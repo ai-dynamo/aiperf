@@ -76,6 +76,8 @@ async def on_delete(
           the GC controller to notice the CR is gone.  On a loaded kind
           cluster the GC controller can be backlogged; the explicit delete
           cuts the pod-disappearance latency from >90 s to <35 s.
+        - Relies on Kubernetes ownerReferences GC to reap the ConfigMap,
+          Role, and RoleBinding - this handler does NOT delete them directly.
 
     The cancellation flag is set BEFORE closing the client so concurrent
     observers see the flag before the client-cache entry disappears.
@@ -322,7 +324,11 @@ async def _shutdown_after_completion(
     try:
         progress_client = await get_or_create_progress_client(key)
         await progress_client.send_shutdown(host)
-    except (TimeoutError, aiohttp.ClientError, OSError) as e:
+    # RuntimeError covers the cross-CR case where the cached session was closed
+    # by another job's cache eviction between the get and the send: ProgressClient
+    # raises RuntimeError on a None session, and letting that escape would fail
+    # the kopf handler for a run whose results are already stored.
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         logger.exception(f"Failed to send shutdown to {host}")
         kopf.event(
             body,

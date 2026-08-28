@@ -995,6 +995,65 @@ class TestMonitorProgressTopLevel:
         kopf_patch.clear.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_fence_rv_cleared_when_terminal_phase_written_by_tick(
+        self,
+    ) -> None:
+        """fence_status_patch RV is removed from the patch when _monitor_tick writes a terminal phase.
+
+        monitor_progress writes metadata.resourceVersion (via fence_status_patch)
+        before calling _monitor_tick.  If _monitor_tick then writes a terminal
+        phase into the StatusBuilder — as every completion and salvage path does —
+        the fence RV is guaranteed stale (try_claim_completion's annotation write
+        already bumped it).  Leaving the stale RV causes kopf's MERGE PATCH to
+        409-conflict and silently drop the phase transition.  monitor_progress must
+        call clear_patch_fence(sb) before returning so the terminal phase write
+        reaches the apiserver.
+        """
+        from kopf._cogs.structs.patches import Patch as _Patch
+
+        real_patch = _Patch()
+
+        async def _tick_writes_failed_phase(
+            *_args: object, sb: object, **_kw: object
+        ) -> None:
+            assert isinstance(sb, StatusBuilder)
+            sb.set_phase(Phase.FAILED)
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value="rv-stale"),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._monitor_tick",
+                new=AsyncMock(side_effect=_tick_writes_failed_phase),
+            ),
+        ):
+            await monitor_progress(
+                body={"metadata": {"name": "job", "uid": "abc-123"}},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "js",
+                    "jobId": "job-1",
+                },
+                spec={},
+                name="job",
+                namespace="ns",
+                patch=real_patch,
+            )
+
+        patch_dict = dict(real_patch)
+        assert "resourceVersion" not in (patch_dict.get("metadata") or {}), (
+            "fence RV must be removed from the patch when _monitor_tick writes a "
+            f"terminal phase; got patch={patch_dict!r}"
+        )
+        assert patch_dict.get("status", {}).get("phase") == str(Phase.FAILED)
+
+    @pytest.mark.asyncio
     async def test_bootstrap_first_observation_pending_phase_runs_tick(
         self,
     ) -> None:

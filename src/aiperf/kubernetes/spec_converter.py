@@ -21,6 +21,7 @@ from pydantic.alias_generators import to_camel
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config.user_files import RunMeta
     from aiperf.kubernetes.crd_models import AIPerfJobSpec, AIPerfSweepSpec
 
 from aiperf.common.enums import AIPerfLogLevel, CommunicationType
@@ -459,6 +460,8 @@ def build_benchmark_run(
     run_config: dict[str, Any],
     run_id: str,
     namespace: str,
+    *,
+    run_meta: RunMeta | None = None,
 ) -> BenchmarkRun:
     """Build a BenchmarkRun from a config dict for a single K8s run.
 
@@ -466,6 +469,11 @@ def build_benchmark_run(
         run_config: AIPerfConfig envelope dict (already has k8s runtime config applied).
         run_id: DNS-safe run identifier (used as benchmark_id and for DNS).
         namespace: Kubernetes namespace (for DNS name generation).
+        run_meta: Run identity for ``artifacts.user_files`` rendering. Required
+            in-cluster because every pod's ``artifact_dir`` is the fixed
+            ``/results`` mount, which carries neither the run epoch nor the
+            AIPerfJob name. Freezing it here keeps the rendered context
+            identical across pods and across controller restarts.
 
     Returns:
         A BenchmarkRun ready for serialization into a ConfigMap.
@@ -520,6 +528,7 @@ def build_benchmark_run(
         random_seed=run_config.get("random_seed"),
         variables=dict(run_config.get("variables") or {}),
         plot=run_config.get("plot"),
+        run_meta=run_meta,
     )
 
 

@@ -216,17 +216,19 @@ class TestRBACSpec:
         assert len(manifest["rules"]) > 0
 
     def test_role_has_configmap_permissions(self) -> None:
-        """Test Role has ConfigMap permissions."""
+        """ConfigMaps are read-only for benchmark pods.
+
+        The run config arrives as a kubelet-mounted volume, so no pod calls the
+        ConfigMap API. Write verbs would let one job rewrite another job's
+        config in a shared benchmark namespace.
+        """
         rbac = RBACSpec(name="aiperf-test", namespace="default", job_id="abc12345")
         manifest = rbac.to_role_manifest()
-        # Find the configmaps rule
         cm_rule = next(
             (r for r in manifest["rules"] if "configmaps" in r["resources"]), None
         )
         assert cm_rule is not None
-        assert "get" in cm_rule["verbs"]
-        assert "create" in cm_rule["verbs"]
-        assert "update" in cm_rule["verbs"]
+        assert set(cm_rule["verbs"]) == {"get", "list", "watch"}
 
     def test_role_has_pod_permissions(self) -> None:
         """Test Role has pod permissions."""
@@ -241,15 +243,20 @@ class TestRBACSpec:
         assert "list" in pods_rule["verbs"]
 
     def test_role_has_jobset_permissions(self) -> None:
-        """Test Role has JobSet permissions."""
+        """JobSets are readable and annotation-patchable, never creatable.
+
+        ``create`` on jobsets is arbitrary container execution under the
+        benchmark ServiceAccount, which controller *and* worker pods share.
+        """
         rbac = RBACSpec(name="aiperf-test", namespace="default", job_id="abc12345")
         manifest = rbac.to_role_manifest()
-        # Find the jobsets rule
         jobset_rule = next(
-            (r for r in manifest["rules"] if "jobsets" in r["resources"]), None
+            (r for r in manifest["rules"] if r["resources"] == ["jobsets"]), None
         )
         assert jobset_rule is not None
         assert "jobset.x-k8s.io" in jobset_rule["apiGroups"]
+        assert set(jobset_rule["verbs"]) == {"get", "list", "watch", "patch"}
+        assert {"create", "update", "delete"}.isdisjoint(jobset_rule["verbs"])
 
     def test_to_role_binding_manifest(self) -> None:
         """Test generating RoleBinding manifest."""
@@ -273,7 +280,11 @@ class TestRBACSpec:
         assert manifest["roleRef"]["name"] == "aiperf-test-role"
 
     def test_role_has_services_and_endpoints_permissions(self) -> None:
-        """Test Role has services and endpoints permissions."""
+        """Services and endpoints are read-only for benchmark pods.
+
+        The headless Service for pod DNS is created by the JobSet controller via
+        ``network.enableDNSHostnames``, so no pod needs create/delete.
+        """
         rbac = RBACSpec(name="aiperf-test", namespace="default", job_id="abc12345")
         manifest = rbac.to_role_manifest()
         svc_rule = next(
@@ -281,14 +292,14 @@ class TestRBACSpec:
         )
         assert svc_rule is not None
         assert "endpoints" in svc_rule["resources"]
-        assert "get" in svc_rule["verbs"]
-        assert "list" in svc_rule["verbs"]
-        assert "watch" in svc_rule["verbs"]
-        assert "create" in svc_rule["verbs"]
-        assert "delete" in svc_rule["verbs"]
+        assert set(svc_rule["verbs"]) == {"get", "list", "watch"}
 
     def test_role_has_events_permissions(self) -> None:
-        """Test Role has events permissions."""
+        """Events are read-only for benchmark pods.
+
+        The heartbeat watchdog lists Events to correlate pod failures; the
+        operator is what emits them, under its own ClusterRole.
+        """
         rbac = RBACSpec(name="aiperf-test", namespace="default", job_id="abc12345")
         manifest = rbac.to_role_manifest()
         events_rule = next(
@@ -296,11 +307,7 @@ class TestRBACSpec:
         )
         assert events_rule is not None
         assert "" in events_rule["apiGroups"]  # Core API group
-        assert "get" in events_rule["verbs"]
-        assert "list" in events_rule["verbs"]
-        assert "watch" in events_rule["verbs"]
-        assert "create" in events_rule["verbs"]
-        assert "patch" in events_rule["verbs"]
+        assert set(events_rule["verbs"]) == {"get", "list", "watch"}
 
     def test_role_has_batch_jobs_permissions(self) -> None:
         """Test Role has batch/jobs read permissions."""
@@ -393,6 +400,76 @@ class TestRBACSpec:
                         f"Helm benchmark-rbac.yaml grants verbs {missing} on "
                         f"({group}, {resource}) not in RBACSpec._RULES"
                     )
+
+
+class TestRBACSpecLeastPrivilege:
+    """The per-job Role must stay pinned to the verbs pods actually exercise.
+
+    Controller and worker pods share one ServiceAccount, so every verb in
+    ``RBACSpec._RULES`` is held by every benchmark pod. These tests are the
+    ratchet: widening a verb here is a deliberate blast-radius change and must
+    fail CI until the pin is updated alongside a justification.
+    """
+
+    #: Every (apiGroup, resource) the per-job Role may mention, and the exact
+    #: verb set it may carry. Derived from an import-graph trace of every
+    #: Kubernetes API call reachable from the in-pod entrypoints: ``aiperf
+    #: service``, the controller pod's FastAPI container, the SystemController's
+    #: pod-monitoring mixin, and the server-metrics Kubernetes discovery plugin.
+    EXPECTED_RULES: dict[tuple[str, ...], set[str]] = {
+        ("aiperf.nvidia.com", "aiperfjobs", "aiperfjobs/status"): {
+            "get", "list", "watch", "patch",
+        },
+        ("", "configmaps"): {"get", "list", "watch"},
+        ("", "pods", "pods/log"): {"get", "list", "watch"},
+        ("", "services", "endpoints"): {"get", "list", "watch"},
+        ("", "events"): {"get", "list", "watch"},
+        ("batch", "jobs"): {"get", "list", "watch"},
+        ("jobset.x-k8s.io", "jobsets"): {"get", "list", "watch", "patch"},
+        ("jobset.x-k8s.io", "jobsets/status"): {"get", "list", "watch"},
+    }  # fmt: skip
+
+    def test_rules_match_the_pinned_least_privilege_set_exactly(self) -> None:
+        """No rule may be added, removed, or re-verbed without updating the pin."""
+        rendered = {
+            (*rule["apiGroups"], *rule["resources"]): set(rule["verbs"])
+            for rule in RBACSpec._RULES
+        }
+        assert rendered == self.EXPECTED_RULES
+
+    @pytest.mark.parametrize(
+        "verb",
+        [
+            param("create", id="create-is-arbitrary-workload-execution"),
+            param("delete", id="delete-is-cross-job-destruction"),
+            param("update", id="update-is-whole-object-replacement"),
+            param("deletecollection", id="deletecollection-is-namespace-wide"),
+            param("escalate", id="escalate-is-rbac-privilege-escalation"),
+            param("bind", id="bind-is-rbac-privilege-escalation"),
+            param("impersonate", id="impersonate-is-identity-assumption"),
+            param("*", id="wildcard-is-namespace-admin"),
+        ],
+    )  # fmt: skip
+    def test_no_rule_grants_a_mutating_or_escalating_verb(self, verb: str) -> None:
+        """``patch`` is the only write verb any benchmark pod may hold.
+
+        Pods patch annotations and status on their own AIPerfJob and JobSet and
+        nothing else; every other write verb belongs to the operator, which holds
+        it under a separate ClusterRole that no pod is bound to.
+        """
+        offenders = [
+            (rule["apiGroups"], rule["resources"])
+            for rule in RBACSpec._RULES
+            if verb in rule["verbs"]
+        ]
+        assert not offenders, f"per-job Role grants {verb!r} on {offenders}"
+
+    def test_secrets_and_rbac_are_not_reachable_at_all(self) -> None:
+        """Endpoint credentials arrive as Secret-backed env vars, never via API."""
+        for rule in RBACSpec._RULES:
+            assert "secrets" not in rule["resources"]
+            assert "serviceaccounts" not in rule["resources"]
+            assert "rbac.authorization.k8s.io" not in rule["apiGroups"]
 
 
 class TestKubernetesDeploymentRBACServiceAccount:

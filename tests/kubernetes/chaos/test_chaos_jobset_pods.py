@@ -27,6 +27,7 @@ import pytest
 import pytest_asyncio
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -59,6 +60,7 @@ def longrun_config(k8s_settings) -> AIPerfJobConfig:  # noqa: ANN001 - k8s_setti
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -71,6 +73,7 @@ def short_fetch_config(k8s_settings) -> AIPerfJobConfig:  # noqa: ANN001 - k8s_s
         benchmark_duration=60.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -164,6 +167,7 @@ async def _find_pid_by_cmdline(
     script = (
         "for d in /proc/[0-9]*; do "
         "  pid=${d##*/}; "
+        '  [ "$pid" = "$$" ] && continue; '
         f'  if cat "$d/cmdline" 2>/dev/null | tr "\\0" " " | grep -q "{cmdline_match}"; then '
         '    echo "$pid"; '
         "    exit 0; "
@@ -315,7 +319,9 @@ async def _get_worker_pod_uids(
     return out
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(
+    900
+)  # 300(Running)+180(live_metrics)+60(terminated)+240(Failed)=780s; 900 gives margin
 async def test_c6_kill_controller_container_salvages(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -341,7 +347,7 @@ async def test_c6_kill_controller_container_salvages(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         # The salvage path this test exercises copies CR live metrics into
@@ -352,29 +358,35 @@ async def test_c6_kill_controller_container_salvages(
         # the operator correctly took the "nothing recoverable" branch --
         # a real behaviour, but not the one under test here.
         await _wait_for_live_metrics(
-            kubectl, name=name, namespace=operator_job_namespace, timeout=120.0
+            kubectl,
+            name=name,
+            namespace=operator_job_namespace,
+            timeout=180.0,  # operator redeploy + warmup lag can exceed 120s on kind
         )
 
         pod = await chaos_injector.get_controller_pod_name(operator_job_namespace, name)
-        # Kill from the event-bus-proxy container; any sibling works
-        # because shareProcessNamespace=true makes /proc shared.
-        control_plane_pid = await _find_pid_by_cmdline(
+        # Find the system-controller PID in the shared PID namespace and kill
+        # it directly. We exec into results-sidecar (neutral container) to
+        # avoid confusing the search with the control-plane's own process list.
+        # The self-exclude ([ "$pid" = "$$" ]) in _find_pid_by_cmdline prevents
+        # the bash search script from matching itself in /proc.
+        ctrl_pid = await _find_pid_by_cmdline(
             kubectl,
             pod=pod,
             namespace=operator_job_namespace,
-            exec_container="event-bus-proxy",
+            exec_container="results-sidecar",
             cmdline_match=CONTROL_PLANE_CMDLINE_MATCH,
         )
         await chaos_injector.kill_container_by_pid(
-            pod=pod,
-            container_pid=control_plane_pid,
+            pod,
+            ctrl_pid,
             namespace=operator_job_namespace,
-            exec_container="event-bus-proxy",
+            exec_container="results-sidecar",
         )
 
-        # Within ~30s the control-plane container should show terminated.
+        # Within ~60s the control-plane container should show terminated.
         reason = await _wait_for_controller_terminated(
-            kubectl, pod=pod, namespace=operator_job_namespace, timeout=30.0
+            kubectl, pod=pod, namespace=operator_job_namespace, timeout=60.0
         )
         assert reason in ("Error", "OOMKilled", "Completed"), (
             f"unexpected terminated reason {reason!r} for control-plane"
@@ -423,7 +435,9 @@ async def test_c6_kill_controller_container_salvages(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(
+    960
+)  # 300(Running)+60(replacement)+480(Completed)=840s; 960 gives margin
 async def test_c7_kill_worker_pod_mid_benchmark(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -450,7 +464,7 @@ async def test_c7_kill_worker_pod_mid_benchmark(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         workers_before = await _get_worker_pod_uids(
@@ -495,14 +509,14 @@ async def test_c7_kill_worker_pod_mid_benchmark(
             operator_job_namespace,
             name,
             phases=("Completed",),
-            timeout=240.0,
+            timeout=480.0,  # replacement pod startup + benchmark resume can be slow on kind
         )
         assert phase == "Completed"
     finally:
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)  # 300(Running)+180(terminal)=480s; 600 gives margin
 async def test_c8_kill_event_bus_sidecar(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -535,7 +549,7 @@ async def test_c8_kill_event_bus_sidecar(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         pod = await chaos_injector.get_controller_pod_name(operator_job_namespace, name)
@@ -567,7 +581,9 @@ async def test_c8_kill_event_bus_sidecar(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(
+    900
+)  # 300(Running)+180(claim)+45(restart)+240(Completed)=765s; 900 gives margin
 async def test_c9_kill_results_sidecar_mid_fetch(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,

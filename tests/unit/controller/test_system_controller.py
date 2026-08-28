@@ -86,10 +86,11 @@ class TestSystemController:
         from aiperf.controller import system_controller as system_controller_module
 
         service_manager = MagicMock()
-        service_manager.service_map = {
-            ServiceType.WORKER_GROUP_MANAGER: ["wgm-0", "wgm-1"]
-        }
+        # service_map is intentionally left empty: KubernetesServiceManager never
+        # populates it, so the expected count must come from the k8s topology.
+        service_manager.service_map = {}
         system_controller.service_manager = service_manager
+        system_controller._k8s_topology = MagicMock(num_worker_pods=2)
         monkeypatch.setattr(system_controller, "_is_kubernetes", lambda: True)
         monkeypatch.setattr(
             system_controller, "_ready_worker_pod_count", MagicMock(return_value=1)
@@ -674,7 +675,6 @@ class TestShutdownDeliveryGrace:
     ) -> None:
         """Populate service_map with an API ServiceRunInfo in the given lifecycle state."""
         from aiperf.common.models import ServiceRunInfo
-        from aiperf.plugin.enums import ServiceType
 
         info = ServiceRunInfo(
             service_type=ServiceType.API,
@@ -790,7 +790,6 @@ class TestShutdownDeliveryGrace:
     @staticmethod
     def _set_api_process_liveness(controller: SystemController, alive: bool) -> None:
         """Populate multi_process_info with an API process record reporting `alive`."""
-        from aiperf.plugin.enums import ServiceType
 
         proc = MagicMock()
         proc.is_alive.return_value = alive

@@ -27,6 +27,26 @@ def _compute_is_fork_parent(conversation: Conversation) -> bool:
     return any(b.mode == ConversationBranchMode.FORK for b in conversation.branches)
 
 
+def _count_expected_fork_children(conversation: Conversation) -> int:
+    """Total FORK-mode child conversations this conversation declares.
+
+    Stamped onto ``UserSession`` at creation for the same reason as
+    ``is_fork_parent``: ``conversation.branches`` is dropped on the
+    PAYLOAD_BYTES wire round-trip, so it cannot be recomputed later.
+
+    This is an upper bound on how many children will pin the parent
+    (branches on turns the run never reaches contribute too). Over-counting
+    only keeps the parent resident longer, which the cache cap reclaims;
+    under-counting would evict it out from under a child that has not
+    arrived yet, which is the failure this count exists to prevent.
+    """
+    return sum(
+        len(b.child_conversation_ids)
+        for b in conversation.branches
+        if b.mode == ConversationBranchMode.FORK
+    )
+
+
 class UserSession(AIPerfBaseModel):
     """
     User session for multi-turn processing.
@@ -94,13 +114,46 @@ class UserSession(AIPerfBaseModel):
     pending_fork_eviction: bool = Field(
         default=False,
         description="When True, the parent's terminal turn has already "
-        "fired, but eviction is deferred until all FORK-mode children "
-        "have joined. Used by ``release_fork_child`` to auto-evict the "
-        "session the moment ``fork_refcount`` reaches 0 (the eviction "
-        "path that normally fires on the parent's terminal turn cannot "
-        "find any children to pin yet — orchestrator dispatches them on "
-        "the credit-return path AFTER this terminal eviction runs).",
+        "fired, but eviction is deferred until every FORK-mode child has "
+        "joined. The eviction path that normally fires on the parent's "
+        "terminal turn cannot find any children to pin yet — the "
+        "orchestrator dispatches them on the credit-return path AFTER "
+        "that terminal eviction runs. Deferral ends when "
+        "``fork_children_outstanding`` goes False, not merely when "
+        "``fork_refcount`` momentarily hits 0.",
     )
+    expected_fork_children: int = Field(
+        default=0,
+        ge=0,
+        description="Upper bound on how many FORK children will pin this "
+        "session, stamped at ``create_and_store`` time from "
+        "``conversation.branches`` (which the PAYLOAD_BYTES round-trip "
+        "strips, so it cannot be recomputed later). Paired with "
+        "``joined_fork_children`` this makes deferred eviction independent "
+        "of the order in which children arrive, pin, and join.",
+    )
+    joined_fork_children: int = Field(
+        default=0,
+        ge=0,
+        description="Cumulative count of FORK children that have joined via "
+        "``release_fork_child``. Unlike ``fork_refcount`` this never "
+        "decreases, so a parent whose children arrive one at a time is not "
+        "evicted the instant the first child joins.",
+    )
+
+    @property
+    def fork_children_outstanding(self) -> bool:
+        """Whether any FORK child may still need this session's history.
+
+        True while a child is actively pinned (``fork_refcount``) or while
+        fewer children have joined than the conversation declared. Children
+        arrive serially, so ``fork_refcount`` alone drops back to 0 between
+        siblings and is not a safe eviction trigger on its own.
+        """
+        return (
+            self.fork_refcount > 0
+            or self.joined_fork_children < self.expected_fork_children
+        )
 
     def advance_turn(self, turn_index: int) -> Turn:
         """Append the next turn onto ``turn_list`` and return it.
@@ -197,6 +250,18 @@ class UserSessionManager:
         self._default_context_mode: ConversationContextMode | None = None
         self._cap_warning_shown: bool = False
         self._pinned_overflow_warning_shown: bool = False
+        self._stale_fork_evictions: int = 0
+
+    @property
+    def stale_fork_evictions(self) -> int:
+        """Count of deferred-eviction parents reclaimed under cap pressure.
+
+        Non-zero means FORK children failed to reach this worker (failed
+        spawn, or a sticky miss that routed them elsewhere) and their
+        parents were only collected because the cache filled up. It is the
+        observable signal that the cache is under DAG pressure.
+        """
+        return self._stale_fork_evictions
 
     @property
     def default_context_mode(self) -> ConversationContextMode | None:
@@ -247,6 +312,7 @@ class UserSessionManager:
             or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
         is_fork_parent = _compute_is_fork_parent(conversation)
+        expected_fork_children = _count_expected_fork_children(conversation)
         # FORK seeding hands the parent's accumulated ``turn_list`` to
         # the child. ``MESSAGE_ARRAY_WITH_RESPONSES`` replaces ``turn_list``
         # on every ``advance_turn`` (see below), which would discard the
@@ -288,6 +354,7 @@ class UserSessionManager:
             turn_list=[],
             context_mode=context_mode,
             is_fork_parent=is_fork_parent,
+            expected_fork_children=expected_fork_children,
             parent_correlation_id=parent_correlation_id,
             branch_mode=branch_mode if parent_correlation_id is not None else None,
         )
@@ -341,6 +408,27 @@ class UserSessionManager:
             if session.fork_refcount > 0 or session.pending_fork_eviction:
                 continue
             del self._cache[x_correlation_id]
+        if len(self._cache) <= self._max_sessions:
+            return
+
+        # Second pass: reclaim parents whose terminal turn already fired and
+        # whose FORK children are no longer outstanding. Those entries are
+        # otherwise immortal -- ``release_fork_child`` is the only collector
+        # and it never runs for children that failed to spawn or that sticky-
+        # missed onto another worker -- so the first pass alone lets a
+        # fork-heavy run defeat the cap entirely and OOM the container, which
+        # is the exact failure the cap exists to prevent.
+        for x_correlation_id in list(self._cache):
+            if len(self._cache) <= self._max_sessions:
+                break
+            session = self._cache[x_correlation_id]
+            if session.fork_refcount > 0 or not session.pending_fork_eviction:
+                continue
+            if session.fork_children_outstanding:
+                continue
+            self._stale_fork_evictions += 1
+            del self._cache[x_correlation_id]
+
         if len(self._cache) > self._max_sessions and (
             not self._pinned_overflow_warning_shown
         ):
@@ -422,15 +510,22 @@ class UserSessionManager:
         practice and must not raise.
 
         When ``pending_fork_eviction`` is set (parent's terminal turn
-        has already fired but was waiting for children to land) and
-        the refcount drops to 0, the session is evicted in the same
-        call — there is no other code path that will collect it.
+        has already fired but was waiting for children to land) and no
+        FORK child is still outstanding, the session is evicted in the
+        same call — there is no other code path that will collect it.
+
+        "Outstanding" deliberately means ``fork_children_outstanding``,
+        not ``fork_refcount == 0``. Children arrive one credit at a time,
+        so the refcount returns to 0 between siblings: evicting on the
+        first join dropped the parent before sibling #2 ever pinned it,
+        and that child then went out with an empty history.
         """
         session = self._cache.get(x_correlation_id)
         if session is None:
             return
         session.fork_refcount = max(0, session.fork_refcount - 1)
-        if session.fork_refcount == 0 and session.pending_fork_eviction:
+        session.joined_fork_children += 1
+        if session.pending_fork_eviction and not session.fork_children_outstanding:
             self._cache.pop(x_correlation_id, None)
 
     def evict_if_unpinned(self, x_correlation_id: str) -> None:
@@ -441,17 +536,20 @@ class UserSessionManager:
         joins. Unknown sessions are a no-op.
 
         Sessions with ``pending_fork_eviction = True`` ALSO stay
-        resident at refcount==0 — their parent's terminal turn already
-        fired, but the orchestrator's child dispatch happens AFTER
-        this point, so we need to keep the session alive for the
-        about-to-arrive children to seed from. ``release_fork_child``
-        handles the eventual cleanup when the last child joins.
+        resident at refcount==0 *while children are still outstanding* —
+        their parent's terminal turn already fired, but the
+        orchestrator's child dispatch happens AFTER this point, so the
+        session must survive for the about-to-arrive children to seed
+        from. ``release_fork_child`` collects it when the last child
+        joins. Once every declared child has joined the deferral is over
+        and the session is popped here, so a parent whose children all
+        joined *before* its own terminal turn is not stranded.
         """
         session = self._cache.get(x_correlation_id)
         if session is None:
             return
         if session.fork_refcount > 0:
             return
-        if session.pending_fork_eviction:
+        if session.pending_fork_eviction and session.fork_children_outstanding:
             return
         self._cache.pop(x_correlation_id, None)

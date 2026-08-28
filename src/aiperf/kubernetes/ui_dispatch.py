@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 from aiperf.common.enums import MessageType
+from aiperf.kubernetes.environment import K8sEnvironment
 
 
 class WSProgressMessage(TypedDict, total=False):
@@ -70,7 +71,7 @@ async def stream_progress(ws_url: str) -> None:
         ws_url,
         on_message=handle_message,
         message_types=WS_MESSAGE_TYPES,
-        max_retries=WS_MAX_RETRIES,
+        max_retries=K8sEnvironment.PROGRESS_STREAM.WS_MAX_RETRIES,
     )
 
 

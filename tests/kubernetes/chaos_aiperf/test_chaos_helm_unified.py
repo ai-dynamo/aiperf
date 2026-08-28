@@ -46,7 +46,11 @@ import pytest_asyncio
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.chaos_aiperf.conftest import wait_for_aiperfjob_phase
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
-from tests.kubernetes.conftest import K8sTestSettings, _create_helm_values
+from tests.kubernetes.conftest import (
+    K8sTestSettings,
+    _create_helm_values,
+    _gpu_node_tolerations,
+)
 from tests.kubernetes.helpers.helm import (
     HelmClient,
     HelmDeployer,
@@ -62,6 +66,12 @@ logger = AIPerfLogger(__name__)
 # in under 2 min on a warm kind cluster, but ``helm install --wait`` plus
 # CRD-establish plus first-pull image load can eat the slack on cold runs.
 _PER_TEST_TIMEOUT = 300
+
+
+def _job_config(k8s_settings: K8sTestSettings, **kwargs: object) -> AIPerfJobConfig:
+    """Build AIPerfJobConfig with GPU tolerations when running on a remote cluster."""
+    tolerations = _gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else []
+    return AIPerfJobConfig(tolerations=tolerations, **kwargs)  # type: ignore[arg-type]
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="package", autouse=True)
@@ -183,7 +193,7 @@ async def _force_cleanup_release(
     )
 
 
-@pytest.mark.timeout(_PER_TEST_TIMEOUT)
+@pytest.mark.timeout(900)  # 2 install+run cycles; _PER_TEST_TIMEOUT is insufficient
 async def test_h1_install_job_uninstall_reinstall_is_clean_unified(
     faults: InjectorRegistry,  # noqa: ARG001  (registry presence keeps this in the unified suite)
     kubectl: KubectlClient,
@@ -215,7 +225,8 @@ async def test_h1_install_job_uninstall_reinstall_is_clean_unified(
     deployer = await _make_isolated_deployer(
         kubectl, helm_client, project_root, values, operator_ns, job_ns, release
     )
-    config = AIPerfJobConfig(
+    config = _job_config(
+        k8s_settings,
         concurrency=2,
         request_count=30,
         warmup_request_count=5,
@@ -303,7 +314,9 @@ async def test_h1_install_job_uninstall_reinstall_is_clean_unified(
 # KeyboardInterrupt, so a Failed raised by the alarm does NOT run this test's
 # finally. The orphaned coroutine then stays scheduled on the package-scoped
 # loop and resumes during h3/h4, tearing down namespaces mid-test.
-@pytest.mark.timeout(420)
+@pytest.mark.timeout(
+    900
+)  # install(3m) + profiling-wait(5m) + upgrade(3m) + observe + completion
 async def test_h2_upgrade_with_inflight_job_preserves_cr_unified(
     faults: InjectorRegistry,  # noqa: ARG001  (registry presence keeps this in the unified suite)
     kubectl: KubectlClient,
@@ -342,7 +355,8 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr_unified(
     # (install 180 + profiling 180 + upgrade 180 + observe 20 + completion 240)
     # against a 300s pytest ceiling, so it was a coin flip that the SIGALRM --
     # not an assertion -- ended the test.
-    longrun = AIPerfJobConfig(
+    longrun = _job_config(
+        k8s_settings,
         concurrency=3,
         request_count=None,
         benchmark_duration=45.0,
@@ -364,7 +378,7 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr_unified(
             cr_name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=120.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 120s
         )
 
         # Trivial no-op values tweak: bump monitor interval. This forces a
@@ -517,7 +531,8 @@ async def test_h3_invalid_values_fail_fast_and_recover_unified(
         )
         await good_deployer.install_chart(wait=True, timeout="3m")
 
-        config = AIPerfJobConfig(
+        config = _job_config(
+            k8s_settings,
             concurrency=2,
             request_count=30,
             warmup_request_count=5,
@@ -535,6 +550,7 @@ async def test_h3_invalid_values_fail_fast_and_recover_unified(
             await _force_cleanup_release(bad_deployer, kubectl)
 
 
+@pytest.mark.k8s_disruptive
 @pytest.mark.timeout(_PER_TEST_TIMEOUT)
 async def test_h4_missing_jobset_crd_surfaces_error_unified(
     faults: InjectorRegistry,  # noqa: ARG001  (registry presence keeps this in the unified suite)
@@ -589,7 +605,8 @@ async def test_h4_missing_jobset_crd_surfaces_error_unified(
 
         await deployer.install_chart(wait=True, timeout="3m")
 
-        config = AIPerfJobConfig(
+        config = _job_config(
+            k8s_settings,
             concurrency=2,
             request_count=30,
             warmup_request_count=5,

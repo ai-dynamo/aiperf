@@ -15,6 +15,7 @@ inject faults on that link. Compose with the package-level
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -34,6 +35,8 @@ from tests.kubernetes.chaos.toxiproxy import (
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import OperatorDeployer
 
+_logger = logging.getLogger(__name__)
+
 
 @pytest.fixture
 def chaos_injector(kubectl: KubectlClient) -> ChaosInjector:
@@ -52,9 +55,19 @@ async def toxiproxy_injector(
     opens an admin port-forward, and tears the namespace down at package
     end. Individual tests must call ``await injector.reset()`` in their
     own ``finally`` to keep proxies/toxics from leaking across tests.
+
+    Soft-fails when toxiproxy cannot be deployed (e.g. on shared remote
+    clusters that lack the infrastructure). Tests that actually exercise
+    toxiproxy must be marked ``@pytest.mark.k8s_needs_toxiproxy`` so they
+    are skipped when this fixture is unavailable; other tests in the same
+    package that receive the injector indirectly (via ``faults``) will find
+    it in a no-op state and must not call toxiproxy-specific methods.
     """
     injector = ToxiproxyInjector()
-    await injector.ensure_deployed(kubectl)
+    try:
+        await injector.ensure_deployed(kubectl)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("toxiproxy not available — running without it: %s", exc)
     try:
         yield injector
     finally:

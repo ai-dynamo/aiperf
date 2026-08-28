@@ -44,6 +44,13 @@ async def attach(
             help="Trial index (0..9) within a sweep variation. Requires -v.",
         ),
     ] = None,
+    ignore_not_found: Annotated[
+        bool,
+        Parameter(
+            name="--ignore-not-found",
+            help="Exit 0 instead of 1 when the benchmark does not exist (mirrors kubectl).",
+        ),
+    ] = False,
 ) -> None:
     """Attach to a running AIPerf benchmark and stream progress.
 
@@ -51,6 +58,11 @@ async def attach(
     progress updates via WebSocket. Press Ctrl+C to disconnect.
 
     If no job_id is specified, uses the last deployed benchmark.
+
+    Exits 1 when the target cannot be addressed at all (no such AIPerfJob,
+    AIPerfSweep or JobSet, or no job_id and no last-benchmark record), so the
+    command works as a CI existence check. Pass ``--ignore-not-found`` to keep
+    exit 0 in that case.
 
     Examples:
         # Attach to the last deployed benchmark
@@ -68,6 +80,9 @@ async def attach(
         # Target a specific sweep variation
         aiperf kube attach my-sweep -v 7
         aiperf kube attach my-sweep -v 5 -t 0
+
+        # Tolerate an already-deleted benchmark in a cleanup script
+        aiperf kube attach abc123 --ignore-not-found
     """
     from aiperf import cli_utils
     from aiperf.cli_commands.kube._kube_common import resolve_child_name
@@ -89,6 +104,7 @@ async def attach(
             kube_context=manage_options.kube_context,
         )
         if not resolved:
+            cli_helpers.exit_target_not_found(ignore_not_found=ignore_not_found)
             return
 
         try:

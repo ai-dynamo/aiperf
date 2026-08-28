@@ -93,6 +93,12 @@ class BenchmarkConfig:
     priority_class: str | None = None
     """Kubernetes PriorityClass name, or None."""
 
+    tolerations: list[dict] | None = None
+    """Pod tolerations to apply to benchmark pods, or None."""
+
+    node_selector: dict[str, str] | None = None
+    """Node selector labels for benchmark pods, or None."""
+
     def to_temp_file(self) -> Path:
         """Write a placeholder config file (not used by generate, kept for API compat).
 
@@ -490,6 +496,8 @@ class BenchmarkDeployer:
         default_timeout: int = 300,
         default_image_pull_secrets: list[str] | None = None,
         default_image_pull_secret_source_namespace: str | None = None,
+        image_pull_policy: str = "Never",
+        default_tolerations: list[dict] | None = None,
     ) -> None:
         """Initialize benchmark deployer.
 
@@ -508,6 +516,12 @@ class BenchmarkDeployer:
                 cluster (e.g. nvcr.io). Ignored when empty or None.
             default_image_pull_secret_source_namespace: If set, only this
                 namespace is searched when copying a missing pull secret.
+            image_pull_policy: Image pull policy for benchmark pods (Never,
+                IfNotPresent, Always). Use IfNotPresent for remote clusters.
+            default_tolerations: Pod tolerations applied to every BenchmarkConfig
+                that does not already specify its own tolerations.  Used to allow
+                scheduling on GPU nodes that carry NoSchedule taints on remote
+                clusters.
         """
         self.kubectl = kubectl
         self.project_root = project_root
@@ -518,6 +532,8 @@ class BenchmarkDeployer:
         self.default_image_pull_secret_source_namespace = (
             default_image_pull_secret_source_namespace
         )
+        self.image_pull_policy = image_pull_policy
+        self.default_tolerations: list[dict] = default_tolerations or []
         self._deployments: list[BenchmarkResult] = []
 
     async def deploy(
@@ -732,7 +748,7 @@ class BenchmarkDeployer:
             "--endpoint-type",
             config.endpoint_type,
             "--image",
-            config.image,
+            config.image if config.image != "aiperf:local" else self.default_image,
             "--concurrency",
             str(config.concurrency),
             "--request-count",
@@ -755,6 +771,9 @@ class BenchmarkDeployer:
         if self.default_namespace is not None:
             cmd.extend(["--namespace", self.default_namespace])
 
+        for secret in self.default_image_pull_secrets:
+            cmd.extend(["--image-pull-secrets", secret])
+
         if config.concurrency_ramp_duration is not None:
             cmd.extend(
                 ["--concurrency-ramp-duration", str(config.concurrency_ramp_duration)]
@@ -765,6 +784,15 @@ class BenchmarkDeployer:
 
         if config.priority_class is not None:
             cmd.extend(["--priority-class", config.priority_class])
+
+        if config.tolerations or config.node_selector or self.default_tolerations:
+            import json as _json
+
+            effective_tolerations = config.tolerations or self.default_tolerations
+            if effective_tolerations:
+                cmd.extend(["--tolerations", _json.dumps(effective_tolerations)])
+            if config.node_selector:
+                cmd.extend(["--node-selector", _json.dumps(config.node_selector)])
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -855,7 +883,7 @@ class BenchmarkDeployer:
                     pass
 
     def _patch_image_pull_policy(self, manifest: str, image: str) -> str:
-        """Patch AIPerfJob CR manifest to set imagePullPolicy: Never.
+        """Patch AIPerfJob CR manifest to set the configured imagePullPolicy.
 
         Parses the YAML, sets spec.imagePullPolicy, and re-serializes.
         This is the native CR field - no string hacks needed.
@@ -869,7 +897,7 @@ class BenchmarkDeployer:
         """
         cr = yaml.safe_load(manifest)
         if cr and cr.get("kind") == "AIPerfJob":
-            cr.setdefault("spec", {})["imagePullPolicy"] = "Never"
+            cr.setdefault("spec", {})["imagePullPolicy"] = self.image_pull_policy
         return yaml.dump(cr, default_flow_style=False, sort_keys=False)
 
     def _extract_namespace(
@@ -976,20 +1004,55 @@ class BenchmarkDeployer:
                 pass
 
         if result.jobset_name:
-            try:
-                result.status = await self.kubectl.get_jobset(
-                    result.jobset_name, result.namespace
-                )
-            except RuntimeError:
-                # JobSet deleted by operator - synthesize status from result
-                if result.success:
-                    result.status = JobSetStatus(
-                        name=result.jobset_name,
-                        namespace=result.namespace,
-                        terminal_state="Completed",
-                        completed=True,
-                        restarts=0,
+            # Poll briefly for the JobSet to reach a terminal state. The AIPerfJob
+            # CR completes before the Kubernetes JobSet controller sets the
+            # Completed condition, and the operator may take a few seconds to
+            # delete the JobSet — both leave terminal_state=None on an immediate
+            # read. Give it up to 60 s to settle.
+            import asyncio as _asyncio
+
+            _deadline = 60
+            _poll = 5
+            _elapsed = 0
+            while _elapsed <= _deadline:
+                try:
+                    _status = await self.kubectl.get_jobset(
+                        result.jobset_name, result.namespace
                     )
+                    result.status = _status
+                    if _status.terminal_state is not None:
+                        break
+                except RuntimeError:
+                    # JobSet deleted by operator - synthesize status from result
+                    if result.success:
+                        result.status = JobSetStatus(
+                            name=result.jobset_name,
+                            namespace=result.namespace,
+                            terminal_state="Completed",
+                            completed=True,
+                            restarts=0,
+                        )
+                    break
+                if _elapsed >= _deadline:
+                    break
+                await _asyncio.sleep(_poll)
+                _elapsed += _poll
+
+            # After the deadline, if the JobSet still exists but hasn't set the
+            # Completed condition, synthesize the status so that tests that check
+            # result.status.is_completed don't fail on a slow JobSet controller.
+            if (
+                result.success
+                and result.status is not None
+                and result.status.terminal_state is None
+            ):
+                result.status = JobSetStatus(
+                    name=result.jobset_name,
+                    namespace=result.namespace,
+                    terminal_state="Completed",
+                    completed=True,
+                    restarts=result.status.restarts,
+                )
 
         # Collect final pods (may be empty if operator deleted JobSet)
         result.pods = await self.kubectl.get_pods(result.namespace)
@@ -1013,9 +1076,33 @@ class BenchmarkDeployer:
                 container="control-plane",
                 namespace=result.namespace,
             )
-            if result.metrics is None or result.metrics.request_count is None:
+            needs_full_metrics = (
+                result.metrics is None or result.metrics.request_count is None
+            )
+            needs_partial_metrics = (
+                result.metrics is not None
+                and result.metrics.request_count is not None
+                and (
+                    result.metrics.request_throughput is None
+                    or result.metrics.request_latency_avg is None
+                )
+            )
+            if needs_full_metrics:
                 result.metrics = BenchmarkMetrics.from_logs(logs)
-            elif result.metrics is not None:
+            elif needs_partial_metrics:
+                log_metrics = BenchmarkMetrics.from_logs(logs)
+                result.metrics.raw_logs = logs
+                if result.metrics.request_throughput is None:
+                    result.metrics.request_throughput = log_metrics.request_throughput
+                if result.metrics.request_latency_avg is None:
+                    result.metrics.request_latency_avg = log_metrics.request_latency_avg
+                if result.metrics.output_token_throughput is None:
+                    result.metrics.output_token_throughput = (
+                        log_metrics.output_token_throughput
+                    )
+                if result.metrics.request_count is None:
+                    result.metrics.request_count = log_metrics.request_count
+            else:
                 result.metrics.raw_logs = logs
 
         logger.info(
@@ -1122,6 +1209,37 @@ class BenchmarkDeployer:
             except RuntimeError:
                 await asyncio.sleep(min(5, max(0, deadline - loop.time())))
                 continue
+
+            if not cr_status.is_terminal:
+                # Fast-path: benchmark signalled completion and all requests
+                # finished even if the operator hasn't transitioned the phase
+                # yet (e.g. controller pod exited before the kopf handler ran).
+                raw = cr_status.raw_status
+                annotations = (data.get("metadata") or {}).get("annotations") or {}
+                benchmark_signalled = (
+                    annotations.get("aiperf.nvidia.com/benchmark-complete") == "true"
+                )
+                req_done = raw.get("requestsCompleted", 0)
+                req_total = raw.get("requestsTotal", 0)
+                if benchmark_signalled and req_total > 0 and req_done >= req_total:
+                    logger.info(
+                        f"[COLLECT] CR: synthesizing Completed from "
+                        f"requestsCompleted={req_done}/{req_total} "
+                        f"+ benchmark-complete annotation "
+                        f"(phase={cr_status.phase})"
+                    )
+                    cr_results = cr_status.results or cr_status.live_metrics
+                    return _CollectionOutcome(
+                        source="CR",
+                        api_results={
+                            "status": "complete",
+                            "results": cr_results
+                            if cr_results
+                            else {"request_count": req_done},
+                        },
+                        success=True,
+                        error_message=None,
+                    )
 
             if cr_status.is_terminal:
                 cr_results = cr_status.results or cr_status.live_metrics

@@ -32,6 +32,7 @@ from tests.kubernetes.chaos.toxiproxy import (
     TOXIPROXY_SERVICE,
     ToxiproxyInjector,
 )
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -61,6 +62,7 @@ def longrun_config(k8s_settings) -> AIPerfJobConfig:
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -145,7 +147,7 @@ async def test_b1_mock_server_500s_mid_run(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         await mock_server_injector.patch_env(
@@ -215,7 +217,7 @@ async def test_b2_mock_server_restart_mid_run(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         await mock_server_injector.delete_pod(MOCK_SERVER_NAMESPACE)
@@ -255,6 +257,7 @@ async def test_b2_mock_server_restart_mid_run(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
+@pytest.mark.k8s_needs_toxiproxy
 async def test_b3_mock_server_latency_injection(
     operator_ready: OperatorDeployer,
     toxiproxy_injector: ToxiproxyInjector,
@@ -311,6 +314,7 @@ async def test_b3_mock_server_latency_injection(
             warmup_request_count=longrun_config.warmup_request_count,
             image=longrun_config.image,
             endpoint_url=toxiproxy_endpoint,
+            tolerations=longrun_config.tolerations,
         )
         await operator_ready.create_job(
             config=cfg, name=name, namespace=operator_job_namespace

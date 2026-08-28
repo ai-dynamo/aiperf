@@ -45,6 +45,7 @@ from tests.kubernetes.chaos.toxiproxy import (
     ToxiproxyInjector,
 )
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -68,6 +69,7 @@ async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> No
     )
 
 
+@pytest.mark.k8s_needs_toxiproxy
 async def test_c15_pause_apiserver_30s_recovers_unified(
     operator_ready_apiserver_toxiproxy_routed: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -94,6 +96,7 @@ async def test_c15_pause_apiserver_30s_recovers_unified(
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     try:
         await operator_ready_apiserver_toxiproxy_routed.create_job(
@@ -129,6 +132,7 @@ async def test_c15_pause_apiserver_30s_recovers_unified(
         await toxiproxy_injector.reset()
 
 
+@pytest.mark.k8s_needs_toxiproxy
 @pytest.mark.timeout(600)
 async def test_c16_block_operator_controller_http_falls_back_unified(
     operator_ready_toxiproxy_routed: OperatorDeployer,
@@ -157,6 +161,7 @@ async def test_c16_block_operator_controller_http_falls_back_unified(
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
     # Sanity-check: operator was deployed through the shared fixture, so

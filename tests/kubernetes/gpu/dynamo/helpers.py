@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
+import aiohttp
 import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -381,6 +382,16 @@ class DynamoDeployer:
         }
 
         worker_envs = [_POD_UID_ENV, *self._build_worker_envs(is_prefill=is_prefill)]
+        if c.hf_token_secret:
+            for env_name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+                worker_envs.append(
+                    {
+                        "name": env_name,
+                        "valueFrom": {
+                            "secretKeyRef": {"name": c.hf_token_secret, "key": "token"}
+                        },
+                    }
+                )
         main_container["env"] = worker_envs
 
         main_container.update(self._build_probes())
@@ -461,7 +472,18 @@ class DynamoDeployer:
         deploy_name = self._deployment_name()
 
         # Frontend service
-        frontend_container: dict = {"image": c.effective_image, "env": [_POD_UID_ENV]}
+        frontend_envs: list[dict] = [_POD_UID_ENV]
+        if c.hf_token_secret:
+            for env_name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+                frontend_envs.append(
+                    {
+                        "name": env_name,
+                        "valueFrom": {
+                            "secretKeyRef": {"name": c.hf_token_secret, "key": "token"}
+                        },
+                    }
+                )
+        frontend_container: dict = {"image": c.effective_image, "env": frontend_envs}
         frontend_pod_spec: dict = {"mainContainer": frontend_container}
         if c.runtime_class_name:
             frontend_pod_spec["runtimeClassName"] = c.runtime_class_name
@@ -816,6 +838,8 @@ class DynamoDeployer:
 
                 if dynamo_pods and all(p.is_ready for p in dynamo_pods):
                     logger.info(f"[DYNAMO] All pods ready (took {elapsed:.1f}s)")
+                    remaining = deadline - time.perf_counter()
+                    await self._wait_for_http_model_ready(remaining)
                     return
 
                 if not dynamo_pods and elapsed > 30:
@@ -861,6 +885,122 @@ class DynamoDeployer:
                         )
 
                 await asyncio.sleep(poll_interval)
+
+    async def _wait_for_http_model_ready(
+        self,
+        timeout: float,
+        poll_interval: float = 10.0,
+    ) -> None:
+        """Wait for the model to finish loading by polling /v1/chat/completions.
+
+        After pod readiness probes pass, the vLLM workers still need time to
+        download and load the model into GPU memory. Until loading completes,
+        the Dynamo frontend returns HTTP 404 for all inference endpoints.
+
+        A model is listed in /v1/models only when some namespace's worker set is
+        *complete* (`is_displayable() && has_ready_workers()` in
+        `lib/llm/src/discovery/model_manager.rs`). For a disaggregated
+        deployment that means every declared worker type must be present: a
+        decode worker with no prefill peer serves nothing and is hidden by
+        design. On timeout we therefore report the per-role breakdown from
+        `GET /v1/models/{model}/ready` so the missing worker type is named
+        rather than inferred.
+        """
+        frontend_svc = f"svc/{self._deployment_name()}-frontend"
+        start = time.perf_counter()
+        deadline = start + timeout
+
+        logger.info(
+            f"[DYNAMO] Waiting for model to load (HTTP readiness, timeout={timeout:.0f}s)"
+        )
+
+        async with self.kubectl.port_forward(
+            frontend_svc,
+            remote_port=_FRONTEND_PORT,
+            namespace=self.config.namespace,
+        ) as local_port:
+            base_url = f"http://localhost:{local_port}"
+            chat_url = f"{base_url}/v1/chat/completions"
+            payload = {
+                "model": self.config.model_name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "stream": False,
+            }
+
+            while True:
+                elapsed = time.perf_counter() - start
+                if time.perf_counter() > deadline:
+                    readiness = await self._describe_model_readiness(base_url)
+                    raise TimeoutError(
+                        f"Dynamo model failed to load within {timeout:.0f}s "
+                        f"(still returning non-200 after {elapsed:.0f}s).\n"
+                        f"{readiness}"
+                    )
+
+                try:
+                    async with (
+                        aiohttp.ClientSession() as session,
+                        session.post(
+                            chat_url,
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp,
+                    ):
+                        if resp.status == 200:
+                            logger.info(
+                                f"[DYNAMO] Model ready — HTTP 200 in {elapsed:.1f}s"
+                            )
+                            return
+                        body = (await resp.text())[:300]
+                        logger.info(
+                            f"[DYNAMO] Model not ready yet: HTTP {resp.status} "
+                            f"at {elapsed:.0f}s — {body!r}"
+                        )
+                except Exception as e:
+                    logger.info(
+                        f"[DYNAMO] HTTP readiness poll failed at {elapsed:.0f}s: {e!r}"
+                    )
+
+                await asyncio.sleep(poll_interval)
+
+    async def _describe_model_readiness(self, base_url: str) -> str:
+        """Summarize GET /v1/models/{model}/ready for a readiness failure.
+
+        The endpoint is backed by the same `evaluate_namespace` facts as the
+        serving gate, so the reported missing worker types cannot disagree with
+        why the model is absent from /v1/models. Returns a human-readable block
+        for the TimeoutError; never raises.
+        """
+        url = f"{base_url}/v1/models/{self.config.model_name}/ready"
+        try:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp,
+            ):
+                if resp.status != 200:
+                    body = (await resp.text())[:300]
+                    return (
+                        f"Model readiness probe returned HTTP {resp.status}: {body!r}"
+                    )
+                data = await resp.json()
+        except Exception as e:
+            return f"Model readiness probe failed: {e!r}"
+
+        lines = [
+            f"Model readiness: model={data.get('model')!r} ready={data.get('ready')}"
+        ]
+        if reason := data.get("reason"):
+            lines.append(f"  reason: {reason}")
+        for ns, ns_data in (data.get("namespaces") or {}).items():
+            lines.append(f"  namespace {ns}: ready={ns_data.get('ready')}")
+            if ns_reason := ns_data.get("reason"):
+                lines.append(f"    reason: {ns_reason}")
+            if present := ns_data.get("present"):
+                lines.append(f"    present: {', '.join(present)}")
+            if missing := ns_data.get("missing_worker_types"):
+                lines.append(f"    MISSING worker types: {', '.join(missing)}")
+        return "\n".join(lines)
 
     async def get_logs(self, tail: int | None = 100) -> str:
         """Get logs from all Dynamo pods.

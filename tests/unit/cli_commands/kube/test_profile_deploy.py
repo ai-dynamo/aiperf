@@ -705,6 +705,64 @@ class TestDeployViaOperatorPersistence:
             kind="AIPerfJob",
         )
 
+    async def test_watch_uses_configured_default_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from contextlib import asynccontextmanager
+
+        from aiperf.kubernetes.environment import K8sEnvironment
+
+        @asynccontextmanager
+        async def _fake_client(**_: Any):
+            yield MagicMock()
+
+        monkeypatch.setattr(K8sEnvironment.WATCH, "DEFAULT_TIMEOUT_SECONDS", 777)
+        validated = MagicMock(image="registry.example/aiperf:latest")
+        validated.model_dump.return_value = {"image": validated.image}
+        config = MagicMock()
+        config.benchmark.endpoint.urls = []
+        config.benchmark.get_model_names.return_value = ["model-a"]
+        options = KubeOptions(image=validated.image)
+        watch_job = AsyncMock()
+
+        with (
+            patch(
+                "aiperf.kubernetes.spec_converter.validate_job_spec",
+                return_value=validated,
+            ),
+            patch("aiperf.kubernetes.client.k8s_client", _fake_client),
+            patch(
+                "aiperf.cli_commands.kube.profile_deploy._submit_cr",
+                new=AsyncMock(return_value={"spec": {"image": validated.image}}),
+            ),
+            patch("aiperf.kubernetes.console.print_cr_submission_summary"),
+            patch("aiperf.kubernetes.console.save_last_benchmark"),
+            patch(
+                "aiperf.cli_commands.kube.profile_deploy.should_detach_from_operator_job",
+                return_value=False,
+            ),
+            patch("aiperf.kubernetes.attach.watch_job", watch_job),
+        ):
+            await deploy_via_operator(
+                {"image": validated.image},
+                options,
+                config,
+                "job-a",
+                "tenant-a",
+                dry_run=False,
+                detach=False,
+                no_wait=False,
+                attach_port=0,
+            )
+
+        watch_job.assert_awaited_once_with(
+            namespace="tenant-a",
+            job_id="job-a",
+            timeout=777,
+            kubeconfig=options.kubeconfig,
+            kube_context=options.kube_context,
+        )
+
 
 # =============================================================================
 # operator_available

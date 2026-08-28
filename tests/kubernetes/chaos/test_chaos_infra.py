@@ -30,6 +30,7 @@ import orjson
 import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -105,12 +106,13 @@ async def test_k1_image_pull_backoff_surfaces_pending(
     chaos_injector: ChaosInjector,
     operator_job_namespace: str,
     kubectl: KubectlClient,
+    k8s_settings,  # noqa: ANN001
 ) -> None:
     """A non-existent image surfaces ImagePullBackOff on JobSet pods.
 
-    Creates a CR pointing at ``ghcr.io/does-not-exist/nope:404`` with
+    Creates a CR pointing at ``127.0.0.1:12345/nope:latest`` with
     ``imagePullPolicy=IfNotPresent`` so kubelet actually attempts to
-    pull. Asserts:
+    pull and gets an immediate ECONNREFUSED. Asserts:
 
     * Within 90 s, at least one pod in ``operator_job_namespace`` has
       container status ``ImagePullBackOff`` or ``ErrImagePull``.
@@ -124,8 +126,9 @@ async def test_k1_image_pull_backoff_surfaces_pending(
         concurrency=1,
         request_count=10,
         warmup_request_count=0,
-        image="ghcr.io/does-not-exist/nope:404",
+        image="127.0.0.1:12345/nope:latest",
         image_pull_policy="IfNotPresent",
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     try:
         await operator_ready.create_job(
@@ -178,7 +181,10 @@ async def test_k1_image_pull_backoff_surfaces_pending(
         )
 
         # The CR must now reach Failed once the pod pull error is visible.
-        deadline = time.monotonic() + 120.0
+        # PENDING_CRITICAL_THRESHOLD_SECONDS=90s + kopf timer scheduling latency
+        # means the operator can take 90-120s to mark the CR Failed after it
+        # first detects the backoff; give 180s of total slack.
+        deadline = time.monotonic() + 180.0
         observed_phase = ""
         while time.monotonic() < deadline:
             observed_phase = await _phase(kubectl, operator_job_namespace, name)
@@ -186,7 +192,7 @@ async def test_k1_image_pull_backoff_surfaces_pending(
                 break
             await asyncio.sleep(2.0)
         assert observed_phase == "Failed", (
-            f"K1: CR did not reach Failed within 120 s after pod "
+            f"K1: CR did not reach Failed within 180 s after pod "
             f"{pull_pod!r} surfaced ErrImagePull/ImagePullBackOff "
             f"(observed phase={observed_phase!r})"
         )
@@ -221,6 +227,7 @@ async def test_k2_dns_resolution_failure_fails_fast(
         request_count=10,
         warmup_request_count=0,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     try:
         await operator_ready.create_job(
@@ -291,6 +298,7 @@ async def test_k3_resource_quota_exhaustion_fails_fast(
         request_count=10,
         warmup_request_count=0,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     quota_applied = False
     try:
@@ -308,9 +316,11 @@ async def test_k3_resource_quota_exhaustion_fails_fast(
             config=config, name=name, namespace=operator_job_namespace
         )
 
-        # Poll for up to 120 s: quota admission rejection must now surface
+        # Poll for up to 180 s: quota admission rejection must now surface
         # on the CR as Failed, not only in namespace events.
-        deadline = time.monotonic() + 120.0
+        # PENDING_CRITICAL_THRESHOLD_SECONDS=90s + kopf timer scheduling means
+        # the operator can take 90-120s; 180s gives adequate margin on kind.
+        deadline = time.monotonic() + 180.0
         observed_phase = ""
         while time.monotonic() < deadline:
             observed_phase = await _phase(kubectl, operator_job_namespace, name)
@@ -319,7 +329,7 @@ async def test_k3_resource_quota_exhaustion_fails_fast(
             await asyncio.sleep(2.0)
 
         assert observed_phase == "Failed", (
-            f"K3: CR did not reach Failed within 120 s after ResourceQuota "
+            f"K3: CR did not reach Failed within 180 s after ResourceQuota "
             f"{quota_name!r} rejected pod admission (observed phase="
             f"{observed_phase!r})"
         )

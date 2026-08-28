@@ -28,6 +28,7 @@ import os
 import shutil
 import sqlite3
 import time
+import uuid
 import zlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -307,18 +308,28 @@ def run_dir(base: Path, namespace: str, name: str, epoch: str) -> Path:
 
 
 def _write_pointer_atomic(root: Path, epoch: str) -> None:
-    """Atomically replace ``root/latest.txt`` with ``epoch``."""
+    """Atomically replace ``root/latest.txt`` with ``epoch``.
+
+    Stages to a ``uuid4``-suffixed temporary name so concurrent writers
+    (two operator workers, or a job completion racing a retention
+    reconcile) never clobber each other's staged file before the rename.
+    """
     pointer = root / LATEST_POINTER
-    staged = root / f"{LATEST_POINTER}.tmp"
-    staged.write_text(epoch)
-    os.replace(staged, pointer)
+    staged = root / f".{LATEST_POINTER}.{uuid.uuid4().hex}.tmp"
+    try:
+        staged.write_text(epoch)
+        os.replace(staged, pointer)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
 
 
 def write_latest(base: Path, namespace: str, name: str, epoch: str) -> None:
     """Atomically record ``epoch`` as the current run for a job.
 
-    Writes to ``<job_dir>/latest.txt.tmp`` first then ``os.replace`` onto
-    the final path so concurrent readers never observe a partial write.
+    Writes to a ``uuid4``-suffixed temporary file first then ``os.replace``
+    onto the final path so concurrent readers never observe a partial write
+    and concurrent writers never clobber each other's staged file.
 
     Rejects epochs that do not match :data:`EPOCH_RE` (9-10 decimal digits,
     optionally plus a 6-digit suffix)

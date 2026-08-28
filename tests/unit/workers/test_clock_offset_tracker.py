@@ -20,6 +20,7 @@ import pytest
 
 from aiperf.common.environment import Environment
 from aiperf.credit.messages import TimePing, TimePong
+from aiperf.workers import clock_offset_tracker
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 
 
@@ -284,3 +285,176 @@ async def test_measure_baseline_rtt_keeps_partial_result_when_cancelled():
         )
 
     assert tracker.baseline_rtt_ns is not None
+
+
+# =============================================================================
+# Sample sanity gates
+# =============================================================================
+
+
+def test_absolute_bound_rejects_an_implausible_sample():
+    """A sample far outside any real skew is corrupt data, not a measurement.
+
+    The estimator is a minimum, so admitting one would hand the correction to
+    that sample for the whole window.
+    """
+    tracker = ClockOffsetTracker(max_abs_sec=1.0)
+    tracker.observe(issued_at_ns=0, received_at_ns=5_000_000_000)
+
+    assert tracker.offset_ns is None
+    assert tracker.sample_count == 0
+    assert tracker.rejected_sample_count == 1
+
+
+def test_absolute_bound_rejects_a_negative_implausible_sample():
+    tracker = ClockOffsetTracker(max_abs_sec=1.0)
+    tracker.observe(issued_at_ns=5_000_000_000, received_at_ns=0)
+
+    assert tracker.offset_ns is None
+    assert tracker.rejected_sample_count == 1
+
+
+def _seed(tracker: ClockOffsetTracker, base_ns: int = 50_000_000) -> None:
+    """Fill the window with a realistically jittered 50ms offset."""
+    for jitter_ns in (0, 200_000, 100_000, 300_000, 150_000, 50_000):
+        tracker.observe(issued_at_ns=0, received_at_ns=base_ns + jitter_ns)
+
+
+def test_single_low_outlier_does_not_capture_the_minimum():
+    """One bad sample must not own the correction until the window evicts it."""
+    tracker = ClockOffsetTracker()
+    _seed(tracker)
+    assert tracker.offset_ns == 50_000_000
+
+    tracker.observe(issued_at_ns=0, received_at_ns=10_000_000)
+
+    assert tracker.offset_ns == 50_000_000
+    assert tracker.rejected_sample_count == 1
+
+
+def test_high_outlier_is_still_admitted_because_the_minimum_ignores_it():
+    """Only the low side is dangerous; rejecting high samples buys nothing."""
+    tracker = ClockOffsetTracker()
+    _seed(tracker)
+
+    tracker.observe(issued_at_ns=0, received_at_ns=900_000_000)
+
+    assert tracker.offset_ns == 50_000_000
+    assert tracker.sample_count == 7
+    assert tracker.rejected_sample_count == 0
+
+
+def test_sustained_low_run_is_read_as_a_real_step_and_re_seeds_the_window():
+    """A controller restart or NTP step moves the true offset; follow it.
+
+    Rejection has to be self-limiting: a filter that keeps rejecting reality
+    would pin the correction at a stale level for the rest of the run.
+    """
+    tracker = ClockOffsetTracker(reset_after_rejects=3)
+    _seed(tracker)
+
+    for _ in range(3):
+        tracker.observe(issued_at_ns=0, received_at_ns=10_000_000)
+
+    assert tracker.offset_ns == 10_000_000
+    assert tracker.rejected_sample_count == 2
+
+
+def test_outlier_rejection_is_disabled_by_a_zero_factor():
+    tracker = ClockOffsetTracker(outlier_factor=0.0)
+    _seed(tracker)
+
+    tracker.observe(issued_at_ns=0, received_at_ns=10_000_000)
+
+    assert tracker.offset_ns == 10_000_000
+    assert tracker.rejected_sample_count == 0
+
+
+def test_outlier_rejection_waits_for_a_population_to_judge_against():
+    """With fewer than min_samples there is no median worth trusting."""
+    tracker = ClockOffsetTracker(min_samples=5)
+    for _ in range(3):
+        tracker.observe(issued_at_ns=0, received_at_ns=50_000_000)
+
+    tracker.observe(issued_at_ns=0, received_at_ns=10_000_000)
+
+    assert tracker.offset_ns == 10_000_000
+    assert tracker.rejected_sample_count == 0
+
+
+def test_rejected_sample_leaves_the_previous_estimate_in_place():
+    tracker = ClockOffsetTracker()
+    _seed(tracker)
+
+    assert tracker.observe(issued_at_ns=0, received_at_ns=10_000_000) == 50_000_000
+
+
+# =============================================================================
+# Baseline RTT sanity and re-measurement
+# =============================================================================
+
+
+def _echo(tracker: ClockOffsetTracker, sent: list[TimePing]):
+    async def send_ping(ping: TimePing) -> None:
+        sent.append(ping)
+        tracker.handle_pong(
+            TimePong(sequence=ping.sequence, sent_at_ns=ping.sent_at_ns)
+        )
+
+    return send_ping
+
+
+@pytest.mark.asyncio
+async def test_implausibly_slow_probe_is_not_used_as_the_baseline():
+    """Halving a queued-behind-credits round trip overstates one-way transit.
+
+    ``correction_ns`` subtracts that estimate, so one bad probe would shift every
+    exported timestamp by half of it.
+    """
+    tracker = ClockOffsetTracker(max_rtt_sec=1e-9)
+    sent: list[TimePing] = []
+
+    await tracker.measure_baseline_rtt(_echo(tracker, sent), probe_count=2)
+
+    assert sent, "probes must still be sent"
+    assert tracker.baseline_rtt_ns is None
+    assert tracker.estimated_one_way_ns is None
+
+
+@pytest.mark.asyncio
+async def test_baseline_rtt_re_measurement_replaces_a_stale_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The startup probe goes stale when the path or the controller changes."""
+    tracker = ClockOffsetTracker()
+    sent: list[TimePing] = []
+    perf_values = iter([0, 1_000_000, 0, 5_000_000])
+    monkeypatch.setattr(
+        clock_offset_tracker.time, "perf_counter_ns", lambda: next(perf_values)
+    )
+
+    await tracker.measure_baseline_rtt(_echo(tracker, sent), probe_count=1)
+    assert tracker.baseline_rtt_ns == 1_000_000
+    assert tracker.baseline_measurement_count == 1
+
+    await tracker.measure_baseline_rtt(_echo(tracker, sent), probe_count=1)
+
+    assert tracker.baseline_rtt_ns == 5_000_000
+    assert tracker.estimated_one_way_ns == 2_500_000
+    assert tracker.baseline_measurement_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_re_measurement_keeps_the_previous_baseline():
+    tracker = ClockOffsetTracker()
+    sent: list[TimePing] = []
+    await tracker.measure_baseline_rtt(_echo(tracker, sent), probe_count=1)
+    established = tracker.baseline_rtt_ns
+
+    async def never_echoes(ping: TimePing) -> None:
+        return None
+
+    await tracker.measure_baseline_rtt(never_echoes, probe_count=1, timeout=0.01)
+
+    assert tracker.baseline_rtt_ns == established
+    assert tracker.baseline_measurement_count == 1

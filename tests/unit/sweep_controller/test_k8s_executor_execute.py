@@ -476,10 +476,15 @@ async def test_recover_terminal_results_skips_live_summary_settle_delay(
 
 
 @pytest.mark.asyncio
-async def test_collect_recovery_results_caps_summary_concurrency() -> None:
-    from aiperf.sweep_controller import k8s_executor as executor_module
+async def test_collect_recovery_results_uses_environment_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aiperf.operator.environment import OperatorEnvironment
 
-    limit = executor_module._RECOVERY_SUMMARY_CONCURRENCY
+    limit = 3
+    monkeypatch.setattr(
+        OperatorEnvironment.SWEEP_CONTROLLER, "RECOVERY_SUMMARY_CONCURRENCY", limit
+    )
     candidates = [
         SimpleNamespace(child={}, label=f"run_{index:04d}")
         for index in range(limit + 3)

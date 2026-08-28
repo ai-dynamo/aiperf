@@ -61,15 +61,16 @@ def test_log_condition_updates_does_not_repeat_unchanged_condition() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_cr_poll_uses_configured_missing_cr_retry(
+async def test_process_cr_poll_uses_configured_missing_cr_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing CR waits for the configured retry interval."""
+    """A missing CR uses the configured warning grace and retry interval."""
     monkeypatch.setattr(
         watch_module,
         "K8sEnvironment",
         SimpleNamespace(
             WATCH=SimpleNamespace(
+                NOT_FOUND_WARNING_GRACE_SECONDS=31.0,
                 NOT_FOUND_RETRY_INTERVAL_SECONDS=17.0,
                 CR_STATUS_LOG_INTERVAL_SECONDS=19.0,
             )
@@ -79,16 +80,18 @@ async def test_process_cr_poll_uses_configured_missing_cr_retry(
     sleep = AsyncMock()
     monkeypatch.setattr(watch_module.asyncio, "sleep", sleep)
 
+    logger = MagicMock()
     result = await watch_module._process_cr_poll(
         MagicMock(),
         "namespace",
         "job",
-        cli_logger=MagicMock(),
+        cli_logger=logger,
         state={"condition_signatures": {}, "last_status_log": 0.0},
-        elapsed=1.0,
+        elapsed=31.1,
     )
 
     assert result is None
+    logger.warning.assert_called_once()
     sleep.assert_awaited_once_with(17.0)
 
 
@@ -102,6 +105,7 @@ async def test_process_cr_poll_uses_configured_status_log_interval(
         "K8sEnvironment",
         SimpleNamespace(
             WATCH=SimpleNamespace(
+                NOT_FOUND_WARNING_GRACE_SECONDS=31.0,
                 NOT_FOUND_RETRY_INTERVAL_SECONDS=17.0,
                 CR_STATUS_LOG_INTERVAL_SECONDS=19.0,
             )
@@ -181,6 +185,11 @@ async def test_watch_job_leaves_watchdog_cadences_to_watchdog_settings(
 
     monkeypatch.setattr(watchdog_module, "BenchmarkWatchdog", _Watchdog)
     monkeypatch.setattr(watchdog_module, "K8sWatchdogSource", lambda api: object())
+    monkeypatch.setattr(
+        watch_module,
+        "K8sEnvironment",
+        SimpleNamespace(WATCH=SimpleNamespace(DEFAULT_TIMEOUT_SECONDS=73)),
+    )
     monkeypatch.setattr(watch_module, "k8s_client", _k8s_client)
     monkeypatch.setattr(watch_module.client, "CustomObjectsApi", lambda api: object())
     monkeypatch.setattr(
@@ -189,6 +198,12 @@ async def test_watch_job_leaves_watchdog_cadences_to_watchdog_settings(
         AsyncMock(return_value={"phase": "Completed"}),
     )
 
+    result = await watch_module.watch_job("namespace", "job")
+
+    assert result == {"phase": "Completed"}
+    assert constructor_kwargs["timeout"] == 73
+
+    constructor_kwargs.clear()
     result = await watch_module.watch_job("namespace", "job", timeout=60)
 
     assert result == {"phase": "Completed"}

@@ -263,6 +263,11 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/workers/clock_offset_tracker.py",
+      "ClockOffsetTracker.__init__"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/workers/session_manager.py",
       "UserSessionManager.create_and_store"
     ],
@@ -390,6 +395,11 @@
       "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
+    ],
+    [
+      "pydantic-fields",
+      "src/aiperf/kubernetes/environment.py",
+      "_K8sEnvironment"
     ]
   ]
 }

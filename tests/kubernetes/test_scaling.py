@@ -71,6 +71,7 @@ class TestWorkerPodScaling:
             param(5, 10, 1, id="5-workers-1-pod"),
             param(10, 10, 1, id="10-workers-1-pod"),
             param(11, 22, 2, id="11-workers-2-pods"),
+            param(20, 20, 2, id="20-workers-2-pods"),
         ],
     )  # fmt: skip
     async def test_worker_pod_count_matches_config(
@@ -118,7 +119,7 @@ class TestWorkerPodScaling:
 
             # Scope to this JobSet because xdist workers share the cluster.
             worker_pods = []
-            for _ in range(60):
+            for _ in range(120):
                 pods = await kubectl.get_pods(result.namespace)
                 worker_pods = [
                     pod
@@ -195,7 +196,7 @@ class TestHighConcurrencyScaling:
             workers=workers,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=600)
+        result = await benchmark_deployer.deploy(config, timeout=1200)
 
         assert result.success, (
             f"High concurrency benchmark failed: {result.error_message}"

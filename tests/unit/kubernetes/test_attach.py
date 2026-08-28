@@ -20,6 +20,7 @@ from aiperf.kubernetes.attach import (
     retrieve_and_display_results,
 )
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 
 # =============================================================================
 # Helpers
@@ -255,7 +256,12 @@ class TestAutoAttachWorkflow:
         self,
         patch_k8s_client: MagicMock,
         patch_console: dict,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(
+            K8sEnvironment.CONTROLLER_POD_READY, "TIMEOUT_SECONDS", 311.0
+        )
+
         with (
             patch(
                 f"{_MODULE}.wait_for_controller_pod_ready",
@@ -268,7 +274,7 @@ class TestAutoAttachWorkflow:
             await auto_attach_workflow("job-1", "ns1", 8080, wait_for_ready=True)
 
         mock_wait.assert_awaited_once_with(
-            patch_k8s_client, "ns1", "job-1", timeout=300
+            patch_k8s_client, "ns1", "job-1", timeout=311.0
         )
 
     @pytest.mark.asyncio

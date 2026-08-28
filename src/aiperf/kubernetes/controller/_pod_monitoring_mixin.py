@@ -30,16 +30,8 @@ from aiperf.kubernetes.controller.kubernetes_pod_helpers import (
     format_pod_failure_reason,
 )
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.plugin.enums import ServiceType
-
-POD_UNHEALTHY_STRIKES = 2
-"""Consecutive unhealthy polls required before a pod's services are reaped.
-
-Mirrors the heartbeat watchdog's two-strike rule in ``BaseServiceManager``.
-Reaping is permanent -- ``ResultJoinCoordinator.complete_domain`` returns early
-once a domain has been popped -- so a single sampling artifact must not be able
-to drop a live producer out of the run.
-"""
 
 BLOCKED_CONTAINER_WAITING_REASONS = frozenset(
     {
@@ -306,7 +298,7 @@ class PodMonitoringMixin:
     def _pod_failure_is_confirmed(
         self, pod_index: str, pod_name: str, *, phase: PodPhase, blocked: bool
     ) -> bool:
-        """Require a second consecutive unhealthy poll before reaping a pod.
+        """Require configured consecutive unhealthy polls before reaping a pod.
 
         Only ``Unknown`` needs the confirmation. It is the phase the apiserver
         reports when it simply cannot reach the node's kubelet, so a momentary
@@ -322,14 +314,15 @@ class PodMonitoringMixin:
             return True
 
         count = strikes.get(pod_index, 0) + 1
-        if count >= POD_UNHEALTHY_STRIKES:
+        confirmation_polls = K8sEnvironment.POD_MONITOR.UNHEALTHY_CONFIRMATION_POLLS
+        if count >= confirmation_polls:
             strikes.pop(pod_index, None)
             return True
 
         strikes[pod_index] = count
         self.warning(
             f"Pod '{pod_name}' (index={pod_index}) reported {phase}; awaiting "
-            f"a second consecutive poll before treating it as dead"
+            f"{confirmation_polls} consecutive polls before treating it as dead"
         )
         return False
 

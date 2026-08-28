@@ -20,15 +20,19 @@ rules:
   resources: ["pods"]
   verbs: ["get", "list", "watch"]
 
-# JobSets - benchmark pods signal completion via status patches
+# JobSets - benchmark pods signal completion via annotation patches.
+# `patch` only: `update` (PUT) would let a pod replace the whole JobSet spec,
+# and nothing in a pod does a PUT. Must stay a subset of RBACSpec._RULES in
+# src/aiperf/kubernetes/resources.py.
 - apiGroups: ["jobset.x-k8s.io"]
   resources: ["jobsets"]
-  verbs: ["get", "list", "watch", "patch", "update"]
+  verbs: ["get", "list", "watch", "patch"]
 
-# AIPerfJobs - benchmark pods read config and patch status
+# AIPerfJobs - benchmark pods read config and patch status. `patch` only, for
+# the same reason as jobsets above.
 - apiGroups: ["aiperf.nvidia.com"]
   resources: ["aiperfjobs", "aiperfjobs/status"]
-  verbs: ["get", "list", "watch", "patch", "update"]
+  verbs: ["get", "list", "watch", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

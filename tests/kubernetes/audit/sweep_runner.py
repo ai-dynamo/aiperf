@@ -33,6 +33,7 @@ from tests.kubernetes.audit import aiperf_cli
 from tests.kubernetes.audit.cases import AuditCase
 from tests.kubernetes.audit.operator_runner import OperatorAuditConfig
 from tests.kubernetes.helpers.kubectl import KubectlClient
+from tests.kubernetes.helpers.operator import copy_pull_secret_to_namespace
 
 logger = AIPerfLogger(__name__)
 
@@ -144,6 +145,18 @@ class SweepAuditRunner:
             "imagePullPolicy": self.config.image_pull_policy,
             "benchmark": benchmark_spec,
         }
+
+        pod_template: dict[str, Any] = {}
+        if self.config.image_pull_secrets:
+            pod_template["imagePullSecrets"] = [
+                {"name": s} for s in self.config.image_pull_secrets
+            ]
+        if self.config.node_selector:
+            pod_template["nodeSelector"] = self.config.node_selector
+        if self.config.tolerations:
+            pod_template["tolerations"] = self.config.tolerations
+        if pod_template:
+            spec["podTemplate"] = pod_template
         body = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
             "kind": "AIPerfSweep",
@@ -205,13 +218,19 @@ class SweepAuditRunner:
             sweep_name,
             "--namespace",
             namespace,
+            "--operator-namespace",
+            self.config.operator_namespace,
             "--output",
             str(dest_dir),
             "--all",
         ]
+        if self.kubectl.context:
+            cmd.extend(["--kube-context", self.kubectl.context])
         env = dict(os.environ)
         if kubeconfig:
             env["KUBECONFIG"] = kubeconfig
+        elif self.kubectl.kubeconfig:
+            env["KUBECONFIG"] = self.kubectl.kubeconfig
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -285,6 +304,9 @@ class SweepAuditRunner:
         sweep_name = f"sw-{case.case_id}-{suffix}"
 
         await self.kubectl.run("create", "namespace", namespace, check=False)
+
+        for secret in self.config.image_pull_secrets:
+            await copy_pull_secret_to_namespace(self.kubectl, secret, namespace)
 
         manifest = self._build_sweep_manifest(
             name=sweep_name, namespace=namespace, case=case

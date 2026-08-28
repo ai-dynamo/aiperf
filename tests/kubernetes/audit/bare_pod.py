@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -20,6 +20,7 @@ import yaml
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.audit.cases import AuditCase
 from tests.kubernetes.helpers.kubectl import KubectlClient
+from tests.kubernetes.helpers.operator import copy_pull_secret_to_namespace
 
 logger = AIPerfLogger(__name__)
 
@@ -30,6 +31,9 @@ class BarePodConfig:
 
     image: str = "aiperf:local"
     image_pull_policy: str = "Never"
+    image_pull_secrets: list[str] = field(default_factory=list)
+    node_selector: dict[str, str] = field(default_factory=dict)
+    tolerations: list[dict] = field(default_factory=list)
     endpoint_url: str = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
     model_name: str = "mock-model"
     tokenizer_name: str = "gpt2"
@@ -114,6 +118,25 @@ class BarePodDeployer:
                     },
                     "spec": {
                         "restartPolicy": "Never",
+                        **(
+                            {
+                                "imagePullSecrets": [
+                                    {"name": s} for s in self.config.image_pull_secrets
+                                ]
+                            }
+                            if self.config.image_pull_secrets
+                            else {}
+                        ),
+                        **(
+                            {"nodeSelector": self.config.node_selector}
+                            if self.config.node_selector
+                            else {}
+                        ),
+                        **(
+                            {"tolerations": self.config.tolerations}
+                            if self.config.tolerations
+                            else {}
+                        ),
                         "containers": [
                             {
                                 "name": "aiperf",
@@ -225,6 +248,9 @@ class BarePodDeployer:
         name = f"bare-{case.case_id}-{suffix}"
 
         await self.kubectl.create_namespace(namespace)
+
+        for secret in self.config.image_pull_secrets:
+            await copy_pull_secret_to_namespace(self.kubectl, secret, namespace)
 
         argv = self._build_args(case, swept_value=swept_value)
         manifest = self._build_job_manifest(name=name, namespace=namespace, argv=argv)

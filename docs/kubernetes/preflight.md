@@ -225,6 +225,15 @@ Operator permission set (15 verbs over 8 resources): configmaps, roles,
 rolebindings, pods, pods/log, events (all core / rbac), jobsets, jobsets/status
 (jobset group). CLI requires a subset of 8.
 
+`SelfSubjectAccessReview` reviews *the caller's* identity, so this check covers
+the operator ServiceAccount (operator path) or your kubeconfig user (CLI path).
+It does not probe the benchmark pods' ServiceAccount, whose narrower Role is
+built separately in code by `RBACSpec._RULES` in
+`src/aiperf/kubernetes/resources.py` — see
+[RBAC and Security](rbac-security.md#operator-created-per-job-role). In
+particular, `create jobsets` appearing in the list above is a requirement on the
+caller, never on a benchmark pod.
+
 ## Check catalog — Tier 3 (concurrent, infra)
 
 ### Namespace (CLI only)

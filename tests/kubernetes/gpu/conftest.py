@@ -95,6 +95,9 @@ class GPUTestSettings:
     vllm_image: str = "vllm/vllm-openai:latest"
     """vLLM container image."""
 
+    vllm_command: list[str] = field(default_factory=list)
+    """Override container command for vLLM (for images without a built-in entrypoint)."""
+
     model: str = "Qwen/Qwen3-0.6B"
     """Model name to benchmark."""
 
@@ -237,6 +240,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--gpu-stream-logs", "GPU_TEST_STREAM_LOGS", None, "bool", "Stream pod logs in real time during deploys"),
     # vLLM / model
     ("--gpu-vllm-image", "GPU_TEST_VLLM_IMAGE", "vllm/vllm-openai:latest", "str", "vLLM container image"),
+    ("--gpu-vllm-command", "GPU_TEST_VLLM_COMMAND", None, "json_list", "Override container command for vLLM (JSON array, e.g. '[\"python3\",\"-m\",\"vllm.entrypoints.openai.api_server\"]')"),
     ("--gpu-model", "GPU_TEST_MODEL", "Qwen/Qwen3-0.6B", "str", "Model name"),
     ("--gpu-count", "GPU_TEST_GPU_COUNT", "1", "int", "GPUs per instance"),
     ("--gpu-max-model-len", "GPU_TEST_MAX_MODEL_LEN", "4096", "int", "Max model context length"),
@@ -377,6 +381,18 @@ def _resolve_settings(config: pytest.Config) -> GPUTestSettings:
             raise pytest.UsageError(
                 "External GPU runs require --gpu-external-existing-operator so "
                 "the harness cannot install or repair shared controllers."
+            )
+        # xdist workers each deploy their own backend server onto the same
+        # finite pool of GPUs, so parallel workers do not merely slow each
+        # other down — they contend for GPU memory and the losers fail engine
+        # init outright. Refuse rather than silently clamping: a clamp would
+        # hide that the requested -n was overridden.
+        numprocesses = config.getoption("numprocesses", default=None)
+        if isinstance(numprocesses, int) and numprocesses > 1:
+            raise pytest.UsageError(
+                f"External GPU runs must be serial, got -n {numprocesses}. "
+                "Parallel xdist workers each deploy a backend server and "
+                "contend for the same GPUs. Re-run with -n 0 (or omit -n)."
             )
         if settings.image_pull_secret and (
             not settings.image_pull_secret_source_namespace
@@ -548,6 +564,54 @@ async def _release_gpu(kubectl: KubectlClient, keep_namespace: str) -> None:
         if result.returncode == 0:
             logger.info(f"[GPU] Releasing GPU: deleting leftover namespace {ns}")
             await kubectl.delete_namespace(ns, wait=True)
+
+
+async def _ensure_hf_token_secret(
+    kubectl: KubectlClient,
+    settings: GPUTestSettings,
+    namespace: str,
+) -> None:
+    """Copy the HuggingFace token secret to *namespace* if it is not already there.
+
+    Searches a priority-ordered list of candidate source namespaces.  This is
+    needed because the secret is typically pre-seeded in one namespace (e.g.
+    the vLLM namespace) and must be propagated to each backend namespace before
+    the server pod starts.
+    """
+    if not settings.hf_token_secret:
+        return
+    existing = await kubectl.run(
+        "get", "secret", settings.hf_token_secret, "-n", namespace, check=False
+    )
+    if existing.returncode == 0:
+        return
+    candidates = [
+        settings.vllm_namespace,
+        settings.benchmark_namespace,
+    ]
+    for src in candidates:
+        if not src:
+            continue
+        result = await kubectl.run(
+            "get", "secret", settings.hf_token_secret, "-n", src, check=False
+        )
+        if result.returncode == 0:
+            import re
+
+            manifest = result.stdout
+            # Strip namespace so the secret adopts the target namespace on apply
+            for field in ("namespace", "resourceVersion", "uid", "creationTimestamp"):
+                manifest = re.sub(rf"\n\s+{field}:.*", "", manifest)
+            await kubectl.apply(manifest, namespace=namespace)
+            logger.info(
+                f"Copied HF token secret '{settings.hf_token_secret}' "
+                f"from {src} → {namespace}"
+            )
+            return
+    logger.warning(
+        f"HF token secret '{settings.hf_token_secret}' not found in any candidate "
+        f"namespace {candidates}; server pod may fail to start."
+    )
 
 
 async def _ensure_user_pull_secrets(

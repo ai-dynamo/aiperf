@@ -393,6 +393,24 @@ defaults:
 
 # tests configures the `helm test` hook pods (CRD check, operator health check).
 tests:
+  # tests.enabled renders the `helm test` hook pods and the dedicated test
+  # ServiceAccount/Role/RoleBinding/ClusterRole/ClusterRoleBinding they run
+  # under. Set false when your cluster policy forbids chart-managed
+  # cluster-scoped RBAC: `test-crd-installed` reads cluster-scoped CRDs, so its
+  # ClusterRole cannot be narrowed to a namespace. With `rbac.create=false` and
+  # `tests.enabled=false` the chart emits zero ClusterRole/ClusterRoleBinding.
+  #
+  # Deliberately NOT gated on `rbac.create`: that flag means "operator RBAC is
+  # pre-provisioned out-of-band", which says nothing about the chart's own
+  # smoke-test scaffolding. Folding the two together would strip the test SA
+  # while still rendering the hook Pods that reference it, so `helm test` would
+  # fail with a pod-creation error instead of reporting no tests.
+  #
+  # `helm test` on a release installed with tests.enabled=false prints
+  # `TEST SUITE: None` and exits 0 -- an unambiguous "no tests were defined",
+  # not a failure. Nothing else in the chart depends on these objects.
+  enabled: true
+
   image:
     # tests.image.repository is the registry/image for test-hook pods.
     # Must provide `kubectl` and `curl` on PATH.

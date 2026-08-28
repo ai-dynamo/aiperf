@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiperf.config.kube import KubeOptions
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION, AIPERF_JOB_KIND
+from aiperf.kubernetes.environment import K8sEnvironment
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import CoreV1Api, CustomObjectsApi
@@ -399,7 +400,7 @@ async def deploy_via_operator(
     await watch_job(
         namespace=namespace,
         job_id=name,
-        timeout=600,
+        timeout=K8sEnvironment.WATCH.DEFAULT_TIMEOUT_SECONDS,
         kubeconfig=kube_options.kubeconfig,
         kube_context=kube_options.kube_context,
     )

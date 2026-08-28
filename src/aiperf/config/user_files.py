@@ -81,6 +81,11 @@ class UserFile(BaseConfig):
                 "string for text. Jinja2 expressions in any string leaf are "
                 "rendered with the user_files context."
             ),
+            # Genuinely polymorphic: a bare string for format: text, a
+            # dict/list/scalar otherwise. Without this marker the CRD generator
+            # emits `type: object` for the untyped `Any` and the apiserver
+            # rejects every format: text entry.
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
     ]
 

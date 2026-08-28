@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pytest import param
@@ -196,6 +197,8 @@ class TestKubeResultsCommand:
         self,
         deployed_small_benchmark_module: BenchmarkResult,
         project_root: Path,
+        kubectl: KubectlClient,
+        k8s_settings: Any,
     ) -> None:
         """Verify results command retrieves benchmark results."""
         result = deployed_small_benchmark_module
@@ -214,7 +217,10 @@ class TestKubeResultsCommand:
             result.job_id,
             "--namespace",
             result.namespace,
-            timeout=30,
+            "--operator-namespace",
+            k8s_settings.operator_namespace,
+            timeout=120,
+            kube_context=kubectl.context,
         )
 
         print(f"\n{'=' * 60}")

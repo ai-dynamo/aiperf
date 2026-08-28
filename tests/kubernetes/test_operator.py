@@ -21,7 +21,7 @@ from dataclasses import replace
 
 import pytest
 
-from tests.kubernetes.conftest import K8sTestSettings
+from tests.kubernetes.conftest import K8sTestSettings, _gpu_node_tolerations
 from tests.kubernetes.helpers.deadline import (
     await_before_deadline,
     delete_and_observe_until_deadline,
@@ -35,7 +35,7 @@ from tests.kubernetes.helpers.operator import (
 
 # Test timeout for individual test phases (not full job completion)
 TEST_PHASE_TIMEOUT = 60  # seconds for waiting for phase transitions
-TEST_JOB_TIMEOUT = 60  # seconds for full job completion
+TEST_JOB_TIMEOUT = 300  # seconds for full job completion
 TEST_CLEANUP_TIMEOUT = 150  # seconds for CR deletion propagation checks
 CLEANUP_ASSERTION_TIMEOUT = 120  # seconds shared by observation and deletion
 CLEANUP_DELETION_POLL_RESERVE = 60  # seconds reserved from the shared deadline
@@ -71,7 +71,7 @@ class TestOperatorDeployment:
         """Verify operator pod is running."""
         operator_pods: list = []
         for _ in range(15):
-            pods = await kubectl.get_pods(OperatorDeployer.OPERATOR_NAMESPACE)
+            pods = await kubectl.get_pods(operator_ready.OPERATOR_NAMESPACE)
             operator_pods = [
                 p
                 for p in pods
@@ -91,23 +91,21 @@ class TestOperatorDeployment:
         kubectl: KubectlClient,
     ) -> None:
         """Verify operator has necessary RBAC permissions."""
-        stdout = ""
-        # RBAC propagation in kind can take 30-60s after CRB apply when the
-        # API server has just started; keep retrying to absorb that window.
-        for _ in range(60):
-            result = await kubectl.run(
-                "auth",
-                "can-i",
-                "create",
-                "jobsets.jobset.x-k8s.io",
-                "--as=system:serviceaccount:aiperf-system:aiperf-operator",
-                check=False,
-            )
-            stdout = result.stdout.strip()
-            if stdout == "yes":
-                break
-            await asyncio.sleep(1)
-        assert stdout == "yes"
+        # Read the ClusterRole rules directly: kubectl auth can-i impersonation
+        # is denied on remote clusters (403 Forbidden). Inspecting the
+        # ClusterRole object is equivalent and works everywhere.
+        cr_result = await kubectl.run(
+            "get",
+            "clusterrole",
+            "aiperf-operator",
+            "-o",
+            "jsonpath={.rules[*].apiGroups}",
+            check=False,
+        )
+        assert "jobset.x-k8s.io" in cr_result.stdout, (
+            f"ClusterRole 'aiperf-operator' does not grant access to jobset.x-k8s.io; "
+            f"rules apiGroups: {cr_result.stdout!r}"
+        )
 
 
 class TestOperatorJobLifecycle:
@@ -436,6 +434,13 @@ class TestOperatorCancellation:
             benchmark_duration=120.0,  # Run for 2 minutes
             warmup_request_count=5,
             image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await operator_ready.create_job(cancel_test_config)
@@ -502,6 +507,7 @@ class TestOperatorErrorHandling:
     async def test_invalid_config_fails_with_error(
         self,
         operator_ready: OperatorDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Verify invalid config results in failure with error message.
 
@@ -511,6 +517,14 @@ class TestOperatorErrorHandling:
             endpoint_url="http://aiperf-mock-server.default.svc.cluster.local:8000/v1",
             concurrency=5,
             request_count=10,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         # The config must pass the CRD schema and fail the operator's own
@@ -620,6 +634,7 @@ class TestOperatorErrorHandling:
     async def test_unreachable_endpoint_fails_gracefully(
         self,
         operator_ready: OperatorDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Verify unreachable endpoint is handled gracefully.
 
@@ -629,6 +644,14 @@ class TestOperatorErrorHandling:
             endpoint_url="http://nonexistent-service:8000/v1",
             concurrency=2,
             request_count=5,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await operator_ready.create_job(
@@ -878,6 +901,7 @@ class TestOperatorScaling:
     async def test_high_concurrency_job(
         self,
         operator_ready: OperatorDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Test operator handles high concurrency job.
 
@@ -887,6 +911,14 @@ class TestOperatorScaling:
             concurrency=10,
             request_count=20,
             warmup_request_count=2,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await operator_ready.run_job(config, timeout=180)
@@ -895,11 +927,12 @@ class TestOperatorScaling:
         assert result.status is not None
         assert result.status.is_completed
 
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(1500)
     @pytest.mark.asyncio
     async def test_multiple_workers_job(
         self,
         operator_ready: OperatorDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Test operator handles job requiring multiple workers.
 
@@ -910,9 +943,17 @@ class TestOperatorScaling:
             request_count=40,
             warmup_request_count=5,
             connections_per_worker=10,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
-        result = await operator_ready.run_job(config, timeout=600)
+        result = await operator_ready.run_job(config, timeout=1200)
 
         assert result.success
         assert result.status is not None

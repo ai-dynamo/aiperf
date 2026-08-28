@@ -33,6 +33,7 @@ from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.results_artifacts import API_RESULTS_FILES_PATH
+from aiperf.operator.environment import OperatorEnvironment
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkPlan
@@ -50,7 +51,6 @@ SWEEP_AGGREGATE_SUBDIR = "sweep_aggregate"
 SEARCH_HISTORY_FILENAME = "search_history.json"
 SAMPLING_DESIGN_FILENAME = "sampling_design.json"
 SWEEP_CONTROLLER_RESULTS_SIDECAR_PORT = K8sEnvironment.PORTS.RESULTS_SIDECAR
-CANCEL_POLL_INTERVAL_SECONDS = 10.0
 _TERMINAL_SWEEP_PHASES = frozenset(
     {"Succeeded", "Failed", "PartiallyFailed", "Cancelled"}
 )
@@ -298,7 +298,7 @@ async def _poll_cancel_flag(
     name: str,
     flag: dict[str, bool],
     expected_uid: str | None = None,
-    interval: float = CANCEL_POLL_INTERVAL_SECONDS,
+    interval: float | None = None,
 ) -> None:
     """Background poller: set flag['requested']=True if parent CR's spec.cancel is set.
 
@@ -306,6 +306,11 @@ async def _poll_cancel_flag(
     it stays set, and the orchestrator/executor read it between cells/trials. A
     parent UID change also sets the flag so a stale controller winds down.
     """
+    poll_interval = (
+        interval
+        if interval is not None
+        else OperatorEnvironment.SWEEP_CONTROLLER.CANCEL_POLL_INTERVAL_SECONDS
+    )
     while not flag["requested"]:
         try:
             cr = await custom.get_namespaced_custom_object(
@@ -330,7 +335,7 @@ async def _poll_cancel_flag(
                 return
         except Exception as e:  # noqa: BLE001 - best-effort poll, never crash the controller
             logger.debug(f"cancel-flag poll transient error: {e}")
-        await asyncio.sleep(interval)
+        await asyncio.sleep(poll_interval)
 
 
 def _child_status(result: Any) -> str:

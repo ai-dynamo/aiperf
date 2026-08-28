@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -24,6 +24,7 @@ from tests.kubernetes.audit.cases import AuditCase
 from tests.kubernetes.helpers.operator import (
     AIPerfJobConfig,
     OperatorDeployer,
+    copy_pull_secret_to_namespace,
 )
 
 logger = AIPerfLogger(__name__)
@@ -33,9 +34,13 @@ logger = AIPerfLogger(__name__)
 class OperatorAuditConfig:
     image: str = "aiperf:local"
     image_pull_policy: str = "Never"
+    image_pull_secrets: list[str] = field(default_factory=list)
+    node_selector: dict[str, str] = field(default_factory=dict)
+    tolerations: list[dict] = field(default_factory=list)
     endpoint_url: str = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
     model_name: str = "mock-model"
     tokenizer_name: str = "gpt2"
+    operator_namespace: str = "aiperf-system"
 
 
 class OperatorAuditRunner:
@@ -67,6 +72,9 @@ class OperatorAuditRunner:
             tokenizer_name=self.config.tokenizer_name,
             image=self.config.image,
             image_pull_policy=self.config.image_pull_policy,
+            image_pull_secrets=list(self.config.image_pull_secrets),
+            node_selector=dict(self.config.node_selector),
+            tolerations=list(self.config.tolerations),
             random_seed=case.seed,
         )
 
@@ -94,6 +102,8 @@ class OperatorAuditRunner:
             job_name,
             "--namespace",
             namespace,
+            "--operator-namespace",
+            self.deployer.OPERATOR_NAMESPACE,
             "--output",
             str(dest_dir),
             "--all",
@@ -145,6 +155,11 @@ class OperatorAuditRunner:
         cfg = self._build_job_config(case, swept_value=swept_value)
 
         await self.deployer.kubectl.run("create", "namespace", namespace, check=False)
+
+        for secret in self.config.image_pull_secrets:
+            await copy_pull_secret_to_namespace(
+                self.deployer.kubectl, secret, namespace
+            )
 
         result = await self.deployer.run_job(
             config=cfg,

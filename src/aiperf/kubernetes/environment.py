@@ -347,16 +347,87 @@ class _ControllerHeartbeatSettings(BaseSettings):
         return self
 
 
+class _ControllerPodReadySettings(BaseSettings):
+    """Controller pod readiness polling policy."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_CONTROLLER_POD_READY_")
+
+    TIMEOUT_SECONDS: float = Field(
+        default=300.0,
+        gt=0.0,
+        le=86400.0,
+        description="Maximum seconds to wait for the controller pod to reach Running.",
+    )
+    POLL_INTERVAL_SECONDS: float = Field(
+        default=2.0,
+        gt=0.0,
+        le=300.0,
+        description="Seconds between controller pod readiness polls.",
+    )
+    STATUS_LOG_INTERVAL_SECONDS: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=3600.0,
+        description="Seconds between controller pod readiness status log lines.",
+    )
+
+
+class _CredentialRetrySettings(BaseSettings):
+    """Retry policy for recoverable Kubernetes credential failures."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_CREDENTIAL_RETRY_")
+
+    INITIAL_BACKOFF_SECONDS: float = Field(
+        default=2.0,
+        gt=0.0,
+        le=3600.0,
+        description="Initial delay before retrying a Kubernetes credential failure.",
+    )
+    BACKOFF_MULTIPLIER: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=100.0,
+        description="Multiplier applied after each Kubernetes credential retry.",
+    )
+    MAX_BACKOFF_SECONDS: float = Field(
+        default=15.0,
+        gt=0.0,
+        le=3600.0,
+        description="Maximum delay between Kubernetes credential retries.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_backoff_range(self) -> "_CredentialRetrySettings":
+        if self.INITIAL_BACKOFF_SECONDS > self.MAX_BACKOFF_SECONDS:
+            raise ValueError(
+                "INITIAL_BACKOFF_SECONDS must be less than or equal to "
+                "MAX_BACKOFF_SECONDS"
+            )
+        return self
+
+
 class _WatchSettings(BaseSettings):
     """CLI AIPerfJob CR polling and logging configuration."""
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_WATCH_")
 
+    DEFAULT_TIMEOUT_SECONDS: int = Field(
+        default=600,
+        ge=1,
+        le=86400,
+        description="Default maximum seconds to watch an AIPerfJob for completion.",
+    )
     CR_POLL_INTERVAL_SECONDS: float = Field(
         default=2.0,
         gt=0.0,
         le=300.0,
         description="Seconds between AIPerfJob CR status polls",
+    )
+    NOT_FOUND_WARNING_GRACE_SECONDS: float = Field(
+        default=30.0,
+        ge=0.0,
+        le=3600.0,
+        description="Seconds before warning that the watched AIPerfJob CR is missing.",
     )
     NOT_FOUND_RETRY_INTERVAL_SECONDS: float = Field(
         default=5.0,
@@ -449,6 +520,51 @@ class _PortForwardSettings(BaseSettings):
         description="Seconds to wait for graceful kubectl termination before "
         "escalating to SIGKILL.",
     )
+    POD_LIVENESS_INTERVAL_SECONDS: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=3600.0,
+        description="Seconds between checks that a forwarded pod still exists.",
+    )
+    API_PROBE_INTERVAL_SECONDS: float = Field(
+        default=1.0,
+        gt=0.0,
+        le=300.0,
+        description="Seconds between forwarded API readiness probes.",
+    )
+    API_PROBE_REQUEST_TIMEOUT_SECONDS: float = Field(
+        default=5.0,
+        gt=0.0,
+        le=600.0,
+        description="Per-request timeout for forwarded API readiness probes.",
+    )
+    RECONNECT_INITIAL_BACKOFF_SECONDS: float = Field(
+        default=1.0,
+        gt=0.0,
+        le=3600.0,
+        description="Initial delay before reconnecting a persistent port-forward.",
+    )
+    RECONNECT_BACKOFF_MULTIPLIER: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=100.0,
+        description="Multiplier applied after each persistent port-forward reconnect.",
+    )
+    RECONNECT_MAX_BACKOFF_SECONDS: float = Field(
+        default=30.0,
+        gt=0.0,
+        le=3600.0,
+        description="Maximum delay between persistent port-forward reconnects.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_reconnect_backoff_range(self) -> "_PortForwardSettings":
+        if self.RECONNECT_INITIAL_BACKOFF_SECONDS > self.RECONNECT_MAX_BACKOFF_SECONDS:
+            raise ValueError(
+                "RECONNECT_INITIAL_BACKOFF_SECONDS must be less than or equal to "
+                "RECONNECT_MAX_BACKOFF_SECONDS"
+            )
+        return self
 
 
 class _ProgressStreamSettings(BaseSettings):
@@ -474,6 +590,21 @@ class _ProgressStreamSettings(BaseSettings):
         le=300,
         description="Seconds between aiohttp WebSocket heartbeats.",
     )
+    WS_MAX_RETRIES: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Maximum WebSocket reconnection attempts before failing.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_backoff_range(self) -> "_ProgressStreamSettings":
+        if self.WS_INITIAL_BACKOFF_SECONDS > self.WS_MAX_BACKOFF_SECONDS:
+            raise ValueError(
+                "WS_INITIAL_BACKOFF_SECONDS must be less than or equal to "
+                "WS_MAX_BACKOFF_SECONDS"
+            )
+        return self
 
 
 class _DiagnosisSettings(BaseSettings):
@@ -570,6 +701,31 @@ class _WatchdogSettings(BaseSettings):
             "Container restart count at which a crash-loop warning is raised "
             "and the operator may treat a stable CrashLoopBackOff as terminal."
         ),
+    )
+    EVENT_CHECK_INTERVAL_TICKS: int = Field(
+        default=3,
+        ge=1,
+        le=1000,
+        description="Watchdog ticks between Kubernetes event checks.",
+    )
+    RESOURCE_CHECK_INTERVAL_TICKS: int = Field(
+        default=6,
+        ge=1,
+        le=1000,
+        description="Watchdog ticks between pod resource-usage checks.",
+    )
+
+
+class _PodMonitorSettings(BaseSettings):
+    """Controller-side worker pod health confirmation policy."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_K8S_POD_MONITOR_")
+
+    UNHEALTHY_CONFIRMATION_POLLS: int = Field(
+        default=2,
+        ge=1,
+        le=100,
+        description="Consecutive Unknown-phase polls required before reaping pod services.",
     )
 
 
@@ -696,6 +852,14 @@ class _K8sEnvironment(BaseSettings):
         default_factory=_ControllerHeartbeatSettings,
         description="Controller progress heartbeat policy",
     )
+    CONTROLLER_POD_READY: _ControllerPodReadySettings = Field(
+        default_factory=_ControllerPodReadySettings,
+        description="Controller pod readiness polling policy",
+    )
+    CREDENTIAL_RETRY: _CredentialRetrySettings = Field(
+        default_factory=_CredentialRetrySettings,
+        description="Kubernetes credential recovery retry policy",
+    )
     RESULTS: _ResultRetrievalSettings = Field(
         default_factory=_ResultRetrievalSettings,
         description="Kubernetes result retrieval settings",
@@ -721,6 +885,10 @@ class _K8sEnvironment(BaseSettings):
     WATCHDOG: _WatchdogSettings = Field(
         default_factory=_WatchdogSettings,
         description="Watchdog pod-health thresholds",
+    )
+    POD_MONITOR: _PodMonitorSettings = Field(
+        default_factory=_PodMonitorSettings,
+        description="Controller-side worker pod health confirmation policy",
     )
 
 

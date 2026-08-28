@@ -39,6 +39,12 @@ class KueueManager:
         if not success:
             raise RuntimeError("Kueue controller-manager did not become available")
         logger.info("Kueue controller-manager is available")
+        # Wait for the admission webhook endpoint to become ready. The
+        # controller-manager pod turning Available is a necessary but not
+        # sufficient condition: the webhook server inside the pod can take a
+        # few extra seconds to bind its port after readiness is reported.
+        await asyncio.sleep(15)
+        logger.info("Kueue webhooks ready")
 
     async def uninstall(self) -> None:
         """Delete the Kueue installation."""
@@ -63,7 +69,23 @@ class KueueManager:
                 "metadata": {"name": name},
             }
         )
-        await self.kubectl.apply(manifest)
+        # Retry to handle the webhook being slow to bind after controller-manager
+        # becomes available (connection refused right after deployment).
+        for attempt in range(8):
+            try:
+                await self.kubectl.apply(manifest)
+                break
+            except RuntimeError as exc:
+                err = str(exc).lower()
+                if ("connection refused" in err or "webhook" in err) and attempt < 7:
+                    delay = 5 * (attempt + 1)
+                    logger.warning(
+                        f"Kueue webhook not ready (attempt {attempt + 1}), "
+                        f"retrying in {delay}s: {exc}"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise
         self._created_resources.append(("resourceflavor", name, None))
         logger.info(f"Created ResourceFlavor {name}")
 

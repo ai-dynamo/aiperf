@@ -53,15 +53,17 @@ async def test_operator_vs_bare_pod(
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
     audit_strict_tolerance: bool,
+    operator_audit_config: OperatorAuditConfig,
+    bare_pod_config: BarePodConfig,
 ) -> None:
     """One audit case: operator path vs bare-pod path, three-bucket diff."""
-    namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
+    namespace = f"aiperf-audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
     op_dir = audit_artifacts_dir / "operator"
     bare_dir = audit_artifacts_dir / "bare"
 
     operator_runner = OperatorAuditRunner(
         deployer=operator_ready,
-        config=OperatorAuditConfig(),
+        config=operator_audit_config,
     )
     await operator_runner.run(
         case=case,
@@ -70,7 +72,7 @@ async def test_operator_vs_bare_pod(
         timeout=900,
     )
 
-    bare = BarePodDeployer(kubectl=kubectl, config=BarePodConfig())
+    bare = BarePodDeployer(kubectl=kubectl, config=bare_pod_config)
     await bare.run(
         case=case,
         namespace=namespace,
@@ -134,6 +136,9 @@ def _prefix_findings(findings: list, prefix: str) -> list:
 
 @pytest.mark.k8s_audit
 @pytest.mark.asyncio
+@pytest.mark.timeout(
+    3600
+)  # sweep(1800) + 6 bare-pod runs(900 each) exceeds global 1800s
 @pytest.mark.parametrize("case", SWEEP_AUDIT_CASES, ids=lambda c: c.case_id)
 async def test_operator_vs_bare_pod_sweep(
     case: AuditCase,
@@ -141,13 +146,15 @@ async def test_operator_vs_bare_pod_sweep(
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
     audit_strict_tolerance: bool,
+    operator_audit_config: OperatorAuditConfig,
+    bare_pod_config: BarePodConfig,
 ) -> None:
     """Sweep-with-trials audit: AIPerfSweep vs N sequential bare-pod runs."""
-    namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
+    namespace = f"aiperf-audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
     op_root = audit_artifacts_dir / "operator"
     bare_root = audit_artifacts_dir / "bare"
 
-    sweep_runner = SweepAuditRunner(kubectl=kubectl, config=OperatorAuditConfig())
+    sweep_runner = SweepAuditRunner(kubectl=kubectl, config=operator_audit_config)
     cells = await sweep_runner.run(
         case=case,
         namespace=namespace,
@@ -155,7 +162,7 @@ async def test_operator_vs_bare_pod_sweep(
         timeout=1800,
     )
 
-    bare = BarePodDeployer(kubectl=kubectl, config=BarePodConfig())
+    bare = BarePodDeployer(kubectl=kubectl, config=bare_pod_config)
 
     all_gating: list = []
     all_findings: list = []
@@ -273,6 +280,7 @@ async def test_operator_index_matches_disk(
     kubectl: KubectlClient,
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
+    operator_audit_config: OperatorAuditConfig,
 ) -> None:
     """Operator-only: confirm the runs_index row matches disk for narrow metrics.
 
@@ -287,12 +295,12 @@ async def test_operator_index_matches_disk(
     only; the standard three-bucket diff in ``test_operator_vs_bare_pod``
     continues to be the cross-mode oracle.
     """
-    namespace = f"audit-idx-{case.case_id}-{uuid.uuid4().hex[:6]}"
+    namespace = f"aiperf-audit-idx-{case.case_id}-{uuid.uuid4().hex[:6]}"
     op_dir = audit_artifacts_dir / "operator"
 
     operator_runner = OperatorAuditRunner(
         deployer=operator_ready,
-        config=OperatorAuditConfig(),
+        config=operator_audit_config,
     )
     await operator_runner.run(
         case=case,

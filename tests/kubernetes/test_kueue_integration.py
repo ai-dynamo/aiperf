@@ -56,6 +56,38 @@ def _kopf_body(name: str = "test123") -> dict[str, Any]:
     }
 
 
+def _jobset_raw(
+    job_name: str = "test123",
+    jobset_name: str = "aiperf-test123",
+    *,
+    labels: dict[str, str] | None = None,
+    suspend: bool = True,
+    replicated_jobs_status: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a minimal JobSet dict that passes aiperfjob_jobset_uid validation."""
+    return {
+        "metadata": {
+            "name": jobset_name,
+            "uid": f"uid-js-{jobset_name}",
+            "labels": labels or {},
+            "ownerReferences": [
+                {
+                    "apiVersion": "aiperf.nvidia.com/v1alpha1",
+                    "kind": "AIPerfJob",
+                    "name": job_name,
+                    "uid": f"uid-{job_name}",
+                    "controller": True,
+                }
+            ],
+        },
+        "spec": {"suspend": suspend},
+        "status": {
+            "conditions": [],
+            "replicatedJobsStatus": replicated_jobs_status or [],
+        },
+    }
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -306,19 +338,13 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        jobset_raw = {
-            "metadata": {
-                "labels": {
-                    KueueLabels.QUEUE_NAME: "test-queue",
-                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
-                },
+        jobset_raw = _jobset_raw(
+            labels={
+                KueueLabels.QUEUE_NAME: "test-queue",
+                AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
             },
-            "spec": {"suspend": True},
-            "status": {
-                "conditions": [],
-                "replicatedJobsStatus": [],
-            },
-        }
+            suspend=True,
+        )
 
         with (
             mock_patch(
@@ -328,6 +354,10 @@ class TestKueueOperatorFlow:
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value=None),
             ),
         ):
             await monitor_progress(
@@ -355,28 +385,23 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        jobset_raw = {
-            "metadata": {
-                "labels": {
-                    KueueLabels.QUEUE_NAME: "test-queue",
-                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+        jobset_raw = _jobset_raw(
+            labels={
+                KueueLabels.QUEUE_NAME: "test-queue",
+                AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
+            },
+            suspend=False,
+            replicated_jobs_status=[
+                {
+                    "name": "workers",
+                    "ready": 1,
+                    "active": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "suspended": 0,
                 },
-            },
-            "spec": {"suspend": False},
-            "status": {
-                "conditions": [],
-                "replicatedJobsStatus": [
-                    {
-                        "name": "workers",
-                        "ready": 1,
-                        "active": 0,
-                        "succeeded": 0,
-                        "failed": 0,
-                        "suspended": 0,
-                    },
-                ],
-            },
-        }
+            ],
+        )
 
         with (
             mock_patch(
@@ -386,6 +411,10 @@ class TestKueueOperatorFlow:
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value=None),
             ),
         ):
             await monitor_progress(
@@ -412,18 +441,10 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        jobset_raw = {
-            "metadata": {
-                "labels": {
-                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
-                },
-            },
-            "spec": {"suspend": True},
-            "status": {
-                "conditions": [],
-                "replicatedJobsStatus": [],
-            },
-        }
+        jobset_raw = _jobset_raw(
+            labels={AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE},
+            suspend=True,
+        )
 
         with (
             mock_patch(
@@ -433,6 +454,10 @@ class TestKueueOperatorFlow:
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value=None),
             ),
         ):
             await monitor_progress(
@@ -557,16 +582,10 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        jobset_raw = {
-            "metadata": {
-                "labels": {KueueLabels.QUEUE_NAME: "test-queue"},
-            },
-            "spec": {"suspend": True},
-            "status": {
-                "conditions": [],
-                "replicatedJobsStatus": [],
-            },
-        }
+        jobset_raw = _jobset_raw(
+            labels={KueueLabels.QUEUE_NAME: "test-queue"},
+            suspend=True,
+        )
 
         with (
             mock_patch(
@@ -576,6 +595,10 @@ class TestKueueOperatorFlow:
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value=None),
             ),
         ):
             await monitor_progress(
@@ -601,16 +624,10 @@ class TestKueueOperatorFlow:
         kopf_patch = MagicMock()
         kopf_patch.status = {}
 
-        jobset_raw = {
-            "metadata": {
-                "labels": {KueueLabels.QUEUE_NAME: "test-queue"},
-            },
-            "spec": {"suspend": True},
-            "status": {
-                "conditions": [],
-                "replicatedJobsStatus": [],
-            },
-        }
+        jobset_raw = _jobset_raw(
+            labels={KueueLabels.QUEUE_NAME: "test-queue"},
+            suspend=True,
+        )
 
         with (
             mock_patch(
@@ -620,6 +637,10 @@ class TestKueueOperatorFlow:
             mock_patch(
                 "aiperf.operator.handlers.monitor.client.CustomObjectsApi",
                 return_value=_mock_custom_api(return_value=jobset_raw),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value=None),
             ),
         ):
             await monitor_progress(

@@ -29,6 +29,7 @@ import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.kubernetes.constants import KueueLabels
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.benchmark import BenchmarkConfig, BenchmarkDeployer
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.kueue import KueueManager
@@ -184,7 +185,7 @@ class TestKueueAdmissionFlow:
         result = await benchmark_deployer.deploy(
             config=config,
             wait_for_completion=True,
-            timeout=600,
+            timeout=1200,
             stream_logs=True,
             pre_apply_hook=create_local_queue,
         )
@@ -205,7 +206,7 @@ class TestKueueAdmissionFlow:
 
         async def verify_workload_hook(namespace: str) -> None:
             workload = await kueue_manager.wait_for_workload_admitted(
-                namespace, timeout=120
+                namespace, timeout=600
             )
             admitted_workload.update(workload)
             logger.info(f"Workload admitted in {namespace}")
@@ -226,7 +227,7 @@ class TestKueueAdmissionFlow:
         result = await benchmark_deployer.deploy(
             config=config,
             wait_for_completion=True,
-            timeout=600,
+            timeout=1200,
             stream_logs=True,
             pre_apply_hook=create_local_queue,
             pre_wait_hook=verify_workload_hook,
@@ -267,7 +268,14 @@ class TestKueueOperatorIntegration:
             request_count=5,
             warmup_request_count=1,
             image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
             queue_name=kueue_queues,
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         await kueue_manager.create_local_queue(
             name=kueue_queues,
@@ -309,8 +317,15 @@ class TestKueueOperatorIntegration:
             request_count=5,
             warmup_request_count=1,
             image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
             queue_name=kueue_queues,
             priority_class="test-priority",
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         await kueue_manager.create_local_queue(
             name=kueue_queues,

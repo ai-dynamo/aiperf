@@ -67,6 +67,10 @@ class VLLMConfig:
     extra_args: list[str] = field(default_factory=list)
     """Additional command-line arguments for the vLLM server."""
 
+    command: list[str] | None = None
+    """Override container command (entrypoint). Use for images that do not set
+    ENTRYPOINT to the vLLM server (e.g. dynamo vllm-runtime images)."""
+
     runtime_class_name: str | None = None
     """Kubernetes RuntimeClass for GPU pods."""
 
@@ -112,6 +116,7 @@ class VLLMDeployer:
         container: dict = {
             "name": "vllm",
             "image": c.image,
+            **({"command": c.command} if c.command else {}),
             "args": args,
             "ports": [{"containerPort": c.port, "name": "http"}],
             "resources": {

@@ -15,7 +15,7 @@ import msgspec.msgpack
 import pytest
 import zmq.asyncio
 
-from aiperf.common.exceptions import CommunicationError, NotInitializedError
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import CreditReturn, WorkerToRouterMessage
 from aiperf.zmq.streaming_pull_client import ZMQStreamingPullClient
 from aiperf.zmq.streaming_push_client import ZMQStreamingPushClient
@@ -101,20 +101,64 @@ class TestStreamingPushClient:
         assert mock_zmq_socket._sync_send.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_send_raises_after_max_retries(
+    async def test_send_buffers_after_max_retries(
         self, mock_zmq_socket, mock_zmq_context, sample_credit_return
     ):
-        """A persistently-Again send raises CommunicationError after exhausting retries."""
+        """A persistently-Again send parks the frame instead of dropping it.
+
+        The peer is unreachable for the whole of a reconnect backoff (100ms..5s),
+        which outlasts the inline retries; a discarded credit return would stall
+        its phase until the run-level timeout.
+        """
         client = ZMQStreamingPushClient(address="tcp://localhost:5555", bind=False)
         await client.initialize()
 
         mock_zmq_socket._sync_send.side_effect = zmq.Again()
 
-        with pytest.raises(CommunicationError, match="after 2 retries"):
-            await client.send(sample_credit_return, max_retries=2)
+        await client.send(sample_credit_return, max_retries=2)
 
-        # 1 initial attempt + 2 retries = 3 sync sends.
+        # 1 initial attempt + 2 retries = 3 sync sends, then the frame is parked.
         assert mock_zmq_socket._sync_send.call_count == 3
+        assert len(client._send_buf) == 1
+
+    @pytest.mark.asyncio
+    async def test_buffered_frames_preserve_order_behind_backlog(
+        self, mock_zmq_socket, mock_zmq_context, sample_credit_return
+    ):
+        """Once anything is parked, later sends queue behind it rather than overtake."""
+        client = ZMQStreamingPushClient(address="tcp://localhost:5555", bind=False)
+        await client.initialize()
+
+        mock_zmq_socket._sync_send.side_effect = zmq.Again()
+        await client.send(sample_credit_return, max_retries=0)
+        assert len(client._send_buf) == 1
+
+        # A backlog short-circuits the fast path entirely: no further sync send.
+        mock_zmq_socket._sync_send.reset_mock()
+        mock_zmq_socket._sync_send.side_effect = None
+        await client.send(sample_credit_return)
+        assert mock_zmq_socket._sync_send.call_count == 0
+        assert len(client._send_buf) == 2
+
+    @pytest.mark.asyncio
+    async def test_drain_task_resends_backlog_when_peer_returns(
+        self, mock_zmq_socket, mock_zmq_context, sample_credit_return
+    ):
+        """The drain task flushes parked frames in order once sends succeed again."""
+        client = ZMQStreamingPushClient(address="tcp://localhost:5555", bind=False)
+        await client.initialize()
+
+        mock_zmq_socket._sync_send.side_effect = zmq.Again()
+        await client.send(sample_credit_return, max_retries=0)
+        await client.send(sample_credit_return)
+        assert len(client._send_buf) == 2
+
+        mock_zmq_socket._sync_send.side_effect = None
+        await client.start()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert not client._send_buf
 
     @pytest.mark.asyncio
     async def test_send_swallows_context_terminated(

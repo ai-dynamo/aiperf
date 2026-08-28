@@ -498,9 +498,9 @@ staging and `results` is reading from prod" is an easy way to chase a ghost.
 | `kube profile` | no | **yes** (on successful submit) | Both operator and direct paths write the file. |
 | `kube sweep` | no | **yes** (on successful submit) | Records `kind: AIPerfSweep`. |
 | `kube generate` | no | no | Prints manifests; never hits cluster state. |
-| `kube attach` | yes (if `job_id` omitted) | no | |
-| `kube results` | yes (if `job_id` omitted) | no | |
-| `kube logs` | yes (if `job_id` omitted) | no | |
+| `kube attach` | yes (if `job_id` omitted) | no | Exits `1` when the target does not exist; see [exit-code convention](#exit-code-convention-for-target-addressing-commands). |
+| `kube results` | yes (if `job_id` omitted) | no | Exits `1` on any incomplete download, not only on a missing target. |
+| `kube logs` | yes (if `job_id` omitted) | no | Exits `1` when the target does not exist; see [exit-code convention](#exit-code-convention-for-target-addressing-commands). |
 | `kube debug` | yes (if `-j` and `-n` both omitted and `-A` not set) | no | |
 | `kube cancel` | yes (if `job_id` omitted) | no | Also reads the stored `kind` to disambiguate. |
 | `kube shutdown` | yes (if `job_id` omitted) | no | |
@@ -508,6 +508,39 @@ staging and `results` is reading from prod" is an easy way to chase a ghost.
 | `kube cleanup` | no | **clears it** | Cleared per removed benchmark that matches the stored record. |
 | `kube list` | no | no | Enumerates the cluster directly. |
 | `kube dashboard` | no | no | Operator-scoped, not job-scoped. |
+
+## Exit-code convention for target-addressing commands
+
+Eleven `aiperf kube` subcommands take a benchmark name or job ID. They split
+into two groups, and the split is deliberate: **validation and retrieval
+commands gate, addressing commands narrate.**
+
+| Group | Commands | Non-zero exit on… |
+| --- | --- | --- |
+| **Gating** — the command's whole purpose is to produce a verdict or a file | `validate`, `preflight`, `results`, `results list-runs` | any failure, including a missing target *and* a partial or failed download |
+| **Addressing** — the command reports on whatever it finds | `attach`, `logs`, `cancel`, `delete`, `shutdown`, `debug`, `list` | nothing, **except** `attach` and `logs`, which exit `1` when the named target does not exist |
+
+`attach` and `logs` are the two commands people reach for in CI to answer "is
+this benchmark there?", so a missing target is an error for them. A target that
+exists but has nothing left to show — pods already garbage-collected, a
+`--container` filter that matched nothing, a container that logged zero lines —
+is **not** an error: the command says so and exits `0`.
+
+Both accept `--ignore-not-found`, spelled and behaving like `kubectl`'s flag:
+the diagnostic is still printed, only the exit status is suppressed. Use it in
+teardown scripts that must tolerate an already-deleted benchmark.
+
+```bash
+# Gate a pipeline on the benchmark existing
+aiperf kube logs "$JOB" --tail 1 >/dev/null || exit 1
+
+# Best-effort log capture during teardown, must not fail the job
+aiperf kube logs "$JOB" -o ./triage --ignore-not-found
+```
+
+`cancel`, `delete`, `shutdown`, `debug`, and `list` intentionally stay at exit
+`0` for a missing target: they are idempotent or exploratory, and "the thing you
+asked me to stop is already gone" is the desired end state, not a failure.
 
 ## Common end-to-end recipes
 

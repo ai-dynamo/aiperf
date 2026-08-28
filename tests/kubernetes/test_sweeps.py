@@ -15,6 +15,7 @@ import yaml
 
 from aiperf.kubernetes.subproc import run_command
 from aiperf.operator.environment import OperatorEnvironment
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -112,30 +113,32 @@ async def _submit_sweep(
     namespace: str,
     image: str,
     kube_context: str,
+    image_pull_policy: str = "IfNotPresent",
+    tolerations: list[dict] | None = None,
 ) -> None:
-    result = await run_command(
-        [
-            "uv",
-            "run",
-            "aiperf",
-            "kube",
-            "sweep",
-            "--config",
-            str(config_path),
-            "--name",
-            name,
-            "--namespace",
-            namespace,
-            "--image",
-            image,
-            "--image-pull-policy",
-            "Never",
-            "--kube-context",
-            kube_context,
-            "--detach",
-        ],
-        timeout=90,
-    )
+    cmd = [
+        "uv",
+        "run",
+        "aiperf",
+        "kube",
+        "sweep",
+        "--config",
+        str(config_path),
+        "--name",
+        name,
+        "--namespace",
+        namespace,
+        "--image",
+        image,
+        "--image-pull-policy",
+        image_pull_policy,
+        "--kube-context",
+        kube_context,
+        "--detach",
+    ]
+    if tolerations:
+        cmd.extend(["--tolerations", orjson.dumps(tolerations).decode()])
+    result = await run_command(cmd, timeout=90)
     assert result.ok, (
         f"aiperf kube sweep failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
@@ -189,6 +192,7 @@ async def _download_sweep_results(
     name: str,
     namespace: str,
     kube_context: str,
+    operator_namespace: str = "aiperf-system",
 ) -> None:
     result = await run_command(
         [
@@ -200,6 +204,8 @@ async def _download_sweep_results(
             name,
             "--namespace",
             namespace,
+            "--operator-namespace",
+            operator_namespace,
             "--output",
             str(destination),
             "--all",
@@ -249,7 +255,7 @@ async def _wait_for_sweep_deleted(
     )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_grid_sweep_completes_and_harvests_aggregate(
     operator_ready: OperatorDeployer,
@@ -269,6 +275,10 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -276,7 +286,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
@@ -329,6 +339,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         downloaded_manifest = orjson.loads(
             await asyncio.to_thread((destination / "sweep_manifest.json").read_bytes)
@@ -376,7 +387,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
         )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
     operator_ready: OperatorDeployer,
@@ -396,6 +407,10 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -403,7 +418,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
@@ -442,6 +457,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         history_files = list(destination.rglob("search_history.json"))
         assert len(history_files) == 1, sorted(
@@ -465,7 +481,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
         )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
     operator_ready: OperatorDeployer,
@@ -485,6 +501,10 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -492,7 +512,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
@@ -508,6 +528,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         design_files = list(destination.rglob("sampling_design.json"))
         assert len(design_files) == 1, sorted(
@@ -531,7 +552,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
         )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
     operator_ready: OperatorDeployer,
@@ -551,6 +572,10 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -558,7 +583,7 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
@@ -603,6 +628,7 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         downloaded_manifest = orjson.loads(
             await asyncio.to_thread((destination / "sweep_manifest.json").read_bytes)

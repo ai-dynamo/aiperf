@@ -408,9 +408,15 @@ def _json_keyset_depth2(path: Path) -> set[str] | None:
         return None
     if not isinstance(payload, dict):
         return set()
-    keys: set[str] = {k for k in payload if k != "input_config"}
+    # Exclude keys that legitimately differ between operator and bare-pod paths.
+    # input_config: config-construction metadata (api_port, logging, etc.).
+    # telemetry_data: operator-side server-telemetry enrichment scraped from
+    #   endpoint metric URLs — the bare-pod CLI path has no server configured
+    #   for metric scraping, so this subtree is always absent on the bare side.
+    _EXCLUDE = frozenset({"input_config", "telemetry_data"})
+    keys: set[str] = {k for k in payload if k not in _EXCLUDE}
     for k, v in payload.items():
-        if k == "input_config":
+        if k in _EXCLUDE:
             continue
         if isinstance(v, dict):
             keys.update(f"{k}.{kk}" for kk in v)

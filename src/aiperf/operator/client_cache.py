@@ -37,8 +37,12 @@ def _max_cache_size() -> int:
     Read per call rather than latched at import so an operator can raise
     ``AIPERF_CLIENT_CACHE_MAX_ENTRIES`` without a code change, and so tests
     can shrink it without mutating module state.
+
+    Floored at 1: a configured value of 0 (or negative) must not make the
+    ``while len(cache) >= _max_cache_size()`` eviction loops spin on an
+    empty dict.
     """
-    return int(OperatorEnvironment.CLIENT_CACHE_MAX_ENTRIES)
+    return max(1, int(OperatorEnvironment.CLIENT_CACHE_MAX_ENTRIES))
 
 
 class _JobCacheState:
@@ -93,6 +97,25 @@ _cancellation_events = _JobCacheState.cancellation_events
 _claim_timestamps = _JobCacheState.claim_timestamps
 
 
+def _evict_unset_cancellation_events() -> None:
+    """Evict unset cancellation events down to the configured cache bound.
+
+    Only unset flags are safe eviction candidates. A large sweep can
+    cancel thousands of children at once, and every SET flag remains a
+    live correctness signal until all in-flight handlers have observed
+    it. Let the cancellation registry exceed the client-cache bound
+    rather than revive work for a CR that is being deleted.
+    """
+    while len(_cancellation_events) >= _max_cache_size():
+        evictable = next(
+            (k for k, e in _cancellation_events.items() if not e.is_set()),
+            None,
+        )
+        if evictable is None:
+            break
+        _cancellation_events.pop(evictable, None)
+
+
 def request_cancellation(key: str) -> None:
     """Signal that any in-flight handler work for this job should abort.
 
@@ -103,19 +126,7 @@ def request_cancellation(key: str) -> None:
     """
     event = _cancellation_events.get(key)
     if event is None:
-        # Only unset flags are safe eviction candidates. A large sweep can
-        # cancel thousands of children at once, and every SET flag remains a
-        # live correctness signal until all in-flight handlers have observed
-        # it. Let the cancellation registry exceed the client-cache bound
-        # rather than revive work for a CR that is being deleted.
-        while len(_cancellation_events) >= _max_cache_size():
-            evictable = next(
-                (k for k, e in _cancellation_events.items() if not e.is_set()),
-                None,
-            )
-            if evictable is None:
-                break
-            _cancellation_events.pop(evictable, None)
+        _evict_unset_cancellation_events()
         event = asyncio.Event()
         _cancellation_events[key] = event
     event.set()
@@ -133,9 +144,15 @@ def get_cancellation_event(key: str) -> asyncio.Event:
     Awaiting this event lets long-running handler I/O stop as soon as
     ``request_cancellation`` runs instead of waiting for the current network
     timeout or retry delay to expire.
+
+    Shares ``request_cancellation``'s eviction preamble so this insertion
+    path stays bounded too: without it, an operator handling a large sweep
+    (thousands of child AIPerfJobs, each with a unique CR-UID-scoped key)
+    would accumulate one Event per job key for the process lifetime.
     """
     event = _cancellation_events.get(key)
     if event is None:
+        _evict_unset_cancellation_events()
         event = asyncio.Event()
         _cancellation_events[key] = event
     return event
@@ -188,6 +205,8 @@ async def get_or_create_progress_client(key: str) -> ProgressClient:
             return client
 
         while len(_progress_clients) >= _max_cache_size():
+            if not _progress_clients:
+                break
             oldest_key = next(iter(_progress_clients))
             await _close_unlocked(oldest_key)
         client = ProgressClient()
@@ -256,6 +275,8 @@ def _latch_claim_timestamp(key: str, body: Any, timestamp: str) -> None:
     a claim.
     """
     while len(_claim_timestamps) >= _max_cache_size():
+        if not _claim_timestamps:
+            break
         _claim_timestamps.pop(next(iter(_claim_timestamps)), None)
     _claim_timestamps[key] = timestamp
 

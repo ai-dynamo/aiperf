@@ -278,6 +278,12 @@ class TestBenchmarkRoleStatusPatchContract:
     def test_benchmark_role_status_patch_targets_have_no_lifecycle_admin_verbs(
         self, api_group: str, resources: set[str]
     ) -> None:
+        """``patch`` is the only write verb; ``update`` is a whole-object PUT.
+
+        Nothing in a benchmark pod replaces a whole JobSet or AIPerfJob -- both
+        writers issue JSON-patch annotation/status updates -- so ``update``
+        would let a compromised pod rewrite ``spec``, not just ``status``.
+        """
         docs = _helm_template()
         role = _find(docs, "Role", "aiperf-operator-benchmark")
         matching_rules = [
@@ -286,8 +292,8 @@ class TestBenchmarkRoleStatusPatchContract:
             if _api_groups(rule) == {api_group} and _resources(rule) == resources
         ]
         assert len(matching_rules) == 1
-        assert _verbs(matching_rules[0]) == {"get", "list", "watch", "patch", "update"}
-        assert {"create", "delete"}.isdisjoint(_verbs(matching_rules[0]))
+        assert _verbs(matching_rules[0]) == {"get", "list", "watch", "patch"}
+        assert {"create", "delete", "update"}.isdisjoint(_verbs(matching_rules[0]))
 
     def test_extra_benchmark_namespace_rolebinding_stays_in_its_namespace(self) -> None:
         docs = _helm_template(
@@ -428,6 +434,121 @@ class TestServiceAccountBindingContract:
         pod = _find(docs, "Pod", pod_name)
         pod_spec = _as_mapping(pod["spec"], "test pod spec")
         assert pod_spec["serviceAccountName"] == "aiperf-operator-tests"
+
+
+# ============================================================
+# "This chart creates no cluster-scoped RBAC" opt-out
+# ============================================================
+
+#: The documented opt-out for a cluster whose policy forbids chart-managed
+#: cluster-scoped RBAC. ``rbac.create=false`` alone is not enough: the
+#: ``helm test`` hook scaffolding is gated separately on ``tests.enabled``
+#: because it serves a different purpose and is torn down with the release.
+_NO_CLUSTER_RBAC_OPT_OUT = (
+    "--set", "rbac.create=false",
+    "--set", "serviceAccount.create=false",
+    "--set", "serviceAccount.name=preprovisioned-operator-sa",
+    "--set", "tests.enabled=false",
+)  # fmt: skip
+
+_CLUSTER_SCOPED_RBAC_KINDS = {"ClusterRole", "ClusterRoleBinding"}
+
+
+class TestClusterScopedRbacOptOut:
+    """``rbac.create=false`` plus ``tests.enabled=false`` must emit zero
+    ClusterRole/ClusterRoleBinding.
+
+    The ``helm test`` hook RBAC used to render unconditionally, so a cluster
+    whose policy is "this chart creates no cluster-scoped RBAC" could not reach
+    that state through any documented flag combination.
+    """
+
+    def test_documented_opt_out_emits_no_cluster_scoped_rbac(self) -> None:
+        docs = _helm_template(*_NO_CLUSTER_RBAC_OPT_OUT)
+        leftover = [
+            f"{doc['kind']}/{_metadata_name(doc)}"
+            for doc in docs
+            if doc.get("kind") in _CLUSTER_SCOPED_RBAC_KINDS
+        ]
+        assert leftover == [], f"chart still emits cluster-scoped RBAC: {leftover}"
+
+    @pytest.mark.parametrize(
+        "overrides,expected_names",
+        [
+            param(
+                ("--set", "rbac.create=false",
+                 "--set", "serviceAccount.create=false",
+                 "--set", "serviceAccount.name=preprovisioned-operator-sa"),
+                {"aiperf-operator-tests"},
+                id="rbac-create-false-alone-leaves-the-test-hook-rbac",
+            ),
+            param(
+                _NO_CLUSTER_RBAC_OPT_OUT,
+                set(),
+                id="tests-disabled-too-leaves-nothing",
+            ),
+        ],
+    )  # fmt: skip
+    def test_rbac_create_false_does_not_by_itself_disable_test_hook_rbac(
+        self, overrides: tuple[str, ...], expected_names: set[str]
+    ) -> None:
+        """``tests.enabled`` is deliberately independent of ``rbac.create``.
+
+        Gating the test scaffolding on ``rbac.create`` would strip the test
+        ServiceAccount while still rendering the hook Pods that reference it, so
+        ``helm test`` would fail on pod creation rather than report no tests.
+        """
+        docs = _helm_template(*overrides)
+        names = {
+            _metadata_name(doc)
+            for doc in docs
+            if doc.get("kind") in _CLUSTER_SCOPED_RBAC_KINDS
+        }
+        assert names == expected_names
+
+    @pytest.mark.parametrize(
+        "kind,name",
+        [
+            param("ServiceAccount", "aiperf-operator-tests", id="test-sa"),
+            param("Role", "aiperf-operator-tests", id="test-role"),
+            param("RoleBinding", "aiperf-operator-tests", id="test-rolebinding"),
+            param("ClusterRole", "aiperf-operator-tests", id="test-clusterrole"),
+            param("ClusterRoleBinding", "aiperf-operator-tests", id="test-crb"),
+            param("Pod", "aiperf-operator-test-crd", id="test-crd-hook-pod"),
+            param("Pod", "aiperf-operator-test-health", id="test-health-hook-pod"),
+        ],
+    )  # fmt: skip
+    def test_tests_disabled_removes_every_test_object(
+        self, kind: str, name: str
+    ) -> None:
+        """The hook Pods and their RBAC are gated together.
+
+        Disabling only one side would leave Pods pointing at a nonexistent
+        ServiceAccount, which fails ``helm test`` confusingly instead of
+        skipping it.
+        """
+        docs = _helm_template("--set", "tests.enabled=false")
+        matches = [
+            doc
+            for doc in docs
+            if doc.get("kind") == kind and _metadata_name(doc) == name
+        ]
+        assert matches == [], f"{kind}/{name} still rendered with tests.enabled=false"
+
+    @pytest.mark.parametrize(
+        "kind,name",
+        [
+            param("ServiceAccount", "aiperf-operator-tests", id="test-sa"),
+            param("ClusterRole", "aiperf-operator-tests", id="test-clusterrole"),
+            param("Pod", "aiperf-operator-test-crd", id="test-crd-hook-pod"),
+            param("Pod", "aiperf-operator-test-health", id="test-health-hook-pod"),
+        ],
+    )  # fmt: skip
+    def test_tests_enabled_by_default_so_helm_test_keeps_working(
+        self, kind: str, name: str
+    ) -> None:
+        """The opt-out is opt-in: a default install still ships `helm test`."""
+        _find(_helm_template(), kind, name)
 
 
 # ============================================================

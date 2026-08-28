@@ -59,6 +59,7 @@ from aiperf.operator.handlers._job_identity import (
     StaleAIPerfJobCallback,
     body_name,
     body_uid,
+    clear_patch_fence,
     current_aiperfjob_resource_version,
     delete_owned_aiperfjob_jobset,
 )
@@ -456,6 +457,13 @@ async def _publish_completion_after_jobset_delete(
     # re-entry, the phase never transitions to Completed. Stale-write protection in the
     # completion path already comes from try_claim_completion + UID fences.
     _merge_staged_status(target_sb, staged_sb._patch.status)
+    # The monitor pre-writes metadata.resourceVersion via fence_status_patch before
+    # dispatching to handle_completion through the orphan-claim recovery path.  Clear
+    # that fence now: it is already stale (try_claim_completion wrote the
+    # completion-claimed annotation, bumping the RV), so leaving it causes kopf's MERGE
+    # PATCH to fail 409 → silent drop → phase never leaves Running.  This is a no-op
+    # when called directly from on_benchmark_complete (no fence was written).
+    clear_patch_fence(target_sb)
     _emit_accepted_completion_events(
         body=body,
         namespace=namespace,
@@ -1537,7 +1545,25 @@ def _record_results_on_status(
     """Populate metrics/summary/resultsPath on the status patch."""
     epoch = epoch_key_from_body(body)
     if has_metrics:
-        metrics_for_status = scrub_non_finite(result.metrics)
+        # /api/metrics filters out ERROR_ONLY metrics (e.g. error_request_count).
+        # Merge missing keys from the JSON export before scrubbing so that
+        # error counters appear in status.results even when the live API path
+        # is used. API metrics take precedence for any key present in both.
+        raw = result.metrics or {}
+        if has_files and isinstance(raw.get("metrics"), dict):
+            file_metrics = _parse_metrics_from_files(
+                result.downloaded,
+                namespace,
+                job_id,
+                epoch=epoch,
+                json_name=key_names.json_name,
+            )
+            if file_metrics and isinstance(file_metrics.get("metrics"), dict):
+                raw = {
+                    **raw,
+                    "metrics": {**file_metrics["metrics"], **raw["metrics"]},
+                }
+        metrics_for_status = scrub_non_finite(raw)
         sb.set_results(metrics_for_status)
         summary = MetricsSummary.from_metrics(metrics_for_status)
         summary_dict = scrub_non_finite(summary.to_status_dict())

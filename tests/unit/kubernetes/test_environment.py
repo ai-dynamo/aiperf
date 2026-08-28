@@ -10,12 +10,18 @@ from aiperf.kubernetes.environment import (
     CONTROLLER_RESOURCE_KEYS,
     K8sEnvironment,
     _ControllerHeartbeatSettings,
+    _ControllerPodReadySettings,
+    _CredentialRetrySettings,
     _HealthProbeSettings,
     _JobSetSettings,
     _K8sZMQSettings,
+    _PodMonitorSettings,
+    _PortForwardSettings,
     _PortSettings,
+    _ProgressStreamSettings,
     _resource_settings,
     _ResultRetrievalSettings,
+    _WatchdogSettings,
     _WatchSettings,
 )
 
@@ -324,17 +330,78 @@ class TestK8sEnvironmentControllerHeartbeat:
             _ControllerHeartbeatSettings(INTERVAL_SECONDS=10.0, EXPIRY_SECONDS=19.0)
 
 
+class TestK8sLifecycleEnvironment:
+    """Tests for Kubernetes lifecycle settings and their environment prefixes."""
+
+    def test_lifecycle_env_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(
+            "AIPERF_K8S_CONTROLLER_POD_READY_POLL_INTERVAL_SECONDS", "2.75"
+        )
+        monkeypatch.setenv("AIPERF_K8S_CREDENTIAL_RETRY_BACKOFF_MULTIPLIER", "3.5")
+        monkeypatch.setenv(
+            "AIPERF_K8S_PORT_FORWARD_API_PROBE_REQUEST_TIMEOUT_SECONDS", "8.5"
+        )
+        monkeypatch.setenv("AIPERF_K8S_PROGRESS_STREAM_WS_MAX_RETRIES", "17")
+        monkeypatch.setenv("AIPERF_K8S_WATCH_DEFAULT_TIMEOUT_SECONDS", "901")
+        monkeypatch.setenv("AIPERF_K8S_WATCHDOG_EVENT_CHECK_INTERVAL_TICKS", "8")
+        monkeypatch.setenv("AIPERF_K8S_POD_MONITOR_UNHEALTHY_CONFIRMATION_POLLS", "4")
+
+        assert _ControllerPodReadySettings().POLL_INTERVAL_SECONDS == 2.75
+        assert _CredentialRetrySettings().BACKOFF_MULTIPLIER == 3.5
+        assert _PortForwardSettings().API_PROBE_REQUEST_TIMEOUT_SECONDS == 8.5
+        assert _ProgressStreamSettings().WS_MAX_RETRIES == 17
+        assert _WatchSettings().DEFAULT_TIMEOUT_SECONDS == 901
+        assert _WatchdogSettings().EVENT_CHECK_INTERVAL_TICKS == 8
+        assert _PodMonitorSettings().UNHEALTHY_CONFIRMATION_POLLS == 4
+
+    @pytest.mark.parametrize(
+        "settings_type,kwargs,error_field",
+        [
+            param(
+                _CredentialRetrySettings,
+                {"INITIAL_BACKOFF_SECONDS": 10.0, "MAX_BACKOFF_SECONDS": 9.0},
+                "INITIAL_BACKOFF_SECONDS",
+                id="credential_retry",
+            ),
+            param(
+                _PortForwardSettings,
+                {
+                    "RECONNECT_INITIAL_BACKOFF_SECONDS": 10.0,
+                    "RECONNECT_MAX_BACKOFF_SECONDS": 9.0,
+                },
+                "RECONNECT_INITIAL_BACKOFF_SECONDS",
+                id="port_forward",
+            ),
+            param(
+                _ProgressStreamSettings,
+                {"WS_INITIAL_BACKOFF_SECONDS": 10.0, "WS_MAX_BACKOFF_SECONDS": 9.0},
+                "WS_INITIAL_BACKOFF_SECONDS",
+                id="progress_stream",
+            ),
+        ],
+    )  # fmt: skip
+    def test_initial_backoff_above_cap_rejected(
+        self, settings_type: type, kwargs: dict[str, float], error_field: str
+    ) -> None:
+        with pytest.raises(ValidationError, match=error_field):
+            settings_type(**kwargs)
+
+
 class TestK8sEnvironmentWatch:
     """Tests for CLI watch settings."""
 
     def test_watch_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AIPERF_K8S_WATCH_DEFAULT_TIMEOUT_SECONDS", "601")
         monkeypatch.setenv("AIPERF_K8S_WATCH_CR_POLL_INTERVAL_SECONDS", "3")
+        monkeypatch.setenv("AIPERF_K8S_WATCH_NOT_FOUND_WARNING_GRACE_SECONDS", "31")
         monkeypatch.setenv("AIPERF_K8S_WATCH_NOT_FOUND_RETRY_INTERVAL_SECONDS", "7")
         monkeypatch.setenv("AIPERF_K8S_WATCH_CR_STATUS_LOG_INTERVAL_SECONDS", "11")
 
         settings = _WatchSettings()
 
+        assert settings.DEFAULT_TIMEOUT_SECONDS == 601
         assert settings.CR_POLL_INTERVAL_SECONDS == 3.0
+        assert settings.NOT_FOUND_WARNING_GRACE_SECONDS == 31.0
         assert settings.NOT_FOUND_RETRY_INTERVAL_SECONDS == 7.0
         assert settings.CR_STATUS_LOG_INTERVAL_SECONDS == 11.0
 

@@ -191,6 +191,15 @@ class _Topology:
 def _derive_topology(
     config: BenchmarkConfig, total_workers: int, workers_per_pod: int | None
 ) -> _Topology:
+    """Mirror the pod layout ``spec_converter.apply_worker_config`` deploys.
+
+    Both derivations read the same config fields in the same order so the
+    estimate describes the topology the JobSet actually creates. The operator
+    calls ``apply_worker_config`` before preflight, so by the time the estimate
+    runs both ``workers_per_pod`` and ``record_processors_per_pod`` are already
+    normalized on the config, including the ``record_processors`` total and the
+    single-pod collapse for non-divisible worker counts.
+    """
     from aiperf.common.environment import Environment
     from aiperf.kubernetes.environment import K8sEnvironment
 
@@ -201,7 +210,9 @@ def _derive_topology(
     )
     num_pods = max(1, math.ceil(total_workers / wpp))
     actual_wpp = min(total_workers, wpp)
-    rp_per_pod = max(1, actual_wpp // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR)
+    rp_per_pod = config.runtime.record_processors_per_pod or max(
+        1, actual_wpp // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
+    )
     return _Topology(actual_wpp=actual_wpp, num_pods=num_pods, rp_per_pod=rp_per_pod)
 
 

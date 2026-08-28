@@ -11,9 +11,11 @@ results volume.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+import aiofiles
 import aiohttp
 import orjson
 
@@ -83,21 +85,32 @@ def _get_upload_base_url(run: BenchmarkRun) -> str | None:
     return f"{api_base}/api/results/upload"
 
 
+async def _iter_file_chunks(file_path: Path) -> AsyncIterator[bytes]:
+    """Stream a file's contents in fixed-size chunks.
+
+    A fresh generator/handle must be created per upload attempt, since an
+    already-consumed async generator cannot be replayed on retry. Callers
+    must therefore invoke this per attempt rather than caching the result.
+    """
+    async with aiofiles.open(file_path, "rb") as f:
+        while chunk := await f.read(Environment.COMPRESSION.CHUNK_SIZE):
+            yield chunk
+
+
 async def _upload_file(
     session: aiohttp.ClientSession,
     upload_base_url: str,
     file_path: Path,
     logger: _UploadLogger,
 ) -> None:
-    """Upload a single raw record file to the controller API."""
+    """Upload a single raw record file to the controller API, streaming its contents."""
     url = f"{upload_base_url}/{file_path.name}"
     try:
-        file_size = file_path.stat().st_size
-        file_bytes = await asyncio.to_thread(file_path.read_bytes)
+        file_size = await asyncio.to_thread(lambda: file_path.stat().st_size)
         data = aiohttp.FormData()
         data.add_field(
             "file",
-            file_bytes,
+            _iter_file_chunks(file_path),
             filename=file_path.name,
             content_type="application/x-ndjson",
         )

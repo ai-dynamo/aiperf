@@ -61,6 +61,8 @@ def _dynamo_benchmark_config(
         input_sequence_max=30,
         output_tokens_min=5,
         output_tokens_max=20,
+        tolerations=gpu_settings.tolerations,
+        node_selector=gpu_settings.node_selector,
     )
 
 
@@ -212,6 +214,8 @@ class TestDynamoBenchmarkWorkerScaling:
             input_sequence_max=30,
             output_tokens_min=5,
             output_tokens_max=20,
+            tolerations=gpu_settings.tolerations,
+            node_selector=gpu_settings.node_selector,
         )
 
         result = await benchmark_deployer.deploy(
@@ -525,6 +529,16 @@ class TestDynamoSweep:
                 *(
                     ["--image-pull-secrets", gpu_settings.image_pull_secret]
                     if gpu_settings.image_pull_secret
+                    else []
+                ),
+                *(
+                    ["--tolerations", str(gpu_settings.tolerations)]
+                    if gpu_settings.tolerations
+                    else []
+                ),
+                *(
+                    ["--node-selector", str(gpu_settings.node_selector)]
+                    if gpu_settings.node_selector
                     else []
                 ),
                 "--kube-context",

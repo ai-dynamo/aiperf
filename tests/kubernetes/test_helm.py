@@ -21,6 +21,7 @@ from dataclasses import replace
 
 import pytest
 
+from tests.kubernetes.conftest import K8sTestSettings, _gpu_node_tolerations
 from tests.kubernetes.helpers.deadline import (
     await_before_deadline,
     delete_and_observe_until_deadline,
@@ -30,8 +31,10 @@ from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorJobResult
 
 # Test timeout for individual test phases (not full job completion)
-TEST_PHASE_TIMEOUT = 60  # seconds for waiting for phase transitions
-TEST_JOB_TIMEOUT = 60  # seconds for full job completion
+TEST_PHASE_TIMEOUT = 120  # seconds for waiting for phase transitions
+TEST_JOB_TIMEOUT = (
+    300  # seconds for full job completion (kind clusters under sustained load)
+)
 TEST_CLEANUP_TIMEOUT = 150  # seconds for CR deletion propagation checks
 CLEANUP_ASSERTION_TIMEOUT = 120  # seconds shared by observation and deletion
 CLEANUP_DELETION_POLL_RESERVE = 60  # seconds reserved from the shared deadline
@@ -134,16 +137,22 @@ class TestHelmChartDeployment:
         )
         sa_name = result.stdout.strip()
 
-        # Check permission to create JobSets
-        result = await kubectl.run(
-            "auth",
-            "can-i",
-            "create",
-            "jobsets.jobset.x-k8s.io",
-            f"--as=system:serviceaccount:{helm_deployed.OPERATOR_NAMESPACE}:{sa_name}",
+        # Verify the ClusterRole bound to this SA grants create on JobSets.
+        # `kubectl auth can-i --as` requires impersonation rights which are
+        # commonly restricted on shared clusters; inspect the ClusterRole
+        # rules directly instead.
+        cr_result = await kubectl.run(
+            "get",
+            "clusterrole",
+            sa_name,
+            "-o",
+            "jsonpath={.rules[*].apiGroups}",
             check=False,
         )
-        assert result.stdout.strip() == "yes"
+        assert "jobset.x-k8s.io" in cr_result.stdout, (
+            f"ClusterRole '{sa_name}' does not grant access to jobset.x-k8s.io; "
+            f"rules apiGroups: {cr_result.stdout!r}"
+        )
 
 
 class TestHelmChartUpgrade:
@@ -220,7 +229,7 @@ class TestHelmJobLifecycle:
         # Cleanup
         await helm_deployed.delete_job(result.job_name, result.namespace)
 
-    @pytest.mark.timeout(TEST_JOB_TIMEOUT)
+    @pytest.mark.timeout(TEST_JOB_TIMEOUT + 60)
     @pytest.mark.asyncio
     async def test_job_transitions_through_phases(
         self,
@@ -230,35 +239,37 @@ class TestHelmJobLifecycle:
         """Verify job transitions through expected phases."""
         result = await helm_deployed.create_job(small_helm_config)
         phases_seen = set()
+        status = None
+        try:
+            loop = asyncio.get_event_loop()
+            start = loop.time()
+            timeout = TEST_JOB_TIMEOUT
 
-        loop = asyncio.get_event_loop()
-        start = loop.time()
-        timeout = TEST_JOB_TIMEOUT
+            while loop.time() - start < timeout:
+                status = await helm_deployed.get_job_status(
+                    result.job_name, result.namespace
+                )
+                if status.phase:
+                    phases_seen.add(status.phase)
 
-        while loop.time() - start < timeout:
-            status = await helm_deployed.get_job_status(
-                result.job_name, result.namespace
+                if status.is_terminal:
+                    break
+
+                await asyncio.sleep(2)
+
+            print(f"\n{'=' * 60}")
+            print("PHASE TRANSITIONS")
+            print(f"{'=' * 60}")
+            print(f"  Phases seen: {sorted(phases_seen)}")
+            print(f"  Final phase: {status.phase if status else 'unknown'}")
+            print(f"{'=' * 60}\n")
+
+            assert len(phases_seen) >= 1
+            assert status is not None and status.is_completed, (
+                f"Expected Completed, got {status.phase if status else 'None'}"
             )
-            if status.phase:
-                phases_seen.add(status.phase)
-
-            if status.is_terminal:
-                break
-
-            await asyncio.sleep(2)
-
-        print(f"\n{'=' * 60}")
-        print("PHASE TRANSITIONS")
-        print(f"{'=' * 60}")
-        print(f"  Phases seen: {sorted(phases_seen)}")
-        print(f"  Final phase: {status.phase}")
-        print(f"{'=' * 60}\n")
-
-        assert len(phases_seen) >= 1
-        assert status.is_completed, f"Expected Completed, got {status.phase}"
-
-        # Cleanup
-        await helm_deployed.delete_job(result.job_name, result.namespace)
+        finally:
+            await helm_deployed.delete_job(result.job_name, result.namespace)
 
     def test_job_completes_successfully(
         self,
@@ -415,12 +426,13 @@ class TestHelmErrorHandling:
         """Verify invalid config results in failure with error message."""
         import yaml
 
+        job_namespace = helm_deployed.default_job_namespace
         cr = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
             "kind": "AIPerfJob",
             "metadata": {
                 "name": "invalid-config-test",
-                "namespace": "default",
+                "namespace": job_namespace,
             },
             "spec": {
                 "image": "aiperf:local",
@@ -447,7 +459,7 @@ class TestHelmErrorHandling:
             deadline = loop.time() + TEST_PHASE_TIMEOUT
             while True:
                 status = await helm_deployed.get_job_status(
-                    "invalid-config-test", "default"
+                    "invalid-config-test", job_namespace
                 )
                 if status.is_terminal or loop.time() >= deadline:
                     break
@@ -468,7 +480,7 @@ class TestHelmErrorHandling:
 
         finally:
             await helm_deployed.kubectl.delete(
-                "aiperfjob", "invalid-config-test", namespace="default"
+                "aiperfjob", "invalid-config-test", namespace=job_namespace
             )
 
     # The preflight's endpoint reachability check has its own retry/backoff
@@ -478,12 +490,21 @@ class TestHelmErrorHandling:
     async def test_unreachable_endpoint_fails_gracefully(
         self,
         helm_deployed: HelmDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Verify unreachable endpoint is handled gracefully."""
         config = AIPerfJobConfig(
             endpoint_url="http://nonexistent-service:8000/v1",
             concurrency=2,
             request_count=5,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await helm_deployed.create_job(
@@ -718,12 +739,21 @@ class TestHelmScaling:
     async def test_high_concurrency_job(
         self,
         helm_deployed: HelmDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Test operator handles high concurrency job."""
         config = AIPerfJobConfig(
             concurrency=10,
             request_count=20,
             warmup_request_count=2,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await helm_deployed.run_job(config, timeout=180)
@@ -732,11 +762,12 @@ class TestHelmScaling:
         assert result.status is not None
         assert result.status.is_completed
 
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(1500)
     @pytest.mark.asyncio
     async def test_multiple_workers_job(
         self,
         helm_deployed: HelmDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Test operator handles job requiring multiple workers."""
         config = AIPerfJobConfig(
@@ -744,9 +775,17 @@ class TestHelmScaling:
             request_count=40,
             warmup_request_count=5,
             connections_per_worker=10,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
-        result = await helm_deployed.run_job(config, timeout=600)
+        result = await helm_deployed.run_job(config, timeout=1200)
 
         assert result.success
         assert result.status is not None

@@ -44,15 +44,25 @@ wall-clock domain for cross-machine comparison.
 import asyncio
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
 from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.messages import TimePing, TimePong
 
 SendPingCallback = Callable[[TimePing], Awaitable[None]]
 """Async callback supplied by the Worker that puts a TimePing on the credit channel."""
+
+
+def _median(values: Sequence[int]) -> float:
+    """Median of a non-empty sequence, without pulling in statistics/numpy."""
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[mid])
+    return (ordered[mid - 1] + ordered[mid]) / 2
 
 
 class ClockOffsetTracker:
@@ -71,9 +81,21 @@ class ClockOffsetTracker:
     corrected latencies high. Sub-second at normal credit rates; shrink
     ``window_size`` if a deployment sees sustained one-directional drift.
 
+    That same asymmetry is why samples are screened before they enter the window:
+    a minimum estimator gives a single spuriously low sample authority over the
+    correction until the window evicts it. Two gates run in ``observe``: an
+    absolute plausibility bound, and rejection of samples sitting more than
+    ``outlier_factor`` median absolute deviations below the window's median. A
+    run of ``reset_after_rejects`` consecutive rejections is read as a real
+    downward step (controller restart, NTP step) and re-seeds the window.
+
     Timestamps are derived from a wall-clock anchor captured once at initialization
     plus ``perf_counter_ns`` deltas, matching the pattern used by the controller's
     ``CreditIssuer``. This avoids sensitivity to NTP step corrections mid-benchmark.
+
+    ``measure_baseline_rtt`` is re-entrant: the Worker re-runs it periodically so
+    the one-way transit estimate follows a path that changed mid-run instead of
+    being frozen at the startup value for the rest of the benchmark.
 
     To convert a worker timestamp to controller time::
 
@@ -84,21 +106,32 @@ class ClockOffsetTracker:
     Attributes:
         offset_ns: Raw min-filtered sample, ``clock_skew + min_transit`` (None
             before first sample). Use ``correction_ns`` to correct a timestamp.
-        sample_count: Total number of offset measurements recorded.
-        baseline_rtt_ns: Minimum RTT from pre-flight probes (None if not measured).
+        sample_count: Number of offset measurements admitted to the window.
+        rejected_sample_count: Number of samples discarded by the sanity gates.
+        baseline_rtt_ns: Minimum RTT from the most recent probe round (None if
+            never measured).
+        baseline_measurement_count: Completed probe rounds that produced an RTT.
         estimated_one_way_ns: Half of baseline RTT (None if not measured).
     """
 
     __slots__ = (
         "_clock",
+        "_consecutive_rejects",
         "_logger",
+        "_max_abs_ns",
+        "_max_rtt_ns",
         "_min_samples",
+        "_outlier_factor",
+        "_outlier_floor_ns",
         "_pending_pong_future",
         "_pending_pong_sequence",
+        "_reset_after_rejects",
         "_window",
+        "baseline_measurement_count",
         "baseline_rtt_ns",
         "estimated_one_way_ns",
         "offset_ns",
+        "rejected_sample_count",
         "sample_count",
     )
 
@@ -107,6 +140,11 @@ class ClockOffsetTracker:
         logger_name: str = "aiperf.worker",
         window_size: int = Environment.WORKER.CLOCK_OFFSET_WINDOW_SIZE,
         min_samples: int = Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
+        max_abs_sec: float = Environment.WORKER.CLOCK_OFFSET_MAX_ABS_SEC,
+        outlier_factor: float = Environment.WORKER.CLOCK_OFFSET_OUTLIER_FACTOR,
+        outlier_floor_sec: float = Environment.WORKER.CLOCK_OFFSET_OUTLIER_FLOOR_SEC,
+        reset_after_rejects: int = Environment.WORKER.CLOCK_OFFSET_RESET_AFTER_REJECTS,
+        max_rtt_sec: float = Environment.WORKER.CLOCK_PROBE_MAX_RTT_SEC,
     ) -> None:
         """Initialize the tracker.
 
@@ -117,15 +155,34 @@ class ClockOffsetTracker:
         Args:
             logger_name: Name for the AIPerfLogger (typically the worker's service_id).
             window_size: Number of recent samples to retain in the sliding window.
-            min_samples: Minimum samples required before ``is_calibrated`` returns True.
+            min_samples: Minimum samples required before ``is_calibrated`` returns True,
+                and before low-outlier rejection has a population to judge against.
+            max_abs_sec: Absolute plausibility bound on a single sample, in seconds.
+                0 disables the bound.
+            outlier_factor: Multiplier on the window's median absolute deviation that
+                sets the low-outlier rejection band. 0 disables rejection.
+            outlier_floor_sec: Floor on that band, in seconds, so a window of
+                near-identical samples does not reject everything that follows.
+            reset_after_rejects: Consecutive low-outlier rejections after which the
+                window is cleared and re-seeded from the rejected sample.
+            max_rtt_sec: Plausibility bound on a single ping/pong round trip, in
+                seconds. 0 disables the bound.
         """
         self._logger = AIPerfLogger(f"{logger_name}.clock_offset")
         self._clock = MonotonicClock()
         self._window: deque[int] = deque(maxlen=window_size)
         self._min_samples = min_samples
+        self._max_abs_ns = int(max_abs_sec * NANOS_PER_SECOND)
+        self._outlier_factor = outlier_factor
+        self._outlier_floor_ns = int(outlier_floor_sec * NANOS_PER_SECOND)
+        self._reset_after_rejects = reset_after_rejects
+        self._max_rtt_ns = int(max_rtt_sec * NANOS_PER_SECOND)
+        self._consecutive_rejects = 0
         self.offset_ns: int | None = None
         self.sample_count: int = 0
+        self.rejected_sample_count: int = 0
         self.baseline_rtt_ns: int | None = None
+        self.baseline_measurement_count: int = 0
         self.estimated_one_way_ns: int | None = None
         self._pending_pong_future: asyncio.Future[TimePong] | None = None
         self._pending_pong_sequence: int | None = None
@@ -138,24 +195,79 @@ class ClockOffsetTracker:
     # Credit-based offset tracking
     # =========================================================================
 
-    def observe(self, issued_at_ns: int, received_at_ns: int) -> int:
+    def observe(self, issued_at_ns: int, received_at_ns: int) -> int | None:
         """Record an offset measurement from an explicit pair of timestamps.
+
+        The sample is admitted only if it survives two sanity gates: an absolute
+        plausibility bound, and rejection as a low outlier against the current
+        window. Low outliers matter and high ones do not, because the estimator
+        is a minimum: one spuriously low sample would otherwise own the
+        correction until the window evicted it, whereas a high one is ignored
+        for free. See ``_is_low_outlier`` for how a genuine downward step is
+        distinguished from a run of bad samples.
 
         Args:
             issued_at_ns: Wall-clock timestamp from the controller (credit issue time).
             received_at_ns: Wall-clock timestamp from this worker (credit receipt time).
 
         Returns:
-            The updated raw min-filtered offset in nanoseconds. This still
-            includes one-way transit; see ``correction_ns`` for the value to
-            apply to a timestamp.
+            The updated raw min-filtered offset in nanoseconds, or the previous
+            one when the sample was rejected (None before any sample was
+            admitted). This still includes one-way transit; see ``correction_ns``
+            for the value to apply to a timestamp.
         """
-        self._window.append(received_at_ns - issued_at_ns)
+        sample = received_at_ns - issued_at_ns
+        if not self._accept_sample(sample):
+            self.rejected_sample_count += 1
+            return self.offset_ns
+        self._window.append(sample)
         self.sample_count += 1
         self.offset_ns = min(self._window)
         return self.offset_ns
 
-    def update(self, issued_at_ns: int) -> int:
+    def _accept_sample(self, sample: int) -> bool:
+        """Decide whether a raw offset sample may enter the window."""
+        if self._max_abs_ns and abs(sample) > self._max_abs_ns:
+            self._logger.warning(
+                lambda: f"Discarding implausible clock-offset sample "
+                f"{sample / 1e6:.3f}ms (bound: "
+                f"{self._max_abs_ns / 1e6:.3f}ms)"
+            )
+            return False
+        if not self._is_low_outlier(sample):
+            self._consecutive_rejects = 0
+            return True
+        self._consecutive_rejects += 1
+        if self._consecutive_rejects < self._reset_after_rejects:
+            return False
+        # A sustained run of low outliers is not noise, it is the true offset
+        # having stepped down (controller restart, NTP step). Drop the stale
+        # window so the filter re-seeds from the new level immediately instead
+        # of rejecting reality for the rest of the run.
+        self._logger.warning(
+            lambda: f"Clock offset stepped down past the outlier band for "
+            f"{self._consecutive_rejects} consecutive samples; re-seeding "
+            f"window at {sample / 1e6:.3f}ms"
+        )
+        self._window.clear()
+        self._consecutive_rejects = 0
+        return True
+
+    def _is_low_outlier(self, sample: int) -> bool:
+        """True when ``sample`` sits implausibly far below the window's median.
+
+        Uses median absolute deviation rather than standard deviation because
+        the sample distribution is right-skewed (transit only ever adds) and a
+        single outlier would inflate a standard deviation enough to hide itself.
+        """
+        if not self._outlier_factor or len(self._window) < self._min_samples:
+            return False
+        median = _median(self._window)
+        mad = _median([int(abs(value - median)) for value in self._window])
+        band = max(self._outlier_factor * mad, self._outlier_floor_ns)
+        return sample < median - band
+
+    def update(self, issued_at_ns: int) -> int | None:
         """Record a new offset measurement from a credit timestamp.
 
         Reads this worker's clock as the receive-side timestamp.
@@ -285,8 +397,12 @@ class ClockOffsetTracker:
         ``probe_count`` of them round-trip or ``max_attempts`` pings have been
         sent. The minimum RTT is stored as ``baseline_rtt_ns``.
 
-        This should be called once during startup before the worker declares itself
-        dispatchable, so that probes are not queued behind real credits.
+        This should first be called during startup before the worker declares
+        itself dispatchable, so that probes are not queued behind real credits.
+        It is safe to call again during the run -- the Worker does so on the
+        ``CLOCK_REMEASURE_INTERVAL`` cadence -- and each round replaces the
+        baseline with its own minimum, so a path that changed is tracked rather
+        than frozen at the startup value.
 
         Timed-out probes are retried rather than consumed from the quota: on a
         real cluster the credit ROUTER is frequently not echoing yet when the
@@ -307,6 +423,7 @@ class ClockOffsetTracker:
         rtts: list[int] = []
         loop = asyncio.get_running_loop()
         attempts = probe_count if max_attempts is None else max_attempts
+        previous_baseline = self.baseline_rtt_ns
 
         try:
             for seq in range(attempts):
@@ -321,7 +438,18 @@ class ClockOffsetTracker:
                 except TimeoutError:
                     self._logger.warning(f"TimePing {seq} timed out")
                     continue
-                rtts.append(time.perf_counter_ns() - sent_at_perf_ns)
+                rtt = time.perf_counter_ns() - sent_at_perf_ns
+                if self._max_rtt_ns and rtt > self._max_rtt_ns:
+                    # Halving an inflated round trip produces an inflated one-way
+                    # estimate, which over-corrects every exported timestamp. A
+                    # probe that slow says more about queueing behind real credits
+                    # or a GC pause than about the path, so it is not a sample.
+                    self._logger.warning(
+                        lambda rtt=rtt: f"Discarding implausible RTT probe "
+                        f"{rtt / 1e6:.2f}ms (bound: {self._max_rtt_ns / 1e6:.2f}ms)"
+                    )
+                    continue
+                rtts.append(rtt)
                 self._apply_baseline_rtt(rtts, probe_count)
         finally:
             self._pending_pong_future = None
@@ -331,9 +459,27 @@ class ClockOffsetTracker:
             self._logger.warning(
                 f"All {attempts} RTT probes timed out, baseline RTT not established"
             )
+            return
+
+        self.baseline_measurement_count += 1
+        min_rtt = min(rtts)
+        if previous_baseline is not None and (
+            min_rtt > 2 * previous_baseline or 2 * min_rtt < previous_baseline
+        ):
+            self._logger.warning(
+                lambda: f"Baseline RTT changed materially: "
+                f"{previous_baseline / 1e6:.2f}ms -> {min_rtt / 1e6:.2f}ms"
+            )
 
     def _apply_baseline_rtt(self, rtts: list[int], probe_count: int) -> None:
-        """Store the minimum observed RTT as the baseline and log it."""
+        """Store the minimum observed RTT of this round as the baseline and log it.
+
+        Each measurement round replaces the baseline outright rather than
+        folding into the previous one, so a re-measurement tracks a path that
+        genuinely changed. The cost is that a re-measurement racing real credit
+        traffic can read higher than the idle startup probe; taking the minimum
+        over the round's probes is what keeps that bounded.
+        """
         min_rtt = min(rtts)
         self.baseline_rtt_ns = min_rtt
         self.estimated_one_way_ns = min_rtt // 2

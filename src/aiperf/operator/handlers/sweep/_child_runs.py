@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn
 import orjson
 
 from aiperf.common.endpoint_credentials import redact_sweep_public_data
+from aiperf.operator.environment import OperatorEnvironment
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -127,7 +128,7 @@ async def append_run_entry(
     from kubernetes_asyncio import client
 
     custom_objects = client.CustomObjectsApi(api)
-    max_attempts = 20
+    max_attempts = OperatorEnvironment.RECONCILE.RUNS_CAS_MAX_ATTEMPTS
     for _attempt in range(max_attempts):
         (
             current_runs,
@@ -283,7 +284,7 @@ def _raise_runs_retry(namespace: str, sweep_name: str, reason: str) -> NoReturn:
 
     raise kopf.TemporaryError(
         f"retry AIPerfSweep {namespace}/{sweep_name} child run rollup: {reason}",
-        delay=5,
+        delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
     )
 
 

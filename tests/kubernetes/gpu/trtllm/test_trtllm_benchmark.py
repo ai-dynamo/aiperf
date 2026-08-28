@@ -202,6 +202,8 @@ class TestTRTLLMBenchmarkConcurrency:
             input_sequence_max=30,
             output_tokens_min=5,
             output_tokens_max=20,
+            tolerations=gpu_settings.tolerations,
+            node_selector=gpu_settings.node_selector,
         )
 
         result = await benchmark_deployer.deploy(

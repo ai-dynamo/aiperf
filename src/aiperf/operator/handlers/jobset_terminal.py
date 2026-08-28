@@ -31,6 +31,7 @@ from aiperf.kubernetes.cr_refs import (
     AIPERF_SWEEP_VERSION,
 )
 from aiperf.kubernetes.phase import format_timestamp
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.sweep.child_rollup import PARENT_TERMINAL_PHASES
 
 JOBSET_TERMINAL_FIELD_MANAGER = "aiperf-operator-jobset-terminal"
@@ -105,13 +106,13 @@ async def _lookup_aiperfjob_body(
         raise kopf.TemporaryError(
             f"AIPerfJob owner lookup for {namespace}/{jobset_name} failed "
             f"({e.status}: {e.reason}); retrying",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from e
     except Exception as e:  # noqa: BLE001 - one-shot watch events must be retried rather than dropped
         raise kopf.TemporaryError(
             f"AIPerfJob owner lookup for {namespace}/{jobset_name} failed: "
             f"{e}; retrying",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from e
 
 
@@ -193,11 +194,13 @@ async def _lookup_aiperfsweep_body(
         if exc.status == 404:
             return None
         raise kopf.TemporaryError(
-            f"Failed to read AIPerfSweep {namespace}/{sweep_name}: {exc}", delay=5
+            f"Failed to read AIPerfSweep {namespace}/{sweep_name}: {exc}",
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
-            f"Failed to read AIPerfSweep {namespace}/{sweep_name}: {exc}", delay=5
+            f"Failed to read AIPerfSweep {namespace}/{sweep_name}: {exc}",
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from exc
 
 
@@ -260,7 +263,8 @@ async def _patch_sweep_controller_failure(
     resource_version = metadata.get("resourceVersion")
     if not isinstance(resource_version, str):
         raise kopf.TemporaryError(
-            f"AIPerfSweep {namespace}/{sweep_name} has no resourceVersion", delay=5
+            f"AIPerfSweep {namespace}/{sweep_name} has no resourceVersion",
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         )
     status = parent_body.get("status")
     current_phase = status.get("phase") if isinstance(status, dict) else None
@@ -305,12 +309,12 @@ async def _patch_sweep_controller_failure(
             return
         raise kopf.TemporaryError(
             f"Failed to terminalize AIPerfSweep {namespace}/{sweep_name}: {exc}",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"Failed to terminalize AIPerfSweep {namespace}/{sweep_name}: {exc}",
-            delay=5,
+            delay=OperatorEnvironment.RECONCILE.EVENT_RETRY_DELAY_SECONDS,
         ) from exc
 
 

@@ -342,6 +342,126 @@ class TestSavePodLogsEdgeCases:
         assert not (logs_dir / "aiperf-job-worker-0-0.log").exists()
 
     @pytest.mark.asyncio
+    async def test_save_pod_logs_reports_no_pods_matched(
+        self, mock_api: MagicMock, tmp_path: Path
+    ) -> None:
+        """An unmatched selector is reported, not silently indistinguishable."""
+        with (
+            patch(
+                "aiperf.kubernetes.logs.get_pods",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("aiperf.kubernetes.logs.run_command"),
+        ):
+            saved = await save_pod_logs("job-123", "default", tmp_path, mock_api)
+
+        assert saved.pods_matched == 0
+        assert saved.files_written == []
+        assert saved.wrote_anything is False
+        assert saved.logs_dir == tmp_path / "logs"
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_reports_kubectl_stderr_as_failure(
+        self, mock_api: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        """kubectl's stderr must reach the caller instead of being discarded."""
+        mock_run = AsyncMock(
+            return_value=CommandResult(
+                returncode=1, stdout="", stderr='pods "x" not found'
+            )
+        )
+
+        with (
+            patch(
+                "aiperf.kubernetes.logs.get_pods",
+                new_callable=AsyncMock,
+                return_value=[pods[0]],
+            ),
+            patch("aiperf.kubernetes.logs.run_command", mock_run),
+        ):
+            saved = await save_pod_logs("job-123", "default", tmp_path, mock_api)
+
+        assert saved.pods_matched == 1
+        assert saved.wrote_anything is False
+        assert saved.failures == [
+            'aiperf-job-controller-0-0: kubectl logs exited 1: pods "x" not found'
+        ]
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_reports_empty_stdout_as_failure(
+        self, mock_api: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        """A zero-exit kubectl call with no output still wrote no file."""
+        mock_run = AsyncMock(
+            return_value=CommandResult(returncode=0, stdout="", stderr="")
+        )
+
+        with (
+            patch(
+                "aiperf.kubernetes.logs.get_pods",
+                new_callable=AsyncMock,
+                return_value=[pods[0]],
+            ),
+            patch("aiperf.kubernetes.logs.run_command", mock_run),
+        ):
+            saved = await save_pod_logs("job-123", "default", tmp_path, mock_api)
+
+        assert saved.wrote_anything is False
+        assert saved.failures == [
+            "aiperf-job-controller-0-0: kubectl logs returned no output"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_reports_partial_success(
+        self, mock_api: MagicMock, pods: list[MagicMock], tmp_path: Path
+    ) -> None:
+        """A partial dump is distinguishable from a complete one."""
+        mock_run = AsyncMock(
+            side_effect=[
+                CommandResult(returncode=0, stdout="good logs", stderr=""),
+                CommandResult(returncode=1, stdout="", stderr="container not started"),
+            ]
+        )
+
+        with (
+            patch(
+                "aiperf.kubernetes.logs.get_pods",
+                new_callable=AsyncMock,
+                return_value=pods,
+            ),
+            patch("aiperf.kubernetes.logs.run_command", mock_run),
+        ):
+            saved = await save_pod_logs("job-123", "default", tmp_path, mock_api)
+
+        assert saved.pods_matched == 2
+        assert saved.files_written == ["aiperf-job-controller-0-0.log"]
+        assert saved.wrote_anything is True
+        assert len(saved.failures) == 1
+
+    @pytest.mark.asyncio
+    async def test_save_pod_logs_reports_unnamed_pod_as_failure(
+        self, mock_api: MagicMock, tmp_path: Path
+    ) -> None:
+        """A pod with no metadata.name is a skipped pod, not a silent one."""
+        nameless = _make_pod("")
+        mock_run = AsyncMock()
+
+        with (
+            patch(
+                "aiperf.kubernetes.logs.get_pods",
+                new_callable=AsyncMock,
+                return_value=[nameless],
+            ),
+            patch("aiperf.kubernetes.logs.run_command", mock_run),
+        ):
+            saved = await save_pod_logs("job-123", "default", tmp_path, mock_api)
+
+        mock_run.assert_not_called()
+        assert saved.pods_matched == 1
+        assert saved.failures == ["<unnamed pod>: no metadata.name to fetch logs by"]
+
+    @pytest.mark.asyncio
     async def test_save_pod_logs_nested_output_dir(
         self, mock_api: MagicMock, pods: list[MagicMock], tmp_path: Path
     ) -> None:

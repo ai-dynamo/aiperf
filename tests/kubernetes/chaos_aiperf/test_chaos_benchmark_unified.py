@@ -46,6 +46,7 @@ from tests.kubernetes.chaos.toxiproxy import (
     ToxiproxyInjector,
 )
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -76,6 +77,7 @@ def longrun_config(k8s_settings) -> AIPerfJobConfig:  # noqa: ANN001 - test-fixt
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -337,6 +339,7 @@ async def test_b2_mock_server_restart_mid_run_unified(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
+@pytest.mark.k8s_needs_toxiproxy
 async def test_b3_mock_server_latency_injection_unified(
     operator_ready: OperatorDeployer,
     faults: InjectorRegistry,
@@ -398,6 +401,7 @@ async def test_b3_mock_server_latency_injection_unified(
             warmup_request_count=longrun_config.warmup_request_count,
             image=longrun_config.image,
             endpoint_url=toxiproxy_endpoint,
+            tolerations=longrun_config.tolerations,
         )
         async with faults.inject(
             "network.latency",

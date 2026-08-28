@@ -106,6 +106,27 @@ class AIPerfJobConfig:
     image_pull_policy: str = "Never"
     """Image pull policy for benchmark pods."""
 
+    image_pull_secrets: list[str] = field(default_factory=list)
+    """Image pull secret names (K8s LocalObjectReference) for benchmark pods."""
+
+    node_selector: dict[str, str] = field(default_factory=dict)
+    """Node selector labels to pin benchmark pods to specific node pools.
+
+    Example: ``{"kubernetes.io/arch": "amd64"}`` targets CPU nodes on a cluster
+    that also has GPU nodes with a ``kubernetes.io/arch=arm64`` taint.
+    """
+
+    tolerations: list[dict] = field(default_factory=list)
+    """Kubernetes tolerations for benchmark pods.
+
+    Example for a cluster with GPU/arch taints::
+
+        [
+            {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+            {"key": "kubernetes.io/arch", "operator": "Exists", "effect": "NoSchedule"},
+        ]
+    """
+
     connections_per_worker: int | None = None
     """Override for connections per worker, or None for default."""
 
@@ -219,6 +240,18 @@ class AIPerfJobConfig:
             if self.priority_class is not None:
                 scheduling["priorityClass"] = self.priority_class
             spec["scheduling"] = scheduling
+
+        pod_template: dict[str, Any] = {}
+        if self.image_pull_secrets:
+            pod_template["imagePullSecrets"] = [
+                {"name": s} for s in self.image_pull_secrets
+            ]
+        if self.node_selector:
+            pod_template["nodeSelector"] = self.node_selector
+        if self.tolerations:
+            pod_template["tolerations"] = self.tolerations
+        if pod_template:
+            spec["podTemplate"] = pod_template
 
         cr = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
@@ -402,6 +435,60 @@ class OperatorJobResult:
         return None
 
 
+async def copy_pull_secret_to_namespace(
+    kubectl: KubectlClient, secret_name: str, target_namespace: str
+) -> None:
+    """Copy an imagePullSecret from any accessible namespace into ``target_namespace``.
+
+    Searches all namespaces for ``secret_name`` and copies it into
+    ``target_namespace``.  No-op when the secret already exists there.
+    """
+    import re
+
+    existing = await kubectl.run(
+        "get", "secret", secret_name, "-n", target_namespace, check=False
+    )
+    if existing.returncode == 0:
+        logger.info(f"Pull secret {secret_name!r} already in {target_namespace}")
+        return
+
+    ns_list = await kubectl.run(
+        "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}", check=False
+    )
+    if ns_list.returncode != 0:
+        logger.warning(
+            f"Cannot list namespaces; pull secret {secret_name!r} may be missing "
+            f"in {target_namespace}"
+        )
+        return
+
+    for ns in ns_list.stdout.strip().split():
+        if ns == target_namespace:
+            continue
+        fetch = await kubectl.run(
+            "get", "secret", secret_name, "-n", ns, "-o", "yaml", check=False
+        )
+        if fetch.returncode != 0:
+            continue
+        raw = fetch.stdout
+        raw = re.sub(r"\n\s+namespace:.*", "", raw)
+        raw = re.sub(r"\n\s+resourceVersion:.*", "", raw)
+        raw = re.sub(r"\n\s+uid:.*", "", raw)
+        raw = re.sub(r"\n\s+creationTimestamp:.*", "", raw)
+        logger.info(
+            f"Copying pull secret {secret_name!r} from {ns!r} → {target_namespace!r}"
+        )
+        try:
+            await kubectl.apply(raw, namespace=target_namespace)
+            return
+        except RuntimeError as exc:
+            logger.warning(f"Failed to copy pull secret from {ns!r}: {exc}")
+
+    logger.warning(
+        f"Pull secret {secret_name!r} not found in any namespace; image pull may fail"
+    )
+
+
 class OperatorDeployer:
     """Manages operator deployment and AIPerfJob lifecycle."""
 
@@ -423,6 +510,7 @@ class OperatorDeployer:
         image_pull_secret: str | None = None,
         operator_node_selector: dict[str, str] | None = None,
         disable_pvc: bool = False,
+        operator_namespace: str = "aiperf-system",
     ) -> None:
         """Initialize operator deployer.
 
@@ -480,6 +568,7 @@ class OperatorDeployer:
         self.image_pull_secret = image_pull_secret
         self.operator_node_selector = operator_node_selector
         self.disable_pvc = disable_pvc
+        self.OPERATOR_NAMESPACE = operator_namespace
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
@@ -700,62 +789,13 @@ class OperatorDeployer:
         namespaces for the secret and copies it to the operator namespace so
         the operator pod can pull its image.
         """
-        import re
+        await self.ensure_pull_secret_in_namespace(secret_name, self.OPERATOR_NAMESPACE)
 
-        existing = await self.kubectl.run(
-            "get",
-            "secret",
-            secret_name,
-            "-n",
-            self.OPERATOR_NAMESPACE,
-            check=False,
-        )
-        if existing.returncode == 0:
-            logger.info(
-                f"Pull secret {secret_name!r} already in {self.OPERATOR_NAMESPACE}"
-            )
-            return
-
-        ns_list = await self.kubectl.run(
-            "get",
-            "namespaces",
-            "-o",
-            "jsonpath={.items[*].metadata.name}",
-            check=False,
-        )
-        if ns_list.returncode != 0:
-            logger.warning(
-                f"Cannot list namespaces; pull secret {secret_name!r} may be missing "
-                f"in {self.OPERATOR_NAMESPACE}"
-            )
-            return
-
-        for ns in ns_list.stdout.strip().split():
-            if ns == self.OPERATOR_NAMESPACE:
-                continue
-            fetch = await self.kubectl.run(
-                "get", "secret", secret_name, "-n", ns, "-o", "yaml", check=False
-            )
-            if fetch.returncode != 0:
-                continue
-            # Strip per-resource metadata so kubectl apply creates a fresh copy.
-            raw = fetch.stdout
-            raw = re.sub(r"\n\s+namespace:.*", "", raw)
-            raw = re.sub(r"\n\s+resourceVersion:.*", "", raw)
-            raw = re.sub(r"\n\s+uid:.*", "", raw)
-            raw = re.sub(r"\n\s+creationTimestamp:.*", "", raw)
-            logger.info(
-                f"Copying pull secret {secret_name!r} from {ns!r} → {self.OPERATOR_NAMESPACE!r}"
-            )
-            try:
-                await self.kubectl.apply(raw, namespace=self.OPERATOR_NAMESPACE)
-                return
-            except RuntimeError as exc:
-                logger.warning(f"Failed to copy pull secret from {ns!r}: {exc}")
-
-        logger.warning(
-            f"Pull secret {secret_name!r} not found in any namespace; image pull may fail"
-        )
+    async def ensure_pull_secret_in_namespace(
+        self, secret_name: str, target_namespace: str
+    ) -> None:
+        """Copy a pull secret from any accessible namespace into ``target_namespace``."""
+        await copy_pull_secret_to_namespace(self.kubectl, secret_name, target_namespace)
 
     async def _cleanup_existing_operator(self) -> None:
         """Remove any existing operator deployment that could conflict.

@@ -31,7 +31,11 @@ from pathlib import Path
 import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
-from tests.kubernetes.conftest import K8sTestSettings, _create_helm_values
+from tests.kubernetes.conftest import (
+    K8sTestSettings,
+    _create_helm_values,
+    _gpu_node_tolerations,
+)
 from tests.kubernetes.helpers.helm import (
     HelmClient,
     HelmDeployer,
@@ -140,7 +144,7 @@ async def _force_cleanup_release(
     )
 
 
-@pytest.mark.timeout(_PER_TEST_TIMEOUT)
+@pytest.mark.timeout(900)  # 2 install+run cycles; _PER_TEST_TIMEOUT is insufficient
 async def test_h1_install_job_uninstall_reinstall_is_clean(
     kubectl: KubectlClient,
     helm_client: HelmClient,
@@ -174,6 +178,7 @@ async def test_h1_install_job_uninstall_reinstall_is_clean(
         request_count=30,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
     try:
@@ -249,7 +254,9 @@ async def test_h1_install_job_uninstall_reinstall_is_clean(
         await _force_cleanup_release(deployer, kubectl)
 
 
-@pytest.mark.timeout(_PER_TEST_TIMEOUT)
+@pytest.mark.timeout(
+    1020
+)  # install(3m) + profiling-wait(5m) + upgrade(3m) + observe(20s) + completion(4m)
 async def test_h2_upgrade_with_inflight_job_preserves_cr(
     kubectl: KubectlClient,
     helm_client: HelmClient,
@@ -277,9 +284,10 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr(
     longrun = AIPerfJobConfig(
         concurrency=3,
         request_count=None,
-        benchmark_duration=120.0,
+        benchmark_duration=45.0,  # 45s: just long enough to still be Running during upgrade
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     cr_name = "chaos-h2"
 
@@ -295,7 +303,7 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr(
             cr_name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         # Trivial no-op values tweak: bump monitor interval. This forces
@@ -445,6 +453,9 @@ async def test_h3_invalid_values_fail_fast_and_recover(
             request_count=30,
             warmup_request_count=5,
             image=k8s_settings.aiperf_image,
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         result = await good_deployer.run_job(config, name="h3-recovery", timeout=240)
         assert result.success, (
@@ -458,6 +469,7 @@ async def test_h3_invalid_values_fail_fast_and_recover(
             await _force_cleanup_release(bad_deployer, kubectl)
 
 
+@pytest.mark.k8s_disruptive
 @pytest.mark.timeout(_PER_TEST_TIMEOUT)
 async def test_h4_missing_jobset_crd_surfaces_error(
     kubectl: KubectlClient,
@@ -511,6 +523,9 @@ async def test_h4_missing_jobset_crd_surfaces_error(
             request_count=30,
             warmup_request_count=5,
             image=k8s_settings.aiperf_image,
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         await deployer.create_job(config, name=cr_name, namespace=job_ns)
 

@@ -484,7 +484,6 @@ spec:
                               description: 'Serialization format. If omitted: ''text'' when content is a string, ''json''
                                 otherwise.'
                             content:
-                              type: object
                               x-kubernetes-preserve-unknown-fields: true
                               description: Templated value. Structured (dict/list/scalar) for json/yaml; string for text.
                                 Jinja2 expressions in any string leaf are rendered with the user_files context.

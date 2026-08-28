@@ -15,6 +15,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from aiperf.kubernetes.client_selectors import controller_selector
 from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE, JobSetLabels
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.models import PodSummary
 
 logger = logging.getLogger(__name__)
@@ -196,9 +197,11 @@ async def wait_for_controller_pod_ready(
     api: ApiClient,
     namespace: str,
     job_id: str,
-    timeout: int = 300,
+    timeout: float | None = None,
 ) -> str:
     """Poll until the controller pod is Running; returns its name."""
+    settings = K8sEnvironment.CONTROLLER_POD_READY
+    timeout = settings.TIMEOUT_SECONDS if timeout is None else timeout
     start = asyncio.get_running_loop().time()
     last_log = 0.0
     while True:
@@ -214,10 +217,10 @@ async def wait_for_controller_pod_ready(
                     f"before Running; check: kubectl logs/describe -n {namespace} "
                     f"{pod_name}"
                 )
-            if elapsed - last_log >= 10:
+            if elapsed - last_log >= settings.STATUS_LOG_INTERVAL_SECONDS:
                 logger.info("Controller pod %s: %s (%.0fs)", pod_name, phase, elapsed)
                 last_log = elapsed
-        elif elapsed - last_log >= 10:
+        elif elapsed - last_log >= settings.STATUS_LOG_INTERVAL_SECONDS:
             logger.info("No controller pod found yet (%.0fs)", elapsed)
             last_log = elapsed
         if elapsed > timeout:
@@ -225,7 +228,7 @@ async def wait_for_controller_pod_ready(
                 f"Controller pod not ready after {timeout}s. "
                 f"Check with: kubectl get pods -n {namespace}"
             )
-        await asyncio.sleep(2)
+        await asyncio.sleep(settings.POLL_INTERVAL_SECONDS)
 
 
 async def get_pods(

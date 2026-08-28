@@ -40,6 +40,8 @@ Root operator environment configuration. Loads from environment variables. Neste
 | `AIPERF_POD_RESTART_THRESHOLD` | `3` | ≥ 0, ≤ 100 | Pod restart count before emitting a warning event |
 | `AIPERF_METRICS_PORT` | `9090` | ≥ 0, ≤ 65535 | Port for the Prometheus /metrics endpoint exposed by the kopf operator process. Set to 0 to disable. Scraped by ServiceMonitor. |
 | `AIPERF_ENDPOINT_CHECK_TIMEOUT` | `10.0` | > 0, ≤ 300 | Seconds to wait for endpoint health check |
+| `AIPERF_ENDPOINT_CHECK_DNS_RETRIES` | `3` | ≥ 1, ≤ 10 | Number of retry attempts when endpoint DNS resolution fails transiently |
+| `AIPERF_ENDPOINT_CHECK_DNS_RETRY_DELAY` | `5.0` | ≥ 0.5, ≤ 60.0 | Seconds to wait between DNS retry attempts for endpoint health check |
 | `AIPERF_PREFLIGHT_TIMEOUT` | `30.0` | > 0, ≤ 120 | Seconds to wait for all pre-flight checks to complete |
 | `AIPERF_CLIENT_CACHE_MAX_ENTRIES` | `200` | ≥ 1, ≤ 100000 | Upper bound on each process-wide kopf handler cache in ``aiperf.operator.client_cache`` (cached ProgressClients, unset cancellation events, latched completion-claim timestamps). Eviction is FIFO/LRU per cache and is loss-tolerant by construction: a ProgressClient is re-created on demand, a SET cancellation flag is never evicted, and a claim timestamp falls back to the durable COMPLETION_CLAIMED annotation on the CR. Raise it on operators that reconcile more than this many AIPerfJobs concurrently. |
 | `AIPERF_COMPLETION_CLAIM_TRUST_WINDOW_SECONDS` | `900.0` | > 0 | How long (seconds, measured from the claim timestamp) the ``aiperf.nvidia.com/completion-claimed`` annotation may suppress the ``spec.timeoutSeconds`` FAILED stamp and the 'JobSet not found' FAILED stamp in the monitor. The annotation lives on CR metadata, which any AIPerfJob editor can write, so trusting it without bound would let a forged or orphaned value disable terminal-phase enforcement forever. Deliberately NOT derived from ``spec.timeoutSeconds``: the window has to cover post-benchmark result draining (fetch + retries + retention), which is unrelated to — and routinely longer than — a short benchmark deadline, and a claim is only ever stamped after completion evidence. Crash-after-claim converges through orphan-claim recovery on the next monitor tick rather than through this window. |
@@ -242,6 +244,26 @@ Controller progress heartbeat policy shared with the operator.
 | `AIPERF_K8S_CONTROLLER_HEARTBEAT_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 600.0 | Interval in seconds between controller progress heartbeats |
 | `AIPERF_K8S_CONTROLLER_HEARTBEAT_EXPIRY_SECONDS` | `30.0` | > 0.0, ≤ 3600.0 | Seconds without a controller progress heartbeat before expiry. Must be at least twice INTERVAL_SECONDS. |
 
+## K8SCONTROLLERPODREADY
+
+Controller pod readiness polling policy.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_CONTROLLER_POD_READY_TIMEOUT_SECONDS` | `300.0` | > 0.0, ≤ 86400.0 | Maximum seconds to wait for the controller pod to reach Running. |
+| `AIPERF_K8S_CONTROLLER_POD_READY_POLL_INTERVAL_SECONDS` | `2.0` | > 0.0, ≤ 300.0 | Seconds between controller pod readiness polls. |
+| `AIPERF_K8S_CONTROLLER_POD_READY_STATUS_LOG_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between controller pod readiness status log lines. |
+
+## K8SCREDENTIALRETRY
+
+Retry policy for recoverable Kubernetes credential failures.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_CREDENTIAL_RETRY_INITIAL_BACKOFF_SECONDS` | `2.0` | > 0.0, ≤ 3600.0 | Initial delay before retrying a Kubernetes credential failure. |
+| `AIPERF_K8S_CREDENTIAL_RETRY_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 100.0 | Multiplier applied after each Kubernetes credential retry. |
+| `AIPERF_K8S_CREDENTIAL_RETRY_MAX_BACKOFF_SECONDS` | `15.0` | > 0.0, ≤ 3600.0 | Maximum delay between Kubernetes credential retries. |
+
 ## K8SDATASETMANAGER
 
 Dataset Manager container CPU and memory (Guaranteed QoS).
@@ -313,6 +335,14 @@ JobSet-level configuration.
 | `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` | `''` | — | Operator-side default for Kueue gang-scheduling. When the AIPerfJob CR's spec.scheduling.queue_name is unset, the JobSet manifest falls back to this value. When non-empty, the JobSet gets the kueue.x-k8s.io/queue-name label, which Kueue's JobSet integration uses to admit the workload as a unit (gang-scheduling: controller + all worker pods admitted atomically, or none). Safe to leave unset on clusters without Kueue — the label is then never added. Set to e.g. 'aiperf-lq' on clusters where Kueue is installed and a LocalQueue of that name exists in the benchmark namespace. |
 | `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_PRIORITY_CLASS` | `''` | — | Operator-side default for Kueue WorkloadPriorityClass. Companion to KUEUE_DEFAULT_QUEUE_NAME. When unset, the JobSet gets no kueue.x-k8s.io/priority-class label and Kueue's default fairness applies. |
 
+## K8SPODMONITOR
+
+Controller-side worker pod health confirmation policy.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_POD_MONITOR_UNHEALTHY_CONFIRMATION_POLLS` | `2` | ≥ 1, ≤ 100 | Consecutive Unknown-phase polls required before reaping pod services. |
+
 ## K8SPORT
 
 Container port assignments.
@@ -346,6 +376,12 @@ Tunables for ``aiperf.kubernetes.port_forward`` kubectl-based forwards.
 | `AIPERF_K8S_PORT_FORWARD_API_RETRY_DELAY_SECONDS` | `2.0` | ≥ 0.1, ≤ 30.0 | Seconds to back off between port-forward restart attempts while the API isn't ready. |
 | `AIPERF_K8S_PORT_FORWARD_API_MAX_RETRIES` | `10` | ≥ 0, ≤ 50 | Maximum number of port-forward restarts before giving up on the API readiness probe. |
 | `AIPERF_K8S_PORT_FORWARD_PROCESS_CLEANUP_TIMEOUT_SECONDS` | `5.0` | ≥ 0.1, ≤ 60.0 | Seconds to wait for graceful kubectl termination before escalating to SIGKILL. |
+| `AIPERF_K8S_PORT_FORWARD_POD_LIVENESS_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between checks that a forwarded pod still exists. |
+| `AIPERF_K8S_PORT_FORWARD_API_PROBE_INTERVAL_SECONDS` | `1.0` | > 0.0, ≤ 300.0 | Seconds between forwarded API readiness probes. |
+| `AIPERF_K8S_PORT_FORWARD_API_PROBE_REQUEST_TIMEOUT_SECONDS` | `5.0` | > 0.0, ≤ 600.0 | Per-request timeout for forwarded API readiness probes. |
+| `AIPERF_K8S_PORT_FORWARD_RECONNECT_INITIAL_BACKOFF_SECONDS` | `1.0` | > 0.0, ≤ 3600.0 | Initial delay before reconnecting a persistent port-forward. |
+| `AIPERF_K8S_PORT_FORWARD_RECONNECT_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 100.0 | Multiplier applied after each persistent port-forward reconnect. |
+| `AIPERF_K8S_PORT_FORWARD_RECONNECT_MAX_BACKOFF_SECONDS` | `30.0` | > 0.0, ≤ 3600.0 | Maximum delay between persistent port-forward reconnects. |
 
 ## K8SPROGRESSSTREAM
 
@@ -356,6 +392,7 @@ Tunables for ``aiperf.kubernetes.progress_stream`` WebSocket reconnects.
 | `AIPERF_K8S_PROGRESS_STREAM_WS_INITIAL_BACKOFF_SECONDS` | `1.0` | ≥ 0.1, ≤ 60.0 | Initial reconnect backoff after a WebSocket transport error. |
 | `AIPERF_K8S_PROGRESS_STREAM_WS_MAX_BACKOFF_SECONDS` | `30.0` | ≥ 1.0, ≤ 300.0 | Cap on the exponential reconnect backoff. |
 | `AIPERF_K8S_PROGRESS_STREAM_WS_HEARTBEAT_SECONDS` | `30` | ≥ 1, ≤ 300 | Seconds between aiohttp WebSocket heartbeats. |
+| `AIPERF_K8S_PROGRESS_STREAM_WS_MAX_RETRIES` | `10` | ≥ 1, ≤ 100 | Maximum WebSocket reconnection attempts before failing. |
 
 ## K8SRECORDSMANAGER
 
@@ -434,6 +471,8 @@ Thresholds for ``aiperf.kubernetes.watchdog`` pod-health heuristics. These were 
 | `AIPERF_K8S_WATCHDOG_PENDING_THRESHOLD_SECONDS` | `30.0` | ≥ 1.0, ≤ 3600.0 | Seconds a pod startup blocker may remain stable before the CLI watchdog or operator raises a warning. |
 | `AIPERF_K8S_WATCHDOG_PENDING_CRITICAL_THRESHOLD_SECONDS` | `90.0` | ≥ 1.0, ≤ 3600.0 | Seconds a pod startup blocker may remain stable before escalation to critical. The operator fails only known non-recoverable image, configuration, crash-loop, or structural scheduling blockers; capacity-related scheduling remains retryable. |
 | `AIPERF_K8S_WATCHDOG_CRASHLOOP_RESTART_THRESHOLD` | `2` | ≥ 1, ≤ 100 | Container restart count at which a crash-loop warning is raised and the operator may treat a stable CrashLoopBackOff as terminal. |
+| `AIPERF_K8S_WATCHDOG_EVENT_CHECK_INTERVAL_TICKS` | `3` | ≥ 1, ≤ 1000 | Watchdog ticks between Kubernetes event checks. |
+| `AIPERF_K8S_WATCHDOG_RESOURCE_CHECK_INTERVAL_TICKS` | `6` | ≥ 1, ≤ 1000 | Watchdog ticks between pod resource-usage checks. |
 
 ## K8SWATCH
 
@@ -441,7 +480,9 @@ CLI AIPerfJob CR polling and logging configuration.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_K8S_WATCH_DEFAULT_TIMEOUT_SECONDS` | `600` | ≥ 1, ≤ 86400 | Default maximum seconds to watch an AIPerfJob for completion. |
 | `AIPERF_K8S_WATCH_CR_POLL_INTERVAL_SECONDS` | `2.0` | > 0.0, ≤ 300.0 | Seconds between AIPerfJob CR status polls |
+| `AIPERF_K8S_WATCH_NOT_FOUND_WARNING_GRACE_SECONDS` | `30.0` | ≥ 0.0, ≤ 3600.0 | Seconds before warning that the watched AIPerfJob CR is missing. |
 | `AIPERF_K8S_WATCH_NOT_FOUND_RETRY_INTERVAL_SECONDS` | `5.0` | > 0.0, ≤ 300.0 | Seconds to wait before retrying a missing AIPerfJob CR |
 | `AIPERF_K8S_WATCH_CR_STATUS_LOG_INTERVAL_SECONDS` | `10.0` | > 0.0, ≤ 3600.0 | Seconds between AIPerfJob CR status log lines |
 
@@ -520,6 +561,7 @@ Timer settings for the kopf monitor handler.
 |----------------------|---------|-------------|-------------|
 | `AIPERF_OPERATOR_MONITOR_INTERVAL` | `10.0` | > 0, ≤ 3600 | Seconds between progress checks |
 | `AIPERF_OPERATOR_MONITOR_INITIAL_DELAY` | `5.0` | ≥ 0, ≤ 300 | Seconds before first progress check after job creation |
+| `AIPERF_OPERATOR_MONITOR_MISSING_JOBSET_SETTLE_DELAY_SECONDS` | `2.0` | ≥ 0, ≤ 60 | Seconds to wait before re-reading an AIPerfJob whose JobSet disappeared, allowing a concurrent completion status patch to settle. |
 
 ## OPERATORPROGRESS
 
@@ -528,8 +570,23 @@ Operator progress-client retry settings. Used by ``aiperf.operator.progress_clie
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_OPERATOR_PROGRESS_MAX_RETRIES` | `3` | ≥ 0, ≤ 20 | Max retry attempts on transient progress-API failures. |
+| `AIPERF_OPERATOR_PROGRESS_REQUEST_TIMEOUT_SECONDS` | `10.0` | > 0, ≤ 300 | Total timeout in seconds for an ordinary progress-API request. |
 | `AIPERF_OPERATOR_PROGRESS_INITIAL_BACKOFF_SEC` | `0.5` | > 0, ≤ 60 | Initial backoff (seconds) between progress-API retries. |
 | `AIPERF_OPERATOR_PROGRESS_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Multiplicative backoff factor between progress-API retries. |
+
+## OPERATORRECONCILE
+
+Retry delays for kopf reconciliation categories.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_RECONCILE_CONFLICT_RETRY_DELAY_SECONDS` | `1.0` | ≥ 0, ≤ 300 | Delay before rebasing status after an optimistic-write conflict. |
+| `AIPERF_OPERATOR_RECONCILE_RUNS_CAS_MAX_ATTEMPTS` | `20` | ≥ 1, ≤ 100 | Maximum resourceVersion CAS attempts when appending status.runs. |
+| `AIPERF_OPERATOR_RECONCILE_EVENT_RETRY_DELAY_SECONDS` | `5.0` | ≥ 0, ≤ 300 | Delay before retrying a watch-event read or status write. |
+| `AIPERF_OPERATOR_RECONCILE_PERSISTENCE_RETRY_DELAY_SECONDS` | `10.0` | ≥ 0, ≤ 300 | Delay before retrying transient monitor or durable-state failures. |
+| `AIPERF_OPERATOR_RECONCILE_STATE_RETRY_DELAY_SECONDS` | `15.0` | ≥ 0, ≤ 300 | Delay before retrying identity-fenced state reconciliation. |
+| `AIPERF_OPERATOR_RECONCILE_CREATE_HARVEST_RETRY_DELAY_SECONDS` | `30.0` | ≥ 0, ≤ 600 | Delay before retrying resource creation or sweep-result harvest. |
+| `AIPERF_OPERATOR_RECONCILE_TTL_DELETE_RETRY_DELAY_SECONDS` | `60.0` | ≥ 0, ≤ 3600 | Delay before retrying an expired AIPerfSweep deletion. |
 
 ## OTEL
 
@@ -578,6 +635,14 @@ Results fetching and storage settings.
 | `AIPERF_RESULTS_K8S_INIT_TIMEOUT_SEC` | `10.0` | > 0, ≤ 120 | Seconds the results-server waits for its Kubernetes client to initialize at startup before giving up and serving PVC-only. The live-job endpoints need a cluster, but every results, sweeps, and artifact route reads the disk, so an unreachable apiserver must degrade the server rather than prevent it from starting. |
 | `AIPERF_RESULTS_MAX_RETRIES` | `5` | ≥ 0, ≤ 50 | Max retries when fetching results from controller |
 | `AIPERF_RESULTS_RETRY_DELAY` | `2.0` | ≥ 0, ≤ 60 | Seconds between result fetch retries |
+| `AIPERF_RESULTS_DOWNLOAD_TIMEOUT_SECONDS` | `300.0` | > 0, ≤ 3600 | Total timeout in seconds for one controller result-file download. |
+| `AIPERF_RESULTS_DOWNLOAD_MAX_CONCURRENCY` | `5` | ≥ 1, ≤ 128 | Maximum result files downloaded concurrently from one controller. |
+| `AIPERF_RESULTS_RETRY_MAX_DELAY_SECONDS` | `30.0` | ≥ 0, ≤ 600 | Maximum backoff delay in seconds between result-fetch attempts. |
+| `AIPERF_RESULTS_RETRY_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Multiplicative backoff factor between result-fetch attempts. |
+| `AIPERF_RESULTS_CLEANUP_INTERVAL_SECONDS` | `86400.0` | > 0, ≤ 604800 | Seconds between job and sweep result-retention passes. |
+| `AIPERF_RESULTS_CLEANUP_INITIAL_DELAY_SECONDS` | `3600.0` | ≥ 0, ≤ 604800 | Seconds before the first per-job result-retention pass. |
+| `AIPERF_RESULTS_CLEANUP_IDLE_SECONDS` | `3600.0` | ≥ 0, ≤ 604800 | Minimum idle seconds before a per-job result-retention timer runs. |
+| `AIPERF_RESULTS_GZIP_MINIMUM_SIZE_BYTES` | `500` | ≥ 0, ≤ 1048576 | Minimum response size in bytes compressed by the results API. |
 | `AIPERF_RESULTS_TTL_DAYS` | `30` | ≥ 0, ≤ 3650 | Days to keep results before cleanup (0 = never clean) |
 | `AIPERF_RESULTS_COMPRESS_ON_DISK` | `True` | — | Store downloaded result files as zstd-compressed (.zst) on disk |
 | `AIPERF_RESULTS_RETAIN_RUNS` | `10` | ≥ 1, ≤ 10000 | Max per-run result dirs to keep under <namespace>/<name>/ before retention trimming. Applied after every successful completion; the just-written epoch is always protected from deletion. |
@@ -612,7 +677,7 @@ Server metrics collection configuration. Controls server metrics collection freq
 | `AIPERF_SERVER_METRICS_SCRAPE_TIMEOUT` | `30.0` | ≥ 0.1, ≤ 600.0 | Hard bound in seconds on a single manager-initiated scrape (baseline, warmup boundary, and the final PROFILE_COMPLETE scrape). These scrapes are awaited inline on the completion and cancel paths, so an endpoint that stalls mid-response would otherwise block the terminal server-metrics result forever. |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | `100` | ≥ 1, ≤ 1000000 | Batch size for server metrics jsonl writer export results processor |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | `10` | ≥ 1, ≤ 300 | Timeout in seconds for checking server metrics endpoint reachability during init |
-| `AIPERF_SERVER_METRICS_REALTIME_PUBLISH_INTERVAL_SECONDS` | `1.0` | > 0.0, ≤ 300.0 | Minimum seconds between realtime server-metrics snapshot messages |
+| `AIPERF_SERVER_METRICS_REALTIME_PUBLISH_INTERVAL_SECONDS` | `1.0` | ≥ 1e-09, ≤ 300.0 | Minimum seconds between realtime server-metrics snapshot messages; the one-nanosecond floor keeps conversion to integer nanoseconds positive |
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | `5.0` | ≥ 1.0, ≤ 300.0 | Delay in seconds before shutting down server metrics service to allow command response transmission |
 | `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_SERIES` | `256` | ≥ 1, ≤ 10000 | Maximum series a single metric may carry into the Kubernetes AIPerfJob status.serverMetrics projection. A metric with more series than this is dropped whole rather than truncated, because a partial series list would decode as a valid-but-wrong aggregate. This is a cardinality sanity bound only -- CR_PROJECTION_MAX_BYTES is the real size backstop -- and is counted per metric across all endpoints, so it must clear the worker or GPU count of the largest deployment. The WebSocket feed and server_metrics_export.json are unaffected. |
 | `AIPERF_SERVER_METRICS_CR_PROJECTION_MAX_BYTES` | `262144` | ≥ 1024, ≤ 1048576 | Maximum serialized size in bytes of the Kubernetes AIPerfJob status.serverMetrics projection. The cardinality caps bound how many labels a series may carry but not how long each label string is, so this is the authoritative guard against the 1.5 MB apiserver object ceiling. An over-budget projection is dropped whole: exceeding the ceiling would have the apiserver reject the entire status patch, silently stopping every other status update (phases, liveMetrics, resultsExported, controllerFailure) along with it. |
@@ -665,6 +730,13 @@ Sweep-controller pod settings. Used by the sweep-controller pod (`aiperf.sweep_c
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
+| `AIPERF_SWEEP_CONTROLLER_CHILD_POLL_INTERVAL_SECONDS` | `5.0` | > 0, ≤ 300 | Seconds between child AIPerfJob terminal-phase polls. |
+| `AIPERF_SWEEP_CONTROLLER_CANCEL_POLL_INTERVAL_SECONDS` | `10.0` | > 0, ≤ 300 | Seconds between parent AIPerfSweep cancellation-flag polls. |
+| `AIPERF_SWEEP_CONTROLLER_RECOVERY_SUMMARY_CONCURRENCY` | `8` | ≥ 1, ≤ 128 | Maximum concurrent child-summary fetches during sweep recovery. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_MAX_ATTEMPTS` | `3` | ≥ 1, ≤ 20 | Maximum attempts to fetch one child summary from the operator API. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_REQUEST_TIMEOUT_SECONDS` | `30.0` | > 0, ≤ 600 | Total timeout in seconds for one operator-API summary request. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_INITIAL_BACKOFF_SECONDS` | `1.0` | ≥ 0, ≤ 60 | Initial backoff seconds after a transient operator-API failure. |
+| `AIPERF_SWEEP_CONTROLLER_OPERATOR_API_BACKOFF_MULTIPLIER` | `2.0` | ≥ 1.0, ≤ 10.0 | Operator-API retry backoff multiplier. |
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_DELETION_TIMEOUT_SECONDS` | `60.0` | > 0, ≤ 600 | Max seconds the sweep-controller will wait for a same-named AIPerfJob from a prior sweep run to finish cascade-deletion before raising ChildNameConflictError. Hit when a user deletes and recreates a sweep with the same name while old children are still terminating. |
 | `AIPERF_SWEEP_CONTROLLER_STALE_CHILD_POLL_INTERVAL_SECONDS` | `2.0` | > 0, ≤ 30 | Poll interval (seconds) while waiting for a deleting same-named AIPerfJob to disappear. See STALE_CHILD_DELETION_TIMEOUT_SECONDS. |
 | `AIPERF_SWEEP_CONTROLLER_CANCEL_GRACE_SECONDS` | `120.0` | > 0, ≤ 3600 | Max seconds the sweep-controller will keep polling a child AIPerfJob for a terminal phase after requesting cancel before giving up and advancing the sweep. Bounds the post-cancel wait so a stuck child (stalled operator cancel path, wedged pod, repeatedly-failing JobSet delete) cannot wedge the whole sweep indefinitely. |
@@ -728,6 +800,12 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | `AIPERF_WORKER_CHECK_INTERVAL` | `1.0` | ≥ 0.1, ≤ 100000.0 | Interval in seconds between worker status checks by WorkerManager |
 | `AIPERF_WORKER_CLOCK_OFFSET_MIN_SAMPLES` | `5` | ≥ 1, ≤ 10000 | Clock-offset observations required before a worker reports calibration |
 | `AIPERF_WORKER_CLOCK_OFFSET_WINDOW_SIZE` | `20` | ≥ 1, ≤ 10000 | Recent worker clock-offset observations retained by the min filter |
+| `AIPERF_WORKER_CLOCK_OFFSET_MAX_ABS_SEC` | `3600.0` | ≥ 0.0, ≤ 100000.0 | Absolute plausibility bound in seconds on a single worker clock-offset sample. A sample whose magnitude exceeds this is discarded instead of entering the min-filter window, because no credit can plausibly carry an issue timestamp that far from the receiving worker's clock. Set to 0 to disable the bound. Kubernetes mode only. |
+| `AIPERF_WORKER_CLOCK_OFFSET_OUTLIER_FACTOR` | `4.0` | ≥ 0.0, ≤ 1000.0 | Multiplier on the median absolute deviation of the offset window below which a new clock-offset sample is rejected as a low outlier. Low outliers are the dangerous ones: the estimator is a minimum, so a single spuriously low sample would set the correction for the whole window. Set to 0 to disable low-outlier rejection. Kubernetes mode only. |
+| `AIPERF_WORKER_CLOCK_OFFSET_OUTLIER_FLOOR_SEC` | `0.001` | ≥ 0.0, ≤ 100000.0 | Floor in seconds on the low-outlier rejection band, so a window of near-identical samples (median absolute deviation near zero) does not reject every subsequent sample. Kubernetes mode only. |
+| `AIPERF_WORKER_CLOCK_OFFSET_RESET_AFTER_REJECTS` | `10` | ≥ 1, ≤ 10000 | Consecutive low-outlier rejections after which the clock-offset window is cleared and re-seeded. A sustained run of rejections means the true offset stepped down (controller restart, NTP step), not that the samples are bad, so the filter must follow it. Kubernetes mode only. |
+| `AIPERF_WORKER_CLOCK_PROBE_MAX_RTT_SEC` | `1.0` | ≥ 0.0, ≤ 100000.0 | Plausibility bound in seconds on a single TimePing/TimePong round trip. A probe slower than this is discarded rather than used as the baseline RTT, because a probe queued behind real credits or delayed by a GC pause would otherwise halve into a wildly overstated one-way transit estimate. Set to 0 to disable the bound. Kubernetes mode only. |
+| `AIPERF_WORKER_CLOCK_REMEASURE_INTERVAL` | `300.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between worker baseline-RTT re-measurements. The startup probe alone goes stale for the rest of the run when the controller restarts or the network path changes, so the probe repeats on this cadence. Raise it past the run duration to keep the startup probe as the only measurement. Kubernetes mode only. |
 | `AIPERF_WORKER_CLOCK_PROBE_COUNT` | `5` | ≥ 1, ≤ 1000 | Successful startup TimePing/TimePong round trips targeted per worker |
 | `AIPERF_WORKER_CLOCK_PROBE_TIMEOUT` | `1.0` | ≥ 0.1, ≤ 100000.0 | Per-probe timeout in seconds for a single startup TimePing/TimePong round trip. Kept short so an unreachable credit ROUTER costs a fast retry instead of consuming AIPERF_WORKER_CLOCK_PROBE_BUDGET on one probe. Kubernetes mode only. |
 | `AIPERF_WORKER_CLOCK_PROBE_BUDGET` | `30.0` | ≥ 0.1, ≤ 100000.0 | Total seconds a worker may spend on startup TimePing/TimePong clock-offset RTT probes before giving up and announcing readiness uncalibrated. Hard ceiling on the whole probe sequence, not per probe, so a router that never echoes cannot stall worker registration past AIPERF_SERVICE_REGISTRATION_TIMEOUT. Sized for real cluster startup, where the credit ROUTER is commonly not echoing for the first several seconds after a worker container starts. Kubernetes mode only. |
@@ -743,6 +821,8 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | `AIPERF_WORKER_RAW_RECORD_UPLOAD_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds to wait for worker pods to upload raw record files to the controller API after benchmark completion. |
 | `AIPERF_WORKER_DEFAULT_WORKERS_PER_POD` | `10` | ≥ 1, ≤ 100 | Default number of worker subprocesses per Kubernetes worker pod. Each pod downloads the dataset once and shares it across workers via mmap. Packing exists because a node holds only ~65k ephemeral ports, which caps concurrent connections per node; see RuntimeConfig.workers_per_pod |
 | `AIPERF_WORKER_DISPATCHABLE_POD_GRACE_PERIOD_SECONDS` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the Kubernetes controller waits for every worker pod to become dispatchable before allowing a healthy subset to start profiling |
+| `AIPERF_WORKER_RETURN_PROBE_BUDGET` | `30.0` | ≥ 0.0, ≤ 100000.0 | Total seconds a worker may spend probing the credit-RETURN PUSH channel before announcing itself dispatchable. Credit dispatch and credit returns ride two different sockets, so a DEALER that has handshaked with the credit ROUTER proves nothing about the PUSH side; without this gate a worker can be routed credits it can never return, and the phase stalls until a run-level timeout. On expiry the worker announces itself anyway with a warning, because the PUSH client buffers unsendable returns and drains them on reconnect. 0 disables the gate. |
+| `AIPERF_WORKER_RETURN_PROBE_RETRY_DELAY` | `0.1` | ≥ 0.001, ≤ 1000.0 | Seconds between credit-RETURN channel probe attempts. Also sets the attempt count, which is AIPERF_WORKER_RETURN_PROBE_BUDGET divided by this delay. |
 | `AIPERF_WORKER_ROUTER_STALE_EVICTION_MULTIPLIER` | `3.0` | ≥ 1.0, ≤ 100.0 | Worker stale-time multiplier used by the credit router before evicting a silent dispatchable worker |
 | `AIPERF_WORKER_SESSION_CACHE_MAX_ENTRIES` | `100000` | ≥ 1, ≤ 10000000 | Maximum multi-turn sessions cached by each worker before oldest unpinned sessions are evicted |
 
@@ -762,13 +842,11 @@ ZMQ socket and communication configuration. Controls ZMQ socket timeouts, keepal
 | `AIPERF_ZMQ_PUSH_MAX_RETRIES` | `2` | ≥ 1, ≤ 100 | Maximum number of retry attempts when pushing messages to ZMQ PUSH socket |
 | `AIPERF_ZMQ_PUSH_RETRY_DELAY` | `0.1` | ≥ 0.1, ≤ 1000.0 | Delay in seconds between retry attempts for ZMQ PUSH operations |
 | `AIPERF_ZMQ_RCVTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket receive timeout in milliseconds (default: 5 minutes) |
-| `AIPERF_ZMQ_RECONNECT_IVL` | `100` | ≥ 0, ≤ 600000 | Milliseconds before the first reconnect attempt for connecting ZMQ sockets |
-| `AIPERF_ZMQ_RECONNECT_IVL_MAX` | `5000` | ≥ 0, ≤ 600000 | Maximum milliseconds for exponential reconnect backoff on connecting ZMQ sockets |
+| `AIPERF_ZMQ_RECONNECT_IVL` | `100` | ≥ 1, ≤ 100000 | Delay in milliseconds before the first ZMQ reconnect attempt |
+| `AIPERF_ZMQ_RECONNECT_IVL_MAX` | `5000` | ≥ 1, ≤ 100000 | Ceiling in milliseconds on the exponential ZMQ reconnect backoff |
 | `AIPERF_ZMQ_SNDTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket send timeout in milliseconds (default: 5 minutes) |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_IDLE` | `60` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle ZMQ connections |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_INTVL` | `10` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes for ZMQ connections |
-| `AIPERF_ZMQ_RECONNECT_IVL` | `100` | ≥ 1, ≤ 100000 | Delay in milliseconds before the first ZMQ reconnect attempt |
-| `AIPERF_ZMQ_RECONNECT_IVL_MAX` | `5000` | ≥ 1, ≤ 100000 | Ceiling in milliseconds on the exponential ZMQ reconnect backoff |
 | `AIPERF_ZMQ_EVENT_BUS_PROXY_FRONTEND_PORT` | `5663` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy frontend (producers connect here). Single source of truth for the non-k8s comm configs (TCP, dual-bind); k8s pod manifests pull the same value via ``K8sEnvironment.PORTS.EVENT_BUS_PROXY_PUB_FRONTEND`` (defaults match). |
 | `AIPERF_ZMQ_EVENT_BUS_PROXY_BACKEND_PORT` | `5664` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy backend (subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``. |
 

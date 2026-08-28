@@ -14,6 +14,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from aiperf.operator.environment import OperatorEnvironment
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -94,11 +96,13 @@ async def _count_owned_children(
             )
     except ApiException as e:
         raise kopf.TemporaryError(
-            f"apiserver rejected list ({e.status}): {e.reason}", delay=15
+            f"apiserver rejected list ({e.status}): {e.reason}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         raise kopf.TemporaryError(
-            f"apiserver unreachable during list: {e}", delay=15
+            f"apiserver unreachable during list: {e}",
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from e
 
     return _tally_children(

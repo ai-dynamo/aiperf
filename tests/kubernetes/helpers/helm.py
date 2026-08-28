@@ -80,6 +80,9 @@ class HelmValues:
     resources_limits_memory: str = "512Mi"
     """Memory limit for the operator pod."""
 
+    image_pull_secrets: list[str] = field(default_factory=list)
+    """imagePullSecrets names to inject into the operator pod."""
+
     controller_http_url_override: str = ""
     """Chaos-only controller HTTP base URL override."""
 
@@ -114,6 +117,10 @@ class HelmValues:
         args.extend(
             f"operator.watchNamespaces[{index}]={namespace}"
             for index, namespace in enumerate(self.operator_watch_namespaces)
+        )
+        args.extend(
+            f"imagePullSecrets[{index}].name={secret}"
+            for index, secret in enumerate(self.image_pull_secrets)
         )
         if self.controller_http_url_override:
             args.append(

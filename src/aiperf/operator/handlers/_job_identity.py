@@ -22,6 +22,7 @@ from aiperf.kubernetes.cr_refs import (
     JOBSET_PLURAL,
     JOBSET_VERSION,
 )
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.status import StatusBuilder
 
 logger = logging.getLogger(__name__)
@@ -74,12 +75,12 @@ async def current_aiperfjob_body(
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: identity read failed "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: identity read failed: {exc}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
 
     metadata = parent.get("metadata") or {}
@@ -107,7 +108,7 @@ async def current_aiperfjob_resource_version(
         raise kopf.TemporaryError(
             f"AIPerfJob {namespace}/{name}: identity read returned no "
             "metadata.resourceVersion; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         )
     return str(resource_version)
 
@@ -137,12 +138,12 @@ async def owned_aiperfjob_jobset_uid(
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: identity read failed "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: identity read failed: {exc}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
 
     return aiperfjob_jobset_uid(
@@ -185,7 +186,7 @@ def aiperfjob_jobset_uid(
     if jobset_uid is None:
         raise kopf.TemporaryError(
             f"JobSet {jobset_name}: identity read returned no metadata.uid; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         )
     return str(jobset_uid)
 
@@ -253,13 +254,13 @@ async def delete_owned_aiperfjob_jobset(
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: delete failed after {context} "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"JobSet {namespace}/{jobset_name}: delete failed after {context}: "
             f"{exc}; retrying",
-            delay=15,
+            delay=OperatorEnvironment.RECONCILE.STATE_RETRY_DELAY_SECONDS,
         ) from exc
     return True
 
@@ -275,3 +276,20 @@ def fence_status_patch(sb: StatusBuilder, resource_version: str | None) -> None:
         return
     if isinstance(patch, dict):
         patch.setdefault("metadata", {})["resourceVersion"] = resource_version
+
+
+def clear_patch_fence(sb: StatusBuilder) -> None:
+    """Remove any metadata.resourceVersion written by fence_status_patch.
+
+    After monitor_progress writes a terminal phase (via any completion or
+    salvage path), the fence RV is guaranteed stale because try_claim_completion
+    already bumped it by writing the completion-claimed annotation.  Leaving
+    the stale RV causes kopf's MERGE PATCH to 409-conflict and silently drop
+    the phase transition.  Clearing it makes the patch unconditional; the
+    completion-claimed annotation + UID fence provide the stale-write safety.
+    """
+    patch_metadata = getattr(sb._patch, "metadata", None)
+    if patch_metadata is not None:
+        patch_metadata.pop("resourceVersion", None)
+    elif isinstance(sb._patch, dict):
+        (sb._patch.get("metadata") or {}).pop("resourceVersion", None)

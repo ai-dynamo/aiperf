@@ -125,7 +125,10 @@ class WorkerLoad:
     on its own timer by the worker service independently of request work, so it
     is the only signal here that separates a dead worker from a slow one.
     Drives ``evict_stale_workers``."""
-    active_credit_ids: set[int] = field(default_factory=set)
+    # Composite key: (phase, phase_index, credit_id) to avoid collisions during
+    # seamless phase overlap where next phase starts while prior drains and both
+    # phases can have the same bare credit.id values.
+    active_credit_ids: set[tuple[str, int | None, int]] = field(default_factory=set)
     active_sessions: int = 0  # Sticky sessions assigned to this worker
     active_session_ids: set[str] = field(default_factory=set)
     last_sent_at_ns: int = (
@@ -352,7 +355,9 @@ class StickyCreditRouter(CommunicationMixin):
         # would have protected it on.
         self._stale_worker_strikes: dict[str, int] = {}
 
-        self._cancellation_pending: bool = False
+        # Monotonic deadline through which cancellation-related warnings stay
+        # suppressed; see the _cancellation_pending property.
+        self._cancellation_pending_until_ns: int = 0
         self._credits_complete: bool = False
 
         # Snapshot list for iteration - avoids dict.values() overhead in hot path.
@@ -608,14 +613,43 @@ class StickyCreditRouter(CommunicationMixin):
                         load.active_sessions -= 1
                         load.active_session_ids.discard(entry.root_key or routing_key)
 
-        self._track_credit_sent(worker_id, credit.id)
+        self._track_credit_sent(worker_id, credit)
 
         await self._router_client.send_to(worker_id, credit)
+
+    @property
+    def _cancellation_pending(self) -> bool:
+        """Whether a cancellation drain is still expected to be in progress.
+
+        Suppression is time-bounded rather than latched. Cancellation is
+        global (``cancel_all_credits`` cancels every in-flight credit
+        regardless of phase) while ``begin_phase`` is per-phase, so under
+        seamless overlap a warmup drain that cancels *after* profiling has
+        already begun would latch the flag for the entire remaining run --
+        silently disabling reconciliation sends, orphan detection,
+        missed-cycle escalation and in-flight warnings just when they matter
+        most. The window covers exactly the drain the runner waits out.
+        """
+        return time.monotonic_ns() < self._cancellation_pending_until_ns
+
+    @_cancellation_pending.setter
+    def _cancellation_pending(self, value: bool) -> None:
+        """Open a fresh drain window, or close it immediately."""
+        if value:
+            self._begin_cancellation_window()
+        else:
+            self._cancellation_pending_until_ns = 0
+
+    def _begin_cancellation_window(self) -> None:
+        """Open (or extend) the drain window during which warnings are suppressed."""
+        self._cancellation_pending_until_ns = time.monotonic_ns() + int(
+            Environment.TIMING.CANCEL_DRAIN_TIMEOUT * NANOS_PER_SECOND
+        )
 
     async def cancel_all_credits(self) -> None:
         """Send cancellation requests to all workers with in-flight credits."""
         # Mark cancellation first, so we suppress warnings for workers that unregister with in-flight credits.
-        self._cancellation_pending = True
+        self._begin_cancellation_window()
 
         # Build up the map of worker_id to credit_ids snapshot to cancel in an atomic way
         # This works because there are no await calls in this loop, they are all done afterwards.
@@ -626,8 +660,11 @@ class StickyCreditRouter(CommunicationMixin):
                     self.debug(
                         f"Worker {worker_load.worker_id} has {worker_load.in_flight_credits} in-flight credits to cancel: {worker_load.active_credit_ids}"
                     )
+                # Extract credit IDs from composite keys (phase, phase_index, credit_id)
                 # Make sure to use copy of the set to avoid race conditions.
-                to_cancel[worker_load.worker_id] = worker_load.active_credit_ids.copy()
+                to_cancel[worker_load.worker_id] = {
+                    cid for _, _, cid in worker_load.active_credit_ids.copy()
+                }
 
         total_cancelled_credits = 0
         for worker_id, credit_ids in to_cancel.items():
@@ -660,7 +697,7 @@ class StickyCreditRouter(CommunicationMixin):
         phase may still dispatch DAG descendants, so this must touch nothing
         the still-draining phase is using.
         """
-        self._cancellation_pending = False
+        self._cancellation_pending_until_ns = 0
 
     def end_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
         """Phase-drain hook: the router holds no per-phase state to release.
@@ -788,7 +825,7 @@ class StickyCreditRouter(CommunicationMixin):
             case CreditReturn():
                 self._track_credit_returned(
                     worker_id,
-                    message.credit.id,
+                    message.credit,
                     message.cancelled,
                     message.error is not None,
                 )
@@ -1162,7 +1199,7 @@ class StickyCreditRouter(CommunicationMixin):
         if callback := getattr(self, "_on_worker_count_changed", None):
             callback(len(self._workers))
 
-    def _track_credit_sent(self, worker_id: str, credit_id: int) -> None:
+    def _track_credit_sent(self, worker_id: str, credit: Credit) -> None:
         """Update worker load: increment in_flight_credits. Lock-free."""
         if worker_load := self._workers.get(worker_id):
             old_load = worker_load.in_flight_credits
@@ -1170,7 +1207,10 @@ class StickyCreditRouter(CommunicationMixin):
             worker_load.total_sent_credits += 1
             worker_load.virtual_sent_credits += 1
             worker_load.in_flight_credits += 1
-            worker_load.active_credit_ids.add(credit_id)
+            # Composite key: (phase, phase_index, credit_id) to avoid collisions
+            # during seamless phase overlap
+            composite_key = (credit.phase.value, credit.phase_index, credit.id)
+            worker_load.active_credit_ids.add(composite_key)
             worker_load.last_sent_at_ns = time.perf_counter_ns()
 
             new_load = worker_load.in_flight_credits
@@ -1187,11 +1227,12 @@ class StickyCreditRouter(CommunicationMixin):
             self._warn_missing_worker(worker_id, "sent")
 
     def _track_credit_returned(
-        self, worker_id: str, credit_id: int, cancelled: bool, error_reported: bool
+        self, worker_id: str, credit: Credit, cancelled: bool, error_reported: bool
     ) -> None:
         """Update worker load: decrement in_flight_credits. Lock-free."""
         if worker_load := self._workers.get(worker_id):
-            worker_load.active_credit_ids.discard(credit_id)
+            composite_key = (credit.phase.value, credit.phase_index, credit.id)
+            worker_load.active_credit_ids.discard(composite_key)
 
             if cancelled:
                 worker_load.total_cancelled_credits += 1
@@ -1211,7 +1252,7 @@ class StickyCreditRouter(CommunicationMixin):
                     self._min_load = new_load
             else:
                 self.error(
-                    f"Worker {worker_id} in_flight_credits already 0 when tracking returned credit {credit_id}"
+                    f"Worker {worker_id} in_flight_credits already 0 when tracking returned credit {credit.id}"
                 )
         else:
             self._warn_missing_worker(worker_id, "returned")

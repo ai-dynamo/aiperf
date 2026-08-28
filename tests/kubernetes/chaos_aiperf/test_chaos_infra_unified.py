@@ -44,6 +44,7 @@ import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
 from tests.kubernetes.chaos_aiperf.conftest import wait_for_aiperfjob_phase
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -102,12 +103,14 @@ async def test_k1_image_pull_backoff_surfaces_pending_unified(
     faults,  # noqa: ANN001  (InjectorRegistry; typed at fixture site)
     operator_job_namespace: str,
     kubectl: KubectlClient,
+    k8s_settings,  # noqa: ANN001
 ) -> None:
     """A non-existent image surfaces ``ImagePullBackOff`` on JobSet pods.
 
     Applies an AIPerfJob whose ``spec.image`` is
-    ``ghcr.io/does-not-exist/nope:404`` with ``imagePullPolicy=IfNotPresent``
-    so kubelet actually attempts the pull. Asserts:
+    ``127.0.0.1:12345/nope:latest`` with ``imagePullPolicy=IfNotPresent``
+    so kubelet actually attempts the pull and gets an immediate ECONNREFUSED.
+    Asserts:
 
     * Within 90 s, at least one pod in ``operator_job_namespace`` has a
       container status whose ``waiting.reason`` is ``ImagePullBackOff`` or
@@ -128,8 +131,9 @@ async def test_k1_image_pull_backoff_surfaces_pending_unified(
         concurrency=1,
         request_count=10,
         warmup_request_count=0,
-        image="ghcr.io/does-not-exist/nope:404",
+        image="127.0.0.1:12345/nope:latest",
         image_pull_policy="IfNotPresent",
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     manifest = bad_image_config.to_cr_manifest(name, operator_job_namespace)
 
@@ -185,17 +189,20 @@ async def test_k1_image_pull_backoff_surfaces_pending_unified(
         )
 
         # The CR must now reach Failed once the pod pull error is visible.
+        # PENDING_CRITICAL_THRESHOLD_SECONDS=90s + kopf timer scheduling latency
+        # means the operator can take 90-120s to mark the CR Failed after it
+        # first detects the backoff; give 180s of total slack.
         try:
             observed_phase = await wait_for_aiperfjob_phase(
                 kubectl,
                 operator_job_namespace,
                 name,
                 ("Failed",),
-                timeout=120.0,
+                timeout=180.0,
             )
         except TimeoutError as exc:
             pytest.fail(
-                f"K1: CR did not reach Failed within 120 s after pod "
+                f"K1: CR did not reach Failed within 180 s after pod "
                 f"{pull_pod!r} surfaced ErrImagePull/ImagePullBackOff "
                 f"({exc!s})"
             )
@@ -231,6 +238,7 @@ async def test_k2_dns_resolution_failure_fails_fast_unified(
         request_count=10,
         warmup_request_count=0,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     manifest = dns_failure_config.to_cr_manifest(name, operator_job_namespace)
 
@@ -310,6 +318,7 @@ async def test_k3_resource_quota_exhaustion_fails_fast_unified(
         request_count=10,
         warmup_request_count=0,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     manifest = config.to_cr_manifest(name, operator_job_namespace)
 
@@ -329,19 +338,21 @@ async def test_k3_resource_quota_exhaustion_fails_fast_unified(
             manifest=manifest,
         ),
     ):
-        # Poll for up to 120 s: quota admission rejection must now
+        # Poll for up to 180 s: quota admission rejection must now
         # surface on the CR as Failed, not only in namespace events.
+        # PENDING_CRITICAL_THRESHOLD_SECONDS=90s + kopf timer scheduling
+        # means the operator can take 90-120s; 180s gives adequate margin.
         try:
             observed_phase = await wait_for_aiperfjob_phase(
                 kubectl,
                 operator_job_namespace,
                 name,
                 ("Failed",),
-                timeout=120.0,
+                timeout=180.0,
             )
         except TimeoutError as exc:
             pytest.fail(
-                f"K3: CR did not reach Failed within 120 s after "
+                f"K3: CR did not reach Failed within 180 s after "
                 f"ResourceQuota {quota_name!r} rejected pod admission "
                 f"({exc!s})"
             )

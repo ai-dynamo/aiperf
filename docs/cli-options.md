@@ -1981,11 +1981,11 @@ Kueue WorkloadPriorityClass name for scheduling priority.
 
 #### `--annotations` `<str>`
 
-Additional pod annotations.
+Additional pod annotations (KEY=VALUE, JSON object, or --annotations.KEY VALUE).
 
 #### `--labels` `<str>`
 
-Additional pod labels.
+Additional pod labels (KEY=VALUE, JSON object, or --labels.KEY VALUE).
 
 ### Kubernetes Secrets
 
@@ -1995,15 +1995,15 @@ Image pull secret names.
 
 #### `--env-vars` `<str>`
 
-Extra environment variables (key: value).
+Extra environment variables (NAME=value, JSON object, or --env-vars.NAME value).
 
 #### `--env-from-secrets` `<str>`
 
-Environment variables from secrets (ENV_NAME: secret_name/key).
+Environment variables from secrets (ENV_NAME=secret_name/key, JSON object, or --env-from-secrets.ENV_NAME secret_name/key).
 
 #### `--secret-mounts` `<list>`
 
-Secret volume mounts.
+Secret volume mounts as JSON object/array or repeated JSON values.
 
 #### `--service-account` `<str>`
 
@@ -3574,11 +3574,11 @@ Kueue WorkloadPriorityClass name for scheduling priority.
 
 #### `--annotations` `<str>`
 
-Additional pod annotations.
+Additional pod annotations (KEY=VALUE, JSON object, or --annotations.KEY VALUE).
 
 #### `--labels` `<str>`
 
-Additional pod labels.
+Additional pod labels (KEY=VALUE, JSON object, or --labels.KEY VALUE).
 
 ### Kubernetes Secrets
 
@@ -3588,15 +3588,15 @@ Image pull secret names.
 
 #### `--env-vars` `<str>`
 
-Extra environment variables (key: value).
+Extra environment variables (NAME=value, JSON object, or --env-vars.NAME value).
 
 #### `--env-from-secrets` `<str>`
 
-Environment variables from secrets (ENV_NAME: secret_name/key).
+Environment variables from secrets (ENV_NAME=secret_name/key, JSON object, or --env-from-secrets.ENV_NAME secret_name/key).
 
 #### `--secret-mounts` `<list>`
 
-Secret volume mounts.
+Secret volume mounts as JSON object/array or repeated JSON values.
 
 #### `--service-account` `<str>`
 
@@ -5173,11 +5173,11 @@ Kueue WorkloadPriorityClass name for scheduling priority.
 
 #### `--annotations` `<str>`
 
-Additional pod annotations.
+Additional pod annotations (KEY=VALUE, JSON object, or --annotations.KEY VALUE).
 
 #### `--labels` `<str>`
 
-Additional pod labels.
+Additional pod labels (KEY=VALUE, JSON object, or --labels.KEY VALUE).
 
 ### Kubernetes Secrets
 
@@ -5187,15 +5187,15 @@ Image pull secret names.
 
 #### `--env-vars` `<str>`
 
-Extra environment variables (key: value).
+Extra environment variables (NAME=value, JSON object, or --env-vars.NAME value).
 
 #### `--env-from-secrets` `<str>`
 
-Environment variables from secrets (ENV_NAME: secret_name/key).
+Environment variables from secrets (ENV_NAME=secret_name/key, JSON object, or --env-from-secrets.ENV_NAME secret_name/key).
 
 #### `--secret-mounts` `<list>`
 
-Secret volume mounts.
+Secret volume mounts as JSON object/array or repeated JSON values.
 
 #### `--service-account` `<str>`
 
@@ -5378,6 +5378,10 @@ When job_id is an AIPerfSweep name, target child variation index (0..199). Resol
 
 Trial index (0..9) within a sweep variation. Requires -v.
 
+#### `--ignore-not-found`, `--no-ignore-not-found`
+
+Exit 0 instead of 1 when the benchmark does not exist (mirrors kubectl).
+
 ### Kubernetes
 
 #### `--kubeconfig` `<str>`
@@ -5483,6 +5487,10 @@ When job_id is an AIPerfSweep name, target child variation index (0..199). Resol
 #### `-t`, `--trial` `<int>`
 
 Trial index (0..9) within a sweep variation. Requires -v.
+
+#### `--ignore-not-found`, `--no-ignore-not-found`
+
+Exit 0 instead of 1 when the benchmark does not exist (mirrors kubectl).
 
 ### Kubernetes
 

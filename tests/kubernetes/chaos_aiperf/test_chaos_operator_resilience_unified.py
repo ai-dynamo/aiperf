@@ -39,6 +39,7 @@ from tests.kubernetes.chaos.chaos_injector import (
 )
 from tests.kubernetes.chaos_aiperf.conftest import wait_for_aiperfjob_phase
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -60,6 +61,7 @@ def longrun_config(k8s_settings) -> AIPerfJobConfig:
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 

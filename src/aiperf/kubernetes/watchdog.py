@@ -181,10 +181,8 @@ class BenchmarkWatchdog:
         self._last_status_time: float = 0.0
         self._last_pod_snapshot: list[WatchdogPodSnapshot] = []
         self._completed_pods: set[str] = set()
-        self._event_check_interval: int = 3  # Check events every Nth tick
-        self._resource_check_interval: int = (
-            6  # Check pod resources every Nth tick (~30s)
-        )
+        self._event_check_interval = wd_env.EVENT_CHECK_INTERVAL_TICKS
+        self._resource_check_interval = wd_env.RESOURCE_CHECK_INTERVAL_TICKS
         self._peak_memory: dict[str, int] = {}
         self._node_check_done: bool = False
         self._stale_ns_check_done: bool = False

@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from tests.kubernetes.audit.operator_runner import OperatorAuditRunner
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
@@ -38,13 +39,16 @@ async def test_download_results_passes_explicit_kube_context_and_kubeconfig(
     """
     dest_dir = tmp_path / "operator"
     deployer = SimpleNamespace(
-        kubectl=KubectlClient(context="kind-aiperf-test", kubeconfig="/tmp/kc")
+        kubectl=KubectlClient(context="kind-aiperf-test", kubeconfig="/tmp/kc"),
+        OPERATOR_NAMESPACE=DEFAULT_OPERATOR_NAMESPACE,
     )
     runner = OperatorAuditRunner(deployer=deployer)
 
     async def _fake_exec(*cmd: str, **kwargs: object) -> _Proc:
         assert "--kube-context" in cmd
         assert "kind-aiperf-test" in cmd
+        assert "--operator-namespace" in cmd
+        assert cmd[cmd.index("--operator-namespace") + 1] == DEFAULT_OPERATOR_NAMESPACE
         assert kwargs["env"]["KUBECONFIG"] == "/tmp/kc"
         dest_dir.mkdir(parents=True, exist_ok=True)
         (dest_dir / "profile_export_aiperf.json").write_text("{}", encoding="utf-8")
@@ -66,7 +70,8 @@ async def test_download_results_prefers_explicit_kubeconfig_over_deployer_defaul
     """Caller-provided kubeconfig wins over the deployer's default."""
     dest_dir = tmp_path / "operator"
     deployer = SimpleNamespace(
-        kubectl=KubectlClient(context="kind-aiperf-test", kubeconfig="/tmp/default-kc")
+        kubectl=KubectlClient(context="kind-aiperf-test", kubeconfig="/tmp/default-kc"),
+        OPERATOR_NAMESPACE=DEFAULT_OPERATOR_NAMESPACE,
     )
     runner = OperatorAuditRunner(deployer=deployer)
 

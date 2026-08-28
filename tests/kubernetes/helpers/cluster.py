@@ -162,15 +162,17 @@ async def timed_operation(operation: str) -> AsyncIterator[None]:
 
 
 class ClusterRuntime(str, Enum):
-    """Supported local Kubernetes cluster runtimes."""
+    """Supported Kubernetes cluster runtimes."""
 
     KIND = "kind"
     MINIKUBE = "minikube"
+    EXISTING = "existing"
+    """Pre-existing remote cluster; creation/deletion and image-load are no-ops."""
 
 
 @dataclass
 class ClusterConfig:
-    """Configuration for a local Kubernetes cluster."""
+    """Configuration for a Kubernetes cluster."""
 
     name: str = "aiperf-pytest"
     """Cluster name used for identification and context."""
@@ -195,6 +197,9 @@ class ClusterConfig:
 
     device_plugin_version: str = DEVICE_PLUGIN_VERSION
     """NVIDIA device plugin DaemonSet version."""
+
+    context_override: str | None = None
+    """Explicit kubectl context string; required for ClusterRuntime.EXISTING."""
 
 
 # ============================================================================
@@ -731,6 +736,42 @@ class MinikubeBackend:
 
 
 # ============================================================================
+# Existing remote cluster backend
+# ============================================================================
+
+
+class ExistingRemoteBackend:
+    """No-op backend for pre-existing remote clusters (e.g. GCP DGX).
+
+    Cluster creation, deletion, and image loading are all skipped; the
+    cluster is assumed to already exist and images are assumed to be
+    available in a remote registry.
+    """
+
+    def __init__(self, context: str) -> None:
+        self._context = context
+
+    @property
+    def context_name(self) -> str:
+        return self._context
+
+    async def exists(self) -> bool:
+        return True
+
+    async def create(self) -> None:
+        logger.info(f"Skipping cluster creation (existing remote: {self._context})")
+
+    async def delete(self) -> None:
+        logger.info(f"Skipping cluster deletion (existing remote: {self._context})")
+
+    async def image_loaded(self, image: str) -> bool:
+        return True
+
+    async def load_image(self, image: str) -> None:
+        logger.info(f"Skipping image load for {image!r} (existing remote cluster)")
+
+
+# ============================================================================
 # Backend factory
 # ============================================================================
 
@@ -739,6 +780,9 @@ def _create_backend(config: ClusterConfig) -> ClusterBackend:
     """Create the appropriate backend for the given config."""
     if config.runtime is ClusterRuntime.KIND:
         return KindBackend(config)
+    if config.runtime is ClusterRuntime.EXISTING:
+        ctx = config.context_override or config.name
+        return ExistingRemoteBackend(ctx)
     return MinikubeBackend(config)
 
 
@@ -833,11 +877,12 @@ class LocalCluster:
         ]
 
     async def __aenter__(self) -> LocalCluster:
-        """Context manager entry - create cluster."""
-        await self.create()
+        """Context manager entry - create cluster (no-op for EXISTING runtime)."""
+        if self.config.runtime is not ClusterRuntime.EXISTING:
+            await self.create()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit - delete cluster if we created it."""
+        """Context manager exit - delete cluster if we created it (no-op for EXISTING)."""
         if self._created:
             await self.delete()

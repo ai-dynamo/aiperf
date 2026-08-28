@@ -165,6 +165,7 @@ class TestAttachSweepChildResolution:
 
     @pytest.mark.asyncio
     async def test_attach_missing_sweep_child_skips_attach(self) -> None:
+        """The child name is still resolved before the exit-1 on absence."""
         from aiperf.cli_commands.kube.attach import attach
 
         opts = KubeManageOptions(namespace="tenant-a")
@@ -177,6 +178,7 @@ class TestAttachSweepChildResolution:
                 "aiperf.kubernetes.attach.attach_to_benchmark",
                 new=AsyncMock(),
             ) as mock_attach,
+            pytest.raises(SystemExit) as exc_info,
         ):
             await attach(
                 job_id="missing-sweep",
@@ -187,6 +189,7 @@ class TestAttachSweepChildResolution:
 
         assert mock_resolve.await_args.args == ("missing-sweep-v03-t1", "tenant-a")
         mock_attach.assert_not_awaited()
+        assert exc_info.value.code == 1
 
 
 # ============================================================
@@ -241,6 +244,7 @@ class TestLogsSweepChildResolution:
 
     @pytest.mark.asyncio
     async def test_logs_missing_sweep_child_skips_pod_log_fetch(self) -> None:
+        """The child name is still resolved before the exit-1 on absence."""
         from aiperf.cli_commands.kube.logs import logs
 
         opts = KubeManageOptions(namespace="tenant-a")
@@ -257,6 +261,7 @@ class TestLogsSweepChildResolution:
                 "aiperf.cli_commands.kube.logs._print_pod_logs",
                 new=AsyncMock(),
             ) as mock_print,
+            pytest.raises(SystemExit) as exc_info,
         ):
             await logs(
                 job_id="missing-sweep", manage_options=opts, variation=2, trial=0
@@ -265,6 +270,7 @@ class TestLogsSweepChildResolution:
         assert mock_resolve.call_args.args == ("missing-sweep-v02-t0", "tenant-a")
         mock_save.assert_not_awaited()
         mock_print.assert_not_awaited()
+        assert exc_info.value.code == 1
 
 
 # ============================================================

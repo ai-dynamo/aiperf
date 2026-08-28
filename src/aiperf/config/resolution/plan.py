@@ -25,6 +25,7 @@ from aiperf.config.sweep import (
     _GridSweepBase,
 )
 from aiperf.config.sweep.multi_run import MultiRunConfig
+from aiperf.config.user_files import RunMeta
 from aiperf.plugin.enums import (
     CustomDatasetType,
     DatasetSamplingStrategy,
@@ -461,6 +462,14 @@ class BenchmarkRun(BaseModel):
         "the runtime process. Runtime type: "
         "aiperf.config.plot.PlotEnvelopeConfig | None. Typed ``Any`` to avoid "
         "the same plot-module import cycle as BenchmarkPlan.plot.",
+    )
+    run_meta: RunMeta | None = Field(
+        default=None,
+        description="Explicit run identity (epoch, job_name, namespace) for "
+        "artifacts.user_files rendering. Set by the Kubernetes launcher, whose "
+        "artifact_dir is a fixed mount path carrying no epoch or job name. None "
+        "on local paths, where ArtifactDirResolver derives it from the resolved "
+        "artifact dir instead.",
     )
     resolved: ResolvedConfig = Field(
         default_factory=ResolvedConfig,

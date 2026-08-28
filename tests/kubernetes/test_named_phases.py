@@ -10,15 +10,25 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
 
-def _named_phase_manifest(*, name: str, namespace: str, image: str) -> dict[str, Any]:
+def _named_phase_manifest(
+    *,
+    name: str,
+    namespace: str,
+    image: str,
+    image_pull_policy: str = "IfNotPresent",
+    tolerations: list[dict] | None = None,
+) -> dict[str, Any]:
     config = AIPerfJobConfig(
         request_count=5,
         warmup_request_count=0,
         concurrency=1,
         image=image,
+        image_pull_policy=image_pull_policy,
+        tolerations=tolerations or [],
     )
     manifest = yaml.safe_load(config.to_cr_manifest(name, namespace))
     manifest["spec"]["benchmark"]["phases"] = [
@@ -60,6 +70,10 @@ async def test_named_phases_are_complete_and_profiling_results_are_filtered(
         name=name,
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
     await operator_ready.kubectl.apply(yaml.safe_dump(manifest, sort_keys=False))

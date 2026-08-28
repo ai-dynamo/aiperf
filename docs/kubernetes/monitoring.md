@@ -123,6 +123,21 @@ Save all pod logs to a directory (one file per pod):
 aiperf kube logs --output ./my-logs
 ```
 
+The closing line counts what actually reached disk (`Saved logs for 7 of 8
+pod(s) to ./my-logs/logs/`), and any pod whose `kubectl logs` call failed gets
+its own warning with the exit code and stderr. When nothing was written the
+closing line is a warning, not a success.
+
+### Exit Codes in Scripts
+
+`attach` and `logs` exit `1` when the benchmark you named does not exist, so
+they work as CI existence checks. A benchmark that exists but has no pods left
+(TTL-collected) still exits `0`. Pass `--ignore-not-found` — same spelling and
+meaning as `kubectl`'s — to force exit `0` for a missing benchmark in teardown
+scripts. The other addressing commands (`cancel`, `delete`, `shutdown`, `debug`,
+`list`) always exit `0`; see the [exit-code
+convention](./workflow.md#exit-code-convention-for-target-addressing-commands).
+
 ---
 
 ## Debugging Failed Benchmarks

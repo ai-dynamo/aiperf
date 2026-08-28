@@ -16,8 +16,9 @@ baked into pod manifests) and ``aiperf.common.environment.Environment``
 """
 
 from pathlib import Path
+from typing import Self
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
@@ -41,6 +42,13 @@ class _MonitorSettings(BaseSettings):
         ge=0,
         le=300,
         description="Seconds before first progress check after job creation",
+    )
+    MISSING_JOBSET_SETTLE_DELAY_SECONDS: float = Field(
+        default=2.0,
+        ge=0,
+        le=60,
+        description="Seconds to wait before re-reading an AIPerfJob whose JobSet "
+        "disappeared, allowing a concurrent completion status patch to settle.",
     )
 
 
@@ -82,6 +90,54 @@ class _ResultsSettings(BaseSettings):
         ge=0,
         le=60,
         description="Seconds between result fetch retries",
+    )
+    DOWNLOAD_TIMEOUT_SECONDS: float = Field(
+        default=300.0,
+        gt=0,
+        le=3600,
+        description="Total timeout in seconds for one controller result-file download.",
+    )
+    DOWNLOAD_MAX_CONCURRENCY: int = Field(
+        default=5,
+        ge=1,
+        le=128,
+        description="Maximum result files downloaded concurrently from one controller.",
+    )
+    RETRY_MAX_DELAY_SECONDS: float = Field(
+        default=30.0,
+        ge=0,
+        le=600,
+        description="Maximum backoff delay in seconds between result-fetch attempts.",
+    )
+    RETRY_BACKOFF_MULTIPLIER: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description="Multiplicative backoff factor between result-fetch attempts.",
+    )
+    CLEANUP_INTERVAL_SECONDS: float = Field(
+        default=86400.0,
+        gt=0,
+        le=604800,
+        description="Seconds between job and sweep result-retention passes.",
+    )
+    CLEANUP_INITIAL_DELAY_SECONDS: float = Field(
+        default=3600.0,
+        ge=0,
+        le=604800,
+        description="Seconds before the first per-job result-retention pass.",
+    )
+    CLEANUP_IDLE_SECONDS: float = Field(
+        default=3600.0,
+        ge=0,
+        le=604800,
+        description="Minimum idle seconds before a per-job result-retention timer runs.",
+    )
+    GZIP_MINIMUM_SIZE_BYTES: int = Field(
+        default=500,
+        ge=0,
+        le=1048576,
+        description="Minimum response size in bytes compressed by the results API.",
     )
     TTL_DAYS: int = Field(
         default=30,
@@ -160,6 +216,13 @@ class _ResultsSettings(BaseSettings):
         ),
     )
 
+    @model_validator(mode="after")
+    def validate_retry_delay_ceiling(self) -> Self:
+        """Keep exponential retry backoff from shrinking its initial delay."""
+        if self.RETRY_MAX_DELAY_SECONDS < self.RETRY_DELAY:
+            raise ValueError("RETRY_MAX_DELAY_SECONDS must be >= RETRY_DELAY")
+        return self
+
 
 class _ProgressSettings(BaseSettings):
     """Operator progress-client retry settings.
@@ -176,6 +239,12 @@ class _ProgressSettings(BaseSettings):
         ge=0,
         le=20,
         description="Max retry attempts on transient progress-API failures.",
+    )
+    REQUEST_TIMEOUT_SECONDS: float = Field(
+        default=10.0,
+        gt=0,
+        le=300,
+        description="Total timeout in seconds for an ordinary progress-API request.",
     )
     INITIAL_BACKOFF_SEC: float = Field(
         default=0.5,
@@ -200,6 +269,48 @@ class _SweepControllerSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_SWEEP_CONTROLLER_")
 
+    CHILD_POLL_INTERVAL_SECONDS: float = Field(
+        default=5.0,
+        gt=0,
+        le=300,
+        description="Seconds between child AIPerfJob terminal-phase polls.",
+    )
+    CANCEL_POLL_INTERVAL_SECONDS: float = Field(
+        default=10.0,
+        gt=0,
+        le=300,
+        description="Seconds between parent AIPerfSweep cancellation-flag polls.",
+    )
+    RECOVERY_SUMMARY_CONCURRENCY: int = Field(
+        default=8,
+        ge=1,
+        le=128,
+        description="Maximum concurrent child-summary fetches during sweep recovery.",
+    )
+    OPERATOR_API_MAX_ATTEMPTS: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Maximum attempts to fetch one child summary from the operator API.",
+    )
+    OPERATOR_API_REQUEST_TIMEOUT_SECONDS: float = Field(
+        default=30.0,
+        gt=0,
+        le=600,
+        description="Total timeout in seconds for one operator-API summary request.",
+    )
+    OPERATOR_API_INITIAL_BACKOFF_SECONDS: float = Field(
+        default=1.0,
+        ge=0,
+        le=60,
+        description="Initial backoff seconds after a transient operator-API failure.",
+    )
+    OPERATOR_API_BACKOFF_MULTIPLIER: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description="Operator-API retry backoff multiplier.",
+    )
     STALE_CHILD_DELETION_TIMEOUT_SECONDS: float = Field(
         default=60.0,
         gt=0,
@@ -262,6 +373,68 @@ class _SweepControllerSettings(BaseSettings):
         "when a user (or the kube garbage collector) deletes a child AIPerfJob "
         "out-of-band mid-run; without this bound the sequential sweep wedges "
         "forever on the deleted variation.",
+    )
+
+    @model_validator(mode="after")
+    def validate_child_poll_deadlines(self) -> Self:
+        """Require terminal polling to sample each bounded child wait at least once."""
+        if self.CHILD_POLL_INTERVAL_SECONDS > self.CANCEL_GRACE_SECONDS:
+            raise ValueError(
+                "CHILD_POLL_INTERVAL_SECONDS must be <= CANCEL_GRACE_SECONDS"
+            )
+        if self.CHILD_POLL_INTERVAL_SECONDS > self.CHILD_MISSING_TIMEOUT_SECONDS:
+            raise ValueError(
+                "CHILD_POLL_INTERVAL_SECONDS must be <= CHILD_MISSING_TIMEOUT_SECONDS"
+            )
+        return self
+
+
+class _ReconcileSettings(BaseSettings):
+    """Retry delays for kopf reconciliation categories."""
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_OPERATOR_RECONCILE_")
+
+    CONFLICT_RETRY_DELAY_SECONDS: float = Field(
+        default=1.0,
+        ge=0,
+        le=300,
+        description="Delay before rebasing status after an optimistic-write conflict.",
+    )
+    RUNS_CAS_MAX_ATTEMPTS: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum resourceVersion CAS attempts when appending status.runs.",
+    )
+    EVENT_RETRY_DELAY_SECONDS: float = Field(
+        default=5.0,
+        ge=0,
+        le=300,
+        description="Delay before retrying a watch-event read or status write.",
+    )
+    PERSISTENCE_RETRY_DELAY_SECONDS: float = Field(
+        default=10.0,
+        ge=0,
+        le=300,
+        description="Delay before retrying transient monitor or durable-state failures.",
+    )
+    STATE_RETRY_DELAY_SECONDS: float = Field(
+        default=15.0,
+        ge=0,
+        le=300,
+        description="Delay before retrying identity-fenced state reconciliation.",
+    )
+    CREATE_HARVEST_RETRY_DELAY_SECONDS: float = Field(
+        default=30.0,
+        ge=0,
+        le=600,
+        description="Delay before retrying resource creation or sweep-result harvest.",
+    )
+    TTL_DELETE_RETRY_DELAY_SECONDS: float = Field(
+        default=60.0,
+        ge=0,
+        le=3600,
+        description="Delay before retrying an expired AIPerfSweep deletion.",
     )
 
 
@@ -371,6 +544,18 @@ class _OperatorEnvironment(BaseSettings):
         le=300,
         description="Seconds to wait for endpoint health check",
     )
+    ENDPOINT_CHECK_DNS_RETRIES: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Number of retry attempts when endpoint DNS resolution fails transiently",
+    )
+    ENDPOINT_CHECK_DNS_RETRY_DELAY: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description="Seconds to wait between DNS retry attempts for endpoint health check",
+    )
     PREFLIGHT_TIMEOUT: float = Field(
         default=30.0,
         gt=0,
@@ -456,7 +641,11 @@ class _OperatorEnvironment(BaseSettings):
     )
     SWEEP_CONTROLLER: _SweepControllerSettings = Field(
         default_factory=_SweepControllerSettings,
-        description="Sweep-controller pod settings (child-create collision handling).",
+        description="Sweep-controller pod settings (child lifecycle and API retries).",
+    )
+    RECONCILE: _ReconcileSettings = Field(
+        default_factory=_ReconcileSettings,
+        description="Kopf reconciliation retry delays grouped by operation semantics.",
     )
     SERVICE: _OperatorServiceSettings = Field(
         default_factory=_OperatorServiceSettings,

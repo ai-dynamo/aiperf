@@ -84,6 +84,35 @@ class TestWorkerFloor:
 
 class TestRouterDoesNotDecideTheBreach:
     @pytest.mark.asyncio
+    async def test_eviction_uses_configured_stale_multiplier(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sweep cutoff is STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER.
+
+        Eviction is two-strike confirmed, so the cutoff reaches the candidate
+        scan on every sweep but only reaches ``_evict_worker_ids`` on the
+        second consecutive sweep that still finds the worker stale.
+        """
+        from aiperf.common.environment import Environment
+
+        router = _router(alive=1, peak=1)
+        router._stale_worker_candidates = MagicMock(return_value=["w-0"])
+        router._evict_worker_ids = MagicMock()
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 7.0)
+        monkeypatch.setattr(
+            Environment.WORKER, "ROUTER_STALE_EVICTION_MULTIPLIER", 4.25
+        )
+
+        await router._evict_stale_workers_task()
+
+        router._stale_worker_candidates.assert_called_once_with(29.75)
+        router._evict_worker_ids.assert_not_called()
+
+        await router._evict_stale_workers_task()
+
+        router._evict_worker_ids.assert_called_once_with(["w-0"], 29.75)
+
+    @pytest.mark.asyncio
     async def test_breach_is_left_for_timing_manager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

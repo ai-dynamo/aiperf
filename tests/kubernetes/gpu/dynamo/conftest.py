@@ -22,6 +22,7 @@ from tests.kubernetes.gpu.conftest import (
     LocalCluster,
     _build_dynamo_from_source,
     _dump_diagnostics,
+    _ensure_hf_token_secret,
     _ensure_user_pull_secrets,
     _log_events,
     _log_pod_statuses,
@@ -437,15 +438,14 @@ async def dynamo_config(
 
     if mode == DynamoMode.DISAGGREGATED_1GPU:
         # Single-GPU disaggregated runs prefill + decode concurrently on the same
-        # physical GPU. Designed for DEDICATED GPU environments where most of the
-        # GPU's VRAM is free. On shared clusters, use disagg mode instead (each
-        # worker gets its own GPU via resource requests). At 0.06 each worker
-        # claims ~11 GiB (0.06 × 184 GiB) + ~3 GiB overhead = ~14 GiB, so two
-        # workers need ~28 GiB — requires at least 30 GiB free on the node.
+        # physical GPU. Use gpu_memory_utilization from settings (default 0.2) so
+        # larger models (e.g. Llama 3.1 8B, ~16 GiB) have room for KV cache.
+        # Two workers at 0.2 each claim ~38 GiB on a 192 GiB GB200 — well within
+        # the 96 GiB / 192 GiB per-GPU budgets.
         return DynamoConfig.single_gpu_disagg(
             **common_overrides,
             max_model_len=s.max_model_len,
-            gpu_memory_utilization=0.06,
+            gpu_memory_utilization=s.mem_util,
             runtime_class_name=s.runtime_class,
         )
 
@@ -479,6 +479,7 @@ async def dynamo_server(
         return
 
     await _ensure_user_pull_secrets(kubectl, s, dynamo_config.namespace)
+    await _ensure_hf_token_secret(kubectl, s, dynamo_config.namespace)
     await _release_gpu(kubectl, dynamo_config.namespace)
     deployer = DynamoDeployer(kubectl=kubectl, config=dynamo_config)
 

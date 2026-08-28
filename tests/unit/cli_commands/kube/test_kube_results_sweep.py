@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 
 from aiperf.cli_commands.kube.results import (
@@ -474,10 +475,14 @@ class _FakeResponse:
                 message="error",
             )
 
+    async def read(self) -> bytes:
+        return orjson.dumps(self._json_body)
+
     async def json(self, *, loads: object | None = None) -> dict:
-        if loads is None:
-            raise AssertionError("aiohttp response JSON must pass orjson.loads")
-        return self._json_body
+        raise AssertionError(
+            "results_operator must read the raw body so gzip-encoded JSON "
+            "listings decode correctly; resp.json() is not gzip-aware"
+        )
 
 
 class _FakeSession:

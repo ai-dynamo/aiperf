@@ -29,6 +29,7 @@ from aiperf.kubernetes.console import (
 )
 from aiperf.kubernetes.constants import Containers
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.logs import save_pod_logs
 from aiperf.kubernetes.port_forward import port_forward_with_status
 from aiperf.kubernetes.results import (
@@ -151,7 +152,10 @@ async def _resolve_controller_pod(
     """Return the controller pod name, optionally waiting for Running."""
     if wait_for_ready:
         pod_name = await wait_for_controller_pod_ready(
-            api, namespace, job_id, timeout=300
+            api,
+            namespace,
+            job_id,
+            timeout=K8sEnvironment.CONTROLLER_POD_READY.TIMEOUT_SECONDS,
         )
         print_success(f"Controller pod ready: {pod_name}")
         return pod_name
@@ -222,9 +226,9 @@ async def auto_attach_workflow(
         namespace: Namespace containing the AIPerfJob.
         attach_port: Local port for the port-forward (pass ``0`` for an
             ephemeral port).
-        wait_for_ready: If True, wait up to 300s for the controller pod to
-            reach ``Running``. If False and no pod exists yet, raises
-            ``RuntimeError``.
+        wait_for_ready: If True, wait for the controller pod to reach
+            ``Running`` using the configured readiness timeout. If False and
+            no pod exists yet, raises ``RuntimeError``.
         stream_ws: If True, stream progress via the controller's WebSocket
             (requires port-forward). If False, tail controller pod logs.
         kubeconfig: Path to kubeconfig file (falls back to in-cluster /
@@ -234,7 +238,7 @@ async def auto_attach_workflow(
     Raises:
         RuntimeError: ``wait_for_ready=False`` and no controller pod found.
         TimeoutError: ``wait_for_ready=True`` and the controller pod did
-            not reach ``Running`` within 300s.
+            not reach ``Running`` within the configured readiness timeout.
         ConnectionError: WebSocket streaming failed after all retries
             (raised from :func:`stream_progress_from_api`).
         ApiException: Underlying Kubernetes API error.

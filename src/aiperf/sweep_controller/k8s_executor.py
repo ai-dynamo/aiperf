@@ -64,8 +64,6 @@ TRIAL_INDEX_LABEL = "aiperf.nvidia.com/trial-index"
 TERMINAL_PHASES = frozenset(
     {"Completed", "Succeeded", "Failed", "Cancelled", "PartiallyFailed"}
 )
-DEFAULT_POLL_INTERVAL_SECONDS = 5.0
-_RECOVERY_SUMMARY_CONCURRENCY = 8
 
 
 def _summary_race_refresh_attempts() -> int:
@@ -96,7 +94,6 @@ def _summary_race_refresh_seconds() -> float:
 
 
 __all__ = [
-    "DEFAULT_POLL_INTERVAL_SECONDS",
     "RUN_IDENTITY_ANNOTATION",
     "SWEEP_LABEL",
     "SWEEP_RUN_EPOCH_LABEL",
@@ -441,7 +438,9 @@ class K8sChildJobExecutor(RunExecutor):
         self, candidates: list[_RecoveryCandidate]
     ) -> list[RunResult]:
         """Collect durable summaries with bounded operator-API concurrency."""
-        semaphore = asyncio.Semaphore(_RECOVERY_SUMMARY_CONCURRENCY)
+        semaphore = asyncio.Semaphore(
+            OperatorEnvironment.SWEEP_CONTROLLER.RECOVERY_SUMMARY_CONCURRENCY
+        )
 
         async def collect(candidate: _RecoveryCandidate) -> RunResult:
             async with semaphore:
@@ -1031,7 +1030,7 @@ class K8sChildJobExecutor(RunExecutor):
         run: BenchmarkRun,
         *,
         expected_child_uid: str,
-        poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        poll_interval: float | None = None,
         cancel_check: Callable[[], bool] | None = None,
     ) -> RunResult | None:
         """Poll the child until status.phase reaches a terminal value.
@@ -1056,6 +1055,11 @@ class K8sChildJobExecutor(RunExecutor):
         while the sequential sweep advances. A reappearing child clears the
         deadline.
         """
+        poll_seconds = (
+            poll_interval
+            if poll_interval is not None
+            else OperatorEnvironment.SWEEP_CONTROLLER.CHILD_POLL_INTERVAL_SECONDS
+        )
         cancel_patched = False
         cancel_deadline: float | None = None
         missing_deadline: float | None = None
@@ -1109,7 +1113,7 @@ class K8sChildJobExecutor(RunExecutor):
                         artifacts_path=run.artifact_dir,
                         was_cancelled=True,
                     )
-            await asyncio.sleep(poll_interval)
+            await asyncio.sleep(poll_seconds)
 
     @staticmethod
     def _advance_missing_child_state(
@@ -1468,15 +1472,21 @@ class K8sChildJobExecutor(RunExecutor):
         # as "metrics unrecoverable" and the variation falls out of the
         # parent aggregate. 4xx (404, 422 epoch allowlist) is permanent
         # and short-circuits.
-        max_attempts = 3 if retry else 1
-        backoff = 1.0
+        settings = OperatorEnvironment.SWEEP_CONTROLLER
+        max_attempts = settings.OPERATOR_API_MAX_ATTEMPTS if retry else 1
+        backoff = settings.OPERATOR_API_INITIAL_BACKOFF_SECONDS
         last_status: int | None = None
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             try:
                 async with (
                     aiohttp.ClientSession() as session,
-                    session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp,
+                    session.get(
+                        url,
+                        timeout=aiohttp.ClientTimeout(
+                            total=settings.OPERATOR_API_REQUEST_TIMEOUT_SECONDS
+                        ),
+                    ) as resp,
                 ):
                     last_status = resp.status
                     if resp.status == 200:
@@ -1494,7 +1504,7 @@ class K8sChildJobExecutor(RunExecutor):
                 last_exc = e
             if attempt < max_attempts:
                 await asyncio.sleep(backoff)
-                backoff *= 2
+                backoff *= settings.OPERATOR_API_BACKOFF_MULTIPLIER
         else:
             if last_exc is not None:
                 logger.debug(

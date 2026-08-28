@@ -1948,6 +1948,63 @@ class _WorkerSettings(BaseSettings):
         default=20,
         description="Recent worker clock-offset observations retained by the min filter",
     )
+    CLOCK_OFFSET_MAX_ABS_SEC: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=3600.0,
+        description="Absolute plausibility bound in seconds on a single worker "
+        "clock-offset sample. A sample whose magnitude exceeds this is discarded "
+        "instead of entering the min-filter window, because no credit can plausibly "
+        "carry an issue timestamp that far from the receiving worker's clock. Set "
+        "to 0 to disable the bound. Kubernetes mode only.",
+    )
+    CLOCK_OFFSET_OUTLIER_FACTOR: float = Field(
+        ge=0.0,
+        le=1000.0,
+        default=4.0,
+        description="Multiplier on the median absolute deviation of the offset "
+        "window below which a new clock-offset sample is rejected as a low outlier. "
+        "Low outliers are the dangerous ones: the estimator is a minimum, so a "
+        "single spuriously low sample would set the correction for the whole "
+        "window. Set to 0 to disable low-outlier rejection. Kubernetes mode only.",
+    )
+    CLOCK_OFFSET_OUTLIER_FLOOR_SEC: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=0.001,
+        description="Floor in seconds on the low-outlier rejection band, so a window "
+        "of near-identical samples (median absolute deviation near zero) does not "
+        "reject every subsequent sample. Kubernetes mode only.",
+    )
+    CLOCK_OFFSET_RESET_AFTER_REJECTS: int = Field(
+        ge=1,
+        le=10000,
+        default=10,
+        description="Consecutive low-outlier rejections after which the clock-offset "
+        "window is cleared and re-seeded. A sustained run of rejections means the "
+        "true offset stepped down (controller restart, NTP step), not that the "
+        "samples are bad, so the filter must follow it. Kubernetes mode only.",
+    )
+    CLOCK_PROBE_MAX_RTT_SEC: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=1.0,
+        description="Plausibility bound in seconds on a single TimePing/TimePong "
+        "round trip. A probe slower than this is discarded rather than used as the "
+        "baseline RTT, because a probe queued behind real credits or delayed by a "
+        "GC pause would otherwise halve into a wildly overstated one-way transit "
+        "estimate. Set to 0 to disable the bound. Kubernetes mode only.",
+    )
+    CLOCK_REMEASURE_INTERVAL: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=300.0,
+        description="Interval in seconds between worker baseline-RTT re-measurements. "
+        "The startup probe alone goes stale for the rest of the run when the "
+        "controller restarts or the network path changes, so the probe repeats on "
+        "this cadence. Raise it past the run duration to keep the startup probe as "
+        "the only measurement. Kubernetes mode only.",
+    )
     CLOCK_PROBE_COUNT: int = Field(
         ge=1,
         le=1000,
@@ -2056,6 +2113,27 @@ class _WorkerSettings(BaseSettings):
         default=5.0,
         description="Seconds the Kubernetes controller waits for every worker pod to "
         "become dispatchable before allowing a healthy subset to start profiling",
+    )
+    RETURN_PROBE_BUDGET: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=30.0,
+        description="Total seconds a worker may spend probing the credit-RETURN "
+        "PUSH channel before announcing itself dispatchable. Credit dispatch and "
+        "credit returns ride two different sockets, so a DEALER that has "
+        "handshaked with the credit ROUTER proves nothing about the PUSH side; "
+        "without this gate a worker can be routed credits it can never return, "
+        "and the phase stalls until a run-level timeout. On expiry the worker "
+        "announces itself anyway with a warning, because the PUSH client buffers "
+        "unsendable returns and drains them on reconnect. 0 disables the gate.",
+    )
+    RETURN_PROBE_RETRY_DELAY: float = Field(
+        ge=0.001,
+        le=1000.0,
+        default=0.1,
+        description="Seconds between credit-RETURN channel probe attempts. Also "
+        "sets the attempt count, which is "
+        "AIPERF_WORKER_RETURN_PROBE_BUDGET divided by this delay.",
     )
     ROUTER_STALE_EVICTION_MULTIPLIER: float = Field(
         ge=1.0,

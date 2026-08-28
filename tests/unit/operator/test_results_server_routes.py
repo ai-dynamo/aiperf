@@ -218,15 +218,20 @@ def test_gzip_middleware_present(tmp_path: Path) -> None:
     )
 
 
-def test_gzip_middleware_minimum_size_is_500(tmp_path: Path) -> None:
-    """Tiny responses (health checks) must skip compression overhead."""
+def test_gzip_middleware_minimum_size_uses_environment_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tiny responses below the configured floor skip compression overhead."""
     from starlette.middleware.gzip import GZipMiddleware
 
+    from aiperf.operator.environment import OperatorEnvironment
     from aiperf.operator.results_server import create_app
+
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "GZIP_MINIMUM_SIZE_BYTES", 777)
 
     app = create_app(results_dir=tmp_path)
     gzip_mw = next(m for m in app.user_middleware if m.cls is GZipMiddleware)
-    assert gzip_mw.kwargs["minimum_size"] == 500
+    assert gzip_mw.kwargs["minimum_size"] == 777
 
 
 @pytest.mark.asyncio

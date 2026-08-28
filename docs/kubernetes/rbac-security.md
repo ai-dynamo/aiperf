@@ -21,10 +21,13 @@ to namespace-scoped `Role`s so that nothing they hold reaches cluster scope.
 The split lets cluster admins pre-provision the operator's cluster-wide
 RBAC once (under a security review), then hand developers a `Role` template
 that cannot escalate beyond the benchmark namespace. Developers never touch
-cluster-scoped resources. Within a benchmark namespace the grant is coarser:
-controller and worker pods share one ServiceAccount, so every pod holds the
-union of what the controller needs. Namespace boundaries, not per-pod roles,
-are what separate tenants.
+cluster-scoped resources. Within a benchmark namespace, controller and worker
+pods share one ServiceAccount, so every pod holds the union of what the
+controller needs. Because that union is what a compromised worker inherits, it
+is held to exactly the operations a pod performs: `patch` on its own AIPerfJob
+and JobSet, and read-only access to everything else. No benchmark pod can
+create, replace, or delete any object. Namespace boundaries are still what
+separate tenants — see [Least-privilege recipe](#least-privilege-recipe).
 
 ```mermaid
 flowchart TB
@@ -92,9 +95,9 @@ speculatively.
 | `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:76-78` |
 | `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml:81-83` |
 | `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml:86-88` |
-| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs` | `clusterrole.yaml:104-106` |
-| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:109-111` |
-| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events and let benchmark pods read them for UI display | `clusterrole.yaml:114-116` |
+| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs`. Deliberately no `patch` — see the comment above the rule, and the `test_clusterrole_pods_restart_event_path_is_read_only` guard it names | `clusterrole.yaml:109-111` |
+| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:114-116` |
+| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events for AIPerfJob diagnostics | `clusterrole.yaml:119-121` |
 
 The binding
 (`deploy/helm/aiperf-operator/templates/clusterrolebinding.yaml:10-17`) connects
@@ -114,11 +117,14 @@ operator-created Role below, it does not follow
 | API group | Resources | Verbs | Purpose | Source |
 |---|---|---|---|---|
 | `""` (core) | `pods` | `get, list, watch` | Workers discover controller and peer record processors via pod labels | `benchmark-rbac.yaml:19-21` |
-| `jobset.x-k8s.io` | `jobsets` | `get, list, watch, patch, update` | Controller patches JobSet status to signal graceful completion | `benchmark-rbac.yaml:24-26` |
-| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch, update` | Controller reads AIPerfJob spec and patches per-phase progress fields | `benchmark-rbac.yaml:29-31` |
+| `jobset.x-k8s.io` | `jobsets` | `get, list, watch, patch` | Controller patches JobSet annotations to signal graceful completion | `benchmark-rbac.yaml:27-29` |
+| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch` | Controller reads AIPerfJob spec and patches per-phase progress fields | `benchmark-rbac.yaml:33-35` |
 
-This chart-managed Role grants no create or delete verbs and no access to
-Secrets or Events. It is not, however, the whole grant.
+This chart-managed Role grants no create, update, or delete verbs and no access
+to Secrets or Events. `patch` without `update` is deliberate: both writers issue
+JSON-patch requests against annotations and `status`, so the whole-object `PUT`
+that `update` authorizes is never needed and would let a pod rewrite `spec`.
+It is not, however, the whole grant.
 
 ### Operator-created per-job Role
 
@@ -126,29 +132,65 @@ On every AIPerfJob reconcile the operator also creates a `Role` named
 `<jobset>-role` and a `RoleBinding` named `<jobset>-binding` in the benchmark
 namespace, owned by the AIPerfJob CR so it is garbage-collected with the job.
 The rules live in `RBACSpec._RULES`
-(`src/aiperf/kubernetes/resources.py:201-249`); the create path is
+(`src/aiperf/kubernetes/resources.py:211-269`); the create path is
 `_create_rbac` in `src/aiperf/operator/handlers/create.py:275-294`. The
 `RoleBinding` subject is `podTemplate.serviceAccountName`, falling back to
 `default`, so it lands on the same identity the benchmark pods run under.
 
 | API group | Resources | Verbs |
 |---|---|---|
-| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch, update` |
-| `""` (core) | `configmaps` | `get, list, watch, create, update, patch, delete` |
+| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status` | `get, list, watch, patch` |
+| `""` (core) | `configmaps` | `get, list, watch` |
 | `""` (core) | `pods`, `pods/log` | `get, list, watch` |
-| `""` (core) | `services`, `endpoints` | `get, list, watch, create, delete` |
-| `""` (core) | `events` | `get, list, watch, create, patch` |
+| `""` (core) | `services`, `endpoints` | `get, list, watch` |
+| `""` (core) | `events` | `get, list, watch` |
 | `batch` | `jobs` | `get, list, watch` |
-| `jobset.x-k8s.io` | `jobsets` | `get, list, watch, create, update, patch, delete` |
+| `jobset.x-k8s.io` | `jobsets` | `get, list, watch, patch` |
 | `jobset.x-k8s.io` | `jobsets/status` | `get, list, watch` |
 
-The effective permission set for benchmark pods is therefore the union of this
-Role and the chart-managed one. Benchmark pods still have no access to Secrets,
-but they do hold create and delete verbs on `configmaps`, `services`,
-`endpoints`, and `jobsets`, plus create and patch on `events`. Treat the
-benchmark namespace as a single trust boundary: any pod in it can create a
-JobSet, and therefore run arbitrary containers under the same ServiceAccount.
-That is the concrete reason for the per-team namespace rule below.
+The effective permission set for benchmark pods is the union of this Role and
+the chart-managed one, and `patch` on `aiperfjobs`/`aiperfjobs/status` and
+`jobsets` is the only write verb in it. Everything else is read-only.
+Benchmark pods have no access to Secrets, ServiceAccounts, or RBAC objects.
+
+Because controller and worker pods share one ServiceAccount and the token is
+mounted in every container, the grant is scoped to exactly what in-pod code
+calls:
+
+- **`aiperfjobs` `get`/`patch`** — `signal_benchmark_complete`
+  (`src/aiperf/kubernetes/completion_signal.py`) sets the
+  benchmark-complete annotation, and the controller pod's API container pushes
+  per-phase progress into `status` (`src/aiperf/api/routers/progress.py`).
+  Both patches are UID-fenced with a JSON-patch `test` op so a pod from a
+  replaced incarnation cannot mutate the current CR.
+- **`jobsets` `get`/`patch`** — the same API container writes JobSet
+  annotations, after verifying the JobSet's `ownerReferences` name the expected
+  AIPerfJob UID.
+- **`pods` `list`, `pods/log` `get`, `events` `list`** — peer discovery, the
+  heartbeat watchdog (`src/aiperf/kubernetes/watchdog_source.py`), and
+  cross-namespace server-metrics endpoint discovery.
+
+Nothing in a pod creates, replaces, or deletes anything. The run config arrives
+as a kubelet-mounted ConfigMap volume rather than an API read, the headless
+Service for pod DNS is provisioned by the JobSet controller via
+`network.enableDNSHostnames`, JobSet deletion is the operator's job
+(`delete_jobset` has no in-pod caller), and Events are emitted by the operator
+under its own ClusterRole. `create` on `jobsets` in particular used to be
+granted here; it let any compromised pod launch a JobSet, and therefore run
+arbitrary containers, under the benchmark ServiceAccount.
+
+Widening these verbs is a deliberate blast-radius change, and two mechanical
+guards make it fail CI: `TestRBACSpecLeastPrivilege` in
+`tests/unit/kubernetes/test_resources.py` pins the exact verb set per rule and
+rejects every mutating verb other than `patch`, and
+`test_helm_benchmark_rbac_is_subset_of_rbac_spec` in the same file requires the
+chart's benchmark Role to stay a subset of `RBACSpec._RULES`, so the Python and
+Helm copies cannot drift apart.
+
+What remains reachable from a compromised benchmark pod is status and annotation
+spoofing on its own job: it can report a false phase or a false completion, and
+it can read every pod, ConfigMap, Service, Endpoint, Event, and Job in the
+namespace. That is the concrete reason for the per-team namespace rule below.
 
 The one deliberate exception to namespace confinement is cross-namespace
 server-metrics discovery. Each entry in `serverMetricsDiscoveryNamespaces`
@@ -195,8 +237,15 @@ helm install aiperf-operator ./deploy/helm/aiperf-operator \
   --namespace aiperf-system \
   --set rbac.create=false \
   --set serviceAccount.create=false \
-  --set serviceAccount.name=aiperf-operator-sa
+  --set serviceAccount.name=aiperf-operator-sa \
+  --set tests.enabled=false
 ```
+
+`tests.enabled=false` is what makes the chart emit **zero** `ClusterRole` and
+`ClusterRoleBinding` objects; see
+[Eliminating all cluster-scoped RBAC](#eliminating-all-cluster-scoped-rbac).
+Omit it if you want `helm test` and accept the two `…-tests` cluster-scoped
+objects.
 
 The cluster admin applies the RBAC tree out-of-band. A minimal example
 mirroring the chart defaults:
@@ -246,10 +295,10 @@ rules:
   verbs: ["get", "list", "watch"]
 - apiGroups: ["jobset.x-k8s.io"]
   resources: ["jobsets"]
-  verbs: ["get", "list", "watch", "patch", "update"]
+  verbs: ["get", "list", "watch", "patch"]
 - apiGroups: ["aiperf.nvidia.com"]
   resources: ["aiperfjobs", "aiperfjobs/status"]
-  verbs: ["get", "list", "watch", "patch", "update"]
+  verbs: ["get", "list", "watch", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -278,13 +327,48 @@ names are derived from the JobSet, so pre-provisioning the chart-named
 and the job never starts. Do not trim those verbs, even for a single fixed
 namespace.
 
-`rbac.create=false` also does not suppress the `helm test` hook RBAC. The
-chart unconditionally creates an `<fullname>-tests` ServiceAccount, namespaced
-`Role`/`RoleBinding` (`pods: get, list`), and a `ClusterRole`/`ClusterRoleBinding`
-scoped by `resourceNames` to the two AIPerf CRDs
-(`deploy/helm/aiperf-operator/templates/tests/rbac.yaml`). Account for these
-five objects in an RBAC review, or delete them after install if your policy
-forbids chart-managed cluster-scoped bindings.
+### Eliminating all cluster-scoped RBAC
+
+`rbac.create=false` does not suppress the `helm test` hook RBAC, and
+deliberately so. With that flag alone the chart still creates an
+`<fullname>-tests` ServiceAccount, a namespaced `Role`/`RoleBinding`
+(`pods: get, list`), and a `ClusterRole`/`ClusterRoleBinding` scoped by
+`resourceNames` to the two AIPerf CRDs with `get` only
+(`deploy/helm/aiperf-operator/templates/tests/rbac.yaml`). The privilege is
+negligible, but a cluster whose policy is "this chart creates no cluster-scoped
+RBAC" needs a way to reach zero.
+
+Use `tests.enabled=false`:
+
+```bash
+$ helm template aiperf-operator ./deploy/helm/aiperf-operator \
+    --namespace aiperf-system \
+    --set rbac.create=false \
+    --set serviceAccount.create=false \
+    --set serviceAccount.name=aiperf-operator-sa \
+    --set tests.enabled=false \
+  | grep -c '^kind: Cluster'
+0
+```
+
+`tests.enabled` gates the hook Pods and their RBAC together, so neither is left
+referencing the other. `helm test` against a release installed this way prints
+`TEST SUITE: None` and exits 0 — an unambiguous "no tests were defined", not a
+failure.
+
+The flag is separate from `rbac.create` on purpose. `rbac.create=false` means
+"the operator's own RBAC is pre-provisioned out-of-band", which says nothing
+about the chart's smoke-test scaffolding. Folding them together would strip the
+test ServiceAccount while still rendering the hook Pods that name it, so
+`helm test` would fail on pod creation with a `serviceaccount not found` error
+instead of reporting that there is nothing to run.
+
+`test-crd-installed` reads cluster-scoped CustomResourceDefinitions, so its
+`ClusterRole` cannot be narrowed to a namespace — keeping `helm test` and
+reaching zero cluster-scoped RBAC are mutually exclusive. If you disable the
+hooks, run the equivalent checks out-of-band: `kubectl get crd
+aiperfjobs.aiperf.nvidia.com aiperfsweeps.aiperf.nvidia.com` and `aiperf kube
+preflight`.
 
 The helper
 `deploy/helm/aiperf-operator/templates/_helpers.tpl`'s
@@ -544,9 +628,10 @@ A hardened rollout checklist:
 2. **Dedicated benchmark namespace per team** — never share the benchmark
    namespace between teams. Benchmark pods have read access to every pod
    in the namespace (`benchmark-rbac.yaml:19-21`), so coexisting unrelated
-   workloads leak metadata. The operator-created per-job Role widens this
-   further: pods can also create and delete `configmaps`, `services`,
-   `endpoints`, and `jobsets` anywhere in the namespace.
+   workloads leak metadata. The operator-created per-job Role widens the read
+   surface further: pods can also list `configmaps`, `services`, `endpoints`,
+   `events`, and `jobsets` anywhere in the namespace. It grants no write verb
+   beyond `patch` on the pod's own AIPerfJob and JobSet.
 3. **Distinct ServiceAccounts per namespace** — the chart's benchmark
    `RoleBinding` hardcodes `default` and exposes no values key to change it.
    To avoid granting the namespace's `default` SA anything, create your own
@@ -586,7 +671,10 @@ A hardened rollout checklist:
 
 With this profile, a compromised benchmark pod cannot escape its namespace,
 cannot read cluster-wide resources, cannot read Secrets, cannot write outside
-its emptyDir volumes, cannot escalate privilege or run as root, and can only
-reach the LLM endpoint and its own peers. It is not confined *within* the
-namespace: the operator-created per-job Role lets it create JobSets, Services,
-and ConfigMaps there. Namespace-per-team is the boundary that matters.
+its emptyDir volumes, cannot escalate privilege or run as root, cannot create,
+replace, or delete any Kubernetes object, and can only reach the LLM endpoint and
+its own peers. Two capabilities remain inside the namespace: it can read the
+metadata of every pod, ConfigMap, Service, Endpoint, Event, and Job there, and it
+can `patch` annotations and `status` on its own AIPerfJob and JobSet — enough to
+report a false phase or a premature completion for its own run, not enough to
+affect another job. Namespace-per-team is still the boundary that matters.

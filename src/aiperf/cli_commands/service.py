@@ -82,6 +82,9 @@ def service(
         from aiperf.common.environment import Environment
         from aiperf.config.resolution.plan import BenchmarkRun
         from aiperf.kubernetes.serialized_run import read_serialized_run_json
+        from aiperf.kubernetes.user_files import (
+            materialize_serialized_run_user_files,
+        )
 
         # The launcher resolves and freezes one BenchmarkRun for the whole
         # deployment. Re-resolving flags independently in every service can
@@ -97,6 +100,12 @@ def service(
         run = BenchmarkRun.model_validate(orjson.loads(run_json))
         credentials = consume_endpoint_credentials()
         apply_endpoint_credentials(run, credentials, require_resolved=True)
+
+        # Only the SystemController owns a run directory the results sidecar
+        # serves and the operator harvests; worker pods mount a private
+        # /results, so letting them write would produce unharvested copies.
+        if service_type == ServiceType.SYSTEM_CONTROLLER:
+            materialize_serialized_run_user_files(run)
 
         if health_host is not None:
             # CLI argument takes precedence over environment variable

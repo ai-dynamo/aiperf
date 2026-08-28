@@ -7,6 +7,7 @@ builders as pytest fixtures.
 """
 
 import importlib
+import sys
 from typing import Any
 
 import pytest
@@ -46,9 +47,17 @@ def _restore_reloaded_operator_modules():
     This snapshots the live module objects before each test and rebinds them
     afterwards if a reload swapped them out, keeping every test file's
     module-level reference and the production read path pointed at one object.
-    Reloads of ``results_server`` / ``dashboard_proxy`` are handled by their own
-    tests; this guard only needs to repair the shared ``environment`` singleton
-    that those reloads cascade through.
+
+    Restoring the ``environment`` module attribute alone is not enough. Most
+    operator modules bind the singleton at *their* import time (``from
+    aiperf.operator.environment import OperatorEnvironment``), so any module
+    first imported — or itself reloaded — inside a test's reload window captures
+    the post-reload instance. Rebinding only ``environment`` then orphans that
+    instance: the module attribute points at the original, a consumer such as
+    ``routers.mutating_auth`` points at the orphan, and a later
+    ``monkeypatch.setattr`` on the object reachable from the module is invisible
+    to the handler that reads the orphan. So sweep every ``aiperf`` module and
+    repoint each captured reference at the original singleton.
     """
     from aiperf.operator import environment as env_mod
 
@@ -56,8 +65,17 @@ def _restore_reloaded_operator_modules():
     original_singleton = env_mod.OperatorEnvironment
     yield
     current = importlib.import_module("aiperf.operator.environment")
-    if current.OperatorEnvironment is not original_singleton:
-        original_module.OperatorEnvironment = original_singleton
+    if current.OperatorEnvironment is original_singleton:
+        return
+
+    original_module.OperatorEnvironment = original_singleton
+    for name, module in list(sys.modules.items()):
+        if not name.startswith("aiperf.") or module is None:
+            continue
+        if getattr(module, "OperatorEnvironment", original_singleton) is not (
+            original_singleton
+        ):
+            module.OperatorEnvironment = original_singleton
 
 
 # =============================================================================

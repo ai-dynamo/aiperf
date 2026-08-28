@@ -59,6 +59,7 @@ aiperf kube attach [JOB_ID] [OPTIONS]
 | `-p`, `--port` | `0` | Local port for the `kubectl port-forward` tunnel. `0` asks the kernel for an ephemeral port, which avoids conflicts with other `aiperf kube` sessions on the same machine. |
 | `-v`, `--variation` | unset | When `JOB_ID` names an `AIPerfSweep`, the child variation index (`0`..`199`). Resolves to the child `AIPerfJob` named `<sweep>-v<idx:02d>`. |
 | `-t`, `--trial` | unset | Trial index (`0`..`9`) within a sweep variation, resolving to `<sweep>-v<idx:02d>-t<trial>`. Requires `-v`. |
+| `--ignore-not-found` | `false` | Exit `0` instead of `1` when the target benchmark does not exist. Mirrors `kubectl`'s flag of the same name; the error is still printed. |
 | `-n`, `--namespace` | last-benchmark namespace, else `aiperf-benchmarks` | Kubernetes namespace containing the `AIPerfJob`. |
 | `--kubeconfig` | unset | Path to a kubeconfig file. When unset, the CLI first tries in-cluster config, then the default kubeconfig resolution. |
 | `--kube-context` | unset | Context name to select inside the kubeconfig. |
@@ -152,7 +153,8 @@ After 10 consecutive failed reconnects, `ConnectionError` is raised with the und
 | Benchmark completes (`ALL_RECORDS_RECEIVED`) | `0` | Port-forward is torn down cleanly; the `AIPerfJob` continues running to completion on the cluster. |
 | Short-circuit on `phase=Completed` / `phase=Failed` | `0` | No port-forward is opened; the CLI prints a pointer to `results` / `logs`. |
 | `Ctrl-C` during streaming (`KeyboardInterrupt`) | non-zero | `exit_on_error` deliberately re-raises `KeyboardInterrupt` rather than swallowing it. **The remote benchmark is not affected** — attach only tears down its own port-forward and WebSocket. |
-| `resolve_job` could not find the CR or JobSet | `0` | The error is printed via `print_error`, but the command returns without raising, so the shell sees success. Re-run `aiperf kube list` to enumerate available jobs, and do not use `aiperf kube attach` as a CI existence check. |
+| `resolve_job` could not find the CR or JobSet | `1` | The error is printed via `print_error` and the command exits non-zero, so `aiperf kube attach` is usable as a CI existence check. Re-run `aiperf kube list` to enumerate available jobs. Pass `--ignore-not-found` to force exit `0` in a cleanup script that must tolerate an already-deleted benchmark. |
+| No `job_id` given and no last-benchmark record | `1` | Same path: the target could not be addressed at all. `--ignore-not-found` also covers this case. |
 | WebSocket reconnection budget exhausted | `1` | Wrapped by `cli_utils.exit_on_error(title="Error Attaching to Benchmark")`. |
 | `kubectl port-forward` budget exhausted | `1` | Same error wrapper; stderr from `kubectl` is surfaced in the message. |
 

@@ -50,7 +50,6 @@ Shutdown begins only after profiling has started and every registered domain has
 either completed or been evicted after a confirmed service failure. This lifecycle
 gate prevents an empty startup barrier from being mistaken for completed results.
 
-
 Kubernetes result publication is a fail-closed filesystem transaction. Before
 a controller starts benchmark work, and again immediately before export, it
 durably removes any stale ready marker and atomically installs a processing
@@ -61,7 +60,6 @@ or restarted export before that commit leaves top-level artifacts hidden from
 the results sidecar. Kubernetes sweep aggregation uses
 the same durable ready-marker commit after plotting and scratch-artifact pruning
 finish, so the operator never harvests a partially published aggregate tree.
-
 
 ### Dataset Manager
 

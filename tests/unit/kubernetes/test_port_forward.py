@@ -11,13 +11,16 @@ Focuses on:
 
 import asyncio
 from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import aiohttp
 import pytest
 
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import (
     _API_MAX_RETRIES,
+    _monitor_pod_liveness,
+    _wait_for_api_ready,
     _wait_for_port_forward_ready,
     cleanup_port_forward,
     port_forward_to_controller,
@@ -79,6 +82,69 @@ def _make_mock_process(
     proc.wait = AsyncMock()
 
     return proc
+
+
+# ============================================================
+# _monitor_pod_liveness
+# ============================================================
+
+
+async def test_monitor_pod_liveness_uses_configured_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        K8sEnvironment.PORT_FORWARD, "POD_LIVENESS_INTERVAL_SECONDS", 12.5
+    )
+    proc = _make_mock_process()
+    sleep = AsyncMock(side_effect=lambda _: setattr(proc, "returncode", 0))
+    run_command = AsyncMock(return_value=MagicMock(returncode=0, stderr=""))
+
+    with (
+        patch("aiperf.kubernetes.port_forward.asyncio.sleep", sleep),
+        patch("aiperf.kubernetes.subproc.run_command", run_command),
+    ):
+        await _monitor_pod_liveness("ns", "pod-0", proc)
+
+    sleep.assert_awaited_once_with(12.5)
+    run_command.assert_awaited_once_with(
+        ["kubectl", "get", "pod", "pod-0", "-n", "ns", "-o", "name"],
+        timeout=12.5,
+    )
+
+
+async def test_wait_for_api_ready_uses_configured_probe_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(K8sEnvironment.PORT_FORWARD, "API_PROBE_INTERVAL_SECONDS", 1.75)
+    proc = _make_mock_process()
+    unavailable = AsyncMock()
+    unavailable.status = 503
+    unavailable.__aenter__ = AsyncMock(return_value=unavailable)
+    unavailable.__aexit__ = AsyncMock(return_value=None)
+    ready = AsyncMock()
+    ready.status = 200
+    ready.__aenter__ = AsyncMock(return_value=ready)
+    ready.__aexit__ = AsyncMock(return_value=None)
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=[unavailable, ready])
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    sleep = AsyncMock()
+
+    with (
+        patch("aiperf.kubernetes.port_forward.asyncio.sleep", sleep),
+        patch(
+            "aiperf.kubernetes.port_forward.aiohttp.ClientSession",
+            return_value=session,
+        ),
+        patch(
+            "aiperf.transports.aiohttp_client.create_tcp_connector",
+            return_value=MagicMock(),
+        ),
+    ):
+        await _wait_for_api_ready(9090, proc)
+
+    assert sleep.await_args_list == [call(0.5), call(1.75)]
 
 
 # ============================================================
@@ -220,8 +286,15 @@ class TestStartPortForward:
         ):
             await start_port_forward("ns", "pod-0", verify_api=False, timeout=5.0)
 
-    async def test_verify_api_calls_health_endpoint(self) -> None:
-        """When verify_api=True, the /health endpoint is checked."""
+    async def test_verify_api_uses_configured_request_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """API readiness probes use the configured request timeout."""
+        monkeypatch.setattr(
+            K8sEnvironment.PORT_FORWARD,
+            "API_PROBE_REQUEST_TIMEOUT_SECONDS",
+            7.25,
+        )
         mock_proc = _make_mock_process(
             stdout_lines=[b"Forwarding from 127.0.0.1:7777 -> 9090\n"],
         )
@@ -244,7 +317,7 @@ class TestStartPortForward:
             patch(
                 "aiperf.kubernetes.port_forward.aiohttp.ClientSession",
                 return_value=mock_session,
-            ),
+            ) as mock_client_session,
             patch(
                 "aiperf.transports.aiohttp_client.create_tcp_connector",
                 return_value=MagicMock(),
@@ -255,6 +328,8 @@ class TestStartPortForward:
             )
         assert port == 7777
         mock_session.get.assert_called_with("http://127.0.0.1:7777/health")
+        session_timeout = mock_client_session.call_args.kwargs["timeout"]
+        assert session_timeout.total == 7.25
 
     async def test_verify_api_retries_on_process_death(self) -> None:
         """Port-forward is restarted when process dies during API check."""

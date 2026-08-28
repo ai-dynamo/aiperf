@@ -64,19 +64,21 @@ class FakeResponse:
         self._body = body
         self._json_data = json_data
         self.headers = headers or {}
-        self.json_loads = None
+        self.read_calls = 0
         # Mirror results.py iter_chunked contract
         self.content = _Chunks(chunks if chunks is not None else [body])
 
     async def read(self) -> bytes:
+        self.read_calls += 1
+        if self._json_data is not None:
+            return orjson.dumps(self._json_data)
         return self._body
 
     async def json(self, *, loads=None) -> dict:
-        self.json_loads = loads
-        if self._json_data is not None:
-            return self._json_data
-        parser = loads or orjson.loads
-        return parser(self._body)
+        raise AssertionError(
+            "results_operator must read the raw body so gzip-encoded JSON "
+            "listings decode correctly; resp.json() is not gzip-aware"
+        )
 
     def raise_for_status(self) -> None:
         if self.status >= 400:
@@ -394,7 +396,7 @@ class TestListOperatorFiles:
             job_id="job-1",
         )
         assert result == [{"name": "a.json"}, {"name": "b.json"}]
-        assert response.json_loads is orjson.loads
+        assert response.read_calls == 1
 
     @pytest.mark.asyncio
     async def test_404_returns_none(self) -> None:
@@ -519,7 +521,7 @@ class TestDownloadAllOperatorFiles:
     """Verify end-to-end operator file listing/download URL selection."""
 
     @pytest.mark.asyncio
-    async def test_resolve_operator_run_uses_orjson_parser(self) -> None:
+    async def test_resolve_operator_run_parses_raw_body(self) -> None:
         response = FakeResponse(
             body=b'{"latest_epoch":"1714150923"}',
         )
@@ -536,7 +538,7 @@ class TestDownloadAllOperatorFiles:
         )
 
         assert latest == "1714150923"
-        assert response.json_loads is orjson.loads
+        assert response.read_calls == 1
 
     @pytest.mark.asyncio
     async def test_default_download_resolves_latest_epoch_before_listing(

@@ -273,12 +273,12 @@ async def _sweep_parent_is_current(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name}: identity read failed "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name}: identity read failed: {exc}; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
 
     current_uid = (current.get("metadata") or {}).get("uid")
@@ -286,7 +286,7 @@ async def _sweep_parent_is_current(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name}: identity read returned no metadata.uid; "
             "retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         )
     return str(current_uid) == sweep_uid
 
@@ -320,13 +320,13 @@ async def _owned_sweep_jobset_uid(
         raise kopf.TemporaryError(
             f"sweep JobSet {namespace}/{jobset_name}: identity read failed "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"sweep JobSet {namespace}/{jobset_name}: identity read failed: "
             f"{exc}; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
 
     metadata = jobset.get("metadata") or {}
@@ -350,7 +350,7 @@ async def _owned_sweep_jobset_uid(
         raise kopf.TemporaryError(
             f"sweep JobSet {namespace}/{jobset_name}: identity read returned no "
             "metadata.uid; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         )
     return str(jobset_uid)
 
@@ -401,12 +401,12 @@ async def _delete_sweep_jobset(
         raise kopf.TemporaryError(
             f"sweep JobSet {namespace}/{jobset_name}: delete failed "
             f"({exc.status}): {exc.reason}; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"sweep JobSet {namespace}/{jobset_name}: delete failed: {exc}; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
 
 
@@ -536,7 +536,7 @@ async def _commit_sweep_archive(
             f"AIPerfSweep {namespace}/{name} epoch={epoch}: child-lineage "
             f"commit failed ({type(exc).__name__}: {exc}); retrying before "
             "the sweep-controller JobSet is deleted",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
 
     if durable_ref is not None or sweep_uid is not None:
@@ -558,7 +558,7 @@ async def _commit_sweep_archive(
             f"AIPerfSweep {namespace}/{name} epoch={epoch}: latest-pointer "
             f"commit failed ({type(exc).__name__}: {exc}); retrying before "
             "the sweep-controller JobSet is deleted",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
 
     epoch_dir = base_dir / namespace / "sweeps" / name / epoch
@@ -702,13 +702,13 @@ async def _publish_durable_sweep_aggregate_ref(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name}: durable aggregate reference "
             f"publication failed ({exc.status}: {exc.reason}); retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
     except (aiohttp.ClientError, ConnectionError, TimeoutError) as exc:
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name}: durable aggregate reference "
             f"publication failed ({type(exc).__name__}: {exc}); retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
     return True
 
@@ -803,7 +803,7 @@ async def _recover_pre_sentinel_sweep_archive(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} pre-sentinel archive "
             f"commit failed ({type(exc).__name__}: {exc}); retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
     await _commit_existing_sweep_archive(
         base_dir=base_dir,
@@ -835,12 +835,12 @@ async def _handle_zero_download_sweep_harvest(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} sidecar listed {listed} "
             f"file(s) but none downloaded; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         )
     if not _sweep_aggregate_on_disk(aggregate_marker):
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} aggregate sidecar returned no files; retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         )
     if _sweep_harvest_sentinel_path(aggregate_marker).is_file():
         logger.info(
@@ -873,7 +873,7 @@ async def _handle_zero_download_sweep_harvest(
             f"AIPerfSweep {namespace}/{name} aggregate on disk without "
             f"harvest sentinel and JobSet {jobset_name} still exists; "
             f"retrying harvest instead of deleting",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         )
     logger.info(
         f"AIPerfSweep {namespace}/{name} aggregate on disk without harvest "
@@ -1037,7 +1037,7 @@ async def on_aiperfsweep_aggregation_complete(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} aggregate harvest partial "
             f"({fetched.downloaded}/{fetched.listed} files downloaded); retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         )
 
     if not _sweep_aggregate_on_disk(aggregate_marker):
@@ -1052,7 +1052,7 @@ async def on_aiperfsweep_aggregation_complete(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} aggregate harvest incomplete "
             f"(aggregate.json not on disk after fetch); retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         )
 
     # Full success: every advertised file landed and the aggregate parses.
@@ -1078,7 +1078,7 @@ async def on_aiperfsweep_aggregation_complete(
         raise kopf.TemporaryError(
             f"AIPerfSweep {namespace}/{name} archive commit failed "
             f"({type(exc).__name__}: {exc}); retrying",
-            delay=30,
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
         ) from exc
 
     committed = await _commit_sweep_archive(
@@ -1378,9 +1378,9 @@ async def monitor_progress(
     AIPERF_GROUP,
     AIPERF_VERSION,
     AIPERF_PLURAL,
-    interval=86400.0,
-    initial_delay=3600.0,
-    idle=3600.0,
+    interval=OperatorEnvironment.RESULTS.CLEANUP_INTERVAL_SECONDS,
+    initial_delay=OperatorEnvironment.RESULTS.CLEANUP_INITIAL_DELAY_SECONDS,
+    idle=OperatorEnvironment.RESULTS.CLEANUP_IDLE_SECONDS,
 )
 @track_handler("cleanup_old_results")
 async def cleanup_old_results(
@@ -1471,7 +1471,7 @@ async def _run_sweep_results_retention(
         try:
             await asyncio.wait_for(
                 asyncio.Event().wait(),
-                timeout=cleanup.SWEEP_RESULTS_CLEANUP_INTERVAL_SECONDS,
+                timeout=OperatorEnvironment.RESULTS.CLEANUP_INTERVAL_SECONDS,
             )
         except TimeoutError:
             continue

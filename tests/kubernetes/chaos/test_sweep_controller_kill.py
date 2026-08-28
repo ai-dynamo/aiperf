@@ -231,6 +231,7 @@ async def _download_sweep_results(
     namespace: str,
     epoch: str,
     kube_context: str,
+    operator_namespace: str = "aiperf-system",
 ) -> None:
     result = await run_command(
         [
@@ -249,6 +250,8 @@ async def _download_sweep_results(
             "--all",
             "--kube-context",
             kube_context,
+            "--operator-namespace",
+            operator_namespace,
         ],
         timeout=300,
     )
@@ -331,6 +334,7 @@ async def _assert_downloaded_sweep_archive(
             == child_epoch
         )
         child_dir = destination / f"v{variation_index}-t{trial_index}"
+        assert (child_dir / "metrics.json").is_file(), child_dir
         assert (child_dir / "profile_export_aiperf.json").is_file(), child_dir
 
 
@@ -471,7 +475,7 @@ async def test_sweep_controller_kill_resumes_correctly(
             namespace=operator_job_namespace,
             sweep_name=sweep_name,
             deleted_uid=deleted_uid,
-            timeout=120.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can take 120s+
         )
         assert replacement_pod
 

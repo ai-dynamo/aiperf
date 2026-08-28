@@ -116,7 +116,7 @@ async def _process_cr_poll(
     """
     raw = await _poll_cr_status(custom, namespace, job_id)
     if raw is None:
-        if elapsed > 30:
+        if elapsed > K8sEnvironment.WATCH.NOT_FOUND_WARNING_GRACE_SECONDS:
             cli_logger.warning(f"[{elapsed:.0f}s] AIPerfJob {job_id} not found")
         await asyncio.sleep(K8sEnvironment.WATCH.NOT_FOUND_RETRY_INTERVAL_SECONDS)
         return None
@@ -187,7 +187,7 @@ async def watch_job(
     namespace: str,
     job_id: str,
     *,
-    timeout: int = 600,
+    timeout: int | None = None,
     kubeconfig: str | None = None,
     kube_context: str | None = None,
 ) -> dict:
@@ -221,6 +221,9 @@ async def watch_job(
     from aiperf.kubernetes.console import logger as cli_logger
     from aiperf.kubernetes.watchdog import BenchmarkWatchdog, K8sWatchdogSource
 
+    timeout = (
+        K8sEnvironment.WATCH.DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
+    )
     async with k8s_client(kubeconfig=kubeconfig, context=kube_context) as api:
         source = K8sWatchdogSource(api)
         custom = client.CustomObjectsApi(api)

@@ -80,7 +80,7 @@ class K8sTestSettings:
     """Cluster name for identification and context."""
 
     runtime: str = "kind"
-    """Cluster runtime backend (kind or minikube)."""
+    """Cluster runtime backend (kind, minikube, or existing)."""
 
     quick: bool = False
     """Shorthand for reuse + skip build/load/cleanup/preflight."""
@@ -115,8 +115,42 @@ class K8sTestSettings:
     kueue_version: str = KUEUE_VERSION
     """Kueue controller version to install."""
 
-    benchmark_timeout: int = 600
+    benchmark_timeout: int = 1200
     """Benchmark completion timeout in seconds."""
+
+    kube_context: str | None = None
+    """Existing kubectl context for remote cluster mode (implies skip_build, skip_load, reuse_cluster, skip_preflight, existing runtime)."""
+
+    operator_namespace: str = "aiperf-system"
+    """Operator namespace on the cluster."""
+
+    skip_operator_deploy: bool = False
+    """Skip deploying the operator (use existing deployment)."""
+
+    image_pull_secret: str | None = None
+    """imagePullSecret name to inject into benchmark pods."""
+
+    image_pull_policy: str = "Never"
+    """Image pull policy for benchmark and mock-server pods."""
+
+    job_node_selector: str | None = None
+    """Comma-separated key=value node selector labels for AIPerfJob and mock-server pods.
+
+    Example: ``kubernetes.io/arch=amd64``.  When ``kube_context`` is set and
+    this is not specified, defaults to ``kubernetes.io/arch=amd64`` so that
+    benchmark pods land on CPU nodes rather than GPU nodes with taints.
+    """
+
+    tolerate_gpu_nodes: bool = False
+    """When True, add tolerations for nvidia.com/gpu=present:NoSchedule and
+    kubernetes.io/arch=arm64:NoSchedule so benchmark pods can run on GPU nodes.
+    Auto-enabled when kube_context is set and CPU nodes have insufficient capacity.
+    """
+
+    allow_disruptive: bool = False
+    """When True, allow tests marked k8s_disruptive (e.g. CRD deletion) to run.
+    By default these are skipped to protect shared cluster state.
+    """
 
     @property
     def cluster_runtime(self) -> ClusterRuntime:
@@ -136,7 +170,7 @@ def _get_settings(config: pytest.Config) -> K8sTestSettings:
 # Option definitions: (cli_flag, env_var, default, type, help)
 _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-cluster", "K8S_TEST_CLUSTER", None, "str", "Cluster name (default: aiperf-<uuid>)"),
-    ("--k8s-runtime", "K8S_TEST_RUNTIME", "kind", "str", "Cluster runtime: kind or minikube (default: kind)"),
+    ("--k8s-runtime", "K8S_TEST_RUNTIME", "kind", "str", "Cluster runtime: kind, minikube, or existing (default: kind)"),
     ("--k8s-quick", "K8S_TEST_QUICK", None, "bool", "Reuse cluster, skip build/load/cleanup/preflight"),
     ("--k8s-skip-build", "K8S_TEST_SKIP_BUILD", None, "bool", "Skip building Docker images (use existing)"),
     ("--k8s-skip-load", "K8S_TEST_SKIP_LOAD", None, "bool", "Skip loading images into cluster"),
@@ -148,7 +182,15 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-mock-server-image", "K8S_TEST_MOCK_SERVER_IMAGE", "aiperf-mock-server:latest", "str", "Mock server container image"),
     ("--k8s-jobset-version", "K8S_TEST_JOBSET_VERSION", JOBSET_VERSION, "str", "JobSet controller version"),
     ("--k8s-kueue-version", "K8S_TEST_KUEUE_VERSION", KUEUE_VERSION, "str", "Kueue controller version"),
-    ("--k8s-benchmark-timeout", "K8S_TEST_BENCHMARK_TIMEOUT", "300", "int", "Benchmark timeout in seconds"),
+    ("--k8s-benchmark-timeout", "K8S_TEST_BENCHMARK_TIMEOUT", "1200", "int", "Benchmark completion timeout in seconds"),
+    ("--k8s-kube-context", "K8S_TEST_CONTEXT", None, "str", "Use an existing kubectl context (remote cluster mode)"),
+    ("--k8s-operator-namespace", "K8S_TEST_OPERATOR_NAMESPACE", "aiperf-system", "str", "Operator namespace on the cluster"),
+    ("--k8s-skip-operator-deploy", "K8S_TEST_SKIP_OPERATOR_DEPLOY", None, "bool", "Skip deploying the operator (use existing deployment)"),
+    ("--k8s-image-pull-secret", "K8S_TEST_IMAGE_PULL_SECRET", None, "str", "imagePullSecret name for benchmark and mock-server pods"),
+    ("--k8s-image-pull-policy", "K8S_TEST_IMAGE_PULL_POLICY", "Never", "str", "Image pull policy for benchmark pods (Never, IfNotPresent, Always)"),
+    ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
+    ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
+    ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
 ]  # fmt: skip
 
 
@@ -219,6 +261,24 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
             if resolved.get(key) is None:
                 resolved[key] = True
 
+    # --k8s-kube-context implies remote existing-cluster mode
+    if resolved.get("kube_context"):
+        if resolved.get("runtime") is None or resolved.get("runtime") == "kind":
+            resolved["runtime"] = "existing"
+        for key in (
+            "skip_build",
+            "skip_load",
+            "reuse_cluster",
+            "skip_preflight",
+            "skip_operator_deploy",
+        ):
+            if not resolved.get(key):
+                resolved[key] = True
+        if resolved.get("cluster") is None:
+            resolved["cluster"] = resolved["kube_context"]
+        # Allow pods to run on GPU nodes (which have NoSchedule taints on remote clusters)
+        if not resolved.get("tolerate_gpu_nodes"):
+            resolved["tolerate_gpu_nodes"] = True
     # Use stable name when reusing, random name otherwise
     if resolved.get("cluster") is None:
         if resolved.get("reuse_cluster"):
@@ -237,6 +297,9 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "reuse_cluster",
         "skip_preflight",
         "stream_logs",
+        "skip_operator_deploy",
+        "tolerate_gpu_nodes",
+        "allow_disruptive",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -360,6 +423,10 @@ def _run_preflight_checks(settings: K8sTestSettings) -> None:
     from tests.kubernetes.helpers.preflight import PreflightChecker
 
     runtime = settings.cluster_runtime
+
+    # Remote cluster mode: skip local docker/kind/minikube checks
+    if runtime is ClusterRuntime.EXISTING:
+        return
 
     checker = PreflightChecker(
         title="KUBERNETES E2E TEST",
@@ -618,6 +685,20 @@ def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Add k8s marker to all tests in this directory."""
+    try:
+        settings = _get_settings(config)
+        allow_disruptive = settings.allow_disruptive
+    except KeyError:
+        allow_disruptive = False
+
+    skip_disruptive = pytest.mark.skip(
+        reason="k8s_disruptive: makes cluster-wide mutations (CRD deletion, etc). "
+        "Pass --k8s-allow-disruptive or set K8S_TEST_ALLOW_DISRUPTIVE=1 to enable."
+    )
+    skip_needs_toxiproxy = pytest.mark.skip(
+        reason="k8s_needs_toxiproxy: requires toxiproxy infrastructure not available on this cluster."
+    )
+
     for item in items:
         path = str(item.fspath)
         if "kubernetes" in path:
@@ -631,6 +712,11 @@ def pytest_collection_modifyitems(
             # they are never co-located with fault-injection tests that stress
             # the same kind cluster.
             item.add_marker(pytest.mark.xdist_group("kubernetes"))
+
+        if item.get_closest_marker("k8s_disruptive") and not allow_disruptive:
+            item.add_marker(skip_disruptive)
+        if item.get_closest_marker("k8s_needs_toxiproxy"):
+            item.add_marker(skip_needs_toxiproxy)
 
 
 @pytest.fixture(scope="package")
@@ -653,6 +739,7 @@ def cluster_config(k8s_settings: K8sTestSettings) -> ClusterConfig:
         name=k8s_settings.cluster,
         runtime=k8s_settings.cluster_runtime,
         wait_timeout=120,
+        context_override=k8s_settings.kube_context,
     )
 
 
@@ -675,6 +762,11 @@ async def local_cluster(
 
     s = k8s_settings
     cluster = LocalCluster(config=cluster_config)
+
+    if cluster.runtime == ClusterRuntime.EXISTING:
+        logger.info(f"Using existing remote cluster context: {cluster.context}")
+        yield cluster
+        return
 
     root_tmp = tmp_path_factory.getbasetemp().parent
     lock_path = root_tmp / f".aiperf_cluster_{cluster.name}.lock"
@@ -871,12 +963,17 @@ def image_manager(
 async def built_images(
     image_manager: ImageManager,
     k8s_settings: K8sTestSettings,
+    local_cluster: LocalCluster,
 ) -> ImageManager:
     """Build all required Docker images.
 
     Always rebuilds to ensure the image matches the current source code.
     Use --k8s-skip-build to skip building (use existing images).
     """
+    if local_cluster.runtime == ClusterRuntime.EXISTING:
+        logger.info("Skipping image build (existing remote cluster)")
+        return image_manager
+
     if k8s_settings.skip_build:
         missing = [
             key
@@ -992,7 +1089,13 @@ async def jobset_controller(
     """Install the JobSet controller.
 
     This fixture is package-scoped and installs JobSet once per test package.
+    When targeting a remote cluster (skip_operator_deploy=True), the controller
+    is assumed to already be installed; we only verify it is ready.
     """
+    if k8s_settings.skip_operator_deploy:
+        await _ensure_jobset_controller_ready(kubectl)
+        return
+
     version = k8s_settings.jobset_version
     async with timed_operation(f"Installing JobSet controller {version}"):
         url = JOBSET_CRD_URL_TEMPLATE.format(version=version)
@@ -1035,14 +1138,131 @@ async def _ensure_jobset_controller_ready(kubectl: KubectlClient) -> None:
         raise RuntimeError("JobSet controller did not become available after restart")
 
 
-def _render_mock_server_manifest(template: str, image: str) -> str:
+def _parse_node_selector(raw: str | None) -> dict[str, str]:
+    """Parse ``key=value[,key=value]`` node-selector string into a dict."""
+    if not raw:
+        return {}
+    result: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            k, _, v = pair.partition("=")
+            result[k.strip()] = v.strip()
+    return result
+
+
+def _gpu_node_tolerations() -> list[dict]:
+    """Return tolerations that allow pods to run on GPU nodes with standard cloud taints."""
+    return [
+        {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+        {"key": "kubernetes.io/arch", "operator": "Exists", "effect": "NoSchedule"},
+    ]
+
+
+async def _copy_pull_secret_to_namespace(
+    kubectl: KubectlClient, secret_name: str, target_namespace: str
+) -> None:
+    """Copy ``secret_name`` from any accessible namespace into ``target_namespace``."""
+    import re
+
+    existing = await kubectl.run(
+        "get", "secret", secret_name, "-n", target_namespace, check=False
+    )
+    if existing.returncode == 0:
+        logger.info(f"Pull secret {secret_name!r} already in {target_namespace!r}")
+        return
+
+    ns_list = await kubectl.run(
+        "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}", check=False
+    )
+    if ns_list.returncode != 0:
+        logger.warning(
+            f"Cannot list namespaces; pull secret {secret_name!r} may be missing "
+            f"in {target_namespace!r}"
+        )
+        return
+
+    for ns in ns_list.stdout.strip().split():
+        if ns == target_namespace:
+            continue
+        fetch = await kubectl.run(
+            "get", "secret", secret_name, "-n", ns, "-o", "yaml", check=False
+        )
+        if fetch.returncode != 0:
+            continue
+        raw = fetch.stdout
+        raw = re.sub(r"\n\s+namespace:.*", "", raw)
+        raw = re.sub(r"\n\s+resourceVersion:.*", "", raw)
+        raw = re.sub(r"\n\s+uid:.*", "", raw)
+        raw = re.sub(r"\n\s+creationTimestamp:.*", "", raw)
+        logger.info(
+            f"Copying pull secret {secret_name!r} from {ns!r} → {target_namespace!r}"
+        )
+        try:
+            await kubectl.apply(raw, namespace=target_namespace)
+            return
+        except RuntimeError as exc:
+            logger.warning(f"Failed to copy pull secret from {ns!r}: {exc}")
+
+    logger.warning(
+        f"Pull secret {secret_name!r} not found in any namespace; image pull may fail"
+    )
+
+
+def _render_mock_server_manifest(
+    template: str,
+    image: str,
+    pull_policy: str = "Never",
+    pull_secret: str | None = None,
+    node_selector: dict[str, str] | None = None,
+    tolerations: list[dict] | None = None,
+) -> str:
     """Render the configured mock-server image into its static test manifest."""
     if any(character.isspace() for character in image):
         raise ValueError("Mock server image reference must not contain whitespace")
     image_line = "          image: aiperf-mock-server:latest"
     if template.count(image_line) != 1:
         raise RuntimeError("Mock server manifest does not contain its expected image")
-    return template.replace(image_line, f"          image: {image}")
+    manifest = template.replace(image_line, f"          image: {image}")
+    # Also patch the imagePullPolicy line just below the image line
+    manifest = manifest.replace(
+        "          imagePullPolicy: Never",
+        f"          imagePullPolicy: {pull_policy}",
+    )
+    if pull_secret:
+        # Inject imagePullSecrets into the pod spec after the containers block ends
+        secret_block = f"      imagePullSecrets:\n        - name: {pull_secret}\n"
+        manifest = manifest.replace(
+            "      containers:\n",
+            f"{secret_block}      containers:\n",
+            1,
+        )
+    if node_selector:
+        ns_lines = "      nodeSelector:\n"
+        for k, v in node_selector.items():
+            ns_lines += f"        {k}: {v}\n"
+        manifest = manifest.replace(
+            "      containers:\n",
+            f"{ns_lines}      containers:\n",
+            1,
+        )
+    if tolerations:
+        tol_lines = "      tolerations:\n"
+        for t in tolerations:
+            tol_lines += "        - "
+            first = True
+            for k, v in t.items():
+                if first:
+                    tol_lines += f"{k}: {v}\n"
+                    first = False
+                else:
+                    tol_lines += f"          {k}: {v}\n"
+        manifest = manifest.replace(
+            "      containers:\n",
+            f"{tol_lines}      containers:\n",
+            1,
+        )
+    return manifest
 
 
 async def _mock_server_deployment_is_healthy(
@@ -1102,6 +1322,11 @@ async def mock_server(
             flag_path.touch()
         else:
             async with timed_operation("Deploying mock LLM server"):
+                # Ensure pull secret exists in default namespace for mock server pods.
+                if k8s_settings.image_pull_secret:
+                    await _copy_pull_secret_to_namespace(
+                        kubectl, k8s_settings.image_pull_secret, "default"
+                    )
                 manifest_path = project_root / "dev" / "deploy" / "mock-server.yaml"
                 manifest_template = safe_read_template_path(str(manifest_path))
                 if manifest_template is None:
@@ -1111,6 +1336,14 @@ async def mock_server(
                 manifest = _render_mock_server_manifest(
                     manifest_template,
                     k8s_settings.mock_server_image,
+                    pull_policy=k8s_settings.image_pull_policy,
+                    pull_secret=k8s_settings.image_pull_secret,
+                    node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+                    tolerations=(
+                        _gpu_node_tolerations()
+                        if k8s_settings.tolerate_gpu_nodes
+                        else None
+                    ),
                 )
 
                 await kubectl.apply(manifest)
@@ -1208,6 +1441,13 @@ async def benchmark_deployer(
         default_image=k8s_settings.aiperf_image,
         default_namespace=benchmark_namespace,
         default_timeout=k8s_settings.benchmark_timeout,
+        default_image_pull_secrets=(
+            [k8s_settings.image_pull_secret] if k8s_settings.image_pull_secret else []
+        ),
+        image_pull_policy=k8s_settings.image_pull_policy,
+        default_tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
     yield deployer
@@ -1230,6 +1470,9 @@ def benchmark_config(k8s_settings: K8sTestSettings) -> BenchmarkConfig:
         request_count=50,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1241,6 +1484,9 @@ def small_benchmark_config(k8s_settings: K8sTestSettings) -> BenchmarkConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1252,6 +1498,9 @@ def large_benchmark_config(k8s_settings: K8sTestSettings) -> BenchmarkConfig:
         request_count=200,
         warmup_request_count=10,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1311,6 +1560,9 @@ def small_benchmark_config_module(k8s_settings: K8sTestSettings) -> BenchmarkCon
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1444,14 +1696,24 @@ async def operator_deployer(
         project_root=project_root,
         operator_image=k8s_settings.aiperf_image,
         default_job_namespace=operator_job_namespace,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secret=k8s_settings.image_pull_secret,
+        operator_namespace=k8s_settings.operator_namespace,
     )
 
-    # Install CRD (always needed)
-    async with timed_operation("Installing AIPerfJob CRD"):
-        await deployer.install_crd()
+    # Skip CRD install when using an existing remote cluster (CRDs already present)
+    if not k8s_settings.skip_operator_deploy:
+        async with timed_operation("Installing AIPerfJob CRD"):
+            await deployer.install_crd()
 
     # Ensure per-worker job namespace exists for xdist isolation.
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
+
+    # Copy pull secret into the job namespace so pods can pull registry images.
+    if k8s_settings.image_pull_secret:
+        await _copy_pull_secret_to_namespace(
+            kubectl, k8s_settings.image_pull_secret, operator_job_namespace
+        )
 
     yield deployer
 
@@ -1496,7 +1758,11 @@ async def operator_ready(
 
     yield operator_deployer
 
-    if not k8s_settings.skip_cleanup and not k8s_settings.reuse_cluster:
+    if (
+        not k8s_settings.skip_cleanup
+        and not k8s_settings.reuse_cluster
+        and not k8s_settings.skip_operator_deploy
+    ):
         async with timed_operation("Uninstalling operator"):
             await operator_deployer.uninstall_operator()
 
@@ -1509,6 +1775,12 @@ def small_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -1520,6 +1792,12 @@ def large_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=100,
         warmup_request_count=10,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -1552,6 +1830,49 @@ def small_operator_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConf
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
+    )
+
+
+@pytest.fixture
+def operator_audit_config(k8s_settings: K8sTestSettings):  # type: ignore[return]
+    """OperatorAuditConfig built from the active K8sTestSettings.
+
+    Injects the correct image, pull policy, pull secrets, and tolerations so
+    audit tests use the same image as every other operator test.
+    """
+    from tests.kubernetes.audit.operator_runner import OperatorAuditConfig
+
+    return OperatorAuditConfig(
+        image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
+        operator_namespace=k8s_settings.operator_namespace,
+    )
+
+
+@pytest.fixture
+def bare_pod_config(k8s_settings: K8sTestSettings):  # type: ignore[return]
+    """BarePodConfig built from the active K8sTestSettings."""
+    from tests.kubernetes.audit.bare_pod import BarePodConfig
+
+    return BarePodConfig(
+        image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -1601,9 +1922,12 @@ def _create_helm_values(k8s_settings: K8sTestSettings) -> HelmValues:
     return HelmValues(
         image_repository=image_repository,
         image_tag=image_tag,
-        image_pull_policy="Never",
+        image_pull_policy=k8s_settings.image_pull_policy,
         default_image=k8s_settings.aiperf_image,
-        default_image_pull_policy="Never",
+        default_image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=(
+            [k8s_settings.image_pull_secret] if k8s_settings.image_pull_secret else []
+        ),
         storage_enabled=False,
     )
 
@@ -1618,6 +1942,7 @@ async def helm_deployer(
     helm_values: HelmValues,
     operator_deployer: OperatorDeployer,
     worker_namespace_suffix: str,
+    k8s_settings: K8sTestSettings,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Create a Helm deployer (module-scoped).
 
@@ -1639,7 +1964,17 @@ async def helm_deployer(
         operator_namespace=helm_operator_namespace,
         default_job_namespace=helm_job_namespace,
     )
+    await kubectl.run("create", "namespace", helm_operator_namespace, check=False)
     await kubectl.run("create", "namespace", helm_job_namespace, check=False)
+
+    # Copy pull secret into both namespaces so image pulls succeed on remote clusters.
+    if k8s_settings.image_pull_secret:
+        await _copy_pull_secret_to_namespace(
+            kubectl, k8s_settings.image_pull_secret, helm_operator_namespace
+        )
+        await _copy_pull_secret_to_namespace(
+            kubectl, k8s_settings.image_pull_secret, helm_job_namespace
+        )
 
     yield deployer
 
@@ -1688,6 +2023,11 @@ def small_helm_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -1699,6 +2039,11 @@ def small_helm_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
