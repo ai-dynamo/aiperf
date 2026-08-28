@@ -21,6 +21,7 @@ import yaml
 
 from aiperf.common.endpoint_credentials import validate_kubernetes_credential_transport
 from aiperf.common.path_safety import safe_read_template_path
+from aiperf.common.redact import REDACTED_VALUE, redact_string, redact_url
 from aiperf.config import AIPerfConfig
 from aiperf.config.loader import ConfigurationError
 from aiperf.kubernetes import console as kube_console
@@ -215,6 +216,55 @@ def validate_unknown_spec_fields(
             result.warnings.append(msg)
 
 
+
+# Spec/config path segments whose *values* are credentials. Pydantic embeds the
+# offending ``input_value`` in every error string, and ``ValidationResult.errors``
+# is returned verbatim by the unauthenticated ``POST /api/v1/validate`` -- so a
+# malformed ``apiKey``/``headers``/``urls`` entry (exactly the case a user pastes
+# from a real config while debugging) would otherwise cross the HTTP boundary.
+# Only the value is dropped: the field path, the reason, and the offending input
+# type all survive, since that is what makes the error actionable.
+_CREDENTIAL_LOC_SEGMENTS: frozenset[str] = frozenset(
+    {"apikey", "api_key", "headers", "extraheaders", "extra_headers", "url", "urls"}
+)
+
+
+def _loc_is_credential(loc: tuple[Any, ...]) -> bool:
+    """True when any segment of a pydantic error ``loc`` names a credential field."""
+    return any(
+        isinstance(segment, str) and segment.lower() in _CREDENTIAL_LOC_SEGMENTS
+        for segment in loc
+    )
+
+
+def safe_error_text(exc: Exception) -> str:
+    """Render ``exc`` for a ValidationResult without echoing credential values.
+
+    Pydantic errors are re-rendered field-by-field so the ``input_value`` of a
+    credential-bearing field becomes ``<redacted>`` while everything else --
+    the dotted field path, the human-readable reason, the pydantic error type,
+    and the offending input type -- survives intact. Non-pydantic exceptions
+    fall back to substring redaction of embedded headers and URL userinfo.
+    """
+    if not isinstance(exc, pydantic.ValidationError):
+        return redact_url(redact_string(str(exc)))
+
+    errors = exc.errors()
+    lines = [f"{len(errors)} validation error(s) for {exc.title}"]
+    for err in errors:
+        loc = ".".join(str(segment) for segment in err["loc"]) or "<root>"
+        if _loc_is_credential(err["loc"]):
+            shown = REDACTED_VALUE
+        else:
+            shown = redact_url(redact_string(repr(err.get("input"))))
+        lines.append(loc)
+        lines.append(
+            f"  {err['msg']} [type={err['type']}, input_value={shown}, "
+            f"input_type={type(err.get('input')).__name__}]"
+        )
+    return "\n".join(lines)
+
+
 def validate_aiperf_config(
     spec: dict[str, Any], name: str, result: ValidationResult
 ) -> None:
@@ -229,7 +279,7 @@ def validate_aiperf_config(
         TypeError,
         KeyError,
     ) as e:
-        result.errors.append(f"Config validation failed: {e}")
+        result.errors.append(f"Config validation failed: {safe_error_text(e)}")
         return
 
     if not config.benchmark.get_model_names():
@@ -253,7 +303,7 @@ def validate_deployment_config(
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
         converter.to_deployment_config()
     except (pydantic.ValidationError, ValueError, TypeError, KeyError) as e:
-        result.errors.append(f"DeploymentConfig validation failed: {e}")
+        result.errors.append(f"DeploymentConfig validation failed: {safe_error_text(e)}")
 
 
 def validate_endpoint_credential_transport(
@@ -274,7 +324,9 @@ def validate_endpoint_credential_transport(
         TypeError,
         KeyError,
     ) as e:
-        result.errors.append(f"Endpoint credential transport validation failed: {e}")
+        result.errors.append(
+            f"Endpoint credential transport validation failed: {safe_error_text(e)}"
+        )
 
 
 def validate_worker_count(
@@ -351,9 +403,9 @@ def validate_kind_spec(
         prepared, _ = prepare_workload_spec(filtered)
         validate_cr(kind, prepared)
     except pydantic.ValidationError as e:
-        result.errors.append(f"{kind} spec validation failed: {e}")
+        result.errors.append(f"{kind} spec validation failed: {safe_error_text(e)}")
     except (ConfigurationError, ValueError) as e:
-        result.errors.append(str(e))
+        result.errors.append(safe_error_text(e))
 
 
 def validate_manifest(doc: dict[str, Any], *, strict: bool = False) -> ValidationResult:

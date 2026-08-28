@@ -53,7 +53,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
 
     Example:
     ```python
-        from aiperf.common.structs import (
+        from aiperf.credit.messages import (
             Credit, CancelCredits, WorkerDispatchable, WorkerShutdown, CreditReturn
         )
 
@@ -67,7 +67,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             match message:
                 case Credit() as credit:
                     do_some_work(credit)
-                    await dealer.send(CreditReturn(credit_id=credit.id))
+                    await dealer.send(CreditReturn(credit=credit))
                 case CancelCredits(credit_ids=ids):
                     cancel_credits(ids)
 

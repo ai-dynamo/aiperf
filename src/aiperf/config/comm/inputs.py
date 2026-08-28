@@ -127,6 +127,16 @@ class TcpCommunicationConfig(BaseConfig):
         ),
     ]
 
+    credit_return_push_pull_port: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=65535,
+            default=5669,
+            description="Port for the credit-return PUSH/PULL fan-in channel.",
+        ),
+    ]
+
     # Proxy configurations
     event_bus_proxy: Annotated[
         TcpProxyConfig,
