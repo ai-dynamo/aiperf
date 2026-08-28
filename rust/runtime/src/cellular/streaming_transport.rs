@@ -528,7 +528,11 @@ impl BudgetOwnedControllerFrame {
 }
 
 /// One decoded cell event owning its event-window permit.
-struct BudgetOwnedCellEvent {
+///
+/// Crate-visible because it names the driver channel both the Velo event
+/// handler and the binding constructor hand across; its fields stay private so
+/// the permit cannot be separated from the event it paid for.
+pub(crate) struct BudgetOwnedCellEvent {
     route_id: u32,
     event: CellPlacementEvent,
     lease: BudgetLease,
@@ -1278,7 +1282,7 @@ mod tests {
             max_bytes: 4096,
         })
         .unwrap();
-        let mut insert = |slab: &mut PlacementActionSlab, route_id: u32, action: u8| {
+        let insert = |slab: &mut PlacementActionSlab, route_id: u32, action: u8| {
             slab.insert(SlabEntry {
                 handle: PlacementHandleId::new(0),
                 route_id,
