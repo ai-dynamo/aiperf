@@ -13,12 +13,17 @@ use crate::export::capture::ExportCapturePlan;
 
 /// Immutable plan produced by validating the canonical run DTO against the
 /// configured exporter set before any runtime effect.
+///
+/// Fields are private: a plan is only ever produced by hashing its own inputs,
+/// so a caller must not be able to substitute a digest that does not describe
+/// the accompanying capture plan.
+#[derive(Debug, Clone)]
 pub struct ValidatedRunPlan {
     /// BLAKE3 hex digest of the canonical run DTO bytes concatenated with the
     /// sorted factory-receipt bytes.  64 lowercase hex characters.
-    pub canonical_digest: String,
+    canonical_digest: String,
     /// Combined capture requirements across all configured exporters.
-    pub capture_plan: ExportCapturePlan,
+    capture_plan: ExportCapturePlan,
 }
 
 impl ValidatedRunPlan {
@@ -53,6 +58,17 @@ impl ValidatedRunPlan {
             canonical_digest: digest,
             capture_plan,
         }
+    }
+
+    /// The BLAKE3 hex digest binding the canonical run DTO to its sorted
+    /// factory receipts. 64 lowercase hex characters.
+    pub fn canonical_digest(&self) -> &str {
+        &self.canonical_digest
+    }
+
+    /// The combined capture requirements across all configured exporters.
+    pub fn capture_plan(&self) -> &ExportCapturePlan {
+        &self.capture_plan
     }
 }
 
