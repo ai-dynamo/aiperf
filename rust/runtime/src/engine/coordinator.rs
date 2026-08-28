@@ -720,7 +720,16 @@ async fn persist_prepared_report(
         _ => artifact_dir.to_path_buf(),
     };
     tracing::info!("Exporting all records");
-    exporters.run(&finalized, &export_dir, export);
+    // The report JSON is already written and renamed above; the outcomes are
+    // observational only, so a failed sink never reaches back into the report.
+    let outcomes = exporters.run_collect(&finalized, &export_dir, export);
+    for outcome in outcomes.iter().filter(|outcome| !outcome.success) {
+        tracing::debug!(
+            exporter = %outcome.descriptor_id,
+            error = outcome.error_message.as_deref().unwrap_or("unknown"),
+            "exporter outcome recorded as failed"
+        );
+    }
     if let Some(report_commit) = report_commit {
         report_commit
             .commit()

@@ -260,6 +260,16 @@ pub enum InventoryError {
         key_id: String,
     },
 
+    /// An entry digest is not a canonical 64-character BLAKE3 hex string, so
+    /// the bytes it is supposed to name cannot be identified.
+    #[error("package {package_id} carries a malformed digest: {value}")]
+    InvalidEntryDigest {
+        /// Offending package.
+        package_id: String,
+        /// Digest text observed.
+        value: String,
+    },
+
     /// An entry depends on a package the inventory does not carry, so the
     /// closure it publishes is not self-contained.
     #[error("package {package_id} depends on absent package {missing}")]
