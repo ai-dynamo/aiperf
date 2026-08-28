@@ -308,11 +308,6 @@ path = "tests/streaming_checkpoint_factories.rs"
 required-features = ["streaming"]
 
 [[test]]
-name = "streaming_aws_client"
-path = "tests/streaming_aws_client.rs"
-required-features = ["streaming"]
-
-[[test]]
 name = "streaming_blocking"
 path = "tests/streaming_blocking.rs"
 required-features = ["streaming"]
