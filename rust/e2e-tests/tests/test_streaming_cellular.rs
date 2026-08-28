@@ -1,96 +1,100 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-binary cellular streaming product evidence.
+//! Real-binary cellular streaming product coverage.
 //!
-//! The plan places the *no-early-issue* proof here rather than in the V4A
-//! socket-free suite for a specific reason: "nothing was issued" is only
-//! meaningful against a real endpoint that can report what it observed. A
-//! socket-free fixture cannot distinguish a run that refused before issuing
-//! from a run that issued and discarded the reply.
+//! The companion suite `test_streaming_shadow_replay.rs` proves that a single
+//! cellular row refuses before any endpoint issue. These rows prove the
+//! *invariance* half: the topology overlay is not allowed to change the product
+//! decision, the reason for it, or the side effects it leaves behind.
+//!
+//! That distinction matters because a controller partitions work and launches
+//! cell processes. A product that resolved its stream bindings per-cell instead
+//! of once at the controller could easily reach a different decision at
+//! `--cells 4` than at `--cells 2`, or leave one cell's scratch state behind
+//! after the controller refused.
 
 mod common;
 
 #[path = "support/streaming_product.rs"]
 mod support;
 
-use support::{
-    StreamingServerCase, StreamingServerHarness, StreamingSourceKind, StreamingTopology,
-    StreamingTransport,
-};
+use support::{LEAK_NEEDLES, StreamingServerCase, StreamingServerHarness, StreamingTransport};
 
-const FIXTURE: &str = "local_finite_conversation.yaml";
-
-/// A bound cellular streaming run refuses before any prepare acknowledgement,
-/// capacity release, or endpoint issue.
+/// A cellular run and a single-process run reach the same decision for the same
+/// reason.
 ///
-/// The refusal has to precede all three: a controller that acknowledged a
-/// prepare or released capacity before failing would leave the cell's admission
-/// accounting inconsistent with a run that never started.
-#[test]
-fn bound_synthesis_profile_mismatch_refuses_before_any_prepare_or_issue() {
-    let case = StreamingServerCase {
-        name: "cellular_synthesis_profile_mismatch",
-        transport: StreamingTransport::Http,
-        source: StreamingSourceKind::Local,
-        topology: StreamingTopology::Cellular { cells: 2 },
-        expected_status: "failed",
-    };
-    let harness = StreamingServerHarness::start(&case);
-    let outcome = harness.profile(FIXTURE);
+/// The stable refusal strips ports and scratch paths, so an equal comparison
+/// means the two topologies agreed on *why* the product refused rather than
+/// merely on the fact that both exited nonzero.
+#[tokio::test]
+async fn cellular_and_single_process_agree_on_the_streaming_decision() {
+    let single = StreamingServerHarness::start(StreamingServerCase::single_process(
+        "single_process",
+        StreamingTransport::Http,
+    ));
+    let single_outcome = single.profile();
+    single_outcome.assert_refused_naming("single_process", &["scheduled_request"]);
 
-    assert_eq!(outcome.public_status(), "failed");
+    let cellular = StreamingServerHarness::start(StreamingServerCase::cellular(
+        "cellular",
+        StreamingTransport::Http,
+        2,
+    ));
+    let cellular_outcome = cellular.profile();
+    cellular_outcome.assert_refused_naming("cellular", &["scheduled_request"]);
+
     assert_eq!(
-        outcome.prepare_acknowledgements(),
-        0,
-        "nothing may be prepared before the refusal"
+        single_outcome.stable_refusal(),
+        cellular_outcome.stable_refusal(),
+        "the topology overlay must not change the product decision or its reason"
     );
-    assert_eq!(
-        outcome.releases(),
-        0,
-        "nothing may be released before the refusal"
-    );
-    assert_eq!(
-        outcome.endpoint_issues(),
-        0,
-        "nothing may be issued before the refusal"
-    );
+    assert_eq!(single.endpoint_issues().await, 0);
+    assert_eq!(cellular.endpoint_issues().await, 0);
 }
 
-/// A cellular run and a single-process run over the same fixture reach the same
-/// outcome: the topology overlay must not change what the product decides.
-#[test]
-fn cellular_and_single_process_agree_on_the_streaming_outcome() {
-    let single = StreamingServerHarness::start(&StreamingServerCase {
-        name: "http_single_process",
-        transport: StreamingTransport::Http,
-        source: StreamingSourceKind::Local,
-        topology: StreamingTopology::SingleProcess,
-        expected_status: "failed",
-    })
-    .profile(FIXTURE);
-    let cellular = StreamingServerHarness::start(&StreamingServerCase {
-        name: "http_cellular_two_cells",
-        transport: StreamingTransport::Http,
-        source: StreamingSourceKind::Local,
-        topology: StreamingTopology::Cellular { cells: 2 },
-        expected_status: "failed",
-    })
-    .profile(FIXTURE);
+/// Widening the cell count changes nothing a caller can observe.
+///
+/// If bindings were resolved per-cell rather than once, a wider fan-out would
+/// be the row that exposed it: more cells means more chances for one of them to
+/// reach the endpoint before the controller's refusal propagated.
+#[tokio::test]
+async fn a_wider_cell_fan_out_reaches_the_same_decision_without_issuing() {
+    let narrow = StreamingServerHarness::start(StreamingServerCase::cellular(
+        "cellular_two",
+        StreamingTransport::Http,
+        2,
+    ));
+    let narrow_outcome = narrow.profile();
+
+    let wide = StreamingServerHarness::start(StreamingServerCase::cellular(
+        "cellular_four",
+        StreamingTransport::Http,
+        4,
+    ));
+    let wide_outcome = wide.profile();
 
     assert_eq!(
-        single.public_status(),
-        cellular.public_status(),
-        "the topology overlay must not change the streaming outcome"
+        narrow_outcome.stable_refusal(),
+        wide_outcome.stable_refusal(),
+        "the cell count must not change the product decision"
     );
-    assert_eq!(single.logical_membership(), cellular.logical_membership());
-    assert_eq!(single.final_report_order(), cellular.final_report_order());
-}
-
-/// A controller restart and a cell restart converge on one checkpoint result.
-#[test]
-#[ignore = "shadow_replay has no prepare_with_context; guarded by \
-            cellular_and_single_process_agree_on_the_streaming_outcome"]
-fn controller_and_cell_restart_converge_on_one_checkpoint_result() {
-    unimplemented!("un-ignore once a cellular streaming run can commit a generation");
+    assert_eq!(
+        wide.endpoint_issues().await,
+        0,
+        "no cell may issue a request before the controller resolves its bindings"
+    );
+    assert_eq!(
+        wide.captured_inference_requests(),
+        0,
+        "the mock retained an inference body, so a cell reached the endpoint"
+    );
+    for outcome in [&narrow_outcome, &wide_outcome] {
+        assert!(
+            outcome.measurement_artifacts().is_empty(),
+            "a refused cellular run must emit no measurement artifact, found {:?}",
+            outcome.measurement_artifacts()
+        );
+        outcome.assert_no_raw_or_secret_leak(LEAK_NEEDLES);
+    }
 }
