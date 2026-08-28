@@ -121,6 +121,9 @@ impl HostAbiUniverseRecordV1 {
     }
 
     /// Verifies that `self.canonical_digest` matches a freshly computed digest.
+    ///
+    /// Comparison uses `blake3::Hash` constant-time `PartialEq` to avoid
+    /// timing side-channels on the digest comparison.
     pub fn verify_digest(&self) -> bool {
         let expected = Self::compute_digest(
             &self.rustc_exe_digest,
@@ -139,7 +142,15 @@ impl HostAbiUniverseRecordV1 {
             self.target_policy_version,
             self.linker_exe_digest.as_deref(),
         );
-        self.canonical_digest == expected
+        // Constant-time comparison: parse both hex digests to blake3::Hash,
+        // which implements constant-time PartialEq.
+        match (
+            blake3::Hash::from_hex(&expected),
+            blake3::Hash::from_hex(&self.canonical_digest),
+        ) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
     }
 
     /// Returns the `HostAbiUniverseId` for this record.
@@ -216,6 +227,9 @@ impl PluginArtifactBuildRecordV1 {
     }
 
     /// Verifies that `self.canonical_digest` matches a freshly computed digest.
+    ///
+    /// Comparison uses `blake3::Hash` constant-time `PartialEq` to avoid
+    /// timing side-channels on the digest comparison.
     pub fn verify_digest(&self) -> bool {
         let expected = Self::compute_digest(
             &self.universe_digest,
@@ -228,7 +242,13 @@ impl PluginArtifactBuildRecordV1 {
             &self.pre_embed_payload_digest,
             &self.artifact_digest,
         );
-        self.canonical_digest == expected
+        match (
+            blake3::Hash::from_hex(&expected),
+            blake3::Hash::from_hex(&self.canonical_digest),
+        ) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
     }
 
     /// Returns the `PluginArtifactBuildId` for this record.
