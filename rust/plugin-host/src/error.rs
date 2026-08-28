@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Typed error codes for plugin manifest operations.
+//! Typed error codes for plugin manifest and acquisition operations.
+
+use std::path::PathBuf;
 
 /// Errors produced during manifest parsing and normalization.
 #[derive(Debug, thiserror::Error)]
@@ -50,4 +52,36 @@ pub enum ManifestError {
     /// A package declares no category entries.
     #[error("no categories defined")]
     NoCategories,
+}
+
+/// Errors produced during immutable artifact acquisition and staging.
+#[derive(Debug, thiserror::Error)]
+pub enum AcquireError {
+    /// The path at the final component is a symbolic link.
+    #[error("path is a symlink: {0}")]
+    Symlink(PathBuf),
+
+    /// The acquired bytes do not match the expected BLAKE3 digest.
+    #[error("digest mismatch: expected {expected}, got {actual}")]
+    DigestMismatch { expected: String, actual: String },
+
+    /// The staged bytes were tampered with after staging.
+    #[error("tampered staged bytes: {0}")]
+    StagedTamper(PathBuf),
+
+    /// Two plugins claim the same `(loader_id, digest)` with conflicting identity.
+    #[error("conflicting loader identity for digest {digest}: {a} vs {b}")]
+    ConflictingLoaderIdentity {
+        digest: String,
+        a: String,
+        b: String,
+    },
+
+    /// Underlying I/O error.
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Manifest parse or normalization error.
+    #[error("manifest error: {0}")]
+    Manifest(#[from] ManifestError),
 }
