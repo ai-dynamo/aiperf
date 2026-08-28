@@ -2580,8 +2580,11 @@ could not be since the artifact is not reproducible across runs.
 This confirms the scoping in `### Accuracy and compliance`: the gate belongs in
 `aiperf rag score --gate` against an authored reference accuracy, not in
 `aiperf profile`, and the reference's own separation of "run" from "check" is the
-same shape. The 97% constant itself must come from the full `mlcommons/inference`
-checkout; it is not quotable from `e2e-rag/` and this record does not assert it.
+same shape. The gate constant is not quotable from `e2e-rag/` alone; it comes from
+the full `mlcommons/inference` checkout, and because it is registered there as a
+pre-multiplied absolute literal rather than a `reference x fraction` expression, an
+implementation must reproduce `33.95` itself rather than recompute it from whichever
+reference accuracy it records.
 
 Output-length compliance is TEST09's. The verification script is not vendored in
 `e2e-rag/` but is in the same repository at `compliance/TEST09/run_verification.py`,
@@ -3203,8 +3206,13 @@ relative to that directory.
   `measure_indexing_with_chunking.py:388`, `:391`, `:414`, `:450`.
 - The two in-flight knobs and what each is annotated as:
   `reference_mlperf_perf.sh:31`-`:32`, `:72`-`:73`; `user.conf:13`;
-  `reference_SUT.py:202`, `:204`, `:334`-`:349`. LoadGen itself is not vendored in
-  this directory, so neither annotation can be confirmed against its source.
+  `reference_SUT.py:202`, `:204`, `:334`-`:349`. LoadGen is not under `e2e-rag/`
+  but is in the same repository, and reading it settles the annotations:
+  `loadgen/test_settings_internal.cc:787` parses `max_async_queries` only under the
+  `Server` scenario key, `:118` pins it to 1 for `TestScenario::Offline`, and
+  `loadgen/issue_query_controller.cc:437`-`:438` and `:540`-`:542` gate enforcement
+  on Server, so the LoadGen-side annotation describes a knob that is inert in the
+  scenario both workloads are registered under.
 - Input-length drivers the earlier draft misread: uncapped sufficiency view
   `multi_shot_retrieval.py:604`-`:609`; grader's full-content new-candidate
   formatting `:483`-`:486`.
