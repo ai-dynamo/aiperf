@@ -299,7 +299,9 @@ class _ResourceChecksMixin:
         required_mem = ctrl_mem + (worker_mem * self.num_pods)
 
         for quota in quotas:
-            hard = (quota.status.hard or {}) if quota.status else {}
+            # Use spec.hard (set immediately on creation) rather than status.hard
+            # (which may be empty until the quota controller first reconciles).
+            hard = (quota.spec.hard or {}) if quota.spec else {}
             used = (quota.status.used or {}) if quota.status else {}
 
             hard_cpu = hard.get("cpu") or hard.get("requests.cpu")
