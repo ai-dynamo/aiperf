@@ -253,6 +253,28 @@ impl Coordinator {
                 );
             }
         };
+        // The stream resource is admitted before every preparation seam: no
+        // source is opened, no factory prepares, no clock is read, and no lease
+        // is taken until this returns. A refusal here is therefore free of
+        // observable effects at the source or the endpoint. The prepared plan is
+        // dropped: the constructor that consumes it is a later slice, and
+        // retaining a value nothing reads would be dead state.
+        #[cfg(feature = "streaming")]
+        if let Err(error) =
+            self.product_registry
+                .validate_dataset_streams_for_run(&run, &context, &selection)
+        {
+            return failure_with_path(
+                operation,
+                self.distribution_id.clone(),
+                benchmark_id,
+                FailureStageV2::Validation,
+                "invalid_dataset_streams",
+                format!("{error:#}"),
+                Some("run.resources.dataset_streams"),
+                1,
+            );
+        }
         if let Err(error) = self
             .product_registry
             .validate_run(&run, &context, &selection)

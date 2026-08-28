@@ -1754,6 +1754,12 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         ..Resolved::default()
     };
 
+    // Arm only the streaming cross-field rules here. The other rules in
+    // `config::validate` have never executed against a real config, so enabling
+    // them wholesale is a behavior change with an unknown blast radius across
+    // existing authored YAML; that is its own change.
+    crate::config::validate::validate_dataset_streams(&cfg)?;
+
     Ok(BenchmarkRun {
         benchmark_id,
         artifact_dir: inputs.artifact_dir.clone(),

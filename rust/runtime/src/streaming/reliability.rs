@@ -976,6 +976,12 @@ impl PreparedStreamingIssuePolicy {
         &self.digest
     }
 
+    /// Borrow the frozen rules in canonical order.
+    #[must_use]
+    pub const fn rules(&self) -> &[StreamingIssueThresholdRule] {
+        &self.rules
+    }
+
     /// Return the checked exact-code rule, falling back to the sole wildcard.
     pub fn rule_for(
         &self,

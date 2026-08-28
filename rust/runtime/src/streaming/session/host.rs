@@ -12,6 +12,9 @@
 use super::{SessionQuarantineTombstoneView, reliability_view_seal};
 use crate::streaming::{checkpoint::StreamRunIdentity, identity::ContentDigest};
 
+/// Durable budgeted quarantine tombstones minted inside this host subtree.
+pub mod tombstones;
+
 /// Session-host-owned sealed borrow of the retained quarantine tombstone map.
 ///
 /// The borrowed entry slice prevents reliability preparation from moving or

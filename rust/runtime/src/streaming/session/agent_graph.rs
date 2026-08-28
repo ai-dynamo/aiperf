@@ -329,18 +329,20 @@ impl GraphSessionScope {
         }
         successors.push(to);
 
-        let is_target_declared = self.nodes.contains_key(&to);
         let is_source_terminal = matches!(
             self.nodes.get(&from).map(|source| source.state),
             Some(GraphNodeState::Terminal)
         );
-        if !is_target_declared {
-            self.orphan_edges.entry(to).or_default().push(from);
-        } else if !is_source_terminal
-            && let Some(node) = self.nodes.get_mut(&to)
-        {
-            // A predecessor that is already terminal never contributes a count.
-            node.pending_predecessors = node.pending_predecessors.saturating_add(1);
+        match self.nodes.get_mut(&to) {
+            Some(node) => {
+                // A predecessor that is already terminal never contributes a count.
+                if !is_source_terminal {
+                    node.pending_predecessors = node.pending_predecessors.saturating_add(1);
+                }
+            }
+            None => {
+                self.orphan_edges.entry(to).or_default().push(from);
+            }
         }
         self.version = self.version.saturating_add(1);
         Ok(())
