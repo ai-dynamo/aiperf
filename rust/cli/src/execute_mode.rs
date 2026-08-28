@@ -59,6 +59,41 @@ pub const CELL_FLAG: &str = "--cell";
 /// `aiperf --aggregator` refuses unavailable hierarchical aggregation.
 pub const AGGREGATOR_FLAG: &str = "--aggregator";
 
+/// Load and verify the propagated plugin lock, then record its digest as this
+/// process's composed plugin identity.
+///
+/// Records `None` when the environment carries no valid lock, which is the
+/// no-plugins case. A lock that is present but fails to load or whose digest
+/// disagrees with the parent's is fatal: the bundle changed between spawn and
+/// bootstrap, so no run may proceed against it.
+fn record_verified_plugin_lock() {
+    let Some((lock_path, expected_digest)) = crate::plugins::propagate::read_lock_env() else {
+        aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(None);
+        return;
+    };
+    let bundle = match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            tracing::error!(
+                error = format!("{error:#}"),
+                path = %lock_path.display(),
+                "failed to load plugin lock bundle"
+            );
+            std::process::exit(2);
+        }
+    };
+    let actual_digest = bundle.lock().digest.hex.as_str();
+    if let Err(error) =
+        crate::plugins::propagate::verify_propagated_digest(&expected_digest, actual_digest)
+    {
+        tracing::error!(error = %error, "plugin lock attestation failed");
+        std::process::exit(2);
+    }
+    aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(Some(
+        actual_digest.to_owned(),
+    ));
+}
+
 /// Return whether the arguments select an internal execution mode.
 pub fn is_execution_mode(args: &[String]) -> bool {
     matches!(
@@ -85,6 +120,10 @@ pub fn capabilities_catalog() -> anyhow::Result<aiperf_runtime::engine::protocol
 /// Always terminates the process (`-> !`); callers do not return from here.
 pub fn dispatch(args: &[String]) -> ! {
     crate::diagnostics::register_sigusr1_faulthandler();
+    // Establish this process's plugin identity before any socket, dataset, or
+    // resource open, so every later attestation (cell registration, report
+    // provenance) names a bundle this process actually loaded and verified.
+    record_verified_plugin_lock();
     let flag = args.first().map(String::as_str).unwrap_or("");
     let cell_mode = flag == CELL_FLAG;
     let aggregator_mode = flag == AGGREGATOR_FLAG;
@@ -170,30 +209,8 @@ fn run_cell() -> ! {
         tracing::error!(error = %error, cell_id, "cell security acquisition failed");
         std::process::exit(2);
     }
-    // Verify plugin lock bundle before any socket, dataset, or resource open.
-    if let Some((lock_path, expected_digest)) = crate::plugins::propagate::read_lock_env() {
-        match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path) {
-            Ok(bundle) => {
-                let actual_digest = bundle.lock().digest.hex.as_str();
-                if let Err(error) = crate::plugins::propagate::verify_propagated_digest(
-                    &expected_digest,
-                    actual_digest,
-                ) {
-                    tracing::error!(error = %error, cell_id, "cell plugin lock attestation failed");
-                    std::process::exit(2);
-                }
-            }
-            Err(error) => {
-                tracing::error!(
-                    error = format!("{error:#}"),
-                    cell_id,
-                    path = %lock_path.display(),
-                    "cell failed to load plugin lock bundle"
-                );
-                std::process::exit(2);
-            }
-        }
-    }
+    // The plugin lock bundle was already loaded, verified, and recorded as this
+    // process's composed identity at the top of `dispatch`, before any effect.
     // Drop the fetch runtime before execution creates its thread-per-core runtime.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

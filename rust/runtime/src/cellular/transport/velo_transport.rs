@@ -739,9 +739,9 @@ impl VeloCellClient {
             cell_peer,
             artifact_capability_digest,
             registration_proof,
-            // Read the digest injected by the controller into each cell's env.
-            plugin_lock_digest: std::env::var(crate::engine::cell_launcher::CELL_PLUGIN_LOCK_ENV)
-                .ok(),
+            // Attest only a digest this process composed and verified; a digest
+            // inherited without its validated lock path proves nothing.
+            plugin_lock_digest: crate::engine::cell_launcher::composed_plugin_lock_digest(),
         };
         self.register_request(&registration).await
     }
@@ -799,9 +799,8 @@ impl VeloCellClient {
             cell_peer,
             artifact_capability_digest,
             registration_proof: Some(registration_proof),
-            // Include the plugin lock digest so the controller can attest it.
-            plugin_lock_digest: std::env::var(crate::engine::cell_launcher::CELL_PLUGIN_LOCK_ENV)
-                .ok(),
+            // Attest only a digest this process composed and verified.
+            plugin_lock_digest: crate::engine::cell_launcher::composed_plugin_lock_digest(),
         })
     }
 

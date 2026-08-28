@@ -164,6 +164,7 @@ name = "aiperf-dry-run-tests"
 version = "0.13.0"
 dependencies = [
  "flate2",
+ "libc",
  "serde_json",
  "tempfile",
 ]

@@ -42,8 +42,13 @@ pub(crate) fn validate_supported_control_hook_transport(run: &BenchmarkRun) -> R
             "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for dynosim transports; \
              they require a live server control plane"
         ),
-        Some(Transport::Plugin { .. }) => bail!(
-            "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for the plugin transport"
+        // The control hooks are host-owned HTTP calls against the benchmark
+        // target's own control routes. A plugin transport declares no such
+        // origin, so the selection fails closed rather than silently skipping
+        // the hook the operator authored.
+        Some(Transport::Plugin { id, .. }) => bail!(
+            "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for the plugin \
+             transport {id:?}; no server control origin is configured"
         ),
     }
 }

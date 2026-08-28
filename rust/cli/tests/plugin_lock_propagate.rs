@@ -2,79 +2,112 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Tests for plugin lock propagation to re-exec subprocess.
+//!
+//! `read_lock_env` reads process-global state, so every test here mutates and
+//! restores the same two variables. Cargo runs the tests in one binary on
+//! multiple threads, so they are serialized behind one mutex.
 
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use aiperf_cli::plugins::propagate::{ENV_LOCK_DIGEST, ENV_LOCK_PATH, read_lock_env};
 
-#[test]
-fn env_vars_roundtrip() {
-    // Safety: single-threaded test process; env mutation is safe here.
+/// A structurally valid BLAKE3 digest: exactly 64 lower-case hex characters.
+const VALID_DIGEST: &str = "a3b4c5d6e7f8a1b2c3d4e5f6a7b8c9d0a3b4c5d6e7f8a1b2c3d4e5f6a7b8c9d0";
+
+fn env_guard() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Set (or clear, on `None`) both variables and read them back.
+fn read_with_env(path: Option<&str>, digest: Option<&str>) -> Option<(PathBuf, String)> {
+    let _guard = env_guard();
+    // Safety: all env mutation in this binary is serialized behind `env_guard`.
     unsafe {
-        std::env::set_var(ENV_LOCK_PATH, "/tmp/test.lock");
-        std::env::set_var(ENV_LOCK_DIGEST, "abc123");
+        match path {
+            Some(value) => std::env::set_var(ENV_LOCK_PATH, value),
+            None => std::env::remove_var(ENV_LOCK_PATH),
+        }
+        match digest {
+            Some(value) => std::env::set_var(ENV_LOCK_DIGEST, value),
+            None => std::env::remove_var(ENV_LOCK_DIGEST),
+        }
     }
     let result = read_lock_env();
     unsafe {
         std::env::remove_var(ENV_LOCK_PATH);
         std::env::remove_var(ENV_LOCK_DIGEST);
     }
-    let (path, digest) = result.expect("should read both env vars");
+    result
+}
+
+#[test]
+fn env_vars_roundtrip() {
+    let (path, digest) = read_with_env(Some("/tmp/test.lock"), Some(VALID_DIGEST))
+        .expect("both env vars are set and well-formed");
     assert_eq!(path, PathBuf::from("/tmp/test.lock"));
-    assert_eq!(digest, "abc123");
+    assert_eq!(digest, VALID_DIGEST);
 }
 
 #[test]
 fn no_env_vars_returns_none() {
-    unsafe {
-        std::env::remove_var(ENV_LOCK_PATH);
-        std::env::remove_var(ENV_LOCK_DIGEST);
-    }
-    assert!(read_lock_env().is_none());
+    assert!(read_with_env(None, None).is_none());
 }
 
 #[test]
 fn partial_env_path_only_returns_none() {
-    unsafe {
-        std::env::set_var(ENV_LOCK_PATH, "/tmp/test.lock");
-        std::env::remove_var(ENV_LOCK_DIGEST);
-    }
-    let result = read_lock_env();
-    unsafe {
-        std::env::remove_var(ENV_LOCK_PATH);
-    }
-    assert!(result.is_none());
+    assert!(read_with_env(Some("/tmp/test.lock"), None).is_none());
 }
 
 #[test]
 fn partial_env_digest_only_returns_none() {
-    unsafe {
-        std::env::remove_var(ENV_LOCK_PATH);
-        std::env::set_var(ENV_LOCK_DIGEST, "deadbeef");
-    }
-    let result = read_lock_env();
-    unsafe {
-        std::env::remove_var(ENV_LOCK_DIGEST);
-    }
-    assert!(result.is_none());
+    assert!(read_with_env(None, Some(VALID_DIGEST)).is_none());
+}
+
+#[test]
+fn short_digest_is_rejected() {
+    assert!(
+        read_with_env(Some("/tmp/test.lock"), Some("deadbeef")).is_none(),
+        "a digest shorter than 64 characters must not be accepted"
+    );
+}
+
+#[test]
+fn non_hex_digest_is_rejected() {
+    let non_hex = "z".repeat(64);
+    assert!(
+        read_with_env(Some("/tmp/test.lock"), Some(&non_hex)).is_none(),
+        "a 64-character non-hex digest must not be accepted"
+    );
+}
+
+#[test]
+fn non_absolute_path_is_rejected() {
+    assert!(
+        read_with_env(Some("relative/test.lock"), Some(VALID_DIGEST)).is_none(),
+        "a non-absolute lock path must not be accepted"
+    );
 }
 
 #[test]
 fn set_lock_env_propagates_to_command() {
     use aiperf_cli::plugins::propagate::set_lock_env;
     use std::process::Command;
-    // We cannot inspect Command's env directly, so we round-trip via a process
-    // that echoes the env vars. Instead, verify set_lock_env doesn't panic and
-    // the constants are well-formed identifiers.
-    let mut cmd = Command::new("true");
+
+    // `Command`'s env map is not readable, so run a child that prints both
+    // variables and assert on what it inherited.
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
+        .arg(format!("printf '%s\\n%s' \"${ENV_LOCK_PATH}\" \"${ENV_LOCK_DIGEST}\""));
     set_lock_env(
         &mut cmd,
         std::path::Path::new("/tmp/lock.bundle"),
-        "aabbccdd",
+        VALID_DIGEST,
     );
-    // Constants must be non-empty ASCII.
-    assert!(!ENV_LOCK_PATH.is_empty());
-    assert!(!ENV_LOCK_DIGEST.is_empty());
-    assert!(ENV_LOCK_PATH.is_ascii());
-    assert!(ENV_LOCK_DIGEST.is_ascii());
+    let output = cmd.output().expect("spawn child shell");
+    let stdout = String::from_utf8(output.stdout).expect("child printed utf-8");
+    assert_eq!(stdout, format!("/tmp/lock.bundle\n{VALID_DIGEST}"));
 }

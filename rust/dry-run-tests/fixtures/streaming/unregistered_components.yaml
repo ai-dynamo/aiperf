@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Every streaming component identifier here is absent from the compiled
+# inventory. The product must name each requested identifier and list the
+# registered alternatives, and must do so against the static registry before it
+# opens a source descriptor, a socket, or a checkpoint root.
+#
+# Rendered tokens: $ARTIFACT_DIR, $SOURCE_ROOT.
+schemaVersion: "2.0"
+benchmark:
+  model: openai/gpt-oss-120b
+  tokenizer: {name: cl100k_base}
+  transport:
+    type: dry_run
+    clock: sim
+    ttft_ms: 10
+    itl_ms: 2
+  endpoint:
+    type: chat
+    url: http://127.0.0.1:8000
+    streaming: true
+  dataset_streams:
+    items:
+      - id: replay
+        source:
+          id: no_such_source
+          config:
+            root: $SOURCE_ROOT
+        format:
+          id: no_such_format
+        session_program:
+          id: no_such_session_program
+        limits:
+          acquired_partitions: 4
+          decoded_fragments: 64
+          decoded_bytes: 1048576
+          state_memory: 1048576
+          state_disk: 0
+  shadow_replay:
+    stream: replay
+    actions:
+      request:
+        id: no_such_action_sink
+    time:
+      mode: relative
+    ordering:
+      watermark: source_order
+      late: drop
+    overload:
+      mode: backpressure
+    checkpoint:
+      mode: none
+  phases:
+    type: concurrency
+    requests: 8
+    concurrency: 2
+  artifacts:
+    dir: $ARTIFACT_DIR

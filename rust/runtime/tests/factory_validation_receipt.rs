@@ -15,7 +15,7 @@ fn deterministic_digest_same_inputs() {
     let p1 = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &[]);
     let p2 = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &[]);
     assert_eq!(
-        p1.canonical_digest, p2.canonical_digest,
+        p1.canonical_digest(), p2.canonical_digest(),
         "same inputs must produce same digest"
     );
 }
@@ -25,7 +25,7 @@ fn different_run_bytes_different_digest() {
     let p1 = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &[]);
     let p2 = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_B, &[]);
     assert_ne!(
-        p1.canonical_digest, p2.canonical_digest,
+        p1.canonical_digest(), p2.canonical_digest(),
         "different run bytes must produce different digest"
     );
 }
@@ -36,7 +36,7 @@ fn receipt_bytes_change_digest() {
     let with_receipts =
         ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &[b"receipt-1".as_ref()]);
     assert_ne!(
-        no_receipts.canonical_digest, with_receipts.canonical_digest,
+        no_receipts.canonical_digest(), with_receipts.canonical_digest(),
         "adding receipts must change the digest"
     );
 }
@@ -49,8 +49,20 @@ fn receipt_order_is_sorted_for_determinism() {
     let p_ab = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &receipts_ab);
     let p_ba = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &receipts_ba);
     assert_eq!(
-        p_ab.canonical_digest, p_ba.canonical_digest,
+        p_ab.canonical_digest(), p_ba.canonical_digest(),
         "receipts must be sorted before hashing so order does not matter"
+    );
+}
+
+#[test]
+fn framing_prevents_concatenation_collision() {
+    // Without length framing, hashing "ab" with no receipts and "a" with the
+    // receipt "b" would stream the identical byte sequence.
+    let joined = ValidatedRunPlan::from_canonical_bytes(b"ab", &[]);
+    let split = ValidatedRunPlan::from_canonical_bytes(b"a", &[b"b".as_ref()]);
+    assert_ne!(
+        joined.canonical_digest(), split.canonical_digest(),
+        "boundary-ambiguous inputs must not collide"
     );
 }
 
@@ -58,9 +70,9 @@ fn receipt_order_is_sorted_for_determinism() {
 fn canonical_digest_is_hex_string() {
     let plan = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &[]);
     // BLAKE3 hex is 64 lowercase hex chars
-    assert_eq!(plan.canonical_digest.len(), 64);
+    assert_eq!(plan.canonical_digest().len(), 64);
     assert!(
-        plan.canonical_digest.chars().all(|c| c.is_ascii_hexdigit()),
+        plan.canonical_digest().chars().all(|c| c.is_ascii_hexdigit()),
         "digest must be lowercase hex"
     );
 }
@@ -69,5 +81,5 @@ fn canonical_digest_is_hex_string() {
 fn capture_plan_accessible() {
     let plan = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &[]);
     // By default (no receipts with requirements) capture plan is empty.
-    assert!(!plan.capture_plan.requires_exact_records);
+    assert!(!plan.capture_plan().requires_exact_records);
 }
