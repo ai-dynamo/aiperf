@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 pub fn default_lock_path(config_path: &Path) -> PathBuf {
     let stem = config_path
         .file_stem()
-        .unwrap_or_else(|| config_path.as_os_str());
+        .unwrap_or(config_path.as_os_str());
     let mut name = stem.to_os_string();
     name.push(".plugin-lock");
     config_path
