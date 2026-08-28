@@ -67,6 +67,7 @@ impl From<std::io::Error> for BundleError {
 }
 
 /// An atomically published, tamper-detected plugin lock on disk.
+#[derive(Debug)]
 pub struct LockedCatalogBundle {
     lock: PluginLockV1,
     path: PathBuf,
