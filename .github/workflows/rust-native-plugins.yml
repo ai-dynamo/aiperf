@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Cross-platform CI for the native plugin system.
+#
+# The plugin boundary is a linkage contract, so it is only meaningfully green
+# when it is green on more than one platform's linker and dynamic loader. This
+# workflow builds and tests the boundary crates (`plugin-api`, `plugin-sdk`,
+# `plugin-host`, `plugin-conformance`) plus the Task-37 distribution tooling
+# (`plugin-packaging-tests`, `plugin-static-comparator`) on Linux and macOS.
+#
+# The static comparator binary is executed rather than only built: its census
+# assertion is the gate that a parity baseline ships the same components the
+# dynamic distribution publishes.
+
+name: Native Plugins CI
+
+on:
+  push:
+    branches:
+      - "ajc/native-rust-runtime-plugins"
+      - "ajc/native-plugin-task*"
+    paths:
+      - "rust/plugin-api/**"
+      - "rust/plugin-sdk/**"
+      - "rust/plugin-sdk-macros/**"
+      - "rust/plugin-host/**"
+      - "rust/plugin-conformance/**"
+      - "rust/plugin-packaging-tests/**"
+      - "rust/plugin-static-comparator/**"
+      - "rust/scripts/assemble-plugin-distribution.rs"
+      - ".github/workflows/rust-native-plugins.yml"
+  pull_request:
+    paths:
+      - "rust/plugin-api/**"
+      - "rust/plugin-sdk/**"
+      - "rust/plugin-sdk-macros/**"
+      - "rust/plugin-host/**"
+      - "rust/plugin-conformance/**"
+      - "rust/plugin-packaging-tests/**"
+      - "rust/plugin-static-comparator/**"
+      - "rust/scripts/assemble-plugin-distribution.rs"
+      - ".github/workflows/rust-native-plugins.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: "native plugins / ${{ matrix.os }}"
+    strategy:
+      # Do not mask a platform-specific linkage failure by cancelling the
+      # other platform the moment one fails.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: native-plugins-${{ matrix.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: native-plugins-${{ matrix.os }}-
+
+      - name: Test plugin crates
+        working-directory: rust
+        run: |
+          cargo test -p aiperf-plugin-api
+          cargo test -p aiperf-plugin-sdk
+          cargo test -p aiperf-plugin-host
+          cargo test -p aiperf-plugin-conformance
+          cargo test -p aiperf-plugin-packaging-tests
+
+      - name: Test distribution tooling
+        working-directory: rust
+        run: cargo test -p aiperf-plugin-static-comparator --all-targets
+
+      - name: Assert the static comparator census
+        working-directory: rust
+        run: cargo run -p aiperf-plugin-static-comparator
+
+      - name: Rehearse a candidate generation assembly
+        working-directory: rust
+        run: |
+          cargo run -p aiperf-plugin-packaging-tests \
+            --bin assemble-plugin-distribution -- \
+            --fixture plugin-packaging-tests/fixtures/candidate-generation/fixture.toml \
+            --artifacts-dir "${RUNNER_TEMP}/plugin-candidate-artifacts" \
+            --output-dir "${RUNNER_TEMP}/plugin-candidate-inventory" \
+            --materialize-synthetic

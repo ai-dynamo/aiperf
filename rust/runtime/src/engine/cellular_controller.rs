@@ -311,6 +311,13 @@ pub struct CellularRunOutcome {
     pub cell_count: u32,
     /// The merged record count across all cells.
     pub record_count: usize,
+    /// The run's reassembled cellular capture — every cell's exact-record artifact
+    /// plus its folded projections — or `None` when the run's capture plan asked
+    /// for nothing and no cell shipped a frame.
+    ///
+    /// Retained so the report finalization path and the exporter runner read the
+    /// checked transfer rather than a discarded one.
+    pub capture: Option<crate::cellular::AssembledCapture>,
 }
 
 const CONTROLLER_PROCESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1494,7 +1501,12 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             .take()
             .and_then(|hooks| hooks.server_profiler)
             .map(CellularProfilerCoordinator::new);
-        while !terminal_partitions.is_complete() {
+        // Capture frames land on their own velo handlers, so the work-partition
+        // barrier alone does not prove the capture stream finished: a chunk or a
+        // closing bundle can still be in flight when the last partition arrives.
+        // Drain until BOTH barriers are satisfied, so `finish` below can never abort
+        // on a frame that was merely late.
+        while !terminal_partitions.is_complete() || !capture.is_complete() {
             tokio::select! {
                 biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
@@ -1552,17 +1564,23 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         let (partitions, store_partitions) = terminal_partitions.into_parts();
         // A run whose capture plan asked for nothing produces no capture frames at
         // all; only a run that started shipping must prove it finished. `finish`
-        // is what refuses a hole, a length disagreement, or a silent cell.
-        if capture.has_activity() {
+        // is what refuses a hole, a length disagreement, or a silent cell. The
+        // result is retained on the run outcome — it is the reassembled exact
+        // records and folded projections the report finalization path reads.
+        let assembled_capture = if capture.has_activity() {
             let missing = capture.missing_cells();
             let assembled = capture.finish().map_err(|error| {
                 anyhow!("cellular capture incomplete (missing cells {missing:?}): {error}")
             })?;
             tracing::debug!(
                 capture_bytes = assembled.total_exact_bytes(),
+                capture_cells = assembled.cell_ids().count(),
                 "cellular capture assembled"
             );
-        }
+            Some(assembled)
+        } else {
+            None
+        };
         if let Some(profiler) = profiler.as_mut()
             && profiler.needs_stop()
         {
@@ -1782,6 +1800,7 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             report_path: report_path.to_path_buf(),
             cell_count,
             record_count,
+            capture: assembled_capture,
         })
         }
         .await;

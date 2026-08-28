@@ -44,7 +44,8 @@ fn distribution_json_is_valid_inventory() {
     // The published document must survive the host's own no-follow,
     // digest-authenticated read: assembly that cannot be verified is not a
     // distribution.
-    let loaded = PluginInventoryV1::load_and_verify(&written).expect("published inventory verifies");
+    let loaded =
+        PluginInventoryV1::load_and_verify(&written).expect("published inventory verifies");
     assert_eq!(loaded.schema_version, 1);
     assert_eq!(loaded.generation, fixture.generation);
 }
@@ -57,7 +58,8 @@ fn distribution_census_has_expected_packages() {
 
     let written = assemble_distribution(&fixture, artifacts.path(), output.path())
         .expect("the candidate generation assembles");
-    let loaded = PluginInventoryV1::load_and_verify(&written).expect("published inventory verifies");
+    let loaded =
+        PluginInventoryV1::load_and_verify(&written).expect("published inventory verifies");
 
     let census: Vec<&str> = loaded.packages.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(census, vec!["nvidia/export-basic", "nvidia/transport-http"]);
@@ -72,7 +74,10 @@ fn distribution_census_has_expected_packages() {
             .find(|p| p.id == declared.id)
             .unwrap_or_else(|| panic!("{} is published", declared.id));
         assert_eq!(published.version, declared.version);
-        assert_eq!(published.build_id.as_deref(), Some(fixture.build_id.as_str()));
+        assert_eq!(
+            published.build_id.as_deref(),
+            Some(fixture.build_id.as_str())
+        );
 
         let artifact_bytes =
             std::fs::read(artifacts.path().join(&declared.artifact)).expect("artifact staged");

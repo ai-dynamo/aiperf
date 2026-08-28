@@ -655,10 +655,14 @@ impl VeloControllerTransport {
                     ctx.msg.register_peer(peer).map_err(|error| {
                         anyhow::anyhow!("register_peer capture chunk shipper: {error}")
                     })?;
-                    let _ = sender
+                    // The ack is the cell's receipt: it must report whether the chunk
+                    // actually reached the controller's drain, not merely that the
+                    // frame authenticated. A closed/full channel is a refusal.
+                    let ok = sender
                         .send(Ok(CellMessage::CaptureChunk(Box::new(chunk))))
-                        .await;
-                    let ack = rmp_serde::to_vec(&CellAck { ok: true })
+                        .await
+                        .is_ok();
+                    let ack = rmp_serde::to_vec(&CellAck { ok })
                         .map_err(|error| anyhow::anyhow!("encode capture chunk ack: {error}"))?;
                     Ok(Some(Bytes::from(ack)))
                 }
@@ -692,10 +696,13 @@ impl VeloControllerTransport {
                     ctx.msg.register_peer(peer).map_err(|error| {
                         anyhow::anyhow!("register_peer capture bundle shipper: {error}")
                     })?;
-                    let _ = sender
+                    // The bundle is the cell's only positive "I reported" signal, so a
+                    // dropped bundle must never be acked as delivered.
+                    let ok = sender
                         .send(Ok(CellMessage::CaptureBundle(Box::new(bundle))))
-                        .await;
-                    let ack = rmp_serde::to_vec(&CellAck { ok: true })
+                        .await
+                        .is_ok();
+                    let ack = rmp_serde::to_vec(&CellAck { ok })
                         .map_err(|error| anyhow::anyhow!("encode capture bundle ack: {error}"))?;
                     Ok(Some(Bytes::from(ack)))
                 }

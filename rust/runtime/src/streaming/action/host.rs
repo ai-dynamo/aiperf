@@ -26,7 +26,7 @@ pub use multiplexed::{
 
 use super::{
     ActionTerminalMembershipOutcomeView, CheckedActionFailureTerminalEvidenceView,
-    CheckedActionTerminalMembershipView, FrozenActionInventoryView, reliability_view_seal,
+    CheckedActionTerminalMembershipView, FrozenActionInventoryView,
 };
 use crate::streaming::{
     checkpoint::StreamRunIdentity,
@@ -83,7 +83,7 @@ impl CheckedActionFailureTerminalEvidence {
     }
 }
 
-impl reliability_view_seal::CheckedActionFailureTerminalEvidenceView
+impl super::reliability_view_seal::CheckedActionFailureTerminalEvidenceView
     for CheckedActionFailureTerminalEvidence
 {
 }
@@ -153,7 +153,7 @@ impl CheckedActionTerminalMembership {
     }
 }
 
-impl reliability_view_seal::CheckedActionTerminalMembershipView
+impl super::reliability_view_seal::CheckedActionTerminalMembershipView
     for CheckedActionTerminalMembership
 {
 }
@@ -223,7 +223,7 @@ impl FrozenActionInventory {
     }
 }
 
-impl reliability_view_seal::FrozenActionInventoryView for FrozenActionInventory {}
+impl super::reliability_view_seal::FrozenActionInventoryView for FrozenActionInventory {}
 
 impl FrozenActionInventoryView for FrozenActionInventory {
     fn run(&self) -> &StreamRunIdentity {
