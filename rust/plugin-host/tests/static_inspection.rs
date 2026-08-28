@@ -7,7 +7,7 @@
 //! on disk.  The ELF construction helpers produce minimal valid ELF64 LE
 //! structures that exercise the inspection logic.
 
-use aiperf_plugin_host::inspect::{ArtifactKind, PLUGIN_ENTRY_SYMBOL, SearchPolicy, inspect_bytes};
+use aiperf_plugin_host::inspect::{inspect_bytes, ArtifactKind, SearchPolicy, PLUGIN_ENTRY_SYMBOL};
 
 /// A minimal blob that is not a valid ELF/MachO/PE produces an Unknown receipt
 /// with a quarantine reason, not an error.
@@ -46,4 +46,10 @@ fn digest_preserved_verbatim() {
 fn unknown_format_search_policy_rejected() {
     let receipt = inspect_bytes(b"bad", "d".to_owned()).expect("no error");
     assert_eq!(receipt.dependency_search_policy, SearchPolicy::Rejected);
+}
+
+/// The plugin entry symbol constant has the expected value.
+#[test]
+fn plugin_entry_symbol_constant() {
+    assert_eq!(PLUGIN_ENTRY_SYMBOL, "aiperf_plugin_init");
 }

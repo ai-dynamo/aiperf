@@ -26,6 +26,7 @@ pub enum ArtifactKind {
 
 /// How the dynamic linker will locate this library's dependencies at load time.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum SearchPolicy {
     /// RUNPATH / relative to object origin (acceptable).
     Origin,

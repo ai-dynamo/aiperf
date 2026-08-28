@@ -42,6 +42,7 @@ pub struct StagedObject {
 /// exactly once.  A second artifact with the same `(loader_id, digest)` is
 /// silently accepted (idempotent).  A second artifact with the same `loader_id`
 /// but a different `digest` is a `ConflictingLoaderIdentity` error.
+#[allow(dead_code)]
 pub struct CanonicalObjectMap {
     inner: HashMap<(String, String), StagedObject>,
     staging_dir: PathBuf,
