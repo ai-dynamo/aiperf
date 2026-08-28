@@ -4448,7 +4448,8 @@ impl fmt::Debug for BudgetOwnedExportIssueReceipt {
     }
 }
 
-/// Durable status reference to an outer and embedded receipt object.#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// Durable status reference to an outer and embedded receipt object.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DerivedExportReceiptReference {
     receipt_digest: ContentDigest,
     receipt_length: u64,
