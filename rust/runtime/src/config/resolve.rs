@@ -378,6 +378,12 @@ pub struct DatasetInputs {
     pub dataset_entries: Option<u32>,
     /// Profiling-phase session bound (from `num_conversations`).
     pub sessions: Option<u64>,
+    /// Authored native streaming dataset resources (YAML only; no CLI flag).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_streams: Option<crate::config::model::dataset_stream::DatasetStreams>,
+    /// Authored shadow-replay policy (YAML only; no CLI flag).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_replay: Option<crate::config::model::dataset_stream::ShadowReplay>,
     /// The next cohesive input group; flattened to retain the execute wire.
     #[serde(flatten)]
     pub workload: WorkloadInputs,
@@ -1594,6 +1600,10 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         .is_some_and(|graph| graph.execute_tools);
     let mut cfg = BenchmarkConfig {
         models: Some(models),
+        // Streaming resources are a verbatim pass-through: resolution performs no
+        // defaulting, rewriting, or source-specific interpretation on them.
+        dataset_streams: inputs.dataset_streams.clone(),
+        shadow_replay: inputs.shadow_replay.clone(),
         endpoint: Some(endpoint),
         tokenizer: Some(tokenizer),
         transport: Some(inputs.transport.clone()),

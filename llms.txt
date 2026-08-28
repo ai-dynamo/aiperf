@@ -436,6 +436,15 @@ profiler.
   collector-wide completion counts while retaining observed chunk timings.
 - **How does the online loop work?** `rust/runtime/src/run.rs` (Clock-paced arrival
   generator, dynamic session/prefill `SlotPool`s, `StopChecker`, adaptive task).
+- **How does a streaming conversation survive a source-partition boundary?**
+  `rust/runtime/src/streaming/session/conversation.rs` (the registered
+  `conversation` session program): fragments join by
+  `(stream_identity, StableSessionKey)`, duplicate/conflict classification runs
+  through `rust/runtime/src/streaming/identity.rs`, endpoint replies fold back in
+  through `observe_execution`, and `checkpoint_view` rolls the decode horizon
+  back before any mutation its payload cannot represent. Coverage is in
+  `rust/runtime/tests/streaming_session_continuity.rs` with the reusable seam in
+  `rust/runtime/tests/support/streaming_session_conformance.rs`.
 - **How do user-centric and fixed-schedule runs work?**
   `rust/runtime/src/{scheduled,scheduler,user_centric,fixed_schedule,multiturn}.rs`;
   exact virtual-time coverage is in `rust/runtime/tests/scheduled_sim.rs`, and real HTTP
