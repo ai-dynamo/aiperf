@@ -207,7 +207,13 @@ class OptunaSearchPlanner(SearchPlanner):
                     dim.path, int(dim.lo), int(dim.hi), log=log
                 )
             else:
-                v = trial.suggest_float(dim.path, dim.lo, dim.hi, log=log)
+                # BoTorch -- the default sampler -- suggests numpy.float64, and
+                # optuna only coerces to a native type for int distributions;
+                # FloatDistribution hands the sampler's scalar straight back.
+                # Unconverted it survives into the search history and blows up
+                # orjson.dumps() in write_search_history() with
+                # "Type is not JSON serializable: numpy.float64".
+                v = float(trial.suggest_float(dim.path, dim.lo, dim.hi, log=log))
             values[dim.path] = v
 
         # mode="python" + context={"include_secrets": True} so neither the
