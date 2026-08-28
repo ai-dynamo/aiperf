@@ -1700,7 +1700,9 @@ pub struct StreamingIssueSummary {
 }
 
 impl StreamingIssueSummary {
-    pub(crate) fn empty() -> Self {
+    /// Build a summary with no retained observation and no fence.
+    #[must_use]
+    pub fn empty() -> Self {
         Self {
             total: 0,
             by_scope: BTreeMap::new(),
@@ -1708,6 +1710,25 @@ impl StreamingIssueSummary {
             by_disposition: BTreeMap::new(),
             is_admission_fenced: false,
         }
+    }
+
+    /// Fold another shard's summary.
+    ///
+    /// Counts sum per key; `is_admission_fenced` is a logical OR, because a
+    /// fence anywhere means the run fenced. Associative and commutative, so any
+    /// reduce order agrees.
+    pub fn merge(&mut self, other: &Self) {
+        self.total = self.total.saturating_add(other.total);
+        for (scope, count) in &other.by_scope {
+            *self.by_scope.entry(*scope).or_default() += count;
+        }
+        for (class, count) in &other.by_class {
+            *self.by_class.entry(*class).or_default() += count;
+        }
+        for (disposition, count) in &other.by_disposition {
+            *self.by_disposition.entry(*disposition).or_default() += count;
+        }
+        self.is_admission_fenced |= other.is_admission_fenced;
     }
 }
 

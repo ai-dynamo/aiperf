@@ -18,7 +18,7 @@ use crate::normalize::normalize_manifest;
 use crate::platform::fs::{is_symlink, open_no_follow};
 
 /// A manifest that has been read from disk, hashed, parsed, and normalized.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AcquiredManifest {
     /// Raw bytes exactly as stored on disk.
     pub raw_bytes: Vec<u8>,
@@ -62,7 +62,7 @@ impl AcquiredManifest {
 }
 
 /// A plugin artifact (.so / .dylib / .dll) that has been read and content-verified.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AcquiredArtifact {
     /// Raw bytes of the artifact.
     pub raw_bytes: Vec<u8>,

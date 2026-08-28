@@ -53,8 +53,9 @@ pub use report::{
     ReportError, ReportExtensionIdentity, ReportGraphOutcomeInfo, ReportGraphRunInfo,
     ReportMetadataError, ReportPairRunFacts, ReportRun, ReportRunInfo, ReportRunMetadata,
     ReportScalarStats, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
-    ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState, ReportSummary, ReportTimeslice,
-    ReportValue, Reporter, RunOutcome,
+    ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState, ReportStreamingDistribution,
+    ReportStreamingHorizons, ReportStreamingPlane, ReportQueueHighWater, ReportSummary,
+    ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
 pub use report_view::ReportView;
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
