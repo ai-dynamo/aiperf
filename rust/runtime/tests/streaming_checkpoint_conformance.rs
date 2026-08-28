@@ -667,6 +667,7 @@ struct DrivenScenario {
 fn coordinator_for(
     run: StreamRunIdentity,
     backend: Box<dyn StreamingCheckpointBackend>,
+    initial_expected: Option<CheckpointGeneration>,
 ) -> (StreamingCheckpointCoordinator, Rc<ParticipantControl>) {
     let (participant, control) = ControlledParticipant::new(run);
     let (reporter, _reporter_control) = support::FakeIssueReporter::new(run);
@@ -676,7 +677,7 @@ fn coordinator_for(
         support::expectations(run),
         vec![Box::new(participant)],
         Box::new(reporter),
-        None,
+        initial_expected,
     )
     .expect("valid conformance coordinator");
     (coordinator, control)
@@ -690,7 +691,7 @@ async fn drive_scenario(
     fault: CheckpointFault,
 ) -> DrivenScenario {
     let armed = armed_fault(fault);
-    let (mut coordinator, control) = coordinator_for(run, open());
+    let (mut coordinator, control) = coordinator_for(run, open(), None);
     let baseline = coordinator
         .commit_barrier(
             support::barrier_for_run(run, 1),
@@ -702,14 +703,8 @@ async fn drive_scenario(
 
     if armed.is_foreign_advance {
         // A second, independent writer over the same medium takes the head.
-        let (mut foreign, _foreign_control) = coordinator_for(run, open());
-        foreign
-            .commit_barrier(
-                support::barrier_for_run(run, 1),
-                &mut PreparedCheckpointResultInput::empty(),
-            )
-            .await
-            .expect("foreign writer republishes the baseline epoch");
+        let (mut foreign, _foreign_control) =
+            coordinator_for(run, open(), Some(baseline.clone()));
         foreign
             .commit_barrier(
                 support::barrier_for_run(run, 2),
@@ -955,12 +950,16 @@ impl TestCheckpointBackend for MemoryConformanceBackend {
 struct LocalConformanceBackend {
     run: StreamRunIdentity,
     root: PathBuf,
+    /// Every invocation owns a private subtree, so a replay never observes the
+    /// head an earlier invocation published.
+    invocation: Cell<u32>,
 }
 
 fn local_conformance_backend(root: &Path) -> LocalConformanceBackend {
     LocalConformanceBackend {
         run: support::run_id(1),
         root: root.to_path_buf(),
+        invocation: Cell::new(0),
     }
 }
 
@@ -1008,8 +1007,10 @@ impl TestCheckpointBackend for LocalConformanceBackend {
     }
 
     async fn run_with_fault(&self, fault: CheckpointFault) -> FaultObservation {
-        // Each row owns a private subtree, so no row can observe another's head.
-        let root = self.root.join(format!("{fault:?}"));
+        // Each invocation owns a private subtree, so no row and no replay can
+        // observe another invocation's head.
+        let invocation = self.invocation.replace(self.invocation.get() + 1);
+        let root = self.root.join(format!("{fault:?}-{invocation}"));
         std::fs::create_dir_all(&root).expect("private conformance store root");
         let clock: Rc<SimClock> = Rc::new(SimClock::new());
         let filesystem = local_filesystem(self.run);
@@ -1055,7 +1056,7 @@ impl LocalConformanceBackend {
         open_backend: &dyn Fn() -> LocalCheckpointBackend,
         open: &dyn Fn() -> Box<dyn StreamingCheckpointBackend>,
     ) -> FaultObservation {
-        let (mut coordinator, _control) = coordinator_for(self.run, open());
+        let (mut coordinator, _control) = coordinator_for(self.run, open(), None);
         let baseline = coordinator
             .commit_barrier(
                 support::barrier_for_run(self.run, 1),
@@ -1475,8 +1476,11 @@ async fn reopened_store_recovers_full_generation_identity_and_resumability() {
 
     let published = {
         let backend = open();
-        let (mut coordinator, _control) =
-            coordinator_for(run, Box::new(backend) as Box<dyn StreamingCheckpointBackend>);
+        let (mut coordinator, _control) = coordinator_for(
+            run,
+            Box::new(backend) as Box<dyn StreamingCheckpointBackend>,
+            None,
+        );
         let first = coordinator
             .commit_barrier(
                 support::barrier_for_run(run, 1),
