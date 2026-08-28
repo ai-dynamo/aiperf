@@ -10,8 +10,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-aiperf-plugin-sdk = { path = "../../plugin-sdk" }
-aiperf-plugin-sdk-macros = { path = "../../plugin-sdk-macros" }
+aiperf-plugin-sdk = { path = "../../../plugin-sdk" }
+aiperf-plugin-sdk-macros = { path = "../../../plugin-sdk-macros" }
 
 [profile.release]
 panic = "abort"
