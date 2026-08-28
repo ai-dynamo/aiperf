@@ -39,13 +39,21 @@ pub fn verify_digest_authority(
     artifact: &AcquiredArtifact,
     expected_digest: &str,
 ) -> Result<AuthorityVerdict, AcquireError> {
-    if artifact.digest == expected_digest {
-        Ok(AuthorityVerdict::Trusted)
-    } else {
-        Ok(AuthorityVerdict::DigestMismatch {
+    // Parse both sides as `blake3::Hash` so the comparison is constant-time,
+    // matching the pattern in `PluginInventoryV1::verify_digest`.
+    match (
+        artifact.digest.parse::<blake3::Hash>(),
+        expected_digest.parse::<blake3::Hash>(),
+    ) {
+        (Ok(actual), Ok(expected)) if actual == expected => Ok(AuthorityVerdict::Trusted),
+        (Ok(_), Ok(_)) => Ok(AuthorityVerdict::DigestMismatch {
             expected: expected_digest.to_owned(),
             actual: artifact.digest.clone(),
-        })
+        }),
+        _ => Ok(AuthorityVerdict::DigestMismatch {
+            expected: expected_digest.to_owned(),
+            actual: artifact.digest.clone(),
+        }),
     }
 }
 
