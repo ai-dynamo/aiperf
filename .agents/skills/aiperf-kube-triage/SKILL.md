@@ -1,0 +1,112 @@
+---
+name: aiperf-kube-triage
+description: Use when an AIPerf benchmark on Kubernetes is stuck, failing, crash-looping, OOM-killed, pending, queued, stalled, showing a high error rate, or its results cannot be retrieved - diagnosing an AIPerfJob or AIPerfSweep from CR status, pod state, and logs.
+---
+
+# Triaging an AIPerf Kubernetes Run
+
+Classify first, then follow the branch. Do not read logs before you know the
+phase — the phase determines which logs matter.
+
+**Related skills:** `aiperf-kube-run` (lifecycle and exit codes),
+`aiperf-kube-setup` (cluster/operator install problems).
+
+The machine-parseable playbook with full JSON schemas and jq/python snippets is
+`docs/kubernetes/ai-debugging-guide.md`. This skill is the routing layer.
+
+## Step 1: classify
+
+```bash
+kubectl get aiperfjob <NAME> -n <NS> -o json | jq '{
+  phase: .status.phase, subPhase: .status.subPhase,
+  workers: .status.workers, error: .status.error,
+  conditions: .status.conditions }'
+
+aiperf kube debug -j <NAME> -n <NS> --verbose
+```
+
+`aiperf kube debug` reports pod states, recent events, node resources, and a
+slice of logs from any pod with problems. `-A` inspects all namespaces. For a
+sweep child, pass `--variation <idx>` (long form only — `-v` is `--verbose`
+here) and `-t <trial>`.
+
+## Step 2: branch on `status.phase`
+
+| Phase / symptom | Likely cause | Next command |
+|---|---|---|
+| `Pending` > ~60 s | Unschedulable pods | `kubectl get pods -n <NS> -l aiperf.nvidia.com/job-id=<ID>` then read `PodScheduled` reason |
+| `Queued` | Kueue has not admitted the workload | `kubectl get workloads -n <NS>`; see `docs/kubernetes/kueue.md` |
+| `Initializing` > ~120 s | Image pull, ConfigMap, or ZMQ connection probe | `aiperf kube logs <ID> --container control-plane --tail 50` |
+| `Running`, restarts > 3 | Crash loop | `aiperf kube logs <ID> --container <c> --tail 100` |
+| `Running`, OOM-killed pod | Memory limit too low | raise the container's `AIPERF_K8S_<SERVICE>_MEMORY` |
+| `Running`, `requestsCompleted` flat | Stalled benchmark | check endpoint reachability from inside the cluster |
+| `Running`, `request_error_rate.avg > 5` | Endpoint rejecting requests | inspect worker logs and server-side errors |
+| `Failed` | See failure table below | `kubectl ... .status.error` + controller logs |
+| `Cancelled` | Someone (or `spec.cancel`) stopped it | no action |
+| `Completed` | Done | `aiperf kube results` |
+
+`request_error_rate.avg` in `status.liveMetrics.metrics` is the **only** error
+signal published while a job runs — `error_request_count` is `ERROR_ONLY` and is
+filtered out of live metrics. Do not conclude "no errors" from its absence.
+
+## Step 3: failure patterns
+
+| `status.error` contains | Root cause | Fix |
+|---|---|---|
+| `preflight` | Cluster validation failed | `aiperf kube preflight -o json`, fix failing checks |
+| `endpoint`, `health check` | Server unreachable from the cluster | resolve the URL from inside a pod, not from your laptop |
+| `timeout` | Exceeded `spec.timeoutSeconds` | raise it, or set `0` |
+| `ConfigMap`, `size` | Config over the 1 MiB object limit | shrink the config / move data to a mounted file |
+| `image`, `pull` | Image not accessible | check tag and `imagePullSecrets`; on Kind, `kind load` + `pullPolicy: Never` |
+| `RBAC`, `forbidden` | Missing permissions | check service account, Role, RoleBinding |
+
+Scheduling messages map directly to fixes: `Insufficient cpu/memory` -> lower
+`--total-workers`; `nvidia.com/gpu` -> no free GPU nodes; `didn't match Pod's
+node affinity/selector` -> fix `spec.podTemplate.nodeSelector`; `had untolerated
+taint` -> add `spec.podTemplate.tolerations`; `quota` -> namespace ResourceQuota
+exhausted.
+
+## Rules that bite
+
+- **A benchmark that looks hung at high concurrency is often CPU starvation of a
+  single service, not a deadlock.** The records-manager and system-controller
+  default to `75m` CPU (`AIPERF_K8S_RECORDS_MANAGER_CPU`,
+  `AIPERF_K8S_SYSTEM_CONTROLLER_CPU`). At very high request rates a pegged core
+  starves the event loop, heartbeats expire, and the CR freezes mid-phase. Raise
+  the CPU before hunting for a logic bug.
+- **Heartbeat expiry is a symptom, not a cause.** `AIPERF_K8S_CONTROLLER_HEARTBEAT_EXPIRY_SECONDS`
+  defaults to 30 s and must be at least twice the interval; widening it hides
+  the starvation instead of fixing it.
+- **Worker pods that cannot complete the connection probe exit on purpose** so
+  Kubernetes restarts them with a fresh ZMQ context
+  (`AIPERF_K8S_JOBSET_WORKER_CONNECTION_PROBE_TIMEOUT`, backoff limit 20). A few
+  early restarts on first deploy are expected, not a bug.
+- **Operator-mode results are harvested only on terminal phase.** "results
+  missing" mid-run is correct behavior; use `--from-pods` to read the live
+  controller instead.
+- **Operator-mode JobSet TTL is 300 s.** Pods vanish shortly after completion —
+  capture logs before then, or read results from the operator PVC, which
+  survives.
+- **`debug`, `cancel`, `delete`, `list` exit 0 on a missing target** by design.
+  Never gate a script on their exit status; use `attach` or `logs`.
+- **First deploy attempts flake more than steady state** (ConfigMap propagation,
+  ZMQ probe). One clean retry before deep investigation is a legitimate step.
+
+## Diagnosis thresholds
+
+`aiperf kube debug` findings are tunable via `AIPERF_K8S_DIAGNOSIS_*`:
+`STALLED_PENDING_THRESHOLD_SECONDS` (60), `STALLED_RUNNING_THRESHOLD_SECONDS`
+(30), `HIGH_ERROR_RATE_THRESHOLD` (0.05), `FAIL_ABOVE_ERROR_RATE` (1.0),
+`HIGH_LATENCY_P99_MULTIPLIER` (10). Full list in
+`docs/environment-variables.md`.
+
+## Log collection
+
+```bash
+aiperf kube logs <ID> -n <NS> -o ./triage --ignore-not-found   # per-pod files
+aiperf kube logs <ID> --container control-plane --follow
+```
+
+Containers worth naming: `control-plane` (SystemController), `api`,
+`event-bus-proxy`, worker containers. Save logs to a directory before the TTL
+reaps the pods.
