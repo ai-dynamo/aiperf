@@ -26,7 +26,7 @@ runtime verification.
 | Specification | `docs/superpowers/specs/2026-08-26-native-rust-runtime-plugins-design.md` | PASS |
 | Specification tip | `449284d0bc` (`docs(plugins): specify zero-loss execution capsule`) | PASS |
 | Local integration branch | `ajc/native-rust-runtime-plugins` | ACTIVE |
-| Current local integration HEAD | `979f7d4ff04a72b7715311bde1d25fff4f7ea68d` | ACTIVE |
+| Current local integration HEAD | `f02291b60b27db5171550d5dcdacab9252f4b95d` (Task 19 merged `f02291b60b`) | ACTIVE |
 | Baseline hygiene commit | `d4159dc91a11c4afe643cd90ec92fc8974171321` | PASS |
 | Full implementation plan | `docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-implementation.md`; final hash-bound audits recorded below | PASS |
 | ABI boundary gap-closure plan | Tasks 1–4 plus Task-5 rejection integrated through `e68ca98c9d`; corrected Task-6 branch `ajc/plugin-abi-gap-task6-corrected` and worktree `.worktrees/plugin-abi-gap-closure-task6` start from that exact post-Task-5 commit; main-plan Task 4 remains blocked until Task 6 lands | ACTIVE |
