@@ -99,6 +99,7 @@ name = "aiperf-cli"
 version = "0.13.0"
 dependencies = [
  "aiperf-allocator-shim",
+ "aiperf-plugin-host",
  "aiperf-runtime",
  "anyhow",
  "async-trait",
@@ -120,6 +121,7 @@ dependencies = [
  "prost 0.14.4",
  "pyo3",
  "regex",
+ "rmp-serde",
  "rustls 0.23.41",
  "rustls-pemfile",
  "serde",
@@ -173,6 +175,7 @@ dependencies = [
  "aiperf-cli",
  "aiperf-mock-server",
  "aiperf-runtime",
+ "anyhow",
  "arrow",
  "axum",
  "base64 0.22.1",
@@ -360,6 +363,7 @@ dependencies = [
  "serde_yaml",
  "tempfile",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -368,6 +372,8 @@ version = "0.13.0"
 dependencies = [
  "aiperf-plugin-host",
  "aiperf-plugin-sdk",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
