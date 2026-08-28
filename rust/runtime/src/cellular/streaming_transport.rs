@@ -1097,11 +1097,13 @@ pub(crate) struct CellularBindingContext {
 
 /// Prepare one multiplexed binding across every selected route.
 ///
-/// There is deliberately no synchronous constructor: when a synthesis profile
-/// is authored, every route must acknowledge the exact bound digest before any
-/// submitter escapes, and a missing or mismatched acknowledgement cancels the
-/// partial binding rather than leaving one cell synthesizing against a
-/// different profile.
+/// When a synthesis profile is authored this sends the exact bound digest to
+/// every route before returning, and stamps that digest into every subsequent
+/// `PrepareAction`, so a cell that resolved a different profile refuses the
+/// first action it is handed rather than synthesizing against the wrong one.
+/// The acknowledgements themselves arrive on the returned event sender, which
+/// the caller has not yet connected to a transport at this point, so matching
+/// them against the route table belongs to the caller that owns the wire.
 pub(crate) async fn prepare_cellular_placement_binding(
     routes: Box<[PreparedCellRoute]>,
     sinks: Box<[Rc<dyn PlacementCommandSink>]>,
@@ -1216,6 +1218,7 @@ pub(crate) fn profile_bound_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::streaming::budget::BudgetLimits;
 
     fn sequence(value: u64) -> GlobalSequence {
         GlobalSequence::new(value)
@@ -1294,5 +1297,513 @@ mod tests {
         assert_eq!(slab.live_count(), 1);
         assert!(slab.get_mut(other).is_some());
         assert_eq!(budget.snapshot().used_items, 2);
+    }
+
+    const FRAME_CEILING: usize = 4096;
+
+    const CELLULAR_LIMITS: StreamingCellularLimits = StreamingCellularLimits {
+        max_frame_bytes: FRAME_CEILING,
+        max_payload_bytes: 2048,
+        max_content_items: 4,
+        max_content_bytes: 1024,
+    };
+
+    /// Controller-to-cell egress that hands frames to an in-process channel.
+    ///
+    /// The transfer logic is what is under test, so the wire is a channel; the
+    /// security boundary on both ends is the real one, because "authenticate
+    /// before decode" is part of what these tests assert.
+    struct LoopbackCommandSink {
+        inbound: mpsc::Sender<BudgetOwnedControllerFrame>,
+        budget: StreamingResourceBudget,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl PlacementCommandSink for LoopbackCommandSink {
+        async fn send_command(
+            &self,
+            _peer: &velo::PeerInfo,
+            frame: Bytes,
+        ) -> Result<(), CellularStreamingError> {
+            let lease = self.budget.acquire(1, frame.len().max(1)).await?;
+            self.inbound
+                .send(BudgetOwnedControllerFrame::new(frame, lease))
+                .await
+                .map_err(|_| CellularStreamingError::Transport("cell inbound closed".to_owned()))
+        }
+    }
+
+    /// Cell-to-controller egress that retains sealed frames for the test to
+    /// feed back through the real controller admission path.
+    #[derive(Default)]
+    struct CollectingEventSink {
+        frames: RefCell<Vec<Bytes>>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl PlacementEventSink for CollectingEventSink {
+        async fn send_event(&self, frame: Bytes) -> Result<(), CellularStreamingError> {
+            self.frames.borrow_mut().push(frame);
+            Ok(())
+        }
+    }
+
+    struct Fixture {
+        binding: PreparedCellularPlacementBinding,
+        events_tx: mpsc::Sender<BudgetOwnedCellEvent>,
+        endpoints: Vec<CellularExecutionEndpoint>,
+        authority: CellRegistrationAuthority,
+        emitted: Rc<CollectingEventSink>,
+        transfer_budget: StreamingResourceBudget,
+        event_budget: StreamingResourceBudget,
+    }
+
+    fn content(byte_length: usize) -> PreparedActionContent {
+        let mut content = PreparedActionContent {
+            schema: crate::streaming::action::DatasetActionSchema::new("aiperf.stream.action.v1"),
+            canonical_request: vec![0x7B; byte_length],
+            content_leases: Vec::new(),
+            item_count: 0,
+            byte_length: byte_length as u64,
+            digest: [0; 32],
+        };
+        content.digest = content.compute_digest();
+        content
+    }
+
+    fn decision(route_id: u32, global_sequence: u64, action: u8) -> PlacementDecision {
+        PlacementDecision {
+            route_id,
+            action_id: StableActionId::from_bytes([action; 32]),
+            attempt_id: ActionAttemptId::from_bytes([action; 32]),
+            global_sequence: sequence(global_sequence),
+            ownership_epoch: SessionOwnershipEpoch::new(1),
+            prior_session_state_version: SessionStateVersion::INITIAL,
+            content: content(64),
+        }
+    }
+
+    /// One binding with `route_count` routes, each addressing its own cell.
+    async fn fixture(route_count: u32, transfer: BudgetLimits) -> Fixture {
+        let (authority, controller_sealer, credentials, cell_inbound) =
+            CellRegistrationAuthority::mint_streaming_security(route_count).expect("security");
+        let session = ControllerStreamingSessionId::from_bytes([0x5A; 32]);
+        let transfer_budget = StreamingResourceBudget::new(transfer).expect("transfer budget");
+        let inbound_budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 256,
+            max_bytes: 256 * FRAME_CEILING,
+        })
+        .expect("inbound budget");
+        let event_budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 64,
+            max_bytes: 64 * FRAME_CEILING,
+        })
+        .expect("event budget");
+        let emitted = Rc::new(CollectingEventSink::default());
+
+        let mut routes = Vec::new();
+        let mut sinks: Vec<Rc<dyn PlacementCommandSink>> = Vec::new();
+        let mut endpoints = Vec::new();
+        for (index, (credential, inbound_security)) in
+            credentials.into_iter().zip(cell_inbound).enumerate()
+        {
+            let cell_id = index as u32;
+            // Seal and authenticate must name the same peer: the frame binds the
+            // peer it travels over, not the signer's own address.
+            let peer = velo::PeerInfo::new(
+                velo::InstanceId::new_v4(),
+                velo::WorkerAddress::from_encoded(vec![0xC0, cell_id as u8]),
+            );
+            inbound_security
+                .install_controller_streaming_session(session)
+                .expect("pin the controller streaming session");
+            let (frame_tx, frame_rx) = mpsc::channel(64);
+            routes.push(PreparedCellRoute {
+                route_id: cell_id,
+                destination_cell: cell_id,
+                peer: peer.clone(),
+            });
+            sinks.push(Rc::new(LoopbackCommandSink {
+                inbound: frame_tx,
+                budget: inbound_budget.clone(),
+            }));
+            endpoints.push(CellularExecutionEndpoint {
+                inbound: frame_rx,
+                events: Rc::clone(&emitted) as Rc<dyn PlacementEventSink>,
+                credential: Rc::new(credential),
+                security: Rc::new(inbound_security),
+                peer: peer.clone(),
+                controller_peer: peer,
+                destination: CellularRole::Cell(cell_id),
+                sequencer: RouteSequencer::default(),
+                staged: HashMap::new(),
+                limits: CELLULAR_LIMITS,
+                bound_profile_digest: None,
+            });
+        }
+
+        let (binding, events_tx) = prepare_cellular_placement_binding(
+            routes.into_boxed_slice(),
+            sinks.into_boxed_slice(),
+            CellularBindingContext {
+                security: Rc::new(controller_sealer),
+                session,
+                plan_digest: [7; 32],
+                budget: transfer_budget.clone(),
+                limits: CellularTransferLimits {
+                    max_items: 8,
+                    max_bytes: 8 * FRAME_CEILING,
+                    max_event_items: 32,
+                    max_event_bytes: 32 * FRAME_CEILING,
+                },
+                cellular_limits: CELLULAR_LIMITS,
+            },
+            None,
+        )
+        .await
+        .expect("prepare binding");
+
+        Fixture {
+            binding,
+            events_tx,
+            endpoints,
+            authority,
+            emitted,
+            transfer_budget,
+            event_budget,
+        }
+    }
+
+    /// Drive one queued controller frame through the cell and return its sealed
+    /// event to the controller's real admission path.
+    async fn round_trip_one_frame(
+        endpoint: &mut CellularExecutionEndpoint,
+        emitted: &CollectingEventSink,
+        authority: &CellRegistrationAuthority,
+        event_budget: &StreamingResourceBudget,
+        events_tx: &mpsc::Sender<BudgetOwnedCellEvent>,
+        route_id: u32,
+        is_release: bool,
+    ) {
+        let frame = endpoint.next_frame().await.expect("queued controller frame");
+        let event = if is_release {
+            endpoint.accept_release(frame).expect("accept release")
+        } else {
+            endpoint
+                .accept_prepare(frame)
+                .expect("accept prepare")
+                .expect("a fresh prepare owes a receipt")
+        };
+        endpoint.emit(&event).await.expect("emit receipt");
+        let sealed = emitted.frames.borrow_mut().remove(0);
+        admit_placement_event(
+            authority,
+            event_budget,
+            CELLULAR_LIMITS,
+            route_id,
+            route_id,
+            sealed,
+            events_tx,
+        )
+        .await
+        .expect("admit the authenticated event");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn full_route_window_backpressures_without_spawning_per_action_drivers() {
+        let Fixture {
+            mut binding,
+            events_tx,
+            mut endpoints,
+            authority,
+            emitted,
+            event_budget,
+            ..
+        } = fixture(
+            1,
+            BudgetLimits {
+                max_items: 5,
+                max_bytes: 5 * FRAME_CEILING,
+            },
+        )
+        .await;
+        let diagnostics = binding.driver.diagnostics();
+
+        binding
+            .submitter
+            .prepare(decision(0, 0, 1))
+            .await
+            .expect("first placement");
+        binding
+            .submitter
+            .prepare(decision(0, 1, 2))
+            .await
+            .expect("second placement");
+
+        // The window is full: the third placement parks rather than failing,
+        // and no timer is involved in waking it.
+        let mut third = std::pin::pin!(binding.submitter.prepare(decision(0, 2, 3)));
+        let is_parked = tokio::select! {
+            biased;
+            _ = third.as_mut() => false,
+            () = std::future::ready(()) => true,
+        };
+        assert!(is_parked, "a saturated prepare window must park a placement");
+        assert_eq!(
+            diagnostics.driver_count(),
+            1,
+            "actions grow in the slab, never in drivers"
+        );
+
+        round_trip_one_frame(
+            &mut endpoints[0],
+            &emitted,
+            &authority,
+            &event_budget,
+            &events_tx,
+            0,
+            false,
+        )
+        .await;
+        let event = binding.driver.next_event().await.expect("prepared receipt");
+        assert!(matches!(event.event, CellPlacementEvent::Prepared { .. }));
+
+        third
+            .await
+            .expect("the released prepare charge admits the parked placement");
+        assert_eq!(diagnostics.driver_count(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn release_is_not_blocked_by_a_saturated_prepare_window() {
+        let Fixture {
+            mut binding,
+            mut endpoints,
+            ..
+        } = fixture(
+            1,
+            BudgetLimits {
+                max_items: 4,
+                max_bytes: 4 * FRAME_CEILING,
+            },
+        )
+        .await;
+        let first = binding
+            .submitter
+            .prepare(decision(0, 0, 1))
+            .await
+            .expect("first placement");
+        binding
+            .submitter
+            .prepare(decision(0, 1, 2))
+            .await
+            .expect("second placement fills the window");
+
+        // The co-reserved release charge is why this completes at all: without
+        // it the only operation that can drain the window would queue behind it.
+        binding
+            .submitter
+            .release(first.handle)
+            .await
+            .expect("release must not queue behind a full prepare window");
+
+        for _ in 0..2 {
+            let frame = endpoints[0].next_frame().await.expect("prepare frame");
+            endpoints[0]
+                .accept_prepare(frame)
+                .expect("accept prepare")
+                .expect("receipt");
+        }
+        let frame = endpoints[0].next_frame().await.expect("release frame");
+        assert!(matches!(
+            endpoints[0].accept_release(frame).expect("accept release"),
+            CellPlacementEvent::Released { .. }
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancel_pending_wakes_a_parked_prepare_and_a_parked_driver() {
+        // The endpoints are retained so the cell inbound channels stay open;
+        // a closed receiver would fail the send rather than park the window.
+        let Fixture {
+            mut binding,
+            endpoints: _endpoints,
+            ..
+        } = fixture(
+            1,
+            BudgetLimits {
+                max_items: 2,
+                max_bytes: 2 * FRAME_CEILING,
+            },
+        )
+        .await;
+        let control = binding.control.clone();
+        binding
+            .submitter
+            .prepare(decision(0, 0, 1))
+            .await
+            .expect("first placement fills the window");
+
+        let mut parked = std::pin::pin!(binding.submitter.prepare(decision(0, 1, 2)));
+        let is_parked = tokio::select! {
+            biased;
+            _ = parked.as_mut() => false,
+            () = std::future::ready(()) => true,
+        };
+        assert!(is_parked);
+
+        control.cancel_pending();
+        assert_eq!(
+            parked.await.err(),
+            Some(CellularStreamingError::Budget(BudgetError::Closed)),
+            "closing the budget is what wakes a parked acquisition"
+        );
+        assert_eq!(
+            binding.driver.next_event().await.err(),
+            Some(CellularStreamingError::Cancelled),
+            "the watch send is what wakes a driver parked on an empty channel"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn binding_task_count_is_independent_of_action_count() {
+        let Fixture {
+            mut binding,
+            events_tx,
+            mut endpoints,
+            authority,
+            emitted,
+            event_budget,
+            ..
+        } = fixture(
+            1,
+            BudgetLimits {
+                max_items: 128,
+                max_bytes: 128 * FRAME_CEILING,
+            },
+        )
+        .await;
+        let diagnostics = binding.driver.diagnostics();
+
+        for index in 0..32_u64 {
+            binding
+                .submitter
+                .prepare(decision(0, index, index as u8 + 1))
+                .await
+                .expect("placement");
+            round_trip_one_frame(
+                &mut endpoints[0],
+                &emitted,
+                &authority,
+                &event_budget,
+                &events_tx,
+                0,
+                false,
+            )
+            .await;
+            binding.driver.next_event().await.expect("prepared receipt");
+            assert_eq!(diagnostics.driver_count(), 1);
+            assert_eq!(diagnostics.owner_task_count(), 0);
+        }
+        assert_eq!(
+            binding.submitter.in_flight(),
+            32,
+            "growth lands in the slab, not in owners"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn drain_joins_owned_tasks_instead_of_aborting_them() {
+        let Fixture {
+            mut binding,
+            endpoints: _endpoints,
+            ..
+        } = fixture(
+            1,
+            BudgetLimits {
+                max_items: 8,
+                max_bytes: 8 * FRAME_CEILING,
+            },
+        )
+        .await;
+        let diagnostics = binding.driver.diagnostics();
+        let (finished, ran_to_completion) = tokio::sync::oneshot::channel::<()>();
+        binding.driver.owners.adopt(tokio::spawn(async move {
+            let _ = finished.send(());
+        }));
+        assert_eq!(diagnostics.owner_task_count(), 1);
+
+        binding.driver.drain().await.expect("drain");
+        assert_eq!(diagnostics.owner_task_count(), 0);
+        assert!(
+            ran_to_completion.await.is_ok(),
+            "drain joins its owners; it never aborts them"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_placement_round_trips_through_authentication_staging_and_release() {
+        let Fixture {
+            mut binding,
+            events_tx,
+            mut endpoints,
+            authority,
+            emitted,
+            transfer_budget,
+            event_budget,
+        } = fixture(
+            1,
+            BudgetLimits {
+                max_items: 8,
+                max_bytes: 8 * FRAME_CEILING,
+            },
+        )
+        .await;
+
+        let placed = binding
+            .submitter
+            .prepare(decision(0, 0, 1))
+            .await
+            .expect("placement");
+        round_trip_one_frame(
+            &mut endpoints[0],
+            &emitted,
+            &authority,
+            &event_budget,
+            &events_tx,
+            0,
+            false,
+        )
+        .await;
+        let prepared = binding.driver.next_event().await.expect("prepared receipt");
+        assert_eq!(prepared.handle, Some(placed.handle));
+        assert_eq!(endpoints[0].staged_count(), 1);
+
+        binding
+            .submitter
+            .release(placed.handle)
+            .await
+            .expect("release");
+        round_trip_one_frame(
+            &mut endpoints[0],
+            &emitted,
+            &authority,
+            &event_budget,
+            &events_tx,
+            0,
+            true,
+        )
+        .await;
+        let released = binding.driver.next_event().await.expect("released receipt");
+        assert_eq!(released.handle, Some(placed.handle));
+        assert!(matches!(
+            released.event,
+            CellPlacementEvent::Released { .. }
+        ));
+
+        // The terminal receipt reclaims the entry, and with it both charges.
+        assert_eq!(binding.submitter.in_flight(), 0);
+        let snapshot = transfer_budget.snapshot();
+        assert_eq!((snapshot.used_items, snapshot.used_bytes), (0, 0));
     }
 }
