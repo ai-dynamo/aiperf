@@ -514,6 +514,12 @@ impl StreamingCheckpointParticipant for ControlledParticipant {
 /// Matching failures allowed to retry before the checkpoint rule exhausts.
 const CHECKPOINT_RETRY_LIMIT: u32 = 3;
 
+/// Virtual instant past the default reader lease's renew margin.
+///
+/// The local store's default reader lease is 60s with a quarter-lease renew
+/// margin, so a read at this instant is the first that must renew.
+const READER_LEASE_RENEW_NS: i64 = 50_000_000_000;
+
 /// Render one digest as lowercase 64-character hex.
 fn hex_digest(digest: &ContentDigest) -> String {
     digest
@@ -1030,7 +1036,9 @@ impl TestCheckpointBackend for LocalConformanceBackend {
         let open = || -> Box<dyn StreamingCheckpointBackend> { Box::new(armed.clone()) };
 
         if fault == CheckpointFault::ReaderLeaseLoss {
-            return self.reader_lease_loss(&open_backend, &open).await;
+            return self
+                .reader_lease_loss(&open_backend, &open, clock.as_ref())
+                .await;
         }
 
         let arm_target = armed.clone();
@@ -1055,6 +1063,7 @@ impl LocalConformanceBackend {
         &self,
         open_backend: &dyn Fn() -> LocalCheckpointBackend,
         open: &dyn Fn() -> Box<dyn StreamingCheckpointBackend>,
+        clock: &SimClock,
     ) -> FaultObservation {
         let (mut coordinator, _control) = coordinator_for(self.run, open(), None);
         let baseline = coordinator
@@ -1073,6 +1082,9 @@ impl LocalConformanceBackend {
             .await
             .expect("open the local head")
             .expect("head exists");
+        // Renewal only runs inside the lease's renew margin, so virtual time is
+        // advanced past it before the refusal can be observed at all.
+        clock.advance_to(READER_LEASE_RENEW_NS);
         fenced.fail_next_renewal();
         let LeasedCheckpointGenerationView::CurrentV4(reader) = opened.view() else {
             panic!("local head is current-v4");
