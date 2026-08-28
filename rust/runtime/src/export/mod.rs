@@ -309,7 +309,7 @@ pub struct ExportConfig {
 /// no outcome.
 #[derive(Debug, Clone)]
 pub struct ExporterOutcome {
-    /// The exporter's registry identifier ([`Exporter::name`]).
+    /// The exporter's registry identifier (the value returned by [`Exporter::name`]).
     pub descriptor_id: String,
     /// Whether [`Exporter::export`] returned `Ok`.
     pub success: bool,
