@@ -3613,10 +3613,6 @@ Multi-run runs per sweep cell; overrides multiRun.numRuns / multi_run.num_runs i
 Cooldown seconds between multi-run trials (overrides YAML).
 <br/>_Default: `0.0`_
 
-#### `--convergence-metric` `<str>`
-
-Stop multi-run early when this metric converges (e.g. ttft_p99).
-
 #### `--min-runs` `<int>`
 
 Minimum runs before convergence is checked (default 3).
@@ -3626,12 +3622,6 @@ Minimum runs before convergence is checked (default 3).
 
 Hard cap on runs even if not converged (default 10).
 <br/>_Default: `10`_
-
-#### `--convergence-threshold` `<float>`
-
-Relative convergence threshold (default 0.05 = 5%).
-<br/>_Constraints: > 0, &lt; 1_
-<br/>_Default: `0.05`_
 
 #### `-d`, `--detach`, `--no-detach`
 

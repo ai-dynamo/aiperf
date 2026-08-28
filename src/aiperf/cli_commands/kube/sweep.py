@@ -45,10 +45,6 @@ _COOLDOWN_PARAM = Parameter(
     name="--cooldown",
     help="Cooldown seconds between multi-run trials (overrides YAML).",
 )
-_CONV_METRIC_PARAM = Parameter(
-    name="--convergence-metric",
-    help="Stop multi-run early when this metric converges (e.g. ttft_p99).",
-)
 _CONV_MIN_PARAM = Parameter(
     name="--min-runs",
     help="Minimum runs before convergence is checked (default 3).",
@@ -56,10 +52,6 @@ _CONV_MIN_PARAM = Parameter(
 _CONV_MAX_PARAM = Parameter(
     name="--max-runs",
     help="Hard cap on runs even if not converged (default 10).",
-)
-_CONV_THRESH_PARAM = Parameter(
-    name="--convergence-threshold",
-    help="Relative convergence threshold (default 0.05 = 5%).",
 )
 
 
@@ -70,10 +62,8 @@ async def sweep(
     kube_options: KubeOptions | None = None,
     multi_run_trials: Annotated[int | None, _TRIALS_PARAM] = None,
     cooldown_seconds: Annotated[float, _COOLDOWN_PARAM] = 0.0,
-    convergence_metric: Annotated[str | None, _CONV_METRIC_PARAM] = None,
     convergence_min_runs: Annotated[int, _CONV_MIN_PARAM] = 3,
     convergence_max_runs: Annotated[int, _CONV_MAX_PARAM] = 10,
-    convergence_threshold: Annotated[float, _CONV_THRESH_PARAM] = 0.05,
     detach: Annotated[bool, _DETACH_PARAM] = False,  # noqa: ARG001 - reserved for future tailing
     dry_run: Annotated[bool, _DRY_RUN_PARAM] = False,
 ) -> None:
@@ -104,10 +94,10 @@ async def sweep(
             kube_options=kube_options,
             multi_run_trials=multi_run_trials,
             cooldown_seconds=cooldown_seconds,
-            convergence_metric=convergence_metric,
+            convergence_metric=cli_config.convergence_metric,
             convergence_min_runs=convergence_min_runs,
             convergence_max_runs=convergence_max_runs,
-            convergence_threshold=convergence_threshold,
+            convergence_threshold=cli_config.convergence_threshold,
         )
         namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
         cr_dict.setdefault("metadata", {})["namespace"] = namespace
