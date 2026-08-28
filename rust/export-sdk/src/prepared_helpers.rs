@@ -38,11 +38,9 @@ pub fn require_report<'a>(input: ExportInputV1<'a>) -> &'a Value {
 pub fn require_exact_records<'a>(
     input: ExportInputV1<'a>,
 ) -> Result<&'a ExactRecordsV1, ExporterError> {
-    input
-        .exact_records()
-        .ok_or(ExporterError::MissingCapture(
-            CaptureRequirementV1::ExactRecordsV1,
-        ))
+    input.exact_records().ok_or(ExporterError::MissingCapture(
+        CaptureRequirementV1::ExactRecordsV1,
+    ))
 }
 
 /// The folded GenAI client histogram projection, or the refusal for a capture
@@ -70,7 +68,11 @@ where
     F: Fn(ExportInputV1<'_>, &dyn ArtifactAccess) -> Result<(), ExporterError>,
 {
     /// Bind one identifier, requirement set, and export closure.
-    pub const fn new(id: RegistryId, requirements: ExporterCaptureRequirementsV1, export: F) -> Self {
+    pub const fn new(
+        id: RegistryId,
+        requirements: ExporterCaptureRequirementsV1,
+        export: F,
+    ) -> Self {
         Self {
             id,
             requirements,
@@ -149,16 +151,18 @@ mod tests {
         let exporter = ClosureExporter::new(
             identifier(),
             ExporterCaptureRequirementsV1::default(),
-            |input, artifacts| {
-                crate::write_json(artifacts, "report.json", require_report(input))
-            },
+            |input, artifacts| crate::write_json(artifacts, "report.json", require_report(input)),
         );
         let report = FinalReportV1::new(serde_json::json!({ "ok": true }));
         exporter
             .export(ExportInputV1::new(&report), &artifacts)
             .expect("export");
         assert_eq!(exporter.id(), &identifier());
-        assert!(exporter.requirements().contains(CaptureRequirementV1::FinalReport));
+        assert!(
+            exporter
+                .requirements()
+                .contains(CaptureRequirementV1::FinalReport)
+        );
         assert!(!artifacts.read("report.json").expect("read").is_empty());
     }
 }
