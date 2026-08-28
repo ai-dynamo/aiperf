@@ -222,12 +222,6 @@ fn inspect_elf(
     })
 }
 
-fn inspect_mach(
-    mach: &goblin::mach::Mach<'_>,
-    target: &str,
-) -> Result<InspectedArtifact, StaticInspectionError> {
-    use goblin::mach::Mach;
-
 fn inspect_macho_binary(
     macho: &goblin::mach::MachO<'_>,
     target: &str,
