@@ -1166,9 +1166,9 @@ pub async fn issue_receipt_partition(
 
 use aiperf_runtime::streaming::{
     checkpoint_backend::StreamingCheckpointBackend,
+    failure::{ResultExportError, ResultExportFailureCode},
     reliability::{
-        PreparedExportAttemptFailure, PreparedExportReceiptPersistence,
-        PreparedStreamingIssuePolicy, ResultSinkAttemptOutcome, StreamingIssueComponentId,
+        PreparedExportAttemptFailure, PreparedExportReceiptPersistence, ResultSinkAttemptOutcome,
         StreamingReliabilityError,
     },
     results::ResultIndexReadBudget,

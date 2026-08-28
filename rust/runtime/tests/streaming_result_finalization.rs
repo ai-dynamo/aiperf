@@ -8,7 +8,6 @@
 
 use aiperf_runtime::streaming::{
     checkpoint::{CheckpointTerminalReason, CommittedCheckpointGeneration},
-    checkpoints::memory::MemoryCheckpointBackend,
     identity::ContentDigest,
     reliability::StreamingIssueComponentId,
     results::{

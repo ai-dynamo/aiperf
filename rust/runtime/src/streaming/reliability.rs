@@ -4434,8 +4434,21 @@ impl BudgetOwnedExportIssueReceipt {
     }
 }
 
-/// Durable status reference to an outer and embedded receipt object.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+impl fmt::Debug for BudgetOwnedExportIssueReceipt {
+    /// Expose only identity and exact charges: the receipt's retained bytes are
+    /// durable evidence, not diagnostic output.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BudgetOwnedExportIssueReceipt")
+            .field("issue_id", &self.receipt.issue_id)
+            .field("attempt_ordinal", &self.receipt.attempt_ordinal)
+            .field("encoded_charge_bytes", &self.encoded.charged_bytes())
+            .field("parsed_charge_bytes", &self.parsed_charge_bytes)
+            .finish()
+    }
+}
+
+/// Durable status reference to an outer and embedded receipt object.#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DerivedExportReceiptReference {
     receipt_digest: ContentDigest,
     receipt_length: u64,
