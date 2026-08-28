@@ -8,3 +8,5 @@ pub mod lease_gc;
 pub mod local;
 pub mod memory;
 pub mod none;
+#[cfg(feature = "streaming-s3")]
+pub mod object_store;
