@@ -9,17 +9,21 @@
 //! ## Why one row is `#[ignore]`d and one row guards it
 //!
 //! `shadow_replay` is a registered workload identity: the CLI authors it, the
-//! protocol-v2 layer projects it, and the static registry resolves its selected
-//! source, format, session program, and checkpoint backend against the compiled
-//! inventory. It has no `prepare_with_context`, so the default
-//! `WorkloadFactory` body refuses execution and the product cannot yet reach
-//! the streaming pipeline from a profile invocation.
+//! protocol-v2 layer projects it onto the shadow-replay workload DTO, and the
+//! static registry resolves its selected source, format, session program, and
+//! checkpoint backend against the compiled inventory. The one component it
+//! cannot resolve is the endpoint-reaching action sink: `scheduled_request`
+//! holds worker-local `Rc` handles, so it is neither `Send` nor `Sync` and is
+//! constructed by a run's composition root rather than registered at startup.
+//! `shadow_replay` has no such composition root yet, so capability agreement
+//! refuses the binding and the product cannot reach the streaming pipeline from
+//! a profile invocation.
 //!
 //! [`restart_from_checkpoint_matches_sealed_reference`] is therefore ignored
 //! and [`shadow_replay_profile_refuses_before_any_source_or_endpoint_effect`]
-//! asserts *exactly why*. The pair cannot rot: the moment a prepare path lands,
-//! the guard row fails and forces the restart row to be un-ignored, rather than
-//! leaving a permanently-skipped test behind.
+//! asserts *exactly why*. The pair cannot rot: the moment the action sink is
+//! constructed and registered, the guard row fails and forces the restart row
+//! to be un-ignored, rather than leaving a permanently-skipped test behind.
 
 #[path = "support/streaming_product.rs"]
 mod support;
@@ -34,8 +38,8 @@ use support::{LEAK_NEEDLES, ProductRun, StreamingProductFixture};
 /// resumed run would have nothing new to consume and could equal the sealed
 /// reference trivially.
 #[test]
-#[ignore = "shadow_replay has no prepare_with_context; guarded by \
-            shadow_replay_profile_refuses_before_any_source_or_endpoint_effect"]
+#[ignore = "shadow_replay has no composition root that registers the endpoint-reaching action \
+            sink; guarded by shadow_replay_profile_refuses_before_any_source_or_endpoint_effect"]
 fn restart_from_checkpoint_matches_sealed_reference() {
     let fixture = StreamingProductFixture::local_follow_cross_chunk_graph();
     let first = fixture
@@ -65,25 +69,31 @@ fn restart_from_checkpoint_matches_sealed_reference() {
 /// effect.
 ///
 /// This is the current product truth and the guard on the ignored restart row.
-/// The refusal must name the workload, and it must leave the source root, the
-/// checkpoint root, and the artifact root untouched: a workload that cannot
-/// execute must not first acquire a partition, commit a generation, or emit a
-/// partial report.
+/// The refusal must name the unresolved binding and the compiled inventory, and
+/// it must leave the source root, the checkpoint root, and every measurement
+/// artifact untouched: a workload that cannot execute must not first acquire a
+/// partition, commit a generation, or emit a partial report. The run's own log
+/// file is not a measurement artifact — the logger is installed before the
+/// registry resolves anything — so it is excluded by name.
 #[test]
 fn shadow_replay_profile_refuses_before_any_source_or_endpoint_effect() {
     let fixture = StreamingProductFixture::local_follow_cross_chunk_graph();
     let run = fixture.profile();
 
-    run.assert_refused_naming(&["shadow_replay"]);
+    run.assert_refused_naming(&["scheduled_request", "available:"]);
     assert_eq!(
         ProductRun::generation(fixture.checkpoint_root()),
         None,
         "a refused workload must not commit a checkpoint generation"
     );
+    let measurement: Vec<_> = run
+        .artifact_files()
+        .into_iter()
+        .filter(|path| !path.starts_with("logs"))
+        .collect();
     assert!(
-        run.artifact_files().is_empty(),
-        "a refused workload must not emit artifacts, found {:?}",
-        run.artifact_files()
+        measurement.is_empty(),
+        "a refused workload must not emit artifacts, found {measurement:?}"
     );
     assert!(
         std::fs::read_dir(fixture.checkpoint_root())
