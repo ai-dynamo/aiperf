@@ -166,8 +166,7 @@ fn reliability_policy_unknown_fields_are_rejected() {
 
 #[test]
 fn zero_backoff_with_nonzero_retry_limit_is_rejected() {
-    let yaml =
-        yaml_with_reliability("      partition_retry_limit: 3\n      retry_backoff_ms: 0\n");
+    let yaml = yaml_with_reliability("      partition_retry_limit: 3\n      retry_backoff_ms: 0\n");
     let message = refusal_message(&yaml);
     assert!(
         message.contains("retry_backoff_ms"),
@@ -225,7 +224,10 @@ fn ordinary_fail_run_policy_is_not_authorable() {
         StreamingIssueDisposition::FailRun,
         None,
     );
-    assert_eq!(refused.err(), Some(StreamingReliabilityError::IllegalDisposition));
+    assert_eq!(
+        refused.err(),
+        Some(StreamingReliabilityError::IllegalDisposition)
+    );
 }
 
 #[test]
@@ -252,7 +254,11 @@ fn endpoint_failure_threshold_is_cumulative_across_every_authorable_class() {
         .iter()
         .filter(|rule| rule.scope() == StreamingIssueScopeKind::Action)
         .collect();
-    assert_eq!(action_rules.len(), 3, "one wildcard rule per authorable class");
+    assert_eq!(
+        action_rules.len(),
+        3,
+        "one wildcard rule per authorable class"
+    );
     for rule in action_rules {
         assert_eq!(
             rule.admission_fence_count(),

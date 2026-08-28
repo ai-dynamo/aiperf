@@ -7,9 +7,8 @@ use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     action::{
         ActionCancelReceipt, ActionFailureCode, ActionPlacement, ActionResultRetention,
-        EndpointRetrySafety,
-        BudgetedActionUpdate, PreparedStreamingActionBinding, StreamingActionDriver,
-        StreamingActionDriverControl, StreamingActionDriverControlOps,
+        BudgetedActionUpdate, EndpointRetrySafety, PreparedStreamingActionBinding,
+        StreamingActionDriver, StreamingActionDriverControl, StreamingActionDriverControlOps,
         StreamingActionSinkDescriptor, StreamingActionSinkFactory, StreamingActionSubmitter,
         ValidatedStreamingActionSinkConfig, action_execution_control,
     },

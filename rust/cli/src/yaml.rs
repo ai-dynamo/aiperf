@@ -58,7 +58,8 @@ pub fn normalize_str(text: &str, artifact_dir: Option<PathBuf>) -> anyhow::Resul
     resolve_expanded_inputs(expanded, artifact_dir, None)
 }
 
-fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {    if let Some(value) = value {
+fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {
+    if let Some(value) = value {
         anyhow::ensure!(
             value.as_str() == Some("2.0"),
             "unsupported schema version {value:?}; expected \"2.0\""

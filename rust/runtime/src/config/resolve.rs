@@ -1685,10 +1685,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         // beside it would make every stream config trip the mutual-exclusion
         // rule, which exists to reject an authored `datasets:` block, not a
         // resolution artifact.
-        datasets: inputs
-            .dataset_streams
-            .is_none()
-            .then(|| vec![dataset]),
+        datasets: inputs.dataset_streams.is_none().then(|| vec![dataset]),
         phases: Some(phases),
         export: None,
         gpu_telemetry: Some(gpu_cfg),
