@@ -31,7 +31,14 @@ fn plugin_transport_deserializes_without_parameters() {
         panic!("expected Plugin variant");
     };
     assert_eq!(id, "acme/fast-transport:2.1");
-    assert!(parameters.is_null() || parameters == serde_json::Value::Null || parameters.as_object().map(|m| m.is_empty()).unwrap_or(false));
+    assert!(
+        parameters.is_null()
+            || parameters == serde_json::Value::Null
+            || parameters
+                .as_object()
+                .map(|m| m.is_empty())
+                .unwrap_or(false)
+    );
 }
 
 #[test]

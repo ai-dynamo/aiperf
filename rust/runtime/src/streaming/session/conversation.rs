@@ -548,7 +548,10 @@ impl StreamingConversationCoordinator {
     ) -> Result<(), SessionCoordinatorError> {
         self.flush_reemissions(output).await?;
         let scope = ConversationSessionScope::new(self.stream_identity, fragment.session_key);
-        if self.tombstones.contains(&self.input_domain, fragment.session_key) {
+        if self
+            .tombstones
+            .contains(&self.input_domain, fragment.session_key)
+        {
             // A retired session is never recreated. The later fragment is
             // excluded and checked-extends the retained frontier, which moves
             // the tombstone root and invalidates any prepared acknowledgement.

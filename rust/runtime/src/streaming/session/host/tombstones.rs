@@ -128,7 +128,11 @@ pub struct SessionQuarantineTombstoneMap {
 impl SessionQuarantineTombstoneMap {
     /// Begin an empty retained tombstone map for one run.
     #[must_use]
-    pub fn new(run: StreamRunIdentity, budget: StreamingResourceBudget, max_entries: usize) -> Self {
+    pub fn new(
+        run: StreamRunIdentity,
+        budget: StreamingResourceBudget,
+        max_entries: usize,
+    ) -> Self {
         let mut map = Self {
             run,
             budget,
@@ -229,8 +233,10 @@ impl SessionQuarantineTombstoneMap {
             .budget
             .try_acquire(1, bytes.len())
             .map_err(map_budget_error)?;
-        let encoded = BudgetedCheckpointBytes::new(Bytes::from(bytes), encoded_lease)
-            .map_err(|_| SessionCoordinatorError::state_budget(StateBudgetFailureCode::ByteCapacity))?;
+        let encoded =
+            BudgetedCheckpointBytes::new(Bytes::from(bytes), encoded_lease).map_err(|_| {
+                SessionCoordinatorError::state_budget(StateBudgetFailureCode::ByteCapacity)
+            })?;
         let parsed_lease = self
             .budget
             .try_acquire(1, size_of::<SessionQuarantineTombstone>())
@@ -289,8 +295,10 @@ impl SessionQuarantineTombstoneMap {
             .budget
             .try_acquire(1, bytes.len())
             .map_err(map_budget_error)?;
-        let encoded = BudgetedCheckpointBytes::new(Bytes::from(bytes), encoded_lease)
-            .map_err(|_| SessionCoordinatorError::state_budget(StateBudgetFailureCode::ByteCapacity))?;
+        let encoded =
+            BudgetedCheckpointBytes::new(Bytes::from(bytes), encoded_lease).map_err(|_| {
+                SessionCoordinatorError::state_budget(StateBudgetFailureCode::ByteCapacity)
+            })?;
         // The new charge is held before the old one is released, so the retained
         // map is never briefly undercharged.
         if let Some(entry) = self.entries.get_mut(&key) {

@@ -184,7 +184,10 @@ async fn crash_before_initial_status_is_found_by_generation_sink_reconciliation(
         .reconcile_initial(&committed, &sink)
         .await
         .expect("reconcile initial status");
-    assert_eq!(status, DerivedSinkStatus::PendingAttempt { next_ordinal: 0 });
+    assert_eq!(
+        status,
+        DerivedSinkStatus::PendingAttempt { next_ordinal: 0 }
+    );
 
     drop(store);
     let reopened = DerivedSinkStatusStore::open(run, substrate, sink_attempt_budget());
@@ -360,7 +363,13 @@ async fn reopen_rejects_tampered_or_unreachable_export_receipt() {
     substrate.overwrite_encoded_receipt(&committed.generation(), &sink, Some(tampered));
     assert_eq!(
         store
-            .reopen_receipt(&committed, &sink, &policy, &export_budget(), &export_budget())
+            .reopen_receipt(
+                &committed,
+                &sink,
+                &policy,
+                &export_budget(),
+                &export_budget()
+            )
             .await
             .expect_err("tampered receipt refused"),
         refusal(SinkFinalizationFailureCode::TamperedReceipt)
@@ -369,7 +378,13 @@ async fn reopen_rejects_tampered_or_unreachable_export_receipt() {
     substrate.overwrite_encoded_receipt(&committed.generation(), &sink, None);
     assert_eq!(
         store
-            .reopen_receipt(&committed, &sink, &policy, &export_budget(), &export_budget())
+            .reopen_receipt(
+                &committed,
+                &sink,
+                &policy,
+                &export_budget(),
+                &export_budget()
+            )
             .await
             .expect_err("unreachable receipt refused"),
         refusal(SinkFinalizationFailureCode::MissingReceipt)
@@ -452,8 +467,7 @@ async fn illegal_sink_transition_and_terminal_successor_are_unnameable() {
             .expect("complete admits no attempt"),
         refusal(SinkFinalizationFailureCode::IllegalTransition)
     );
-    let probe =
-        DurableSinkOutputProbe::new(&committed, sink, substrate).expect("bind probe");
+    let probe = DurableSinkOutputProbe::new(&committed, sink, substrate).expect("bind probe");
     let replayed = probe.probe().await.expect("probe").expect("durable output");
     assert_eq!(
         store
@@ -521,7 +535,10 @@ async fn reopened_status_and_receipt_retain_exact_encoded_and_parsed_charges() {
         .expect("reopen receipt");
 
     assert_eq!(receipt.encoded_charge_bytes(), encoded_len);
-    assert_eq!(encoded.snapshot().used_bytes, receipt.encoded_charge_bytes());
+    assert_eq!(
+        encoded.snapshot().used_bytes,
+        receipt.encoded_charge_bytes()
+    );
     assert_eq!(parsed.snapshot().used_bytes, receipt.parsed_charge_bytes());
     assert_eq!(encoded.snapshot().used_items, 1);
     assert_eq!(parsed.snapshot().used_items, 1);

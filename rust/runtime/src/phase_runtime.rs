@@ -1070,11 +1070,7 @@ pub(crate) trait ScheduledPhaseRuntimeBuilder {
             plan.policy.needs_performance_records,
         ));
         let native_metrics = Rc::new(if !plan.policy.needs_native_record_dimensions {
-            NativeMetricsObserver::new_aggregate_only(
-                clock.clone(),
-                start_ns,
-                plan.metrics_config,
-            )
+            NativeMetricsObserver::new_aggregate_only(clock.clone(), start_ns, plan.metrics_config)
         } else {
             NativeMetricsObserver::new(clock.clone(), start_ns, plan.metrics_config)
         });

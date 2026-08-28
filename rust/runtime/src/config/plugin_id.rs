@@ -29,7 +29,9 @@ pub fn validate_plugin_id(id: &str) -> Result<(), String> {
         return Err(format!("plugin ID {id:?} cannot be a relative path"));
     }
     if id.starts_with("../") || id == ".." {
-        return Err(format!("plugin ID {id:?} cannot start with a path traversal"));
+        return Err(format!(
+            "plugin ID {id:?} cannot start with a path traversal"
+        ));
     }
     // Reject traversal components anywhere in a slash-separated path.
     for segment in id.split('/') {

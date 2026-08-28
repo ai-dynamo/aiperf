@@ -191,7 +191,9 @@ impl StreamingCheckpointParticipant for NotifyingParticipant {
         if barrier.run != self.run {
             return Err(CheckpointError::ObjectVerification);
         }
-        self.control.view_calls.set(self.control.view_calls.get() + 1);
+        self.control
+            .view_calls
+            .set(self.control.view_calls.get() + 1);
         PreparedParticipantState::new(
             self.run,
             self.participant_id.clone(),
