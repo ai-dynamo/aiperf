@@ -76,7 +76,12 @@ pub struct ExactRecordsChunkV1 {
 /// omitting the field, so "the cell had no data" and "the cell never reported"
 /// stay distinguishable at the controller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "presence", content = "value", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(
+    tag = "presence",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum FoldedProjection<T> {
     /// The cell produced this projection.
     Present(T),

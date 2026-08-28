@@ -132,8 +132,9 @@ fn set_lock_env_propagates_to_command() {
     // `Command`'s env map is not readable, so run a child that prints both
     // variables and assert on what it inherited.
     let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(format!("printf '%s\\n%s' \"${ENV_LOCK_PATH}\" \"${ENV_LOCK_DIGEST}\""));
+    cmd.arg("-c").arg(format!(
+        "printf '%s\\n%s' \"${ENV_LOCK_PATH}\" \"${ENV_LOCK_DIGEST}\""
+    ));
     set_lock_env(
         &mut cmd,
         std::path::Path::new("/tmp/lock.bundle"),

@@ -420,10 +420,11 @@ fn read_pointer(root: &Path, name: &str) -> Result<Option<InstallGeneration>, In
     let text = match open_no_follow(&pointer) {
         Ok(mut f) => {
             let mut buf = String::new();
-            f.read_to_string(&mut buf).map_err(|source| InstallError::Io {
-                path: pointer.clone(),
-                source,
-            })?;
+            f.read_to_string(&mut buf)
+                .map_err(|source| InstallError::Io {
+                    path: pointer.clone(),
+                    source,
+                })?;
             buf
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),

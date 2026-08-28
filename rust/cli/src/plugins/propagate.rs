@@ -38,7 +38,10 @@ pub enum PropagateError {
     ///
     /// The parent always sets both or neither, so a half-set environment means
     /// the child's view of the plugin universe was tampered with or truncated.
-    PartialEnvironment { present: &'static str, missing: &'static str },
+    PartialEnvironment {
+        present: &'static str,
+        missing: &'static str,
+    },
     /// [`ENV_LOCK_DIGEST`] is not exactly 64 hexadecimal characters.
     MalformedDigest { value: String },
     /// [`ENV_LOCK_PATH`] is not an absolute path.
@@ -134,10 +137,14 @@ pub fn read_lock_env() -> Result<Option<(PathBuf, String)>, PropagateError> {
 /// Returns `Ok(())` when the digests agree, or [`PropagateError::DigestMismatch`]
 /// when they differ.
 pub fn verify_propagated_digest(expected: &str, actual: &str) -> Result<(), PropagateError> {
-    let expected_hash = blake3::Hash::from_hex(expected)
-        .map_err(|_| PropagateError::MalformedDigest { value: expected.to_owned() })?;
-    let actual_hash = blake3::Hash::from_hex(actual)
-        .map_err(|_| PropagateError::MalformedDigest { value: actual.to_owned() })?;
+    let expected_hash =
+        blake3::Hash::from_hex(expected).map_err(|_| PropagateError::MalformedDigest {
+            value: expected.to_owned(),
+        })?;
+    let actual_hash =
+        blake3::Hash::from_hex(actual).map_err(|_| PropagateError::MalformedDigest {
+            value: actual.to_owned(),
+        })?;
     if expected_hash == actual_hash {
         Ok(())
     } else {
