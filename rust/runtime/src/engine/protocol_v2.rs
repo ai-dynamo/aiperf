@@ -447,12 +447,44 @@ impl BenchmarkRunWireV2 {
                 "phases": phases,
                 "failure_policy": failure_policy,
             }),
-            None => serde_json::json!({
-                "worker_count": worker_count,
-                "tokenizer": tokenizer,
-                "phases": phases,
-                "failure_policy": failure_policy,
-            }),
+            // A stream run projects onto `ShadowReplayWorkloadConfigV2`, whose
+            // strict DTO names the selected stream components rather than a
+            // finite dataset and tokenizer. Emitting the scheduled shape here
+            // would fail that decode with an unknown-field error that names the
+            // wire rather than the authored selection.
+            None => {
+                let streams = dataset_streams.as_ref().ok_or_else(|| {
+                    anyhow!("run.cfg must contain exactly one dataset or one dataset_streams resource")
+                })?;
+                let replay = &streams.shadow_replay;
+                let stream = streams
+                    .items
+                    .iter()
+                    .find(|item| item.id == replay.stream)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "run.cfg.shadow_replay.stream {:?} names no configured dataset stream",
+                            replay.stream
+                        )
+                    })?;
+                // `project_dataset_streams` derives this digest from the same
+                // resolved policy the host prepares, so its absence here means
+                // the resource was assembled outside that projection.
+                let digest = streams.reliability_policy_digest.ok_or_else(|| {
+                    anyhow!(
+                        "run.cfg.dataset_streams carries no reliability policy digest; the \
+                         resource was not projected from the authored policy"
+                    )
+                })?;
+                serde_json::json!({
+                    "worker_count": worker_count,
+                    "source": stream.source.id.as_str(),
+                    "format": stream.format.id.as_str(),
+                    "session_program": stream.session_program.id.as_str(),
+                    "phases": phases,
+                    "reliability_policy_digest": digest,
+                })
+            }
         };
         // `weka_semantics` selects the graph reconstruction pipeline and exists
         // only on the graph workload's config DTO. The scheduled workload DTO is
