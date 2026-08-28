@@ -1034,7 +1034,7 @@ pub(crate) async fn execute_native_inner(
         outcome.evaluator = Some(evaluation.evaluator_report);
         outcome.errors = accuracy_report_errors(&evaluation.failures);
     }
-    let mut report = NativeReport::from_outcome(&profiling_metrics, &outcome);
+    let report = NativeReport::from_outcome(&profiling_metrics, &outcome);
     Ok(report)
 }
 

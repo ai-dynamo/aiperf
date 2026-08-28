@@ -263,7 +263,6 @@ impl RunCapture {
             fold_dispatch_next: Cell::new(0),
             fold_dispatch_ordinals: RefCell::new(HashMap::new()),
             record_lane: None,
-            otel: None,
             capture_outputs_text: false,
             worker_label: None,
         }
