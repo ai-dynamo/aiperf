@@ -143,6 +143,25 @@ pub struct ValidatedRetentionPolicy {
 }
 
 impl ValidatedRetentionPolicy {
+    /// Policy derived for a store whose operator has authored no retention.
+    ///
+    /// It keeps the head plus one resume root, retains final generations, and
+    /// serves no grace, which is the least surprising behavior before a policy
+    /// is installed. Lifetimes are clamped positive because a zero-lifetime lease
+    /// is born expired and would pin nothing.
+    #[must_use]
+    pub const fn derived(prepare_lease_ns: i64, reader_lease_ns: i64) -> Self {
+        Self {
+            resume_roots: 1,
+            partial_history: 0,
+            retain_final_until_exported: true,
+            retain_source_cache_through_resume_root: false,
+            orphan_grace_ns: 0,
+            prepare_lease_ns: if prepare_lease_ns > 0 { prepare_lease_ns } else { 1 },
+            reader_lease_ns: if reader_lease_ns > 0 { reader_lease_ns } else { 1 },
+        }
+    }
+
     /// Committed generations retained as resume roots.
     #[must_use]
     pub const fn resume_roots(&self) -> usize {
