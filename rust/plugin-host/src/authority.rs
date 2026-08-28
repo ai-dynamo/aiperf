@@ -58,16 +58,23 @@ pub fn verify_digest_authority(
 }
 
 /// Verify authority for a raw byte slice + known digest.
+///
+/// Both sides are parsed as `blake3::Hash` before comparison, so two identical
+/// but unparseable strings (e.g. `("", "")`) are a `DigestMismatch` rather than
+/// an accidental `Trusted`.
 pub fn verify_digest_authority_bytes(
     actual_digest: &str,
     expected_digest: &str,
 ) -> AuthorityVerdict {
-    if actual_digest == expected_digest {
-        AuthorityVerdict::Trusted
-    } else {
-        AuthorityVerdict::DigestMismatch {
-            expected: expected_digest.to_owned(),
-            actual: actual_digest.to_owned(),
-        }
+    let mismatch = || AuthorityVerdict::DigestMismatch {
+        expected: expected_digest.to_owned(),
+        actual: actual_digest.to_owned(),
+    };
+    match (
+        actual_digest.parse::<blake3::Hash>(),
+        expected_digest.parse::<blake3::Hash>(),
+    ) {
+        (Ok(actual), Ok(expected)) if actual == expected => AuthorityVerdict::Trusted,
+        _ => mismatch(),
     }
 }

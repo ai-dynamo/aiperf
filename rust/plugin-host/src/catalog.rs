@@ -8,7 +8,10 @@
 //! winners (one per package ID), shadowed losers, ambiguous ties, and
 //! quarantined packages that failed parsing.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::PathBuf,
+};
 
 use crate::{
     discovery::DiscoveredPackage, manifest::PluginManifestV2, normalize::normalize_manifest,
@@ -76,8 +79,16 @@ pub fn resolve_catalog(
 ) -> IntendedCatalog {
     let mut catalog = IntendedCatalog::default();
     let mut candidates: Vec<Candidate> = vec![];
+    // A search path repeated on `AIPERF_PLUGIN_PATH` (e.g. `/a:/a`) discovers the
+    // same manifest more than once. Admitting it twice would make a package
+    // ambiguous against itself, so each (path, source kind) pair is taken once.
+    let mut seen_candidates: HashSet<(PathBuf, u8)> = HashSet::new();
 
     for pkg in discovered {
+        if !seen_candidates.insert((pkg.manifest_path.clone(), pkg.source_id.kind_ordinal)) {
+            continue;
+        }
+
         let bytes = match manifest_bytes.get(&pkg.manifest_path) {
             Some(b) => b,
             None => {
@@ -119,8 +130,10 @@ pub fn resolve_catalog(
     }
 
     // Group by package ID; each manifest may declare multiple packages.
+    // A `BTreeMap` keeps winner/shadow/ambiguous emission ordered by package ID,
+    // so a transactional registry sees the same load order on every run.
     // (package_id) → Vec<(eff_priority, manifest_path, manifest)>
-    let mut by_id: HashMap<String, Vec<(i32, PathBuf, PluginManifestV2)>> = HashMap::new();
+    let mut by_id: BTreeMap<String, Vec<(i32, PathBuf, PluginManifestV2)>> = BTreeMap::new();
 
     for cand in candidates {
         for pkg_entry in &cand.manifest.packages {

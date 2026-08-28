@@ -83,8 +83,9 @@ pub fn normalize_manifest(raw: PluginManifestV2) -> Result<PluginManifestV2, Man
 fn normalize_package(
     mut pkg: PluginPackageManifestV2,
 ) -> Result<PluginPackageManifestV2, ManifestError> {
-    // Validate id
-    NormalizedIdV1::parse(&pkg.id)?;
+    // Validate and canonicalize id: the lowercased form is what reaches catalog
+    // resolution, so `Foo` and `foo` contest the same priority bucket.
+    pkg.id = NormalizedIdV1::parse(&pkg.id)?.0;
 
     // Validate version as canonical SemVer (X.Y.Z)
     Version::parse(&pkg.version).map_err(|_| ManifestError::InvalidSemVer(pkg.version.clone()))?;
