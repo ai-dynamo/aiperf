@@ -160,14 +160,9 @@ impl S3GenerationToken {
         // A multipart ETag is `<hex>-<partcount>`; it is not a hash of the object
         // bytes and does not survive a re-upload with a different part size, so
         // it is a generation token only.
-        if etag
-            .rsplit_once('-')
-            .is_some_and(|(head, parts)| {
-                !head.is_empty()
-                    && !parts.is_empty()
-                    && parts.bytes().all(|byte| byte.is_ascii_digit())
-            })
-        {
+        if etag.rsplit_once('-').is_some_and(|(head, parts)| {
+            !head.is_empty() && !parts.is_empty() && parts.bytes().all(|byte| byte.is_ascii_digit())
+        }) {
             return Self::MultipartETag {
                 value: etag.to_owned(),
             };
@@ -986,8 +981,10 @@ impl S3Discovery {
                     self.manifest_key = Some(object.key);
                     continue;
                 }
-                let token =
-                    S3GenerationToken::classify(object.version_id.as_deref(), object.etag.as_deref());
+                let token = S3GenerationToken::classify(
+                    object.version_id.as_deref(),
+                    object.etag.as_deref(),
+                );
                 if matches!(self.policy.fidelity(), SourceFidelity::Lossless { .. })
                     && !token.is_conditionally_bindable()
                 {
@@ -1119,10 +1116,7 @@ impl S3Discovery {
                 ..
             } => {
                 self.published_max_position.is_some()
-                    && self
-                        .clock
-                        .now_ns()
-                        .saturating_sub(self.last_new_key_ns)
+                    && self.clock.now_ns().saturating_sub(self.last_new_key_ns)
                         >= no_backfill_horizon_ns
             }
             // A bounded rescan window has no watermark authority, so it never
@@ -1421,7 +1415,8 @@ impl S3Source {
             .values()
             .map(|entry| entry.key.clone())
             .collect();
-        self.discovery.published_max_key = self.discovery.published_keys.iter().next_back().cloned();
+        self.discovery.published_max_key =
+            self.discovery.published_keys.iter().next_back().cloned();
         self.discovery.published_max_position = self
             .discovery
             .seen

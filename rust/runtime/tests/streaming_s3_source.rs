@@ -37,8 +37,8 @@ use aiperf_runtime::streaming::source::{
     StreamSourceError, StreamingDatasetSource, StreamingSourceControl, streaming_stop_channel,
 };
 use aiperf_runtime::streaming::sources::s3::{
-    LosslessFrontierProof, PreparedS3Policy, S3GenerationToken, S3Source, S3SourceConfig,
-    SourceFidelity, S3PolicyError, validate_s3_policy,
+    LosslessFrontierProof, PreparedS3Policy, S3GenerationToken, S3PolicyError, S3Source,
+    S3SourceConfig, SourceFidelity, validate_s3_policy,
 };
 use aiperf_runtime::streaming::sources::s3_client::{
     S3Client, S3ClientError, S3GetRequest, S3ListPage, S3ListRequest, S3ListedObject, S3ObjectBody,
@@ -106,10 +106,9 @@ impl FakeS3Client {
 
     fn put_versioned(&self, key: &str, body: &[u8], version: &str) {
         let mut state = self.state.borrow_mut();
-        state.versions.insert(
-            (key.to_owned(), version.to_owned()),
-            body.to_vec(),
-        );
+        state
+            .versions
+            .insert((key.to_owned(), version.to_owned()), body.to_vec());
         state.current.insert(
             key.to_owned(),
             FakeGeneration {
@@ -411,7 +410,9 @@ async fn drain_ready(
                 observed.positions.push(partition.position());
                 observed.identities.push(*partition.content().identity());
                 let bytes = read_sequential(partition.content(), budget).await?;
-                observed.keys.push(String::from_utf8_lossy(&bytes).into_owned());
+                observed
+                    .keys
+                    .push(String::from_utf8_lossy(&bytes).into_owned());
             }
             SourceEvent::Frontier(frontier) => observed.frontiers.push(frontier.through),
             SourceEvent::Seal(seal) => {
@@ -478,7 +479,10 @@ fn barrier() -> CheckpointBarrier {
 async fn notification_loss_and_late_key_are_recovered_before_interval_seal() {
     let client = FakeS3Client::new();
     client.put_versioned("0002", b"second", "v2");
-    let mut harness = harness(Rc::clone(&client) as Rc<dyn S3Client>, policy_from(manifest_config()));
+    let mut harness = harness(
+        Rc::clone(&client) as Rc<dyn S3Client>,
+        policy_from(manifest_config()),
+    );
     let budget = acquisition_budget();
 
     let first = drain_ready(&mut harness.source, &budget)
@@ -545,19 +549,14 @@ async fn unsealed_generation_bound_fails_closed() {
     client.put_versioned("0002", b"b", "v2");
     let mut config = manifest_config();
     config["max_unsealed_generations"] = json!(1);
-    let mut harness = harness(
-        Rc::clone(&client) as Rc<dyn S3Client>,
-        policy_from(config),
-    );
+    let mut harness = harness(Rc::clone(&client) as Rc<dyn S3Client>, policy_from(config));
 
     let error = drain_ready(&mut harness.source, &acquisition_budget())
         .await
         .expect_err("an unbounded unsealed prefix is refused rather than truncated");
     assert_eq!(
         error,
-        StreamSourceError::source(
-            aiperf_runtime::streaming::failure::SourceFailureCode::Discovery
-        )
+        StreamSourceError::source(aiperf_runtime::streaming::failure::SourceFailureCode::Discovery)
     );
 
     harness.control.stop();
@@ -600,9 +599,7 @@ async fn hard_no_backfill_violation_fails_before_seal() {
         .expect_err("a backfilled key refutes the authored no-backfill assertion");
     assert_eq!(
         error,
-        StreamSourceError::source(
-            aiperf_runtime::streaming::failure::SourceFailureCode::Discovery
-        )
+        StreamSourceError::source(aiperf_runtime::streaming::failure::SourceFailureCode::Discovery)
     );
 
     harness.control.stop();
@@ -645,11 +642,9 @@ async fn pagination_and_identity_rules_are_explicit() {
 
 #[test]
 fn multipart_etag_is_never_a_content_digest() {
-    let multipart = S3GenerationToken::classify(None, Some("\"9bb58f26192e4ba00f01e2e7b136bbd8-3\""));
-    assert!(matches!(
-        multipart,
-        S3GenerationToken::MultipartETag { .. }
-    ));
+    let multipart =
+        S3GenerationToken::classify(None, Some("\"9bb58f26192e4ba00f01e2e7b136bbd8-3\""));
+    assert!(matches!(multipart, S3GenerationToken::MultipartETag { .. }));
     assert!(multipart.provider_version().is_none());
     assert!(
         multipart.is_conditionally_bindable(),
@@ -659,7 +654,10 @@ fn multipart_etag_is_never_a_content_digest() {
     let single = S3GenerationToken::classify(None, Some("\"d41d8cd98f00b204e9800998ecf8427e\""));
     assert!(matches!(single, S3GenerationToken::SinglePartETag { .. }));
 
-    assert_eq!(S3GenerationToken::classify(None, None), S3GenerationToken::Absent);
+    assert_eq!(
+        S3GenerationToken::classify(None, None),
+        S3GenerationToken::Absent
+    );
     assert!(!S3GenerationToken::Absent.is_conditionally_bindable());
 }
 
@@ -971,8 +969,7 @@ fn authored_configuration_is_strictly_decoded() {
 
     let mut zero_pages = manifest_config();
     zero_pages["max_pages_per_pass"] = json!(0);
-    let config: S3SourceConfig =
-        serde_json::from_value(zero_pages).expect("configuration decodes");
+    let config: S3SourceConfig = serde_json::from_value(zero_pages).expect("configuration decodes");
     assert_eq!(
         validate_s3_policy(config).err(),
         Some(S3PolicyError::UnboundedOrZeroLimit)
@@ -989,10 +986,7 @@ async fn checkpoint_cursor_retains_exact_byte_offsets_and_no_secrets() {
     client.put_versioned("0001", b"0123456789abcdef", "v1");
     let mut config = manifest_config();
     config["endpoint_url"] = json!("http://minio:sekrit-value@127.0.0.1:9000");
-    let mut harness = harness(
-        Rc::clone(&client) as Rc<dyn S3Client>,
-        policy_from(config),
-    );
+    let mut harness = harness(Rc::clone(&client) as Rc<dyn S3Client>, policy_from(config));
     let budget = acquisition_budget();
 
     let partition = {
