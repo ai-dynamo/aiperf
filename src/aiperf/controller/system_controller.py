@@ -750,11 +750,9 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
                 f"Service registry lost registration for '{message.service_id}'"
             )
 
-
         # A replacement pod reusing a deterministic service ID is alive again,
         # so it must stop being excluded from command fan-out.
         self._reaped_service_ids.discard(message.service_id)
-
 
         previous = self.service_manager.service_id_map.get(message.service_id)
         if previous is not None and previous.service_type != message.service_type:

@@ -1941,7 +1941,6 @@ class TestScrapeHangContainment:
             await collector._session.close()
 
 
-
 class TestPhaseOccurrenceIdReachesEveryScrape:
     """Every scrape identity must carry the occurrence id, not just the first.
 

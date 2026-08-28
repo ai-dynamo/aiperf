@@ -631,7 +631,9 @@ class TestMemoryEstimator:
         est = MemoryEstimator(params).estimate()
         assert est.worker_pod.replicas == 5
 
-    def test_non_divisible_concurrency_models_busiest_worker_and_processor(self) -> None:
+    def test_non_divisible_concurrency_models_busiest_worker_and_processor(
+        self,
+    ) -> None:
         params = _make_params(
             total_workers=3,
             workers_per_pod=3,
