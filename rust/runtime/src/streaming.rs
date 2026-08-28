@@ -4,6 +4,8 @@
 //! Native streaming dataset contracts and execution support.
 
 pub mod action;
+#[cfg(feature = "streaming-s3")]
+pub mod aws;
 pub mod blocking;
 pub mod budget;
 pub mod checkpoint;
@@ -11,11 +13,14 @@ pub mod checkpoint_backend;
 pub mod checkpoints;
 pub mod failure;
 pub mod format;
+pub mod formats;
+pub mod hf_credentials;
 pub mod identity;
 pub mod reliability;
 pub mod results;
 pub mod session;
 pub mod source;
+pub mod sources;
 pub mod unit;
 
 /// Whether the lightweight native streaming runtime is compiled.

@@ -7,8 +7,8 @@
 //! protobuf bytes and decode responses back to endpoint JSON. The wire client
 //! operates on unframed message bytes over Tonic.
 
-pub mod kserve_binding;
 pub mod codec;
+pub mod kserve_binding;
 pub mod models;
 pub mod proto;
 mod raw_codec;
@@ -18,14 +18,14 @@ pub mod riva_proto;
 pub mod sink;
 pub mod transport;
 
+pub use codec::{
+    CodecError, decode_model_infer_response, decode_model_ready_response,
+    decode_model_stream_infer_response, encode_model_infer_request, encode_model_ready_request,
+};
 pub use kserve_binding::{
     GrpcBindingRegistry, GrpcBindingRegistryBuilder, GrpcEndpointBinding,
     GrpcEndpointBindingFactory, GrpcEndpointBindingRegistryError, GrpcStreamChunk,
     KServeV2GrpcBindingFactory,
-};
-pub use codec::{
-    CodecError, decode_model_infer_response, decode_model_ready_response,
-    decode_model_stream_infer_response, encode_model_infer_request, encode_model_ready_request,
 };
 pub use models::{
     ConnectionReuseStrategy, GrpcClientConfig, GrpcErrorDetails, GrpcErrorKind, GrpcRequestConfig,

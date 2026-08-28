@@ -6,10 +6,10 @@
 //! `http` contains Hyper and SSE support, `grpc` contains feature-gated Tonic
 //! support, and ungated `core` contains shared dispatch vocabulary.
 pub mod core;
-#[cfg(feature = "grpc")]
-pub mod grpc;
 #[cfg(feature = "engine")]
 pub mod dry_run;
+#[cfg(feature = "grpc")]
+pub mod grpc;
 pub mod http;
 pub(crate) mod measure;
 pub(crate) mod reduce;

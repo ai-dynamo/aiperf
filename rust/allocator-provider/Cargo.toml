@@ -11,6 +11,7 @@ build = "build.rs"
 # cdylib: the shared provider binary loaded by host and plugin processes.
 # rlib: makes the static mimalloc available for workspace-internal test linking.
 [lib]
+name = "aiperf_alloc_v1"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

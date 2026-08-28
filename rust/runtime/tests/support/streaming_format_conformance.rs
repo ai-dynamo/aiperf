@@ -21,6 +21,7 @@ use std::rc::Rc;
 
 use aiperf_runtime::streaming::{
     budget::StreamingResourceBudget,
+    checkpoint::StreamRunIdentity,
     failure::{StreamFormatError, StreamingIssueReporter},
     format::{
         DecodeBatchBudget, DecodeStep, DecoderCheckpoint, DecoderResumeState, FormatEvent,
@@ -28,7 +29,9 @@ use aiperf_runtime::streaming::{
         StreamingFormatPrepareContext,
     },
     identity::{ContentDigest, ImmutableObjectIdentity, StableRecordId},
-    source::{AcquiredPartition, SourceFrontier, SourceSeal, StreamingSourceDescriptor},
+    source::{
+        AcquiredPartition, AcquisitionBudget, SourceFrontier, SourceSeal, StreamingSourceDescriptor,
+    },
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -44,6 +47,8 @@ pub type FormatAdvance = Rc<dyn Fn()>;
 
 /// Everything one format implementation contributes to the shared harness.
 pub struct FormatConformanceCases {
+    /// Logical run bound into the prepare context.
+    pub run: StreamRunIdentity,
     /// Strictly authored configuration the factory must accept.
     pub authored: Box<RawValue>,
     /// Authored configuration the factory must refuse before any effect.
@@ -61,6 +66,8 @@ pub struct FormatConformanceCases {
     pub decode_budget: DecodeBatchBudget,
     /// The budget the decoder's output leases are charged against.
     pub fragment_budget: StreamingResourceBudget,
+    /// The budget bounding decoder reads from the acquired partition.
+    pub acquisition_budget: AcquisitionBudget,
     /// Fragments the script emits before exhaustion.
     pub expected_fragment_count: u64,
     /// Frontier translated by the format.
@@ -110,8 +117,11 @@ pub async fn assert_format_conformance(
     let handle = reporter.handle();
     // Borrow of the owned reporter ends here, before every await below.
     let context = StreamingFormatPrepareContext {
+        run: cases.run,
         stream_semantic_digest: cases.stream_semantic_digest,
         issue_reporter: handle,
+        fragment_budget: cases.fragment_budget.clone(),
+        acquisition_budget: cases.acquisition_budget.clone(),
     };
     let validated = factory
         .validate(&cases.authored, cases.source_descriptor)

@@ -33,14 +33,16 @@ fn main() {
             profile_dir.display()
         );
 
-        // Cargo does not propagate cargo:rustc-link-lib from dev-dep build
-        // scripts into integration test binary link commands; only
-        // cargo:rustc-link-search propagates.  Emitting both directives here
-        // (from the crate's own build.rs) reaches all targets, including tests.
+        // Emit the mimalloc search path so the #[link(name = "mimalloc")]
+        // attribute in allocator.rs can find libmimalloc.a at link time.
+        // Cargo propagates cargo:rustc-link-search to all targets (including
+        // integration tests) but suppresses cargo:rustc-link-lib through the
+        // links = "mimalloc" deduplication.  The #[link] attribute in the test
+        // source bypasses that propagation path entirely.
         //
         // libmimalloc-sys is in [dependencies] so its build script runs before
         // this one, guaranteeing libmimalloc.a exists in the profile build dir
-        // when we scan.  The shim's mi_* extern "C" references require it.
+        // when we scan.
         if let Ok(entries) = std::fs::read_dir(profile_dir.join("build")) {
             for entry in entries.flatten() {
                 if entry.file_name().to_string_lossy().starts_with("libmimalloc-sys-") {
@@ -50,7 +52,6 @@ fn main() {
                             "cargo:rustc-link-search=native={}",
                             entry.path().join("out").display()
                         );
-                        println!("cargo:rustc-link-lib=static=mimalloc");
                         break;
                     }
                 }

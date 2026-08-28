@@ -1,6 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# This crate lives inside the main workspace directory but intentionally opts
+# out of workspace membership.  It is a standalone test fixture built by the
+# allocator conformance suite's ensure_fixtures_built() function.
+[workspace]
+
 [package]
 name = "allocator-candidate-host"
 version = "0.1.0"

@@ -45,8 +45,9 @@ benchmark:
   dataset:
     type: synthetic
     entries: 2000                   # Pool of unique prompts; recycled to fill the duration
-    isl: {mean: 512, stddev: 50}
-    osl: {mean: 256, stddev: 25}
+    prompts:
+      isl: {mean: 512, stddev: 50}
+      osl: {mean: 256, stddev: 25}
 
   warmup:
     type: concurrency
