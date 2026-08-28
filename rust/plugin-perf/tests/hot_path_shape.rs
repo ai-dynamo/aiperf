@@ -31,11 +31,7 @@ fn frozen_identity_is_immutable() {
 #[test]
 fn pair_schedule_is_balanced_ab_ba() {
     let schedule = PairSchedule::balanced(30);
-    assert_eq!(
-        schedule.len(),
-        30,
-        "schedule must contain exactly 30 pairs"
-    );
+    assert_eq!(schedule.len(), 30, "schedule must contain exactly 30 pairs");
     let ab_count = schedule.iter().filter(|p| p.is_ab()).count();
     let ba_count = schedule.iter().filter(|p| p.is_ba()).count();
     assert_eq!(ab_count, 15, "exactly 15 AB pairs required");

@@ -401,6 +401,13 @@ name = "aiperf-plugin-perf"
 version = "0.13.0"
 dependencies = [
  "aiperf-bench-tools",
+ "anyhow",
+ "blake3",
+ "clap",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

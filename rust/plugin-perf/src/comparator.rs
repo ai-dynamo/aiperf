@@ -150,9 +150,7 @@ impl<'a> ComparatorIdentityCheck<'a> {
                 comparator: self.comparator.cargo_lock_digest,
             });
         }
-        if self.candidate.implementation_leaf_census
-            != self.comparator.implementation_leaf_census
-        {
+        if self.candidate.implementation_leaf_census != self.comparator.implementation_leaf_census {
             return Err(ComparatorIdentityError::ImplementationLeafCensusMismatch {
                 candidate: self.candidate.implementation_leaf_census.clone(),
                 comparator: self.comparator.implementation_leaf_census.clone(),

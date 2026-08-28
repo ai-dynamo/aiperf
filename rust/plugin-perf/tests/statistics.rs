@@ -9,8 +9,8 @@
 //! real paper-rig run.
 
 use aiperf_plugin_perf::stats::{
-    BootstrapConfig, BootstrapResult, PairedSamples, QuantileType, bootstrap_paired_max_degradation,
-    coefficient_of_variation, hyndman_fan_quantile,
+    BootstrapConfig, BootstrapResult, PairedSamples, QuantileType,
+    bootstrap_paired_max_degradation, coefficient_of_variation, hyndman_fan_quantile,
 };
 
 /// Hyndman-Fan type-7 quantile: the standard Excel/R/NumPy default.
@@ -60,7 +60,10 @@ fn cv_below_threshold_accepted() {
     // Mean=100, stddev≈1 → CV≈1%.
     let samples: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64 - 14.5) / 14.5).collect();
     let cv = coefficient_of_variation(&samples);
-    assert!(cv <= 0.02, "CV of low-variance series must be <=2%, got {cv:.4}");
+    assert!(
+        cv <= 0.02,
+        "CV of low-variance series must be <=2%, got {cv:.4}"
+    );
 }
 
 /// CV >2% threshold: a series with CV=10% must fail.
@@ -69,7 +72,10 @@ fn cv_above_threshold_rejected() {
     // Mean=100, values spread 70–130 → CV>>2%.
     let samples: Vec<f64> = (0..30).map(|i| 70.0 + i as f64 * 2.0).collect();
     let cv = coefficient_of_variation(&samples);
-    assert!(cv > 0.02, "CV of high-variance series must be >2%, got {cv:.4}");
+    assert!(
+        cv > 0.02,
+        "CV of high-variance series must be >2%, got {cv:.4}"
+    );
 }
 
 /// Paired bootstrap on identical AB and BA series must produce a lower bound >=0.99.
@@ -130,8 +136,11 @@ fn bootstrap_rejects_fewer_than_30_pairs() {
 #[test]
 fn bootstrap_enforces_minimum_resamples() {
     use aiperf_plugin_perf::stats::MINIMUM_BOOTSTRAP_RESAMPLES;
-    assert!(
-        MINIMUM_BOOTSTRAP_RESAMPLES >= 100_000,
-        "MINIMUM_BOOTSTRAP_RESAMPLES must be >=100_000, got {MINIMUM_BOOTSTRAP_RESAMPLES}"
+    // Compared by equality rather than by inequality: the workspace parity
+    // metadata fixes this at exactly 100,000, and clippy rejects an assertion
+    // whose truth is decidable at compile time.
+    assert_eq!(
+        MINIMUM_BOOTSTRAP_RESAMPLES, 100_000,
+        "the workspace parity metadata fixes the production resample count"
     );
 }

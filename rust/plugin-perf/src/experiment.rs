@@ -94,7 +94,9 @@ impl fmt::Display for ExperimentError {
                 f,
                 "requested {found} warmup pairs, the parity gate requires {required}"
             ),
-            Self::MissingField { field } => write!(f, "experiment field `{field}` must not be empty"),
+            Self::MissingField { field } => {
+                write!(f, "experiment field `{field}` must not be empty")
+            }
             Self::FrozenIdentity { field } => write!(
                 f,
                 "experiment identity is frozen; `{field}` cannot be replaced after freezing"
@@ -526,7 +528,10 @@ impl ExperimentRunner {
         ba_dynamic_ns: f64,
         ba_static_ns: f64,
     ) -> AttemptOutcome {
-        if matches!(self.phase, ExperimentPhase::Failed | ExperimentPhase::Complete) {
+        if matches!(
+            self.phase,
+            ExperimentPhase::Failed | ExperimentPhase::Complete
+        ) {
             return AttemptOutcome::ImmediateFailure {
                 reason: "experiment already concluded".to_owned(),
             };
@@ -546,7 +551,10 @@ impl ExperimentRunner {
     /// or the total budget is exhausted, because at that point the machine is
     /// the finding.
     pub fn record_invalidation(&mut self, reason: InvalidationReason) -> AttemptOutcome {
-        if matches!(self.phase, ExperimentPhase::Failed | ExperimentPhase::Complete) {
+        if matches!(
+            self.phase,
+            ExperimentPhase::Failed | ExperimentPhase::Complete
+        ) {
             return AttemptOutcome::ImmediateFailure {
                 reason: "experiment already concluded".to_owned(),
             };
