@@ -291,6 +291,7 @@ dependencies = [
  "aiperf-plugin-sdk",
  "aiperf-transport-sdk",
  "blake3",
+ "libloading 0.8.9",
  "libmimalloc-sys",
  "serde_json",
  "tempfile",
@@ -303,6 +304,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
 ]
 
 [[package]]
@@ -312,6 +315,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
 ]
 
 [[package]]
@@ -321,6 +326,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
 ]
 
 [[package]]
@@ -330,6 +337,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
 ]
 
 [[package]]
@@ -339,6 +348,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
 ]
 
 [[package]]
@@ -348,6 +359,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
 ]
 
 [[package]]
@@ -428,6 +441,8 @@ version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
  "aiperf-transport-sdk",
 ]
 
@@ -438,6 +453,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
  "aiperf-transport-sdk",
 ]
 
@@ -448,6 +465,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
  "aiperf-transport-sdk",
 ]
 
@@ -458,6 +477,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
  "aiperf-transport-sdk",
 ]
 
@@ -468,6 +489,8 @@ dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
  "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+ "aiperf-plugin-sdk-macros",
  "aiperf-transport-sdk",
 ]
 
