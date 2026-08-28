@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
@@ -182,6 +183,7 @@ impl LocalFixture {
         let context = StreamingSourcePrepareContext {
             run: self.run,
             stream_semantic_digest: self.stream_identity,
+            clock: RealClock::new(),
             acquisition_budget: acquisition_budget(),
             issue_reporter,
         };
