@@ -371,7 +371,10 @@ async fn late_old_epoch_receipt_is_rejected() {
         .controller
         .admit_placement_event(session, SessionOwnershipEpoch::new(0))
         .expect_err("the pre-migration epoch is fenced");
-    assert_eq!(refusal.failure_code(), PlacementFailureCode::StaleOwnershipEpoch);
+    assert_eq!(
+        refusal.failure_code(),
+        PlacementFailureCode::StaleOwnershipEpoch
+    );
     assert_eq!(fixture.controller.stale_event_refusals(), 1);
     assert_eq!(fixture.controller.active().staged_count(), staged_before);
     assert_eq!(fixture.controller.active().issued_count(), issued_before);
@@ -586,7 +589,11 @@ async fn terminal_retirement_is_refused_during_migration() {
         .expect("a terminal mid-migration is accepted, not an error");
 
     let placement = fixture.placement.borrow();
-    assert_eq!(placement.active_owner_count(), 1, "the route stays installed");
+    assert_eq!(
+        placement.active_owner_count(),
+        1,
+        "the route stays installed"
+    );
     assert_eq!(placement.migration_lease_count(), 1, "both leases are held");
     assert_eq!(fixture.route_budget.snapshot().used_items, 2);
 }

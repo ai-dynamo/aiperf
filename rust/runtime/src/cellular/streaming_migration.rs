@@ -199,17 +199,15 @@ impl StreamingCheckpointParticipant for SessionRoutePlacementParticipant {
         let set = CheckpointedRouteSet {
             routes: self.placement.borrow().checkpoint_route_entries(),
         };
-        let encoded =
-            serde_json::to_vec(&set).map_err(|_| CheckpointError::ObjectVerification)?;
+        let encoded = serde_json::to_vec(&set).map_err(|_| CheckpointError::ObjectVerification)?;
         let item_count = set.routes.len() as u64;
         let bytes = Bytes::from(encoded);
-        let lease = self
-            .state_budget
-            .try_acquire(1, bytes.len())
-            .map_err(|_| CheckpointError::StateBudget {
+        let lease = self.state_budget.try_acquire(1, bytes.len()).map_err(|_| {
+            CheckpointError::StateBudget {
                 participant: self.participant_id.clone(),
                 code: StateBudgetFailureCode::ByteCapacity,
-            })?;
+            }
+        })?;
         let payload = BudgetedCheckpointBytes::new(bytes, lease)?;
         PreparedParticipantState::new(
             self.run,
@@ -453,12 +451,11 @@ impl CellularStreamingController {
 
     /// Step 4: commit controller session state, terminal receipts, and the old
     /// fence. The owner is unchanged by this generation.
-    pub async fn commit_fence(
-        &mut self,
-        barrier: CheckpointBarrier,
-    ) -> Result<(), MigrationError> {
+    pub async fn commit_fence(&mut self, barrier: CheckpointBarrier) -> Result<(), MigrationError> {
         let mut results = PreparedCheckpointResultInput::empty();
-        self.coordinator.commit_barrier(barrier, &mut results).await?;
+        self.coordinator
+            .commit_barrier(barrier, &mut results)
+            .await?;
         Ok(())
     }
 
@@ -482,10 +479,11 @@ impl CellularStreamingController {
                 bytes: ROUTE_ENTRY_BYTES,
             })
             .await?;
-        let new = self
-            .placement
-            .borrow_mut()
-            .stage_destination(session, destination, reservation.lease)?;
+        let new = self.placement.borrow_mut().stage_destination(
+            session,
+            destination,
+            reservation.lease,
+        )?;
         for (action_id, sequence) in staged {
             self.active.accept_prepare(ReleaseFence {
                 plan_digest: self.plan_digest,
@@ -595,10 +593,7 @@ impl CellularStreamingController {
             self.abort_migration(session)?;
             return Err(error);
         }
-        if let Err(error) = self
-            .commit_route_generation(session, route_barrier)
-            .await
-        {
+        if let Err(error) = self.commit_route_generation(session, route_barrier).await {
             self.abort_migration(session)?;
             return Err(error);
         }

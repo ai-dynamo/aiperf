@@ -955,10 +955,7 @@ impl ActiveExecutionSet {
     /// A byte-identical re-prepare is idempotent, because prepare frames are
     /// retransmitted on reconnect. A conflicting re-prepare for the same
     /// `(route_id, action_id)` is refused and leaves the existing entry intact.
-    pub fn accept_prepare(
-        &mut self,
-        fence: ReleaseFence,
-    ) -> Result<(), PlacementError> {
+    pub fn accept_prepare(&mut self, fence: ReleaseFence) -> Result<(), PlacementError> {
         let key = (fence.route_id, fence.action_id);
         if let Some(existing) = self.entries.get(&key) {
             if existing.plan_digest == fence.plan_digest
