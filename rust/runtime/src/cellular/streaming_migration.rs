@@ -232,17 +232,25 @@ impl StreamingCheckpointParticipant for SessionRoutePlacementParticipant {
         }
         let set: CheckpointedRouteSet = serde_json::from_slice(state.payload_bytes())
             .map_err(|_| CheckpointError::ObjectVerification)?;
-        // `restore_route_states` collapses every in-flight migration to its
-        // committed owner and reacquires exactly one charge per session, so a
-        // crashed migration can leak neither authority nor budget.
-        self.placement
-            .borrow_mut()
-            .restore_route_states(set.routes)
-            .await
-            .map_err(|_| CheckpointError::StateBudget {
-                participant: self.participant_id.clone(),
-                code: StateBudgetFailureCode::ItemCapacity,
-            })
+        // Prove every charge before touching the route map, so no borrow of the
+        // shared policy is held across an acquisition and an exhausted budget
+        // leaves the live map untouched rather than half-restored.
+        let budget = self.placement.borrow().route_budget();
+        let mut charged = Vec::with_capacity(set.routes.len());
+        for entry in set.routes {
+            let lease = budget.acquire(1, ROUTE_ENTRY_BYTES).await.map_err(|_| {
+                CheckpointError::StateBudget {
+                    participant: self.participant_id.clone(),
+                    code: StateBudgetFailureCode::ItemCapacity,
+                }
+            })?;
+            charged.push((entry, lease));
+        }
+        // `install_restored_routes` collapses every in-flight migration to its
+        // committed owner and installs no migration lease, so a crashed
+        // migration can leak neither authority nor budget.
+        self.placement.borrow_mut().install_restored_routes(charged);
+        Ok(())
     }
 
     async fn checkpoint_committed(

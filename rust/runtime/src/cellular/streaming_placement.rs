@@ -416,6 +416,16 @@ impl StickySessionPlacement {
         CellularRouteAdmission::new(self.route_budget.clone())
     }
 
+    /// A cheap clone of the accounting handle route charges are proven against.
+    ///
+    /// A restore path needs the budget *without* borrowing the policy, so it can
+    /// prove every charge first and install the rebuilt map in one synchronous
+    /// step rather than holding a borrow across an acquisition.
+    #[must_use]
+    pub fn route_budget(&self) -> StreamingResourceBudget {
+        self.route_budget.clone()
+    }
+
     /// Number of currently installed routes.
     #[must_use]
     pub fn installed_route_count(&self) -> usize {
@@ -815,25 +825,42 @@ impl StickySessionPlacement {
         &mut self,
         restored: impl IntoIterator<Item = CheckpointedSessionRoute>,
     ) -> Result<(), PlacementError> {
-        let mut rebuilt = BTreeMap::new();
+        let mut charged = Vec::new();
         for entry in restored {
             let lease = self
                 .route_budget
                 .acquire(1, ROUTE_ENTRY_BYTES)
                 .await
                 .map_err(map_budget_error)?;
-            rebuilt.insert(
-                entry.session,
-                BudgetOwnedSessionRoute {
-                    state: SessionRouteState::Owned(*entry.state.authoritative()),
-                    lease,
-                    migration_lease: None,
-                    highest_sequence: entry.highest_sequence,
-                },
-            );
+            charged.push((entry, lease));
         }
-        self.routes = rebuilt;
+        self.install_restored_routes(charged);
         Ok(())
+    }
+
+    /// Publish an already-charged restored route set in one synchronous step.
+    ///
+    /// Split out from [`StickySessionPlacement::restore_route_states`] so a
+    /// caller holding the policy behind a shared cell can prove every charge
+    /// first and never hold that borrow across an acquisition.
+    pub fn install_restored_routes(
+        &mut self,
+        restored: Vec<(CheckpointedSessionRoute, BudgetLease)>,
+    ) {
+        self.routes = restored
+            .into_iter()
+            .map(|(entry, lease)| {
+                (
+                    entry.session,
+                    BudgetOwnedSessionRoute {
+                        state: SessionRouteState::Owned(*entry.state.authoritative()),
+                        lease,
+                        migration_lease: None,
+                        highest_sequence: entry.highest_sequence,
+                    },
+                )
+            })
+            .collect();
     }
 
     const fn decision(route: SessionRoute) -> SessionPlacementDecision {
