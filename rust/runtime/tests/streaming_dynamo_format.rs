@@ -353,16 +353,17 @@ async fn decode_object_from(
     let validated = factory
         .validate(&raw(authored), &LOCAL_LIKE_SOURCE_DESCRIPTOR)
         .expect("authored configuration validates");
+    let acquisition = acquisition_budget();
     let context = StreamingFormatPrepareContext {
         run: run_identity(),
         stream_semantic_digest: STREAM_DIGEST,
         fragment_budget: budget.clone(),
         issue_reporter: reporter.handle(),
+        acquisition_budget: acquisition.clone(),
     };
     let mut format = factory.prepare(validated, &context).expect("prepare");
     format.initialize(None).await.expect("fresh initialization");
 
-    let acquisition = acquisition_budget();
     let bytes = Rc::new(object.as_bytes().to_vec());
     let resume_offset = resume.as_ref().map_or(0, |state| {
         u64::from_le_bytes(state[0..8].try_into().expect("cursor offset"))
@@ -778,16 +779,17 @@ async fn partition_eof_emits_end_without_close_root_or_tree_receipt() {
     let validated = factory
         .validate(&raw(authored_config()), &LOCAL_LIKE_SOURCE_DESCRIPTOR)
         .expect("validates");
+    let acquisition = acquisition_budget();
     let context = StreamingFormatPrepareContext {
         run: run_identity(),
         stream_semantic_digest: STREAM_DIGEST,
         fragment_budget: budget,
         issue_reporter: reporter.handle(),
+        acquisition_budget: acquisition.clone(),
     };
     let mut format = factory.prepare(validated, &context).expect("prepare");
     format.initialize(None).await.expect("initialize");
 
-    let acquisition = acquisition_budget();
     let bytes = Rc::new(object.into_bytes());
     let partition = acquire(&bytes, 0, &acquisition).await;
     let mut decoder = format
@@ -911,6 +913,7 @@ async fn dynamo_format_satisfies_the_shared_conformance_harness() {
                 max_bytes: 1 << 20,
             },
             fragment_budget: budget,
+            acquisition_budget: acquisition.clone(),
             expected_fragment_count: 3,
             frontier: SourceFrontier {
                 through: SourcePosition::new(1),
