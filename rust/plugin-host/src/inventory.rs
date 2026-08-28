@@ -232,15 +232,15 @@ pub fn validate_inventory(inventory: &AuthenticatedInventory) -> Result<(), Inve
 
     for entry in &inventory.entries {
         if !is_canonical_digest(&entry.manifest_digest) {
-            return Err(InventoryError::MalformedDigest {
-                context: entry.package_id.clone(),
+            return Err(InventoryError::InvalidEntryDigest {
+                package_id: entry.package_id.clone(),
                 value: entry.manifest_digest.clone(),
             });
         }
         for digest in entry.artifact_digests.values() {
             if !is_canonical_digest(digest) {
-                return Err(InventoryError::MalformedDigest {
-                    context: entry.package_id.clone(),
+                return Err(InventoryError::InvalidEntryDigest {
+                    package_id: entry.package_id.clone(),
                     value: digest.clone(),
                 });
             }
