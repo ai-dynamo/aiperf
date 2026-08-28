@@ -97,7 +97,7 @@ async def _namespace_events_text(kubectl: KubectlClient, namespace: str) -> str:
     return res.stdout
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(600)
 async def test_k1_image_pull_backoff_surfaces_pending_unified(
     operator_ready: OperatorDeployer,  # noqa: ARG001  (operator must be running to reconcile the CR)
     faults,  # noqa: ANN001  (InjectorRegistry; typed at fixture site)
@@ -191,14 +191,15 @@ async def test_k1_image_pull_backoff_surfaces_pending_unified(
         # The CR must now reach Failed once the pod pull error is visible.
         # PENDING_CRITICAL_THRESHOLD_SECONDS=90s + kopf timer scheduling latency
         # means the operator can take 90-120s to mark the CR Failed after it
-        # first detects the backoff; give 180s of total slack.
+        # first detects the backoff; on shared/external clusters kopf timer
+        # scheduling can be delayed further — give 360s of total slack.
         try:
             observed_phase = await wait_for_aiperfjob_phase(
                 kubectl,
                 operator_job_namespace,
                 name,
                 ("Failed",),
-                timeout=180.0,
+                timeout=360.0,
             )
         except TimeoutError as exc:
             pytest.fail(

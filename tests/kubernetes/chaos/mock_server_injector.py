@@ -234,6 +234,14 @@ class MockServerInjector:
                 namespace,
                 check=False,
             )
+            # Wait for the Deployment to roll out the restored pod before
+            # returning, so the next test starts with a stable mock server.
+            await self.kubectl.wait_for_rollout(
+                "deployment",
+                deployment,
+                namespace=namespace,
+                timeout=120,
+            )
         elif op.kind == "scale":
             namespace = str(op.payload["namespace"])
             deployment = str(op.payload["deployment"])

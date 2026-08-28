@@ -11,7 +11,7 @@ calls. Each scenario maps to one unified fault id:
 
 * B1 -> ``workload.set_env`` against the mock-server Deployment to flip
   ``MOCK_SERVER_ERROR_RATE=100``; benchmark must drive the AIPerfJob
-  to ``Completed`` and surface non-zero ``error_request_count``.
+  to ``Completed`` and surface non-zero ``request_error_rate``.
 * B2 -> ``pod.kill`` against a discovered mock-server pod name; the
   Deployment respawns the pod and the benchmark must tolerate the flap.
 * B3 -> ``network.latency`` toxic via the package-scoped Toxiproxy proxy;
@@ -185,7 +185,7 @@ async def test_b1_mock_server_500s_mid_run_unified(
     Exercises the worker error-handling path in ``src/aiperf/workers/``
     when the inference server returns HTTP 500s: the worker must record
     a ``RequestFailure`` credit (not hang), the records-manager must
-    surface it as a non-zero ``error_request_count`` metric, and the
+    surface it as a non-zero ``request_error_rate`` metric, and the
     system-controller must still drive the CR to ``Completed`` rather
     than stalling on the bad endpoint.
 
@@ -198,7 +198,7 @@ async def test_b1_mock_server_500s_mid_run_unified(
     Tolerances:
         - CR phase ``Completed`` within 240 s (benchmark_duration=120 s
           plus generous startup + teardown margin).
-        - ``metrics.error_request_count`` average > 0 (strict check:
+        - ``metrics.request_error_rate`` average > 0 (strict check:
           forcing every response to 500 makes a zero count a real bug,
           not a tolerance issue).
         - No assertion on the exact error count because the env patch
@@ -247,9 +247,11 @@ async def test_b1_mock_server_500s_mid_run_unified(
             "records-manager did not surface metrics"
         )
         metrics = status.results.get("metrics", {})
-        error_avg = _metric_avg(metrics, "error_request_count")
-        assert error_avg is not None and error_avg > 0, (
-            "expected non-zero error_request_count when mock-server forces "
+        # error_request_count carries MetricFlags.ERROR_ONLY and is stripped
+        # before reaching CR status.results; use request_error_rate (%) instead.
+        error_rate = _metric_avg(metrics, "request_error_rate")
+        assert error_rate is not None and error_rate > 0, (
+            "expected non-zero request_error_rate when mock-server forces "
             f"500 on every response, got metrics={metrics}"
         )
     finally:
