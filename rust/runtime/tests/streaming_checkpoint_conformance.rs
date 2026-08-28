@@ -45,7 +45,10 @@ use aiperf_runtime::{
             },
             memory::{MemoryCheckpointBackend, TestMemoryFault},
         },
-        failure::{CheckpointAttemptError, OrdinaryStreamingFailure, ResultExportError},
+        failure::{
+            CheckpointAttemptError, CheckpointAttemptFailureCode, OrdinaryStreamingFailure,
+            ResultExportError, ResultExportFailureCode,
+        },
         identity::ContentDigest,
         reliability::{
             BudgetOwnedStreamingIssueReporter, IssueSequenceUpdate, OrdinaryStreamingIssue,
@@ -54,9 +57,7 @@ use aiperf_runtime::{
             StreamingIssueThresholdRule, StreamingTerminalInvariant,
         },
         results::ResultIndexReadBudget,
-        unit::{
-            CheckpointAttemptFailureCode, ResultExportFailureCode, StateBudgetFailureCode,
-        },
+        unit::StateBudgetFailureCode,
     },
 };
 
@@ -513,6 +514,15 @@ impl StreamingCheckpointParticipant for ControlledParticipant {
 /// Matching failures allowed to retry before the checkpoint rule exhausts.
 const CHECKPOINT_RETRY_LIMIT: u32 = 3;
 
+/// Render one digest as lowercase 64-character hex.
+fn hex_digest(digest: &ContentDigest) -> String {
+    digest
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn component(value: &str) -> StreamingIssueComponentId {
     StreamingIssueComponentId::new(value).expect("valid conformance component id")
 }
@@ -768,8 +778,8 @@ async fn reopened_head(
         .scan_result_index(
             None,
             ResultIndexReadBudget {
-                max_descriptors: NonZeroUsize::new(4).expect("nonzero descriptor bound"),
-                max_bytes: NonZeroUsize::new(64 * 1024).expect("nonzero index byte bound"),
+                max_items: NonZeroUsize::new(4).expect("nonzero descriptor bound"),
+                max_bytes: NonZeroU64::new(64 * 1024).expect("nonzero index byte bound"),
             },
         )
         .await
@@ -892,7 +902,7 @@ async fn classify(
         is_admission_fenced: summary.is_admission_fenced,
         baseline_generation: scenario.baseline,
         current_generation,
-        issue_ids: vec![format!("{}", outcome.issue_id())],
+        issue_ids: vec![hex_digest(&outcome.issue_id())],
         notification_callbacks: scenario.notification_callbacks,
         is_resumable,
         is_horizon_contiguous,
@@ -1070,8 +1080,8 @@ impl LocalConformanceBackend {
             .scan_result_index(
                 None,
                 ResultIndexReadBudget {
-                    max_descriptors: NonZeroUsize::new(2).expect("nonzero descriptor bound"),
-                    max_bytes: NonZeroUsize::new(4096).expect("nonzero index byte bound"),
+                    max_items: NonZeroUsize::new(2).expect("nonzero descriptor bound"),
+                    max_bytes: NonZeroU64::new(4096).expect("nonzero index byte bound"),
                 },
             )
             .await
