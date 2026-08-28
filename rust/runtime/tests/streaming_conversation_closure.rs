@@ -22,6 +22,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
+use aiperf_runtime::metrics_core::RequestTrace;
 use aiperf_runtime::multiturn::IssuedCredit;
 use aiperf_runtime::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnRecordProcessor};
 use aiperf_runtime::streaming::action::{
@@ -774,7 +775,7 @@ fn completed_outcome(response_text: &str) -> TurnDispatchOutcome {
         model_response: ModelResponseMetadata::default(),
         prompt_tokens: None,
         completion_tokens: None,
-        http: aiperf_core::measurement::RequestTrace::default(),
+        http: RequestTrace::default(),
     }
 }
 
