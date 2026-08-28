@@ -737,6 +737,7 @@ async fn conformance_reporter_is_released_before_each_await() {
             expects_frontier: true,
             expected_issue_count: 0,
             run: run_identity(),
+            stream_semantic_digest: ContentDigest::from_bytes([0x51; 32]),
             advance: Rc::new(move || gate.open()),
         },
     )

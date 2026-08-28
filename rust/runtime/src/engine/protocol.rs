@@ -89,6 +89,22 @@ pub struct Catalog {
     /// Dataset samplers. Kept for the plugins.yaml document shape;
     /// [`Self::from_registry`] leaves it empty.
     pub dataset_sampler: BTreeMap<String, CatalogEntry>,
+    /// Streaming dataset source inventory. Omitted when none is linked, so a
+    /// non-streaming build serializes byte-identically to today's document.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stream_source: BTreeMap<String, CatalogEntry>,
+    /// Streaming format inventory.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stream_format: BTreeMap<String, CatalogEntry>,
+    /// Streaming session-program inventory.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stream_session_program: BTreeMap<String, CatalogEntry>,
+    /// Streaming action-sink inventory.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stream_action_sink: BTreeMap<String, CatalogEntry>,
+    /// Streaming checkpoint backend inventory.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub stream_checkpoint_backend: BTreeMap<String, CatalogEntry>,
 }
 
 impl Catalog {
@@ -133,9 +149,99 @@ impl Catalog {
             custom_dataset_loader: BTreeMap::new(),
             public_dataset_loader: BTreeMap::new(),
             dataset_sampler: BTreeMap::new(),
+            #[cfg(feature = "streaming")]
+            stream_source: streaming_entries(product_registry.stream_source_descriptors()),
+            #[cfg(not(feature = "streaming"))]
+            stream_source: BTreeMap::new(),
+            #[cfg(feature = "streaming")]
+            stream_format: streaming_entries(product_registry.stream_format_descriptors()),
+            #[cfg(not(feature = "streaming"))]
+            stream_format: BTreeMap::new(),
+            #[cfg(feature = "streaming")]
+            stream_session_program: streaming_entries(
+                product_registry.stream_session_program_descriptors(),
+            ),
+            #[cfg(not(feature = "streaming"))]
+            stream_session_program: BTreeMap::new(),
+            #[cfg(feature = "streaming")]
+            stream_action_sink: streaming_entries(
+                product_registry.stream_action_sink_descriptors(),
+            ),
+            #[cfg(not(feature = "streaming"))]
+            stream_action_sink: BTreeMap::new(),
+            #[cfg(feature = "streaming")]
+            stream_checkpoint_backend: streaming_entries(
+                product_registry.stream_checkpoint_backend_descriptors(),
+            ),
+            #[cfg(not(feature = "streaming"))]
+            stream_checkpoint_backend: BTreeMap::new(),
         }
     }
 }
+
+/// Project frozen streaming descriptors into catalog entries.
+///
+/// The descriptor is serialized verbatim, so a new streaming capability
+/// declares its catalog metadata at its single registration site rather than in
+/// a separate match here.
+#[cfg(feature = "streaming")]
+fn streaming_entries<D>(descriptors: Vec<&'static D>) -> BTreeMap<String, CatalogEntry>
+where
+    D: Serialize + StreamingCatalogDescriptor,
+{
+    descriptors
+        .into_iter()
+        .filter_map(|descriptor| {
+            // A descriptor that cannot serialize is a build-time bug in the
+            // registering extension, not a runtime data error; drop it from the
+            // catalog rather than panicking in a discovery path.
+            let metadata = serde_json::to_value(descriptor).ok()?;
+            Some((
+                descriptor.catalog_id().to_owned(),
+                CatalogEntry {
+                    description: Some(descriptor.catalog_description()),
+                    metadata,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Catalog identity shared by every streaming descriptor.
+#[cfg(feature = "streaming")]
+pub trait StreamingCatalogDescriptor {
+    /// Stable registry identifier.
+    fn catalog_id(&self) -> &'static str;
+
+    /// Human-readable implementation description.
+    fn catalog_description(&self) -> &'static str;
+}
+
+#[cfg(feature = "streaming")]
+macro_rules! streaming_catalog_descriptor {
+    ($($descriptor:ty),+ $(,)?) => {
+        $(
+            impl StreamingCatalogDescriptor for $descriptor {
+                fn catalog_id(&self) -> &'static str {
+                    self.id
+                }
+
+                fn catalog_description(&self) -> &'static str {
+                    self.description
+                }
+            }
+        )+
+    };
+}
+
+#[cfg(feature = "streaming")]
+streaming_catalog_descriptor!(
+    crate::streaming::source::StreamingSourceDescriptor,
+    crate::streaming::format::StreamingFormatDescriptor,
+    crate::streaming::session::StreamingSessionProgramDescriptor,
+    crate::streaming::action::StreamingActionSinkDescriptor,
+    crate::streaming::checkpoint_backend::StreamingCheckpointBackendDescriptor,
+);
 
 pub use crate::engine::sidecar_input::{LiveStreamingSpec, MLflowStreamingSpec, OTelStreamingSpec};
 

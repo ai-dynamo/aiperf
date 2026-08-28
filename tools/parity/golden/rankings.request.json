@@ -19,7 +19,8 @@
             "isl": {
               "mean": 550.0,
               "stddev": 0.0
-            }
+            },
+            "random_corpus_style": "vllm"
           },
           "rankings": {
             "passage_tokens": {
@@ -48,6 +49,7 @@
         "headers": {},
         "http2": false,
         "keepalive_timeout": 300.0,
+        "per_chunk_usage": false,
         "proxy_from_env": false,
         "ssl_verify": true,
         "streaming": false,
@@ -700,11 +702,11 @@
               "header": "Video Peak Memory"
             }
           },
-          "title": "NVIDIA AIPerf",
-          "width": 140,
           "model_names": [
             "Qwen/Qwen3-0.6B"
-          ]
+          ],
+          "title": "NVIDIA AIPerf",
+          "width": 140
         },
         "genai_perf": {
           "enabled": true,
@@ -724,7 +726,8 @@
                   "prompts": {
                     "isl": {
                       "mean": 550.0
-                    }
+                    },
+                    "random_corpus_style": "vllm"
                   },
                   "rankings": {
                     "passage_tokens": {
@@ -989,7 +992,8 @@
                 "prompts": {
                   "isl": {
                     "mean": 550.0
-                  }
+                  },
+                  "random_corpus_style": "vllm"
                 },
                 "rankings": {
                   "passage_tokens": {

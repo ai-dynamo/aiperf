@@ -35,8 +35,8 @@ use crate::metrics::{NativeMetricsObserver, ObserverTee};
 use crate::multiturn::TurnToSend;
 use crate::scheduled::{
     IssuanceGate, ScheduledAncillaryPolicies, ScheduledRunReport, ScheduledRuntime,
-    TurnDispatchOutcome, TurnDispatcher, TurnLifecycleObserver, TurnRecordProcessor,
-    UserControlSnapshot, Workload,
+    TerminalProcessingOutcome, TurnDispatchOutcome, TurnDispatcher, TurnLifecycleObserver,
+    TurnRecordProcessor, UserControlSnapshot, Workload,
 };
 use crate::scheduler::LocalTaskScheduler;
 
@@ -570,6 +570,19 @@ pub struct DeferredPhasedScheduledRunReport {
     phases: Vec<PhaseStats>,
     order: BTreeMap<String, (usize, PhaseKind)>,
     reports: Vec<(String, PendingScheduledPhaseReport)>,
+    /// Whether a derived export could not be completed for this run.
+    ///
+    /// Never set without a streaming terminal lane, so a finite run's status is
+    /// unchanged.
+    export_incomplete: bool,
+}
+
+impl DeferredPhasedScheduledRunReport {
+    /// Whether a derived export could not be completed for this run.
+    #[must_use]
+    pub const fn is_export_incomplete(&self) -> bool {
+        self.export_incomplete
+    }
 }
 
 impl DeferredPhasedScheduledRunReport {
@@ -791,7 +804,37 @@ async fn run_scheduled_phases_inner(
     let phase_result = drive_phases(orchestrator, clock_is_virtual)
         .await
         .map_err(|error| anyhow!(error));
-    let processor_result = execution_factory.wait_record_processors().await;
+    let terminal = execution_factory.finalize_terminal_processing().await;
+    // A checked accounting/authority invariant is surfaced BEFORE any report is
+    // constructed: the counters the report would be built from are the ones
+    // known to be wrong.
+    #[cfg(feature = "streaming")]
+    if let Some(invariant) = terminal.invariant {
+        let invariant_error = anyhow!("streaming terminal accounting invariant: {invariant:?}");
+        return match phase_result {
+            Ok(_) => Err(invariant_error),
+            Err(phase_error) => Err(phase_error.context(format!(
+                "terminal processing also failed: {invariant_error:#}"
+            ))),
+        };
+    }
+    debug_assert!(!terminal.has_checked_invariant());
+    let export_incomplete = terminal.export_incomplete;
+    // Ordinary processor/export faults degrade a streaming run's derived-sink
+    // status instead of failing it. Legacy finite runs keep the existing hard
+    // failure: `export_incomplete` is never set without a lane.
+    let processor_result = match terminal.ordinary_error {
+        Some(error) if export_incomplete => {
+            tracing::warn!(
+                error = %error,
+                component = "streaming_terminal_lane",
+                "terminal export is incomplete; the run report is retained"
+            );
+            Ok(())
+        }
+        Some(error) => Err(error),
+        None => Ok(()),
+    };
     let phases = match (phase_result, processor_result) {
         (Ok(phases), Ok(())) => phases,
         (Err(phase_error), Ok(())) => return Err(phase_error),
@@ -808,6 +851,7 @@ async fn run_scheduled_phases_inner(
         phases,
         order,
         reports,
+        export_incomplete,
     })
 }
 
@@ -905,12 +949,15 @@ struct ScheduledPhaseExecutionFactory {
 }
 
 impl ScheduledPhaseExecutionFactory {
-    async fn wait_record_processors(&self) -> Result<()> {
+    async fn finalize_terminal_processing(&self) -> TerminalProcessingOutcome {
         let runtimes = self.runtimes.borrow().clone();
+        let mut merged = TerminalProcessingOutcome::default();
         for runtime in runtimes {
-            runtime.wait_record_processors().await?;
+            // No `?`: every phase must be joined even after one reports a
+            // fault, or a later phase's processors are never awaited at all.
+            merged.absorb(runtime.finalize_terminal_processing().await);
         }
-        Ok(())
+        merged
     }
 }
 
