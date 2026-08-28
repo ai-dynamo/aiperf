@@ -238,6 +238,10 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         # error) or reports itself disabled (telemetry/server-metrics status)
         # unregisters, so it stops blocking. Replaces the per-gate boolean flags.
         self._result_join_coordinator = ResultJoinCoordinator()
+        # Services a watchdog confirmed dead. Kept alongside the coordinator
+        # because command fan-out targets must exclude them even after the
+        # barrier has released.
+        self._reaped_service_ids: set[str] = set()
         # A producer that dies abruptly never sends SERVICE_ERROR, so the
         # heartbeat/pod reapers are the only signal. Without this hook they mark
         # the service failed in the registry but leave it in the barrier, and
@@ -750,11 +754,9 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
                 f"Service registry lost registration for '{message.service_id}'"
             )
 
-
         # A replacement pod reusing a deterministic service ID is alive again,
         # so it must stop being excluded from command fan-out.
         self._reaped_service_ids.discard(message.service_id)
-
 
         previous = self.service_manager.service_id_map.get(message.service_id)
         if previous is not None and previous.service_type != message.service_type:
@@ -970,6 +972,7 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
             return
 
         if self._result_join_coordinator.evict_service(service_id, reason):
+            self._reaped_service_ids.add(service_id)
             # Membership in the barrier and *degradation* are different
             # questions, and the eviction return answers only the first: a
             # producer that already delivered every domain it owed (marked done
@@ -1013,6 +1016,7 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
             f"Required service '{service_id}' ({info.service_type}) was reaped "
             f"during the benchmark ({reason})"
         )
+        self._reaped_service_ids.add(service_id)
         self._exit_errors.append(
             ExitErrorInfo(
                 error_details=ErrorDetails(

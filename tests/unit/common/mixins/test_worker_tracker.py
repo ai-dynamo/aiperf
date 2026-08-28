@@ -339,3 +339,22 @@ class TestWorstStatus:
         assert (group.task_stats.total, group.task_stats.completed) == (8, 6)
         assert group.task_stats.failed == 2
         assert group.declared_workers == 2
+
+
+def test_status_rank_has_a_single_definition() -> None:
+    """The dashboard's synthetic group status and the WGM-published group status
+    must roll up through the same precedence table.
+
+    Two byte-identical copies used to exist (``worker_group_state`` and
+    ``worker_tracker_mixin``); adding a ``WorkerStatus`` member or reordering
+    ``STALE`` vs ``HIGH_LOAD`` in one made the two disagree with no test or
+    type error to catch it. Identity (not equality) is asserted so a
+    re-introduced local copy fails here.
+    """
+    from aiperf.common import worker_status_rank
+    from aiperf.common.mixins import worker_tracker_mixin
+    from aiperf.workers import worker_group_state
+
+    assert worker_group_state.STATUS_RANK is worker_status_rank.STATUS_RANK
+    assert worker_group_state.worst_status is worker_status_rank.worst_status
+    assert worker_tracker_mixin.worst_status is worker_status_rank.worst_status

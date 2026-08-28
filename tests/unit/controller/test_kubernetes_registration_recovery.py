@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Kubernetes registrations populate tracking and recover replacement pods."""
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -95,14 +96,21 @@ async def test_failed_worker_group_replacement_is_reconfigured(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_updates_registry_timestamp(
+async def test_process_heartbeat_message_stamps_registry_timestamp_on_receipt(
     system_controller: SystemController,
 ) -> None:
+    """``last_seen_ns`` comes from the controller's clock, never the sender's.
+
+    ``request_ns`` is stamped in the sender's process on a different machine
+    under Kubernetes, so adopting it would make a skewed pod look instantly
+    stale. See ``tests/unit/controller/test_heartbeat_clock_skew.py``.
+    """
     system_controller.service_manager.service_id_map = {}
     system_controller.service_manager.service_map = {}
     await system_controller._handle_register_service_command(
         _registration("worker-pod-old")
     )
+    before_ns = time.time_ns()
 
     await system_controller._process_heartbeat_message(
         HeartbeatMessage(
@@ -113,4 +121,7 @@ async def test_heartbeat_updates_registry_timestamp(
         )
     )
 
-    assert ServiceRegistry.get_service("worker_group_manager_0").last_seen_ns == 12345
+    info = ServiceRegistry.get_service("worker_group_manager_0")
+    assert info is not None
+    assert info.last_seen_ns != 12345
+    assert info.last_seen_ns >= before_ns
