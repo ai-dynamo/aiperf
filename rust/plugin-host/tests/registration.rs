@@ -183,6 +183,8 @@ fn frozen_registry_lookup_by_id_returns_first_registration_in_load_order() {
     .expect("transport registration succeeds");
 
     let registry = freeze_universe(vec![u1, u2]);
-    let found = registry.lookup_by_id("shared").expect("shared is registered");
+    let found = registry
+        .lookup_by_id("shared")
+        .expect("shared is registered");
     assert!(std::ptr::eq(found.package(), &*PACKAGE_EXPORTER));
 }
