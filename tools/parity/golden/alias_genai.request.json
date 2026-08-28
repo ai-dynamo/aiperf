@@ -39,7 +39,8 @@
             "osl": {
               "mean": 128.0,
               "stddev": 5.0
-            }
+            },
+            "random_corpus_style": "vllm"
           },
           "sampling": "sequential",
           "turn_delay_ratio": 1.0,
@@ -54,6 +55,7 @@
         "headers": {},
         "http2": false,
         "keepalive_timeout": 300.0,
+        "per_chunk_usage": false,
         "proxy_from_env": false,
         "ssl_verify": true,
         "streaming": false,
@@ -706,11 +708,11 @@
               "header": "Video Peak Memory"
             }
           },
-          "title": "NVIDIA AIPerf | LLM Metrics",
-          "width": 140,
           "model_names": [
             "Qwen/Qwen3-0.6B"
-          ]
+          ],
+          "title": "NVIDIA AIPerf | LLM Metrics",
+          "width": 140
         },
         "genai_perf": {
           "enabled": true,
@@ -742,7 +744,8 @@
                     "osl": {
                       "mean": 128.0,
                       "stddev": 5.0
-                    }
+                    },
+                    "random_corpus_style": "vllm"
                   },
                   "type": "synthetic"
                 }
@@ -1006,7 +1009,8 @@
                   "osl": {
                     "mean": 128.0,
                     "stddev": 5.0
-                  }
+                  },
+                  "random_corpus_style": "vllm"
                 },
                 "type": "synthetic"
               }

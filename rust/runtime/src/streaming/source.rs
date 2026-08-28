@@ -3,7 +3,7 @@
 
 //! Streaming source discovery, immutable acquisition, and stop contracts.
 
-use std::{any::Any, num::NonZeroUsize};
+use std::{any::Any, num::NonZeroUsize, rc::Rc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -12,11 +12,12 @@ use serde_json::value::RawValue;
 
 use super::{
     budget::{BudgetLease, StreamingResourceBudget},
-    checkpoint::StreamingCheckpointParticipant,
+    checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
     failure::StreamingIssueReporterHandle,
     identity::{ContentDigest, ImmutableObjectIdentity},
     unit::SourcePosition,
 };
+use crate::clock::Clock;
 
 pub use super::failure::{AcquisitionFailureCode, SourceFailureCode, StreamSourceError};
 
@@ -138,12 +139,44 @@ where
 }
 
 /// Host-owned source preparation context.
-#[derive(Clone, Debug)]
+///
+/// The clock is host-owned on purpose: a source that needs to wait — a follow
+/// poll interval, a read-retry backoff, a credential-refresh backoff — must take
+/// that wait from the run's clock discipline rather than constructing a real
+/// clock or reaching for a Tokio timer, which would silently break virtual-clock
+/// execution.
+#[derive(Clone)]
 pub struct StreamingSourcePrepareContext {
+    /// Logical run bound into every issue this source reports.
+    ///
+    /// A source can fault on its very first acquisition, before any checkpoint
+    /// barrier has been presented, so the run cannot be read out of restore.
+    pub run: StreamRunIdentity,
+    /// Semantic namespace of the selected stream.
+    ///
+    /// Partition identity and issue input domains are derived under this
+    /// digest, so the same object under two streams is two distinct inputs.
+    pub stream_semantic_digest: ContentDigest,
+    /// Host clock for every source-owned wait.
+    pub clock: Rc<dyn Clock>,
     /// Budget used for immutable acquired partition bytes.
     pub acquisition_budget: AcquisitionBudget,
     /// Host-owned reliability issue reporting boundary.
     pub issue_reporter: StreamingIssueReporterHandle,
+}
+
+// `Clock` has no `Debug` supertrait, so the derived `Debug` is replaced with one
+// that reports the clock's discipline rather than its identity.
+impl std::fmt::Debug for StreamingSourcePrepareContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StreamingSourcePrepareContext")
+            .field("run", &self.run)
+            .field("stream_semantic_digest", &self.stream_semantic_digest)
+            .field("is_virtual_clock", &self.clock.is_virtual())
+            .field("acquisition_budget", &self.acquisition_budget)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Startup source validation and preparation contract.

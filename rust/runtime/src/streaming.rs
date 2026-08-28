@@ -20,6 +20,7 @@ pub mod reliability;
 pub mod results;
 pub mod session;
 pub mod source;
+pub mod sources;
 pub mod terminal_lane;
 pub mod unit;
 

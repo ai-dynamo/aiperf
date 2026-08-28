@@ -326,3 +326,336 @@ fn failed_extension_does_not_leak_earlier_registrations() {
     );
     assert_eq!(registry.extension_names().len(), 0);
 }
+
+#[cfg(feature = "streaming")]
+mod streaming_categories {
+    use std::sync::Arc;
+
+    use aiperf_runtime::endpoints::EndpointDescriptor;
+    use aiperf_runtime::engine::registry::{TransportDescriptor, WorkloadDescriptor};
+    use aiperf_runtime::extensions::{AIPerfExtension, AIPerfRegistry, ExtensionError};
+    use aiperf_runtime::streaming::{
+        action::{
+            ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
+            DatasetActionSchema, PreparedStreamingActionBinding, StreamingActionSinkDescriptor,
+            StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
+            ValidatedStreamingActionSinkConfig,
+        },
+        checkpoint::CheckpointError,
+        checkpoint_backend::{
+            CheckpointBackendPlacement, CheckpointBackendPrepareContext,
+            CheckpointBackendRequirements, CheckpointRetention, StreamingCheckpointBackend,
+            StreamingCheckpointBackendDescriptor, StreamingCheckpointBackendFactory,
+            ValidatedCheckpointBackendConfig,
+        },
+        failure::{DecodeFailureCode, SessionFailureCode, SourceFailureCode},
+        format::{
+            FormatProjection, FormatStateRetention, StreamFormatError, StreamingDatasetFormat,
+            StreamingDatasetFormatFactory, StreamingFormatDescriptor,
+            StreamingFormatPrepareContext, ValidatedStreamingFormatConfig,
+        },
+        identity::ContentDigest,
+        session::{
+            SessionClosureCapability, SessionCoordinatorError, SessionPlacement,
+            SessionStateRetention, StreamingSessionCoordinator, StreamingSessionPrepareContext,
+            StreamingSessionProgramDescriptor, StreamingSessionProgramFactory,
+            ValidatedStreamingSessionProgramConfig,
+        },
+        source::{
+            PartitionAccessKind, PreparedStreamingDatasetSource, StreamSourceError,
+            StreamingDatasetSourceFactory, StreamingResumeGranularity, StreamingSourceDescriptor,
+            StreamingSourceMode, StreamingSourceOrdering, StreamingSourcePlacement,
+            StreamingSourcePrepareContext, StreamingSourceRetention,
+            ValidatedStreamingSourceConfig,
+        },
+    };
+    use serde_json::value::RawValue;
+
+    static EXTERNAL_SOURCE: StreamingSourceDescriptor = StreamingSourceDescriptor {
+        id: "external_stream_source",
+        description: "Test-only compiled streaming source",
+        modes: &[StreamingSourceMode::Finite],
+        access: &[PartitionAccessKind::Sequential],
+        ordering: StreamingSourceOrdering::Partition,
+        resume: &[StreamingResumeGranularity::Partition],
+        has_event_time: false,
+        has_stable_record_ids: false,
+        retention: StreamingSourceRetention::BoundedMemory,
+        placement: StreamingSourcePlacement::ControllerOnly,
+        supports_virtual_clock: true,
+    };
+
+    static EXTERNAL_FORMAT: StreamingFormatDescriptor = StreamingFormatDescriptor {
+        id: "external_stream_format",
+        description: "Test-only compiled streaming format",
+        semantic_digest: ContentDigest::from_bytes([7u8; 32]),
+        media_types: &["application/jsonl"],
+        input_schemas: &["external.source.v1"],
+        required_access: PartitionAccessKind::Sequential,
+        projection: FormatProjection::FullRecord,
+        output_schema: "external.fragment.v1",
+        has_event_time: false,
+        has_stable_record_ids: false,
+        retention: FormatStateRetention::BoundedMemory,
+        supports_virtual_clock: true,
+    };
+
+    static EXTERNAL_SESSION: StreamingSessionProgramDescriptor =
+        StreamingSessionProgramDescriptor {
+            id: "external_stream_session",
+            description: "Test-only compiled session program",
+            fragment_input_schemas: &["external.fragment.v1"],
+            action_schemas: &["external.action.v1"],
+            closure: &[SessionClosureCapability::ExplicitClose],
+            retention: SessionStateRetention::BoundedMemory,
+            placement: SessionPlacement::ControllerCanonical,
+            supports_virtual_clock: true,
+        };
+
+    static EXTERNAL_SINK: StreamingActionSinkDescriptor = StreamingActionSinkDescriptor {
+        id: "external_stream_sink",
+        description: "Test-only compiled action sink",
+        accepted_schemas: &["external.action.v1"],
+        transport_ids: &["http"],
+        endpoint_kinds: &["chat"],
+        retention: ActionResultRetention::StreamingTerminal,
+        placement: ActionPlacement::WorkerLocal,
+        supports_virtual_clock: true,
+    };
+
+    static EXTERNAL_BACKEND: StreamingCheckpointBackendDescriptor =
+        StreamingCheckpointBackendDescriptor {
+            id: "external_stream_backend",
+            description: "Test-only compiled checkpoint backend",
+            is_durable: false,
+            has_leased_readers: false,
+            has_atomic_generations: true,
+            has_result_segments: false,
+            protects_sensitive_state: false,
+            retention: CheckpointRetention::Ephemeral,
+            placement: CheckpointBackendPlacement::ControllerLocal,
+            supports_virtual_clock: true,
+        };
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExternalStreamSource;
+
+    impl StreamingDatasetSourceFactory for ExternalStreamSource {
+        fn descriptor(&self) -> &'static StreamingSourceDescriptor {
+            &EXTERNAL_SOURCE
+        }
+
+        fn validate(
+            &self,
+            _authored: &RawValue,
+        ) -> Result<Box<dyn ValidatedStreamingSourceConfig>, StreamSourceError> {
+            Err(StreamSourceError::source(
+                SourceFailureCode::SourceUnavailable,
+            ))
+        }
+
+        fn prepare(
+            &self,
+            _config: Box<dyn ValidatedStreamingSourceConfig>,
+            _context: &StreamingSourcePrepareContext,
+        ) -> Result<Box<dyn PreparedStreamingDatasetSource>, StreamSourceError> {
+            Err(StreamSourceError::source(
+                SourceFailureCode::SourceUnavailable,
+            ))
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExternalStreamFormat;
+
+    impl StreamingDatasetFormatFactory for ExternalStreamFormat {
+        fn descriptor(&self) -> &'static StreamingFormatDescriptor {
+            &EXTERNAL_FORMAT
+        }
+
+        fn validate(
+            &self,
+            _authored: &RawValue,
+            _source: &StreamingSourceDescriptor,
+        ) -> Result<Box<dyn ValidatedStreamingFormatConfig>, StreamFormatError> {
+            Err(StreamFormatError::decode(DecodeFailureCode::Schema))
+        }
+
+        fn prepare(
+            &self,
+            _config: Box<dyn ValidatedStreamingFormatConfig>,
+            _context: &StreamingFormatPrepareContext,
+        ) -> Result<Box<dyn StreamingDatasetFormat>, StreamFormatError> {
+            Err(StreamFormatError::decode(DecodeFailureCode::Schema))
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExternalStreamSession;
+
+    impl StreamingSessionProgramFactory for ExternalStreamSession {
+        fn descriptor(&self) -> &'static StreamingSessionProgramDescriptor {
+            &EXTERNAL_SESSION
+        }
+
+        fn validate(
+            &self,
+            _authored: &RawValue,
+            _format: &StreamingFormatDescriptor,
+            _workload: &WorkloadDescriptor,
+        ) -> Result<Box<dyn ValidatedStreamingSessionProgramConfig>, SessionCoordinatorError>
+        {
+            Err(SessionCoordinatorError::session(
+                SessionFailureCode::MissingPredecessor,
+            ))
+        }
+
+        fn prepare(
+            &self,
+            _config: Box<dyn ValidatedStreamingSessionProgramConfig>,
+            _context: &StreamingSessionPrepareContext,
+        ) -> Result<Box<dyn StreamingSessionCoordinator>, SessionCoordinatorError> {
+            Err(SessionCoordinatorError::session(
+                SessionFailureCode::MissingPredecessor,
+            ))
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExternalStreamSink;
+
+    impl StreamingActionSinkFactory for ExternalStreamSink {
+        fn descriptor(&self) -> &'static StreamingActionSinkDescriptor {
+            &EXTERNAL_SINK
+        }
+
+        fn validate_binding(
+            &self,
+            _authored: &RawValue,
+            _action: &DatasetActionSchema,
+            _transport: &TransportDescriptor,
+            _endpoint: &EndpointDescriptor,
+        ) -> Result<Box<dyn ValidatedStreamingActionSinkConfig>, ActionExecutionError> {
+            Err(ActionExecutionError::action(
+                ActionFailureCode::MissingBinding,
+            ))
+        }
+
+        fn prepare(
+            &self,
+            _config: Box<dyn ValidatedStreamingActionSinkConfig>,
+            _context: &StreamingActionSinkPrepareContext,
+        ) -> Result<PreparedStreamingActionBinding, ActionExecutionError> {
+            Err(ActionExecutionError::action(
+                ActionFailureCode::MissingBinding,
+            ))
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExternalStreamBackend;
+
+    impl StreamingCheckpointBackendFactory for ExternalStreamBackend {
+        fn descriptor(&self) -> &'static StreamingCheckpointBackendDescriptor {
+            &EXTERNAL_BACKEND
+        }
+
+        fn validate(
+            &self,
+            _authored: &RawValue,
+            _requirements: &CheckpointBackendRequirements,
+        ) -> Result<Box<dyn ValidatedCheckpointBackendConfig>, CheckpointError> {
+            Err(CheckpointError::ParticipantSetMismatch)
+        }
+
+        fn prepare(
+            &self,
+            _config: Box<dyn ValidatedCheckpointBackendConfig>,
+            _context: &CheckpointBackendPrepareContext,
+        ) -> Result<Box<dyn StreamingCheckpointBackend>, CheckpointError> {
+            Err(CheckpointError::ParticipantSetMismatch)
+        }
+    }
+
+    struct ExternalStreamingExtension;
+
+    impl AIPerfExtension for ExternalStreamingExtension {
+        fn name(&self) -> &str {
+            "external-streaming"
+        }
+
+        fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+            registry
+                .register_stream_source(Arc::new(ExternalStreamSource))
+                .map_err(|error| ExtensionError::rejected(format!("{error:#}")))?;
+            registry
+                .register_stream_format(Arc::new(ExternalStreamFormat))
+                .map_err(|error| ExtensionError::rejected(format!("{error:#}")))?;
+            registry
+                .register_stream_session_program(Arc::new(ExternalStreamSession))
+                .map_err(|error| ExtensionError::rejected(format!("{error:#}")))?;
+            registry
+                .register_stream_action_sink(Arc::new(ExternalStreamSink))
+                .map_err(|error| ExtensionError::rejected(format!("{error:#}")))?;
+            registry
+                .register_stream_checkpoint_backend(Arc::new(ExternalStreamBackend))
+                .map_err(|error| ExtensionError::rejected(format!("{error:#}")))?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn linked_extension_registers_one_factory_in_every_streaming_category() {
+        let mut registry = AIPerfRegistry::builtin().expect("builtin registry");
+        registry
+            .register_extension(&ExternalStreamingExtension)
+            .expect("streaming extension registers");
+
+        assert!(
+            registry
+                .stream_source_factory("external_stream_source")
+                .is_some()
+        );
+        assert!(
+            registry
+                .stream_format_factory("external_stream_format")
+                .is_some()
+        );
+        assert!(
+            registry
+                .stream_session_program_factory("external_stream_session")
+                .is_some()
+        );
+        assert!(
+            registry
+                .stream_action_sink_factory("external_stream_sink")
+                .is_some()
+        );
+        assert!(
+            registry
+                .stream_checkpoint_backend_factory("external_stream_backend")
+                .is_some()
+        );
+        assert_eq!(
+            registry.extension_names().collect::<Vec<_>>(),
+            ["external-streaming"]
+        );
+    }
+
+    #[test]
+    fn duplicate_streaming_extension_leaves_no_streaming_registration() {
+        let mut registry = AIPerfRegistry::builtin().expect("builtin registry");
+        registry
+            .register_extension(&ExternalStreamingExtension)
+            .expect("first application");
+        let error = registry
+            .register_extension(&ExternalStreamingExtension)
+            .expect_err("duplicate extension name");
+        assert!(error.to_string().contains("duplicate AIPerf extension"));
+        assert_eq!(registry.stream_source_descriptors().len(), 1);
+        assert_eq!(registry.stream_format_descriptors().len(), 1);
+        assert_eq!(registry.stream_session_program_descriptors().len(), 1);
+        assert_eq!(registry.stream_action_sink_descriptors().len(), 1);
+        assert_eq!(registry.stream_checkpoint_backend_descriptors().len(), 1);
+    }
+}

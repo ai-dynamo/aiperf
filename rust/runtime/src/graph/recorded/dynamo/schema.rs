@@ -56,7 +56,7 @@ fn extract_raw_hashes(raw: &RawValue) -> Result<Vec<Box<RawValue>>, RecordedTrac
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct TraceRecord {
+pub(crate) struct TraceRecord {
     pub source_order: usize,
     pub event_type: EventType,
     pub event_time_ms: i64,
@@ -66,7 +66,7 @@ pub(super) struct TraceRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum EventType {
+pub(crate) enum EventType {
     RequestEnd,
     ToolStart,
     ToolEnd,
@@ -74,14 +74,14 @@ pub(super) enum EventType {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct AgentContext {
+pub(crate) struct AgentContext {
     pub session_id: String,
     pub parent_session_id: Option<String>,
     pub parent_trajectory_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RequestMetrics {
+pub(crate) struct RequestMetrics {
     pub request_id: String,
     pub model: Option<String>,
     pub input_tokens: Option<i64>,
@@ -94,14 +94,14 @@ pub(super) struct RequestMetrics {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ReplayMetrics {
+pub(crate) struct ReplayMetrics {
     pub block_size: usize,
     pub input_length: i64,
     pub hashes: Vec<i128>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct ToolEvent {
+pub(crate) struct ToolEvent {
     pub tool_call_id: String,
     pub status: Option<String>,
 }
@@ -116,7 +116,7 @@ pub(super) fn unwrap_sink_envelope(value: Value) -> Value {
     }
 }
 
-pub(super) fn parse_record(
+pub(crate) fn parse_record(
     raw: &RawValue,
     source_order: usize,
 ) -> Result<Option<TraceRecord>, RecordedTraceError> {

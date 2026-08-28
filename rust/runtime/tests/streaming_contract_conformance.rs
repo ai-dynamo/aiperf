@@ -18,6 +18,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
@@ -736,6 +737,7 @@ async fn conformance_reporter_is_released_before_each_await() {
             expects_frontier: true,
             expected_issue_count: 0,
             run: run_identity(),
+            stream_semantic_digest: ContentDigest::from_bytes([0x51; 32]),
             advance: Rc::new(move || gate.open()),
         },
     )
@@ -747,7 +749,11 @@ async fn host_stop_wakes_pending_source_without_issue_or_seal() {
     let gate = Arc::new(ScriptGate::default());
     let factory = ScriptedSourceFactory { gate };
     let reporter = CountingReporter::new(run_identity());
+    let run = run_identity();
     let context = StreamingSourcePrepareContext {
+        run,
+        stream_semantic_digest: ContentDigest::from_bytes(*run.logical_replay_run().as_bytes()),
+        clock: RealClock::new(),
         acquisition_budget: harness_acquisition_budget(),
         issue_reporter: reporter.handle(),
     };
