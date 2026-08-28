@@ -3,8 +3,9 @@
 //! Static streaming config validation integration tests.
 //!
 //! These drive the two stages `aiperf config validate` performs: YAML
-//! normalization (which now raises the streaming Config-v2 cross-field rules)
-//! and the in-process static registry stage.
+//! normalization, which decides shape, and the in-process static registry
+//! stage, which owns the single authoritative resolution and therefore every
+//! Config-v2 cross-field rule.
 
 use std::path::PathBuf;
 
@@ -22,6 +23,19 @@ fn reliability_yaml() -> &'static str {
 /// A stream config that leaves `reliability` at its documented defaults.
 fn shadow_yaml() -> &'static str {
     include_str!("fixtures/streaming-shadow.yaml")
+}
+
+/// Run both `config validate` stages and return the refusal message.
+///
+/// The Config-v2 cross-field rules are armed inside `config::resolve::resolve`,
+/// which is stage 2's single authoritative resolution — not stage 1, which only
+/// normalizes shape. A cross-field violation therefore surfaces as an error
+/// from `validate_statically`, not from `normalize_str`.
+fn refusal_message(yaml: &str) -> String {
+    let inputs = yaml::normalize_str(yaml, artifact_dir()).expect("config normalizes");
+    let error = streaming_preflight::validate_statically(&inputs)
+        .expect_err("static validation must refuse this config");
+    format!("{error:#}")
 }
 
 /// Build one stream config with the given `reliability` block body.
@@ -124,9 +138,7 @@ fn config_validate_rejects_mixed_datasets_and_dataset_streams() {
         "  dataset_streams:",
         "  datasets:\n    - {type: synthetic, prompts: {isl: 128, osl: 16}}\n  dataset_streams:",
     );
-    let error = yaml::normalize_str(&yaml, artifact_dir())
-        .expect_err("datasets and dataset_streams must not coexist");
-    let message = format!("{error:#}");
+    let message = refusal_message(&yaml);
     assert!(
         message.contains("mutually exclusive"),
         "expected a mutual-exclusion refusal, got: {message}"
@@ -139,9 +151,7 @@ fn config_validate_rejects_accuracy_with_dataset_streams() {
         "  dataset_streams:",
         "  accuracy:\n    evaluator: exact_match\n  dataset_streams:",
     );
-    let error =
-        yaml::normalize_str(&yaml, artifact_dir()).expect_err("accuracy needs a finite dataset");
-    let message = format!("{error:#}");
+    let message = refusal_message(&yaml);
     assert!(
         message.contains("accuracy"),
         "expected an accuracy refusal, got: {message}"
@@ -164,9 +174,7 @@ fn reliability_policy_unknown_fields_are_rejected() {
 fn zero_backoff_with_nonzero_retry_limit_is_rejected() {
     let yaml =
         yaml_with_reliability("      partition_retry_limit: 3\n      retry_backoff_ms: 0\n");
-    let error = yaml::normalize_str(&yaml, artifact_dir())
-        .expect_err("a zero backoff cannot pace a nonzero retry limit");
-    let message = format!("{error:#}");
+    let message = refusal_message(&yaml);
     assert!(
         message.contains("retry_backoff_ms"),
         "expected a refusal naming the backoff field, got: {message}"
@@ -176,9 +184,7 @@ fn zero_backoff_with_nonzero_retry_limit_is_rejected() {
 #[test]
 fn retry_backoff_overflow_is_rejected() {
     let yaml = yaml_with_reliability(&format!("      retry_backoff_ms: {}\n", u64::MAX));
-    let error = yaml::normalize_str(&yaml, artifact_dir())
-        .expect_err("an unrepresentable backoff must be refused");
-    let message = format!("{error:#}");
+    let message = refusal_message(&yaml);
     assert!(
         message.contains("retry_backoff_ms") && message.contains("duration"),
         "expected a representability refusal naming the field, got: {message}"

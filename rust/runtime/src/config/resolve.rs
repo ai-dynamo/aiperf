@@ -1681,7 +1681,14 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 hardware: inputs.hardware_description.clone(),
                 endpoint_placement: inputs.endpoint_placement.clone(),
             }),
-        datasets: Some(vec![dataset]),
+        // An authored stream *is* the dataset. Emitting the synthesized default
+        // beside it would make every stream config trip the mutual-exclusion
+        // rule, which exists to reject an authored `datasets:` block, not a
+        // resolution artifact.
+        datasets: inputs
+            .dataset_streams
+            .is_none()
+            .then(|| vec![dataset]),
         phases: Some(phases),
         export: None,
         gpu_telemetry: Some(gpu_cfg),
