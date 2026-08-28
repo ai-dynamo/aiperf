@@ -131,7 +131,7 @@ async def operator_ready_shared_pid(
 
 
 async def _force_delete_cr(kubectl: KubectlClient, namespace: str, name: str) -> None:
-    """Best-effort force-delete an AIPerfJob CR in test teardown."""
+    """Best-effort force-delete an AIPerfJob CR and its JobSet in test teardown."""
     await kubectl.run(
         "delete",
         "aiperfjob",
@@ -140,6 +140,16 @@ async def _force_delete_cr(kubectl: KubectlClient, namespace: str, name: str) ->
         namespace,
         "--wait=false",
         "--ignore-not-found",
+        check=False,
+    )
+    await kubectl.run(
+        "delete",
+        "jobset",
+        f"aiperf-{name}",
+        "-n",
+        namespace,
+        "--ignore-not-found",
+        "--wait=false",
         check=False,
     )
 

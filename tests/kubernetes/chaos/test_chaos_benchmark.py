@@ -92,16 +92,28 @@ def _metric_p99(metrics: dict[str, Any], key: str) -> float | None:
 
 
 async def _force_delete_cr(kubectl: KubectlClient, namespace: str, name: str) -> None:
-    """Drop the CR without blocking on finalizer settlement.
+    """Drop the CR and JobSet without blocking on finalizer settlement.
 
     Mirrors the teardown pattern in ``test_chaos_cancellation.py`` so
     that a failed assertion never leaves an AIPerfJob around to poison
-    the next test.
+    the next test.  Explicitly deletes the JobSet too so the jobset-controller
+    can remove its finalizer and terminate pods even if the operator's on_delete
+    best-effort delete failed.
     """
     await kubectl.run(
         "delete",
         "aiperfjob",
         name,
+        "-n",
+        namespace,
+        "--ignore-not-found",
+        "--wait=false",
+        check=False,
+    )
+    await kubectl.run(
+        "delete",
+        "jobset",
+        f"aiperf-{name}",
         "-n",
         namespace,
         "--ignore-not-found",

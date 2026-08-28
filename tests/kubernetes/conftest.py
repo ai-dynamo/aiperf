@@ -1673,21 +1673,31 @@ async def _cleanup_session_namespaces(
 
     kubectl = KubectlClient(context=context)
     for ns in (benchmark_namespace, operator_job_namespace):
+        # Delete all workload resources so the jobset-controller stops reconciling
+        # them.  We do NOT delete the namespace here — namespace deletion triggers
+        # an API-server GC cascade that can crash the jobset-controller's leader
+        # election.  Empty namespaces cause zero reconciliation load; the startup
+        # stale-purge (_purge_dead_session_*_namespaces) deletes them on the next
+        # test run, before any new tests start.
         await kubectl.run(
             "delete",
-            "aiperfjobs,aiperfsweeps,jobsets",
+            "aiperfjobs,aiperfsweeps,jobsets,jobs",
             "--all",
             "-n",
             ns,
             "--ignore-not-found",
             check=False,
         )
+        # Force-terminate any remaining pods so they don't hold finalizers that
+        # block the next test from using the same namespace name.
         await kubectl.run(
             "delete",
-            "namespace",
+            "pods",
+            "--all",
+            "-n",
             ns,
             "--ignore-not-found",
-            "--wait=false",
+            "--grace-period=1",
             check=False,
         )
 

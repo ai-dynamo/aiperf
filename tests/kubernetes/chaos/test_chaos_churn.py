@@ -38,11 +38,28 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
 
 
 async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> None:
-    """Best-effort CR delete; used as the unconditional finally-path."""
+    """Best-effort CR + JobSet delete; used as the unconditional finally-path.
+
+    Deletes the AIPerfJob CR (which triggers on_delete to remove the JobSet)
+    and also explicitly deletes the JobSet so pods start terminating immediately
+    even if the jobset-controller is mid-restart and can't process ownerRef GC.
+    """
     await kubectl.run(
         "delete",
         "aiperfjob",
         name,
+        "-n",
+        namespace,
+        "--ignore-not-found",
+        "--wait=false",
+        check=False,
+    )
+    # Explicitly delete the JobSet so the jobset-controller can remove its
+    # finalizer and terminate pods without waiting for GC-controller cascade.
+    await kubectl.run(
+        "delete",
+        "jobset",
+        f"aiperf-{name}",
         "-n",
         namespace,
         "--ignore-not-found",
