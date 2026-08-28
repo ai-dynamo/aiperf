@@ -11,11 +11,26 @@ publish = false
 [dependencies]
 aiperf-plugin-host.workspace = true
 aiperf-plugin-sdk.workspace = true
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 tempfile = { workspace = true }
+
+# Release tooling lives under `rust/scripts/` but is a real target of this
+# crate, so the assembler the release path runs is the assembler the
+# distribution census tests exercise.
+[[bin]]
+name = "assemble-plugin-distribution"
+path = "../scripts/assemble-plugin-distribution.rs"
 
 [[test]]
 name = "distribution_lifecycle"
 path = "tests/distribution_lifecycle.rs"
+
+[[test]]
+name = "distribution_census"
+path = "tests/distribution_census.rs"

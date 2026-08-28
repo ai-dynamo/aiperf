@@ -7,6 +7,11 @@
 //! host crate owns: authenticated inventory publication
 //! ([`aiperf_plugin_host::inventory`]) and atomic generation installation
 //! ([`aiperf_plugin_host::install`]).
+//!
+//! [`assemble`] adds the producing half of that lifecycle: it turns a declared
+//! candidate generation into the authenticated inventory the host consumes.
+
+pub mod assemble;
 
 /// The source API version exposed by provisional plugin crate shells.
 pub const PLUGIN_SOURCE_API_VERSION: &str = "1.0.0";
