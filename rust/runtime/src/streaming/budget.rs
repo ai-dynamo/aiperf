@@ -293,6 +293,15 @@ impl StreamingResourceBudget {
         self.inner.byte_semaphore.close();
     }
 
+    /// Borrow the authored capacity this budget enforces.
+    ///
+    /// Observability reports a peak beside the limit it was bounded by, which is
+    /// what makes a high-water mark evidence of boundedness rather than a number.
+    #[must_use]
+    pub fn limits(&self) -> BudgetLimits {
+        self.inner.limits
+    }
+
     /// Read an atomic pair of current counters and independent peak counters.
     #[must_use]
     pub fn snapshot(&self) -> BudgetSnapshot {

@@ -19,10 +19,14 @@ pub mod format;
 pub mod formats;
 pub mod hf_credentials;
 pub mod identity;
+pub mod observability;
 pub mod pipeline;
 pub mod placement;
+pub mod policy;
 pub mod reliability;
 pub mod results;
+#[cfg(feature = "streaming-crypto")]
+pub mod sensitive_state;
 pub mod session;
 pub mod source;
 pub mod sources;

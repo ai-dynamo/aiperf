@@ -3,9 +3,9 @@
 
 //! Reference and persistent checkpoint backend implementations.
 
-pub(crate) mod budget;
 #[cfg(feature = "streaming-s3")]
 pub mod aws_object_store;
+pub(crate) mod budget;
 pub mod lease_gc;
 pub mod local;
 pub mod memory;

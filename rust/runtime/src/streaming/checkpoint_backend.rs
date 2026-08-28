@@ -92,6 +92,9 @@ pub struct CheckpointBackendRequirements {
     pub needs_restartable_execution: bool,
     /// Whether partial results must survive process replacement.
     pub needs_durable_partial_results: bool,
+    /// Whether retained participant state carries live target output and so
+    /// must be protected at rest by the selected backend.
+    pub needs_sensitive_state_protection: bool,
 }
 
 /// Type-erased, strictly validated checkpoint backend configuration.

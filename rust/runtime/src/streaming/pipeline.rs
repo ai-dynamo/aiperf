@@ -44,7 +44,9 @@ use tracing::debug;
 use crate::clock::Clock;
 
 use super::{
-    action::{ActionExecutionError, ActionExecutionEvent, StreamingActionHost},
+    action::{
+        ActionExecutionError, ActionExecutionEvent, ActionTerminalDisposition, StreamingActionHost,
+    },
     checkpoint::{
         CheckpointBarrier, CheckpointEpoch, CheckpointError, CheckpointParticipantId,
         CheckpointParticipantOwners, CheckpointParticipantPlan, CheckpointParticipantPlanError,
@@ -61,6 +63,10 @@ use super::{
         StreamingPartitionDecoder,
     },
     identity::{ContentDigest, GlobalSequence, SessionCausalFrontier, StableSessionKey},
+    observability::{
+        CheckpointHorizonSnapshot, ScheduledActionHorizon, StageSpan, StreamingPlaneMetrics,
+        StreamingPlaneObserver, StreamingStage,
+    },
     placement::{
         PlacementError, PlacementEvent, PlacementHandle, PlacementHandleId,
         PreparedStreamingPlacementBinding, StreamingPlacementAdmission, StreamingPlacementControl,
@@ -204,6 +210,8 @@ pub struct StreamingRunOutcome {
     pub terminal_reason: StreamingTerminalReason,
     /// Last generation that became authoritative, when any.
     pub last_committed_generation: Option<CommittedCheckpointGeneration>,
+    /// Bounded stage-boundary observability accumulated over the run.
+    pub observability: StreamingPlaneMetrics,
 }
 
 /// Bounded pipeline failure.
@@ -482,6 +490,13 @@ pub struct StreamingPipeline {
     source_pulls: Cell<u64>,
     decode_pulls: Cell<u64>,
     is_source_sealed: Cell<bool>,
+    /// Open endpoint intervals, one per admitted action. Bounded by the same
+    /// in-flight set as `placements`, and cleared by the action's terminal.
+    action_spans: RefCell<std::collections::BTreeMap<super::identity::StableActionId, StageSpan>>,
+    /// Stage-boundary recorder, installed once the phase context supplies the
+    /// run clock. Absent before `run`, which is why every observation goes
+    /// through [`StreamingPipeline::observe`] rather than borrowing directly.
+    observability: RefCell<Option<StreamingPlaneObserver>>,
 }
 
 impl StreamingPipeline {
@@ -597,6 +612,8 @@ impl StreamingPipeline {
             source_pulls: Cell::new(0),
             decode_pulls: Cell::new(0),
             is_source_sealed: Cell::new(false),
+            action_spans: RefCell::new(std::collections::BTreeMap::new()),
+            observability: RefCell::new(None),
         };
         Ok((pipeline, control, participants))
     }
@@ -625,6 +642,95 @@ impl StreamingPipeline {
         self.accepted.get() == self.settled.get()
     }
 
+    /// Return the observability accumulated so far.
+    #[must_use]
+    pub fn observability_snapshot(&self) -> StreamingPlaneMetrics {
+        self.observability
+            .borrow()
+            .as_ref()
+            .map(StreamingPlaneObserver::snapshot)
+            .unwrap_or_default()
+    }
+
+    /// Apply one recorder mutation, if the recorder is installed.
+    ///
+    /// The borrow is held only for the duration of `record`, which is
+    /// synchronous and allocation-free, so no stage boundary can observe a
+    /// pipeline borrow taken by observability.
+    fn observe(&self, record: impl FnOnce(&mut StreamingPlaneObserver)) {
+        if let Some(observer) = self.observability.borrow_mut().as_mut() {
+            record(observer);
+        }
+    }
+
+    /// Open a stage interval at the run clock's current reading.
+    fn open_span(&self, stage: StreamingStage) -> Option<StageSpan> {
+        self.observability
+            .borrow()
+            .as_ref()
+            .map(|observer| observer.open_span(stage))
+    }
+
+    /// Close a stage interval opened by [`Self::open_span`].
+    fn close_span(&self, span: Option<StageSpan>) {
+        if let Some(span) = span {
+            self.observe(|observer| observer.close_span(span));
+        }
+    }
+
+    /// Refresh every budget-backed permit high-water mark.
+    ///
+    /// Called at the checkpoint barrier and at the terminal cut, never per unit:
+    /// the budget maintains its own peaks, so sampling more often would cost
+    /// atomics on the admission path without observing anything new.
+    fn refresh_queue_high_water(&self) {
+        let memory = self.acquisition.memory_budget();
+        let disk = self.acquisition.disk_budget();
+        let memory_limits = memory.limits();
+        let disk_limits = disk.limits();
+        let memory_snapshot = memory.snapshot();
+        let disk_snapshot = disk.snapshot();
+        let pending = self.sink.borrow().actions.len();
+        let max_pending = self.limits.max_pending_actions;
+        self.observe(|observer| {
+            observer.observe_queue(
+                StreamingStage::Acquire,
+                memory_snapshot,
+                memory_limits.max_items,
+                memory_limits.max_bytes,
+            );
+            observer.observe_queue(
+                StreamingStage::Source,
+                disk_snapshot,
+                disk_limits.max_items,
+                disk_limits.max_bytes,
+            );
+            observer.observe_queue(
+                StreamingStage::Session,
+                super::budget::BudgetSnapshot {
+                    used_items: pending,
+                    used_bytes: 0,
+                    high_water_items: pending,
+                    high_water_bytes: 0,
+                },
+                max_pending,
+                0,
+            );
+        });
+    }
+
+    /// Install the horizons and fence state the run can truthfully claim.
+    fn refresh_observability_boundary(&self) {
+        let cut = self.current_cut();
+        let scheduled = ScheduledActionHorizon::new(GlobalSequence::new(self.accepted.get()));
+        let mut issues = super::reliability::StreamingIssueSummary::empty();
+        issues.is_admission_fenced = self.control.is_admission_fenced();
+        self.refresh_queue_high_water();
+        self.observe(|observer| {
+            observer.refresh_boundary(issues.clone(), CheckpointHorizonSnapshot { cut, scheduled });
+        });
+    }
+
     /// Run the complete bounded pipeline to a terminal outcome.
     ///
     /// # Errors
@@ -648,6 +754,7 @@ impl StreamingPipeline {
             mut stop,
         } = phase;
 
+        *self.observability.borrow_mut() = Some(StreamingPlaneObserver::new(clock.clone()));
         let this = &self;
         let mut state = PipelinePhase::Pulling;
         let mut last_committed: Option<CommittedCheckpointGeneration> = None;
@@ -683,9 +790,11 @@ impl StreamingPipeline {
                         CheckpointBarrierFinality::Terminal(reason.checkpoint_terminal_reason()),
                     )
                     .await?;
+                this.refresh_observability_boundary();
                 return Ok(StreamingRunOutcome {
                     terminal_reason: reason.terminal_reason(),
                     last_committed_generation: Some(generation),
+                    observability: this.observability_snapshot(),
                 });
             }
 
@@ -759,6 +868,7 @@ impl StreamingPipeline {
                         )
                         .await?;
                     last_committed = Some(generation);
+                    this.refresh_observability_boundary();
                     next_barrier_ns = clock
                         .now_ns()
                         .saturating_add(this.limits.checkpoint_interval_ns);
@@ -786,10 +896,12 @@ impl StreamingPipeline {
             return self.decode_and_admit().await;
         }
 
+        let span = self.open_span(StreamingStage::Source);
         let event = {
             let mut source = self.source.borrow_mut();
             source.next_event().await
         };
+        self.close_span(span);
         self.source_pulls.set(self.source_pulls.get() + 1);
         let event = match event {
             Ok(event) => event,
@@ -800,6 +912,7 @@ impl StreamingPipeline {
         match event {
             SourceEvent::Partition(partition) => {
                 // Reservation 1: the acquisition lease, outermost of the chain.
+                let span = self.open_span(StreamingStage::Acquire);
                 let acquired = partition
                     .content()
                     .acquire(
@@ -808,6 +921,7 @@ impl StreamingPipeline {
                     )
                     .await
                     .map_err(StreamingPipelineError::Source)?;
+                self.close_span(span);
                 let decoder = {
                     let mut format = self.format.borrow_mut();
                     format
@@ -858,6 +972,7 @@ impl StreamingPipeline {
     async fn decode_and_admit(&self) -> Result<Option<DrainReason>, StreamingPipelineError> {
         // Reservation 2: the strict per-pull decode bound. Not a lease — an
         // exact upper bound on what one pull may materialize.
+        let span = self.open_span(StreamingStage::Decode);
         let step = {
             let mut decoder = self.decoder.borrow_mut();
             let Some(decoder) = decoder.as_mut() else {
@@ -865,12 +980,14 @@ impl StreamingPipeline {
             };
             decoder.next_batch(self.limits.decode_batch).await
         };
+        self.close_span(span);
         self.decode_pulls.set(self.decode_pulls.get() + 1);
         match step.map_err(StreamingPipelineError::Format)? {
             DecodeStep::Batch(batch) => {
                 for fragment in batch.fragments {
                     // Reservation 3: the session retained-state charge, which
                     // refuses rather than waits.
+                    let span = self.open_span(StreamingStage::Session);
                     {
                         let mut session = self.session.borrow_mut();
                         let mut sink = self.sink.borrow_mut();
@@ -879,6 +996,7 @@ impl StreamingPipeline {
                             .await
                             .map_err(StreamingPipelineError::Session)?;
                     }
+                    self.close_span(span);
                     self.drain_sink().await?;
                 }
                 Ok(None)
@@ -941,6 +1059,7 @@ impl StreamingPipeline {
                 .route_admission(&action)
                 .map_err(StreamingPipelineError::Placement)?
         };
+        let span = self.open_span(StreamingStage::Placement);
         let reservation = match charge {
             Some(charge) => Some(
                 self.admission
@@ -951,6 +1070,7 @@ impl StreamingPipeline {
             ),
             None => None,
         };
+        self.close_span(span);
 
         // Synchronous block: no `.await` between installing the proven capacity
         // and deciding the route it pays for.
@@ -985,10 +1105,12 @@ impl StreamingPipeline {
         // Reservations 6 and 7: the active-execution lease and, transitively
         // inside the binding's own `submit`, the terminal-record permit. The
         // host assigns the dense global sequence here; the pipeline does not.
+        let span = self.open_span(StreamingStage::Action);
         let sequence = {
             let mut action_host = self.action.borrow_mut();
             action_host.submit(action).await
         };
+        self.close_span(span);
         let sequence = match sequence {
             Ok(sequence) => sequence,
             Err(error) => {
@@ -1089,6 +1211,17 @@ impl StreamingPipeline {
             _ => None,
         };
 
+        // Endpoint time is admission receipt to terminal receipt. Both are stage
+        // boundaries the loop already visits; nothing here runs inside a token
+        // callback, and the first-token event is deliberately not observed.
+        if let ActionExecutionEvent::Admitted(receipt) = &event
+            && let Some(span) = self.open_span(StreamingStage::Terminal)
+        {
+            self.action_spans
+                .borrow_mut()
+                .insert(receipt.event.action_id, span);
+        }
+
         {
             let mut session = self.session.borrow_mut();
             let mut sink = self.sink.borrow_mut();
@@ -1099,6 +1232,19 @@ impl StreamingPipeline {
         }
 
         if let Some((action_id, disposition)) = terminal {
+            let span = self.action_spans.borrow_mut().remove(&action_id);
+            self.close_span(span);
+            match disposition {
+                ActionTerminalDisposition::Failed => {
+                    self.observe(StreamingPlaneObserver::observe_failed_terminal_action);
+                }
+                ActionTerminalDisposition::Dropped => {
+                    self.observe(|observer| {
+                        observer.observe_drop(super::observability::StreamingDropReason::Overload);
+                    });
+                }
+                ActionTerminalDisposition::Completed | ActionTerminalDisposition::Cancelled => {}
+            }
             let handle = self.placements.borrow().get(&action_id).copied();
             if let Some(handle) = handle {
                 // A route serves a session, not an action, so it is fenced only

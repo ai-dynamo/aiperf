@@ -134,6 +134,11 @@ aws-smithy-http-client = { version = "=1.1.10", default-features = false, featur
 aws-credential-types = { version = "=1.2.12", default-features = false }
 parquet = { version = "58.3", default-features = false, features = ["arrow", "json", "snap", "zstd"] }
 rand = "0.9"
+# Sensitive streaming session state (`streaming-crypto` only): XChaCha20-Poly1305
+# envelopes and drop-time wiping of key/plaintext buffers. Both are optional in
+# every member manifest and are unreachable from the base `streaming` feature.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
 ed25519-dalek = "2.2"
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "aws_lc_rs"] }
 rand_distr = "0.5"
