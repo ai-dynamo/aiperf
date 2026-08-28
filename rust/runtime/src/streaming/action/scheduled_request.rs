@@ -44,9 +44,9 @@ use super::{
     ActionHandleId, ActionPlacement, ActionResultRetention, ActionTerminalDisposition,
     ActionTerminalReceipt, DatasetActionSchema, EndpointRetrySafety, OrderedDatasetAction,
     PreparedStreamingActionBinding, StreamingActionDriver, StreamingActionDriverControl,
-    StreamingActionDriverControlOps, StreamingActionSinkDescriptor, StreamingActionSinkFactory,
+    StreamingActionDriverControlOps, StreamingActionSinkDescriptor,
     StreamingActionSinkPrepareContext, StreamingActionSubmitter, SubmittedAction,
-    ValidatedStreamingActionSinkConfig, action_execution_control, canonical_action_schema,
+    action_execution_control, canonical_action_schema,
 };
 use crate::{
     body_plan::RequestBody,
@@ -375,9 +375,12 @@ fn terminal_disposition(
 ) -> ActionTerminalDisposition {
     use crate::dispatch::collector::ReplayTerminalStatus;
     match terminal {
-        ReplayTerminalStatus::Complete => ActionTerminalDisposition::Completed,
-        ReplayTerminalStatus::Cancelled => ActionTerminalDisposition::Cancelled,
-        _ => ActionTerminalDisposition::Failed,
+        ReplayTerminalStatus::Completed => ActionTerminalDisposition::Completed,
+        ReplayTerminalStatus::Canceled => ActionTerminalDisposition::Cancelled,
+        // An admission refusal never reached the endpoint, so it is a drop
+        // rather than a failure of the action itself.
+        ReplayTerminalStatus::Rejected => ActionTerminalDisposition::Dropped,
+        ReplayTerminalStatus::Failed => ActionTerminalDisposition::Failed,
     }
 }
 
