@@ -77,7 +77,13 @@ fn find_exported_symbol(artifact_path: &Path, symbol: &str) -> Result<bool, std:
         .arg(artifact_path)
         .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains(symbol))
+    // Check each line for the exact symbol name in the last whitespace-delimited field,
+    // preventing "aiperf_plugin_entry_v1_extra" from matching "aiperf_plugin_entry_v1".
+    Ok(stdout.lines().any(|line| {
+        line.split_whitespace()
+            .last()
+            .is_some_and(|name| name == symbol)
+    }))
 }
 
 /// Errors from the conformance runner.
