@@ -179,15 +179,12 @@ class MultiProcessServiceManager(BaseServiceManager):
         # subscribed, leaving them un-configured and their data missing from
         # the final export.
         #
-        # Count replicas per type, not just presence of the type: a
-        # replicated service (e.g. RECORD_PROCESSOR, scaled with worker
-        # count) spawns multiple entries in multi_process_info with the same
-        # service_type. Treating the type as "registered" once the first
-        # replica checks in lets ProfileConfigureCommand fire -- and with it
-        # DatasetManager's one-shot DatasetConfiguredNotification -- before
-        # every replica's SUB socket is subscribed. Replicas that register
-        # after that point silently miss the notification and hang until
-        # DATASET.CONFIGURATION_TIMEOUT.
+        # Count replicas per type, not per-type presence: a replicated
+        # service (e.g. RECORD_PROCESSOR, scaled with worker count) has
+        # multiple multi_process_info entries sharing one service_type. A
+        # replica that registers after the first can otherwise miss
+        # DatasetManager's one-shot DatasetConfiguredNotification and hang
+        # until DATASET.CONFIGURATION_TIMEOUT.
         required_counts: Counter[ServiceTypeT] = Counter(
             info.service_type for info in self.multi_process_info
         ) or Counter(self.required_services)

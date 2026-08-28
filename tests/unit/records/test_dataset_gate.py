@@ -110,7 +110,7 @@ class TestDatasetConfigCatchUp:
         )
         event = asyncio.Event()
 
-        await catch_up.try_once(event)  # must not raise
+        await catch_up.try_once(event)
 
         on_configured.assert_not_called()
 
@@ -144,12 +144,12 @@ class TestDatasetConfigCatchUp:
         tasks = [asyncio.create_task(catch_up.try_once(event)) for _ in range(5)]
         await asyncio.sleep(0)  # let every task reach the in-flight request
 
-        request_client.request.assert_awaited_once()  # still in flight, already single-flight
+        request_client.request.assert_awaited_once()
 
         release.set()
         await asyncio.gather(*tasks)
 
-        request_client.request.assert_awaited_once()  # still just the one call
+        request_client.request.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_try_once_does_not_requery_after_a_negative_attempt(self):

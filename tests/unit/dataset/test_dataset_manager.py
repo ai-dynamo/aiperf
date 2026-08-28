@@ -1074,6 +1074,26 @@ class TestDatasetConfigStatusRequest:
         assert response.notification is None
 
     @pytest.mark.asyncio
+    async def test_echoes_request_id_so_the_dealer_client_can_match_it(
+        self, initialized_dataset_manager
+    ) -> None:
+        """Regression: ZMQDealerRequestClient matches an in-flight request to
+        its response by ``response_message.request_id`` (see
+        ``aiperf.zmq.dealer_request_client``). A response that doesn't echo
+        the request's ``request_id`` is silently unmatched -- the caller's
+        request never resolves and every catch-up attempt times out instead
+        of self-healing."""
+        dm = initialized_dataset_manager
+
+        response = await dm._handle_dataset_config_status_request(
+            DatasetConfigStatusRequest(
+                service_id="late_record_processor", request_id="req-123"
+            )
+        )
+
+        assert response.request_id == "req-123"
+
+    @pytest.mark.asyncio
     async def test_after_configuration_replays_last_notification(
         self, configured_dataset_manager
     ) -> None:

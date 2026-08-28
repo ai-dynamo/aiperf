@@ -1031,6 +1031,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
         return DatasetConfigStatusResponse(
             service_id=self.service_id,
+            request_id=message.request_id,
             notification=self._last_dataset_configured_notification,
         )
 

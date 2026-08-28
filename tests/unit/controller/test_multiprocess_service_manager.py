@@ -339,9 +339,6 @@ class TestMultiProcessServiceManager:
             ),
         }
 
-        # Pre-fix: wait would return immediately -- the type RECORD_PROCESSOR
-        # is present in registered_types via the first replica alone.
-        # Post-fix: wait times out because only 1/2 replicas registered.
         with pytest.raises(AIPerfError, match="failed to register within timeout"):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(), timeout_seconds=1.0
@@ -376,7 +373,6 @@ class TestMultiProcessServiceManager:
             for i in (1, 2)
         }
 
-        # Should NOT raise or time out -- both replicas are registered.
         await service_manager.wait_for_all_services_registration(
             stop_event=asyncio.Event(), timeout_seconds=2.0
         )
