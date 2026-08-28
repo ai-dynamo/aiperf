@@ -1168,24 +1168,44 @@ fn empty_raw_object() -> Box<RawValue> {
 ///
 /// Collecting straight into a `BTreeMap` would silently keep the last binding
 /// for a repeated key, which would make two conflicting authored action sinks
-/// look like one valid selection.
+/// look like one valid selection. A `Vec<(K, V)>` cannot stand in here: serde's
+/// JSON and YAML deserializers reject a map for a sequence-shaped type, and the
+/// authored spelling is a map (`actions: { request: {...} }`).
 fn unique_action_bindings<'de, D>(
     deserializer: D,
 ) -> std::result::Result<BTreeMap<DatasetActionKindV2, StreamComponentSpecV2>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let entries = Vec::<(DatasetActionKindV2, StreamComponentSpecV2)>::deserialize(deserializer)?;
-    let mut bindings = BTreeMap::new();
-    for (kind, component) in entries {
-        if bindings.insert(kind, component).is_some() {
-            return Err(serde::de::Error::custom(format!(
-                "duplicate shadow_replay action binding {:?}",
-                kind.field_name()
-            )));
+    struct ActionBindingsVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for ActionBindingsVisitor {
+        type Value = BTreeMap<DatasetActionKindV2, StreamComponentSpecV2>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a map of action kind to action-sink selection")
+        }
+
+        fn visit_map<A>(self, mut access: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut bindings = BTreeMap::new();
+            while let Some((kind, component)) =
+                access.next_entry::<DatasetActionKindV2, StreamComponentSpecV2>()?
+            {
+                if bindings.insert(kind, component).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate shadow_replay action binding {:?}",
+                        kind.field_name()
+                    )));
+                }
+            }
+            Ok(bindings)
         }
     }
-    Ok(bindings)
+
+    deserializer.deserialize_map(ActionBindingsVisitor)
 }
 
 /// Wire-only invariants for the dataset-stream resource.

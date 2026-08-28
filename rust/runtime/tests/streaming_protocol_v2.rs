@@ -495,17 +495,39 @@ fn stream_config(streams: serde_json::Value, replay: serde_json::Value) -> Bench
     serde_json::from_value(json!({
         "dataset_streams": streams,
         "shadow_replay": replay,
+        "phases": [profiling_phase()],
     }))
     .expect("stream config decodes")
 }
 
+/// The one phase every `config::validate` fixture needs to reach the stream rules.
+fn profiling_phase() -> serde_json::Value {
+    json!({"name": "profiling", "kind": "profiling", "type": "concurrency", "concurrency": 1, "requests": 1})
+}
+
+/// Decode a stream resource from JSON **text**, not a `serde_json::Value`.
+///
+/// A `Value` map silently dedups repeated keys, which would hide the very
+/// duplicate the strict deserializer exists to reject.
 fn spec_from(streams: serde_json::Value, replay: serde_json::Value) -> DatasetStreamsSpecV2 {
     let mut value = streams;
     value["shadow_replay"] = replay;
-    serde_json::from_value(value).expect("dataset stream spec decodes")
+    serde_json::from_str(&value.to_string()).expect("dataset stream spec decodes")
 }
 
 fn wire(cfg: serde_json::Value) -> serde_json::Value {
+    let mut cfg = cfg;
+    let object = cfg.as_object_mut().expect("cfg is an object");
+    object
+        .entry("models")
+        .or_insert_with(|| json!({"items": [{"name": "model"}]}));
+    object.entry("endpoint").or_insert_with(
+        || json!({"type": "chat", "url": "http://127.0.0.1:8000", "streaming": false}),
+    );
+    object.entry("transport").or_insert_with(|| json!({"type": "http"}));
+    object
+        .entry("phases")
+        .or_insert_with(|| json!([profiling_phase()]));
     json!({
         "benchmark_id": "stream-test",
         "artifact_dir": "/tmp/stream-test",
@@ -566,10 +588,15 @@ fn unknown_field_in_dataset_stream_is_rejected() {
 // ---------------------------------------------------------------------------
 
 fn validate_streams(streams: serde_json::Value, replay: serde_json::Value) -> anyhow::Result<()> {
-    let run = serde_json::from_value::<BenchmarkRunWireV2>(wire(json!({
-        "dataset_streams": streams,
-        "shadow_replay": replay,
-    })))?;
+    // Decoded from text so a repeated authored key survives to the strict
+    // deserializer instead of being deduped by `serde_json::Value`.
+    let run = serde_json::from_str::<BenchmarkRunWireV2>(
+        &wire(json!({
+            "dataset_streams": streams,
+            "shadow_replay": replay,
+        }))
+        .to_string(),
+    )?;
     run.into_authored()?.validate_outer()
 }
 
@@ -587,16 +614,26 @@ fn duplicate_stream_ids_are_rejected() {
 
 #[test]
 fn duplicate_shadow_replay_action_binding_is_rejected() {
-    // A JSON object cannot express a repeated key, so the duplicate is authored
-    // as the sequence-of-pairs spelling the strict deserializer also accepts.
-    let (streams, mut replay) = authored_streams_yaml();
-    replay["actions"] = json!([
-        ["request", {"id": "scheduled_request", "config": {}}],
-        ["request", {"id": "session_state", "config": {}}],
-    ]);
-    let error = validate_streams(streams, replay).expect_err("duplicate binding must fail");
+    // A repeated key can only be authored in raw text: `serde_json::Value` and
+    // any map-typed intermediate would dedup it before the strict deserializer
+    // ever sees the conflict.
+    let (streams, replay) = authored_streams_yaml();
+    let mut value = streams;
+    value["shadow_replay"] = replay;
+    let text = value.to_string().replace(
+        r#""actions":{"#,
+        r#""actions":{"request":{"id":"session_state","config":{}},"#,
+    );
     assert!(
-        error.to_string().contains("duplicate shadow_replay action binding"),
+        text.matches(r#""request":"#).count() == 2,
+        "the duplicate key must actually be authored: {text}"
+    );
+    let error = serde_json::from_str::<DatasetStreamsSpecV2>(&text)
+        .expect_err("duplicate binding must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate shadow_replay action binding"),
         "{error}"
     );
 }
@@ -667,6 +704,7 @@ fn mixed_datasets_and_dataset_streams_is_a_validation_error() {
         "datasets": [finite_dataset()],
         "dataset_streams": streams.clone(),
         "shadow_replay": replay.clone(),
+        "phases": [profiling_phase()],
     }))
     .expect("mixed config decodes");
     let error = aiperf_runtime::config::validate::validate(&cfg)
@@ -693,6 +731,7 @@ fn shadow_replay_without_dataset_streams_is_rejected() {
     let cfg: BenchmarkConfig = serde_json::from_value(json!({
         "datasets": [finite_dataset()],
         "shadow_replay": replay,
+        "phases": [profiling_phase()],
     }))
     .expect("replay-only config decodes");
     let error = aiperf_runtime::config::validate::validate(&cfg).expect_err("replay needs streams");
@@ -702,7 +741,8 @@ fn shadow_replay_without_dataset_streams_is_rejected() {
     );
 
     let cfg: BenchmarkConfig =
-        serde_json::from_value(json!({"dataset_streams": streams})).expect("streams-only decodes");
+        serde_json::from_value(json!({"dataset_streams": streams, "phases": [profiling_phase()]}))
+            .expect("streams-only decodes");
     let error = aiperf_runtime::config::validate::validate(&cfg).expect_err("streams need replay");
     assert!(
         error.to_string().contains("dataset_streams requires shadow_replay"),
@@ -716,6 +756,7 @@ fn accuracy_with_dataset_streams_is_refused() {
     let cfg: BenchmarkConfig = serde_json::from_value(json!({
         "dataset_streams": streams,
         "shadow_replay": replay,
+        "phases": [profiling_phase()],
         "accuracy": {"benchmark": "mmlu", "enable_cot": null, "grader": null, "n_shots": null,
                      "system_prompt": null, "tasks": null, "verbose": false},
     }))
@@ -731,6 +772,7 @@ fn resident_exporter_with_dataset_streams_is_refused() {
         serde_json::from_value(json!({
             "dataset_streams": streams.clone(),
             "shadow_replay": replay.clone(),
+            "phases": [profiling_phase()],
             "artifacts": artifacts,
         }))
         .expect("artifact stream config decodes")
@@ -741,7 +783,7 @@ fn resident_exporter_with_dataset_streams_is_refused() {
         "graph_trace_summary_path",
         "graph_replay_provenance_path",
     ] {
-        let cfg = with_artifacts(json!({field: "out.json"}));
+        let cfg = with_artifacts(json!({"trace": false, "inputs_path": "inputs.json", field: "out.json"}));
         let error = aiperf_runtime::config::validate::validate(&cfg)
             .unwrap_err()
             .to_string();
@@ -750,7 +792,11 @@ fn resident_exporter_with_dataset_streams_is_refused() {
     }
 
     // Per-record exporters append per record and stay accepted.
-    let cfg = with_artifacts(json!({"records_path": "records.jsonl"}));
+    let cfg = with_artifacts(json!({
+        "trace": false,
+        "inputs_path": "inputs.json",
+        "records_path": "records.jsonl",
+    }));
     aiperf_runtime::config::validate::validate(&cfg).expect("per-record exporters are accepted");
 }
 
@@ -1009,7 +1055,6 @@ fn absent_dataset_streams_serializes_byte_identically() {
 fn finite_run_projection_keeps_its_dataset_key() {
     let run = serde_json::from_value::<BenchmarkRunWireV2>(wire(json!({
         "datasets": [finite_dataset()],
-        "transport": {"type": "http"},
     })))
     .expect("finite wire decodes");
     let authored = run.into_authored().expect("finite projection");
