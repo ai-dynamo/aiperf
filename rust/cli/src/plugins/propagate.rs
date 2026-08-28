@@ -72,10 +72,7 @@ pub fn read_lock_env() -> Option<(PathBuf, String)> {
 ///
 /// Returns `Ok(())` when the digests agree, or [`PropagateError::DigestMismatch`]
 /// when they differ.
-pub fn verify_propagated_digest(
-    expected: &str,
-    actual: &str,
-) -> Result<(), PropagateError> {
+pub fn verify_propagated_digest(expected: &str, actual: &str) -> Result<(), PropagateError> {
     if expected == actual {
         Ok(())
     } else {

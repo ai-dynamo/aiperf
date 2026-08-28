@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use aiperf_cli::plugins::propagate::{read_lock_env, ENV_LOCK_DIGEST, ENV_LOCK_PATH};
+use aiperf_cli::plugins::propagate::{ENV_LOCK_DIGEST, ENV_LOCK_PATH, read_lock_env};
 
 #[test]
 fn env_vars_roundtrip() {
