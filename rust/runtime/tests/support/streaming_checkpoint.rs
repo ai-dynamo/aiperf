@@ -1211,12 +1211,14 @@ pub fn final_metadata(
 /// Commit one final generation carrying three distinguishable result segments.
 ///
 /// The segments differ only in projection identity, so the compaction key must
-/// order them rather than relying on staging order.
+/// order them rather than relying on staging order. A generation with no
+/// predecessor is only publishable at the initial epoch, so the fixture owns the
+/// epoch rather than accepting one.
 pub async fn committed_final_generation(
     backend: &MemoryCheckpointBackend,
     run: StreamRunIdentity,
-    epoch: u64,
 ) -> CommittedCheckpointGeneration {
+    let epoch = 1;
     let mut transaction = StreamingCheckpointBackend::begin_generation(
         backend,
         run,
@@ -1268,7 +1270,6 @@ pub async fn staged_abort_transaction(
     backend: &MemoryCheckpointBackend,
     run: StreamRunIdentity,
     previous: &CommittedCheckpointGeneration,
-    epoch: u64,
 ) -> (
     Box<dyn StreamingGenerationTransaction>,
     CheckpointCommitMetadata,
@@ -1281,6 +1282,8 @@ pub async fn staged_abort_transaction(
     let expected = current_v4_predecessor(&opened, previous.generation_ref())
         .expect("current-v4 predecessor authority");
     drop(opened);
+    // The backend admits exactly the dense successor epoch.
+    let epoch = previous.generation_ref().epoch().get() + 1;
     let mut transaction = StreamingCheckpointBackend::begin_generation(
         backend,
         run,
