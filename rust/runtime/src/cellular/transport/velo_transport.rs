@@ -2080,8 +2080,7 @@ mod tests {
                     )
                     .await
                     .expect("valid capture chunk");
-                    let ack: CellAck =
-                        rmp_serde::from_slice(&reply).expect("capture chunk ack");
+                    let ack: CellAck = rmp_serde::from_slice(&reply).expect("capture chunk ack");
                     assert!(ack.ok);
                     assert!(matches!(
                         tokio::time::timeout(Duration::from_secs(2), controller.recv())
@@ -2124,8 +2123,7 @@ mod tests {
                     )
                     .await
                     .expect("valid capture bundle");
-                    let ack: CellAck =
-                        rmp_serde::from_slice(&reply).expect("capture bundle ack");
+                    let ack: CellAck = rmp_serde::from_slice(&reply).expect("capture bundle ack");
                     assert!(ack.ok);
                     assert!(matches!(
                         tokio::time::timeout(Duration::from_secs(2), controller.recv())
