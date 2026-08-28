@@ -25,7 +25,11 @@ fn lock(packages: Vec<LockedPackageV1>) -> PluginLockV1 {
 #[test]
 fn diff_reports_added_package() {
     let old = lock(vec![]);
-    let new = lock(vec![pkg("aiperf_export_otlp", "0.3.0", PackageStatus::Active)]);
+    let new = lock(vec![pkg(
+        "aiperf_export_otlp",
+        "0.3.0",
+        PackageStatus::Active,
+    )]);
     let diff = diff_locks(&old, &new);
     assert_eq!(diff.added.len(), 1);
     assert_eq!(diff.added[0].id, "aiperf_export_otlp");
@@ -35,7 +39,11 @@ fn diff_reports_added_package() {
 
 #[test]
 fn diff_reports_removed_package() {
-    let old = lock(vec![pkg("aiperf_export_otlp", "0.3.0", PackageStatus::Active)]);
+    let old = lock(vec![pkg(
+        "aiperf_export_otlp",
+        "0.3.0",
+        PackageStatus::Active,
+    )]);
     let new = lock(vec![]);
     let diff = diff_locks(&old, &new);
     assert_eq!(diff.removed.len(), 1);
@@ -46,8 +54,16 @@ fn diff_reports_removed_package() {
 
 #[test]
 fn diff_reports_version_change() {
-    let old = lock(vec![pkg("aiperf_export_otlp", "0.3.0", PackageStatus::Active)]);
-    let new = lock(vec![pkg("aiperf_export_otlp", "0.4.0", PackageStatus::Active)]);
+    let old = lock(vec![pkg(
+        "aiperf_export_otlp",
+        "0.3.0",
+        PackageStatus::Active,
+    )]);
+    let new = lock(vec![pkg(
+        "aiperf_export_otlp",
+        "0.4.0",
+        PackageStatus::Active,
+    )]);
     let diff = diff_locks(&old, &new);
     assert_eq!(diff.changed.len(), 1);
     assert_eq!(diff.changed[0].0.version, "0.3.0");
@@ -70,8 +86,16 @@ fn diff_on_identical_locks_is_empty() {
 
 #[test]
 fn diff_reports_status_change_as_changed() {
-    let old = lock(vec![pkg("aiperf_export_otlp", "0.3.0", PackageStatus::Active)]);
-    let new = lock(vec![pkg("aiperf_export_otlp", "0.3.0", PackageStatus::Disabled)]);
+    let old = lock(vec![pkg(
+        "aiperf_export_otlp",
+        "0.3.0",
+        PackageStatus::Active,
+    )]);
+    let new = lock(vec![pkg(
+        "aiperf_export_otlp",
+        "0.3.0",
+        PackageStatus::Disabled,
+    )]);
     let diff = diff_locks(&old, &new);
     assert_eq!(diff.changed.len(), 1);
     assert_eq!(diff.changed[0].0.status, PackageStatus::Active);

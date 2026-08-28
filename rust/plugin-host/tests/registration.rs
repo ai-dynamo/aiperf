@@ -6,8 +6,8 @@
 use std::sync::LazyLock;
 
 use aiperf_plugin_api::{
-    AIPerfExtension, ExtensionError, PluginPackageDescriptor, PluginRegistrar, RegistryId,
-    REGISTRY_ID_NORMALIZATION_VERSION,
+    AIPerfExtension, ExtensionError, PluginPackageDescriptor, PluginRegistrar,
+    REGISTRY_ID_NORMALIZATION_VERSION, RegistryId,
 };
 use aiperf_plugin_host::{
     freeze::freeze_universe,
@@ -63,14 +63,19 @@ impl AIPerfExtension for MultiCapabilityExtension {
 #[test]
 fn register_plugin_succeeds_and_frozen_universe_has_correct_registrations() {
     let ctx = PluginRegistrationContext::new(&PACKAGE_EXPORTER);
-    let extension = SingleCapabilityExtension { capability_id: "otlp" };
+    let extension = SingleCapabilityExtension {
+        capability_id: "otlp",
+    };
     let frozen = register_plugin(&ctx, &extension).expect("registration must succeed");
 
     assert_eq!(frozen.package().id.as_str(), "aiperf_export_otlp");
     assert_eq!(frozen.len(), 1);
     assert_eq!(frozen.registrations()[0].id().as_str(), "otlp");
     // The descriptor carries the manifest-bound package.
-    assert!(std::ptr::eq(frozen.registrations()[0].package(), &*PACKAGE_EXPORTER));
+    assert!(std::ptr::eq(
+        frozen.registrations()[0].package(),
+        &*PACKAGE_EXPORTER
+    ));
 }
 
 #[test]
@@ -89,8 +94,13 @@ fn freeze_universe_merges_multiple_packages_in_load_order() {
     let ctx_export = PluginRegistrationContext::new(&PACKAGE_EXPORTER);
     let ctx_transport = PluginRegistrationContext::new(&PACKAGE_TRANSPORT);
 
-    let u1 = register_plugin(&ctx_export, &SingleCapabilityExtension { capability_id: "otlp" })
-        .expect("exporter registration succeeds");
+    let u1 = register_plugin(
+        &ctx_export,
+        &SingleCapabilityExtension {
+            capability_id: "otlp",
+        },
+    )
+    .expect("exporter registration succeeds");
     let u2 = register_plugin(&ctx_transport, &MultiCapabilityExtension)
         .expect("transport registration succeeds");
 

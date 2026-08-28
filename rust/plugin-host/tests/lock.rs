@@ -6,15 +6,13 @@
 use aiperf_plugin_host::lock::{LockedPackageV1, PackageStatus, PluginLockDigest, PluginLockV1};
 
 fn minimal_lock() -> PluginLockV1 {
-    PluginLockV1::new(vec![
-        LockedPackageV1 {
-            id: "aiperf_export_otlp".to_string(),
-            version: "0.3.0".to_string(),
-            status: PackageStatus::Active,
-            artifact_digest: "blake3:".to_string() + &"a".repeat(64),
-            closure_digest: "blake3:".to_string() + &"b".repeat(64),
-        },
-    ])
+    PluginLockV1::new(vec![LockedPackageV1 {
+        id: "aiperf_export_otlp".to_string(),
+        version: "0.3.0".to_string(),
+        status: PackageStatus::Active,
+        artifact_digest: "blake3:".to_string() + &"a".repeat(64),
+        closure_digest: "blake3:".to_string() + &"b".repeat(64),
+    }])
 }
 
 #[test]
@@ -39,15 +37,13 @@ fn plugin_lock_digest_is_stable_for_same_content() {
 #[test]
 fn plugin_lock_digest_differs_when_packages_differ() {
     let lock1 = minimal_lock();
-    let lock2 = PluginLockV1::new(vec![
-        LockedPackageV1 {
-            id: "aiperf_transport_h2c".to_string(),
-            version: "1.0.0".to_string(),
-            status: PackageStatus::Active,
-            artifact_digest: "blake3:".to_string() + &"c".repeat(64),
-            closure_digest: "blake3:".to_string() + &"d".repeat(64),
-        },
-    ]);
+    let lock2 = PluginLockV1::new(vec![LockedPackageV1 {
+        id: "aiperf_transport_h2c".to_string(),
+        version: "1.0.0".to_string(),
+        status: PackageStatus::Active,
+        artifact_digest: "blake3:".to_string() + &"c".repeat(64),
+        closure_digest: "blake3:".to_string() + &"d".repeat(64),
+    }]);
     assert_ne!(lock1.digest.hex, lock2.digest.hex);
 }
 

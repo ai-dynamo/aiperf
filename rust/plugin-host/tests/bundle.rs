@@ -45,10 +45,13 @@ fn load_and_verify_rejects_corrupted_digest() {
     let json = serde_json::to_vec(&lock).expect("serializes");
     std::fs::write(&path, &json).expect("write tampered file");
 
-    let err = LockedCatalogBundle::load_and_verify(&path)
-        .expect_err("tampered file must be rejected");
+    let err =
+        LockedCatalogBundle::load_and_verify(&path).expect_err("tampered file must be rejected");
     assert!(
-        matches!(err, aiperf_plugin_host::bundle::BundleError::DigestMismatch { .. }),
+        matches!(
+            err,
+            aiperf_plugin_host::bundle::BundleError::DigestMismatch { .. }
+        ),
         "wrong error variant: {err:?}"
     );
 }
@@ -57,8 +60,7 @@ fn load_and_verify_rejects_corrupted_digest() {
 fn load_and_verify_rejects_missing_file() {
     let dir = tempdir();
     let path = dir.path().join("missing.lock");
-    let err = LockedCatalogBundle::load_and_verify(&path)
-        .expect_err("missing file must error");
+    let err = LockedCatalogBundle::load_and_verify(&path).expect_err("missing file must error");
     assert!(
         matches!(err, aiperf_plugin_host::bundle::BundleError::Io(_)),
         "wrong error variant: {err:?}"

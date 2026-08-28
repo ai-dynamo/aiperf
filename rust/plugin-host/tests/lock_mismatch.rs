@@ -32,10 +32,14 @@ fn tempdir() -> TempDir {
 
 struct TempDir(std::path::PathBuf);
 impl TempDir {
-    fn path(&self) -> &std::path::Path { &self.0 }
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
 }
 impl Drop for TempDir {
-    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 #[test]
@@ -79,8 +83,8 @@ fn wrong_schema_version_is_rejected() {
     let json = r#"{"schema_version":"0.0","packages":[],"digest":{"algorithm":"blake3","hex":"0000000000000000000000000000000000000000000000000000000000000000"}}"#;
     std::fs::write(&path, json).expect("write");
 
-    let err = LockedCatalogBundle::load_and_verify(&path)
-        .expect_err("wrong schema version rejected");
+    let err =
+        LockedCatalogBundle::load_and_verify(&path).expect_err("wrong schema version rejected");
     assert!(
         matches!(err, BundleError::UnsupportedSchemaVersion(_)),
         "expected UnsupportedSchemaVersion, got: {err:?}"
