@@ -231,6 +231,9 @@ fn synthetic_report() -> NativeReport {
         evaluator: None,
         errors: Vec::new(),
         steady_state: None,
+        plugin_lock_digest: None,
+        plugin_catalog: Vec::new(),
+        streaming: None,
     }
 }
 

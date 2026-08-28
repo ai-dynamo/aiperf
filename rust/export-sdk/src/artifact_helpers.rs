@@ -120,8 +120,12 @@ mod tests {
     fn json_round_trips_through_the_capability() {
         let root = tempfile::tempdir().expect("temporary artifact root");
         let artifacts = DirectoryArtifacts::new(root.path());
-        write_json(&artifacts, "nested/out.json", &serde_json::json!({ "a": 1 }))
-            .expect("write json");
+        write_json(
+            &artifacts,
+            "nested/out.json",
+            &serde_json::json!({ "a": 1 }),
+        )
+        .expect("write json");
         let written = artifacts.read("nested/out.json").expect("read");
         let parsed: serde_json::Value = serde_json::from_slice(&written).expect("parse");
         assert_eq!(parsed, serde_json::json!({ "a": 1 }));

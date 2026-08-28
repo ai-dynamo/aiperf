@@ -1684,7 +1684,7 @@ impl PartialEq for StreamingIssueCounterView<'_> {
 impl Eq for StreamingIssueCounterView<'_> {}
 
 /// Fixed-size aggregate issue summary.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StreamingIssueSummary {
     /// Total retained issue observations.

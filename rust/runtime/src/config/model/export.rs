@@ -302,6 +302,7 @@ pub struct Export {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PluginExport {
     /// Plugin-registered exporter ID (e.g. `"vendor/metrics-out:1.0"`).
+    #[serde(deserialize_with = "crate::config::plugin_id::deserialize_plugin_id")]
     pub id: String,
     /// Freeform parameters forwarded to the plugin exporter factory.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]

@@ -11,3 +11,11 @@ publish = false
 [dependencies]
 aiperf-plugin-host.workspace = true
 aiperf-plugin-sdk.workspace = true
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[[test]]
+name = "distribution_lifecycle"
+path = "tests/distribution_lifecycle.rs"

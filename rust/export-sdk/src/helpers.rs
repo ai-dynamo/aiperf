@@ -132,7 +132,10 @@ mod tests {
             "aiperf-αααααααα"
         );
         assert_eq!(default_run_name(None, || "fallback".to_owned()), "fallback");
-        assert_eq!(default_run_name(Some(""), || "fallback".to_owned()), "fallback");
+        assert_eq!(
+            default_run_name(Some(""), || "fallback".to_owned()),
+            "fallback"
+        );
     }
 
     #[test]

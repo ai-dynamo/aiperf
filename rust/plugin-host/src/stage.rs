@@ -8,8 +8,11 @@
 //! The loader receives only the private staged path after rehash verification.
 
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 use crate::acquire::AcquiredArtifact;
 use crate::error::AcquireError;
@@ -79,6 +82,18 @@ impl CanonicalObjectMap {
             .join(loader_id.replace(['/', '\\', ':'], "_"));
         std::fs::create_dir_all(&dest_dir)?;
         let dest = dest_dir.join(&artifact.digest);
+        // Create with 0600 (owner rw only) so no other process can read the
+        // binary before the loader verifies and dlopen()s it.
+        #[cfg(unix)]
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&dest)?;
+            file.write_all(&artifact.raw_bytes)?;
+        }
+        #[cfg(not(unix))]
         std::fs::write(&dest, &artifact.raw_bytes)?;
         // Rehash after write to detect I/O corruption or tamper.
         let actual = rehash(&dest)?;

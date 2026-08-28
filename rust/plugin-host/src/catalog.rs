@@ -160,6 +160,7 @@ pub fn resolve_catalog(
                 effective_priority: top_priority,
             });
         } else {
+            // Safe: only reachable when top_entries.len() == 1 (len > 1 case handled above).
             let (_, path, manifest) = top_entries.into_iter().next().unwrap();
             let version = manifest
                 .packages

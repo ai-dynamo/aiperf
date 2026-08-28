@@ -74,8 +74,7 @@ const REQUIRED_IMPORTS: &[&str] = &[
 // ── path helpers ──────────────────────────────────────────────────────────
 
 fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("fixtures")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")
 }
 
 fn workspace_rust_dir() -> PathBuf {
@@ -94,7 +93,11 @@ fn fixture_host_path() -> PathBuf {
 }
 
 fn fixture_plugin_path() -> PathBuf {
-    let prefix = if cfg!(target_os = "windows") { "" } else { "lib" };
+    let prefix = if cfg!(target_os = "windows") {
+        ""
+    } else {
+        "lib"
+    };
     let ext = if cfg!(target_os = "windows") {
         "dll"
     } else if cfg!(target_os = "macos") {
@@ -120,7 +123,10 @@ fn ensure_provider_built() {
             .current_dir(workspace_rust_dir())
             .status()
             .expect("cargo build aiperf-allocator-provider failed to launch");
-        assert!(status.success(), "cargo build aiperf-allocator-provider failed");
+        assert!(
+            status.success(),
+            "cargo build aiperf-allocator-provider failed"
+        );
         true
     });
 }
@@ -140,12 +146,19 @@ fn ensure_fixtures_built() {
                 "--manifest-path",
                 manifest.to_str().unwrap(),
                 "--target-dir",
-                provider_dir.parent().unwrap_or(provider_dir).to_str().unwrap(),
+                provider_dir
+                    .parent()
+                    .unwrap_or(provider_dir)
+                    .to_str()
+                    .unwrap(),
             ])
             .env("AIPERF_ALLOC_V1_DIR", provider_dir_str)
             .status()
             .expect("cargo build allocator-candidate-host failed to launch");
-        assert!(status.success(), "cargo build allocator-candidate-host failed");
+        assert!(
+            status.success(),
+            "cargo build allocator-candidate-host failed"
+        );
 
         // Build the fixture plugin into the main workspace target dir.
         let manifest = fixtures_dir().join("allocator-candidate-plugin/Cargo.toml");
@@ -155,12 +168,19 @@ fn ensure_fixtures_built() {
                 "--manifest-path",
                 manifest.to_str().unwrap(),
                 "--target-dir",
-                provider_dir.parent().unwrap_or(provider_dir).to_str().unwrap(),
+                provider_dir
+                    .parent()
+                    .unwrap_or(provider_dir)
+                    .to_str()
+                    .unwrap(),
             ])
             .env("AIPERF_ALLOC_V1_DIR", provider_dir_str)
             .status()
             .expect("cargo build allocator-candidate-plugin failed to launch");
-        assert!(status.success(), "cargo build allocator-candidate-plugin failed");
+        assert!(
+            status.success(),
+            "cargo build allocator-candidate-plugin failed"
+        );
 
         true
     });
@@ -186,7 +206,9 @@ fn nm_dynamic_symbols(path: &Path) -> Vec<String> {
             // nm output format: "<addr> <type> <name>" or "         U <name>"
             let parts: Vec<&str> = line.split_whitespace().collect();
             // Strip GNU version suffix (e.g. "mi_malloc@@AIPERF_ALLOC_V1" → "mi_malloc").
-            parts.last().map(|s| s.split('@').next().unwrap_or(s).to_string())
+            parts
+                .last()
+                .map(|s| s.split('@').next().unwrap_or(s).to_string())
         })
         .collect()
 }
@@ -206,7 +228,9 @@ fn nm_dynamic_imports(path: &Path) -> Vec<String> {
         .filter_map(|line| {
             let parts: Vec<&str> = line.split_whitespace().collect();
             // Strip GNU version suffix (e.g. "mi_malloc@AIPERF_ALLOC_V1" → "mi_malloc").
-            parts.last().map(|s| s.split('@').next().unwrap_or(s).to_string())
+            parts
+                .last()
+                .map(|s| s.split('@').next().unwrap_or(s).to_string())
         })
         .collect()
 }
@@ -232,7 +256,10 @@ fn provider_exports_required_mi_symbols() {
         assert!(
             exports.iter().any(|s| s == sym),
             "provider cdylib {CDYLIB_NAME} must export `{sym}`; found exports: {:?}",
-            exports.iter().filter(|s| s.starts_with("mi_")).collect::<Vec<_>>()
+            exports
+                .iter()
+                .filter(|s| s.starts_with("mi_"))
+                .collect::<Vec<_>>()
         );
     }
 }
@@ -266,13 +293,19 @@ fn shim_compiles_and_satisfies_global_alloc() {
     // Allocate, write, read, reallocate, and free through the shim.
     let layout = Layout::array::<u8>(64).unwrap();
     let ptr = unsafe { shim.alloc(layout) };
-    assert!(!ptr.is_null(), "MiMallocShim::alloc returned null for 64 bytes");
+    assert!(
+        !ptr.is_null(),
+        "MiMallocShim::alloc returned null for 64 bytes"
+    );
 
     unsafe { std::ptr::write_bytes(ptr, 0xAB, 64) };
 
     let new_layout = Layout::array::<u8>(128).unwrap();
     let rptr = unsafe { shim.realloc(ptr, layout, new_layout.size()) };
-    assert!(!rptr.is_null(), "MiMallocShim::realloc returned null for 128 bytes");
+    assert!(
+        !rptr.is_null(),
+        "MiMallocShim::realloc returned null for 128 bytes"
+    );
 
     unsafe { shim.dealloc(rptr, new_layout) };
 
@@ -280,7 +313,10 @@ fn shim_compiles_and_satisfies_global_alloc() {
     let zptr = unsafe { shim.alloc_zeroed(layout) };
     assert!(!zptr.is_null(), "MiMallocShim::alloc_zeroed returned null");
     let zeroed = unsafe { std::slice::from_raw_parts(zptr, 64) };
-    assert!(zeroed.iter().all(|&b| b == 0), "alloc_zeroed must return zeroed memory");
+    assert!(
+        zeroed.iter().all(|&b| b == 0),
+        "alloc_zeroed must return zeroed memory"
+    );
     unsafe { shim.dealloc(zptr, layout) };
 }
 
@@ -306,7 +342,8 @@ fn fixture_host_dynamically_imports_mi_symbols() {
     let host = fixture_host_path();
     assert!(
         host.exists(),
-        "fixture host binary not found at {}", host.display()
+        "fixture host binary not found at {}",
+        host.display()
     );
 
     let imports = nm_dynamic_imports(&host);
@@ -316,7 +353,10 @@ fn fixture_host_dynamically_imports_mi_symbols() {
             imports.iter().any(|s| s == sym),
             "fixture host must dynamically import `{sym}` from provider; \
              found mi_* imports: {:?}",
-            imports.iter().filter(|s| s.starts_with("mi_")).collect::<Vec<_>>()
+            imports
+                .iter()
+                .filter(|s| s.starts_with("mi_"))
+                .collect::<Vec<_>>()
         );
     }
 }
@@ -350,11 +390,13 @@ fn fixture_host_subprocess_exits_zero() {
 
     assert!(
         host.exists(),
-        "fixture host not found at {}", host.display()
+        "fixture host not found at {}",
+        host.display()
     );
     assert!(
         plugin.exists(),
-        "fixture plugin not found at {}", plugin.display()
+        "fixture plugin not found at {}",
+        plugin.display()
     );
 
     let provider_dir = Path::new(PROFILE_TARGET_DIR);
