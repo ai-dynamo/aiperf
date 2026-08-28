@@ -10,3 +10,16 @@ publish = false
 
 [dependencies]
 aiperf-bench-tools.workspace = true
+anyhow.workspace = true
+blake3.workspace = true
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# The AB/BA gate driver. Kept a separate target from the library so the
+# statistical engine can be unit-tested without linking a process runner.
+[[bin]]
+name = "parity"
+path = "src/bin/parity.rs"
