@@ -81,8 +81,12 @@ impl PluginCategoryEntryV2 {
     /// Returns the canonical ID for this category registration.
     pub fn id(&self) -> &str {
         match self {
-            Self::Exporter(r) | Self::Endpoint(r) | Self::Transport(r)
-            | Self::Workload(r) | Self::Dataset(r) | Self::Sampler(r)
+            Self::Exporter(r)
+            | Self::Endpoint(r)
+            | Self::Transport(r)
+            | Self::Workload(r)
+            | Self::Dataset(r)
+            | Self::Sampler(r)
             | Self::Actuator(r) => &r.id,
         }
     }
@@ -90,8 +94,12 @@ impl PluginCategoryEntryV2 {
     /// Returns the aliases for this category registration.
     pub fn aliases(&self) -> &[String] {
         match self {
-            Self::Exporter(r) | Self::Endpoint(r) | Self::Transport(r)
-            | Self::Workload(r) | Self::Dataset(r) | Self::Sampler(r)
+            Self::Exporter(r)
+            | Self::Endpoint(r)
+            | Self::Transport(r)
+            | Self::Workload(r)
+            | Self::Dataset(r)
+            | Self::Sampler(r)
             | Self::Actuator(r) => &r.aliases,
         }
     }
