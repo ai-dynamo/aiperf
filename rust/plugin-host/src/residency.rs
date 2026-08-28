@@ -46,11 +46,7 @@ impl ResidencyLedger {
     ///   call is idempotent and returns `Ok(())`.
     /// - If the digest is already recorded with a **different** staged path,
     ///   returns `Err(LoadError::ResidencyConflict)`.
-    pub fn register(
-        &mut self,
-        digest: String,
-        staged_path: PathBuf,
-    ) -> Result<(), LoadError> {
+    pub fn register(&mut self, digest: String, staged_path: PathBuf) -> Result<(), LoadError> {
         match self.by_digest.get(&digest) {
             None => {
                 self.by_digest.insert(digest, staged_path);

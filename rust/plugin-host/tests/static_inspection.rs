@@ -7,9 +7,7 @@
 //! on disk.  The ELF construction helpers produce minimal valid ELF64 LE
 //! structures that exercise the inspection logic.
 
-use aiperf_plugin_host::inspect::{
-    inspect_bytes, ArtifactKind, SearchPolicy, PLUGIN_ENTRY_SYMBOL,
-};
+use aiperf_plugin_host::inspect::{ArtifactKind, PLUGIN_ENTRY_SYMBOL, SearchPolicy, inspect_bytes};
 
 /// A minimal blob that is not a valid ELF/MachO/PE produces an Unknown receipt
 /// with a quarantine reason, not an error.
@@ -20,14 +18,17 @@ fn unknown_format_quarantined_not_error() {
         .expect("inspect_bytes should not return Err for unknown format");
     assert_eq!(receipt.artifact_kind, ArtifactKind::Unknown);
     assert!(!receipt.has_entry_symbol);
-    assert!(!receipt.quarantine_reasons.is_empty(), "unknown format must have quarantine reasons");
+    assert!(
+        !receipt.quarantine_reasons.is_empty(),
+        "unknown format must have quarantine reasons"
+    );
 }
 
 /// An empty file produces an Unknown receipt (not a panic or error).
 #[test]
 fn empty_bytes_quarantined() {
-    let receipt = inspect_bytes(&[], "empty-digest".to_owned())
-        .expect("empty bytes should not error");
+    let receipt =
+        inspect_bytes(&[], "empty-digest".to_owned()).expect("empty bytes should not error");
     assert_eq!(receipt.artifact_kind, ArtifactKind::Unknown);
 }
 

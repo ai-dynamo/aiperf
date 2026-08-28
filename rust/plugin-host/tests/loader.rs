@@ -31,7 +31,10 @@ fn nonexistent_path_poisons() {
         "fake-digest".to_owned(),
     );
     let result = set.finalize("lock".to_owned());
-    assert!(result.is_err(), "dlopen of missing file must poison the set");
+    assert!(
+        result.is_err(),
+        "dlopen of missing file must poison the set"
+    );
 }
 
 /// Once poisoned, finalize returns the error regardless of no further loads.
@@ -43,5 +46,8 @@ fn poison_is_sticky() {
     let result = set.finalize("lock".to_owned());
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.partial_handles.is_empty(), "no partial handles for zero successful loads");
+    assert!(
+        err.partial_handles.is_empty(),
+        "no partial handles for zero successful loads"
+    );
 }

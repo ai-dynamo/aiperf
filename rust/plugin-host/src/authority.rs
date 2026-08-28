@@ -50,7 +50,10 @@ pub fn verify_digest_authority(
 }
 
 /// Verify authority for a raw byte slice + known digest.
-pub fn verify_digest_authority_bytes(actual_digest: &str, expected_digest: &str) -> AuthorityVerdict {
+pub fn verify_digest_authority_bytes(
+    actual_digest: &str,
+    expected_digest: &str,
+) -> AuthorityVerdict {
     if actual_digest == expected_digest {
         AuthorityVerdict::Trusted
     } else {

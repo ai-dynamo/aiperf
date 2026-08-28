@@ -72,7 +72,11 @@ pub enum AcquireError {
     /// Two loader artifacts with different staged paths claim the same content digest
     /// under the same loader identity.
     #[error("conflicting loader identity: digest={digest} a={a} b={b}")]
-    ConflictingLoaderIdentity { digest: String, a: String, b: String },
+    ConflictingLoaderIdentity {
+        digest: String,
+        a: String,
+        b: String,
+    },
 
     /// An I/O error occurred while acquiring or staging.
     #[error("io: {0}")]

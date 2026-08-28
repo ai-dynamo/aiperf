@@ -50,7 +50,10 @@ pub struct CanonicalObjectMap {
 impl CanonicalObjectMap {
     /// Create an empty map backed by `staging_dir`.
     pub fn new(staging_dir: PathBuf) -> Self {
-        Self { inner: HashMap::new(), staging_dir }
+        Self {
+            inner: HashMap::new(),
+            staging_dir,
+        }
     }
 
     /// Stage `artifact` under `loader_id` and return a reference to the

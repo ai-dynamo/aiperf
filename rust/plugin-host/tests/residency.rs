@@ -28,8 +28,12 @@ fn register_same_digest_same_path_is_idempotent() {
     let mut ledger = ResidencyLedger::new();
     let digest = "abc123".to_owned();
     let path = PathBuf::from("/staged/abc123.so");
-    ledger.register(digest.clone(), path.clone()).expect("first");
-    ledger.register(digest.clone(), path.clone()).expect("second — idempotent");
+    ledger
+        .register(digest.clone(), path.clone())
+        .expect("first");
+    ledger
+        .register(digest.clone(), path.clone())
+        .expect("second — idempotent");
     assert_eq!(ledger.len(), 1);
 }
 
@@ -44,14 +48,19 @@ fn register_same_digest_different_path_is_conflict() {
         .expect_err("conflict");
     // The error should mention the digest.
     let msg = err.to_string();
-    assert!(msg.contains("abc123"), "error should reference digest: {msg}");
+    assert!(
+        msg.contains("abc123"),
+        "error should reference digest: {msg}"
+    );
 }
 
 #[test]
 fn lookup_known_digest_returns_path() {
     let mut ledger = ResidencyLedger::new();
     let path = PathBuf::from("/staged/abc123.so");
-    ledger.register("abc123".to_owned(), path.clone()).expect("register");
+    ledger
+        .register("abc123".to_owned(), path.clone())
+        .expect("register");
     let found = ledger.lookup("abc123").expect("should find");
     assert_eq!(*found, path);
 }
@@ -65,8 +74,12 @@ fn lookup_unknown_digest_returns_none() {
 #[test]
 fn records_iterator_yields_all() {
     let mut ledger = ResidencyLedger::new();
-    ledger.register("d1".to_owned(), PathBuf::from("/a.so")).expect("ok");
-    ledger.register("d2".to_owned(), PathBuf::from("/b.so")).expect("ok");
+    ledger
+        .register("d1".to_owned(), PathBuf::from("/a.so"))
+        .expect("ok");
+    ledger
+        .register("d2".to_owned(), PathBuf::from("/b.so"))
+        .expect("ok");
     let mut records: Vec<_> = ledger.records().collect();
     records.sort_by_key(|r| r.digest.clone());
     assert_eq!(records.len(), 2);

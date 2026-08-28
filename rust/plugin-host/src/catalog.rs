@@ -11,9 +11,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    discovery::DiscoveredPackage,
-    manifest::PluginManifestV2,
-    normalize::normalize_manifest,
+    discovery::DiscoveredPackage, manifest::PluginManifestV2, normalize::normalize_manifest,
     priority::effective_priority,
 };
 
@@ -126,12 +124,12 @@ pub fn resolve_catalog(
 
     for cand in candidates {
         for pkg_entry in &cand.manifest.packages {
-            let eff =
-                effective_priority(cand.source_id_kind_ordinal, pkg_entry.priority);
-            by_id
-                .entry(pkg_entry.id.clone())
-                .or_default()
-                .push((eff, cand.manifest_path.clone(), cand.manifest.clone()));
+            let eff = effective_priority(cand.source_id_kind_ordinal, pkg_entry.priority);
+            by_id.entry(pkg_entry.id.clone()).or_default().push((
+                eff,
+                cand.manifest_path.clone(),
+                cand.manifest.clone(),
+            ));
         }
     }
 
@@ -140,8 +138,9 @@ pub fn resolve_catalog(
         entries.sort_by(|a, b| b.0.cmp(&a.0));
         let top_priority = entries[0].0;
 
-        let (top_entries, losers): (Vec<_>, Vec<_>) =
-            entries.into_iter().partition(|(eff, _, _)| *eff == top_priority);
+        let (top_entries, losers): (Vec<_>, Vec<_>) = entries
+            .into_iter()
+            .partition(|(eff, _, _)| *eff == top_priority);
 
         // Push shadows for losers.
         let winner_path = top_entries[0].1.clone();

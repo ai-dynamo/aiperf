@@ -3,7 +3,7 @@
 
 //! Authority verification tests (Task 13).
 
-use aiperf_plugin_host::authority::{verify_digest_authority_bytes, AuthorityVerdict};
+use aiperf_plugin_host::authority::{AuthorityVerdict, verify_digest_authority_bytes};
 
 #[test]
 fn matching_digests_yield_trusted() {

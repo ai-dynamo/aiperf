@@ -156,22 +156,26 @@ fn inspect_parsed(obj: ObjectFile<'_>, digest: String) -> InspectionReceipt {
     allocator_imports.dedup();
 
     // Eager binding approximated by absence of PLT section.
-    let allocator_eager_binding = !obj
-        .sections()
-        .any(|s| s.name().ok().map(|n| n == ".plt" || n == "__stubs").unwrap_or(false));
+    let allocator_eager_binding = !obj.sections().any(|s| {
+        s.name()
+            .ok()
+            .map(|n| n == ".plt" || n == "__stubs")
+            .unwrap_or(false)
+    });
 
-    let panic_strategy =
-        if imported_symbols.iter().any(|s| s.contains("rust_begin_unwind"))
-            || imported_symbols.iter().any(|s| s == "__rust_start_panic")
-        {
-            Some("unwind".to_owned())
-        } else if exported_symbols.iter().any(|s| s.contains("panic_abort"))
-            || imported_symbols.iter().any(|s| s == "abort")
-        {
-            Some("abort".to_owned())
-        } else {
-            None
-        };
+    let panic_strategy = if imported_symbols
+        .iter()
+        .any(|s| s.contains("rust_begin_unwind"))
+        || imported_symbols.iter().any(|s| s == "__rust_start_panic")
+    {
+        Some("unwind".to_owned())
+    } else if exported_symbols.iter().any(|s| s.contains("panic_abort"))
+        || imported_symbols.iter().any(|s| s == "abort")
+    {
+        Some("abort".to_owned())
+    } else {
+        None
+    };
 
     let (dependencies, dependency_search_policy) = collect_dependencies(&obj);
 
@@ -215,7 +219,11 @@ fn collect_dependencies(obj: &ObjectFile<'_>) -> (Vec<String>, SearchPolicy) {
     }
 
     let has_absolute = deps.iter().any(|d| d.starts_with('/'));
-    let policy = if has_absolute { SearchPolicy::Absolute } else { SearchPolicy::Origin };
+    let policy = if has_absolute {
+        SearchPolicy::Absolute
+    } else {
+        SearchPolicy::Origin
+    };
     (deps, policy)
 }
 

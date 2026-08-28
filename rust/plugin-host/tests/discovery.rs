@@ -5,16 +5,14 @@
 
 use std::path::PathBuf;
 
-use aiperf_plugin_host::discovery::{
-    discover_plugins, DiscoverySource, MANIFEST_FILENAME,
-};
+use aiperf_plugin_host::discovery::{DiscoverySource, MANIFEST_FILENAME, discover_plugins};
 
 /// A non-existent explicit directory returns an empty list (not an error).
 #[test]
 fn nonexistent_explicit_dir_is_empty() {
-    let sources = vec![DiscoverySource::ExplicitDirectory(
-        PathBuf::from("/tmp/aiperf_test_nonexistent_99999"),
-    )];
+    let sources = vec![DiscoverySource::ExplicitDirectory(PathBuf::from(
+        "/tmp/aiperf_test_nonexistent_99999",
+    ))];
     let results = discover_plugins(&sources, false).expect("no error for non-existent dir");
     assert!(results.is_empty());
 }
@@ -22,9 +20,9 @@ fn nonexistent_explicit_dir_is_empty() {
 /// An explicit manifest path that does not exist is silently skipped.
 #[test]
 fn nonexistent_explicit_manifest_is_skipped() {
-    let sources = vec![DiscoverySource::ExplicitManifest(
-        PathBuf::from("/tmp/aiperf_test_nonexistent_manifest.yaml"),
-    )];
+    let sources = vec![DiscoverySource::ExplicitManifest(PathBuf::from(
+        "/tmp/aiperf_test_nonexistent_manifest.yaml",
+    ))];
     let results = discover_plugins(&sources, false).expect("no error");
     assert!(results.is_empty());
 }
@@ -42,7 +40,10 @@ fn subdir_manifest_discovered() {
     let sources = vec![DiscoverySource::ExplicitDirectory(dir.path().to_path_buf())];
     let results = discover_plugins(&sources, false).expect("discover");
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].manifest_path.file_name().unwrap(), MANIFEST_FILENAME);
+    assert_eq!(
+        results[0].manifest_path.file_name().unwrap(),
+        MANIFEST_FILENAME
+    );
 }
 
 /// `no_auto_plugins = true` skips Distribution, PlatformSystem, PlatformUser.
@@ -63,8 +64,7 @@ fn no_auto_plugins_skips_auto_sources() {
 fn root_manifest_file_discovered() {
     let dir = tempfile::tempdir().expect("tempdir");
     let manifest_path = dir.path().join(MANIFEST_FILENAME);
-    std::fs::write(&manifest_path, b"schema_version: '2.0'\npackages: []\n")
-        .expect("write");
+    std::fs::write(&manifest_path, b"schema_version: '2.0'\npackages: []\n").expect("write");
 
     let sources = vec![DiscoverySource::ExplicitDirectory(dir.path().to_path_buf())];
     let results = discover_plugins(&sources, false).expect("discover");

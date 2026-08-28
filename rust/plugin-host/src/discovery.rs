@@ -87,7 +87,10 @@ pub fn discover_plugins(
             }
         }
 
-        let source_id = DiscoverySourceId { kind_ordinal, authored_index };
+        let source_id = DiscoverySourceId {
+            kind_ordinal,
+            authored_index,
+        };
 
         match source {
             DiscoverySource::ExplicitManifest(path) => {
@@ -99,8 +102,7 @@ pub fn discover_plugins(
                     });
                 }
             }
-            DiscoverySource::ExplicitDirectory(dir)
-            | DiscoverySource::HermeticBundle(dir) => {
+            DiscoverySource::ExplicitDirectory(dir) | DiscoverySource::HermeticBundle(dir) => {
                 scan_dir(dir, &source_id, priority_for_source(source), &mut results)?;
             }
             DiscoverySource::Environment(var_name) => {

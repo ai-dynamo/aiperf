@@ -15,7 +15,10 @@ fn effective_priority_distribution_lowest() {
         source_kind_ordinal(&DiscoverySource::HermeticBundle("/b".into())),
         0,
     );
-    assert!(dist < bundle, "distribution must have lower effective priority than hermetic bundle");
+    assert!(
+        dist < bundle,
+        "distribution must have lower effective priority than hermetic bundle"
+    );
 }
 
 #[test]
@@ -30,10 +33,7 @@ fn authored_priority_breaks_ties_within_tier() {
 fn source_tier_dominates_authored_priority() {
     // A distribution plugin with authored priority=1000 must lose to
     // a hermetic bundle with authored priority=-1000.
-    let dist = effective_priority(
-        source_kind_ordinal(&DiscoverySource::Distribution),
-        1000,
-    );
+    let dist = effective_priority(source_kind_ordinal(&DiscoverySource::Distribution), 1000);
     let bundle = effective_priority(
         source_kind_ordinal(&DiscoverySource::HermeticBundle("/b".into())),
         -1000,

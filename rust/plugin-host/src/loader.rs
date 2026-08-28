@@ -61,7 +61,10 @@ pub struct ActivatingLibrarySet {
 impl ActivatingLibrarySet {
     /// Create an empty activating set.
     pub fn new() -> Self {
-        Self { handles: vec![], poisoned: None }
+        Self {
+            handles: vec![],
+            poisoned: None,
+        }
     }
 
     /// dlopen one artifact.  If already poisoned, skips the call and
@@ -74,7 +77,11 @@ impl ActivatingLibrarySet {
         }
         match dlopen_now(&staged_path) {
             Ok(raw) => {
-                self.handles.push(LoadedHandle { staged_path, digest, raw });
+                self.handles.push(LoadedHandle {
+                    staged_path,
+                    digest,
+                    raw,
+                });
             }
             Err(e) => {
                 self.poisoned = Some(LoadError::DlopenFailed {
@@ -89,10 +96,7 @@ impl ActivatingLibrarySet {
     ///
     /// `lock_digest` is a stable identifier for this exact set of artifacts
     /// (e.g., a hash over all artifact digests in sorted order).
-    pub fn finalize(
-        self,
-        lock_digest: String,
-    ) -> Result<LoadedLibrarySet, PoisonedLibrarySet> {
+    pub fn finalize(self, lock_digest: String) -> Result<LoadedLibrarySet, PoisonedLibrarySet> {
         match self.poisoned {
             None => Ok(LoadedLibrarySet {
                 handles: self.handles,
@@ -145,9 +149,7 @@ fn dlopen_now(path: &std::path::Path) -> Result<*mut libc::c_void, String> {
             if err.is_null() {
                 "unknown dlopen error".to_owned()
             } else {
-                std::ffi::CStr::from_ptr(err)
-                    .to_string_lossy()
-                    .into_owned()
+                std::ffi::CStr::from_ptr(err).to_string_lossy().into_owned()
             }
         };
         Err(msg)
