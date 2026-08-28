@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from tests.kubernetes.audit import aiperf_cli
 from tests.kubernetes.audit.cases import AuditCase
 from tests.kubernetes.helpers.operator import (
@@ -40,7 +41,7 @@ class OperatorAuditConfig:
     endpoint_url: str = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
     model_name: str = "mock-model"
     tokenizer_name: str = "gpt2"
-    operator_namespace: str = "aiperf-system"
+    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE
 
 
 class OperatorAuditRunner:

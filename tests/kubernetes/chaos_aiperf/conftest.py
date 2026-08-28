@@ -20,7 +20,8 @@ unified-API ports of legacy AIPerf chaos scenarios that live in
    :py:class:`InjectorRegistry` pre-loaded with every concrete injector the
    ported AIPerf scenarios need. The :py:class:`CRDInjector` is parameterized
    for ``aiperfjob`` / ``aiperf.nvidia.com`` and points at
-   :py:data:`DEFAULT_OPERATOR_NAMESPACE` (``aiperf-system``). The
+   ``k8s_settings.operator_namespace`` (``--k8s-operator-namespace``,
+   defaulting to :py:data:`DEFAULT_OPERATOR_NAMESPACE`). The
    :py:class:`NetworkInjector` is wired to the legacy ``toxiproxy_injector``
    (namespace ``aiperf-chaos-toxiproxy``, AIPerf-only port pool covering
    the reserved C15/C16/B3 ports 20000/20002/20010) -- explicitly NOT the
@@ -71,13 +72,19 @@ from tests.kubernetes.chaos_common.injectors.process import ProcessInjector
 from tests.kubernetes.chaos_common.injectors.store import StoreInjector
 from tests.kubernetes.chaos_common.injectors.workload import WorkloadInjector
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
+from tests.kubernetes.conftest import K8sTestSettings
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 logger = AIPerfLogger(__name__)
 
 
 AIPERF_OPERATOR_NAMESPACE = DEFAULT_OPERATOR_NAMESPACE
-"""Chart-default operator namespace used by the CRDInjector wiring below."""
+"""Chart-default operator namespace.
+
+Fallback only: the ``faults`` fixture wires :py:class:`CRDInjector` from
+``k8s_settings.operator_namespace`` so ``--k8s-operator-namespace`` /
+``K8S_TEST_OPERATOR_NAMESPACE`` reaches the chaos suite.
+"""
 
 AIPERF_OPERATOR_SELECTOR = "app.kubernetes.io/name=aiperf-operator"
 """kubectl ``-l`` selector that uniquely identifies the operator Pod."""
@@ -91,6 +98,7 @@ AIPERF_OPERATOR_SELECTOR = "app.kubernetes.io/name=aiperf-operator"
 @pytest_asyncio.fixture
 async def faults(
     kubectl: KubectlClient,
+    k8s_settings: K8sTestSettings,
     toxiproxy_injector: ToxiproxyInjector,  # noqa: F811 — pytest fixture request; shadows the re-export import by design
 ) -> AsyncIterator[InjectorRegistry]:
     """Per-test :py:class:`InjectorRegistry` wired for the chaos_aiperf suite.
@@ -130,7 +138,7 @@ async def faults(
             kubectl,
             cr_kind="aiperfjob",
             cr_api_group="aiperf.nvidia.com",
-            operator_namespace=AIPERF_OPERATOR_NAMESPACE,
+            operator_namespace=k8s_settings.operator_namespace,
             operator_selector=AIPERF_OPERATOR_SELECTOR,
         )
     )

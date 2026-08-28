@@ -13,6 +13,7 @@ import orjson
 import pytest
 import yaml
 
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from aiperf.kubernetes.subproc import run_command
 from aiperf.operator.environment import OperatorEnvironment
 from tests.kubernetes.conftest import _gpu_node_tolerations
@@ -197,7 +198,7 @@ async def _download_sweep_results(
     name: str,
     namespace: str,
     kube_context: str,
-    operator_namespace: str = "aiperf-system",
+    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
 ) -> None:
     result = await run_command(
         [

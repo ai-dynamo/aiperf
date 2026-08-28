@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from tests.kubernetes.chaos_common.base import FaultSpec
 from tests.kubernetes.chaos_common.injectors.crd import CRDInjector
 
@@ -51,7 +52,7 @@ def _make_injector(
     *,
     cr_kind: str = "aiperfjob",
     cr_api_group: str = "aiperf.nvidia.com",
-    operator_namespace: str = "aiperf-system",
+    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
     operator_selector: str = "app.kubernetes.io/name=aiperf-operator",
 ) -> CRDInjector:
     return CRDInjector(
@@ -277,7 +278,7 @@ async def test_operator_kill_uses_configured_selector_and_namespace() -> None:
     assert "--force" in args
     assert "--grace-period=0" in args
     # No leak of the AIPerf defaults.
-    assert "aiperf-system" not in args
+    assert DEFAULT_OPERATOR_NAMESPACE not in args
     assert "app.kubernetes.io/name=aiperf-operator" not in args
 
 

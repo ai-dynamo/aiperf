@@ -280,7 +280,7 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr(
     deployer = await _make_isolated_deployer(
         kubectl, helm_client, project_root, values, operator_ns, job_ns, release
     )
-    injector = ChaosInjector(kubectl=kubectl)
+    injector = ChaosInjector(kubectl=kubectl, operator_namespace=operator_ns)
     longrun = AIPerfJobConfig(
         concurrency=3,
         request_count=None,

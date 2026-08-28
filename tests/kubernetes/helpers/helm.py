@@ -15,6 +15,7 @@ import orjson
 import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from tests.kubernetes.helpers.cluster import _run_streaming
 from tests.kubernetes.helpers.kubectl import KubectlClient, background_status
 from tests.kubernetes.helpers.log_streamer import PodLogStreamer
@@ -438,7 +439,7 @@ class HelmDeployer:
     # have different names. Otherwise a helm test's CRB would clobber the
     # kubectl deploy's CRB and break cross-test RBAC checks.
     RELEASE_NAME = "aiperf-operator-helm"
-    OPERATOR_NAMESPACE = "aiperf-system"
+    OPERATOR_NAMESPACE = DEFAULT_OPERATOR_NAMESPACE
     CRD_NAME = "aiperfjobs.aiperf.nvidia.com"
 
     def __init__(

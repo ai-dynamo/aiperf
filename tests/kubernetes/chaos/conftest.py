@@ -32,6 +32,7 @@ from tests.kubernetes.chaos.toxiproxy import (
     TOXIPROXY_SERVICE,
     ToxiproxyInjector,
 )
+from tests.kubernetes.conftest import K8sTestSettings
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import OperatorDeployer
 
@@ -39,9 +40,13 @@ _logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def chaos_injector(kubectl: KubectlClient) -> ChaosInjector:
+def chaos_injector(
+    kubectl: KubectlClient, k8s_settings: K8sTestSettings
+) -> ChaosInjector:
     """Provide a ``ChaosInjector`` bound to the package-scoped cluster."""
-    return ChaosInjector(kubectl=kubectl)
+    return ChaosInjector(
+        kubectl=kubectl, operator_namespace=k8s_settings.operator_namespace
+    )
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")

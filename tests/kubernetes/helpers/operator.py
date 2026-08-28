@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from tests.kubernetes.helpers.kubectl import (
     JobSetStatus,
     KubectlClient,
@@ -492,7 +493,7 @@ async def copy_pull_secret_to_namespace(
 class OperatorDeployer:
     """Manages operator deployment and AIPerfJob lifecycle."""
 
-    OPERATOR_NAMESPACE = "aiperf-system"
+    OPERATOR_NAMESPACE = DEFAULT_OPERATOR_NAMESPACE
     CRD_NAME = "aiperfjobs.aiperf.nvidia.com"
 
     def __init__(
@@ -510,7 +511,7 @@ class OperatorDeployer:
         image_pull_secret: str | None = None,
         operator_node_selector: dict[str, str] | None = None,
         disable_pvc: bool = False,
-        operator_namespace: str = "aiperf-system",
+        operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
     ) -> None:
         """Initialize operator deployer.
 

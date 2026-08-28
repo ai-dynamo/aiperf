@@ -20,6 +20,7 @@ from typing import Any
 import orjson
 import pytest
 
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from aiperf.kubernetes.subproc import run_command
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import OperatorDeployer
@@ -231,7 +232,7 @@ async def _download_sweep_results(
     namespace: str,
     epoch: str,
     kube_context: str,
-    operator_namespace: str = "aiperf-system",
+    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
 ) -> None:
     result = await run_command(
         [

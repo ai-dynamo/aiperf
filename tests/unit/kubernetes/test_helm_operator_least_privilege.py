@@ -22,6 +22,8 @@ from typing import Any
 import pytest
 from pytest import param
 
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
+
 CHART_PATH = Path(__file__).parents[3] / "deploy" / "helm" / "aiperf-operator"
 
 pytestmark = pytest.mark.skipif(
@@ -41,7 +43,7 @@ def _render(*extra: str) -> list[dict[str, Any]]:
             "aiperf-operator",
             str(CHART_PATH),
             "-n",
-            "aiperf-system",
+            DEFAULT_OPERATOR_NAMESPACE,
             *extra,
         ],
         text=True,

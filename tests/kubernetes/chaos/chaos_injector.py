@@ -23,12 +23,16 @@ from typing import Any
 
 import orjson
 
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
 logger = logging.getLogger(__name__)
 
 
-OPERATOR_NAMESPACE = "aiperf-system"
+OPERATOR_NAMESPACE = DEFAULT_OPERATOR_NAMESPACE
+"""Chart-default operator namespace; overridden per-instance via
+``ChaosInjector(operator_namespace=...)`` so a cluster that installs the
+operator elsewhere (``--k8s-operator-namespace``) is still targetable."""
 OPERATOR_SELECTOR = "app.kubernetes.io/name=aiperf-operator"
 AIPERF_CLAIM_ANNOTATION = "aiperf.nvidia.com/completion-claimed"
 AIPERF_BENCHMARK_COMPLETE_ANNOTATION = "aiperf.nvidia.com/benchmark-complete"
@@ -66,13 +70,22 @@ class ChaosInjector:
     test harness.
     """
 
-    def __init__(self, kubectl: KubectlClient) -> None:
+    def __init__(
+        self,
+        kubectl: KubectlClient,
+        operator_namespace: str = OPERATOR_NAMESPACE,
+    ) -> None:
         """Initialize the injector.
 
         Args:
             kubectl: Async kubectl wrapper pinned to the chaos cluster.
+            operator_namespace: Namespace hosting the operator Deployment.
+                Defaults to the chart default; pass
+                ``k8s_settings.operator_namespace`` to follow
+                ``--k8s-operator-namespace``.
         """
         self.kubectl = kubectl
+        self.operator_namespace = operator_namespace
         self.timings = ChaosTimings()
 
     async def delete_cr_no_wait(self, namespace: str, name: str) -> float:
@@ -129,7 +142,7 @@ class ChaosInjector:
             "-l",
             OPERATOR_SELECTOR,
             "-n",
-            OPERATOR_NAMESPACE,
+            self.operator_namespace,
             "--ignore-not-found",
         ]
         if force:
@@ -265,7 +278,7 @@ class ChaosInjector:
                 "-l",
                 OPERATOR_SELECTOR,
                 "-n",
-                OPERATOR_NAMESPACE,
+                self.operator_namespace,
                 "-o",
                 "jsonpath={.items[*].status.containerStatuses[*].ready}",
                 check=False,

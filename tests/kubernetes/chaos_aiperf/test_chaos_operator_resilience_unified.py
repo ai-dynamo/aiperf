@@ -39,7 +39,7 @@ from tests.kubernetes.chaos.chaos_injector import (
 )
 from tests.kubernetes.chaos_aiperf.conftest import wait_for_aiperfjob_phase
 from tests.kubernetes.chaos_common.registry import InjectorRegistry
-from tests.kubernetes.conftest import _gpu_node_tolerations
+from tests.kubernetes.conftest import K8sTestSettings, _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -66,7 +66,9 @@ def longrun_config(k8s_settings) -> AIPerfJobConfig:
 
 
 async def _wait_for_operator_ready(
-    kubectl: KubectlClient, timeout: str = "60s"
+    kubectl: KubectlClient,
+    operator_namespace: str = OPERATOR_NAMESPACE,
+    timeout: str = "60s",
 ) -> None:
     """Wait for the operator Deployment to be Available again.
 
@@ -80,7 +82,7 @@ async def _wait_for_operator_ready(
         "wait",
         f"deployment/{OPERATOR_SELECTOR.split('=')[1]}",
         "-n",
-        OPERATOR_NAMESPACE,
+        operator_namespace,
         "--for=condition=Available",
         f"--timeout={timeout}",
         check=True,
@@ -93,6 +95,7 @@ async def test_c4_kill_operator_mid_benchmark_recovers_unified(
     longrun_config: AIPerfJobConfig,
     operator_job_namespace: str,
     kubectl: KubectlClient,
+    k8s_settings: K8sTestSettings,
 ) -> None:
     """Force-delete operator pod mid-profiling; benchmark reaches Completed.
 
@@ -116,12 +119,15 @@ async def test_c4_kill_operator_mid_benchmark_recovers_unified(
 
         async with faults.inject(
             "operator.kill",
-            target={"selector": OPERATOR_SELECTOR, "ns": OPERATOR_NAMESPACE},
+            target={
+                "selector": OPERATOR_SELECTOR,
+                "ns": k8s_settings.operator_namespace,
+            },
         ):
             # ``operator.kill`` restore is a no-op; ReplicaSet recreates the
             # Pod and the test owns "wait for ready" below.
             pass
-        await _wait_for_operator_ready(kubectl)
+        await _wait_for_operator_ready(kubectl, k8s_settings.operator_namespace)
 
         # Benchmark duration is 120 s; give generous margin for the
         # post-completion housekeeping (JobSet delete, pod terminate).
@@ -161,6 +167,7 @@ async def test_c5_orphaned_claim_recovers_unified(
     longrun_config: AIPerfJobConfig,
     operator_job_namespace: str,
     kubectl: KubectlClient,
+    k8s_settings: K8sTestSettings,
 ) -> None:
     """Pre-stamp completion-claim annotation + kill operator; CR still completes.
 
@@ -197,10 +204,13 @@ async def test_c5_orphaned_claim_recovers_unified(
         ):
             async with faults.inject(
                 "operator.kill",
-                target={"selector": OPERATOR_SELECTOR, "ns": OPERATOR_NAMESPACE},
+                target={
+                    "selector": OPERATOR_SELECTOR,
+                    "ns": k8s_settings.operator_namespace,
+                },
             ):
                 pass
-            await _wait_for_operator_ready(kubectl)
+            await _wait_for_operator_ready(kubectl, k8s_settings.operator_namespace)
 
             # Benchmark duration 120 s + orphan-recovery margin. Phase poll
             # happens INSIDE the ``crd.annotate`` block so the annotation

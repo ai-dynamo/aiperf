@@ -33,6 +33,7 @@ import pytest_asyncio
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.path_safety import safe_read_template_path
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from dev.versions import JOBSET_CRD_URL_TEMPLATE, JOBSET_VERSION, KUEUE_VERSION
 from tests.kubernetes.helpers.benchmark import (
     BenchmarkConfig,
@@ -121,7 +122,7 @@ class K8sTestSettings:
     kube_context: str | None = None
     """Existing kubectl context for remote cluster mode (implies skip_build, skip_load, reuse_cluster, skip_preflight, existing runtime)."""
 
-    operator_namespace: str = "aiperf-system"
+    operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE
     """Operator namespace on the cluster."""
 
     skip_operator_deploy: bool = False
@@ -184,7 +185,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-kueue-version", "K8S_TEST_KUEUE_VERSION", KUEUE_VERSION, "str", "Kueue controller version"),
     ("--k8s-benchmark-timeout", "K8S_TEST_BENCHMARK_TIMEOUT", "1200", "int", "Benchmark completion timeout in seconds"),
     ("--k8s-kube-context", "K8S_TEST_CONTEXT", None, "str", "Use an existing kubectl context (remote cluster mode)"),
-    ("--k8s-operator-namespace", "K8S_TEST_OPERATOR_NAMESPACE", "aiperf-system", "str", "Operator namespace on the cluster"),
+    ("--k8s-operator-namespace", "K8S_TEST_OPERATOR_NAMESPACE", DEFAULT_OPERATOR_NAMESPACE, "str", "Operator namespace on the cluster"),
     ("--k8s-skip-operator-deploy", "K8S_TEST_SKIP_OPERATOR_DEPLOY", None, "bool", "Skip deploying the operator (use existing deployment)"),
     ("--k8s-image-pull-secret", "K8S_TEST_IMAGE_PULL_SECRET", None, "str", "imagePullSecret name for benchmark and mock-server pods"),
     ("--k8s-image-pull-policy", "K8S_TEST_IMAGE_PULL_POLICY", "Never", "str", "Image pull policy for benchmark pods (Never, IfNotPresent, Always)"),
