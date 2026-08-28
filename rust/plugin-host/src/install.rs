@@ -153,9 +153,7 @@ impl InstallRoot {
         validate_inventory(inventory)?;
         let checked: Vec<(PathBuf, &[u8])> = files
             .iter()
-            .map(|f| {
-                checked_relative_path(&f.relative_path).map(|p| (p, f.bytes.as_slice()))
-            })
+            .map(|f| checked_relative_path(&f.relative_path).map(|p| (p, f.bytes.as_slice())))
             .collect::<Result<_, _>>()?;
 
         let id = self.next_generation_id()?;
@@ -365,10 +363,7 @@ fn checked_relative_path(raw: &str) -> Result<PathBuf, InstallError> {
     }
     // Only plain components are accepted; `..`, a root, or a Windows prefix
     // would all let a published generation write outside its own directory.
-    if !path
-        .components()
-        .all(|c| matches!(c, Component::Normal(_)))
-    {
+    if !path.components().all(|c| matches!(c, Component::Normal(_))) {
         return Err(InstallError::InvalidRelativePath(raw.to_string()));
     }
     Ok(path.to_path_buf())
@@ -421,7 +416,12 @@ fn read_pointer(root: &Path, name: &str) -> Result<Option<InstallGeneration>, In
     let text = match std::fs::read_to_string(&pointer) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => return Err(InstallError::Io { path: pointer, source }),
+        Err(source) => {
+            return Err(InstallError::Io {
+                path: pointer,
+                source,
+            });
+        }
     };
     let dir = PathBuf::from(text.trim());
     let Some(id) = dir
