@@ -258,6 +258,29 @@ fn schema_golden_file_exists_and_is_valid_json() {
     );
 }
 
+// --- dot-dot traversal in IDs (C1 from Graham review) ---
+
+#[test]
+fn dot_dot_id_rejected() {
+    use aiperf_plugin_host::normalize::NormalizedIdV1;
+    assert!(
+        matches!(NormalizedIdV1::parse(".."), Err(ManifestError::InvalidPath(_))),
+        "NormalizedIdV1::parse('..') must return InvalidPath"
+    );
+}
+
+#[test]
+fn dot_dot_prefix_id_rejected() {
+    use aiperf_plugin_host::normalize::NormalizedIdV1;
+    assert!(
+        matches!(
+            NormalizedIdV1::parse("..dangerous"),
+            Err(ManifestError::InvalidPath(_))
+        ),
+        "NormalizedIdV1::parse('..dangerous') must return InvalidPath"
+    );
+}
+
 // --- canonical serialization ---
 
 #[test]
