@@ -228,40 +228,10 @@ fn inspect_mach(
 ) -> Result<InspectedArtifact, StaticInspectionError> {
     use goblin::mach::Mach;
 
-    let macho = match mach {
-        Mach::Binary(m) => m,
-        Mach::Fat(fat) => {
-            // For fat binaries, find the slice matching the target arch by
-            // inspecting arch headers, then parse the matching binary.
-            let expected_cputype = macho_cputype_for_target(target).unwrap_or(u32::MAX);
-            let mut found_idx = None;
-            for (i, arch_result) in fat.iter_arches().enumerate() {
-                if let Ok(arch) = arch_result {
-                    if arch.cputype() as u32 == expected_cputype {
-                        found_idx = Some(i);
-                        break;
-                    }
-                }
-            }
-            match found_idx {
-                Some(idx) => match fat.get(idx) {
-                    Ok(goblin::mach::SingleArch::MachO(m)) => m,
-                    _ => {
-                        return Err(StaticInspectionError::UnsupportedFormat(
-                            "fat Mach-O slice is not a MachO binary".to_string(),
-                        ));
-                    }
-                },
-                None => {
-                    return Err(StaticInspectionError::ArchMismatch {
-                        declared: target.to_string(),
-                        detected: "unknown (fat without matching arch)".to_string(),
-                    });
-                }
-            }
-        }
-    };
-
+fn inspect_macho_binary(
+    macho: &goblin::mach::MachO<'_>,
+    target: &str,
+) -> Result<InspectedArtifact, StaticInspectionError> {
     // Verify architecture.
     let expected_cputype = macho_cputype_for_target(target).unwrap_or(u32::MAX);
     let arch_matches = macho.header.cputype as u32 == expected_cputype;
@@ -287,9 +257,46 @@ fn inspect_mach(
     Ok(InspectedArtifact {
         target: target.to_string(),
         entry_symbol_present: true,
-        bind_now: true, // Mach-O bind-at-load is enforced by build flags, not inspected here.
+        bind_now: true,
         arch_matches: true,
     })
+}
+
+fn inspect_mach(
+    mach: &goblin::mach::Mach<'_>,
+    target: &str,
+) -> Result<InspectedArtifact, StaticInspectionError> {
+    use goblin::mach::Mach;
+
+    match mach {
+        Mach::Binary(m) => inspect_macho_binary(m, target),
+        Mach::Fat(fat) => {
+            // For fat binaries, find the slice matching the target arch by
+            // inspecting arch headers, then parse the matching binary.
+            let expected_cputype = macho_cputype_for_target(target).unwrap_or(u32::MAX);
+            let mut found_idx = None;
+            for (i, arch_result) in fat.iter_arches().enumerate() {
+                if let Ok(arch) = arch_result {
+                    if arch.cputype() as u32 == expected_cputype {
+                        found_idx = Some(i);
+                        break;
+                    }
+                }
+            }
+            match found_idx {
+                Some(idx) => match fat.get(idx) {
+                    Ok(goblin::mach::SingleArch::MachO(m)) => inspect_macho_binary(&m, target),
+                    _ => Err(StaticInspectionError::UnsupportedFormat(
+                        "fat Mach-O slice is not a MachO binary".to_string(),
+                    )),
+                },
+                None => Err(StaticInspectionError::ArchMismatch {
+                    declared: target.to_string(),
+                    detected: "unknown (fat without matching arch)".to_string(),
+                }),
+            }
+        }
+    }
 }
 
 fn inspect_pe(
