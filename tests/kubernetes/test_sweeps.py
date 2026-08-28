@@ -21,6 +21,11 @@ from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
 _TERMINAL_PHASES = frozenset({"Succeeded", "Failed", "Cancelled", "PartiallyFailed"})
 
+# Pytest hard-kills the test at PHASE_TIMEOUT; the sweep wait must give up
+# first so its own failure message (last observed CR status) survives.
+PHASE_TIMEOUT = 1200
+SWEEP_WAIT_TIMEOUT = PHASE_TIMEOUT - 100
+
 
 def _grid_sweep_config() -> dict[str, Any]:
     benchmark = AIPerfJobConfig(
@@ -255,7 +260,7 @@ async def _wait_for_sweep_deleted(
     )
 
 
-@pytest.mark.timeout(1200)
+@pytest.mark.timeout(PHASE_TIMEOUT)
 @pytest.mark.asyncio
 async def test_grid_sweep_completes_and_harvests_aggregate(
     operator_ready: OperatorDeployer,
@@ -286,7 +291,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=1100,
+            timeout=SWEEP_WAIT_TIMEOUT,
         )
 
         status = doc.get("status", {})
@@ -387,7 +392,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
         )
 
 
-@pytest.mark.timeout(1200)
+@pytest.mark.timeout(PHASE_TIMEOUT)
 @pytest.mark.asyncio
 async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
     operator_ready: OperatorDeployer,
@@ -418,7 +423,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=1100,
+            timeout=SWEEP_WAIT_TIMEOUT,
         )
 
         status = doc.get("status", {})
@@ -481,7 +486,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
         )
 
 
-@pytest.mark.timeout(1200)
+@pytest.mark.timeout(PHASE_TIMEOUT)
 @pytest.mark.asyncio
 async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
     operator_ready: OperatorDeployer,
@@ -512,7 +517,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=1100,
+            timeout=SWEEP_WAIT_TIMEOUT,
         )
 
         status = doc.get("status", {})
@@ -552,7 +557,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
         )
 
 
-@pytest.mark.timeout(1200)
+@pytest.mark.timeout(PHASE_TIMEOUT)
 @pytest.mark.asyncio
 async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
     operator_ready: OperatorDeployer,
@@ -583,7 +588,7 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=1100,
+            timeout=SWEEP_WAIT_TIMEOUT,
         )
 
         status = doc.get("status", {})
