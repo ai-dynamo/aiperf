@@ -58,8 +58,9 @@ use crate::{
             CommittedParticipantReceipt, CommittedParticipantState, ParticipantInitialization,
             PreparedParticipantState, StreamingCheckpointParticipant,
         },
-        identity::{ActionAttemptId, ContentDigest, RunIncarnationId, SessionOwnershipEpoch,
-            StableActionId},
+        identity::{
+            ActionAttemptId, ContentDigest, RunIncarnationId, SessionOwnershipEpoch, StableActionId,
+        },
         unit::{DatasetActionKind, DatasetActionV1},
     },
 };
@@ -341,12 +342,11 @@ impl StreamingActionSubmitter for ScheduledRequestSubmitter {
         });
 
         let complete_shared = Rc::clone(&self.shared);
-        let on_complete: crate::scheduled::CompletionHandler =
-            Box::new(move |_credit, outcome| {
-                let disposition = terminal_disposition(&outcome.terminal);
-                complete_shared.push_terminal(action_id, disposition);
-                Box::pin(async {})
-            });
+        let on_complete: crate::scheduled::CompletionHandler = Box::new(move |_credit, outcome| {
+            let disposition = terminal_disposition(&outcome.terminal);
+            complete_shared.push_terminal(action_id, disposition);
+            Box::pin(async {})
+        });
 
         let (control, receiver) = action_execution_control();
         let is_issued =
@@ -387,11 +387,13 @@ fn terminal_disposition(
 /// Render a 32-byte identity as stable lowercase hex.
 fn hex_identity(bytes: &[u8; 32]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(64), |mut text, byte| {
-        // Writing to a String is infallible; the result is discarded knowingly.
-        let _ = write!(text, "{byte:02x}");
-        text
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(64), |mut text, byte| {
+            // Writing to a String is infallible; the result is discarded knowingly.
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
 }
 
 /// Sole mutable event stream, and a stable checkpoint participant.

@@ -42,11 +42,10 @@ fn report_omits_plugin_fields_when_none() {
 
 #[test]
 fn report_includes_plugin_fields_when_set() {
-    let report = NativeReport::new(&AccumulatorSummary::new(), None)
-        .with_plugin_provenance(
-            "blake3:aabbccdd".to_string(),
-            vec![make_catalog_entry("acme/exporter")],
-        );
+    let report = NativeReport::new(&AccumulatorSummary::new(), None).with_plugin_provenance(
+        "blake3:aabbccdd".to_string(),
+        vec![make_catalog_entry("acme/exporter")],
+    );
     let json = serde_json::to_value(&report).unwrap();
     assert_eq!(
         json["plugin_lock_digest"],
@@ -88,10 +87,7 @@ fn distribution_id_unchanged_when_plugin_lock_set() {
     .unwrap();
 
     let report_a = NativeReport::new(&AccumulatorSummary::new(), None)
-        .finalize_run(
-            run_metadata.clone(),
-            ReportPairRunFacts::default(),
-        )
+        .finalize_run(run_metadata.clone(), ReportPairRunFacts::default())
         .unwrap();
 
     let report_b = NativeReport::new(&AccumulatorSummary::new(), None)
@@ -104,8 +100,7 @@ fn distribution_id_unchanged_when_plugin_lock_set() {
 
     // distribution_id must be identical
     assert_eq!(
-        json_a["run"]["distribution_id"],
-        json_b["run"]["distribution_id"],
+        json_a["run"]["distribution_id"], json_b["run"]["distribution_id"],
         "plugin_lock_digest must not affect distribution_id"
     );
 
