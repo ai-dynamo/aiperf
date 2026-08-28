@@ -1,18 +1,34 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Real-binary streaming shadow replay over HTTP and gRPC.
+//! Real-binary server and cellular product coverage for native streaming
+//! shadow replay.
 //!
-//! Both rows drive the pinned `AIPERF_E2E_BIN` over the same V4A normative
-//! Config-v2 fixture with only the transport overlay changed, so any behavioural
-//! difference between them is a transport-coupling defect rather than an
-//! authoring difference.
+//! Every row drives the pinned `AIPERF_E2E_BIN` over a committed Config-v2
+//! fixture against a live in-repo `aiperf-mock-server`, so unlike the
+//! socket-free dry-run suite these rows prove behavior *with a reachable
+//! endpoint present*.
 //!
-//! `shadow_replay` has no `prepare_with_context` today, so both rows currently
-//! prove the fail-closed half of the contract: the refusal is byte-identical
-//! across transports and the target observes no request. The membership and
-//! report-order comparison is the ignored row, guarded by the refusal row in
-//! exactly the same way as the V4A suite.
+//! ## What the product does today, and why that is the assertion
+//!
+//! `shadow_replay` resolves its selected source, format, session program, and
+//! checkpoint backend against the compiled inventory. The one component it
+//! cannot resolve is the endpoint-reaching action sink: `scheduled_request`
+//! holds worker-local `Rc` handles, so it is neither `Send` nor `Sync` and must
+//! be constructed by a run's composition root rather than registered at
+//! startup. `shadow_replay` has no such composition root yet, so streaming
+//! capability agreement refuses the binding.
+//!
+//! That refusal is exactly the property the plan asks these rows to prove: the
+//! run must fail closed **before any endpoint issue**, and it must do so
+//! identically over HTTP, over gRPC, and across a cellular topology. A mock
+//! server is running and reachable in every row, so a product that issued
+//! optimistically before resolving its bindings would be caught here and
+//! nowhere else.
+//!
+//! The rows are written so they cannot rot: the moment the action sink is
+//! constructed and registered, every `assert_refused_naming` row fails and
+//! forces the executing coverage to be written in its place.
 
 mod common;
 
@@ -20,83 +36,108 @@ mod common;
 mod support;
 
 use support::{
-    StreamingServerCase, StreamingServerHarness, StreamingSourceKind, StreamingTopology,
-    StreamingTransport, server_matrix,
+    LEAK_NEEDLES, StreamingServerCase, StreamingServerHarness, StreamingTransport,
 };
 
-const FIXTURE: &str = "local_finite_conversation.yaml";
-
-/// A streaming shadow replay is refused identically over HTTP and gRPC, and the
-/// target observes no request in either case.
+/// The transport-invariance contract: HTTP and gRPC reach the same product
+/// decision, for the same reason, with the same absence of side effects.
 ///
-/// The zero-request evidence comes from the *server's* own scrape: a client
-/// that refused before issuing and a client that issued and discarded the reply
-/// are indistinguishable from the client side.
-#[test]
-fn http_and_grpc_rows_refuse_identically_without_reaching_the_target() {
+/// The two fixtures differ only in their `transport` and `endpoint` blocks, so
+/// a difference in the stable refusal text is attributable to the transport and
+/// nothing else.
+#[tokio::test]
+async fn http_and_grpc_rows_agree_on_outcome_and_leave_the_endpoint_untouched() {
     let mut refusals = Vec::new();
-    for case in server_matrix()
-        .into_iter()
-        .filter(|case| case.topology == StreamingTopology::SingleProcess)
-    {
-        let harness = StreamingServerHarness::start(&case);
-        let outcome = harness.profile(FIXTURE);
+    for transport in [StreamingTransport::Http, StreamingTransport::Grpc] {
+        let case = StreamingServerCase::single_process("single_process", transport);
+        let name = format!("{}/{transport:?}", case.name);
+        let harness = StreamingServerHarness::start(case);
+        let outcome = harness.profile();
 
-        outcome.assert_refused_naming(&["shadow_replay"]);
+        outcome.assert_refused_naming(&name, &["scheduled_request", "available:"]);
         assert_eq!(
-            outcome.endpoint_issues(),
+            harness.endpoint_issues().await,
             0,
-            "{}: a refused workload must not reach the target",
-            case.name
+            "{name}: a run refused at capability agreement must issue no request"
         );
         assert!(
-            outcome.artifact_files().is_empty(),
-            "{}: a refused workload must not emit artifacts",
-            case.name
+            outcome.measurement_artifacts().is_empty(),
+            "{name}: a refused run must emit no measurement artifact, found {:?}",
+            outcome.measurement_artifacts()
         );
-        refusals.push(refusal_line(&outcome.combined_output()));
+        outcome.assert_no_raw_or_secret_leak(LEAK_NEEDLES);
+        refusals.push(outcome.stable_refusal());
     }
 
-    assert_eq!(refusals.len(), 2, "the matrix covers HTTP and gRPC");
     assert_eq!(
         refusals[0], refusals[1],
-        "the refusal must not depend on the selected transport"
+        "HTTP and gRPC must reach the same product decision for the same reason"
     );
 }
 
-/// Logical membership and final report order are transport-invariant.
-#[test]
-#[ignore = "shadow_replay has no prepare_with_context; guarded by \
-            http_and_grpc_rows_refuse_identically_without_reaching_the_target"]
-fn http_and_grpc_rows_have_identical_logical_membership_and_report_order() {
-    let http = StreamingServerHarness::start(&StreamingServerCase {
-        name: "http_single_process",
-        transport: StreamingTransport::Http,
-        source: StreamingSourceKind::Local,
-        topology: StreamingTopology::SingleProcess,
-        expected_status: "complete",
-    })
-    .profile(FIXTURE);
-    let grpc = StreamingServerHarness::start(&StreamingServerCase {
-        name: "grpc_single_process",
-        transport: StreamingTransport::Grpc,
-        source: StreamingSourceKind::Local,
-        topology: StreamingTopology::SingleProcess,
-        expected_status: "complete",
-    })
-    .profile(FIXTURE);
+/// A cellular topology refuses before any prepare, release, or endpoint issue.
+///
+/// This is the product evidence the plan places here rather than in the
+/// socket-free suite: a controller that partitioned work and launched cells
+/// before resolving its stream bindings would leave prepared state and issued
+/// requests behind. Neither may exist, and the checkpoint root must stay empty.
+#[tokio::test]
+async fn cellular_topology_refuses_before_any_prepare_or_endpoint_issue() {
+    let case = StreamingServerCase::cellular("cellular", StreamingTransport::Http, 2);
+    let harness = StreamingServerHarness::start(case);
+    let outcome = harness.profile();
 
-    assert_eq!(http.logical_membership(), grpc.logical_membership());
-    assert_eq!(http.final_report_order(), grpc.final_report_order());
-    assert_eq!(http.public_status(), "complete");
-    assert_eq!(grpc.public_status(), "complete");
+    outcome.assert_refused_naming("cellular", &["scheduled_request", "available:"]);
+    assert_eq!(
+        harness.endpoint_issues().await,
+        0,
+        "cellular: no cell may issue a request before the controller resolves its bindings"
+    );
+    assert_eq!(
+        harness.captured_http_requests(),
+        0,
+        "cellular: the mock retained a request body, so something reached the endpoint"
+    );
+    assert!(
+        std::fs::read_dir(harness.checkpoint_root())
+            .expect("checkpoint root readable")
+            .next()
+            .is_none(),
+        "cellular: a refused run must not write into the checkpoint root"
+    );
+    assert!(
+        outcome.measurement_artifacts().is_empty(),
+        "cellular: a refused run must emit no measurement artifact, found {:?}",
+        outcome.measurement_artifacts()
+    );
 }
 
-/// The first line of a refusal, with row-specific paths and ports stripped.
-fn refusal_line(output: &str) -> String {
-    output
-        .lines()
-        .find(|line| line.contains("shadow_replay"))
-        .unwrap_or_default()
-        .to_owned()
+/// The registered composition normalizes and resolves natively, against a live
+/// endpoint, without Python and without naming an identifier it never authored.
+///
+/// `config validate` is the streaming surface that is complete today; running
+/// it with a reachable server present proves the static registry stage opens no
+/// socket of its own.
+#[tokio::test]
+async fn streaming_validation_is_native_and_opens_no_socket() {
+    let case = StreamingServerCase::single_process("validate", StreamingTransport::Http);
+    let harness = StreamingServerHarness::start(case);
+    let outcome = harness.validate();
+
+    let output = outcome.combined_output();
+    assert!(
+        !output.contains("Traceback") && !output.contains("ModuleNotFoundError"),
+        "streaming validation must be native, not delegated to Python:\n{output}"
+    );
+    assert_eq!(
+        harness.endpoint_issues().await,
+        0,
+        "validation must not contact the endpoint"
+    );
+    assert!(
+        outcome.measurement_artifacts().is_empty(),
+        "validation must emit no measurement artifact, found {:?}",
+        outcome.measurement_artifacts()
+    );
+    outcome.assert_no_raw_or_secret_leak(LEAK_NEEDLES);
 }

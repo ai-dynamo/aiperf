@@ -3,43 +3,79 @@
 
 //! Server and cellular product fixture for native streaming shadow replay.
 //!
-//! Owns child processes, ports, scratch trees, and bounded artifact readers
-//! through RAII. It never searches `target/`, never sleeps for correctness, and
-//! always joins children.
+//! The socket-free twin of this module lives in the dry-run suite
+//! (`rust/dry-run-tests/tests/support/streaming_product.rs`) and owns the
+//! `dry_run` rows. This module owns the rows that need a real listener: HTTP
+//! and gRPC against the in-repo `aiperf-mock-server`, and the cellular
+//! controller/cell topology.
 //!
-//! The V4A normative Config-v2 fixtures are reused verbatim; this module adds
-//! only the transport and cellular overlays — the endpoint URL a row targets
-//! and the `runtime.cells` count it runs under.
+//! The same three rules apply here:
+//!
+//! - **No implicit binary search.** Every invocation runs `common::exec_binary`,
+//!   which reads `AIPERF_E2E_BIN` and panics when it is unset, so a row can
+//!   never silently measure a stale `target/` artifact.
+//! - **No sleep for correctness.** `MockServer::start_with*` already polls
+//!   `/health` (HTTP) or a raw TCP accept (gRPC) before returning, and the child
+//!   is joined on its own exit rather than after a fixed delay. The only
+//!   `sleep` in this module is the cadence inside a bounded predicate poll.
+//! - **No leaked child.** [`SupervisedChild`] delivers SIGINT, escalates to
+//!   SIGKILL after a grace window, and joins in `Drop`, so a panicking row still
+//!   reaps its process; [`StreamingServerHarness`] owns the mock, every child,
+//!   and the scratch tree, and drops them in that order.
+//!
+//! Fixtures under `tests/fixtures/streaming/` are rendered with an explicit
+//! four-token set — `$ARTIFACT_DIR`, `$SOURCE_ROOT`, `$CHECKPOINT_ROOT`, and
+//! `$ENDPOINT_URL`. An unsubstituted token is a fixture defect and panics rather
+//! than reaching the product as a literal path.
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
-use crate::common::{self, MockServer, RunResult};
+use aiperf_mock_server::config::MockServerConfig;
 
-/// The transport a row exercises against the in-repo mock server.
+use crate::common::{MockServer, exec_binary};
+
+/// Longest a row lets one invocation run before failing it.
+const RUN_DEADLINE: Duration = Duration::from_secs(120);
+
+/// Longest a row waits for a child to exit after SIGINT before SIGKILL.
+const TERMINATE_GRACE: Duration = Duration::from_secs(10);
+
+/// Interval between reads inside a bounded predicate poll.
+///
+/// A poll cadence, not a correctness delay: each iteration re-reads durable
+/// process state whose change *is* the event being waited on.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// The wire transport a row exercises.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StreamingTransport {
-    /// HTTP/1 plus SSE.
+    /// HTTP/1 + SSE against the in-repo mock server.
     Http,
-    /// gRPC (KServe OIP v2).
+    /// KServe OIP v2 gRPC against the in-repo mock server.
     Grpc,
 }
 
-/// The stream source a row exercises.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StreamingSourceKind {
-    /// Local filesystem partitions.
-    Local,
+impl StreamingTransport {
+    /// The committed fixture this transport authors.
+    const fn fixture(self) -> &'static str {
+        match self {
+            Self::Http => "http_local_conversation.yaml",
+            Self::Grpc => "grpc_local_conversation.yaml",
+        }
+    }
 }
 
 /// The execution topology a row exercises.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StreamingTopology {
-    /// One process.
+    /// One `aiperf` process.
     SingleProcess,
-    /// One controller plus `cells` cell processes.
+    /// One controller plus `cells` cell processes, selected with `--cells`.
     Cellular {
         /// Number of cell processes the controller partitions across.
         cells: u32,
@@ -49,120 +85,142 @@ pub enum StreamingTopology {
 /// One parameterized server/cellular row.
 #[derive(Clone, Debug)]
 pub struct StreamingServerCase {
-    /// Row name, used in failure messages and artifact subdirectories.
+    /// Row name, used in assertion messages.
     pub name: &'static str,
-    /// Transport overlay.
+    /// Selected wire transport.
     pub transport: StreamingTransport,
-    /// Source overlay.
-    pub source: StreamingSourceKind,
-    /// Topology overlay.
+    /// Selected execution topology.
     pub topology: StreamingTopology,
-    /// Expected public status: `complete`, `degraded`, `export_incomplete`, or
-    /// `failed`.
-    pub expected_status: &'static str,
 }
 
-/// RAII owner of the mock target, the scratch tree, and one row's artifacts.
+impl StreamingServerCase {
+    /// A single-process row over the named transport.
+    #[must_use]
+    pub const fn single_process(name: &'static str, transport: StreamingTransport) -> Self {
+        Self {
+            name,
+            transport,
+            topology: StreamingTopology::SingleProcess,
+        }
+    }
+
+    /// A cellular row over the named transport and cell count.
+    #[must_use]
+    pub const fn cellular(name: &'static str, transport: StreamingTransport, cells: u32) -> Self {
+        Self {
+            name,
+            transport,
+            topology: StreamingTopology::Cellular { cells },
+        }
+    }
+}
+
+/// Directory holding the committed Config-v2 streaming fixtures.
+#[must_use]
+pub fn fixture_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/streaming")
+}
+
+/// RAII owner of the mock target, every child process, and the scratch tree for
+/// one row.
 ///
-/// `MockServer` owns its runtime and shuts the accept loop down on drop;
-/// `tempfile::TempDir` removes the scratch tree. There is no separate join
-/// step because every invocation this harness makes is a bounded, joined
-/// `RunResult` — no child outlives its call.
+/// Field order is drop order: the scratch tree is declared last so it is removed
+/// only after every child that could still be writing into it has been reaped.
 pub struct StreamingServerHarness {
+    case: StreamingServerCase,
     mock: MockServer,
-    scratch: tempfile::TempDir,
     source_root: PathBuf,
     checkpoint_root: PathBuf,
     artifact_root: PathBuf,
-    case: StreamingServerCase,
+    scratch: tempfile::TempDir,
 }
 
 impl StreamingServerHarness {
-    /// Launch the mock target the case requires and prepare its scratch tree.
+    /// Start the mock target this case needs and prepare its scratch tree.
     ///
-    /// `MockServer` binds `127.0.0.1:0` and polls `/health` (HTTP) or a raw TCP
-    /// accept (gRPC) before returning, so readiness is a durable predicate and
-    /// not a sleep.
-    pub fn start(case: &StreamingServerCase) -> Self {
+    /// Request capture is enabled so an HTTP row can inspect the exact bodies
+    /// that reached the endpoint; the transport-neutral *count* comes from the
+    /// mock's own Prometheus family, which both listeners record into.
+    #[must_use]
+    pub fn start(case: StreamingServerCase) -> Self {
+        let mut cfg = MockServerConfig::default();
+        cfg.fast = true;
+        cfg.workers = 8;
+        cfg.no_tokenizer = true;
+        cfg.request_capture_capacity = 256;
         let mock = match case.transport {
-            StreamingTransport::Http => MockServer::start(),
-            StreamingTransport::Grpc => {
-                let mut cfg = aiperf_mock_server::config::MockServerConfig::default();
-                cfg.fast = true;
-                cfg.workers = 8;
-                cfg.no_tokenizer = true;
-                MockServer::start_with_grpc(cfg)
-            }
+            StreamingTransport::Http => MockServer::start_with(cfg),
+            StreamingTransport::Grpc => MockServer::start_with_grpc(cfg),
         };
-        let scratch = tempfile::TempDir::new().expect("create streaming scratch directory");
+
+        let scratch = tempfile::tempdir().expect("create streaming scratch directory");
         let source_root = scratch.path().join("source");
         let checkpoint_root = scratch.path().join("checkpoint");
         let artifact_root = scratch.path().join("artifacts");
         for directory in [&source_root, &checkpoint_root, &artifact_root] {
             std::fs::create_dir_all(directory).expect("create streaming scratch subdirectory");
         }
+
         let harness = Self {
+            case,
             mock,
-            scratch,
             source_root,
             checkpoint_root,
             artifact_root,
-            case: case.clone(),
+            scratch,
         };
-        harness.publish_partition("000-a.parquet", PARTITION_A);
+        harness.write_partition("000-a.parquet", PARTITION_A);
+        harness.write_partition("001-b.parquet", PARTITION_B);
         harness
     }
 
-    /// The mock target's HTTP base URL.
-    pub fn http_url(&self) -> &str {
-        &self.mock.url
+    /// The mock target this row benchmarks against.
+    #[must_use]
+    pub fn mock(&self) -> &MockServer {
+        &self.mock
     }
 
-    /// The mock target's gRPC URL, when the row enabled the gRPC listener.
-    pub fn grpc_url(&self) -> Option<&str> {
-        self.mock.grpc_url.as_deref()
+    /// The acquired source root for this row.
+    #[must_use]
+    pub fn source_root(&self) -> &Path {
+        &self.source_root
     }
 
-    /// The endpoint URL this row's transport overlay selects.
-    pub fn endpoint_url(&self) -> String {
+    /// The durable checkpoint root for this row.
+    #[must_use]
+    pub fn checkpoint_root(&self) -> &Path {
+        &self.checkpoint_root
+    }
+
+    /// Publish one partition into the source root by atomic rename.
+    ///
+    /// Rename, not create-then-write: the local source accepts publication by
+    /// rename, so a partially written file must never be visible under its
+    /// final name.
+    pub fn write_partition(&self, name: &str, bytes: &[u8]) {
+        let staging = self.scratch.path().join(format!(".staging-{name}"));
+        std::fs::write(&staging, bytes).expect("stage source partition");
+        std::fs::rename(&staging, self.source_root.join(name)).expect("publish source partition");
+    }
+
+    /// The endpoint URL the fixture is rendered against.
+    fn endpoint_url(&self) -> String {
         match self.case.transport {
             StreamingTransport::Http => self.mock.url.clone(),
             StreamingTransport::Grpc => self
                 .mock
                 .grpc_url
                 .clone()
-                .expect("grpc row started the grpc listener"),
+                .expect("a grpc row starts the grpc listener"),
         }
     }
 
-    /// The acquired source root for this row.
-    pub fn source_root(&self) -> &Path {
-        &self.source_root
-    }
-
-    /// The durable checkpoint root for this row.
-    pub fn checkpoint_root(&self) -> &Path {
-        &self.checkpoint_root
-    }
-
-    /// Publish one partition into the source root by atomic rename.
-    pub fn publish_partition(&self, name: &str, bytes: &[u8]) {
-        let staging = self.scratch.path().join(format!(".staging-{name}"));
-        std::fs::write(&staging, bytes).expect("stage source partition");
-        std::fs::rename(&staging, self.source_root.join(name)).expect("publish source partition");
-    }
-
-    /// Render the shared V4A fixture with this row's transport and topology
-    /// overlays applied.
-    ///
-    /// The token set is exactly `$ARTIFACT_DIR`, `$SOURCE_ROOT`,
-    /// `$CHECKPOINT_ROOT`, and `$ENDPOINT_URL`; an unsubstituted token is a
-    /// fixture defect and panics rather than reaching the product as a literal.
-    pub fn render_config(&self, fixture: &str) -> PathBuf {
-        let source = fixture_root().join(fixture);
+    /// Render the committed fixture into this row's scratch tree.
+    fn render_config(&self) -> PathBuf {
+        let source = fixture_root().join(self.case.transport.fixture());
         let yaml = std::fs::read_to_string(&source)
-            .unwrap_or_else(|e| panic!("read fixture {}: {e}", source.display()));
-        let mut rendered = yaml
+            .unwrap_or_else(|error| panic!("read fixture {}: {error}", source.display()));
+        let rendered = yaml
             .replace("$ARTIFACT_DIR", &self.artifact_root.display().to_string())
             .replace("$SOURCE_ROOT", &self.source_root.display().to_string())
             .replace(
@@ -170,177 +228,156 @@ impl StreamingServerHarness {
                 &self.checkpoint_root.display().to_string(),
             )
             .replace("$ENDPOINT_URL", &self.endpoint_url());
-        if let StreamingTopology::Cellular { cells } = self.case.topology {
-            rendered = format!("runtime:\n  cells: {cells}\n{rendered}");
-        }
         assert!(
             !rendered.contains('$'),
-            "fixture {fixture} has an unsubstituted token"
+            "fixture {} has an unsubstituted token",
+            self.case.transport.fixture()
         );
         let path = self.scratch.path().join("benchmark.yaml");
         std::fs::write(&path, rendered).expect("write rendered streaming config");
         path
     }
 
-    /// Run `aiperf profile --config <rendered>` for this row.
-    pub fn profile(&self, fixture: &str) -> StreamingServerOutcome {
-        // The rendered config carries its own artifact directory, so the run is
-        // driven through a direct binary invocation rather than
-        // `AIPerfHarness::run`, which appends a second `--artifact-dir` flag.
-        let config = self.render_config(fixture);
-        let run = run_config(&config, self.artifact_root.as_path());
+    /// Run `aiperf config validate` over the rendered fixture.
+    #[must_use]
+    pub fn validate(&self) -> StreamingServerOutcome {
+        let config = self.render_config();
+        self.invoke(vec![
+            "config".to_owned(),
+            "validate".to_owned(),
+            config.display().to_string(),
+        ])
+    }
+
+    /// Run `aiperf profile --config <rendered>` under this row's topology.
+    #[must_use]
+    pub fn profile(&self) -> StreamingServerOutcome {
+        let config = self.render_config();
+        let mut args = vec![
+            "profile".to_owned(),
+            "--config".to_owned(),
+            config.display().to_string(),
+        ];
+        if let StreamingTopology::Cellular { cells } = self.case.topology {
+            args.push("--cells".to_owned());
+            args.push(cells.to_string());
+        }
+        self.invoke(args)
+    }
+
+    fn invoke(&self, args: Vec<String>) -> StreamingServerOutcome {
+        let mut child = SupervisedChild::spawn(&args);
+        let started = Instant::now();
+        loop {
+            match child.child.try_wait().expect("poll aiperf child") {
+                Some(_) => break,
+                None if started.elapsed() > RUN_DEADLINE => {
+                    return self.finish(child.terminate(TERMINATE_GRACE));
+                }
+                None => std::thread::sleep(POLL_INTERVAL),
+            }
+        }
+        self.finish(child.join())
+    }
+
+    fn finish(&self, completed: CompletedChild) -> StreamingServerOutcome {
         StreamingServerOutcome {
-            run,
-            endpoint_issues: self.observed_endpoint_requests(),
+            exit_code: completed.exit_code,
+            stdout: completed.stdout,
+            stderr: completed.stderr,
             artifacts: self.artifact_root.clone(),
         }
     }
 
-    /// Requests the mock target actually observed, from its own scrape.
+    /// Requests the mock target accepted, counted from its own metric family.
     ///
-    /// The evidence for "nothing was issued" has to come from the *server*, not
-    /// from the client's own report: a client that refused before issuing and a
-    /// client that issued and discarded the result look identical from the
-    /// client side.
-    fn observed_endpoint_requests(&self) -> u64 {
-        let Some(body) = scrape(self.mock.port, "/metrics") else {
-            return 0;
-        };
-        body.lines()
-            .filter(|line| !line.starts_with('#'))
-            .filter(|line| line.contains("requests_total"))
-            .filter_map(|line| line.rsplit(' ').next())
-            .filter_map(|value| value.trim().parse::<f64>().ok())
-            .map(|value| value as u64)
-            .sum()
+    /// Read after the child is fully reaped, so no request can still be in
+    /// flight when the count is taken. The HTTP and gRPC handlers both record
+    /// into `aiperf_mock_requests_by_model_total`, so this is the one
+    /// transport-neutral endpoint-issue count available; the axum request
+    /// capture store, by contrast, sees only the HTTP listener.
+    pub async fn endpoint_issues(&self) -> u64 {
+        // `no_proxy`: an ambient `HTTP_PROXY` would otherwise route this
+        // loopback scrape through a proxy that answers 405.
+        let body = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build metrics scrape client")
+            .get(format!("{}/metrics", self.mock.url))
+            .send()
+            .await
+            .expect("scrape mock metrics")
+            .text()
+            .await
+            .expect("read mock metrics body");
+        sum_counter(&body, "aiperf_mock_requests_by_model_total")
+    }
+
+    /// HTTP request bodies the mock retained, for the HTTP rows.
+    #[must_use]
+    pub fn captured_http_requests(&self) -> usize {
+        self.mock.state.request_captures().len()
     }
 }
 
-/// Fetch one loopback path with a minimal blocking HTTP/1.0 GET.
+/// Sum every sample of one Prometheus counter family in a scrape body.
 ///
-/// Deliberately not `reqwest`: the e2e crate links `reqwest` without its
-/// `blocking` feature, and a loopback scrape must never consult ambient proxy
-/// settings. Twenty lines of `std::net` avoids both problems.
-fn scrape(port: u16, path: &str) -> Option<String> {
-    use std::io::{Read, Write};
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
-    stream
-        .write_all(format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").as_bytes())
-        .ok()?;
-    let mut response = String::new();
-    stream.read_to_string(&mut response).ok()?;
-    let body_start = response.find("\r\n\r\n")? + 4;
-    Some(response[body_start..].to_owned())
+/// The family is label-partitioned by model and endpoint, so a row that cares
+/// only about "did anything reach the endpoint" must add the children rather
+/// than read one series.
+fn sum_counter(body: &str, family: &str) -> u64 {
+    body.lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter(|line| line.starts_with(family))
+        .filter_map(|line| line.rsplit_once(' '))
+        .filter_map(|(_, value)| value.trim().parse::<f64>().ok())
+        .map(|value| value as u64)
+        .sum()
 }
 
-/// Directory holding the committed Config-v2 streaming fixtures.
-pub fn fixture_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/streaming")
-}
-
-/// Invoke the pinned product binary on one rendered Config-v2 document.
-fn run_config(config: &Path, artifact_dir: &Path) -> RunResult {
-    let output = std::process::Command::new(common::exec_binary())
-        .args([
-            "profile",
-            "--config",
-            &config.display().to_string(),
-        ])
-        .env("HF_HUB_OFFLINE", "1")
-        .env("TRANSFORMERS_OFFLINE", "1")
-        .env("PYTHONUNBUFFERED", "1")
-        .env("MALLOC_ARENA_MAX", "2")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .expect("spawn aiperf profile");
-    RunResult {
-        exit_code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        artifacts: common::ArtifactReader {
-            dir: artifact_dir.to_path_buf(),
-        },
-    }
-}
-
-/// The observable result of one server/cellular row.
+/// The observable result of one server or cellular row.
 pub struct StreamingServerOutcome {
-    run: RunResult,
-    endpoint_issues: u64,
-    artifacts: PathBuf,
+    /// Process exit code, or `-1` when terminated by signal.
+    pub exit_code: i32,
+    /// Complete child stdout.
+    pub stdout: String,
+    /// Complete child stderr.
+    pub stderr: String,
+    /// Artifact root this invocation was pointed at.
+    pub artifacts: PathBuf,
 }
 
 impl StreamingServerOutcome {
-    /// Both child streams, for diagnostics.
-    pub fn combined_output(&self) -> String {
-        format!("{}\n{}", self.run.stdout, self.run.stderr)
-    }
-
-    /// Whether the run exited successfully.
+    /// Whether the child exited successfully.
+    #[must_use]
     pub fn success(&self) -> bool {
-        self.run.success()
+        self.exit_code == 0
     }
 
-    /// Public execution status.
-    pub fn public_status(&self) -> String {
-        self.run.artifacts.json()["streaming"]["status"]
-            .as_str()
-            .unwrap_or(if self.success() { "complete" } else { "failed" })
-            .to_owned()
+    /// Both child streams, for diagnostics and leak scanning.
+    #[must_use]
+    pub fn combined_output(&self) -> String {
+        format!("{}\n{}", self.stdout, self.stderr)
     }
 
-    /// Sorted stable action ids paired with their content digests.
-    pub fn logical_membership(&self) -> Vec<(String, String)> {
-        let mut membership: Vec<(String, String)> = self
-            .run
-            .artifacts
-            .jsonl()
-            .iter()
-            .map(|record| {
-                (
-                    record["metadata"]["stable_action_id"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    record["metadata"]["content_digest"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                )
-            })
-            .collect();
-        membership.sort();
-        membership
+    /// Assert the run refused and its refusal names every expected fragment.
+    pub fn assert_refused_naming(&self, case: &str, fragments: &[&str]) {
+        assert!(
+            !self.success(),
+            "{case}: expected a refusal, but the run exited 0:\n{}",
+            self.combined_output()
+        );
+        let output = self.combined_output();
+        for fragment in fragments {
+            assert!(
+                output.contains(fragment),
+                "{case}: refusal must name {fragment:?}:\n{output}"
+            );
+        }
     }
 
-    /// The final report's metric row order, which must be topology-invariant.
-    pub fn final_report_order(&self) -> Vec<String> {
-        self.run.artifacts.json()["records"]
-            .as_object()
-            .map(|rows| rows.keys().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    /// Prepare acknowledgements the run committed.
-    pub fn prepare_acknowledgements(&self) -> u64 {
-        self.run.artifacts.json()["streaming"]["prepare_acknowledgements"]
-            .as_u64()
-            .unwrap_or(0)
-    }
-
-    /// Capacity releases the run committed.
-    pub fn releases(&self) -> u64 {
-        self.run.artifacts.json()["streaming"]["releases"]
-            .as_u64()
-            .unwrap_or(0)
-    }
-
-    /// Requests the mock target actually observed.
-    pub fn endpoint_issues(&self) -> u64 {
-        self.endpoint_issues
-    }
-
-    /// Every regular file under the artifact root, relative and sorted.
+    /// Artifact paths relative to the artifact root, sorted.
+    #[must_use]
     pub fn artifact_files(&self) -> Vec<PathBuf> {
         let mut found = Vec::new();
         collect_files(&self.artifacts, &self.artifacts, &mut found);
@@ -348,18 +385,51 @@ impl StreamingServerOutcome {
         found
     }
 
-    /// Assert the run refused and its refusal names every expected fragment.
-    pub fn assert_refused_naming(&self, fragments: &[&str]) {
-        assert!(
-            !self.success(),
-            "expected a refusal, but the run exited 0:\n{}",
-            self.combined_output()
-        );
-        let output = self.combined_output();
-        for fragment in fragments {
+    /// Artifact paths excluding the run's own log tree.
+    ///
+    /// The logger is installed before the registry resolves anything, so a log
+    /// file is present even for a run refused at capability agreement. It is
+    /// not a measurement artifact and does not count as an execution effect.
+    #[must_use]
+    pub fn measurement_artifacts(&self) -> Vec<PathBuf> {
+        self.artifact_files()
+            .into_iter()
+            .filter(|path| !path.starts_with("logs"))
+            .collect()
+    }
+
+    /// The refusal message with volatile substrings removed.
+    ///
+    /// Timestamps, ports, and scratch paths differ between two rows that must
+    /// nonetheless agree on *why* the product refused. Stripping them makes the
+    /// transport-invariance comparison meaningful rather than trivially false.
+    #[must_use]
+    pub fn stable_refusal(&self) -> String {
+        self.combined_output()
+            .lines()
+            .filter(|line| line.contains("Native AIPerf run failed") || line.contains("aiperf:"))
+            .map(|line| match line.find("failed: ") {
+                Some(index) => line[index + "failed: ".len()..].to_owned(),
+                None => line.trim().to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Assert no raw source byte and no authored secret reached any artifact.
+    pub fn assert_no_raw_or_secret_leak(&self, needles: &[&str]) {
+        let mut haystack = self.combined_output();
+        for file in self.artifact_files() {
+            if let Ok(bytes) = std::fs::read(self.artifacts.join(&file)) {
+                haystack.push('\n');
+                haystack.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        for needle in needles {
             assert!(
-                output.contains(fragment),
-                "refusal must name {fragment:?}:\n{output}"
+                !haystack.contains(needle),
+                "raw source bytes or an authored secret ({needle:?}) reached an artifact or the \
+                 child's output"
             );
         }
     }
@@ -379,38 +449,114 @@ fn collect_files(root: &Path, directory: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// Every transport × topology row the streaming server matrix covers.
-pub fn server_matrix() -> Vec<StreamingServerCase> {
-    vec![
-        StreamingServerCase {
-            name: "http_single_process",
-            transport: StreamingTransport::Http,
-            source: StreamingSourceKind::Local,
-            topology: StreamingTopology::SingleProcess,
-            expected_status: "failed",
-        },
-        StreamingServerCase {
-            name: "grpc_single_process",
-            transport: StreamingTransport::Grpc,
-            source: StreamingSourceKind::Local,
-            topology: StreamingTopology::SingleProcess,
-            expected_status: "failed",
-        },
-        StreamingServerCase {
-            name: "http_cellular_two_cells",
-            transport: StreamingTransport::Http,
-            source: StreamingSourceKind::Local,
-            topology: StreamingTopology::Cellular { cells: 2 },
-            expected_status: "failed",
-        },
-    ]
+/// One completed child invocation.
+struct CompletedChild {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
 }
 
-/// Unused today; retained so the matrix can key rows by name.
-pub type CaseIndex = HashMap<&'static str, StreamingServerCase>;
+/// A child `aiperf` process that is always joined, even when a row panics.
+struct SupervisedChild {
+    child: Child,
+    stdout: Option<std::thread::JoinHandle<String>>,
+    stderr: Option<std::thread::JoinHandle<String>>,
+}
 
-/// One committed source partition. Opaque to this harness by design.
+impl SupervisedChild {
+    fn spawn(args: &[String]) -> Self {
+        let mut child = Command::new(exec_binary())
+            .args(args)
+            .env("HF_HUB_OFFLINE", "1")
+            .env("TRANSFORMERS_OFFLINE", "1")
+            .env("PYTHONUNBUFFERED", "1")
+            .env("MALLOC_ARENA_MAX", "2")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn aiperf");
+        // Drain both pipes on their own threads: a child that fills a 64 KiB
+        // pipe buffer while the row is parked would otherwise deadlock against
+        // a reader that never runs.
+        let stdout = child.stdout.take().map(drain);
+        let stderr = child.stderr.take().map(drain);
+        Self {
+            child,
+            stdout,
+            stderr,
+        }
+    }
+
+    /// Deliver SIGINT, escalate to SIGKILL after the grace window, then join.
+    fn terminate(mut self, grace: Duration) -> CompletedChild {
+        signal_interrupt(&self.child);
+        let started = Instant::now();
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if started.elapsed() > grace => {
+                    let _ = self.child.kill();
+                    break;
+                }
+                Ok(None) => std::thread::sleep(POLL_INTERVAL),
+                Err(_) => break,
+            }
+        }
+        self.join()
+    }
+
+    fn join(mut self) -> CompletedChild {
+        let status = self.child.wait().ok();
+        let stdout = self.stdout.take().map(join_drain).unwrap_or_default();
+        let stderr = self.stderr.take().map(join_drain).unwrap_or_default();
+        CompletedChild {
+            exit_code: status.as_ref().and_then(ExitStatus::code).unwrap_or(-1),
+            stdout,
+            stderr,
+        }
+    }
+}
+
+impl Drop for SupervisedChild {
+    fn drop(&mut self) {
+        // Never leak a child, even when a row panicked mid-run.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn drain<R: Read + Send + 'static>(mut reader: R) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = reader.read_to_end(&mut buffer);
+        String::from_utf8_lossy(&buffer).into_owned()
+    })
+}
+
+fn join_drain(handle: std::thread::JoinHandle<String>) -> String {
+    handle.join().unwrap_or_default()
+}
+
+/// Send SIGINT so the product's own handler can flush partial artifacts.
+#[cfg(unix)]
+fn signal_interrupt(child: &Child) {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    let _ = kill(Pid::from_raw(child.id() as i32), Signal::SIGINT);
+}
+
+/// Non-unix stub: the caller falls through to the hard `kill()` escalation.
+#[cfg(not(unix))]
+fn signal_interrupt(_child: &Child) {}
+
+/// Two committed source partitions whose sessions span the boundary.
+///
+/// The bytes are opaque to this harness on purpose: the row's job is to prove
+/// they never reach an artifact or the wire, not to reimplement the format's
+/// decoder.
 const PARTITION_A: &[u8] = b"aiperf-streaming-fixture-partition-a-SOURCESECRET\n";
+const PARTITION_B: &[u8] = b"aiperf-streaming-fixture-partition-b-SOURCESECRET\n";
 
-/// Byte sequences that must never appear in an artifact or a child stream.
+/// Byte sequences that must never appear in any artifact or child stream.
 pub const LEAK_NEEDLES: &[&str] = &["SOURCESECRET"];

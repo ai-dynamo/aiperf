@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Local finite source replayed by the `conversation` session program over the
+# native gRPC KServe transport against `aiperf-mock-server`, under a periodic
+# `local` checkpoint backend. The gRPC arm of the transport-invariance pair; its
+# HTTP twin (`http_local_conversation.yaml`) differs only in the transport and
+# endpoint blocks, so any difference in outcome is attributable to the
+# transport.
+#
+# Rendered tokens: $ARTIFACT_DIR, $SOURCE_ROOT, $CHECKPOINT_ROOT, $ENDPOINT_URL.
+schemaVersion: "2.0"
+benchmark:
+  model: openai/gpt-oss-120b
+  tokenizer: {name: cl100k_base}
+  transport:
+    type: grpc
+  endpoint:
+    type: kserve_v2_infer
+    url: $ENDPOINT_URL
+    streaming: false
+    waitForModelTimeout: 0.0
+  dataset_streams:
+    items:
+      - id: replay
+        source:
+          id: local
+          config:
+            root: $SOURCE_ROOT
+            mode:
+              kind: finite
+            suffix: .parquet
+            max_partition_bytes: 16777216
+            max_scan_entries: 256
+        format:
+          id: baseten_trace
+        session_program:
+          id: conversation
+        limits:
+          acquired_partitions: 4
+          decoded_fragments: 64
+          decoded_bytes: 1048576
+          state_memory: 1048576
+          state_disk: 0
+  shadow_replay:
+    stream: replay
+    actions:
+      request:
+        id: scheduled_request
+    time:
+      mode: relative
+    ordering:
+      watermark: source_order
+      late: drop
+    overload:
+      mode: backpressure
+    checkpoint:
+      mode: periodic
+      interval_seconds: 1.0
+      backend:
+        id: local
+        config:
+          root: $CHECKPOINT_ROOT
+          max_transactions: 4
+          max_transaction_bytes: 8388608
+          max_prepared_indexes: 8
+          max_prepared_index_bytes: 1048576
+          max_storage_objects: 1024
+          max_storage_bytes: 67108864
+          max_result_summaries: 256
+          max_result_summary_bytes: 1048576
+          max_reads: 8
+          max_read_bytes: 8388608
+          gc_page_items: 64
+          prepare_lease_ns: 30000000000
+          max_blocking_jobs: 4
+          max_blocking_input_bytes: 8388608
+          max_blocking_output_bytes: 8388608
+  phases:
+    type: concurrency
+    requests: 8
+    concurrency: 2
+  artifacts:
+    dir: $ARTIFACT_DIR
