@@ -59,6 +59,30 @@ ALLOWED_MODIFIED: dict[str, str] = {
         "adds the _RngSettings group (AIPERF_RNG_BACKEND) that random_generator "
         "reads. Project convention puts tunables here rather than in service code."
     ),
+    "src/aiperf/config/templates/gpu_telemetry.yaml": (
+        "fix: isl/osl must nest under dataset.prompts; DatasetSection uses "
+        "deny_unknown_fields and rejects top-level isl/osl"
+    ),
+    "src/aiperf/config/templates/http_trace_metrics.yaml": (
+        "fix: isl/osl must nest under dataset.prompts; DatasetSection uses "
+        "deny_unknown_fields and rejects top-level isl/osl"
+    ),
+    "src/aiperf/config/templates/latency_test.yaml": (
+        "fix: isl/osl must nest under dataset.prompts; DatasetSection uses "
+        "deny_unknown_fields and rejects top-level isl/osl"
+    ),
+    "src/aiperf/config/templates/ramping.yaml": (
+        "fix: isl/osl must nest under dataset.prompts; DatasetSection uses "
+        "deny_unknown_fields and rejects top-level isl/osl"
+    ),
+    "src/aiperf/config/templates/time_based_soak.yaml": (
+        "fix: isl/osl must nest under dataset.prompts; DatasetSection uses "
+        "deny_unknown_fields and rejects top-level isl/osl"
+    ),
+    "src/aiperf/config/templates/warmup_profiling.yaml": (
+        "fix: isl/osl must nest under dataset.prompts; DatasetSection uses "
+        "deny_unknown_fields and rejects top-level isl/osl"
+    ),
 }
 
 # Directory prefixes from origin/main this branch is permitted to modify. Prefer
@@ -124,9 +148,7 @@ TRACKED_ROOTS = ("src/", "tests/")
 
 def _git(*args: str) -> str:
     """Run a git command and return stdout, raising on failure."""
-    result = subprocess.run(
-        ["git", *args], capture_output=True, text=True, check=True
-    )
+    result = subprocess.run(["git", *args], capture_output=True, text=True, check=True)
     return result.stdout
 
 
@@ -195,7 +217,9 @@ def check(base: str, head: str) -> list[str]:
 def main() -> int:
     """Check the Python parity invariant and report any violations."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="origin/main", help="base ref to compare against")
+    parser.add_argument(
+        "--base", default="origin/main", help="base ref to compare against"
+    )
     parser.add_argument("--head", default="HEAD", help="ref to check")
     args = parser.parse_args()
 

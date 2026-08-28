@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Built-in streaming source registration.
+//! Concrete streaming source implementations and their built-in registration.
 
+pub mod hf_rows;
 pub mod local;
 
 use super::source::StreamingDatasetSourceFactory;

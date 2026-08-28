@@ -11,12 +11,12 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 
 use super::{
-    budget::BudgetLease,
-    checkpoint::StreamingCheckpointParticipant,
+    budget::{BudgetLease, StreamingResourceBudget},
+    checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
     failure::StreamingIssueReporterHandle,
     identity::{ContentDigest, ImmutableObjectIdentity},
     source::{
-        AcquiredPartition, PartitionAccessKind, SourceFrontier, SourceSeal,
+        AcquiredPartition, AcquisitionBudget, PartitionAccessKind, SourceFrontier, SourceSeal,
         StreamingSourceDescriptor,
     },
     unit::{EventTimeUtc, StreamingSessionFragment},
@@ -100,10 +100,19 @@ where
 /// Host-owned format preparation context.
 #[derive(Clone, Debug)]
 pub struct StreamingFormatPrepareContext {
+    /// Logical run every format-minted reliability issue is bound to.
+    ///
+    /// A decoder's first record quarantine can precede the first checkpoint
+    /// barrier, so the run identity cannot be discovered from a barrier.
+    pub run: StreamRunIdentity,
     /// Semantic namespace of the selected stream.
     pub stream_semantic_digest: ContentDigest,
     /// Host-owned reliability issue reporting boundary.
     pub issue_reporter: StreamingIssueReporterHandle,
+    /// Budget every emitted fragment and retained decoder cursor is charged against.
+    pub fragment_budget: StreamingResourceBudget,
+    /// Budget bounding the bytes a decoder reads from an acquired partition.
+    pub acquisition_budget: AcquisitionBudget,
 }
 
 /// Startup format validation and preparation contract.

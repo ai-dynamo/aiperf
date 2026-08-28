@@ -18,6 +18,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
@@ -748,9 +749,11 @@ async fn host_stop_wakes_pending_source_without_issue_or_seal() {
     let gate = Arc::new(ScriptGate::default());
     let factory = ScriptedSourceFactory { gate };
     let reporter = CountingReporter::new(run_identity());
+    let run = run_identity();
     let context = StreamingSourcePrepareContext {
-        run: run_identity(),
-        stream_semantic_digest: ContentDigest::from_bytes([0x51; 32]),
+        run,
+        stream_semantic_digest: ContentDigest::from_bytes(*run.logical_replay_run().as_bytes()),
+        clock: RealClock::new(),
         acquisition_budget: harness_acquisition_budget(),
         issue_reporter: reporter.handle(),
     };
@@ -853,6 +856,7 @@ async fn scripted_format_satisfies_the_shared_conformance_harness() {
         &factory,
         Box::new(CountingReporter::new(run_identity())),
         FormatConformanceCases {
+            run: run_identity(),
             authored: raw(serde_json::json!({ "fragments": 1 })),
             rejected_authored: raw(serde_json::json!({ "fragments": 1, "extra": true })),
             source_descriptor: &SOURCE_DESCRIPTOR,
@@ -864,6 +868,7 @@ async fn scripted_format_satisfies_the_shared_conformance_harness() {
                 max_bytes: 4096,
             },
             fragment_budget,
+            acquisition_budget: harness_acquisition_budget(),
             expected_fragment_count: 1,
             frontier: SourceFrontier {
                 through: SourcePosition::new(1),

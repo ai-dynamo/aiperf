@@ -11,8 +11,10 @@ SPDX-License-Identifier: Apache-2.0
 graph inputs into node programs and executes them as a deterministic async
 dataflow over the shared `Clock` seam. Its sole product entry point is the
 `graph` workload, selected when the dataset graph source is `dag_jsonl`,
-`weka_trace`, `dynamo_trace`, `agent_recording`, `conditional_graph`, or
-`otlp_genai`.
+`conditional_graph`, `weka_trace`, `dynamo_trace`, `aiperf_trace`, `tracelab`,
+`agent_recording`, or `otlp_genai` (`BUILTIN_GRAPH_FORMATS`,
+`rust/runtime/src/config/model/workload_kind.rs:28`; the six-element
+`GRAPH_FORMATS` at `:19` is the frozen legacy public subset).
 
 ## Built
 

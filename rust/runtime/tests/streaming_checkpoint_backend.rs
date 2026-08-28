@@ -1209,7 +1209,10 @@ async fn verified_current_reader_publicly_mints_move_only_begin_predecessor() {
         .stage_participant(support::prepared_participant(run, 2).await)
         .await
         .unwrap();
-    transaction.stage_results(&mut Vec::new(), &mut None).await.unwrap();
+    transaction
+        .stage_results(&mut Vec::new(), &mut None)
+        .await
+        .unwrap();
     let second = transaction
         .commit(support::metadata_with_lineage(Some(first.generation()), 2))
         .await

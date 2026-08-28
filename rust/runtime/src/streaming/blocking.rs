@@ -150,6 +150,12 @@ impl<T> BudgetedBlockingOutput<T> {
         drop(_lease);
         value
     }
+
+    /// Consume the wrapper and return the inner value, releasing the budget lease.
+    #[must_use]
+    pub fn into_value(self) -> T {
+        self.into_inner()
+    }
 }
 
 impl<T> Deref for BudgetedBlockingOutput<T> {

@@ -11,11 +11,11 @@
 //! high-throughput live execution; use [`SimClock`](crate::clock::sim_clock) for
 //! reproducible runs.
 
-use crate::clock::clock::Clock;
+use crate::clock::clock::{Clock, ClockAnchorError, UtcMonotonicAnchor};
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Copyable monotonic origin shared by cooperating real-clock runtimes.
 ///
@@ -74,6 +74,61 @@ impl Clock for RealClock {
 
     fn sleep(self: Rc<Self>, duration_ns: i64) -> Pin<Box<dyn Future<Output = ()>>> {
         Box::pin(sleep_ns(duration_ns))
+    }
+
+    /// The product's only `SystemTime` read.
+    ///
+    /// Brackets the wall-clock read between two monotonic reads so the pairing
+    /// carries its own error bar instead of pretending the two readings are
+    /// simultaneous: the wall instant is paired with the bracket midpoint and
+    /// the half-bracket becomes the anchor's uncertainty. `now_ns` here is an
+    /// offset from this clock's shared [`RealClockAnchor`], so the anchored
+    /// instant sits on the same timeline as every scheduler and measurement
+    /// timestamp in the run.
+    fn capture_utc_anchor(
+        &self,
+        authored_utc_epoch_ns: Option<i64>,
+        max_uncertainty_ns: i64,
+    ) -> Result<UtcMonotonicAnchor, ClockAnchorError> {
+        if max_uncertainty_ns < 0 {
+            return Err(ClockAnchorError::InvalidUncertainty(max_uncertainty_ns));
+        }
+        // Fail closed rather than ignore: silently discarding an authored epoch
+        // would make the run's UTC labels differ from what the user wrote.
+        if authored_utc_epoch_ns.is_some() {
+            return Err(ClockAnchorError::AuthoredEpochUnsupported);
+        }
+
+        let first_ns = self.now_ns();
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ClockAnchorError::BeforeUnixEpoch(0))?;
+        let second_ns = self.now_ns();
+
+        if second_ns < first_ns {
+            return Err(ClockAnchorError::MonotonicRegression {
+                first_ns,
+                second_ns,
+            });
+        }
+        let nanos = wall.as_nanos();
+        let utc_ns = i64::try_from(nanos).map_err(|_| ClockAnchorError::EpochOutOfRange(nanos))?;
+
+        let bracket_ns = second_ns
+            .checked_sub(first_ns)
+            .ok_or(ClockAnchorError::AnchorArithmeticOverflow)?;
+        let uncertainty_ns = bracket_ns / 2;
+        if uncertainty_ns > max_uncertainty_ns {
+            return Err(ClockAnchorError::UncertaintyExceeded {
+                observed_ns: uncertainty_ns,
+                max_ns: max_uncertainty_ns,
+            });
+        }
+        let monotonic_ns = first_ns
+            .checked_add(uncertainty_ns)
+            .ok_or(ClockAnchorError::AnchorArithmeticOverflow)?;
+
+        UtcMonotonicAnchor::new(utc_ns, monotonic_ns, uncertainty_ns)
     }
 }
 
@@ -217,5 +272,43 @@ mod tests {
         assert!(first.now_ns() >= 1_000_000);
         assert!(second.now_ns() >= 1_000_000);
         assert!(first.now_ns().abs_diff(second.now_ns()) < 5_000_000);
+    }
+
+    /// The anchored monotonic instant lies inside a bracket the caller can
+    /// observe, and the UTC side is a plausible post-2023 wall instant.
+    #[test]
+    fn real_anchor_pairs_utc_with_a_bracketed_monotonic_instant() {
+        let clock = RealClock::new();
+        let before = clock.now_ns();
+        let anchor = clock
+            .capture_utc_anchor(None, 1_000_000_000)
+            .expect("a generous uncertainty budget admits a real anchor");
+        let after = clock.now_ns();
+
+        assert!(anchor.monotonic_ns >= before && anchor.monotonic_ns <= after);
+        assert!(anchor.uncertainty_ns >= 0);
+        assert!(anchor.utc_ns > 1_700_000_000_000_000_000);
+    }
+
+    /// A real clock reads its own UTC and refuses a conflicting authored epoch
+    /// rather than silently discarding it.
+    #[test]
+    fn real_clock_rejects_an_authored_epoch() {
+        let clock = RealClock::new();
+        assert_eq!(
+            clock.capture_utc_anchor(Some(1), 1_000_000),
+            Err(ClockAnchorError::AuthoredEpochUnsupported)
+        );
+    }
+
+    /// A negative budget is rejected before the wall-clock read, identically to
+    /// the virtual default body.
+    #[test]
+    fn negative_max_uncertainty_is_rejected() {
+        let clock = RealClock::new();
+        assert_eq!(
+            clock.capture_utc_anchor(None, -1),
+            Err(ClockAnchorError::InvalidUncertainty(-1))
+        );
     }
 }

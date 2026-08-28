@@ -22,7 +22,7 @@ static GLOBAL: MiMallocShim = MiMallocShim;
 ///
 /// The host compares this with its own `mi_subproc_main()` result to confirm
 /// that host and plugin share one allocator instance.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn plugin_subproc_id() -> MiSubprocId {
     // SAFETY: mi_subproc_main is exported by the provider cdylib and is safe
     // to call after the process has initialized.
@@ -33,7 +33,7 @@ pub extern "C" fn plugin_subproc_id() -> MiSubprocId {
 ///
 /// The caller (host fixture) is responsible for freeing the returned pointer,
 /// which tests cross-boundary deallocation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn plugin_alloc(n: usize) -> *mut u8 {
     let layout = Layout::array::<u8>(n).expect("plugin_alloc: invalid layout");
     // SAFETY: layout is valid; MiMallocShim satisfies the GlobalAlloc contract.
@@ -43,7 +43,7 @@ pub extern "C" fn plugin_alloc(n: usize) -> *mut u8 {
 /// Frees a pointer allocated by the caller with size `n`.
 ///
 /// Used to test the host→plugin deallocation direction.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn plugin_free(ptr: *mut u8, n: usize) {
     if ptr.is_null() {
         return;

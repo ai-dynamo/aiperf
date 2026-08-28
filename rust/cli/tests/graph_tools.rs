@@ -934,10 +934,10 @@ fn static_channel_readiness_reports_scheduler_dispatch_and_completion_routes() {
     for (edge, trigger) in [
         (
             ", delay_after_predecessor_first_token_us: 3.0",
-            "completed: producer",
+            "first-token: producer",
         ),
         (
-            ", delay_after_predecessor_start_us: 20.0, delay_after_predecessor_first_token_us: 5.0",
+            ", delay_after_predecessor_start_us: 20.0",
             "dispatched: producer",
         ),
     ] {
@@ -1305,6 +1305,7 @@ fn graph_help_lists_the_stock_built_in_formats_without_python() {
             "weka_trace",
             "dynamo_trace",
             "aiperf_trace",
+            "tracelab",
             "agent_recording",
             "otlp_genai",
         ]
