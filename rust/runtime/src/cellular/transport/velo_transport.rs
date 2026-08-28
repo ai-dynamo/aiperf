@@ -262,10 +262,7 @@ pub(crate) fn decode_reply(
 pub(crate) fn controller_streaming_session(
     controller: &ConnectedController,
     run_nonce: [u8; 32],
-) -> Result<
-    crate::cellular::streaming_protocol::ControllerStreamingSessionId,
-    CellTransportError,
-> {
+) -> Result<crate::cellular::streaming_protocol::ControllerStreamingSessionId, CellTransportError> {
     Ok(
         crate::engine::cellular_registration::derive_controller_streaming_session(
             &controller.binding()?,
