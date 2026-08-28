@@ -355,6 +355,9 @@ fn open_dir_snapshot(dir: RawFd) -> Result<OwnedFd, i32> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
+// `libc::stat` field widths vary by target and libc; the casts are identities
+// on 64-bit glibc and widening conversions elsewhere.
+#[allow(clippy::unnecessary_cast)]
 fn generation_from_stat(stat: &libc::stat) -> FileGeneration {
     FileGeneration {
         dev: stat.st_dev as u64,
@@ -1763,7 +1766,7 @@ impl DirectoryWatch {
                 .map_err(|_| unavailable())?;
             match guard.try_io(|inner| drain_inotify(inner.get_ref())) {
                 Err(_would_block) => continue,
-                Ok(result) => return result.map(|()| ()).map_err(|_| unavailable()),
+                Ok(result) => return result.map_err(|_| unavailable()),
             }
         }
     }
