@@ -774,7 +774,17 @@ async def local_cluster(
 
     with FileLock(str(lock_path)):
         if await cluster.exists():
-            logger.info(f"Reusing existing cluster: {cluster.name}")
+            # Verify the cluster is actually healthy; the kind registry can list
+            # a cluster whose control-plane container is stopped, which causes
+            # `kind load` to fail with "container is not running".
+            if len(await cluster.get_nodes()) > 0:
+                logger.info(f"Reusing existing cluster: {cluster.name}")
+            else:
+                logger.warning(
+                    f"Cluster {cluster.name} exists but has no ready nodes "
+                    f"(stale/stopped container); force-recreating."
+                )
+                await cluster.create(force=True)
         else:
             await cluster.create(force=not s.reuse_cluster)
 
