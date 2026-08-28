@@ -9,6 +9,7 @@
 
 pub mod model;
 pub mod phase_validate;
+pub mod plugin_id;
 pub mod redact;
 pub mod resolve;
 pub(crate) mod system_prompt;

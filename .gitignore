@@ -37,6 +37,9 @@ profile.html
 # blanket `artifacts/` rule above would otherwise swallow.
 !tools/parity/speed_bench/artifacts/
 !tools/parity/speed_bench/artifacts/**
+# The native-plugin-baseline topology snapshot is a checked-in policy artifact.
+!artifacts/native-plugin-baseline/
+!artifacts/native-plugin-baseline/**
 !tests/unit/plot/fixtures/**/*.jsonl
 coverage.xml
 *.egg-info/

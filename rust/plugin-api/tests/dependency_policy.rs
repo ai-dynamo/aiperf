@@ -248,6 +248,11 @@ struct StandaloneLockPackage {
     version: String,
 }
 
+fn venv_python(repository_root: &Path) -> PathBuf {
+    let candidate = repository_root.join(".venv/bin/python3");
+    if candidate.exists() { candidate } else { PathBuf::from("python3") }
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -834,7 +839,7 @@ fn distribution_exclusion_policy() {
     let repository_root = root.parent().expect("repository root");
     let verifier = root.join("scripts/verify-plugin-test-support-boundaries.py");
     let current_executable = std::env::current_exe().expect("current policy-test executable");
-    let output = Command::new("python3")
+    let output = Command::new(venv_python(repository_root))
         .arg(&verifier)
         .arg(repository_root)
         .arg(current_executable)
@@ -1117,7 +1122,7 @@ fn candidate_inventory_policy() {
     assert_eq!(implementation_leaves, 115);
     assert_eq!(assets, 9);
     assert_eq!(facade_rows, 2);
-    let output = Command::new("python3")
+    let output = Command::new(venv_python(repository_root))
         .args([
             generator.to_str().expect("generator path"),
             repository_root.to_str().expect("repository path"),

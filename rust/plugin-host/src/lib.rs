@@ -12,6 +12,7 @@ pub mod closure;
 pub mod diff;
 pub mod error;
 pub mod freeze;
+pub mod inspect;
 pub mod lock;
 pub mod manifest;
 pub mod normalize;

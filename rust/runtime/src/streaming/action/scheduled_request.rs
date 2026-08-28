@@ -58,8 +58,9 @@ use crate::{
             CommittedParticipantReceipt, CommittedParticipantState, ParticipantInitialization,
             PreparedParticipantState, StreamingCheckpointParticipant,
         },
-        identity::{ActionAttemptId, ContentDigest, RunIncarnationId, SessionOwnershipEpoch,
-            StableActionId},
+        identity::{
+            ActionAttemptId, ContentDigest, RunIncarnationId, SessionOwnershipEpoch, StableActionId,
+        },
         unit::{DatasetActionKind, DatasetActionV1},
     },
 };
@@ -113,11 +114,13 @@ impl Default for AuthoredScheduledRequestConfig {
 }
 
 /// Startup-validated configuration bound to one exact schema.
+///
+/// Public because it is the factory's validate/prepare boundary type; its
+/// fields stay private so the only way to obtain one is to pass validation.
 #[derive(Clone, Debug)]
-struct ValidatedScheduledRequestConfig {
+pub struct ValidatedScheduledRequestConfig {
     schema: DatasetActionSchema,
     max_active_actions: usize,
-    max_update_bytes: usize,
     is_streaming: bool,
 }
 
@@ -341,12 +344,11 @@ impl StreamingActionSubmitter for ScheduledRequestSubmitter {
         });
 
         let complete_shared = Rc::clone(&self.shared);
-        let on_complete: crate::scheduled::CompletionHandler =
-            Box::new(move |_credit, outcome| {
-                let disposition = terminal_disposition(&outcome.terminal);
-                complete_shared.push_terminal(action_id, disposition);
-                Box::pin(async {})
-            });
+        let on_complete: crate::scheduled::CompletionHandler = Box::new(move |_credit, outcome| {
+            let disposition = terminal_disposition(&outcome.terminal);
+            complete_shared.push_terminal(action_id, disposition);
+            Box::pin(async {})
+        });
 
         let (control, receiver) = action_execution_control();
         let is_issued =
@@ -387,11 +389,13 @@ fn terminal_disposition(
 /// Render a 32-byte identity as stable lowercase hex.
 fn hex_identity(bytes: &[u8; 32]) -> String {
     use std::fmt::Write;
-    bytes.iter().fold(String::with_capacity(64), |mut text, byte| {
-        // Writing to a String is infallible; the result is discarded knowingly.
-        let _ = write!(text, "{byte:02x}");
-        text
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(64), |mut text, byte| {
+            // Writing to a String is infallible; the result is discarded knowingly.
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
 }
 
 /// Sole mutable event stream, and a stable checkpoint participant.
@@ -403,6 +407,11 @@ struct ScheduledRequestDriver {
 }
 
 impl ScheduledRequestDriver {
+    /// Take the next queued event, releasing the borrow before returning.
+    fn pop_front_event(&self) -> Option<ActionExecutionEvent> {
+        self.shared.events.borrow_mut().pop_front()
+    }
+
     /// Count one terminal receipt as it leaves the queue.
     fn observe(&self, event: &ActionExecutionEvent) -> Result<(), ActionExecutionError> {
         if matches!(event, ActionExecutionEvent::Terminal(_)) {
@@ -423,8 +432,7 @@ impl StreamingActionDriver for ScheduledRequestDriver {
     async fn next_event(&mut self) -> Result<ActionExecutionEvent, ActionExecutionError> {
         loop {
             // Pop before awaiting so a dropped future never consumes an event.
-            let next = self.shared.events.borrow_mut().pop_front();
-            if let Some(event) = next {
+            if let Some(event) = self.pop_front_event() {
                 self.observe(&event)?;
                 return Ok(event);
             }
@@ -437,10 +445,9 @@ impl StreamingActionDriver for ScheduledRequestDriver {
         // truthful, so wait for the in-flight map to empty rather than
         // reporting whatever happens to be queued right now.
         loop {
-            while let Some(event) = {
-                let next = self.shared.events.borrow_mut().pop_front();
-                next
-            } {
+            // The borrow is taken and released inside `pop_front_event` so it is
+            // never held across the `observe` call or the await below.
+            while let Some(event) = self.pop_front_event() {
                 self.observe(&event)?;
             }
             if self.shared.inflight.borrow().is_empty() {
@@ -631,7 +638,6 @@ impl ScheduledRequestActionSinkFactory {
         Ok(ValidatedScheduledRequestConfig {
             schema: action.clone(),
             max_active_actions: authored.max_active_actions,
-            max_update_bytes: authored.max_update_bytes,
             is_streaming: authored.is_streaming,
         })
     }

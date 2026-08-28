@@ -40,9 +40,9 @@ use crate::{
             BudgetedCheckpointBytes, CheckpointBackendBudgetKind, CheckpointEpoch, CheckpointError,
             CheckpointGeneration, CheckpointParticipantId, CommittedCheckpointGeneration,
             CommittedParticipantState, CurrentV4ParticipantStateContext,
-            DecodedCheckpointGeneration, LegacyParticipantState,
-            LegacyV3CheckpointGeneration, ParticipantStateDescriptor, PreparedParticipantState,
-            StreamRunIdentity, decode_versioned_checkpoint_generation,
+            DecodedCheckpointGeneration, LegacyParticipantState, LegacyV3CheckpointGeneration,
+            ParticipantStateDescriptor, PreparedParticipantState, StreamRunIdentity,
+            decode_versioned_checkpoint_generation,
         },
         checkpoint_backend::{
             CheckpointBackendPlacement, CheckpointBackendPrepareContext,

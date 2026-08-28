@@ -223,6 +223,15 @@ fn resolve_native_execution(
         // every workload is `dynosim_or_unsupported!`, which supplies the
         // feature-off rejection.
         Transport::DynosimOffline(_) | Transport::DynosimOnline(_) => Ok(None),
+
+        // Plugin transports are resolved at preparation time from the frozen
+        // plugin universe; reaching this arm means preparation did not produce
+        // a concrete factory, which is a configuration error.
+        Transport::Plugin { id, .. } => anyhow::bail!(
+            "plugin transport {:?} is not registered; ensure the plugin is \
+             loaded before starting a benchmark run",
+            id
+        ),
     }
 }
 
@@ -1936,6 +1945,8 @@ impl PreparedRunnerOperation for PreparedNativeOperation {
             report_facts: self.report_facts,
             run_metadata: self.run_metadata,
             report_commit: None,
+            #[cfg(feature = "streaming")]
+            report_retry: None,
         })
     }
 }

@@ -29,15 +29,29 @@ pub enum Transport {
     DryRun(DryRunConfig),
     /// Native persistent WebSocket transport.
     Websocket(WebSocketTransportConfig),
+    /// Plugin-provided transport, identified by plugin-registered ID.
+    ///
+    /// The `id` selects a transport factory registered by a loaded plugin; the
+    /// `parameters` value is passed opaquely to that factory. Static validation
+    /// accepts any syntactically valid ID; registry lookup is deferred to
+    /// execution preparation when the frozen plugin universe is available.
+    Plugin {
+        /// Plugin-registered transport ID (e.g. `"vendor/my-transport:1.0"`).
+        id: String,
+        /// Freeform parameters forwarded to the plugin transport factory.
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        parameters: serde_json::Value,
+    },
 }
 
 impl Transport {
     /// Canonical wire discriminant id for this transport (the `type` value).
     ///
-    /// This is the typed source of truth for the id the runner keys component
-    /// selection on (`match id.as_str()`), replacing string extraction from the
-    /// serialized value. Matches the serde `rename_all = "snake_case"` tag.
-    pub const fn canonical_id(&self) -> &'static str {
+    /// For built-in transports this matches the serde `rename_all = "snake_case"`
+    /// tag and the factory registry key. For the `Plugin` variant the caller
+    /// receives `"plugin"` and must consult the `id` field for the actual
+    /// plugin-registered factory key.
+    pub fn canonical_id(&self) -> &str {
         match self {
             Transport::Http => "http",
             Transport::Grpc => "grpc",
@@ -45,6 +59,7 @@ impl Transport {
             Transport::DynosimOnline(_) => "dynosim_online",
             Transport::DryRun(_) => "dry_run",
             Transport::Websocket(_) => "websocket",
+            Transport::Plugin { .. } => "plugin",
         }
     }
 
@@ -64,6 +79,11 @@ impl Transport {
     /// Whether this selects the persistent WebSocket transport.
     pub fn is_websocket(&self) -> bool {
         matches!(self, Transport::Websocket(_))
+    }
+
+    /// Whether this is a plugin-provided transport.
+    pub fn is_plugin(&self) -> bool {
+        matches!(self, Transport::Plugin { .. })
     }
 }
 
@@ -724,6 +744,10 @@ mod tests {
             Transport::DynosimOnline(DynosimConfig::default()),
             Transport::DryRun(DryRunConfig::default()),
             Transport::Websocket(WebSocketTransportConfig::default()),
+            Transport::Plugin {
+                id: "vendor/test:1.0".to_owned(),
+                parameters: serde_json::Value::Null,
+            },
         ];
 
         let mut covered = std::collections::BTreeSet::new();
@@ -735,6 +759,7 @@ mod tests {
                 Transport::DynosimOnline(_) => "dynosim_online",
                 Transport::DryRun(_) => "dry_run",
                 Transport::Websocket(_) => "websocket",
+                Transport::Plugin { .. } => "plugin",
             };
             let wire_tag = serde_json::to_value(transport).unwrap()["type"]
                 .as_str()
@@ -754,7 +779,7 @@ mod tests {
         assert_eq!(covered.len(), cases.len(), "duplicate sample variants");
         assert_eq!(
             covered.len(),
-            6,
+            7,
             "add a sample for the new Transport variant"
         );
     }

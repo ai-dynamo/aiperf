@@ -35,16 +35,10 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target_os.as_str() {
         "linux" | "android" => {
-            println!(
-                "cargo:rustc-link-arg=-Wl,-rpath,{}",
-                profile_dir.display()
-            );
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", profile_dir.display());
         }
         "macos" | "ios" => {
-            println!(
-                "cargo:rustc-link-arg=-Wl,-rpath,{}",
-                profile_dir.display()
-            );
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", profile_dir.display());
         }
         _ => {
             // Windows: the provider DLL must be in the same directory as the

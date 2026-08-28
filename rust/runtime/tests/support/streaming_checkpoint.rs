@@ -380,6 +380,42 @@ pub async fn commit_with_segment(
         .await
 }
 
+/// Commit one generation with a result segment against any backend.
+///
+/// The memory-specific helper above returns the concrete transaction type; this
+/// one drives the erased trait so a second backend can reuse the same shape.
+pub async fn commit_with_segment_on(
+    backend: &dyn aiperf_runtime::streaming::checkpoint_backend::StreamingCheckpointBackend,
+    run: StreamRunIdentity,
+    previous: Option<CheckpointGeneration>,
+    epoch: u64,
+) -> Result<CommittedCheckpointGeneration, CheckpointError> {
+    let expected = match previous.as_ref() {
+        None => None,
+        Some(previous) => {
+            let opened = backend
+                .open_latest(&run, &expectations(run))
+                .await?
+                .ok_or_else(|| CheckpointError::GenerationConflict {
+                    expected: Some(previous.clone()),
+                    actual: None,
+                })?;
+            Some(current_v4_predecessor(&opened, previous)?)
+        }
+    };
+    let mut transaction = backend
+        .begin_generation(run, expected, expectations(run))
+        .await?;
+    transaction
+        .stage_participant(prepared_participant(run, epoch).await)
+        .await?;
+    let mut partitions = vec![result_partition(run, epoch).await];
+    transaction.stage_results(&mut partitions, &mut None).await?;
+    transaction
+        .commit(metadata_with_lineage(previous, epoch))
+        .await
+}
+
 pub fn current_v4_predecessor(
     opened: &LeasedCheckpointGeneration,
     expected: &CheckpointGeneration,
@@ -758,11 +794,24 @@ fn legacy_result_index_root(encoded: &[u8]) -> ContentDigest {
     ContentDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 
+/// Backend-neutral view of one run's authoritative publication state.
+///
+/// The conformance helper only needs equality across a refused publication, so
+/// backend-specific inventory and usage are rendered into one opaque string
+/// rather than forcing every backend to expose the memory backend's types.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicationAuthoritySnapshot {
     generation: Option<CheckpointGeneration>,
-    inventory: ImmutableObjectInventory,
-    usage: MemoryLiveBudgetUsage,
+    storage: String,
+}
+
+impl PublicationAuthoritySnapshot {
+    pub fn new(generation: Option<CheckpointGeneration>, storage: String) -> Self {
+        Self {
+            generation,
+            storage,
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -857,11 +906,14 @@ impl PublicationBackendFixture for MemoryPublicationBackendFixture {
             .await
             .expect("open memory head")
             .map(|reader| reader.generation().clone());
-        PublicationAuthoritySnapshot {
+        PublicationAuthoritySnapshot::new(
             generation,
-            inventory: self.backend.immutable_object_inventory(&run),
-            usage: self.backend.live_budget_usage(),
-        }
+            format!(
+                "{:?}|{:?}",
+                self.backend.immutable_object_inventory(&run),
+                self.backend.live_budget_usage()
+            ),
+        )
     }
 
     fn reset_effect_counter(&self) {
@@ -1166,7 +1218,6 @@ pub async fn issue_receipt_partition(
 
 use aiperf_runtime::streaming::{
     checkpoint_backend::StreamingCheckpointBackend,
-    failure::{ResultExportError, ResultExportFailureCode},
     reliability::{
         PreparedExportAttemptFailure, PreparedExportReceiptPersistence, ResultSinkAttemptOutcome,
         StreamingReliabilityError,
@@ -1562,10 +1613,7 @@ impl DeliveryFixture {
         DeliveryRestartRequest {
             mode: self.mode,
             capability: self.capability,
-            cut: self
-                .mode
-                .has_authoritative_results()
-                .then_some(&self.cut),
+            cut: self.mode.has_authoritative_results().then_some(&self.cut),
             result_index_root: self
                 .mode
                 .has_authoritative_results()
@@ -1607,5 +1655,558 @@ pub fn delivery_fixture(
         capability,
         cut: cut_at(DELIVERY_CUT_SEQUENCE),
         binding: delivery_binding(),
+    }
+}
+
+// ── Task 5F2: conditional object-store checkpoint fixtures ───────────────────
+
+#[cfg(feature = "streaming-s3")]
+pub use object_store_support::*;
+
+#[cfg(feature = "streaming-s3")]
+mod object_store_support {
+    use super::{
+        commit_with_segment_on, current_v4_predecessor, expectations, legacy_fixture_budget,
+        legacy_v3_fixture, prepared_participant, run_id, PublicationAuthoritySnapshot,
+        PublicationBackendFixture,
+    };
+    use aiperf_runtime::streaming::{
+        budget::{BudgetLimits, StreamingResourceBudget},
+        checkpoint::{
+            CheckpointEpoch, CheckpointError, CheckpointGeneration, CommittedCheckpointGeneration,
+            StreamRunIdentity,
+        },
+        checkpoint_backend::{
+            CheckpointGenerationExpectations, StreamingCheckpointBackend,
+            StreamingGenerationTransaction,
+        },
+        checkpoints::object_store::{
+            immutable_object_key, stale_writer_error, BudgetOwnedObjectChunk,
+            BudgetOwnedObjectPage, BudgetOwnedObjectReader, ConditionalObjectStore,
+            ObjectCheckpointBackend, ObjectCheckpointLimits, ObjectKey, ObjectListBudget,
+            ObjectListCursor, ObjectMetadata, ObjectReadBudget, ObjectReadRange, ObjectVersion,
+            PointerObject,
+        },
+        identity::ContentDigest,
+    };
+    use async_trait::async_trait;
+    use bytes::Bytes;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::{BTreeMap, BTreeSet},
+        num::NonZeroUsize,
+        rc::Rc,
+    };
+
+    /// Prefix every object-store fixture writes under.
+    pub fn object_test_prefix() -> ObjectKey {
+        ObjectKey::new("aiperf-test/checkpoints")
+    }
+
+    fn nonzero(value: usize) -> NonZeroUsize {
+        NonZeroUsize::new(value).expect("nonzero test bound")
+    }
+
+    /// Limits generous enough that only deliberate cases hit a bound.
+    pub fn object_backend_limits() -> ObjectCheckpointLimits {
+        let limits = BudgetLimits {
+            max_items: 256,
+            max_bytes: 1_048_576,
+        };
+        ObjectCheckpointLimits {
+            transactions: limits,
+            prepared_indexes: limits,
+            storage: limits,
+            result_summaries: limits,
+            reads: limits,
+            max_chunk_bytes: nonzero(64 * 1024),
+            list: ObjectListBudget {
+                max_items: nonzero(256),
+                max_metadata_bytes: nonzero(1_048_576),
+            },
+        }
+    }
+
+    pub fn object_io_budget(bytes: usize) -> usize {
+        bytes
+    }
+
+    pub fn read_budget(max_chunk_bytes: usize) -> ObjectReadBudget {
+        ObjectReadBudget { max_chunk_bytes }
+    }
+
+    /// Build one backend over the supplied fake store.
+    pub fn object_backend(store: FakeConditionalObjectStore) -> ObjectCheckpointBackend {
+        ObjectCheckpointBackend::new(Rc::new(store), object_test_prefix(), object_backend_limits())
+            .expect("valid object checkpoint backend")
+    }
+
+    #[derive(Default)]
+    struct FakeState {
+        objects: BTreeMap<ObjectKey, (ObjectVersion, Bytes)>,
+        read_progress: BTreeMap<(ObjectKey, ObjectVersion), u64>,
+        verified: BTreeSet<(ObjectKey, ObjectVersion)>,
+        next_version: u64,
+    }
+
+    /// Deterministic in-process conditional object store.
+    ///
+    /// Only the properties the backend contract depends on are modelled: exact
+    /// conditional pointer replacement, content-addressed immutable writes, and
+    /// bounded ranged reads. Everything else — durability, latency, eventual
+    /// consistency — is deliberately absent so a failing test names a contract
+    /// violation rather than a simulation artifact.
+    #[derive(Clone)]
+    pub struct FakeConditionalObjectStore {
+        state: Rc<RefCell<FakeState>>,
+        retention: StreamingResourceBudget,
+        allocated: Rc<Cell<usize>>,
+        cas_calls: Rc<Cell<u64>>,
+        effects: Rc<Cell<u64>>,
+        uploads: Rc<Cell<u64>>,
+        fail_upload_at: Rc<Cell<Option<u64>>>,
+        declared_length: Option<u64>,
+    }
+
+    impl std::fmt::Debug for FakeConditionalObjectStore {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("FakeConditionalObjectStore")
+                .field("objects", &self.state.borrow().objects.len())
+                .finish()
+        }
+    }
+
+    impl FakeConditionalObjectStore {
+        pub fn new(retained_bytes: usize) -> Self {
+            Self {
+                state: Rc::new(RefCell::new(FakeState::default())),
+                retention: StreamingResourceBudget::new(BudgetLimits {
+                    max_items: 1_024,
+                    max_bytes: retained_bytes.max(1),
+                })
+                .expect("valid fake retention budget"),
+                allocated: Rc::new(Cell::new(0)),
+                cas_calls: Rc::new(Cell::new(0)),
+                effects: Rc::new(Cell::new(0)),
+                uploads: Rc::new(Cell::new(0)),
+                fail_upload_at: Rc::new(Cell::new(None)),
+                declared_length: None,
+            }
+        }
+
+        /// Seed one pointer whose listed length is a hostile declaration.
+        pub fn declaring_length(length: usize) -> Self {
+            let store = Self::new(64 * 1024);
+            let key = ObjectKey::new(format!("{}/pointers/hostile", object_test_prefix().as_str()));
+            store.state.borrow_mut().objects.insert(
+                key,
+                (ObjectVersion::new("v-hostile"), Bytes::from_static(b"{}")),
+            );
+            Self {
+                declared_length: Some(u64::try_from(length).unwrap_or(u64::MAX)),
+                ..store
+            }
+        }
+
+        pub fn allocated_bytes(&self) -> usize {
+            self.allocated.get()
+        }
+
+        pub fn pointer_cas_calls(&self) -> u64 {
+            self.cas_calls.get()
+        }
+
+        pub fn effects(&self) -> u64 {
+            self.effects.get()
+        }
+
+        pub fn reset_counters(&self) {
+            self.allocated.set(0);
+            self.cas_calls.set(0);
+            self.effects.set(0);
+        }
+
+        pub fn arm_upload_failure(&self, nth: u64) {
+            self.fail_upload_at.set(Some(nth));
+        }
+
+        pub fn upload_attempts(&self) -> u64 {
+            self.uploads.get()
+        }
+
+        /// Render every retained object and pointer for snapshot comparison.
+        pub fn state_fingerprint(&self) -> String {
+            let state = self.state.borrow();
+            state
+                .objects
+                .iter()
+                .map(|(key, (version, bytes))| {
+                    format!("{}@{}#{}", key.as_str(), version.as_str(), bytes.len())
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+
+        /// Every object the current pointer names must have been read back whole.
+        pub fn current_pointer_references_only_verified_objects(&self) -> bool {
+            let state = self.state.borrow();
+            let pointer_prefix = format!("{}/pointers/", object_test_prefix().as_str());
+            let mut pointers = state
+                .objects
+                .iter()
+                .filter(|(key, _)| key.as_str().starts_with(&pointer_prefix));
+            let Some((_, (_, bytes))) = pointers.next() else {
+                return false;
+            };
+            let Ok(document) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+                return false;
+            };
+            let (Some(key), Some(version)) = (
+                document.get("generation_object").and_then(|v| v.as_str()),
+                document.get("generation_version").and_then(|v| v.as_str()),
+            ) else {
+                return false;
+            };
+            let named = (ObjectKey::new(key), ObjectVersion::new(version));
+            state.objects.contains_key(&named.0) && state.verified.contains(&named)
+        }
+
+        fn note_effect(&self) {
+            self.effects.set(self.effects.get().saturating_add(1));
+        }
+
+        fn mint_version(&self, state: &mut FakeState) -> ObjectVersion {
+            state.next_version += 1;
+            ObjectVersion::new(format!("v{}", state.next_version))
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl ConditionalObjectStore for FakeConditionalObjectStore {
+        async fn put_immutable(
+            &self,
+            mut object: Box<dyn BudgetOwnedObjectReader>,
+        ) -> Result<ObjectVersion, CheckpointError> {
+            self.note_effect();
+            let attempt = self.uploads.get() + 1;
+            self.uploads.set(attempt);
+            if self.fail_upload_at.get() == Some(attempt) {
+                return Err(CheckpointError::Storage {
+                    message: format!("injected object upload fault on attempt {attempt}"),
+                });
+            }
+            let digest = object.content_digest();
+            let declared = object.content_length();
+            let mut assembled = Vec::new();
+            while let Some(chunk) = object.next_chunk(64 * 1024).await? {
+                assembled.extend_from_slice(&chunk.bytes);
+            }
+            if u64::try_from(assembled.len()).unwrap_or(u64::MAX) != declared
+                || ContentDigest::from_bytes(*blake3::hash(&assembled).as_bytes()) != digest
+            {
+                return Err(CheckpointError::ObjectVerification);
+            }
+            let key = immutable_object_key(&object_test_prefix(), &digest);
+            let mut state = self.state.borrow_mut();
+            if let Some((version, existing)) = state.objects.get(&key) {
+                // Content-addressed writes are idempotent; a differing body under
+                // the same address would be a digest collision, not a rewrite.
+                if existing.as_ref() != assembled.as_slice() {
+                    return Err(CheckpointError::ObjectVerification);
+                }
+                return Ok(version.clone());
+            }
+            let version = self.mint_version(&mut state);
+            state.objects.insert(
+                key,
+                (
+                    version.clone(),
+                    Bytes::from(assembled.into_boxed_slice()),
+                ),
+            );
+            Ok(version)
+        }
+
+        async fn compare_and_swap_pointer(
+            &self,
+            key: &ObjectKey,
+            expected: Option<&ObjectVersion>,
+            next: PointerObject,
+        ) -> Result<ObjectVersion, CheckpointError> {
+            self.note_effect();
+            self.cas_calls.set(self.cas_calls.get() + 1);
+            let mut state = self.state.borrow_mut();
+            let current = state.objects.get(key).map(|(version, _)| version.clone());
+            if current.as_ref() != expected {
+                return Err(stale_writer_error());
+            }
+            let version = self.mint_version(&mut state);
+            state
+                .objects
+                .insert(key.clone(), (version.clone(), next.bytes));
+            drop(next.lease);
+            Ok(version)
+        }
+
+        async fn get_version_range(
+            &self,
+            key: &ObjectKey,
+            version: &ObjectVersion,
+            range: ObjectReadRange,
+            budget: ObjectReadBudget,
+        ) -> Result<BudgetOwnedObjectChunk, CheckpointError> {
+            self.note_effect();
+            let length = usize::try_from(range.length)
+                .map_err(|_| CheckpointError::ObjectVerification)?;
+            if length == 0 || length > budget.max_chunk_bytes {
+                return Err(CheckpointError::ObjectVerification);
+            }
+            let bytes = {
+                let state = self.state.borrow();
+                let (stored_version, bytes) = state
+                    .objects
+                    .get(key)
+                    .ok_or(CheckpointError::ObjectVerification)?;
+                if stored_version != version {
+                    return Err(CheckpointError::ObjectVerification);
+                }
+                let start = usize::try_from(range.offset)
+                    .map_err(|_| CheckpointError::ObjectVerification)?;
+                if start >= bytes.len() {
+                    return Err(CheckpointError::ObjectVerification);
+                }
+                bytes.slice(start..bytes.len().min(start + length))
+            };
+            let lease = self
+                .retention
+                .acquire(1, bytes.len())
+                .await
+                .map_err(|_| CheckpointError::ObjectVerification)?;
+            self.allocated
+                .set(self.allocated.get().saturating_add(bytes.len()));
+            let mut state = self.state.borrow_mut();
+            let identity = (key.clone(), version.clone());
+            let total = state
+                .objects
+                .get(key)
+                .map(|(_, stored)| stored.len() as u64)
+                .unwrap_or_default();
+            let progress = state.read_progress.entry(identity.clone()).or_default();
+            if *progress == range.offset {
+                *progress += bytes.len() as u64;
+                if *progress >= total {
+                    state.verified.insert(identity);
+                }
+            }
+            Ok(BudgetOwnedObjectChunk { bytes, lease })
+        }
+
+        async fn list_versions(
+            &self,
+            prefix: &ObjectKey,
+            _cursor: Option<&ObjectListCursor>,
+            budget: ObjectListBudget,
+        ) -> Result<BudgetOwnedObjectPage, CheckpointError> {
+            self.note_effect();
+            let entries: Vec<ObjectMetadata> = {
+                let state = self.state.borrow();
+                state
+                    .objects
+                    .iter()
+                    .filter(|(key, _)| key.as_str().starts_with(prefix.as_str()))
+                    .take(budget.max_items.get())
+                    .map(|(key, (version, bytes))| ObjectMetadata {
+                        key: key.clone(),
+                        version: version.clone(),
+                        byte_length: self
+                            .declared_length
+                            .unwrap_or_else(|| bytes.len() as u64),
+                    })
+                    .collect()
+            };
+            let lease = self
+                .retention
+                .acquire(entries.len(), entries.len() * std::mem::size_of::<ObjectMetadata>())
+                .await
+                .map_err(|_| CheckpointError::ObjectVerification)?;
+            Ok(BudgetOwnedObjectPage {
+                objects: entries.into_boxed_slice(),
+                next: None,
+                lease,
+            })
+        }
+
+        async fn delete_version(
+            &self,
+            key: &ObjectKey,
+            version: &ObjectVersion,
+        ) -> Result<(), CheckpointError> {
+            self.note_effect();
+            let mut state = self.state.borrow_mut();
+            match state.objects.get(key) {
+                Some((stored, _)) if stored == version => {
+                    state.objects.remove(key);
+                    Ok(())
+                }
+                _ => Err(stale_writer_error()),
+            }
+        }
+    }
+
+    /// Stage one transaction ready to commit at `epoch`.
+    pub async fn prepared_transaction(
+        backend: &ObjectCheckpointBackend,
+        previous: Option<CheckpointGeneration>,
+        epoch: u64,
+    ) -> Box<dyn StreamingGenerationTransaction> {
+        let run = run_id(1);
+        let expected = match previous.as_ref() {
+            None => None,
+            Some(previous) => {
+                let opened = backend
+                    .open_latest(&run, &expectations(run))
+                    .await
+                    .expect("open object head")
+                    .expect("object head exists");
+                Some(current_v4_predecessor(&opened, previous).expect("verified predecessor"))
+            }
+        };
+        let mut transaction = backend
+            .begin_generation(run, expected, expectations(run))
+            .await
+            .expect("begin object transaction");
+        transaction
+            .stage_participant(prepared_participant(run, epoch).await)
+            .await
+            .expect("stage object participant");
+        transaction
+            .stage_results(&mut Vec::new(), &mut None)
+            .await
+            .expect("stage object result epoch");
+        transaction
+    }
+
+    /// Publication-conformance fixture over the conditional object store.
+    pub struct ObjectPublicationBackendFixture {
+        backend: ObjectCheckpointBackend,
+        store: FakeConditionalObjectStore,
+        run: StreamRunIdentity,
+    }
+
+    pub fn object_publication_backend_fixture() -> ObjectPublicationBackendFixture {
+        let store = FakeConditionalObjectStore::new(1_048_576);
+        ObjectPublicationBackendFixture {
+            backend: object_backend(store.clone()),
+            store,
+            run: run_id(1),
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl PublicationBackendFixture for ObjectPublicationBackendFixture {
+        fn run(&self) -> StreamRunIdentity {
+            self.run
+        }
+
+        async fn seed_baseline(&self) -> CommittedCheckpointGeneration {
+            commit_with_segment_on(&self.backend, self.run, None, 1)
+                .await
+                .expect("seed object baseline generation")
+        }
+
+        async fn seed_maximum_epoch(&self) -> (StreamRunIdentity, CommittedCheckpointGeneration) {
+            let run = run_id(2);
+            let committed = self
+                .backend
+                .seed_nonempty_committed_generation_at_epoch(
+                    run,
+                    CheckpointEpoch::new(u64::MAX),
+                    &expectations(run),
+                    vec![prepared_participant(run, u64::MAX).await],
+                )
+                .await
+                .expect("seed maximum object head in fresh run");
+            (run, committed)
+        }
+
+        async fn staged_after(
+            &self,
+            run: StreamRunIdentity,
+            expected: CheckpointGeneration,
+            participant_epoch: u64,
+        ) -> Box<dyn StreamingGenerationTransaction> {
+            let opened = self
+                .backend
+                .open_latest(&run, &expectations(run))
+                .await
+                .expect("open object lineage head")
+                .expect("object lineage head exists");
+            let predecessor = current_v4_predecessor(&opened, &expected)
+                .expect("verified current-v4 predecessor");
+            let mut transaction = self
+                .backend
+                .begin_generation(run, Some(predecessor), expectations(run))
+                .await
+                .expect("begin object lineage transaction");
+            transaction
+                .stage_participant(prepared_participant(run, participant_epoch).await)
+                .await
+                .expect("stage object lineage participant");
+            transaction
+                .stage_results(&mut Vec::new(), &mut None)
+                .await
+                .expect("stage object lineage result epoch");
+            transaction
+        }
+
+        async fn authority_snapshot(&self, run: StreamRunIdentity) -> PublicationAuthoritySnapshot {
+            let generation = self
+                .backend
+                .open_latest(&run, &expectations(run))
+                .await
+                .expect("open object head")
+                .map(|reader| reader.generation().clone());
+            PublicationAuthoritySnapshot::new(generation, self.store.state_fingerprint())
+        }
+
+        fn reset_effect_counter(&self) {
+            self.store.reset_counters();
+        }
+
+        fn effect_counter(&self) -> u64 {
+            self.store.effects()
+        }
+    }
+
+    /// One object backend whose only head is a verified legacy-v3 generation.
+    pub struct LegacyObjectHeadFixture {
+        pub backend: ObjectCheckpointBackend,
+        pub store: FakeConditionalObjectStore,
+        pub run: StreamRunIdentity,
+        pub expectations: CheckpointGenerationExpectations,
+        _budget: StreamingResourceBudget,
+    }
+
+    pub async fn object_backend_with_legacy_v3_head() -> LegacyObjectHeadFixture {
+        let run = run_id(1);
+        let store = FakeConditionalObjectStore::new(1_048_576);
+        let backend = object_backend(store.clone());
+        let budget = legacy_fixture_budget();
+        let (fixture, _) = legacy_v3_fixture(&budget, run).await;
+        backend
+            .import_legacy_v3_read_only_fixture(fixture)
+            .await
+            .expect("import legacy-v3 head");
+        // The import itself replaced the pointer; the assertion under test is
+        // about successor writes, so seeding must not be counted.
+        store.reset_counters();
+        LegacyObjectHeadFixture {
+            backend,
+            store,
+            run,
+            expectations: expectations(run),
+            _budget: budget,
+        }
     }
 }

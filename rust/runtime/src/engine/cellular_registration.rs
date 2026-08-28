@@ -1357,6 +1357,76 @@ impl CellRegistrationAuthority {
         Ok((authority, credentials))
     }
 
+    /// Mint a roster and hand back the streaming material a transfer test needs.
+    ///
+    /// The controller's sealing context and the ledger-owning authority are two
+    /// instances over one signing key and run nonce: the authority consumes an
+    /// `Arc` while the transfer plane holds an `Rc`, and the streaming session
+    /// is an explicit parameter rather than derived state, so the split is
+    /// invisible on the wire. Each cell likewise gets an inbound authentication
+    /// context beside the credential that signs its outbound events.
+    #[cfg(all(test, feature = "streaming", feature = "cellular"))]
+    pub(crate) fn mint_streaming_security(
+        cell_count: u32,
+    ) -> Result<(
+        Self,
+        CellSecurityContext,
+        Vec<CellRegistrationCredential>,
+        Vec<CellSecurityContext>,
+    )> {
+        ensure!(
+            cell_count > 0,
+            "cell registration requires at least one cell"
+        );
+        let run_nonce = random_nonce("streaming run nonce")?;
+        let controller_seed = random_nonce("controller reply key")?;
+        let controller_verifier = SigningKey::from_bytes(&controller_seed).verifying_key();
+        let mut role_verifiers = Vec::with_capacity(cell_count as usize);
+        let mut credentials = Vec::with_capacity(cell_count as usize);
+        let mut cell_inbound = Vec::with_capacity(cell_count as usize);
+        for cell_id in 0..cell_count {
+            let seed = random_nonce("registration key")?;
+            role_verifiers.push(RoleVerifyingKey {
+                role: CellularRole::Cell(cell_id),
+                verifier: SigningKey::from_bytes(&seed).verifying_key(),
+            });
+            credentials.push(CellRegistrationCredential {
+                cell_id,
+                context: Arc::new(CellSecurityContext::worker(
+                    run_nonce,
+                    CellularRole::Cell(cell_id),
+                    SigningKey::from_bytes(&seed),
+                    controller_verifier,
+                )?),
+            });
+            cell_inbound.push(CellSecurityContext::worker(
+                run_nonce,
+                CellularRole::Cell(cell_id),
+                SigningKey::from_bytes(&seed),
+                controller_verifier,
+            )?);
+        }
+        let roster = role_verifiers.into_boxed_slice();
+        let ledger_context = Arc::new(CellSecurityContext::controller(
+            run_nonce,
+            SigningKey::from_bytes(&controller_seed),
+            roster.clone(),
+        )?);
+        let authority = ledger_context.registration_authority()?;
+        for credential in &credentials {
+            authority.admission_ledger.commit_session(
+                CellularRole::Cell(credential.cell_id),
+                credential.context.session_nonce,
+            );
+        }
+        let controller_sealer = CellSecurityContext::controller(
+            run_nonce,
+            SigningKey::from_bytes(&controller_seed),
+            roster,
+        )?;
+        Ok((authority, controller_sealer, credentials, cell_inbound))
+    }
+
     #[cfg(any(test, feature = "streaming"))]
     pub(crate) fn run_nonce(&self) -> [u8; 32] {
         self.run_nonce
