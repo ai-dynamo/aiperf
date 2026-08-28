@@ -264,7 +264,10 @@ fn schema_golden_file_exists_and_is_valid_json() {
 fn dot_dot_id_rejected() {
     use aiperf_plugin_host::normalize::NormalizedIdV1;
     assert!(
-        matches!(NormalizedIdV1::parse(".."), Err(ManifestError::InvalidPath(_))),
+        matches!(
+            NormalizedIdV1::parse(".."),
+            Err(ManifestError::InvalidPath(_))
+        ),
         "NormalizedIdV1::parse('..') must return InvalidPath"
     );
 }
