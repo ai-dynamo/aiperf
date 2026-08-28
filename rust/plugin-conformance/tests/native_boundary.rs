@@ -205,7 +205,7 @@ fn static_inspection_validates_minimal_plugin() {
 #[test]
 #[cfg(unix)]
 fn dlopen_resolves_entry_symbol() {
-    use aiperf_plugin_api::extension::{PluginDeclarationV1, PLUGIN_ENTRY_SYMBOL_V1};
+    use aiperf_plugin_api::extension::{PLUGIN_ENTRY_SYMBOL_V1, PluginDeclarationV1};
 
     ensure_minimal_plugin_built();
     let lib_path = minimal_plugin_lib_path();
@@ -218,8 +218,8 @@ fn dlopen_resolves_entry_symbol() {
     // references into the loaded image; `_lib` keeps the image mapped for the
     // duration of the assertion.
     unsafe {
-        let _lib = libloading::Library::new(&lib_path)
-            .expect("dlopen minimal-plugin cdylib failed");
+        let _lib =
+            libloading::Library::new(&lib_path).expect("dlopen minimal-plugin cdylib failed");
         let entry: libloading::Symbol<unsafe extern "C" fn() -> PluginDeclarationV1> = _lib
             .get(format!("{PLUGIN_ENTRY_SYMBOL_V1}\0").as_bytes())
             .expect("failed to resolve aiperf_plugin_entry_v1 via dlsym");
