@@ -259,7 +259,10 @@ fn plugin_source_api_version_is_set() {
     );
     // Must be semver-shaped: at least two dots.
     assert_eq!(
-        PLUGIN_SOURCE_API_VERSION.chars().filter(|&c| c == '.').count(),
+        PLUGIN_SOURCE_API_VERSION
+            .chars()
+            .filter(|&c| c == '.')
+            .count(),
         2,
         "PLUGIN_SOURCE_API_VERSION must be a semver triple: {PLUGIN_SOURCE_API_VERSION}"
     );
