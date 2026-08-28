@@ -109,13 +109,15 @@ On `debug`, `--variation` must be spelled long — `-v` is `--verbose` there.
   Size `--total-workers` for one child; a 32-way grid at 64 workers needs
   capacity for 64 workers, not 2048, and needs no Kueue serialization. What
   scales with the grid is wall-clock, not capacity.
-- **The cardinality caps are enforced by the operator at admission, not by
-  the CLI.** 200 variations (`MAX_SWEEP_VARIATIONS`) and 10 trials
-  (`MAX_SWEEP_TRIALS`, i.e. `multiRun.numRuns` 1..10) — both raise
-  `kopf.PermanentError`, so the CR is accepted by the apiserver and then goes
-  `Failed` with the cap message in `status.error`, with no retry. `--dry-run`
-  and `aiperf kube validate` both pass on an over-cap sweep. Count your grid
-  before submitting: the product of every axis length must be <= 200.
+- **The 200-variation cap is enforced only by the operator at admission; the
+  10-trial cap is also a client-side schema bound.** `multiRun.numRuns` must be
+  1..10, so `numRuns: 11` fails locally — `--dry-run` and `aiperf kube validate`
+  both exit 1 with "Input should be less than or equal to 10". The
+  200-variation cap raises `kopf.PermanentError` in the operator, so the CR is
+  accepted by the apiserver and then goes `Failed` with the cap message in
+  `status.error`, with no retry; `--dry-run` and `validate` both pass on an
+  over-variation sweep. Count your grid before submitting: the product of every
+  axis length must be <= 200.
 - **The aggregate is inlined into CR status only up to ~600 KB**
   (`AIPERF_K8S_JOBSET_SWEEP_AGGREGATE_INLINE_MAX_BYTES`; the apiserver rejects
   patches over ~1 MiB with HTTP 413). Past that the sweep-controller drops
@@ -135,12 +137,13 @@ On `debug`, `--variation` must be spelled long — `-v` is `--verbose` there.
 
 ## Adaptive / Bayesian search
 
-The sweep-controller instantiates the same `BayesianSearchPlanner` plugin the
-in-process path uses; the K8s executor creates one `AIPerfJob` per iteration, so
+The sweep-controller instantiates the same Bayesian-optimization planner the
+in-process path uses (`sweep.planner: bayesian`); the K8s executor creates one `AIPerfJob` per iteration, so
 iterations are sequential by construction. Convergence flags
-(`--convergence-metric`, `--convergence-threshold`, `--convergence-stat`,
-`--confidence-level`, `--bo-constraint-mode`, SLO flags) are accepted by
-`aiperf kube sweep` exactly as by the local path. See
+(`--convergence-metric`, `--convergence-threshold`, `--convergence-mode`,
+`--convergence-stat`, `--confidence-level`, SLO flags) are accepted by
+`aiperf kube sweep` exactly as by the local path. `--bo-constraint-mode` also
+parses but is deprecated and has no effect on either path. See
 `references/adaptive-search.md`.
 
 ## Cancelling and cleanup

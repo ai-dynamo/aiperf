@@ -99,8 +99,12 @@ benchmarkNamespace:
 ```
 
 ```bash
-helm --kube-context "$CTX" upgrade --install aiperf-operator \
-  <path-or-ref-to-aiperf-operator-chart> \
+# The chart ships inside the aiperf source tree; there is no published Helm
+# repo. Clone github.com/ai-dynamo/aiperf and point CHART at it, or use your
+# own packaged/OCI copy if your org republishes it.
+CHART=deploy/helm/aiperf-operator     # chart version 0.7.0
+
+helm --kube-context "$CTX" upgrade --install aiperf-operator "$CHART" \
   --namespace "$NS_OP" -f aiperf-operator-values.yaml --wait --timeout 5m
 ```
 
@@ -125,8 +129,12 @@ Full values matrix, hardening posture, and CI patterns:
 
 - **`kueue.defaultQueueName` does not by itself route benchmarks through
   Kueue.** It only stamps a `kueue.x-k8s.io/default-queue-name` annotation onto
-  the Namespace the chart renders — so it is a complete no-op when
-  `benchmarkNamespace.create: false` (no Namespace object is rendered at all).
+  the Namespace the chart renders — so it is a no-op when
+  `benchmarkNamespace.create: false` **and** `benchmarkNamespace.name` is absent
+  from `benchmarkRbacNamespaces` — the template renders the primary name only
+  under `create`, but renders every `benchmarkRbacNamespaces` entry
+  unconditionally, and annotates whichever rendered namespace matches
+  `benchmarkNamespace.name`.
   What actually puts the `kueue.x-k8s.io/queue-name` label on the JobSet is
   `spec.scheduling.queueName` on the AIPerfJob, or the operator-level default
   `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME`. Set one of those two if you want every
@@ -249,8 +257,10 @@ goes stale. Finish with a small benchmark from `aiperf-kube-run` before
 handing the cluster to anyone else.
 
 The `AIPerfJob`/`AIPerfSweep` CRDs shipped in the chart are generated from the
-operator's Pydantic models — never hand-edit the CRD YAML in a chart checkout;
-regenerate it with the project's CRD generator instead.
+operator's Pydantic models. Never hand-edit `templates/crd-aiperfjob.yaml` or
+`templates/crd-aiperfsweep.yaml` in a chart checkout — an upgrade overwrites
+them. From an aiperf source checkout, regenerate with
+`uv run python tools/generate_crd.py` (`--check` verifies without writing).
 
 ## Local Kind clusters
 

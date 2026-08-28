@@ -207,7 +207,7 @@ Fixes, in order:
    worker total across more pods — `spec.benchmark` is immutable, recreate.
 3. Raise `AIPERF_K8S_WORKER_POD_MEMORY` (default `4Gi`) **on the operator**, not
    in `spec.podTemplate.env` — the operator process renders the JobSet:
-   `kubectl set env -n aiperf-system deploy/aiperf-operator AIPERF_K8S_WORKER_POD_MEMORY=8Gi`
+   `kubectl set env -n aiperf-system deploy/aiperf-operator -c operator AIPERF_K8S_WORKER_POD_MEMORY=8Gi`
 
 ## 9. Collect results
 
@@ -319,7 +319,9 @@ fails; `--strict` promotes warnings to errors.
 
 Resource and JobSet variables are read by the process that *renders* the JobSet,
 so set them on the operator deployment (`kubectl set env -n aiperf-system
-deploy/aiperf-operator KEY=VALUE`); `spec.podTemplate.env` has no effect on
+deploy/aiperf-operator -c operator KEY=VALUE` — `-c operator` matters, the
+Deployment also runs `results-server` and `dashboard` containers and `set env`
+defaults to all of them); `spec.podTemplate.env` has no effect on
 container resources. Default operator namespace `aiperf-system`, default
 benchmark namespace `aiperf-benchmarks`.
 

@@ -133,7 +133,7 @@ Wire form is camelCase; snake_case is accepted on input.
 | `optunaAcquisition` | `logei`,`qlogei`,`qnei`,`qlognei` (single-obj) / `qehvi`,`qnehvi`,`qlognehvi` (multi-obj) | `null` |
 | `optunaTerminator` | `regret` \| `emmr` \| `none` | `none` |
 | `objectivePooling` | `mean` \| `pooled` | `mean` (no-op when `stat=avg`) |
-| `constraintMode` | `penalty` \| `eic` | `penalty` |
+| `constraintMode` | `penalty` \| `eic` | `penalty` — deprecated and ignored; both planners use Optuna's native `constraints_func` |
 | `monotonicStabilityTrials` | int >= 1 | `2` |
 | `slaReplicates` | int >= 0 (0 = auto) | `0` |
 | `slaPrecision` | `tight` (10000) \| `normal` (1000) \| `coarse` (300) requests | `normal` |
@@ -176,13 +176,24 @@ directly instead. Only these sweep-specific flags exist:
 | `--convergence-metric M` | `multiRun.convergence.metric` | unset |
 | `--min-runs N` | `multiRun.convergence.minRuns` | `3` |
 | `--max-runs N` | `multiRun.numRuns` (raised to at least this) | `10` |
-| `--convergence-threshold F` | `multiRun.convergence.threshold` | `0.05` |
+| `--convergence-threshold F` | `multiRun.convergence.threshold` | unset (per-mode default: `ci_width` 0.10, `cv` 0.05, `distribution` 0.05) |
 | `-d`, `--detach` | reserved; submission always behaves as detached | `false` |
 | `--dry-run` | print the rendered CR as JSON, submit nothing | `false` |
 
-There is **no** `--convergence-stat`, `--confidence-level`, `--bo-constraint-mode`,
-or any `--search-*` / SLO flag on the Kubernetes path — everything else is
-authored in YAML. Passing `--convergence-metric` also forces
+`--min-runs`, `--max-runs`, and `--convergence-threshold` are silently ignored
+unless `--convergence-metric` is also passed. `--max-runs` raises
+`multiRun.numRuns` to *at least* N; it never lowers an authored value.
+
+`aiperf kube sweep` inherits the full benchmark CLI surface, so
+`--convergence-stat`, `--convergence-mode`, `--confidence-level`, the
+`--search-*` family (`--search-space`, `--search-metric`, `--search-stat`,
+`--search-direction`, `--search-max-iterations`, `--search-initial-points`,
+`--search-random-seed`, `--search-planner`, `--search-percentile-pooling`,
+`--search-sla`, `--search-sla-tier`, `--search-recipe`, `--search-style`) and
+the SLO/goodput flags (`--slo-attainment-fraction`, `--goodput`) all parse. The
+table above lists only the sweep-specific flags; anything not listed is either
+inherited from the benchmark surface or authored in YAML. `--bo-constraint-mode`
+parses but is deprecated and ignored. Passing `--convergence-metric` also forces
 `sweep.iterationOrder: independent` when unset, and synthesizes a one-cell
 sweep when there is no `sweep:` block. `--dry-run` renders the CR and returns;
 it never expands variations, so it shows neither the variation list nor whether

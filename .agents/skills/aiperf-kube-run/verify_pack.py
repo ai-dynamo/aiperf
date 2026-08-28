@@ -40,6 +40,18 @@ HELM_ROOTS = {
 # Real env vars that the generated env-var doc does not list: they are injected
 # by the operator into pods, never set by a user, so the doc generator skips
 # them. Verified present in src/aiperf/common/endpoint_credentials.py.
+# Locations inside an aiperf source checkout that a standalone skill must still
+# name, because the artifact itself is only distributed there: the Helm chart has
+# no published repo/OCI index, and the CRD generator is the only supported way to
+# regenerate the chart's CRD YAML. Naming them is actionable for a reader who
+# clones the repo; every other repo path must be inlined into the skill instead.
+SOURCE_CHECKOUT_ALLOWLIST = {
+    "deploy/helm/aiperf-operator",
+    "tools/generate_crd.py",
+    "templates/crd-aiperfjob.yaml",
+    "templates/crd-aiperfsweep.yaml",
+}
+
 ENV_ALLOWLIST = {
     "AIPERF_OPERATOR_MANAGED",
     "AIPERF_INJECTED_API_KEY",
@@ -179,6 +191,8 @@ def main() -> int:
         ):
             if ref.startswith(("docs/", "src/", "tools/", "dev/")):
                 continue  # reported by the repo-reference sweep below
+            if ref in SOURCE_CHECKOUT_ALLOWLIST:
+                continue
             if not (SKILLS / name / ref.split("#")[0]).exists():
                 fail(f"{name}: path reference does not resolve in the skill: {ref}")
         for outside in set(
@@ -189,6 +203,8 @@ def main() -> int:
         ):
             if outside == "dev/null":
                 continue  # shell redirection, not a repo path
+            if outside in SOURCE_CHECKOUT_ALLOWLIST:
+                continue
             fail(f"{name}: non-standalone repo reference: {outside}")
 
         for var in set(re.findall(r"AIPERF_[A-Z0-9_]+", corpus)):

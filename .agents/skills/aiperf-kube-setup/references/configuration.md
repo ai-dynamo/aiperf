@@ -106,7 +106,7 @@ Also templated unconditionally: `PYTHONUNBUFFERED=1`,
 probes) has no chart value.** Apply it to the live Deployment after install:
 
 ```bash
-kubectl -n aiperf-system set env deployment/aiperf-operator \
+kubectl -n aiperf-system set env deployment/aiperf-operator -c operator \
   AIPERF_K8S_WORKER_POD_MEMORY=8Gi AIPERF_K8S_RECORDS_MANAGER_CPU=4000m
 ```
 
@@ -246,8 +246,9 @@ Load-bearing omissions — do not "fix" them:
 
 - **No `pods: patch`.** Pod-restart detection is an event handler precisely
   because a field handler would need a diff-base annotation on every observed
-  Pod. A unit test asserts `{create,delete,patch,update}` stay disjoint from the
-  pods rule.
+  Pod. The `pods`/`pods/log` rule must never gain `create`, `delete`, `patch`,
+  or `update`; check the rendered ClusterRole with
+  `helm template aiperf-operator "$CHART" | yq 'select(.kind=="ClusterRole").rules'`.
 - **`secrets: get` without `list`/`watch`.** Preflight reads referenced pull
   secrets by name; `list` would expose every secret in the cluster.
 - **No `coordination.k8s.io/leases`.** No leader election exists — hence
@@ -326,7 +327,7 @@ work with an atomic test-and-set patch, so restarting mid-completion cannot
 double-fire.
 
 ```bash
-helm upgrade aiperf-operator <path-or-ref-to-aiperf-operator-chart> \
+helm upgrade aiperf-operator "$CHART" \
   -n aiperf-system -f values-prod.yaml --wait
 ```
 
@@ -409,7 +410,7 @@ Mechanism 2 has no chart value — `operator.env` is a fixed nine-key map — so
 apply it to the live Deployment:
 
 ```bash
-kubectl -n aiperf-system set env deployment/aiperf-operator \
+kubectl -n aiperf-system set env deployment/aiperf-operator -c operator \
   AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME=aiperf-local-queue \
   AIPERF_K8S_JOBSET_KUEUE_DEFAULT_PRIORITY_CLASS=
 ```
@@ -417,9 +418,12 @@ kubectl -n aiperf-system set env deployment/aiperf-operator \
 Mechanism 3 is the sharp edge. The operator never reads the annotation, so it
 adds no `kueue.x-k8s.io/queue-name` label and no `spec.suspend: true`; admission
 depends entirely on Kueue's webhook and the operator's phase reporting (which
-keys on the label) will not surface `Queued`. It is also gated on
-`benchmarkNamespace.create=true` — with a pre-existing namespace no Namespace
-object renders and `kueue.defaultQueueName` is a complete no-op. Prefer
+keys on the label) will not surface `Queued`. It is also gated on which
+namespaces the chart actually renders: the primary `benchmarkNamespace.name`
+renders only under `create: true`, every `benchmarkRbacNamespaces` entry renders
+unconditionally, and the annotation is applied to whichever rendered namespace
+equals `benchmarkNamespace.name`. So `kueue.defaultQueueName` is a no-op when
+`create: false` **and** that name is absent from `benchmarkRbacNamespaces`. Prefer
 mechanism 1 or 2; for 3, annotate the namespace yourself:
 
 ```bash
@@ -453,7 +457,7 @@ kubectl annotate namespace aiperf-benchmarks \
 ## Reference install
 
 ```bash
-helm upgrade --install aiperf-operator <path-or-ref-to-aiperf-operator-chart> \
+helm upgrade --install aiperf-operator "$CHART" \
   -n aiperf-system --create-namespace \
   -f values-prod.yaml --wait --timeout 5m
 ```

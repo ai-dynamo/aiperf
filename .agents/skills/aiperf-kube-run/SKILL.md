@@ -30,7 +30,7 @@ reference: `references/lifecycle.md` (bundled with this skill).
 ## Minimum viable run
 
 ```bash
-aiperf kube preflight -i aiperf:latest -e http://server:8000 -w 8
+aiperf kube preflight -i aiperf:latest -e http://server:8000 -w 1
 aiperf kube profile \
     --model Qwen/Qwen3-0.6B \
     --url http://server:8000 \
@@ -41,6 +41,13 @@ aiperf kube attach          # live progress
 aiperf kube list            # phase == Completed?
 aiperf kube results         # -> ./artifacts/<name>/
 ```
+
+`-w` on `preflight` counts worker **pods**; `--total-workers` on `profile`
+counts worker **processes**, packed `runtime.workersPerPod` (default 10) per
+pod. `--total-workers 8` is one pod, so preflight it with `-w 1`; for 8 worker
+pods use `--total-workers 80 -w 8`. A total that is neither <= workersPerPod nor
+a multiple of it is rejected rather than silently collapsed onto one pod.
+
 
 Defaults: benchmark namespace `aiperf-benchmarks`, operator namespace
 `aiperf-system` (auto-detected by cluster-wide pod-label search).
@@ -77,7 +84,7 @@ Defaults: benchmark namespace `aiperf-benchmarks`, operator namespace
   The refusal prints an error and **still exits 0**, so a script that only
   checks `$?` will believe it cancelled or deleted something.
 - **`cancel` and `delete` only know about CRs, and say nothing useful when
-  there isn't one.** Both resolve the target through `find_aiperf_cr`; a
+  there isn't one.** Both resolve the target by looking up an `AIPerfJob` or `AIPerfSweep` CR by name; a
   direct-mode (`--no-operator`) run has no `AIPerfJob`, so they print "No
   AIPerfJob or AIPerfSweep named ..." and exit 0 while the JobSet keeps
   running. Tear down direct-mode runs with `kubectl delete jobset <name>` (plus

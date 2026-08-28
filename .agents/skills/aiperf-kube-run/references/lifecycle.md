@@ -22,7 +22,7 @@ aiperf kube validate --strict bench.yaml
 
 # 3. Cluster readiness: connectivity, API versions, RBAC, node capacity,
 #    image pull-ability, endpoint reachability
-aiperf kube preflight -i aiperf:latest -e http://server:8000 -w 8
+aiperf kube preflight -i aiperf:latest -e http://server:8000 -w 1
 
 # 4. Submit one AIPerfJob CR; the operator owns the JobSet, ConfigMap,
 #    Role and RoleBinding via ownerReferences
@@ -42,6 +42,13 @@ aiperf kube shutdown               # let the finished controller pod exit
 aiperf kube delete <name> --force  # CR + GC'd children; PVC results survive
 ```
 
+`-w` on `preflight` counts worker **pods**; `--total-workers` on `profile`
+counts worker **processes**, packed `runtime.workersPerPod` (default 10) per
+pod. `--total-workers 8` is one pod, so preflight it with `-w 1`; for 8 worker
+pods use `--total-workers 80 -w 8`. A total that is neither <= workersPerPod nor
+a multiple of it is rejected rather than silently collapsed onto one pod.
+
+
 Operator mode is chosen automatically when the `aiperfjobs.aiperf.nvidia.com`
 CRD is present. `--operator` forces it while skipping the cluster-scoped CRD
 probe — how a namespace-scoped tenant submits without cluster-wide RBAC; pair
@@ -52,7 +59,7 @@ failure it salvages partial checkpoints); nothing is harvested mid-run.
 ### `--dry-run` fidelity
 
 `--dry-run` never contacts the cluster, so the mode it prints is assumed, not
-detected, and the CR is printed *before* `AIPerfJobSpec` validation.
+detected, and the CR is printed *before* the spec is schema-validated.
 
 With `--operator` or `--no-operator` the flagged mode always wins and no probe
 happens. With neither flag: a real run probes the CRD and falls back to direct
@@ -71,8 +78,8 @@ absent. The CLI creates `Role`, `RoleBinding`, `ConfigMap`, `JobSet` — plus a
 
 It keeps the same image, JobSet topology (one controller pod + N worker pods),
 run-config ConfigMap, per-namespace Role/RoleBinding (read/watch on pods, pod
-logs, jobs, ConfigMaps, Services, Endpoints, Events, plus `patch` on JobSets;
-no create/update/delete verb), and live `attach` stream. An `AIPerfJob` YAML
+logs, jobs, ConfigMaps, Services, Endpoints, Events, plus `patch` on JobSets
+and on `aiperfjobs`/`aiperfjobs/status`; no create/update/delete verb), and live `attach` stream. An `AIPerfJob` YAML
 still works as input — its JobSet-compatible deployment fields are projected
 into the raw manifests with operator-mode override precedence. It is *not* the
 operator Deployment, a CR, a PVC, a dashboard, or cross-job analytics.
@@ -114,7 +121,8 @@ aiperf kube attach --namespace aiperf-bench
 aiperf kube results --from-pods --shutdown --namespace aiperf-bench
 ```
 
-Resource names are `aiperf-<name>` (ConfigMap adds `-config`), `<name>` being
+Resource names are `aiperf-<name>` for the JobSet; the ConfigMap adds
+`-config`, the Role adds `-role`, the RoleBinding adds `-binding`. `<name>` is
 `--name` or the auto-generated `<model>-<endpoint-type>-<phase-type>` slug. The
 CLI prints one `Created <Kind>/<name>` line each; a
 `Created Namespace/aiperf-benchmarks` line is prepended only when `--namespace`
@@ -156,8 +164,8 @@ Tear down manually:
 ```bash
 kubectl delete jobset      aiperf-<name>        -n <namespace>
 kubectl delete configmap   aiperf-<name>-config -n <namespace>
-kubectl delete role        aiperf-<name>        -n <namespace>
-kubectl delete rolebinding aiperf-<name>        -n <namespace>
+kubectl delete role        aiperf-<name>-role    -n <namespace>
+kubectl delete rolebinding aiperf-<name>-binding -n <namespace>
 kubectl delete namespace   <namespace>          # only if dedicated to the run
 ```
 
@@ -207,7 +215,7 @@ Positional: one or more YAML paths (required).
 | `-o`, `--output` | `text` | `text` or `json` |
 
 Checks YAML structure, `apiVersion`/`kind`/`metadata.name`/`spec.endpoint`,
-RFC 1123 names, the `AIPerfJobSpec`/`AIPerfSweepSpec` model, DeploymentConfig
+RFC 1123 names, the CR spec schema for the detected kind, deployment-field
 extraction, worker count >= 1, and unknown spec fields. Exits 1 on failure.
 
 ### `aiperf kube preflight`
