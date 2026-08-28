@@ -286,7 +286,15 @@ class StatusBuilder:
         return self
 
     def set_workers(self, ready: int, total: int) -> StatusBuilder:
-        """Set worker counts."""
+        """Set the two-key bootstrap estimate of worker counts.
+
+        Only two of the nine ``status.workers`` keys, which is exactly what
+        makes this write distinguishable from the controller's: the absence of
+        ``totalPods`` is the marker that the controller has not taken the field
+        over yet. Callers in the operator must gate on that
+        (``_controller_authored_workers`` in ``handlers/monitor.py``) so the two
+        writers never both run in steady state.
+        """
         return self.set_worker_aggregate_status({"ready": ready, "total": total})
 
     def set_results(self, results: dict[str, Any]) -> StatusBuilder:

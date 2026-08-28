@@ -911,6 +911,62 @@ async def _handle_jobset_failed_condition(
     return False
 
 
+def _controller_authored_workers(status: dict[str, Any]) -> dict[str, Any] | None:
+    """Return ``status.workers`` only when the controller authored it.
+
+    The controller pushes the full nine-key aggregate from
+    ``build_aggregate_worker_status``; the operator's bootstrap estimate writes
+    exactly two keys (``ready``, ``total``). So the presence of ``totalPods`` is
+    itself the takeover marker -- it lives in the CR, survives an operator
+    restart, and costs no schema change. There is deliberately no separate
+    "owner" status field to drift out of sync with the data it describes.
+    """
+    workers = status.get("workers")
+    if not isinstance(workers, dict):
+        return None
+    return workers if isinstance(workers.get("totalPods"), int) else None
+
+
+def _set_workers_ready_condition(
+    sb: StatusBuilder,
+    *,
+    controller_workers: dict[str, Any] | None,
+    fallback_ready: int,
+    fallback_total: int,
+) -> None:
+    """Assert WorkersReady from whichever writer currently owns the counts.
+
+    Nothing else ever sets WorkersReady true. Without it the completion
+    backfill always fires, so a completely healthy run ends up asserting "Job
+    completed before workers (N) were observed ready" -- with N > 0,
+    contradicting itself. Record the observation when it actually happens.
+
+    Once the controller owns ``status.workers`` the assertion must read its
+    value, not the JobSet estimate: a pod can be Ready while its worker
+    processes have not registered with the credit router, and claiming
+    WorkersReady off the pod count would assert dispatch readiness the run
+    does not have.
+    """
+    if controller_workers is not None:
+        ready = controller_workers.get("ready")
+        total = controller_workers.get("total")
+        if not isinstance(ready, int) or ready <= 0:
+            return
+        total = total if isinstance(total, int) and total > 0 else ready
+        sb.conditions.set_true(
+            ConditionType.WORKERS_READY,
+            "WorkersReady",
+            f"{ready} of {total} worker(s) dispatch-ready",
+        )
+        return
+    if fallback_ready > 0:
+        sb.conditions.set_true(
+            ConditionType.WORKERS_READY,
+            "WorkersReady",
+            f"{fallback_ready} of {fallback_total} worker job(s) ready",
+        )
+
+
 def _update_worker_counts(
     *,
     status: dict[str, Any],
@@ -921,14 +977,29 @@ def _update_worker_counts(
     """Update worker ready/total on StatusBuilder.
 
     Returns (workers_ready, workers_succeeded, total_workers) all in
-    *process* units (not pod units).
+    *process* units (not pod units). The returned counts are always the
+    JobSet-derived ones because their consumer
+    (``_set_initializing_when_workers_start``) is asking "have worker pods
+    started running", which is a pod-scheduling question, not a
+    worker-registration one.
 
     The JobSet ``replicatedJobsStatus[name="workers"].ready`` field counts
     *pods*, not worker processes.  Multiplying by ``workers_per_pod`` converts
     to the same unit used by ``status.workers.total`` (set at job creation from
     ``RuntimeConfig.workers``), so ``aiperf kube list`` shows ``4/4`` instead
     of ``2/4`` for a job with ``workers: 4, workersPerPod: 2``.
+
+    ``status.workers`` itself is owned by the *controller*, which reports
+    workers that actually registered rather than ready pods scaled by a config
+    constant -- the CRD calls the field "Controller-authored aggregate worker
+    status" and ``ready`` a "Dispatch-ready worker count", and a scaled
+    ready-pod count is only an upper bound on that. The write below is a
+    bootstrap-window fallback: it runs only until the first controller-authored
+    aggregate lands, after which the two writers would disagree during rollout
+    and after partial worker failure, leaving ``status.workers.ready`` flapping
+    between whichever patched last.
     """
+    controller_workers = _controller_authored_workers(status)
     total_workers = status.get("workers", {}).get("total", 0)
     workers_per_pod: int = (
         spec.get("benchmark", {}).get("runtime", {}).get("workersPerPod", 1) or 1
@@ -953,18 +1024,14 @@ def _update_worker_counts(
                     )
                     * workers_per_pod
                 ) or 1  # Fallback to 1 if all zero
-            sb.set_workers(workers_ready, total_workers)
-            if workers_ready > 0:
-                # Nothing else ever sets WorkersReady true. Without this the
-                # completion backfill always fires, so a completely healthy run
-                # ends up asserting "Job completed before workers (N) were
-                # observed ready" -- with N > 0, contradicting itself. Record
-                # the observation when it actually happens.
-                sb.conditions.set_true(
-                    ConditionType.WORKERS_READY,
-                    "WorkersReady",
-                    f"{workers_ready} of {total_workers} worker job(s) ready",
-                )
+            if controller_workers is None:
+                sb.set_workers(workers_ready, total_workers)
+            _set_workers_ready_condition(
+                sb,
+                controller_workers=controller_workers,
+                fallback_ready=workers_ready,
+                fallback_total=total_workers,
+            )
 
     return workers_ready, workers_succeeded, total_workers
 

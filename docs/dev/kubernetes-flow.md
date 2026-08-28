@@ -667,6 +667,61 @@ off a `kvbm_*` prefix and no `kvbm_*` metric appears in `backendMetric` — but 
 is a class of gap, not a single instance. The live WebSocket path and the final
 `server_metrics_export.json` are unaffected and keep the full payload.
 
+### Ownership of `status.workers`
+
+`status.workers` is the **controller's** field, not the operator's. The push
+folds the controller's per-pod state cache through
+`build_aggregate_worker_status`
+(`src/aiperf/controller/system_controller_models.py`) and writes all nine
+camelCase keys — `ready`, `total`, `dispatchable`, `routerConnected`,
+`readyRecordProcessors`, `declaredRecordProcessors`, `readyPods`, `totalPods`,
+`degradedPods`. The CRD object declares exactly those nine and carries no
+`x-kubernetes-preserve-unknown-fields`, so the apiserver prunes any other
+spelling; `_build_workers_payload` translates through the operator's
+`WORKER_AGGREGATE_STATUS_CRD_KEYS` alias map so both writers agree on one.
+
+`workers` is listed in `_SNAPSHOT_STATUS_KEYS` alongside `serverMetrics`: it
+mirrors one controller tick rather than accumulating across ticks, so replace
+semantics keep the block internally self-consistent and stop it ever holding
+this tick's `ready` beside an earlier writer's `total`.
+
+The operator still writes the field in the **bootstrap window**. `create.py`
+seeds `{ready: 0, total: <spec workers>}` at admission, and
+`_update_worker_counts` (`src/aiperf/operator/handlers/monitor.py`) refreshes a
+JobSet-derived estimate — `replicatedJobsStatus[name="workers"].ready` scaled by
+`workersPerPod` — until the controller takes over. Both write only `ready` and
+`total`, so **the presence of `totalPods` in the live `status.workers` is the
+takeover marker**, and the operator's write is gated on its absence
+(`_controller_authored_workers`). That marker lives in the CR, so it survives an
+operator restart and needs no extra status field. The controller withholds the
+key entirely until `totalPods > 0`, which both keeps the bootstrap estimate live
+through startup and stops an empty aggregate from overwriting the spec-derived
+`total` with 0.
+
+The two writers must never both be live in steady state: the operator counts
+ready *pods* scaled by a config constant, the controller counts workers that
+actually registered with the credit router. They disagree during rollout and
+after partial worker failure, and `status.workers.ready` would flap between them
+depending on which patched last. The CRD's own wording settles the tie — the
+field is "Controller-authored aggregate worker status" and `ready` is a
+"Dispatch-ready worker count", which a scaled ready-pod count is only an upper
+bound on.
+
+Because the operator's estimate is only ever the bootstrap value, the accuracy
+of the `workersPerPod` derivation still matters: it is what `aiperf kube list`
+and the `WorkersReady` condition read before the first controller tick lands.
+That derivation must mirror the deployment-side one in
+`src/aiperf/kubernetes/jobset.py` (fall back to
+`Environment.WORKER.DEFAULT_WORKERS_PER_POD`, reproduce the single-pod collapse
+when the total is not divisible) rather than reading the un-normalized CR spec.
+
+The `WorkersReady` condition follows ownership rather than the writer. Once the
+controller owns the field, `_set_workers_ready_condition` asserts the condition
+from the controller-authored `ready`; before that it uses the JobSet estimate.
+Nothing else sets `WorkersReady` true, so it must never be left without a
+setter: the completion backfill would otherwise always fire and assert "Job
+completed before workers (N) were observed ready" with N > 0.
+
 The operator's recurring watchdog inspects only this cached parent body while
 the heartbeat is fresh; broad JobSet, Pod, sidecar, and results recovery
 runs only after heartbeat expiry or when an explicit `timeoutSeconds` deadline

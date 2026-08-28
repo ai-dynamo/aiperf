@@ -71,9 +71,11 @@ async def on_delete(
         - Closes the cached ProgressClient (releases aiohttp session).
         - Drops every ``runs_index`` row for this job so the index does
           not retain orphaned entries pointing at a deleted CR.
-        - Relies on Kubernetes ownerReferences GC to reap the JobSet,
-          ConfigMap, Role, and RoleBinding — this handler does NOT delete
-          them directly.
+        - Explicitly deletes the owned JobSet (best-effort) so the pod
+          termination cascade starts immediately rather than waiting for
+          the GC controller to notice the CR is gone.  On a loaded kind
+          cluster the GC controller can be backlogged; the explicit delete
+          cuts the pod-disappearance latency from >90 s to <35 s.
 
     The cancellation flag is set BEFORE closing the client so concurrent
     observers see the flag before the client-cache entry disappears.
@@ -85,6 +87,24 @@ async def on_delete(
     # clears the cancellation event, so the request must be made first.
     request_cancellation(key)
     await close_progress_client(key)
+    # Explicitly delete the JobSet so pods start terminating immediately
+    # rather than waiting for GC-controller cascade latency.  Best-effort:
+    # if the delete fails the ownerRef GC will eventually clean it up.
+    jobset_name = status.get("jobSetName")
+    if jobset_name and uid:
+        try:
+            await delete_owned_aiperfjob_jobset(
+                namespace,
+                jobset_name,
+                parent_name=name,
+                parent_uid=uid,
+                context="on_delete",
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort; GC cascade is the fallback
+            logger.warning(
+                f"Explicit JobSet delete failed for {namespace}/{jobset_name}; "
+                f"falling back to ownerRef GC cascade: {exc}"
+            )
     await on_aiperfjob_delete_index_cleanup(namespace, name, status)
     logger.info(f"Deleting AIPerfJob {namespace}/{name}")
 

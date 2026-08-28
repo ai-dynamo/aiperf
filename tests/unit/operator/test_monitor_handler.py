@@ -34,6 +34,7 @@ from aiperf.operator.handlers.monitor import (
     _check_job_timeout,
     _classify_jobset_failure,
     _container_status_by_name,
+    _controller_authored_workers,
     _fail_unrecoverable_controller,
     _get_pod_startup_issue,
     _get_terminated_controller_info,
@@ -47,7 +48,7 @@ from aiperf.operator.handlers.monitor import (
     _startup_issue_state,
     _update_worker_counts,
 )
-from aiperf.operator.status import StatusBuilder
+from aiperf.operator.status import ConditionType, StatusBuilder
 
 
 def _make_status_builder() -> tuple[StatusBuilder, Any]:
@@ -809,6 +810,127 @@ class TestUpdateWorkerCounts:
             status=status, jobset_status=jobset_status, spec={}, sb=sb
         ) == (0, 0, 0)
 
+    def test_bootstrap_write_happens_while_controller_is_silent(self) -> None:
+        """Until the controller reports, the operator owns status.workers."""
+        sb, patch = _make_status_builder()
+        status = {"workers": {"ready": 0, "total": 4}}
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {
+                    "name": "workers",
+                    "ready": 4,
+                    "succeeded": 0,
+                    "active": 0,
+                    "failed": 0,
+                    "suspended": 0,
+                },
+            ],
+        }
+
+        _update_worker_counts(
+            status=status, jobset_status=jobset_status, spec={}, sb=sb
+        )
+
+        assert patch.status["workers"] == {"ready": 4, "total": 4}
+        sb.finalize()
+        assert _workers_ready_condition(sb) is not None
+
+    def test_controller_authored_aggregate_stops_the_operator_write(self) -> None:
+        """Two live writers make status.workers.ready flap; the controller wins.
+
+        The operator counts ready *pods* scaled by a config constant, the
+        controller counts workers that actually registered with the credit
+        router. Here the JobSet says both pods are Ready while only 6 of 8
+        workers have registered -- the exact disagreement the gate exists for.
+        """
+        sb, patch = _make_status_builder()
+        status = {
+            "workers": {
+                "ready": 6,
+                "total": 8,
+                "dispatchable": 6,
+                "routerConnected": 6,
+                "readyRecordProcessors": 4,
+                "declaredRecordProcessors": 4,
+                "readyPods": 2,
+                "totalPods": 2,
+                "degradedPods": 0,
+            }
+        }
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {
+                    "name": "workers",
+                    "ready": 2,
+                    "succeeded": 0,
+                    "active": 0,
+                    "failed": 0,
+                    "suspended": 0,
+                },
+            ],
+        }
+        spec = {"benchmark": {"runtime": {"workersPerPod": 4}}}
+
+        ready, _succeeded, total = _update_worker_counts(
+            status=status, jobset_status=jobset_status, spec=spec, sb=sb
+        )
+
+        assert "workers" not in patch.status
+        # The returned counts stay JobSet-derived: their consumer asks whether
+        # worker pods have started, which is a pod-scheduling question.
+        assert (ready, total) == (8, 8)
+
+    def test_workers_ready_condition_reads_the_controller_value(self) -> None:
+        """A Ready pod whose workers have not registered is not dispatch-ready."""
+        sb, _patch = _make_status_builder()
+        status = {"workers": {"ready": 6, "total": 8, "totalPods": 2}}
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {
+                    "name": "workers",
+                    "ready": 2,
+                    "succeeded": 0,
+                    "active": 0,
+                    "failed": 0,
+                    "suspended": 0,
+                },
+            ],
+        }
+
+        _update_worker_counts(
+            status=status,
+            jobset_status=jobset_status,
+            spec={"benchmark": {"runtime": {"workersPerPod": 4}}},
+            sb=sb,
+        )
+        sb.finalize()
+
+        assert "6 of 8 worker(s) dispatch-ready" in _workers_ready_condition(sb)
+
+    def test_workers_ready_withheld_when_controller_reports_none_ready(self) -> None:
+        """Ready pods must not assert readiness no worker has reported."""
+        sb, _patch = _make_status_builder()
+        status = {"workers": {"ready": 0, "total": 8, "totalPods": 2}}
+        jobset_status = {
+            "replicatedJobsStatus": [
+                {
+                    "name": "workers",
+                    "ready": 2,
+                    "succeeded": 0,
+                    "active": 0,
+                    "failed": 0,
+                    "suspended": 0,
+                },
+            ],
+        }
+
+        _update_worker_counts(
+            status=status, jobset_status=jobset_status, spec={}, sb=sb
+        )
+        sb.finalize()
+
+        assert _workers_ready_condition(sb) is None
+
     def test_workers_per_pod_scales_ready_and_succeeded(self) -> None:
         """Pod counts from the JobSet are multiplied by workersPerPod.
 
@@ -1259,3 +1381,50 @@ class TestPhaseCoercionGate:
     def test_as_phase_coerces_to_member(self, raw: Any, expected: Phase) -> None:
         assert as_phase(raw) is expected
         assert as_phase(raw) in frozenset({expected})
+
+
+def _workers_ready_condition(sb: StatusBuilder) -> str | None:
+    """Return the WorkersReady condition message, or None if never asserted."""
+    condition = sb.conditions.get_condition(ConditionType.WORKERS_READY)
+    if condition is None or condition.get("status") != "True":
+        return None
+    return condition.get("message", "")
+
+
+class TestControllerAuthoredWorkers:
+    """Tests for ``_controller_authored_workers``.
+
+    The takeover marker is the *shape* of the data: the operator's two writers
+    emit exactly ``ready`` and ``total``, a controller write always emits all
+    nine. That marker lives in the CR, so it survives an operator restart and
+    needs no extra status field.
+    """
+
+    @pytest.mark.parametrize(
+        "workers",
+        [
+            param(None, id="absent"),
+            param({}, id="empty"),
+            param({"ready": 0, "total": 4}, id="operator-bootstrap-seed"),
+            param({"ready": 4, "total": 4}, id="operator-jobset-estimate"),
+            param({"ready": 4, "total": 4, "totalPods": None}, id="null-total-pods"),
+            param({"ready": 4, "total": 4, "totalPods": "2"}, id="non-int-total-pods"),
+            param("not-a-dict", id="wrong-type"),
+        ],
+    )  # fmt: skip
+    def test_operator_shaped_writes_are_not_a_takeover(self, workers: Any) -> None:
+        status = {} if workers is None else {"workers": workers}
+        assert _controller_authored_workers(status) is None
+
+    def test_total_pods_marks_the_controller_takeover(self) -> None:
+        workers = {"ready": 6, "total": 8, "totalPods": 2, "readyPods": 2}
+        assert _controller_authored_workers({"workers": workers}) == workers
+
+    def test_zero_total_pods_still_counts_as_controller_authored(self) -> None:
+        """The controller withholds the key entirely below one pod.
+
+        So a literal ``totalPods: 0`` can only have come from a controller
+        write, and treating it as a bootstrap write would hand the field back.
+        """
+        workers = {"ready": 0, "total": 0, "totalPods": 0}
+        assert _controller_authored_workers({"workers": workers}) == workers
