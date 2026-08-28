@@ -270,6 +270,11 @@ path = "tests/streaming_action_binding.rs"
 required-features = ["streaming"]
 
 [[test]]
+name = "streaming_shadow_operation"
+path = "tests/streaming_shadow_operation.rs"
+required-features = ["streaming"]
+
+[[test]]
 name = "streaming_feature_inventory"
 path = "tests/streaming_feature_inventory.rs"
 required-features = ["streaming"]

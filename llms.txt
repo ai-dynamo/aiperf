@@ -454,6 +454,33 @@ profiler.
   that order successors without dispatching, and a cycle-closing or
   post-release edge is refused at ingest. Coverage is in
   `rust/runtime/tests/streaming_agent_graph_sessions.rs`.
+- **How does a streaming action actually reach an endpoint?**
+  `rust/runtime/src/streaming/action/scheduled_request.rs` (the registered
+  `scheduled_request` action binding): one `aiperf.action.request.v1` action
+  becomes one `TurnToSend` issued through `ScheduledRuntime`, and the dispatch
+  lifecycle returns as `ActionExecutionEvent`s at the first-token hook and
+  completion handler the runtime already exposes, so no per-token hook is added.
+  `ScheduledRuntime` has no admission bound of its own, so the binding refuses
+  past `max_active_actions` itself, and an issue a stop condition refused is a
+  `Dropped` terminal rather than a run failure. `TurnToSend` is constructible
+  only inside `multiturn`, so `rust/runtime/src/multiturn/streaming_turn.rs` is
+  the one single-turn seam; its backend refuses every multi-turn walk because a
+  streaming continuation arrives as its own ordered action.
+- **What refuses an unsupported streaming run before it executes?**
+  `rust/runtime/src/engine/streaming_execution.rs` (the registered
+  `shadow_replay` workload): capability agreement admits exactly one profiling
+  phase, refuses a Dynamo source/format composition while canonical content
+  reconstruction has no registered factory, requires the resolved reliability
+  policy digest to equal the one in the frozen execution plan, and refuses a
+  resume whose `SynthesisAuthority` disagrees with the authored plan before any
+  participant initializes. Coverage is in
+  `rust/runtime/tests/streaming_shadow_operation.rs`.
+- **What proves a no-more-actions-before frontier?**
+  `rust/runtime/src/streaming/action/host/inventory.rs`
+  (`ActionInventoryLedger`): each finalized action records its terminal
+  membership at its dense global sequence, and freezing refuses while any
+  covered sequence is still outstanding, so the action-host-sealed
+  `FrozenActionInventory` the reporter accepts can never outrun its terminals.
 - **What makes one streaming conversation turn durable?**
   `rust/runtime/src/streaming/closure.rs` (`ConversationClosureSeam`): a turn
   binds a terminal slot before dispatch, closes only on
