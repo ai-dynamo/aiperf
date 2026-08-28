@@ -44,9 +44,7 @@ use tracing::debug;
 use crate::clock::Clock;
 
 use super::{
-    action::{
-        ActionExecutionError, ActionExecutionEvent, ActionTerminalDisposition, StreamingActionHost,
-    },
+    action::{ActionExecutionError, ActionExecutionEvent, StreamingActionHost},
     checkpoint::{
         CheckpointBarrier, CheckpointEpoch, CheckpointError, CheckpointParticipantId,
         CheckpointParticipantOwners, CheckpointParticipantPlan, CheckpointParticipantPlanError,
@@ -331,9 +329,9 @@ impl DrainReason {
 
     const fn checkpoint_terminal_reason(self) -> CheckpointTerminalReason {
         match self {
-            Self::Sealed => CheckpointTerminalReason::Sealed,
+            Self::Sealed => CheckpointTerminalReason::Completed,
             Self::Cancelled | Self::ReliabilityFence { .. } => CheckpointTerminalReason::Cancelled,
-            Self::FailedInvariant { .. } => CheckpointTerminalReason::Failed,
+            Self::FailedInvariant { .. } => CheckpointTerminalReason::Aborted,
         }
     }
 }

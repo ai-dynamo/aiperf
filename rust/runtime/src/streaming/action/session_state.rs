@@ -28,6 +28,7 @@ use super::{
     ActionAdmissionReceipt, ActionCancelReceipt, ActionDrainReceipt, ActionEventIdentity,
     ActionExecutionError, ActionExecutionEvent, ActionFailureCode, ActionHandleId, ActionPlacement,
     ActionResultRetention, ActionTerminalDisposition, ActionTerminalReceipt, DatasetActionSchema,
+    EndpointRetrySafety,
     OrderedDatasetAction, PreparedStreamingActionBinding, StreamingActionDriver,
     StreamingActionDriverControl, StreamingActionDriverControlOps, StreamingActionSinkDescriptor,
     StreamingActionSinkFactory, StreamingActionSinkPrepareContext, StreamingActionSubmitter,
@@ -66,6 +67,9 @@ pub static SESSION_STATE_ACTION_SINK: StreamingActionSinkDescriptor =
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        // The sink never reaches an endpoint, so it can prove nothing about
+        // duplicate rejection and refuses any nonzero endpoint retry limit.
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
 /// Authored configuration accepted by the state-only action sink.
@@ -322,7 +326,7 @@ impl StreamingCheckpointParticipant for SessionStateDriver {
         let Some(state) = state else {
             return Ok(());
         };
-        if state.descriptor().schema_id() != STATE_SCHEMA_ID {
+        if state.descriptor().schema_id != STATE_SCHEMA_ID {
             return Err(CheckpointError::ObjectVerification);
         }
         let restored: SessionStateCheckpoint = serde_json::from_slice(state.payload_bytes())
