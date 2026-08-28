@@ -79,22 +79,31 @@ async fn http_and_grpc_rows_agree_on_outcome_and_leave_the_endpoint_untouched() 
 ///
 /// This is the product evidence the plan places here rather than in the
 /// socket-free suite: a controller that partitioned work and launched cells
-/// before resolving its stream bindings would leave prepared state and issued
+/// before resolving its stream resource would leave prepared state and issued
 /// requests behind. Neither may exist, and the checkpoint root must stay empty.
+///
+/// The cellular refusal today is *earlier* than the single-process one — the
+/// partitioner reads an authored `datasets` array that a stream run does not
+/// have, so it refuses before streaming capability agreement is ever reached.
+/// The row therefore asserts the invariant (nothing prepared, nothing issued)
+/// rather than a specific message, and pins only that the refusal names the
+/// resource it could not partition. When cellular stream partitioning lands,
+/// this row converges on the same `scheduled_request` refusal as its
+/// single-process twin.
 #[tokio::test]
 async fn cellular_topology_refuses_before_any_prepare_or_endpoint_issue() {
     let case = StreamingServerCase::cellular("cellular", StreamingTransport::Http, 2);
     let harness = StreamingServerHarness::start(case);
     let outcome = harness.profile();
 
-    outcome.assert_refused_naming("cellular", &["scheduled_request", "available:"]);
+    outcome.assert_refused_naming("cellular", &["datasets"]);
     assert_eq!(
         harness.endpoint_issues().await,
         0,
         "cellular: no cell may issue a request before the controller resolves its bindings"
     );
     assert_eq!(
-        harness.captured_http_requests(),
+        harness.captured_inference_requests(),
         0,
         "cellular: the mock retained a request body, so something reached the endpoint"
     );

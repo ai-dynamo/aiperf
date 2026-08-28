@@ -313,10 +313,25 @@ impl StreamingServerHarness {
         sum_counter(&body, "aiperf_mock_requests_by_model_total")
     }
 
-    /// HTTP request bodies the mock retained, for the HTTP rows.
+    /// Inference request bodies the mock retained, for the HTTP rows.
+    ///
+    /// The capture middleware sits in front of every route, including the
+    /// harness's own `/metrics` scrape and the startup `/health` probe, so
+    /// control routes are excluded by prefix — only a request the benchmark
+    /// itself issued counts as an endpoint effect.
     #[must_use]
-    pub fn captured_http_requests(&self) -> usize {
-        self.mock.state.request_captures().len()
+    pub fn captured_inference_requests(&self) -> usize {
+        self.mock
+            .state
+            .request_captures()
+            .iter()
+            .filter(|capture| {
+                !matches!(
+                    capture.route.as_str(),
+                    "/metrics" | "/health" | "/accuracy" | "/models" | "/v1/models"
+                )
+            })
+            .count()
     }
 }
 
