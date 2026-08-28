@@ -362,7 +362,9 @@ fn stale_expected_head_is_refused_without_adopting_a_concurrent_advance() {
             fixture.run,
             Box::new(fixture.backend.clone()),
             expectations(fixture.run),
-            vec![Box::new(NotifyingParticipant::new(fixture.run, support::PARTICIPANT_ID).0)],
+            vec![Box::new(
+                NotifyingParticipant::new(fixture.run, support::PARTICIPANT_ID).0,
+            )],
             Box::new(FakeIssueReporter::new(fixture.run).0),
             Some(first_generation.clone()),
         )
@@ -379,10 +381,7 @@ fn stale_expected_head_is_refused_without_adopting_a_concurrent_advance() {
             .commit_barrier(barrier_at(2), &mut inputs)
             .await
             .expect_err("stale expectation refuses");
-        assert!(matches!(
-            error,
-            CheckpointError::GenerationConflict { .. }
-        ));
+        assert!(matches!(error, CheckpointError::GenerationConflict { .. }));
 
         // The advance is refused, never adopted.
         assert_eq!(fixture.coordinator.expected(), Some(&first_generation));

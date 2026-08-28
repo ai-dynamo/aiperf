@@ -19,9 +19,7 @@ use aiperf_runtime::streaming::{
         ActionEventIdentity, ActionExecutionEvent, ActionTerminalDisposition, ActionTerminalReceipt,
     },
     budget::{BudgetLimits, StreamingResourceBudget},
-    checkpoint::{
-        CheckpointParticipantId, StreamRunIdentity, StreamingCheckpointParticipant,
-    },
+    checkpoint::{CheckpointParticipantId, StreamRunIdentity, StreamingCheckpointParticipant},
     failure::{
         SessionCoordinatorError, SessionFailureCode, StreamingIssueReporter,
         StreamingIssueReporterHandle,
@@ -38,9 +36,7 @@ use aiperf_runtime::streaming::{
     },
     session::{
         StreamingSessionCoordinator, StreamingSessionPrepareContext,
-        agent_graph::{
-            AgentGraphProgramConfig, GraphNodeState, StreamingAgentGraphCoordinator,
-        },
+        agent_graph::{AgentGraphProgramConfig, GraphNodeState, StreamingAgentGraphCoordinator},
     },
     unit::{
         AgentEventFragment, ConversationTurnFragment, EventTimeUtc, GraphEdgeFragment,
@@ -277,7 +273,10 @@ fn emitted_nodes(sink: &CollectingActionSink) -> Vec<String> {
         .collect()
 }
 
-fn state_of(coordinator: &StreamingAgentGraphCoordinator, node_key: &str) -> Option<GraphNodeState> {
+fn state_of(
+    coordinator: &StreamingAgentGraphCoordinator,
+    node_key: &str,
+) -> Option<GraphNodeState> {
     let session_key = stable_session_key(NAMESPACE, SESSION.as_bytes());
     let scope = coordinator.scope(session_key)?;
     scope.node_state(scope.node_record_id(node_key))
@@ -324,7 +323,10 @@ async fn hidden_parent_edge_parks_then_gates_the_child_across_chunks() {
         .expect("child declaration is accepted");
     let scope = coordinator.scope(session_key).expect("session");
     assert_eq!(scope.orphan_edge_count(), 0, "the parked edge is consumed");
-    assert_eq!(scope.pending_predecessors(scope.node_record_id("child")), Some(1));
+    assert_eq!(
+        scope.pending_predecessors(scope.node_record_id("child")),
+        Some(1)
+    );
     assert!(
         emitted_nodes(&sink).is_empty(),
         "a child owing a predecessor is retained, not released"
@@ -339,7 +341,10 @@ async fn hidden_parent_edge_parks_then_gates_the_child_across_chunks() {
         .await
         .expect("parent declaration is accepted");
     assert_eq!(emitted_nodes(&sink), ["parent"]);
-    assert_eq!(state_of(&coordinator, "child"), Some(GraphNodeState::Waiting));
+    assert_eq!(
+        state_of(&coordinator, "child"),
+        Some(GraphNodeState::Waiting)
+    );
 
     let parent_action = sink.actions[0].action_id;
     coordinator
@@ -403,7 +408,10 @@ async fn edge_into_released_node_is_refused_and_state_is_unchanged() {
         .await
         .expect("root declaration is accepted");
     assert_eq!(emitted_nodes(&sink), ["root"]);
-    assert_eq!(state_of(&coordinator, "root"), Some(GraphNodeState::Released));
+    assert_eq!(
+        state_of(&coordinator, "root"),
+        Some(GraphNodeState::Released)
+    );
 
     let error = coordinator
         .ingest(edge(&state_budget, "e-1", 1, 1, "late", "root"), &mut sink)
@@ -413,7 +421,10 @@ async fn edge_into_released_node_is_refused_and_state_is_unchanged() {
         error,
         SessionCoordinatorError::session(SessionFailureCode::EdgeAfterExecution)
     );
-    assert_eq!(state_of(&coordinator, "root"), Some(GraphNodeState::Released));
+    assert_eq!(
+        state_of(&coordinator, "root"),
+        Some(GraphNodeState::Released)
+    );
     assert_eq!(
         emitted_nodes(&sink),
         ["root"],
@@ -569,7 +580,10 @@ async fn session_close_is_terminal_only_after_every_declared_node() {
         .expect("root terminal is accepted");
     let terminals = sink.terminal_actions();
     assert_eq!(terminals.len(), 1);
-    assert_eq!(terminals[0].payload, CapturedActionPayload::Terminal("producer-close".to_string()));
+    assert_eq!(
+        terminals[0].payload,
+        CapturedActionPayload::Terminal("producer-close".to_string())
+    );
 }
 
 /// A same-identity redeclaration is idempotent; conflicting content under one
@@ -635,10 +649,7 @@ async fn checkpoint_restore_preserves_waiting_graph_state() {
         .await
         .expect("leaf declaration is accepted");
     coordinator
-        .ingest(
-            edge(&state_budget, "e-3", 1, 3, "leaf", "tail"),
-            &mut sink,
-        )
+        .ingest(edge(&state_budget, "e-3", 1, 3, "leaf", "tail"), &mut sink)
         .await
         .expect("outbound edge onto an undeclared tail is accepted");
 

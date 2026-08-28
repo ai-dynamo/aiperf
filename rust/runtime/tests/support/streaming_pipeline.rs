@@ -54,8 +54,7 @@ use aiperf_runtime::streaming::{
     placement::local_placement_binding,
     reliability::{StreamingIssueReporter, StreamingIssueReporterHandle},
     session::{
-        DatasetActionSink, SessionCoordinatorError, SessionSealReceipt,
-        StreamingSessionCoordinator,
+        DatasetActionSink, SessionCoordinatorError, SessionSealReceipt, StreamingSessionCoordinator,
     },
     source::{
         AcquiredPartition, AcquisitionBudget, SourceEvent, SourceFrontier, SourceSeal,
@@ -218,7 +217,9 @@ impl StreamingDatasetSource for FakeSource {
     }
 
     async fn next_event(&mut self) -> Result<SourceEvent, StreamSourceError> {
-        self.probes.source_pulls.set(self.probes.source_pulls.get() + 1);
+        self.probes
+            .source_pulls
+            .set(self.probes.source_pulls.get() + 1);
         if self.probes.is_submit_parked.get() {
             self.probes
                 .source_pulls_after_saturation
@@ -378,8 +379,8 @@ impl FakeSession {
         for _ in 0..self.actions_per_watermark {
             let tag = self.next_action.get();
             self.next_action.set(tag.wrapping_add(1));
-            let action = request_action(&self.content_budget, StableActionId::from_bytes([tag; 32]))
-                .await;
+            let action =
+                request_action(&self.content_budget, StableActionId::from_bytes([tag; 32])).await;
             output.send_action(action).await?;
         }
         let sequence = self.sequence.get() + 1;
