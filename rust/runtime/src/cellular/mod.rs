@@ -51,10 +51,11 @@ pub use streaming_capability::{
 };
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub use streaming_placement::{
-    ActiveExecutionSet, BudgetOwnedSessionRoute, CellularRouteAdmission, IssueGrant,
-    PlacementError, PlacementRouteCharge, PlacementRouteReservation, ROUTE_ENTRY_BYTES,
-    ReleaseFence, ReleaseSubmitter, SessionPlacementDecision, SessionRoute, StagedState,
-    StickySessionPlacement, StreamingPlacementPolicy, assign_cell, release_at_controller_target,
+    ActiveExecutionSet, BudgetOwnedSessionRoute, CellularRouteAdmission, CheckpointedSessionRoute,
+    IssueGrant, PlacementError, PlacementRouteCharge, PlacementRouteReservation, ROUTE_ENTRY_BYTES,
+    ReleaseFence, ReleaseSubmitter, SessionPlacementDecision, SessionRoute, SessionRouteState,
+    StagedState, StickySessionPlacement, StreamingPlacementPolicy, assign_cell,
+    release_at_controller_target,
 };
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub(crate) use streaming_transport::{
