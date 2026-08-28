@@ -578,7 +578,11 @@ fn validate_agentic_cache_warmup(cfg: &BenchmarkConfig) -> Result<()> {
 /// This is the raise-only offline pass: it never rewrites. Each rejection names
 /// the feature that is structurally incompatible with an unbounded source, not
 /// merely unimplemented.
-fn validate_dataset_streams(cfg: &BenchmarkConfig) -> Result<()> {
+///
+/// Called directly by [`crate::config::resolve::resolve`] so it is armed on the
+/// one authoritative resolution path; it is not reachable through the
+/// surrounding [`validate`] chain, which has no caller.
+pub fn validate_dataset_streams(cfg: &BenchmarkConfig) -> Result<()> {
     let Some(streams) = cfg.dataset_streams.as_ref() else {
         ensure!(
             cfg.shadow_replay.is_none(),
@@ -640,6 +644,26 @@ fn validate_dataset_streams(cfg: &BenchmarkConfig) -> Result<()> {
             );
         }
     }
+    // The authoring-time twin of `StreamingReliabilityPolicyV2::validate_outer`.
+    // Both must hold: this one names the Config-v2 field path, the protocol-v2
+    // one names the wire. Neither may be dropped in favor of the other.
+    let reliability = &streams.reliability;
+    let has_retries = reliability.partition_retry_limit > 0
+        || reliability.endpoint_retry_limit > 0
+        || reliability.checkpoint_retry_limit > 0
+        || reliability.export_retry_limit > 0;
+    ensure!(
+        !(has_retries && reliability.retry_backoff_ms == 0),
+        "dataset_streams.reliability.retry_backoff_ms must be positive when any retry limit is \
+         nonzero"
+    );
+    // `Duration::from_millis` never overflows, but the nanosecond conversion the
+    // retry owner performs does; refuse it where the field name is still known.
+    ensure!(
+        reliability.retry_backoff_ms <= u64::MAX / 1_000_000,
+        "dataset_streams.reliability.retry_backoff_ms {} is not representable as a duration",
+        reliability.retry_backoff_ms
+    );
     Ok(())
 }
 

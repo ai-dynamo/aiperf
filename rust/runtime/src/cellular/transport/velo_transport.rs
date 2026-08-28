@@ -995,6 +995,95 @@ impl CellClient for VeloCellClient {
     }
 }
 
+/// Velo egress and ingress for the bounded multiplexed streaming placement
+/// plane.
+///
+/// Both directions are per-frame authenticated by the streaming frame boundary,
+/// which is what separates this plane from the pre-existing dataset and phaser
+/// subscription pushes. Neither handler owns per-action state: each one only
+/// hands bytes to the binding's own bounded channel, so the binding's task count
+/// stays fixed as its action count grows.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+impl VeloCellClient {
+    /// Register the cell-side handler that receives controller placement pushes.
+    ///
+    /// The precedent is the phaser client's own local `am_handler_async`
+    /// registration: a cell registers first, then the controller pushes. The
+    /// channel is bounded, so a cell that stops draining applies backpressure to
+    /// the controller rather than growing without limit.
+    pub(crate) fn register_streaming_placement_handler(
+        &self,
+        sender: mpsc::Sender<Bytes>,
+    ) -> Result<(), CellTransportError> {
+        self.velo
+            .register_handler(
+                Handler::am_handler_async(
+                    super::HANDLER_STREAMING_PLACEMENT,
+                    move |ctx: Context| {
+                        let sender = sender.clone();
+                        async move {
+                            // Authentication and bounded decode belong to the
+                            // endpoint that owns the receive budget; this
+                            // handler only transfers ownership of the bytes.
+                            if sender.try_send(ctx.payload.clone()).is_err() {
+                                tracing::debug!(
+                                    component = "cellular_streaming",
+                                    "dropped a placement push against a full cell inbound window"
+                                );
+                            }
+                            Ok(())
+                        }
+                    },
+                )
+                .build(),
+            )
+            .map_err(io)
+    }
+
+    /// Send one sealed placement event frame to the controller.
+    pub(crate) async fn send_streaming_event(
+        &self,
+        frame: Bytes,
+    ) -> Result<(), CellTransportError> {
+        self.velo
+            .am_send(super::HANDLER_STREAMING_EVENT)
+            .map_err(io)?
+            .raw_payload(frame)
+            .instance(self.controller.instance_id())
+            .send()
+            .await
+            .map_err(io)
+    }
+}
+
+/// Register the controller-side handler that receives ordered placement events.
+///
+/// Kept separate from `bind_controller_inner` because a binding's event channel
+/// is created when the streaming plane binds, which is strictly after the
+/// controller transport itself is bound.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub(crate) fn register_controller_streaming_event_handler(
+    velo: &Velo,
+    sender: mpsc::Sender<Bytes>,
+) -> Result<(), CellTransportError> {
+    velo.register_handler(
+        Handler::am_handler_async(super::HANDLER_STREAMING_EVENT, move |ctx: Context| {
+            let sender = sender.clone();
+            async move {
+                if sender.try_send(ctx.payload.clone()).is_err() {
+                    tracing::debug!(
+                        component = "cellular_streaming",
+                        "dropped a placement event against a full controller event window"
+                    );
+                }
+                Ok(())
+            }
+        })
+        .build(),
+    )
+    .map_err(io)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;

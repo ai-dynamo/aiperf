@@ -3,7 +3,13 @@
 
 //! Content-neutral checkpoint result descriptors and budgeted read values.
 
+pub mod compactor;
+pub mod epoch;
 pub mod index;
+pub mod sink_status;
+
+pub use compactor::{PreparedStreamingReport, StreamingResultCompactor};
+pub use sink_status::SinkFinalizationFailureCode;
 
 use std::{
     fmt,
@@ -251,6 +257,13 @@ impl ResultPartition {
     #[must_use]
     pub fn into_parts(self) -> (BudgetedResultDescriptor, BudgetedCheckpointBytes) {
         (self.descriptor, self.payload)
+    }
+
+    /// Whether the descriptor's sequence range contains the given value.
+    #[must_use]
+    pub fn contains_sequence(&self, seq: u64) -> bool {
+        let seq = GlobalSequence::new(seq);
+        self.descriptor().first_sequence <= seq && seq <= self.descriptor().last_sequence
     }
 }
 
@@ -760,6 +773,16 @@ pub enum ResultPlaneError {
         /// Canonical membership root under contention.
         membership_root: ContentDigest,
     },
+    /// Producer-side partition descriptor budget was exhausted.
+    ///
+    /// Refusal maps only to this variant: never to backend, participant-state,
+    /// storage, or provisional-hole capacity.
+    PartitionDescriptorCapacityExceeded {
+        /// Descriptor items requested at the point of refusal.
+        items: u64,
+        /// Descriptor retained bytes requested at the point of refusal.
+        bytes: u64,
+    },
     /// Provisional index capacity was exhausted.
     ProvisionalCapacityExceeded {
         /// Provisional items requested.
@@ -776,6 +799,11 @@ pub enum ResultPlaneError {
         /// Stable, user-readable compaction context.
         message: String,
     },
+    /// One derived result sink refused a durable finalization transition.
+    SinkFinalization {
+        /// Stable machine-readable finalization refusal.
+        code: SinkFinalizationFailureCode,
+    },
 }
 
 impl ResultPlaneError {
@@ -784,10 +812,14 @@ impl ResultPlaneError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::MembershipConflict { .. } => "membership_conflict",
+            Self::PartitionDescriptorCapacityExceeded { .. } => {
+                "partition_descriptor_capacity_exceeded"
+            }
             Self::ProvisionalCapacityExceeded { .. } => "provisional_capacity_exceeded",
             Self::InvalidCoverage => "invalid_coverage",
             Self::SegmentVerification => "segment_verification",
             Self::Compaction { .. } => "compaction",
+            Self::SinkFinalization { .. } => "sink_finalization",
         }
     }
 }
@@ -801,6 +833,11 @@ impl fmt::Display for ResultPlaneError {
                 self.code(),
                 membership_root
             ),
+            Self::PartitionDescriptorCapacityExceeded { items, bytes } => write!(
+                formatter,
+                "{}: {items} items and {bytes} bytes exceed partition descriptor capacity",
+                self.code()
+            ),
             Self::ProvisionalCapacityExceeded { items, bytes } => write!(
                 formatter,
                 "{}: {items} items and {bytes} bytes exceed provisional index capacity",
@@ -810,6 +847,9 @@ impl fmt::Display for ResultPlaneError {
                 write!(formatter, "{}", self.code())
             }
             Self::Compaction { message } => write!(formatter, "{}: {message}", self.code()),
+            Self::SinkFinalization { code } => {
+                write!(formatter, "{}: {}", self.code(), code.as_str())
+            }
         }
     }
 }

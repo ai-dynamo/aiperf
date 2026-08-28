@@ -43,6 +43,23 @@ impl ArtifactChannelServerConfig {
     }
 }
 
+/// Velo handler name: controller-to-cell streaming placement command push.
+///
+/// Fire-and-forget `am_send`; the payload is one controller-signed streaming
+/// frame. A unary call would couple the sender's future to the receiver's
+/// processing, so one slow action would block the multiplexed window; the
+/// acknowledgement arrives on [`HANDLER_STREAMING_EVENT`] instead.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub const HANDLER_STREAMING_PLACEMENT: &str = "aiperf.streaming.placement";
+/// Velo handler name: cell-to-controller ordered placement event.
+///
+/// Fire-and-forget `am_send`; the payload is one worker-signed authenticated
+/// frame under `AdmissionPurpose::StreamingPlacementEvent`. It feeds the
+/// binding's own bounded channel, never the shared [`CellMessage`] channel, so
+/// streaming traffic cannot starve terminal partition delivery.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub const HANDLER_STREAMING_EVENT: &str = "aiperf.streaming.event";
+
 /// Discovery-free Velo construction and endpoint-based controller connection.
 #[cfg(feature = "cellular")]
 pub mod connect;

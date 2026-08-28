@@ -976,6 +976,12 @@ impl PreparedStreamingIssuePolicy {
         &self.digest
     }
 
+    /// Borrow the frozen rules in canonical order.
+    #[must_use]
+    pub const fn rules(&self) -> &[StreamingIssueThresholdRule] {
+        &self.rules
+    }
+
     /// Return the checked exact-code rule, falling back to the sole wildcard.
     pub fn rule_for(
         &self,
@@ -1694,7 +1700,7 @@ pub struct StreamingIssueSummary {
 }
 
 impl StreamingIssueSummary {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             total: 0,
             by_scope: BTreeMap::new(),
@@ -4140,6 +4146,24 @@ impl PreparedIssueReceiptPartitionView {
         self.view_lease.charged_bytes()
     }
 
+    /// Return the exact receipt count carried by this view.
+    ///
+    /// The coordinator uses this to build the result-partition descriptor that
+    /// `into_result_partition` validates against.
+    #[must_use]
+    pub const fn receipt_count(&self) -> u64 {
+        self.receipt_count
+    }
+
+    /// Return the schema version required by `into_result_partition`.
+    ///
+    /// The coordinator must use this exact value when constructing the descriptor
+    /// passed to `into_result_partition`.
+    #[must_use]
+    pub const fn required_schema_version() -> u32 {
+        ISSUE_RECEIPT_WIRE_VERSION
+    }
+
     /// Consume the view into the reserved immutable result-partition handoff.
     pub fn into_result_partition(
         self,
@@ -4430,11 +4454,10 @@ impl DerivedExportReceiptReference {
     ///
     /// This is the sole reconstruction seam for a post-restart status owner. It is
     /// private to `reliability`: outside this module the only way to obtain a
-    /// reference remains an in-process prepared failure. The durable status
-    /// owner that calls it is a later task, so the mint is currently exercised
-    /// only by this module's tests.
-    #[allow(dead_code)]
-    const fn from_status_fields(
+    /// reference remains an in-process prepared failure. Inside the crate the
+    /// sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) const fn from_status_fields(
         receipt_digest: ContentDigest,
         receipt_length: u64,
         embedded_receipt_digest: ContentDigest,
@@ -4606,11 +4629,10 @@ impl VerifiedDerivedSinkAttemptStatus {
     /// from the caller, so a status owner cannot name a generation it does not
     /// hold. Density is enforced here, once, rather than at every reader: the
     /// forward path defines `counter_before` as `u64::from(attempt_ordinal)`, so
-    /// any other pairing is not a reachable predecessor status. The durable
-    /// status owner that calls it is a later task, so the mint is currently
-    /// exercised only by this module's tests.
-    #[allow(dead_code)]
-    fn from_status_owner(
+    /// any other pairing is not a reachable predecessor status. Inside the
+    /// crate the sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) fn from_status_owner(
         final_generation: &CommittedCheckpointGeneration,
         sink_id: StreamingIssueComponentId,
         last_attempt_ordinal: u32,
@@ -4695,11 +4717,10 @@ impl<'policy> DurableExportReceiptValidationContext<'policy> {
     /// Both authorities are required and cross-checked. The status already
     /// carries the run and generation it was minted against; passing the
     /// committed generation again proves the caller is restoring under the
-    /// generation it currently holds, not under a stale status object. The
-    /// durable status owner that calls it is a later task, so the mint is
-    /// currently exercised only by this module's tests.
-    #[allow(dead_code)]
-    fn from_final_generation_status(
+    /// generation it currently holds, not under a stale status object. Inside
+    /// the crate the sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) fn from_final_generation_status(
         final_generation: &CommittedCheckpointGeneration,
         policy: &'policy PreparedStreamingIssuePolicy,
         status: &VerifiedDerivedSinkAttemptStatus,

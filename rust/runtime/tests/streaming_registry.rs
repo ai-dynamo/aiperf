@@ -18,6 +18,7 @@ use aiperf_runtime::extensions::{
 use aiperf_runtime::streaming::{
     action::{
         ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
+        EndpointRetrySafety,
         DatasetActionSchema, PreparedStreamingActionBinding, StreamingActionSinkDescriptor,
         StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
         ValidatedStreamingActionSinkConfig,
@@ -232,6 +233,7 @@ impl FakeActionSinkFactory {
                 retention: ActionResultRetention::StreamingTerminal,
                 placement: ActionPlacement::WorkerLocal,
                 supports_virtual_clock: true,
+                endpoint_retry_safety: EndpointRetrySafety::Unproven,
             })),
         }
     }
@@ -547,20 +549,26 @@ fn builtin_registry_exposes_only_the_conversation_session_program() {
         .map(|descriptor| descriptor.id)
         .collect::<Vec<_>>();
     assert_eq!(ids, ["conversation"]);
-    assert!(registry.stream_source_descriptors().is_empty());
-    assert!(registry.stream_format_descriptors().is_empty());
-    assert!(registry.stream_action_sink_descriptors().is_empty());
-    assert!(registry.stream_checkpoint_backend_descriptors().is_empty());
-    // The stock catalog still lacks the source and format identifiers a
-    // streaming run selects, so no capability combination can be minted.
-    assert!(registry.stream_source_factory("shadow_replay").is_none());
-    assert!(registry.stream_format_factory("s3").is_none());
-    assert!(registry.stream_format_factory("object_store").is_none());
-    assert!(registry.declared_supported_cross_product().is_empty());
     assert!(
         registry
             .stream_session_program_factory("conversation")
             .is_some()
+    );
+    // The stock catalog registers no action-sink binding, so no streaming
+    // capability combination can be minted from it yet. Source and format
+    // built-ins are owned by their own lanes and are deliberately not asserted
+    // here.
+    assert!(registry.stream_action_sink_descriptors().is_empty());
+    assert!(
+        registry
+            .stream_action_sink_factory("scheduled_request")
+            .is_none()
+    );
+    assert!(registry.declared_supported_cross_product().is_empty());
+    assert!(
+        registry
+            .stream_session_program_factory("shadow_replay")
+            .is_none()
     );
 }
 

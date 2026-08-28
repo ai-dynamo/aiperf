@@ -10,10 +10,12 @@
 //! into the same transcript as authored turns, which is what makes an
 //! authored/endpoint pair one durable, checkpointable unit.
 //!
-//! Closure policy beyond producer-authored `SessionClose` — inferred closure,
-//! missing-predecessor disposition, spill, and quarantine tombstones — belongs
-//! to a separate owner and is deliberately absent here: an unresolved declared
-//! predecessor is held pending and never given an invented disposition.
+//! Inferred closure, missing-predecessor disposition, and quarantine tombstones
+//! are decided by the checked policies in [`super::closure`]. Partition
+//! exhaustion is never closure evidence, an unresolved declared predecessor is
+//! held pending rather than given an invented disposition, and a quarantined
+//! session is retired into a durable budgeted tombstone that a later fragment
+//! extends instead of resurrecting.
 
 use std::collections::{BTreeMap, btree_map::Entry};
 
@@ -36,15 +38,22 @@ use crate::streaming::{
     failure::SessionFailureCode,
     format::{SessionWatermark, StreamingFormatDescriptor},
     identity::{
-        ContentDigest, DuplicateDisposition, GlobalSequence, LogicalRecordReceipt,
-        SessionCausalFrontier, StableActionId, StableOrderKey, StableRecordId, StableSessionKey,
-        classify_logical_duplicate, stable_action_id,
+        ContentDigest, DuplicateDisposition, GlobalSequence, ImmutableObjectIdentity,
+        LogicalRecordReceipt, SessionCausalFrontier, StableActionId, StableOrderKey,
+        StableRecordId, StableSessionKey, classify_logical_duplicate, stable_action_id,
     },
+    reliability::StreamingInputDomainIdentity,
     session::{
         DatasetActionSink, SessionClosureCapability, SessionCoordinatorError, SessionPlacement,
-        SessionSealReceipt, SessionStateRetention, StreamingSessionCoordinator,
-        StreamingSessionPrepareContext, StreamingSessionProgramDescriptor,
-        StreamingSessionProgramFactory, ValidatedStreamingSessionProgramConfig,
+        SessionQuarantineTombstoneMap, SessionSealReceipt, SessionStateRetention,
+        StreamingSessionCoordinator, StreamingSessionPrepareContext,
+        StreamingSessionProgramDescriptor, StreamingSessionProgramFactory,
+        ValidatedStreamingSessionProgramConfig,
+        closure::{
+            MissingPredecessorPolicy, SessionCausalityLimits, SessionClosureDecision,
+            SessionClosureEvidence, SessionClosurePolicy, SessionQuarantineClosureProof,
+            validate_session_limits,
+        },
     },
     source::SourceSeal,
     unit::{
@@ -268,6 +277,12 @@ pub struct ConversationProgramConfig {
     /// Maximum out-of-order authored turns held for one conversation.
     #[serde(default = "default_max_pending_mutations")]
     pub max_pending_mutations_per_session: usize,
+    /// Maximum retained quarantine tombstones for this run.
+    #[serde(default = "default_max_quarantine_tombstones")]
+    pub max_quarantine_tombstones: usize,
+    /// Inferred-closure and missing-predecessor policy.
+    #[serde(default)]
+    pub closure: SessionClosurePolicy,
 }
 
 const fn default_max_active_sessions() -> usize {
@@ -286,6 +301,10 @@ const fn default_max_pending_mutations() -> usize {
     16
 }
 
+const fn default_max_quarantine_tombstones() -> usize {
+    4096
+}
+
 impl Default for ConversationProgramConfig {
     fn default() -> Self {
         Self {
@@ -293,18 +312,35 @@ impl Default for ConversationProgramConfig {
             max_turns_per_session: default_max_turns_per_session(),
             max_transcript_bytes: default_max_transcript_bytes(),
             max_pending_mutations_per_session: default_max_pending_mutations(),
+            max_quarantine_tombstones: default_max_quarantine_tombstones(),
+            closure: SessionClosurePolicy::default(),
         }
     }
 }
 
 impl ConversationProgramConfig {
     fn validate_limits(self) -> Result<Self, SessionCoordinatorError> {
-        if self.max_active_sessions == 0
-            || self.max_turns_per_session == 0
-            || self.max_transcript_bytes == 0
-            || self.max_pending_mutations_per_session == 0
+        if self.max_quarantine_tombstones == 0 {
+            return Err(SessionCoordinatorError::session(
+                SessionFailureCode::UnboundedCausalityState,
+            ));
+        }
+        if let Some(deadline) = self.closure.inactivity_deadline_ns
+            && deadline <= 0
         {
-            // A zero bound is an unbounded causality state with extra steps.
+            return Err(SessionCoordinatorError::session(
+                SessionFailureCode::UnboundedCausalityState,
+            ));
+        }
+        // A zero bound is an unbounded causality state with extra steps, and the
+        // shared refusal is what proves the authored policy can retire state.
+        validate_session_limits(SessionCausalityLimits {
+            max_active_sessions: Some(self.max_active_sessions),
+            max_pending_per_session: Some(self.max_pending_mutations_per_session),
+            max_retained_bytes_per_session: Some(self.max_transcript_bytes),
+            missing_predecessor: self.closure.missing_predecessor,
+        })?;
+        if self.max_turns_per_session == 0 {
             return Err(SessionCoordinatorError::session(
                 SessionFailureCode::UnboundedCausalityState,
             ));
@@ -323,6 +359,9 @@ pub static CONVERSATION_SESSION_PROGRAM: StreamingSessionProgramDescriptor =
         closure: &[
             SessionClosureCapability::ExplicitClose,
             SessionClosureCapability::MonotonicSequence,
+            SessionClosureCapability::HardWatermark,
+            SessionClosureCapability::FiniteSeal,
+            SessionClosureCapability::LossyInactivity,
         ],
         retention: SessionStateRetention::BoundedMemory,
         placement: SessionPlacement::ControllerCanonical,
@@ -385,11 +424,13 @@ pub struct StreamingConversationCoordinator {
     participant_id: CheckpointParticipantId,
     program_semantic_digest: ContentDigest,
     stream_identity: ContentDigest,
+    input_domain: StreamingInputDomainIdentity,
     limits: ConversationProgramConfig,
     state_budget: StreamingResourceBudget,
     checkpoint_budget: StreamingResourceBudget,
     sessions: BTreeMap<ConversationSessionScope, ConversationSession>,
     in_flight: BTreeMap<StableActionId, ConversationSessionScope>,
+    tombstones: SessionQuarantineTombstoneMap,
     initialization: ParticipantInitialization,
     causal_frontier: SessionCausalFrontier,
     next_global_sequence: u64,
@@ -439,11 +480,20 @@ impl StreamingConversationCoordinator {
             participant_id: context.participant_id.clone(),
             program_semantic_digest: context.program_semantic_digest,
             stream_identity: context.stream_semantic_digest,
+            input_domain: StreamingInputDomainIdentity::new(
+                context.stream_semantic_digest,
+                context.source_identity,
+            ),
             limits: config,
             state_budget: context.session_state_budget.clone(),
             checkpoint_budget: context.checkpoint_budget.clone(),
             sessions: BTreeMap::new(),
             in_flight: BTreeMap::new(),
+            tombstones: SessionQuarantineTombstoneMap::new(
+                context.run,
+                context.session_state_budget.clone(),
+                config.max_quarantine_tombstones,
+            ),
             initialization: ParticipantInitialization::default(),
             causal_frontier: SessionCausalFrontier {
                 through_sequence: GlobalSequence::new(0),
@@ -498,6 +548,12 @@ impl StreamingConversationCoordinator {
     ) -> Result<(), SessionCoordinatorError> {
         self.flush_reemissions(output).await?;
         let scope = ConversationSessionScope::new(self.stream_identity, fragment.session_key);
+        if self.tombstones.contains(&self.input_domain, fragment.session_key) {
+            // A retired session is never recreated. The later fragment is
+            // excluded and checked-extends the retained frontier, which moves
+            // the tombstone root and invalidates any prepared acknowledgement.
+            return self.exclude_into_tombstone(fragment, output).await;
+        }
         // Vocabulary acceptance precedes every state change, so an unaccepted
         // mutation never opens a session.
         let accepted = AcceptedMutation::classify(&fragment.mutation)?;
@@ -869,9 +925,97 @@ impl StreamingConversationCoordinator {
         output: &mut dyn DatasetActionSink,
     ) -> Result<(), SessionCoordinatorError> {
         self.flush_reemissions(output).await?;
-        // Format-proven completeness is recorded here; every closure policy that
-        // consumes it belongs to the inferred-closure owner.
         self.observe_event_time(Some(watermark.through));
+        // A format watermark is soft completeness evidence. It closes a session
+        // only through an authored inactivity deadline or the hard-watermark
+        // policy; on its own it proves nothing about session closure.
+        for scope in self.closable_under_watermark(watermark.through) {
+            self.retire_session(scope);
+        }
+        self.publish_frontier(output).await
+    }
+
+    /// Return every session the authored closure policy closes at `watermark`.
+    fn closable_under_watermark(&self, watermark: EventTimeUtc) -> Vec<ConversationSessionScope> {
+        self.sessions
+            .iter()
+            .filter(|(_, session)| {
+                // An emitted-but-unterminated turn is still causally in flight.
+                session.continuity.in_flight_turn().is_none()
+            })
+            .filter_map(|(scope, session)| {
+                let session_event_time = session.last_event_time?;
+                let inactivity = self.limits.closure.decide(
+                    SessionClosureEvidence::SoftWatermarkBelowDeadline {
+                        watermark,
+                        session_event_time,
+                    },
+                );
+                let decision = match inactivity {
+                    SessionClosureDecision::Wait => self.limits.closure.decide(
+                        SessionClosureEvidence::HardWatermarkPastSession {
+                            watermark,
+                            session_event_time,
+                        },
+                    ),
+                    closed => closed,
+                };
+                matches!(decision, SessionClosureDecision::Close(_)).then_some(*scope)
+            })
+            .collect()
+    }
+
+    /// Drop one session's live state and return its retained charge.
+    fn retire_session(&mut self, scope: ConversationSessionScope) {
+        if let Some(session) = self.sessions.remove(&scope) {
+            self.in_flight.retain(|_, owner| *owner != scope);
+            // `state_leases` release the retained transcript charge on drop.
+            drop(session);
+        }
+    }
+
+    /// Retire one session into a durable budgeted quarantine tombstone.
+    ///
+    /// The tombstone binds the run, exact input domain, session key, issue
+    /// identity, retained causal frontier, and the checked closure proof; live,
+    /// pending, and emitted state is retired in the same call.
+    pub fn quarantine_session(
+        &mut self,
+        session_key: StableSessionKey,
+        issue_id: ContentDigest,
+        closure_proof: SessionQuarantineClosureProof,
+    ) -> Result<(), SessionCoordinatorError> {
+        let scope = ConversationSessionScope::new(self.stream_identity, session_key);
+        self.tombstones.install(
+            self.input_domain.clone(),
+            session_key,
+            issue_id,
+            self.causal_frontier.clone(),
+            closure_proof,
+        )?;
+        self.retire_session(scope);
+        Ok(())
+    }
+
+    /// Borrow the retained quarantine tombstone map.
+    #[must_use]
+    pub const fn tombstones(&self) -> &SessionQuarantineTombstoneMap {
+        &self.tombstones
+    }
+
+    /// Exclude one fragment addressed to a retired session.
+    async fn exclude_into_tombstone(
+        &mut self,
+        fragment: StreamingSessionFragment,
+        output: &mut dyn DatasetActionSink,
+    ) -> Result<(), SessionCoordinatorError> {
+        let session_key = fragment.session_key;
+        self.observe_event_time(fragment.event_time);
+        self.next_global_sequence = self.next_global_sequence.saturating_add(1);
+        drop(fragment.lease);
+        let frontier = self.derive_frontier();
+        self.tombstones
+            .extend_frontier(&self.input_domain, session_key, frontier)?;
         self.publish_frontier(output).await
     }
 
@@ -949,8 +1093,27 @@ impl StreamingConversationCoordinator {
         output: &mut dyn DatasetActionSink,
     ) -> Result<SessionSealReceipt, SessionCoordinatorError> {
         self.flush_reemissions(output).await?;
-        // A source seal is not session closure in generation one: sessions still
-        // open here stay open, and inferred closure decides their fate.
+        // A finite seal is hard completeness evidence: a session that still
+        // holds an unresolved causal gap can never complete, so it fails rather
+        // than waiting forever, and the rest close under a verified seal.
+        let sealed: Vec<(ConversationSessionScope, bool)> = self
+            .sessions
+            .iter()
+            .map(|(scope, session)| (*scope, !session.pending.is_empty()))
+            .collect();
+        for (scope, has_causal_gap) in sealed {
+            match self
+                .limits
+                .closure
+                .decide(SessionClosureEvidence::FiniteSeal { has_causal_gap })
+            {
+                SessionClosureDecision::Close(_) => self.retire_session(scope),
+                SessionClosureDecision::Wait => {}
+                SessionClosureDecision::Fail(code) => {
+                    return Err(SessionCoordinatorError::session(code));
+                }
+            }
+        }
         self.publish_frontier(output).await?;
         Ok(SessionSealReceipt {
             digest: self.seal_digest(&seal),
@@ -977,10 +1140,8 @@ impl StreamingConversationCoordinator {
         ContentDigest::from_bytes(*hasher.finalize().as_bytes())
     }
 
-    async fn publish_frontier(
-        &mut self,
-        output: &mut dyn DatasetActionSink,
-    ) -> Result<(), SessionCoordinatorError> {
+    /// Derive the causal frontier from current retained state.
+    fn derive_frontier(&self) -> SessionCausalFrontier {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"aiperf.stream.session.conversation.frontier.v1");
         hasher.update(&self.next_global_sequence.to_le_bytes());
@@ -988,11 +1149,18 @@ impl StreamingConversationCoordinator {
             hasher.update(scope.session_key.as_bytes());
             hasher.update(&session.continuity.version.get().to_le_bytes());
         }
-        self.causal_frontier = SessionCausalFrontier {
+        SessionCausalFrontier {
             through_sequence: GlobalSequence::new(self.next_global_sequence),
             event_time: self.latest_event_time,
             digest: ContentDigest::from_bytes(*hasher.finalize().as_bytes()),
-        };
+        }
+    }
+
+    async fn publish_frontier(
+        &mut self,
+        output: &mut dyn DatasetActionSink,
+    ) -> Result<(), SessionCoordinatorError> {
+        self.causal_frontier = self.derive_frontier();
         output
             .advance_causal_frontier(self.causal_frontier.clone())
             .await
@@ -1044,12 +1212,17 @@ impl StreamingConversationCoordinator {
     ) -> Result<(Vec<u8>, BudgetLease, Option<SourcePosition>, u64), CheckpointError> {
         let mut records: Vec<ConversationSessionRecordV1> =
             self.sessions.values().map(record_of).collect();
+        // Tombstones are never dropped to fit: retiring a session and then
+        // forgetting it would let the next incarnation resurrect it.
+        let tombstones: Vec<QuarantineTombstoneRecordV1> =
+            self.tombstones.iter().map(tombstone_record_of).collect();
         let mut first_unrepresented: Option<SourcePosition> = None;
         loop {
             let state = ConversationCheckpointStateV1 {
                 program_semantic_digest: self.program_semantic_digest,
                 stream_identity: self.stream_identity,
                 sessions: records,
+                tombstones: tombstones.clone(),
             };
             let bytes = rmp_serde::to_vec(&state).map_err(|error| CheckpointError::Storage {
                 message: format!("could not encode conversation session state: {error}"),
@@ -1096,6 +1269,23 @@ impl StreamingConversationCoordinator {
             || decoded.stream_identity != self.stream_identity
         {
             return Err(CheckpointError::ObjectVerification);
+        }
+        for tombstone in decoded.tombstones {
+            self.tombstones
+                .install(
+                    StreamingInputDomainIdentity::new(
+                        self.stream_identity,
+                        tombstone.source_identity,
+                    ),
+                    tombstone.session_key,
+                    tombstone.issue_id,
+                    tombstone.causal_frontier,
+                    tombstone.closure_proof,
+                )
+                .map_err(|_| CheckpointError::StateBudget {
+                    participant: self.participant_id.clone(),
+                    code: StateBudgetFailureCode::ItemCapacity,
+                })?;
         }
         for record in decoded.sessions {
             let scope = *record.continuity.scope();
@@ -1309,6 +1499,18 @@ const fn map_budget_error(error: BudgetError) -> SessionCoordinatorError {
     }
 }
 
+fn tombstone_record_of(
+    tombstone: &crate::streaming::session::SessionQuarantineTombstone,
+) -> QuarantineTombstoneRecordV1 {
+    QuarantineTombstoneRecordV1 {
+        source_identity: *tombstone.input_domain().source_identity(),
+        session_key: tombstone.session_key(),
+        issue_id: tombstone.issue_id(),
+        causal_frontier: tombstone.causal_frontier().clone(),
+        closure_proof: tombstone.closure_proof(),
+    }
+}
+
 fn record_of(session: &ConversationSession) -> ConversationSessionRecordV1 {
     ConversationSessionRecordV1 {
         continuity: session.continuity.clone(),
@@ -1329,6 +1531,18 @@ struct ConversationCheckpointStateV1 {
     program_semantic_digest: ContentDigest,
     stream_identity: ContentDigest,
     sessions: Vec<ConversationSessionRecordV1>,
+    tombstones: Vec<QuarantineTombstoneRecordV1>,
+}
+
+/// Durable projection of one retained quarantine tombstone.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QuarantineTombstoneRecordV1 {
+    source_identity: ImmutableObjectIdentity,
+    session_key: StableSessionKey,
+    issue_id: ContentDigest,
+    causal_frontier: SessionCausalFrontier,
+    closure_proof: SessionQuarantineClosureProof,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
