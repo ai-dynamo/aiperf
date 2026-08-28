@@ -34,7 +34,8 @@ use crate::{
     engine::{
         protocol::PhaseSpec,
         registry::{
-            ValidatedWorkloadConfig, WorkloadDescriptor, WorkloadFactory, WorkloadRequirements,
+            ResourceRequirementsV2, ValidatedWorkloadConfig, WorkloadDescriptor, WorkloadFactory,
+            WorkloadRequirements,
         },
     },
     extensions::AIPerfRegistry,
@@ -209,8 +210,13 @@ impl WorkloadFactory for ShadowReplayWorkloadFactoryV2 {
 
     fn requirements(&self, _config: &dyn ValidatedWorkloadConfig) -> Result<WorkloadRequirements> {
         // Streaming shadow replay reaches an ordinary inference endpoint, so it
-        // asks for no transport feature the scheduled workload does not.
-        Ok(WorkloadRequirements::default())
+        // asks for no transport feature the scheduled workload does not. It does
+        // require the stream resource: `WorkloadRequirements::default()` carries
+        // the inference matrix, which forbids it.
+        Ok(WorkloadRequirements {
+            resources: ResourceRequirementsV2::shadow_replay(),
+            ..WorkloadRequirements::default()
+        })
     }
 }
 
