@@ -140,7 +140,11 @@ pub struct QueueHighWater {
 impl QueueHighWater {
     /// Build from one budget snapshot and its authored limits.
     #[must_use]
-    pub const fn from_budget(snapshot: BudgetSnapshot, item_limit: usize, byte_limit: usize) -> Self {
+    pub const fn from_budget(
+        snapshot: BudgetSnapshot,
+        item_limit: usize,
+        byte_limit: usize,
+    ) -> Self {
         Self {
             items: snapshot.high_water_items,
             bytes: snapshot.high_water_bytes,
@@ -497,7 +501,10 @@ impl StreamingPlaneMetrics {
         for stage in STREAMING_STAGES {
             let distribution = self.distribution(stage);
             if distribution.count() > 0 {
-                distributions.insert(stage.distribution_name().to_string(), distribution.to_report());
+                distributions.insert(
+                    stage.distribution_name().to_string(),
+                    distribution.to_report(),
+                );
             }
         }
         ReportStreamingPlane {
@@ -708,7 +715,11 @@ impl StreamingPlaneObserver {
     /// A retry is telemetry, not membership: it never advances
     /// `failed_terminal_actions`, which only a terminal receipt does.
     pub fn observe_retry(&mut self, retry_ordinal: u32) {
-        *self.metrics.retry_ordinals.entry(retry_ordinal).or_default() += 1;
+        *self
+            .metrics
+            .retry_ordinals
+            .entry(retry_ordinal)
+            .or_default() += 1;
     }
 
     /// Record one action finalized by a failed terminal receipt.
