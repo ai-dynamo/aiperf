@@ -17,6 +17,12 @@ from tests.kubernetes.helpers.operator import (
     OperatorDeployer,
     OperatorJobResult,
 )
+from tests.kubernetes.helpers.pod_watchdog import (
+    check_fatal_pod_conditions,
+    detect_fatal_image_conditions,
+    detect_fatal_pod_conditions,
+    detect_fatal_scheduling_conditions,
+)
 
 __all__ = [
     "AIPerfJobConfig",
@@ -35,4 +41,8 @@ __all__ = [
     "OperatorDeployer",
     "OperatorJobResult",
     "PodStatus",
+    "check_fatal_pod_conditions",
+    "detect_fatal_image_conditions",
+    "detect_fatal_pod_conditions",
+    "detect_fatal_scheduling_conditions",
 ]
