@@ -199,8 +199,10 @@ def compute_sweep_curves(
     start_ns = _apply_record_mask(store.start_ns[:n], mask)
     end_ns = _apply_record_mask(store.end_ns[:n], mask)
     generation_start_ns = _apply_record_mask(store.generation_start_ns[:n], mask)
-    output_tokens = _apply_record_mask(store.numeric("output_sequence_length"), mask)
-    input_tokens = _apply_record_mask(store.numeric("input_sequence_length"), mask)
+    output_tokens = _apply_record_mask(
+        store.numeric("output_sequence_length")[:n], mask
+    )
+    input_tokens = _apply_record_mask(store.numeric("input_sequence_length")[:n], mask)
 
     conc = _build_concurrency_curves(_sweepline, start_ns, end_ns, generation_start_ns)
     tput = _build_throughput_curves(

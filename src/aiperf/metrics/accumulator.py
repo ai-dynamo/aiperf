@@ -330,11 +330,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if ctx.phase is not None:
             phase_value = str(ctx.phase)
             mask &= self._column_store.mask_for_categorical(
-                "benchmark_phase", phase_value
+                "benchmark_phase", phase_value, count=n
             )
             if ctx.phase_index is not None:
                 mask &= self._column_store.mask_for_categorical(
-                    "phase_index", str(ctx.phase_index)
+                    "phase_index", str(ctx.phase_index), count=n
                 )
             return mask
         if ctx.start_ns is not None:
