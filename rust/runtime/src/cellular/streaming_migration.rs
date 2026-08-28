@@ -500,17 +500,26 @@ impl CellularStreamingController {
 
     /// Step 6: the CAS. Commit the incremented epoch and the new owner.
     ///
-    /// The coordinator does not roll back a committed head, so this either
-    /// commits or does not; there is no half-committed epoch. A post-commit
-    /// notification failure is not an abort — the head advanced and the
-    /// migration succeeded.
+    /// The staged owner is adopted in memory first, because the view this
+    /// barrier takes is exactly what a restart reads back. The coordinator does
+    /// not roll back a committed head, so this either commits or does not; there
+    /// is no half-committed epoch, and a refused CAS reverts to the owner it
+    /// replaced. A post-commit notification failure is not an abort — the head
+    /// advanced and the migration succeeded.
     pub async fn commit_route_generation(
         &mut self,
+        session: StableSessionKey,
         barrier: CheckpointBarrier,
     ) -> Result<(), MigrationError> {
+        let (old, _new) = self.placement.borrow_mut().adopt_staged_owner(session)?;
         let mut results = PreparedCheckpointResultInput::empty();
-        self.coordinator.commit_barrier(barrier, &mut results).await?;
-        Ok(())
+        match self.coordinator.commit_barrier(barrier, &mut results).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                self.placement.borrow_mut().revert_adoption(session, old)?;
+                Err(MigrationError::Checkpoint(error))
+            }
+        }
     }
 
     /// Step 7: promote the staged owner and release everything past the fence.
@@ -586,7 +595,10 @@ impl CellularStreamingController {
             self.abort_migration(session)?;
             return Err(error);
         }
-        if let Err(error) = self.commit_route_generation(route_barrier).await {
+        if let Err(error) = self
+            .commit_route_generation(session, route_barrier)
+            .await
+        {
             self.abort_migration(session)?;
             return Err(error);
         }

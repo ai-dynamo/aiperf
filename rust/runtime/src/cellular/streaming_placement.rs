@@ -607,12 +607,58 @@ impl StickySessionPlacement {
         Ok(new)
     }
 
-    /// Promote the staged destination to committed owner.
+    /// Adopt the staged owner in memory, immediately before the route
+    /// generation's CAS.
     ///
-    /// Step 7, and only ever called after the route generation committed. The
-    /// old lease is dropped and the migration lease promoted in its place, so
-    /// the transient double charge is returned in the same operation that makes
-    /// the new owner authoritative.
+    /// Step 6a. The checkpoint view taken *by* that CAS must already name the
+    /// new owner, because the generation it publishes is exactly what a restart
+    /// will read back. Both leases are still held: the transient double charge
+    /// is not returned until the generation has committed and step 7 settles it.
+    ///
+    /// Returns `(old, new)` so a refused CAS can revert to precisely the owner
+    /// it replaced rather than to a re-derived one.
+    pub fn adopt_staged_owner(
+        &mut self,
+        session: StableSessionKey,
+    ) -> Result<(SessionRoute, SessionRoute), PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        let SessionRouteState::Prepared { old, new, .. } = owned.state else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        owned.state = SessionRouteState::Owned(new);
+        Ok((old, new))
+    }
+
+    /// Undo an adoption whose route generation did not commit.
+    ///
+    /// Nothing durable named `new`, so the committed owner is still `old`. The
+    /// migration lease is dropped here, which returns the transient charge.
+    pub fn revert_adoption(
+        &mut self,
+        session: StableSessionKey,
+        old: SessionRoute,
+    ) -> Result<(), PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        owned.state = SessionRouteState::Owned(old);
+        drop(owned.migration_lease.take());
+        Ok(())
+    }
+
+    /// Settle the transient double charge after the route generation committed.
+    ///
+    /// Step 7. The old lease is dropped and the migration lease promoted in its
+    /// place, so exactly one route charge is returned in the same operation that
+    /// completes the migration.
     pub fn commit_owner(
         &mut self,
         session: StableSessionKey,
@@ -622,7 +668,7 @@ impl StickySessionPlacement {
                 PlacementFailureCode::RouteUnavailable,
             ));
         };
-        let SessionRouteState::Prepared { new, .. } = owned.state else {
+        let SessionRouteState::Owned(new) = owned.state else {
             return Err(PlacementError::placement(
                 PlacementFailureCode::RouteUnavailable,
             ));
@@ -632,7 +678,6 @@ impl StickySessionPlacement {
                 PlacementFailureCode::RouteUnavailable,
             ));
         };
-        owned.state = SessionRouteState::Owned(new);
         // Assignment drops the old lease, returning exactly one route charge.
         owned.lease = promoted;
         Ok(new.ownership_epoch)
