@@ -5,3 +5,4 @@ require:
 
 allowRemediationCommits:
   individual: true
+  thirdParty: true
