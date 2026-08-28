@@ -43,7 +43,8 @@
                 },
                 "probability": 40.0
               }
-            ]
+            ],
+            "random_corpus_style": "vllm"
           },
           "sampling": "sequential",
           "turn_delay_ratio": 1.0,
@@ -759,7 +760,8 @@
                         },
                         "probability": 40.0
                       }
-                    ]
+                    ],
+                    "random_corpus_style": "vllm"
                   },
                   "type": "synthetic"
                 }
@@ -1036,7 +1038,8 @@
                       },
                       "probability": 40.0
                     }
-                  ]
+                  ],
+                  "random_corpus_style": "vllm"
                 },
                 "type": "synthetic"
               }

@@ -21,7 +21,8 @@
             },
             "osl": {
               "value": 128.0
-            }
+            },
+            "random_corpus_style": "vllm"
           },
           "sampling": "sequential",
           "turn_delay_ratio": 1.0,
@@ -722,7 +723,8 @@
                     },
                     "osl": {
                       "value": 128.0
-                    }
+                    },
+                    "random_corpus_style": "vllm"
                   },
                   "type": "synthetic"
                 }
@@ -986,7 +988,8 @@
                   },
                   "osl": {
                     "value": 128.0
-                  }
+                  },
+                  "random_corpus_style": "vllm"
                 },
                 "type": "synthetic"
               }

@@ -23,7 +23,8 @@
             "osl": {
               "mean": 256.0,
               "stddev": 0.0
-            }
+            },
+            "random_corpus_style": "vllm"
           },
           "sampling": "sequential",
           "turn_delay_ratio": 1.0,
@@ -722,7 +723,8 @@
                     },
                     "osl": {
                       "mean": 256.0
-                    }
+                    },
+                    "random_corpus_style": "vllm"
                   },
                   "type": "synthetic"
                 }
@@ -997,7 +999,8 @@
                   },
                   "osl": {
                     "mean": 256.0
-                  }
+                  },
+                  "random_corpus_style": "vllm"
                 },
                 "type": "synthetic"
               }

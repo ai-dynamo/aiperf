@@ -26,7 +26,8 @@
             },
             "osl": {
               "value": 64.0
-            }
+            },
+            "random_corpus_style": "vllm"
           },
           "sampling": "sequential",
           "turn_delay_ratio": 0.5,
@@ -726,7 +727,8 @@
                     },
                     "osl": {
                       "value": 64.0
-                    }
+                    },
+                    "random_corpus_style": "vllm"
                   },
                   "turn_delay_ratio": 0.5,
                   "type": "synthetic"
@@ -1001,7 +1003,8 @@
                   },
                   "osl": {
                     "value": 64.0
-                  }
+                  },
+                  "random_corpus_style": "vllm"
                 },
                 "turn_delay_ratio": 0.5,
                 "type": "synthetic"
@@ -1204,7 +1207,8 @@
                   },
                   "osl": {
                     "value": 64.0
-                  }
+                  },
+                  "random_corpus_style": "vllm"
                 },
                 "turn_delay_ratio": 0.5,
                 "type": "synthetic"
