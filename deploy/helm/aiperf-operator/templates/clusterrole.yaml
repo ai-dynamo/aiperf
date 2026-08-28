@@ -53,14 +53,23 @@ rules:
 #   creates a per-sweep SA (`aiperf-sweep-controller-<sweep>`) so the
 #   sweep-controller pod has minimal namespace-scoped access. Cleanup is via
 #   OwnerReferences, so update/patch/delete are not required.
-# ResourceQuotas - preflight inspects quotas before scheduling
-# Secrets - preflight verifies referenced imagePullSecrets / env secrets
+# ResourceQuotas - preflight inspects quotas before scheduling. It enumerates
+#   every quota in the benchmark namespace (list_namespaced_resource_quota), so
+#   `list` is required here; `watch` is not used.
+# Secrets - preflight verifies referenced imagePullSecrets / env secrets by
+#   name (read_namespaced_secret). `get` only, deliberately: the operator never
+#   enumerates secrets, and cluster-wide list/watch would let it read every
+#   secret in the cluster. Scope stays cluster-wide so benchmarks can run in any
+#   namespace.
 - apiGroups: [""]
   resources: ["serviceaccounts"]
   verbs: ["get", "list", "watch", "create"]
 - apiGroups: [""]
-  resources: ["resourcequotas", "secrets"]
-  verbs: ["get", "list", "watch"]
+  resources: ["resourcequotas"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
 
 # NetworkPolicies - preflight checks benchmark-namespace network policies
 - apiGroups: ["networking.k8s.io"]

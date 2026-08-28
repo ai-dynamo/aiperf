@@ -92,16 +92,35 @@ def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # The results-server sidecar serves from a read-only PVC mount. The
-        # kopf operator process is the single SQLite writer and creates/migrates
-        # the index during operator startup; this process only opens a read-only
-        # connection for normal API serving.
+        # The kopf operator process is the single SQLite writer and
+        # creates/migrates the index during operator startup; this process only
+        # opens a read-only connection for normal API serving.
         index_owned_here = False
         if not runs_index.is_open():
+            index_path = base_dir / ".aiperf_index.sqlite"
+            # A not-yet-created index is the expected state before the operator
+            # has started; anything else means the index silently degrades every
+            # request to a full filesystem scan, so it must be loud.
+            index_exists = await asyncio.to_thread(index_path.is_file)
             try:
-                await runs_index.open_readonly(base_dir / ".aiperf_index.sqlite")
+                await runs_index.open_readonly(index_path)
             except (RuntimeError, OSError, sqlite3.Error) as exc:
-                logger.warning("runs_index read-only open skipped: %s", exc)
+                if index_exists:
+                    logger.error(
+                        "runs_index exists at %s but could not be opened read-only: "
+                        "%s -- all results queries will fall back to filesystem "
+                        "scans until this is fixed",
+                        index_path,
+                        exc,
+                        exc_info=True,
+                    )
+                else:
+                    logger.info(
+                        "runs_index not present yet at %s (%s); serving from "
+                        "filesystem scans until the operator creates it",
+                        index_path,
+                        exc,
+                    )
             else:
                 index_owned_here = True
         db_holder[0] = ResultsDB(base_dir)

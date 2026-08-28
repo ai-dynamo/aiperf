@@ -234,6 +234,14 @@ RUN WHEEL=$(ls /dist/aiperf-*.whl) \
     && uv pip install --no-deps "aiperf[botorch] @ file://${WHEEL}" \
     && rm -rf /dist /workspace/pyproject.toml
 
+# Remove setuptools as it is not needed for the runtime image. Nothing imported
+# by the runtime entry points (aiperf CLI, kopf operator, results_server, the
+# dash dashboard) touches setuptools/pkg_resources -- dash only declares it as a
+# metadata dependency and its sole pkg_resources user is the build-time
+# component_generator. Must stay after every install in this stage so nothing
+# reinstalls it before the runtime venv COPY.
+RUN uv pip uninstall setuptools
+
 # Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
 RUN mkdir -p /opt/tiktoken_cache \
     && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"

@@ -246,12 +246,50 @@ async def open(path: Path) -> None:
     logger.info("runs_index opened at %s (schema_version=%d)", path, SCHEMA_VERSION)
 
 
+class ReadOnlyMountError(RuntimeError):
+    """The index exists on disk but this process cannot open it for reading.
+
+    SQLite in WAL mode requires every reader to create or attach the ``-wal`` /
+    ``-shm`` sidecars, so a read-only filesystem mount fails the open outright
+    whenever the writer is not concurrently holding those sidecars alive (e.g.
+    the operator container cleanly closed the DB, which unlinks them). The fix
+    is a read-write mount, not ``immutable=1``: the operator writes this file
+    concurrently, and ``immutable=1`` promises SQLite the opposite, which yields
+    stale or torn reads instead of an error.
+    """
+
+
+async def _classify_readonly_open_failure(
+    path: Path, exc: sqlite3.OperationalError
+) -> Exception:
+    """Return the exception to raise for a failed read-only open.
+
+    ``unable to open database file`` covers both a missing DB and a DB whose
+    directory denies the WAL sidecars, so the file must be stat'd to tell the
+    expected startup race apart from the misconfigured mount.
+    """
+    message = str(exc).lower()
+    exists = await asyncio.to_thread(path.is_file)
+    if exists and ("readonly" in message or "unable to open database" in message):
+        return ReadOnlyMountError(
+            f"runs_index DB at {path} could not be opened read-only ({exc}). "
+            "A WAL-mode SQLite reader needs to create the -wal/-shm sidecars; "
+            "mount the results volume read-write in this container."
+        )
+    return exc
+
+
 async def open_readonly(path: Path) -> None:
     """Open an existing runs_index DB for read-only serving.
 
     Results-server sidecars use this path because the operator process is the
     single writer. The DB must already exist; missing or migrated schemas are
     operator-startup responsibilities, not sidecar side effects.
+
+    Read-only is enforced at the SQLite layer (``mode=ro`` plus ``PRAGMA
+    query_only``) rather than by the filesystem, because the WAL sidecars still
+    have to be writable. Raises ``ReadOnlyMountError`` when the filesystem
+    denies that.
     """
     global _DB, _DB_PATH, _READ_ONLY
 
@@ -259,7 +297,10 @@ async def open_readonly(path: Path) -> None:
         return
 
     uri = f"file:{quote(str(path), safe='/')}?mode=ro&cache=shared"
-    db = await aiosqlite.connect(uri, uri=True, isolation_level=None)
+    try:
+        db = await aiosqlite.connect(uri, uri=True, isolation_level=None)
+    except sqlite3.OperationalError as exc:
+        raise (await _classify_readonly_open_failure(path, exc)) from exc
     # Same leak guard as open(): a failure between connect and _DB assignment
     # (e.g. missing meta table on a foreign sqlite file) would otherwise leak
     # the connection's non-daemon thread on every retry.
@@ -278,6 +319,11 @@ async def open_readonly(path: Path) -> None:
                 f"runs_index DB at {path} has schema_version={existing} but this "
                 f"build only knows up to {SCHEMA_VERSION}. Refusing to open."
             )
+    except sqlite3.OperationalError as exc:
+        # WAL shm initialization is deferred to the first statement, so a
+        # read-only mount surfaces here rather than at connect().
+        await db.close()
+        raise (await _classify_readonly_open_failure(path, exc)) from exc
     except BaseException:
         await db.close()
         raise

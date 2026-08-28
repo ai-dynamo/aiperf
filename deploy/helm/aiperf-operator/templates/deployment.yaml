@@ -195,9 +195,14 @@ spec:
         volumeMounts:
         - name: tmp
           mountPath: /tmp
+        # Mounted read-write on purpose. The results-server only ever reads, but
+        # it opens the operator-written SQLite runs index, which is in WAL mode:
+        # a WAL reader must be able to create/attach the `-shm` sidecar, so a
+        # read-only mount fails the open outright once the writer has cleanly
+        # closed and removed the sidecars. Read-only is still enforced where it
+        # matters, at the SQLite layer (`mode=ro` URI + `PRAGMA query_only`).
         - name: results
           mountPath: {{ .Values.storage.mountPath | quote }}
-          readOnly: true
       {{- if .Values.dashboard.enabled }}
       - name: dashboard
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
