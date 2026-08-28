@@ -292,6 +292,8 @@ class ChaosInjector:
             f"{timeout or self.timings.operator_recovery_seconds} s"
         )
 
+    _TERMINAL_PHASES: frozenset[str] = frozenset({"Completed", "Failed"})
+
     async def wait_for_phase(
         self,
         namespace: str,
@@ -307,6 +309,11 @@ class ChaosInjector:
         to match. Useful for ``wait_for_phase(..., ("Running",),
         current_phase="profiling")`` to catch actively-benchmarking state.
         Returns the phase that was observed.
+
+        If the CR reaches a terminal phase (Completed or Failed) that is NOT
+        in ``phases``, raises ``TimeoutError`` immediately rather than waiting
+        out the full timeout — a terminal phase cannot transition away, so
+        polling further is pointless.
         """
         deadline = time.monotonic() + (timeout or self.timings.completion_wait_seconds)
         observed_phase = ""
@@ -314,6 +321,7 @@ class ChaosInjector:
         polls = 0
         failed_polls = 0
         last_stderr = ""
+        target_phases = frozenset(phases)
         while time.monotonic() < deadline:
             res = await self.kubectl.run(
                 "get",
@@ -334,6 +342,14 @@ class ChaosInjector:
             observed_current_phase = curr
             if phase in phases and (current_phase is None or curr == current_phase):
                 return phase
+            # If we land on a terminal phase that is not one we're waiting for,
+            # bail immediately — the CR cannot escape a terminal state.
+            if phase in self._TERMINAL_PHASES and phase not in target_phases:
+                raise TimeoutError(
+                    f"AIPerfJob {namespace}/{name} reached terminal phase "
+                    f"{phase!r} (currentPhase={curr!r}) but expected one of "
+                    f"{phases} (currentPhase={current_phase!r}); aborting early"
+                )
             await asyncio.sleep(1.0)
         # An empty phase is ambiguous on its own: the CR may not exist, may not
         # be readable, or may exist with no .status yet. Say which, otherwise
