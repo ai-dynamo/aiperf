@@ -7,3 +7,4 @@ pub(crate) mod budget;
 pub mod lease_gc;
 pub mod local;
 pub mod memory;
+pub mod none;

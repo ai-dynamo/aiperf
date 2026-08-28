@@ -18,6 +18,7 @@ use aiperf_runtime::extensions::{
 use aiperf_runtime::streaming::{
     action::{
         ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
+        EndpointRetrySafety,
         DatasetActionSchema, PreparedStreamingActionBinding, StreamingActionSinkDescriptor,
         StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
         ValidatedStreamingActionSinkConfig,
@@ -232,6 +233,7 @@ impl FakeActionSinkFactory {
                 retention: ActionResultRetention::StreamingTerminal,
                 placement: ActionPlacement::WorkerLocal,
                 supports_virtual_clock: true,
+                endpoint_retry_safety: EndpointRetrySafety::Unproven,
             })),
         }
     }

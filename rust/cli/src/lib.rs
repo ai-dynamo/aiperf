@@ -48,6 +48,7 @@ pub mod signals;
 pub mod slurm;
 pub mod speed_bench;
 pub mod stats;
+pub mod streaming_preflight;
 pub mod sweep;
 pub mod synthesize;
 pub mod validate;

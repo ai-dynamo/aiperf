@@ -15,6 +15,13 @@
 
 use std::collections::BTreeMap;
 
+mod multiplexed;
+
+pub use multiplexed::{
+    ActionEventBatch, ActiveExecution, ActiveExecutionSet, BudgetOwnedActionTerminalReceipt,
+    StreamingActionBindingSet, StreamingActionHost, action_kind, canonical_action_schema,
+};
+
 use super::{
     ActionTerminalMembershipOutcomeView, CheckedActionFailureTerminalEvidenceView,
     CheckedActionTerminalMembershipView, FrozenActionInventoryView, reliability_view_seal,

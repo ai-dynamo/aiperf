@@ -1,0 +1,45 @@
+schemaVersion: "2.0"
+benchmark:
+  model: my-model
+  endpoint:
+    type: chat
+    url: "127.0.0.1:8000"
+  dataset_streams:
+    items:
+      - id: s1
+        source:
+          id: local
+        format:
+          id: jsonl
+        session_program:
+          id: single_turn
+        limits:
+          acquired_partitions: 4
+          decoded_fragments: 16
+          decoded_bytes: 65536
+          state_memory: 8192
+          state_disk: 0
+    reliability:
+      partition_retry_limit: 5
+      endpoint_retry_limit: 0
+      checkpoint_retry_limit: 2
+      export_retry_limit: 2
+      retry_backoff_ms: 200
+  shadow_replay:
+    stream: s1
+    actions:
+      request:
+        id: request
+    time:
+      mode: relative
+    ordering:
+      watermark: source_order
+      late: drop
+    overload:
+      mode: backpressure
+    checkpoint:
+      mode: none
+  phases:
+    type: concurrency
+    requests: 10
+    concurrency: 1

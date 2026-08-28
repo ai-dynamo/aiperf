@@ -21,6 +21,9 @@ pub mod sketch;
 /// Controller-to-cell streaming capability agreement propagation.
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub mod streaming_capability;
+/// Strict, authenticated controller-to-cell streaming commands and events.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub mod streaming_protocol;
 pub mod transport;
 
 pub use heartbeat::{

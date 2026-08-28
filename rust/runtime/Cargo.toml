@@ -265,6 +265,11 @@ name = "transport_http_tls"
 path = "tests/transport_http/tls.rs"
 
 [[test]]
+name = "streaming_action_binding"
+path = "tests/streaming_action_binding.rs"
+required-features = ["streaming"]
+
+[[test]]
 name = "streaming_feature_inventory"
 path = "tests/streaming_feature_inventory.rs"
 required-features = ["streaming"]
@@ -282,6 +287,11 @@ required-features = ["streaming"]
 [[test]]
 name = "streaming_local_checkpoint"
 path = "tests/streaming_local_checkpoint.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_checkpoint_factories"
+path = "tests/streaming_checkpoint_factories.rs"
 required-features = ["streaming"]
 
 [[test]]

@@ -35,6 +35,14 @@ pub(crate) use host::{
     CheckedActionFailureTerminalEvidence, CheckedActionTerminalMembership, FrozenActionInventory,
 };
 
+/// State-only built-in action sink.
+pub mod session_state;
+
+pub use host::{
+    ActionEventBatch, ActiveExecution, ActiveExecutionSet, BudgetOwnedActionTerminalReceipt,
+    StreamingActionBindingSet, StreamingActionHost, action_kind, canonical_action_schema,
+};
+
 /// Borrowed checked evidence that one failed action attempt reached terminal.
 ///
 /// Implementations are sealed to action-host child modules. An adapter cannot
@@ -148,6 +156,24 @@ impl DatasetActionSchema {
     }
 }
 
+/// Whether an action sink can be safely retried against its target.
+///
+/// Retrying an endpoint action duplicates work at the target unless the target
+/// either rejects duplicates before accepting them or is logically idempotent.
+/// Absent one of those proofs an authored endpoint retry silently doubles
+/// measured load, so the default is the refusing variant.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointRetrySafety {
+    /// No proof; a nonzero endpoint retry limit is refused.
+    #[default]
+    Unproven,
+    /// The target rejects a duplicate before accepting it.
+    PreAcceptance,
+    /// The target's effect is logically idempotent under an exact action key.
+    LogicalIdempotency,
+}
+
 /// Immutable registry metadata for one streaming action sink implementation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StreamingActionSinkDescriptor {
@@ -167,6 +193,8 @@ pub struct StreamingActionSinkDescriptor {
     pub placement: ActionPlacement,
     /// Whether the binding can run under a virtual clock.
     pub supports_virtual_clock: bool,
+    /// Whether authored endpoint retries are admissible for this binding.
+    pub endpoint_retry_safety: EndpointRetrySafety,
 }
 
 /// Action result retention behavior.
