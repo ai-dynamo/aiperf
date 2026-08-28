@@ -1643,7 +1643,6 @@ def operator_job_namespace(worker_namespace_suffix: str, _session_uuid: str) -> 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
 async def _cleanup_session_namespaces(
-    kubectl: KubectlClient,
     k8s_settings: K8sTestSettings,
     benchmark_namespace: str,
     operator_job_namespace: str,
@@ -1654,12 +1653,24 @@ async def _cleanup_session_namespaces(
     aiperf-jobs-gw0-{uuid}).  Without this fixture, reused-cluster runs accumulate
     many orphaned namespaces that backlog the GC controller and destabilize the
     jobset-controller's leader election heartbeat.
+
+    Derives the kubectl context directly from k8s_settings to avoid a scope
+    mismatch with the package-scoped ``kubectl`` fixture.
     """
     yield
 
     if not k8s_settings.reuse_cluster:
         return  # Cluster will be deleted anyway
 
+    # Derive the kubectl context without depending on the package-scoped fixture.
+    if k8s_settings.kube_context:
+        context = k8s_settings.kube_context
+    elif k8s_settings.runtime == "kind":
+        context = f"kind-{k8s_settings.cluster}"
+    else:
+        return  # Cannot determine context for this runtime
+
+    kubectl = KubectlClient(context=context)
     for ns in (benchmark_namespace, operator_job_namespace):
         await kubectl.run(
             "delete",

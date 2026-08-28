@@ -126,6 +126,10 @@ def main() -> int:
             fail(f"{name}: missing SKILL.md")
             continue
         body = path.read_text()
+        refs = sorted((SKILLS / name / "references").glob("*.md"))
+        # Bundled references are part of the skill, so every content check
+        # below runs against them too.
+        corpus = body + "\n" + "\n".join(r.read_text() for r in refs)
 
         matched = re.match(r"^---\nname: (.+)\ndescription: (.+)\n---\n", body)
         if not matched:
@@ -140,12 +144,12 @@ def main() -> int:
             fail(f"{name}: description must start with 'Use when'")
         print(
             f"{name}: frontmatter ok ({frontmatter_len} chars), "
-            f"{len(body.split())} words"
+            f"{len(body.split())} words, {len(refs)} bundled reference(s)"
         )
 
         # Fold shell line-continuations so flags on later lines of a multi-line
         # example are scanned too; the command regex stops at a newline.
-        folded = re.sub(r"\\\n\s*", " ", body)
+        folded = re.sub(r"\\\n\s*", " ", corpus)
         for sub, rest in re.findall(r"aiperf kube ([a-z-]+)((?: [^\n`|]*)?)", folded):
             if sub not in subcommands:
                 fail(f"{name}: unknown subcommand 'aiperf kube {sub}'")
@@ -156,23 +160,30 @@ def main() -> int:
                 if known and flag not in flags[sub]:
                     fail(f"{name}: 'aiperf kube {sub}' has no flag {flag}")
 
-        for ref in set(re.findall(r"`([a-zA-Z0-9_./-]+\.(?:md|py|yaml|yml))`", body)):
-            candidates = [ref]
-            if not ref.startswith(("docs/", "src/", "deploy/", "tools/")):
-                candidates.append("docs/kubernetes/" + ref.split("/")[-1])
-            if not any((REPO / c.split("#")[0]).exists() for c in candidates):
-                fail(f"{name}: referenced path not found: {ref}")
+        # Standalone rule: a skill must be usable without this repo checked
+        # out. Every path it names has to resolve inside its own directory.
+        # A bare filename (`bench.yaml`) is a file the reader authors, not a
+        # reference; only qualified paths point somewhere.
+        for ref in set(
+            re.findall(
+                r"`([a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+\.(?:md|py|yaml|yml))`", corpus
+            )
+        ):
+            if ref.startswith(("docs/", "src/", "tools/", "dev/")):
+                continue  # reported by the repo-reference sweep below
+            if not (SKILLS / name / ref.split("#")[0]).exists():
+                fail(f"{name}: path reference does not resolve in the skill: {ref}")
+        for outside in set(
+            re.findall(r"(?:docs|src|tools|dev)/[a-zA-Z0-9_./-]+", corpus)
+        ):
+            fail(f"{name}: non-standalone repo reference: {outside}")
 
-        for ref in set(re.findall(r"`(docs/[a-zA-Z0-9_./-]+)`", body)):
-            if not (REPO / ref.split("#")[0]).exists():
-                fail(f"{name}: referenced doc not found: {ref}")
-
-        for var in set(re.findall(r"AIPERF_[A-Z0-9_]+", body)):
+        for var in set(re.findall(r"AIPERF_[A-Z0-9_]+", corpus)):
             if var not in env_doc and var not in ENV_ALLOWLIST:
                 fail(f"{name}: env var not in docs/environment-variables.md: {var}")
 
         for value in set(
-            re.findall(r"`([a-z][a-zA-Z]*(?:\.[a-zA-Z][a-zA-Z]*)+)`", body)
+            re.findall(r"`([a-z][a-zA-Z]*(?:\.[a-zA-Z][a-zA-Z]*)+)`", corpus)
         ):
             if value.split(".")[0] in HELM_ROOTS and value.split(".")[-1] not in values:
                 fail(f"{name}: Helm value not in values.yaml: {value}")
