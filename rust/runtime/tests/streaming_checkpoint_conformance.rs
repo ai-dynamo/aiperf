@@ -181,7 +181,13 @@ fn reliability_fault_matrix() -> Vec<ReliabilityFaultCase> {
     use StreamingIssueDisposition as D;
     vec![
         // Transient durability faults before publication: retry, head unmoved.
-        row(F::ParticipantWrite, D::Retry, C::Retryable, false, G::Previous),
+        row(
+            F::ParticipantWrite,
+            D::Retry,
+            C::Retryable,
+            false,
+            G::Previous,
+        ),
         row(F::ObjectSync, D::Retry, C::Retryable, false, G::Previous),
         row(F::DirectorySync, D::Retry, C::Retryable, false, G::Previous),
         row(F::IndexWrite, D::Retry, C::Retryable, false, G::Previous),
@@ -202,7 +208,13 @@ fn reliability_fault_matrix() -> Vec<ReliabilityFaultCase> {
             G::Successor,
         ),
         // A lost read lease fences the reader and is reopened, never failed.
-        row(F::ReaderLeaseLoss, D::Retry, C::Retryable, false, G::Previous),
+        row(
+            F::ReaderLeaseLoss,
+            D::Retry,
+            C::Retryable,
+            false,
+            G::Previous,
+        ),
         // Capacity: backpressure and admission fencing, head unmoved.
         row(
             F::BackendCapacity,
@@ -565,12 +577,8 @@ fn conformance_policy() -> PreparedStreamingIssuePolicy {
         None,
     )
     .expect("valid derived export rule");
-    PreparedStreamingIssuePolicy::new(vec![
-        checkpoint_retry,
-        checkpoint_capacity,
-        derived_export,
-    ])
-    .expect("valid conformance policy")
+    PreparedStreamingIssuePolicy::new(vec![checkpoint_retry, checkpoint_capacity, derived_export])
+        .expect("valid conformance policy")
 }
 
 fn ledger(run: StreamRunIdentity) -> BudgetOwnedStreamingIssueReporter {
@@ -709,8 +717,7 @@ async fn drive_scenario(
 
     if armed.is_foreign_advance {
         // A second, independent writer over the same medium takes the head.
-        let (mut foreign, _foreign_control) =
-            coordinator_for(run, open(), Some(baseline.clone()));
+        let (mut foreign, _foreign_control) = coordinator_for(run, open(), Some(baseline.clone()));
         foreign
             .commit_barrier(
                 support::barrier_for_run(run, 2),
@@ -938,7 +945,8 @@ impl TestCheckpointBackend for MemoryConformanceBackend {
         let backend = MemoryCheckpointBackend::new(support::backend_limits())
             .expect("valid memory conformance backend");
         let open_backend = backend.clone();
-        let open = move || -> Box<dyn StreamingCheckpointBackend> { Box::new(open_backend.clone()) };
+        let open =
+            move || -> Box<dyn StreamingCheckpointBackend> { Box::new(open_backend.clone()) };
         let arm_backend = backend.clone();
         let arm = move || {
             arm_backend.arm_test_fault(TestMemoryFault::AfterPrevalidationBeforePublication);
@@ -1153,7 +1161,7 @@ impl TestCheckpointBackend for ObjectConformanceBackend {
     }
 
     async fn run_with_fault(&self, fault: CheckpointFault) -> FaultObservation {
-        use object_support::object_store_support::{FakeConditionalObjectStore, object_backend};
+        use object_support::{FakeConditionalObjectStore, object_backend};
 
         let store = FakeConditionalObjectStore::new(4 * 1024 * 1024);
         let open_store = store.clone();
@@ -1425,12 +1433,22 @@ async fn retry_exhaustion_backpressures_and_fences_without_failing_the_run() {
         summary.is_admission_fenced,
         "exhausted checkpoint retries must fence admission"
     );
-    assert_eq!(summary.by_disposition.get(&StreamingIssueDisposition::FailRun), None);
+    assert_eq!(
+        summary
+            .by_disposition
+            .get(&StreamingIssueDisposition::FailRun),
+        None
+    );
 
     // The head never moved: exhaustion is a pacing decision, not a publication.
     let backend = memory_conformance_backend();
-    let observed = backend.run_with_fault(CheckpointFault::BackendCapacity).await;
-    assert_eq!(observed.disposition, StreamingIssueDisposition::Backpressure);
+    let observed = backend
+        .run_with_fault(CheckpointFault::BackendCapacity)
+        .await;
+    assert_eq!(
+        observed.disposition,
+        StreamingIssueDisposition::Backpressure
+    );
     assert!(!observed.is_run_failed);
     assert_eq!(
         observed.current_generation.as_ref(),
@@ -1442,7 +1460,10 @@ async fn retry_exhaustion_backpressures_and_fences_without_failing_the_run() {
 async fn derived_sink_failure_leaves_execution_head_and_outcome_unchanged() {
     let directory = tempfile::tempdir().expect("scratch directory");
     let backend = local_conformance_backend(directory.path());
-    for fault in [CheckpointFault::Compaction, CheckpointFault::ReportPersistence] {
+    for fault in [
+        CheckpointFault::Compaction,
+        CheckpointFault::ReportPersistence,
+    ] {
         let observed = backend.run_with_fault(fault).await;
         assert_eq!(
             observed.disposition,
