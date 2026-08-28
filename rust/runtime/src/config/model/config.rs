@@ -91,6 +91,12 @@ pub struct BenchmarkConfig {
     /// Canonical single-dataset list (`cfg.datasets`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub datasets: Option<Vec<Dataset>>,
+    /// Native streaming dataset resources (`cfg.dataset_streams`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_streams: Option<super::dataset_stream::DatasetStreams>,
+    /// Shadow-replay execution policy (`cfg.shadow_replay`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_replay: Option<super::dataset_stream::ShadowReplay>,
     /// Ordered phase policy (`cfg.phases`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phases: Option<Vec<Phase>>,

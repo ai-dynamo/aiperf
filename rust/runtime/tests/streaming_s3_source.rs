@@ -1072,6 +1072,8 @@ async fn sim_clock_is_refused_at_prepare() {
         .expect("authored configuration is valid JSON");
     let reporter = Rc::new(ReporterState::default());
     let context = StreamingSourcePrepareContext {
+        run: run_identity(),
+        stream_semantic_digest: ContentDigest::from_bytes([0x73; 32]),
         acquisition_budget: acquisition_budget(),
         issue_reporter: StreamingIssueReporterHandle::new(RecordingEndpoint { state: reporter }),
         clock: Rc::new(SimClock::new()),

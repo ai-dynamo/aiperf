@@ -333,75 +333,79 @@ pub(crate) async fn execute_native_inner(
         // returns `None` when exact-fold is off or no records/raw/CSV artifact is
         // requested. Its parent dirs are created eagerly (before `create_run_artifacts`
         // in the async block), matching the batch writers' own dir creation.
-        let record_lane = if exact_fold {
-            RecordArtifactLane::new(
-                request
+        let lane_paths = if exact_fold {
+            RecordLanePaths {
+                records: request
                     .artifacts
                     .records_path
                     .as_ref()
                     .map(|path| artifact_path(&request.artifact_dir, path, "records_path"))
                     .transpose()?,
-                request
+                raw: request
                     .artifacts
                     .raw_path
                     .as_ref()
                     .map(|path| artifact_path(&request.artifact_dir, path, "raw_path"))
                     .transpose()?,
-                request
+                records_csv: request
                     .artifacts
                     .records_csv_path
                     .as_ref()
                     .map(|path| artifact_path(&request.artifact_dir, path, "records_csv_path"))
                     .transpose()?,
-                request
+                records_parquet: request
                     .artifacts
                     .records_parquet_path
                     .as_ref()
-                    .map(|path| artifact_path(&request.artifact_dir, path, "records_parquet_path"))
+                    .map(|path| {
+                        artifact_path(&request.artifact_dir, path, "records_parquet_path")
+                    })
                     .transpose()?,
                 // outputs.json streams through the lane at completion.
-                request
+                outputs: request
                     .artifacts
                     .outputs_path
                     .as_ref()
                     .map(|path| artifact_path(&request.artifact_dir, path, "outputs_path"))
                     .transpose()?,
-                request.artifacts.trace,
-            )?
+                include_trace: request.artifacts.trace,
+            }
         } else {
-            None
+            RecordLanePaths::default()
         };
         // outputs.json streams through the lane, so exact-fold folds
         // and drops the model output text at completion rather than retaining it.
-        let capture = Rc::new(
-            RunCapture::new(
-                clock.clone(),
-                start_ns,
-                metrics_config.clone(),
-                request.artifacts.raw_path.is_some(),
-                live_sink.is_some() || heartbeat_lane.is_some(),
-                wants_adaptive_record,
-                exact_fold,
-            )
-            .with_record_lane(record_lane)
-            // Per-record OTLP folds at completion only on the exact-fold
-            // path; the retain path still folds the retained records post-run.
-            .with_otel(exact_fold && request.native_otel_enabled)
-            // Stage each turn's model output text so the streaming outputs.json entry
-            // carries it, then drop it in the fold (exact-fold + outputs.json only).
-            .with_outputs_capture(exact_fold && request.artifacts.outputs_path.is_some()),
-        );
+        let PreparedCaptureService {
+            capture,
+            dispatcher,
+        } = CaptureService::build(CaptureServiceRequest {
+            clock: clock.clone(),
+            origin_ns: start_ns,
+            metrics_config: metrics_config.clone(),
+            policy: RunCapturePolicy {
+                is_raw_enabled: request.artifacts.raw_path.is_some(),
+                needs_live_record: live_sink.is_some() || heartbeat_lane.is_some(),
+                needs_adaptive_record: wants_adaptive_record,
+                is_exact_fold: exact_fold,
+            },
+            // Cell processes select the autonomous issuer and the global phase
+            // ordinal bases from the environment; single-process execution uses
+            // direct issuance and zero bases.
+            issuance: crate::engine::cellular_cell::issuance_authority_from_env(),
+            phase_ordinal_bases: crate::engine::cellular_cell::phase_ordinal_bases_from_env(),
+            lane_paths,
+            is_native_otel_enabled: request.native_otel_enabled,
+            execution_backend: execution_backend.clone(),
+            model: primary_model.clone(),
+            // `workers == 1` has no distinct worker thread to name.
+            worker_label: None,
+        })?;
         let execution_result = async {
             execution_backend.set_run_origin(start_ns)?;
             // Build one worker-local observer per execution worker from the single
             // resolved metrics configuration; token accumulation moves off the
             // coordinator onto each worker's core.
             execution_backend.configure_measurement(metrics_config.clone(), start_ns)?;
-            let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
-                execution_backend: execution_backend.clone(),
-                model: primary_model.clone(),
-                capture: capture.clone(),
-            });
 
             let shared_resources = native_scheduled_resources(&request.phases);
             let on_failure = OnFailure::scheduled_or_default(request.failure_policy);
