@@ -220,8 +220,13 @@ impl S3Client for FakeS3Client {
                 .get(&request.key)
                 .cloned()
                 .ok_or(S3ClientError::NotFound)?;
+            // S3 compares `If-Match` modulo the ETag's surrounding quotes.
             if let Some(expected) = request.if_match_etag.as_deref()
-                && generation.etag.as_deref() != Some(expected)
+                && generation
+                    .etag
+                    .as_deref()
+                    .map(|etag| etag.trim_matches('"'))
+                    != Some(expected.trim_matches('"'))
             {
                 return Err(S3ClientError::PreconditionFailed);
             }
@@ -302,6 +307,9 @@ impl StreamingIssueReporterEndpoint for RecordingEndpoint {
 // Harness
 // ---------------------------------------------------------------------------
 
+/// How long a drain waits for a follow source to produce something new.
+const QUIESCENCE: std::time::Duration = std::time::Duration::from_millis(40);
+
 fn run_identity() -> StreamRunIdentity {
     StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x5a; 32]))
 }
@@ -341,7 +349,7 @@ fn manifest_config() -> serde_json::Value {
         "max_attempts": 2,
         "base_backoff_ns": 1_000,
         "max_backoff_ns": 8_000,
-        "poll_interval_ns": 1_000_000_000
+        "poll_interval_ns": 1_000_000
     })
 }
 
@@ -374,7 +382,7 @@ fn harness(client: Rc<dyn S3Client>, policy: PreparedS3Policy) -> Harness {
 }
 
 /// One drained discovery observation.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Observation {
     keys: Vec<String>,
     positions: Vec<SourcePosition>,
@@ -383,23 +391,20 @@ struct Observation {
     seal: Option<SourceSeal>,
 }
 
-/// Drain every event the source can produce without waiting on a poll interval.
+/// Drain every event the source produces until it is quiescent.
 ///
-/// Parking is the source's honest "nothing more is ready", so the loop stops at
-/// the first `Pending` rather than blocking a test on a follow poll.
+/// A follow source is never "done", so the loop ends when nothing new arrives
+/// within [`QUIESCENCE`] — several authored poll intervals. Parking is the
+/// source's honest "nothing more is ready", and it is never a seal.
 async fn drain_ready(
     source: &mut S3Source,
     budget: &AcquisitionBudget,
 ) -> Result<Observation, StreamSourceError> {
     let mut observed = Observation::default();
     loop {
-        let event = {
-            let next = source.next_event();
-            tokio::pin!(next);
-            match futures::poll!(&mut next) {
-                Poll::Ready(result) => result?,
-                Poll::Pending => break,
-            }
+        let event = match tokio::time::timeout(QUIESCENCE, source.next_event()).await {
+            Ok(result) => result?,
+            Err(_) => break,
         };
         match event {
             SourceEvent::Partition(partition) => {
@@ -576,7 +581,7 @@ async fn hard_no_backfill_violation_fails_before_seal() {
         "max_attempts": 2,
         "base_backoff_ns": 1_000,
         "max_backoff_ns": 8_000,
-        "poll_interval_ns": 1_000_000_000
+        "poll_interval_ns": 1_000_000
     });
     let mut harness = harness(Rc::clone(&client) as Rc<dyn S3Client>, policy_from(config));
     let budget = acquisition_budget();
@@ -929,13 +934,13 @@ fn lossless_and_lossy_policies_fail_or_label_honestly() {
         "max_attempts": 2,
         "base_backoff_ns": 1_000,
         "max_backoff_ns": 8_000,
-        "poll_interval_ns": 1_000_000_000
+        "poll_interval_ns": 1_000_000
     });
     let config: S3SourceConfig =
         serde_json::from_value(mutable).expect("authored configuration decodes");
     assert_eq!(
-        validate_s3_policy(config),
-        Err(S3PolicyError::LosslessFrontierUnprovable {
+        validate_s3_policy(config).err(),
+        Some(S3PolicyError::LosslessFrontierUnprovable {
             has_hard_no_backfill: false,
             has_monotonic_keys: true,
         })
@@ -969,8 +974,8 @@ fn authored_configuration_is_strictly_decoded() {
     let config: S3SourceConfig =
         serde_json::from_value(zero_pages).expect("configuration decodes");
     assert_eq!(
-        validate_s3_policy(config),
-        Err(S3PolicyError::UnboundedOrZeroLimit)
+        validate_s3_policy(config).err(),
+        Some(S3PolicyError::UnboundedOrZeroLimit)
     );
 }
 
@@ -1075,7 +1080,7 @@ async fn sim_clock_is_refused_at_prepare() {
     let context = StreamingSourcePrepareContext {
         acquisition_budget: acquisition_budget(),
         issue_reporter: StreamingIssueReporterHandle::new(RecordingEndpoint { state: reporter }),
-        clock: SimClock::new(),
+        clock: Rc::new(SimClock::new()),
     };
     let validated = factory
         .validate(&authored)
