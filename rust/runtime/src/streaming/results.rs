@@ -4,11 +4,18 @@
 //! Content-neutral checkpoint result descriptors and budgeted read values.
 
 pub mod compactor;
+pub mod delivery;
 pub mod epoch;
 pub mod index;
 pub mod sink_status;
 
 pub use compactor::{PreparedStreamingReport, StreamingResultCompactor};
+pub use delivery::{
+    CheckpointDeliveryMode, DeliveryClaim, DeliveryCrashPoint, DeliveryRestartDecision,
+    DeliveryRestartError, DeliveryRestartRequest, DeliveryTopologyBinding, DuplicateWindow,
+    OutstandingAction, OutstandingActionState, TargetIdempotencyCapability,
+    deliver_restart_decision,
+};
 pub use sink_status::SinkFinalizationFailureCode;
 
 use std::{

@@ -73,6 +73,8 @@ pub mod sharded_scheduled;
 pub mod sidecar_input;
 pub mod slurm_topology;
 #[cfg(feature = "streaming")]
+pub mod streaming_execution;
+#[cfg(feature = "streaming")]
 pub mod streaming_policy;
 pub mod turn_execution;
 #[cfg(test)]

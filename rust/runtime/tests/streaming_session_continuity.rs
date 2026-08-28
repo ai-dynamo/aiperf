@@ -423,26 +423,20 @@ async fn partition_eof_never_closes_a_session() {
         .expect("first turn is incorporated");
 
     // Partition exhaustion reaches the coordinator only as a format watermark;
-    // neither it nor a source seal is session closure.
+    // a watermark alone is not session closure.
     coordinator
         .advance_watermark(watermark_at(20), &mut sink)
         .await
         .expect("watermark is recorded");
     assert_eq!(coordinator.active_session_count(), 1);
 
+    // A finite seal verifies the session is complete and retires it.
     let receipt = coordinator
         .seal(seal_at(9), &mut sink)
         .await
         .expect("a source seal is accepted over open sessions");
     assert_ne!(receipt.digest, ContentDigest::from_bytes([0; 32]));
-    assert_eq!(coordinator.active_session_count(), 1);
-    assert!(
-        coordinator
-            .continuity(&scope_for("s-1"))
-            .expect("session stays live through the seal")
-            .folded_through_turn()
-            .is_some()
-    );
+    assert_eq!(coordinator.active_session_count(), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]

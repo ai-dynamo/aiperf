@@ -260,9 +260,9 @@ impl Coordinator {
         // dropped: the constructor that consumes it is a later slice, and
         // retaining a value nothing reads would be dead state.
         #[cfg(feature = "streaming")]
-        if let Err(error) =
-            self.product_registry
-                .validate_dataset_streams_for_run(&run, &context, &selection)
+        if let Err(error) = self
+            .product_registry
+            .validate_dataset_streams_for_run(&run, &context, &selection)
         {
             return failure_with_path(
                 operation,

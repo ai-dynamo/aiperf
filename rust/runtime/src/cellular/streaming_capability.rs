@@ -721,6 +721,7 @@ mod tests {
         placement: ActionPlacement::WorkerLocal,
         endpoint_retry_safety: EndpointRetrySafety::Unproven,
         supports_virtual_clock: true,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
     static TRANSPORT: TransportDescriptor = TransportDescriptor {
