@@ -54,8 +54,14 @@ fn a_second_install_advances_current_and_retains_the_previous_generation() {
         .expect("install two");
 
     assert_eq!(second.id, first.id + 1);
-    assert_eq!(root.current().expect("current").expect("current").id, second.id);
-    assert_eq!(root.previous().expect("previous").expect("previous").id, first.id);
+    assert_eq!(
+        root.current().expect("current").expect("current").id,
+        second.id
+    );
+    assert_eq!(
+        root.previous().expect("previous").expect("previous").id,
+        first.id
+    );
     // Both complete generations remain readable: a reader that resolved the old
     // pointer before the swap still sees intact bytes.
     assert_eq!(
@@ -83,8 +89,15 @@ fn a_generation_without_a_ready_marker_is_never_observed() {
     fs::write(orphan.join("lib/libplugin.so"), b"partial").expect("write partial");
 
     let ids = root.complete_generations().expect("complete generations");
-    assert_eq!(ids, vec![first.id], "the marker-less generation must be invisible");
-    assert_eq!(root.current().expect("current").expect("current").id, first.id);
+    assert_eq!(
+        ids,
+        vec![first.id],
+        "the marker-less generation must be invisible"
+    );
+    assert_eq!(
+        root.current().expect("current").expect("current").id,
+        first.id
+    );
 }
 
 #[test]
@@ -100,7 +113,10 @@ fn a_crash_before_the_pointer_swap_leaves_the_previous_generation_current() {
     fs::create_dir_all(&staged).expect("mkdir staging");
     fs::write(staged.join("lib.so"), b"half").expect("write staged");
 
-    assert_eq!(root.current().expect("current").expect("current").id, first.id);
+    assert_eq!(
+        root.current().expect("current").expect("current").id,
+        first.id
+    );
     assert_eq!(
         fs::read(first.dir.join("lib/libplugin.so")).expect("read"),
         b"one"
@@ -119,7 +135,10 @@ fn rollback_restores_the_previous_generation() {
 
     let restored = root.rollback().expect("rollback");
     assert_eq!(restored.id, first.id);
-    assert_eq!(root.current().expect("current").expect("current").id, first.id);
+    assert_eq!(
+        root.current().expect("current").expect("current").id,
+        first.id
+    );
     assert_eq!(
         fs::read(restored.dir.join("lib/libplugin.so")).expect("read"),
         b"one"
@@ -150,8 +169,15 @@ fn garbage_collection_never_removes_the_current_or_previous_generation() {
     }
 
     let removed = root.gc_old_generations(2).expect("gc");
-    assert_eq!(removed, vec![1, 2], "only the oldest generations are collected");
-    assert_eq!(root.complete_generations().expect("generations"), vec![3, 4]);
+    assert_eq!(
+        removed,
+        vec![1, 2],
+        "only the oldest generations are collected"
+    );
+    assert_eq!(
+        root.complete_generations().expect("generations"),
+        vec![3, 4]
+    );
     assert_eq!(root.current().expect("current").expect("current").id, 4);
     assert_eq!(root.previous().expect("previous").expect("previous").id, 3);
 }
