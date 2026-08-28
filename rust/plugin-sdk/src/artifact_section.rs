@@ -205,9 +205,23 @@ pub fn extract_record(
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     return Err(ArtifactSectionError::UnsupportedPlatform);
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     {
         let out = Command::new("objcopy")
+            .args(["--dump-section", &format!("{section_name}=/dev/stdout")])
+            .arg(artifact_path)
+            .output()?;
+        if !out.status.success() {
+            // Section absent — not an error.
+            return Ok(None);
+        }
+        decode_section(&out.stdout)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        // macOS and Windows use llvm-objcopy, mirroring embed_record.
+        let out = Command::new("llvm-objcopy")
             .args(["--dump-section", &format!("{section_name}=/dev/stdout")])
             .arg(artifact_path)
             .output()?;
