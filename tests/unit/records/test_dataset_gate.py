@@ -253,12 +253,19 @@ class TestAwaitDatasetConfiguredWithCatchUp:
 
     @pytest.mark.asyncio
     async def test_no_catch_up_falls_back_to_normal_wait(self):
-        """catch_up=None (unset, e.g. legacy/test double) must behave exactly
-        like the pre-fix gate: wait on the event directly."""
+        """catch_up=None (unset, e.g. legacy/test double) must skip the
+        catch-up path entirely and block on the event directly, exactly like
+        the pre-fix gate -- proven by starting with the event unset (so the
+        fast path can't short-circuit the assertion) and only completing
+        once the event is set from outside."""
         service = MagicMock()
         event = asyncio.Event()
-        event.set()
 
-        result = await await_dataset_configured(service, event, None)
+        task = asyncio.create_task(await_dataset_configured(service, event, None))
+        await asyncio.sleep(0)
+        assert not task.done()
+
+        event.set()
+        result = await asyncio.wait_for(task, timeout=1.0)
 
         assert result is True

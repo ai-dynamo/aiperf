@@ -196,7 +196,6 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         async def _wait_for_registration():
             while not stop_event.is_set():
-                # Count registered replicas per service type from the id map
                 registered_counts = Counter(
                     service_info.service_type
                     for service_info in self.service_id_map.values()
@@ -204,7 +203,6 @@ class MultiProcessServiceManager(BaseServiceManager):
                     == ServiceRegistrationStatus.REGISTERED
                 )
 
-                # Check if every required replica of every required type is registered
                 if all(
                     registered_counts[service_type] >= count
                     for service_type, count in required_counts.items()
@@ -219,7 +217,6 @@ class MultiProcessServiceManager(BaseServiceManager):
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
         except TimeoutError as e:
-            # Log which services didn't register enough replicas in time
             registered_counts = Counter(
                 service_info.service_type
                 for service_info in self.service_id_map.values()

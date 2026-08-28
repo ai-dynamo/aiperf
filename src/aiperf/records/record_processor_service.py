@@ -102,8 +102,6 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # this event so processors are configured (e.g. accuracy ground truths) before
         # any record is graded.
         self._dataset_configured_event: asyncio.Event = asyncio.Event()
-        # Late-join self-heal for a missed one-shot DatasetConfiguredNotification
-        # -- see dataset_gate.DatasetConfigCatchUp.
         self._dataset_config_catch_up = DatasetConfigCatchUp(
             request_client=self.comms.create_request_client(
                 address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
