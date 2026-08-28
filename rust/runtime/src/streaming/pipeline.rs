@@ -126,12 +126,14 @@ pub struct CheckpointProxy {
 }
 
 impl CheckpointProxy {
-    fn borrow_stage(&self) -> Result<RefMut<'_, dyn StreamingCheckpointParticipant>, CheckpointError> {
-        self.stage.try_borrow_participant().ok_or_else(|| {
-            CheckpointError::ParticipantUnavailable {
+    fn borrow_stage(
+        &self,
+    ) -> Result<RefMut<'_, dyn StreamingCheckpointParticipant>, CheckpointError> {
+        self.stage
+            .try_borrow_participant()
+            .ok_or_else(|| CheckpointError::ParticipantUnavailable {
                 participant: self.participant_id.clone(),
-            }
-        })
+            })
     }
 }
 
@@ -470,7 +472,8 @@ pub struct StreamingPipeline {
     decoder: RefCell<Option<Box<dyn StreamingPartitionDecoder>>>,
     control: StreamingPipelineControl,
     /// Placements retained until their action reaches terminal.
-    placements: RefCell<std::collections::BTreeMap<super::identity::StableActionId, PlacementHandle>>,
+    placements:
+        RefCell<std::collections::BTreeMap<super::identity::StableActionId, PlacementHandle>>,
     /// In-flight action count per placed session, so route capacity is released
     /// at the session's causal terminal rather than at each action's.
     session_inflight: RefCell<std::collections::BTreeMap<StableSessionKey, usize>>,
@@ -1183,13 +1186,16 @@ impl StreamingPipeline {
         };
         use super::unit::SourcePosition;
 
-        let frontier = self.sink.borrow().frontier.clone().unwrap_or_else(|| {
-            SessionCausalFrontier {
-                through_sequence: GlobalSequence::new(0),
-                event_time: None,
-                digest: ContentDigest::from_bytes([0; 32]),
-            }
-        });
+        let frontier =
+            self.sink
+                .borrow()
+                .frontier
+                .clone()
+                .unwrap_or_else(|| SessionCausalFrontier {
+                    through_sequence: GlobalSequence::new(0),
+                    event_time: None,
+                    digest: ContentDigest::from_bytes([0; 32]),
+                });
         let position = SourcePosition::new(self.source_pulls.get());
         CheckpointCut {
             discovered: DiscoveryHorizon::new(position),
@@ -1223,11 +1229,11 @@ impl StreamingPipeline {
             self.control.fence_admission();
         }
         match outcome.disposition() {
-            StreamingIssueDisposition::FailRun => PipelinePhase::Draining(
-                DrainReason::FailedInvariant {
+            StreamingIssueDisposition::FailRun => {
+                PipelinePhase::Draining(DrainReason::FailedInvariant {
                     issue_id: outcome.issue_id(),
-                },
-            ),
+                })
+            }
             StreamingIssueDisposition::Retry
             | StreamingIssueDisposition::Backpressure
             | StreamingIssueDisposition::Quarantine

@@ -446,9 +446,10 @@ impl StreamingPlacementPolicy for LocalStreamingPlacement {
                 PlacementFailureCode::StaleOwnershipEpoch,
             ));
         }
-        let next = ownership_epoch.get().checked_add(1).ok_or_else(|| {
-            PlacementError::placement(PlacementFailureCode::TargetOverflow)
-        })?;
+        let next = ownership_epoch
+            .get()
+            .checked_add(1)
+            .ok_or_else(|| PlacementError::placement(PlacementFailureCode::TargetOverflow))?;
         self.epochs
             .insert(session, SessionOwnershipEpoch::new(next));
         // Dropping the lease here is what returns the exact route capacity and
@@ -564,9 +565,10 @@ impl StreamingPlacementSubmitter for LocalPlacementSubmitter {
             ));
         }
         let id = PlacementHandleId::new(self.next_handle);
-        self.next_handle = self.next_handle.checked_add(1).ok_or_else(|| {
-            PlacementError::placement(PlacementFailureCode::TargetOverflow)
-        })?;
+        self.next_handle = self
+            .next_handle
+            .checked_add(1)
+            .ok_or_else(|| PlacementError::placement(PlacementFailureCode::TargetOverflow))?;
         let handle = PlacementHandle {
             id,
             action_id: action.action_id(),
@@ -581,10 +583,9 @@ impl StreamingPlacementSubmitter for LocalPlacementSubmitter {
             .borrow_mut()
             .push_back(PlacementEvent::Prepared(PlacementPreparedReceipt {
                 handle: id,
-                content_digest: ContentDigest::from_bytes(*blake3::hash(
-                    action.action_id().as_bytes(),
-                )
-                .as_bytes()),
+                content_digest: ContentDigest::from_bytes(
+                    *blake3::hash(action.action_id().as_bytes()).as_bytes(),
+                ),
             }));
         self.shared.wake.notify_one();
         Ok(handle)
@@ -704,13 +705,7 @@ impl StreamingPlacementControl for LocalPlacementControlHandle {
     }
 
     async fn cancel_inflight(&self) -> Result<(), PlacementError> {
-        let handles: Vec<_> = self
-            .shared
-            .prepared
-            .borrow()
-            .keys()
-            .copied()
-            .collect();
+        let handles: Vec<_> = self.shared.prepared.borrow().keys().copied().collect();
         let mut events = self.shared.events.borrow_mut();
         for handle in handles {
             events.push_back(PlacementEvent::Failed(PlacementFailureReceipt {
@@ -772,10 +767,12 @@ async fn local_participant_view(
     barrier: &CheckpointBarrier,
     budget: &StreamingResourceBudget,
 ) -> Result<PreparedParticipantState, CheckpointError> {
-    let lease = budget.try_acquire(1, 0).map_err(|_| CheckpointError::StateBudget {
-        participant: participant_id.clone(),
-        code: StateBudgetFailureCode::ItemCapacity,
-    })?;
+    let lease = budget
+        .try_acquire(1, 0)
+        .map_err(|_| CheckpointError::StateBudget {
+            participant: participant_id.clone(),
+            code: StateBudgetFailureCode::ItemCapacity,
+        })?;
     let payload = BudgetedCheckpointBytes::new(Bytes::new(), lease)?;
     PreparedParticipantState::new(
         run.clone(),

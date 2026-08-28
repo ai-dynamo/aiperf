@@ -291,12 +291,18 @@ fn session_terminal_fences_the_route_epoch() {
             budget(4, 4096),
         );
         let session = StableSessionKey::from_bytes([2; 32]);
-        assert_eq!(policy.ownership_epoch(session), SessionOwnershipEpoch::new(0));
+        assert_eq!(
+            policy.ownership_epoch(session),
+            SessionOwnershipEpoch::new(0)
+        );
 
         policy
             .observe_session_terminal(session, SessionOwnershipEpoch::new(0), &frontier())
             .expect("first terminal advances the epoch");
-        assert_eq!(policy.ownership_epoch(session), SessionOwnershipEpoch::new(1));
+        assert_eq!(
+            policy.ownership_epoch(session),
+            SessionOwnershipEpoch::new(1)
+        );
 
         let stale = policy
             .observe_session_terminal(session, SessionOwnershipEpoch::new(0), &frontier())
