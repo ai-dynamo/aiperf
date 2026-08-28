@@ -271,10 +271,7 @@ async fn two_writers_cannot_both_commit() {
         matches!(error, CheckpointError::GenerationConflict { .. }),
         "unexpected refusal: {error:?}"
     );
-    assert_eq!(
-        objects_before,
-        object_names(directory.path(), run)
-    );
+    assert_eq!(objects_before, object_names(directory.path(), run));
     assert_eq!(head_of(&first, run).await, Some(baseline.generation()));
 }
 
