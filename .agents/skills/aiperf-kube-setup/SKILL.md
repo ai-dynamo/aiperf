@@ -43,8 +43,8 @@ pull-secret name.
 ## 2. Install JobSet
 
 The chart grants RBAC for `jobset.x-k8s.io` but does **not** install JobSet.
-The pinned version lives in `dev/versions.py` (`JOBSET_VERSION`); bump the pin
-and this step together.
+AIPerf pins JobSet `v0.8.0`. Install that version unless you have a reason to
+diverge, and keep the pin and this step in step with each other.
 
 ```bash
 kubectl --context "$CTX" apply --server-side \
@@ -100,27 +100,26 @@ benchmarkNamespace:
 
 ```bash
 helm --kube-context "$CTX" upgrade --install aiperf-operator \
-  deploy/helm/aiperf-operator \
+  <path-or-ref-to-aiperf-operator-chart> \
   --namespace "$NS_OP" -f aiperf-operator-values.yaml --wait --timeout 5m
 ```
 
-Other knobs worth knowing, all in
-`deploy/helm/aiperf-operator/values.yaml`:
+Other knobs worth knowing, all top-level keys in the chart's `values.yaml`:
 
 | Value | Default | Why you'd change it |
 |---|---|---|
 | `defaults.image` | computed from `image.*` | decouple benchmark image from operator image |
 | `benchmarkRbacNamespaces` | `[]` | benchmarks run in more than one namespace |
 | `serverMetricsDiscoveryNamespaces` | `[]` | scrape server metrics from an existing inference namespace |
-| `kueue.defaultQueueName` / `kueue.createQueues` | `""` / `false` | gang-scheduled admission (`docs/kubernetes/kueue.md`) |
+| `kueue.defaultQueueName` / `kueue.createQueues` | `""` / `false` | gang-scheduled admission via Kueue |
 | `serviceMonitor.enabled` | `false` | Prometheus Operator scraping of operator metrics |
 | `operator.priorityClassName` | `""` | keep the operator off the eviction list |
 | `operator.env` | — | operator lifecycle/results tunables only (9 fixed keys) |
-| `rbac.create` / `networkPolicy.enabled` | `true` / `false` | hardening; `docs/kubernetes/rbac-security.md` |
+| `rbac.create` / `networkPolicy.enabled` | `true` / `false` | hardening (read the RBAC rule below before flipping `rbac.create`) |
 | `dashboard.enabled` | `false` | Plotly results UI |
 
-Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
-`docs/kubernetes/production.md`.
+Full values matrix, hardening posture, and CI patterns:
+`references/configuration.md` (bundled with this skill).
 
 ## Rules that bite
 
@@ -150,16 +149,15 @@ Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
 - **`benchmarkNamespace.create: true` fails when the namespace already
   exists**, and `create: false` does not buy you an escape hatch via
   `benchmarkRbacNamespaces`: that list is rendered into Namespace objects
-  unconditionally (`deploy/helm/aiperf-operator/templates/benchmark-namespace.yaml` gates only the primary
-  name on `create`), so listing an existing namespace re-triggers the same
+  unconditionally (the chart's benchmark-namespace template gates only the
+  primary name on `create`), so listing an existing namespace re-triggers the same
   ownership failure. Either Helm-adopt the namespace (label
   `app.kubernetes.io/managed-by: Helm` plus annotations
   `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`) or leave
-  it out of the chart and apply
-  `deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml`'s Role/RoleBinding out of band.
+  it out of the chart and apply the benchmark Role/RoleBinding out of band.
 - **`operator.watchNamespaces` does not narrow RBAC.** The ClusterRole still
   grants cluster-wide reads. Narrowing it is not a one-flag change:
-  `rbac.create=false` gates the *whole* `deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml` file, so it also
+  `rbac.create=false` gates the *whole* benchmark-RBAC template, so it also
   deletes the benchmark Role/RoleBinding that gives job pods `pods
   get/list/watch`, `jobsets patch`, and `aiperfjobs/status patch` — the install
   succeeds and then every benchmark fails. It also does not remove cluster
@@ -239,9 +237,9 @@ whenever the worker count or endpoint changes — capacity is the check that
 goes stale. Finish with a small benchmark from `aiperf-kube-run` before
 handing the cluster to anyone else.
 
-CRDs are generated from Pydantic models — never hand-edit
-`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml`; run
-`uv run python tools/generate_crd.py` (`--check` in CI).
+The `AIPerfJob`/`AIPerfSweep` CRDs shipped in the chart are generated from the
+operator's Pydantic models — never hand-edit the CRD YAML in a chart checkout;
+regenerate it with the project's CRD generator instead.
 
 ## Local Kind clusters
 

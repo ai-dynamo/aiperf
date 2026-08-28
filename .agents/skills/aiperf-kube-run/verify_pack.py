@@ -37,7 +37,15 @@ HELM_ROOTS = {
 }
 # Env vars that are read by aiperf but intentionally absent from the generated
 # env-var doc (set by the operator on pods, not by users).
-ENV_ALLOWLIST = {"AIPERF_OPERATOR_MANAGED"}
+# Real env vars that the generated env-var doc does not list: they are injected
+# by the operator into pods, never set by a user, so the doc generator skips
+# them. Verified present in src/aiperf/common/endpoint_credentials.py.
+ENV_ALLOWLIST = {
+    "AIPERF_OPERATOR_MANAGED",
+    "AIPERF_INJECTED_API_KEY",
+    "AIPERF_INJECTED_HEADERS",
+    "AIPERF_INJECTED_ENDPOINT_URLS",
+}
 
 # Defaults the pack quotes as literals. If one of these changes, the pack text is
 # wrong and must be updated in the same change that moves the default.
@@ -174,8 +182,13 @@ def main() -> int:
             if not (SKILLS / name / ref.split("#")[0]).exists():
                 fail(f"{name}: path reference does not resolve in the skill: {ref}")
         for outside in set(
-            re.findall(r"(?:docs|src|tools|dev)/[a-zA-Z0-9_./-]+", corpus)
+            re.findall(
+                r"(?<![/\w])(?:docs|src|tools|dev|deploy/helm)/[a-zA-Z0-9_./-]+",
+                corpus,
+            )
         ):
+            if outside == "dev/null":
+                continue  # shell redirection, not a repo path
             fail(f"{name}: non-standalone repo reference: {outside}")
 
         for var in set(re.findall(r"AIPERF_[A-Z0-9_]+", corpus)):

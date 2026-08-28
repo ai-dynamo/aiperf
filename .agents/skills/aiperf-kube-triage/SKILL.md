@@ -12,7 +12,8 @@ phase — the phase determines which logs matter.
 `aiperf-kube-setup` (cluster/operator install problems).
 
 The machine-parseable playbook with full JSON schemas and jq/python snippets is
-`docs/kubernetes/ai-debugging-guide.md`. This skill is the routing layer.
+`references/debugging.md` (bundled with this skill). This skill is the routing
+layer.
 
 ## Step 1: classify
 
@@ -35,7 +36,7 @@ here) and `-t <trial>`.
 | Phase / symptom | Likely cause | Next command |
 |---|---|---|
 | `Pending` > ~60 s | Unschedulable pods | `kubectl get pods -n <NS> -l aiperf.nvidia.com/job-id=<ID>` then read `PodScheduled` reason |
-| `Queued` | Kueue has not admitted the workload | `kubectl get workloads -n <NS>`; see `docs/kubernetes/kueue.md` |
+| `Queued` | Kueue has not admitted the workload | `kubectl get workloads -n <NS>` and read `.status.conditions[?(@.type=="QuotaReserved")]` |
 | `Initializing` > ~120 s | Image pull, ConfigMap, or ZMQ connection probe | `aiperf kube logs <ID> --container control-plane --tail 50` |
 | `Running`, restarts > 3 | Crash loop | `aiperf kube logs <ID> --container <c> --tail 100` |
 | `Running`, OOM-killed pod | Node memory pressure, *not* a container limit (see below) | `kubectl describe node` for pressure; raise `AIPERF_K8S_WORKER_POD_MEMORY` / `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` on the **operator** deployment |
@@ -76,7 +77,7 @@ exhausted.
   the CPU before hunting for a logic bug.
 - **The default `resourceMode` is `burstable`, so pods have requests and no
   limits.** `spec.resourceMode` defaults to `burstable`
-  (`src/aiperf/kubernetes/jobset.py`), which emits `requests` only. That means
+  and emits `requests` only. That means
   a container cannot be cgroup-OOM-killed for exceeding its memory budget and
   cannot be CFS-throttled for exceeding its CPU budget — the `75m`/`150m`
   numbers are scheduling hints, not ceilings. Two consequences: an `OOMKilled`
@@ -107,9 +108,7 @@ exhausted.
 - **On a successful run the pods do not last 300 s — they are deleted at
   once.** `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` (300 s) is only the
   fallback: once the operator has harvested results it calls
-  `_maybe_delete_jobset_after_success`
-  (`src/aiperf/operator/handlers/completion.py`) and deletes the JobSet
-  immediately. The TTL window is real only for failed runs and for partial
+  its post-success cleanup and deletes the JobSet immediately. The TTL window is real only for failed runs and for partial
   harvests that are being retried. Never plan to "grab the logs after it
   finishes" — stream them with `--follow` during the run, or accept that a
   clean success leaves you only the PVC artifacts. Direct (operator-less) mode
@@ -125,8 +124,8 @@ exhausted.
 `aiperf kube debug` findings are tunable via `AIPERF_K8S_DIAGNOSIS_*`:
 `STALLED_PENDING_THRESHOLD_SECONDS` (60), `STALLED_RUNNING_THRESHOLD_SECONDS`
 (30), `HIGH_ERROR_RATE_THRESHOLD` (0.05), `FAIL_ABOVE_ERROR_RATE` (1.0),
-`HIGH_LATENCY_P99_MULTIPLIER` (10). Full list in
-`docs/environment-variables.md`.
+`HIGH_LATENCY_P99_MULTIPLIER` (10). Full env-var table in
+`references/debugging.md`.
 
 ## Log collection
 

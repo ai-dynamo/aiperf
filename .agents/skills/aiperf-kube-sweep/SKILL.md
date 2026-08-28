@@ -13,9 +13,8 @@ status roll-up) but stays planner-agnostic — the adaptive/BO loop lives only
 in the sweep-controller pod.
 
 **Related skills:** `aiperf-kube-run` (single-job lifecycle, shared flags),
-`aiperf-kube-triage` (a child is stuck). Reference:
-`docs/tutorials/sweeps.md#running-sweeps-on-kubernetes`,
-`docs/kubernetes/adaptive-search.md`.
+`aiperf-kube-triage` (a child is stuck). Full grid/zip/scenario and adaptive-
+search reference: `references/adaptive-search.md` (bundled with this skill).
 
 ## Quick start
 
@@ -59,8 +58,7 @@ fields (`image`, `podTemplate`, worker counts, credential transport), so
 validate the CR you would `kubectl apply` when those matter.
 
 **`--dry-run` does not expand anything.** It renders the `AIPerfSweep` CR,
-prints it as JSON, and returns before touching the cluster
-(`src/aiperf/cli_commands/kube/sweep.py`). It will not show you the variation
+prints it as JSON, and returns before touching the cluster. It will not show you the variation
 list, the child count, or whether the sweep is over the cardinality caps. To
 see the variation count before you submit, expand it locally (the in-process
 `aiperf profile` sweep path prints the plan) or read the caps below and do the
@@ -97,7 +95,9 @@ On `debug`, `--variation` must be spelled long — `-v` is `--verbose` there.
   and credential-like `variables.*` names are refused for grid, zip, scenario,
   adaptive-search, Sobol, and Latin Hypercube sweeps. Keep credentials fixed and
   inject them via the Secret-backed endpoint credential env vars
-  (`docs/kubernetes/rbac-security.md`).
+  (`AIPERF_INJECTED_API_KEY`, `AIPERF_INJECTED_HEADERS`,
+  `AIPERF_INJECTED_ENDPOINT_URLS`), sourced from a Secret you create in the
+  benchmark namespace.
 - **Never nest an in-process sweep inside an operator-managed run.** With
   `AIPERF_OPERATOR_MANAGED=1` set in a controller pod, any `plan.is_sweep` hard-
   fails on purpose. The sweep controller strips the parent `multiRun` block from
@@ -141,7 +141,7 @@ iterations are sequential by construction. Convergence flags
 (`--convergence-metric`, `--convergence-threshold`, `--convergence-stat`,
 `--confidence-level`, `--bo-constraint-mode`, SLO flags) are accepted by
 `aiperf kube sweep` exactly as by the local path. See
-`docs/kubernetes/adaptive-search.md`.
+`references/adaptive-search.md`.
 
 ## Cancelling and cleanup
 

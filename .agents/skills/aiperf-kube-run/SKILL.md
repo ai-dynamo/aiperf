@@ -24,8 +24,8 @@ controller pod + N worker pods, orchestrated by the in-cluster operator.
 | 6. Collect | `aiperf kube results` | yes |
 | 7. Clean up | `aiperf kube delete <name> --force` | yes |
 
-Full narrative: `docs/kubernetes/workflow.md`. Per-command reference pages live
-alongside it in `docs/kubernetes/`.
+Full lifecycle narrative, phase table, exit codes, and per-command flag
+reference: `references/lifecycle.md` (bundled with this skill).
 
 ## Minimum viable run
 
@@ -101,8 +101,8 @@ harvests results to a PVC on terminal phase (nothing is harvested mid-run).
 
 Direct mode (`--no-operator`, or CRD absent) creates the resources itself, has
 no CR and no PVC, and uses an 8-hour JobSet TTL (vs 5 minutes) so pods survive
-long enough for `aiperf kube results --from-pods`. See
-`docs/kubernetes/direct-mode.md`.
+long enough for `aiperf kube results --from-pods`. Direct-mode details are in
+`references/lifecycle.md`.
 
 `--operator` skips the cluster-scoped CRD probe on its own — that is how
 namespace-scoped tenants submit without cluster-wide RBAC. Pair it with an
