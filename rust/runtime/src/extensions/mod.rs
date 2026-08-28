@@ -168,7 +168,29 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &crate::engine::registry::DynosimExtension,
             #[cfg(feature = "engine")]
             &BuiltinNativeGraphExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingSessionExtension,
         ])
+    }
+}
+
+/// Built-in streaming session programs (`conversation`).
+#[cfg(feature = "streaming")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinStreamingSessionExtension;
+
+#[cfg(feature = "streaming")]
+impl AIPerfExtension for BuiltinStreamingSessionExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.streaming-sessions"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_stream_session_program(std::sync::Arc::new(
+                crate::streaming::session::conversation::StreamingConversationProgramFactory,
+            ))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
     }
 }
 
