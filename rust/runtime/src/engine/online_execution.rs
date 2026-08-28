@@ -1857,7 +1857,6 @@ fn build_common_plan(
         sidecars,
         user_files: run.artifacts.user_files.clone(),
         failure_policy,
-        native_otel_enabled: run.export.otel.enabled && run.export.otel.endpoint.is_some(),
         transport,
         dispatch_mode: run.dispatch,
         hop_routing: run.hop_routing,

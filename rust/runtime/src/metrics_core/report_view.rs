@@ -6,7 +6,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::export::otel::OtelRecordAccumulator;
 use crate::metrics_core::AccuracyAnalysis;
 use crate::metrics_core::MetricTagId;
 use crate::metrics_core::report::{MetricEntry, ReportError, ReportSteadyState, ReportSummary};
@@ -48,9 +47,6 @@ pub trait ReportView {
 
     /// Exact pooled speculative-decode acceptance counts.
     fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u128>>;
-
-    /// Per-record OTLP capture when exact records were retained.
-    fn per_record(&self) -> Option<&OtelRecordAccumulator>;
 }
 
 #[cfg(test)]

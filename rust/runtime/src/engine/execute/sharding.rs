@@ -441,9 +441,6 @@ pub(crate) async fn execute_scheduled_pipeline(
         issuance: crate::engine::cellular_cell::issuance_authority_for(partition),
         phase_ordinal_bases: shared.phase_ordinal_bases.clone(),
         lane_paths,
-        // Per-record OTLP folding is the coordinator pipeline's; a shard capture
-        // never enabled it.
-        is_native_otel_enabled: false,
         execution_backend: execution_backend.clone(),
         model: shared.primary_model.clone(),
         worker_label,

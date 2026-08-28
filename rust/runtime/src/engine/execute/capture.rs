@@ -101,12 +101,6 @@ pub(crate) struct RunCapture {
     /// `None` on the retained-record path (which uses the batch writers) and whenever no
     /// lane artifact is requested. Set once at construction via [`Self::with_record_lane`].
     pub(crate) record_lane: Option<Rc<RecordArtifactLane>>,
-    /// Per-record OTLP histogram accumulator: when native OTLP is enabled on
-    /// the exact-fold path, each completed profiling record is folded here at
-    /// completion (an order-independent fold) and then dropped, instead of iterating
-    /// the retained record set post-run. `None` when native OTLP is off. Set once at
-    /// construction via [`Self::with_otel`].
-    pub(crate) otel: Option<RefCell<OtelRecordAccumulator>>,
     /// Whether the fold-and-drop path must retain each turn's model output text long
     /// enough to stream its `outputs.json` entry: `record_model_output`
     /// stages the text in `outputs`, [`Self::fold_record`] attaches it to the streamed
@@ -298,19 +292,6 @@ impl RunCapture {
         self
     }
 
-    /// Enable per-record OTLP folding at completion. When `enabled`, each
-    /// completed profiling record is folded into a bounded [`OtelRecordAccumulator`]
-    /// in [`Self::fold_record`] and dropped, so the OTLP histograms need no retained
-    /// record set. Builder-style so only the exact-fold call site with native OTLP
-    /// opts in; every other construction leaves it `None` and the retain path folds
-    /// the retained records post-run.
-    pub(crate) fn with_otel(mut self, enabled: bool) -> Self {
-        if enabled {
-            self.otel = Some(RefCell::new(OtelRecordAccumulator::new()));
-        }
-        self
-    }
-
     /// Retain each turn's model output text for streaming `outputs.json`.
     /// When `enabled`, `record_model_output` stages the text even on the fold-and-drop
     /// path so [`Self::fold_record`] can attach it to the streamed record before the
@@ -319,14 +300,6 @@ impl RunCapture {
     pub(crate) fn with_outputs_capture(mut self, enabled: bool) -> Self {
         self.capture_outputs_text = enabled;
         self
-    }
-
-    /// Move the folded per-record OTLP accumulator out for the finalize, if one was
-    /// attached. Consumed once at run end (leaves an empty accumulator behind).
-    pub(crate) fn take_otel(&self) -> Option<OtelRecordAccumulator> {
-        self.otel
-            .as_ref()
-            .map(|cell| std::mem::take(&mut *cell.borrow_mut()))
     }
 
     /// Flush and close the streaming per-record artifact lane, if one is attached.
@@ -753,18 +726,13 @@ impl RunCapture {
         }
         self.accumulator.borrow_mut().process_record(&ingest);
         let errored = ingest.errored || ingest.canceled;
-        // Per-record OTLP folds every PROFILING record (success and error
-        // alike, matching the retain path's post-run loop) into the order-independent
-        // accumulator; warmup records never contribute.
-        let wants_otel = self.otel.is_some() && phase == MetricsPhase::Profiling;
         // Materialize a CapturedRecord only when something consumes it: the streaming
-        // artifact lane writes every record's rows, the per-record OTLP fold
-        // observes each profiling record, and the error grouping retains
+        // artifact lane writes every record's rows and the error grouping retains
         // errored records. The raw HTTP exchange captured for this uuid is pulled out
         // here (present only when `raw_path` is enabled) so raw.jsonl and the error
         // classification see the same transport facts the retain path does; the drop
         // keeps `raw_exchanges` bounded to in-flight work.
-        if self.record_lane.is_some() || errored || wants_otel {
+        if self.record_lane.is_some() || errored {
             let raw = self.raw_exchanges.borrow_mut().remove(&uuid);
             // The streaming outputs.json entry reads the model output text;
             // drain the text staged by `record_model_output` so the entry carries it,
@@ -784,9 +752,6 @@ impl RunCapture {
             };
             if let Some(lane) = &self.record_lane {
                 lane.write(&captured, &self.metrics_config)?;
-            }
-            if wants_otel && let Some(cell) = &self.otel {
-                observe_otel_record(&mut cell.borrow_mut(), &captured, &self.metrics_config);
             }
             if errored {
                 self.streaming_errored.borrow_mut().push(captured);
@@ -1715,108 +1680,6 @@ mod tests {
             reference_summary(MetricsPhase::Warmup),
             subject_summary(MetricsPhase::Warmup),
             "warmup window must be byte-identical to the retain path",
-        );
-    }
-
-    /// The exact-fold capture folds each profiling record's per-record OTLP
-    /// histogram at completion (`with_otel` + `fold_record`), and `take_otel` yields
-    /// the byte-identical accumulator the retain path builds by looping the retained
-    /// records post-run — for the same record sequence. Warmup records never
-    /// contribute, matching the post-run loop's `phase == Profiling` filter.
-    #[test]
-    fn fold_record_folds_otel_matching_post_run_loop() {
-        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-        let config = MetricsConfig::default();
-
-        // (uuid, isl, osl, end_ns, phase, errored) — a mix of profiling successes, one
-        // errored profiling record, and one warmup record the OTLP fold must ignore.
-        let make = |isl: u64, osl: u64, end_ns: i64, phase: MetricsPhase| -> RecordIngest {
-            let mut ingest = RecordIngest::minimal(1_000_000, end_ns, phase);
-            ingest.first_token_ns = Some(3_000_000);
-            ingest.token_arrival_ns = vec![3_000_000, 5_000_000, end_ns];
-            ingest.tokens = crate::metrics_core::TokenCounts {
-                input: Some(isl),
-                output: Some(osl),
-                requested_output: Some(osl),
-                ..Default::default()
-            };
-            ingest
-        };
-        let specs: Vec<(Uuid, RecordIngest, bool)> = vec![
-            (
-                Uuid::from_u128(0x1),
-                make(8, 3, 11_000_000, MetricsPhase::Profiling),
-                false,
-            ),
-            (
-                Uuid::from_u128(0x2),
-                make(16, 5, 21_000_000, MetricsPhase::Profiling),
-                false,
-            ),
-            (
-                Uuid::from_u128(0x3),
-                make(64, 1, 4_000_000, MetricsPhase::Profiling),
-                true,
-            ),
-            (
-                Uuid::from_u128(0x4),
-                make(8, 3, 11_000_000, MetricsPhase::Warmup),
-                false,
-            ),
-        ];
-
-        // Exact-fold path: fold each record at completion with native OTLP enabled.
-        let capture = RunCapture::new(clock.clone(), 0, config.clone(), false, false, false, true)
-            .with_otel(true);
-        for (i, (uuid, ingest, errored)) in specs.iter().enumerate() {
-            let mut ingest = ingest.clone();
-            ingest.errored = *errored;
-            let phase = ingest.phase;
-            capture
-                .fold_record(
-                    ingest,
-                    *uuid,
-                    "corr",
-                    phase,
-                    None,
-                    None,
-                    None,
-                    None,
-                    i as u64,
-                    None,
-                    Some(i),
-                )
-                .unwrap();
-        }
-        let folded = capture.take_otel().expect("otel enabled");
-
-        // Retain path: build the equivalent stamped records and fold the profiling
-        // subset via the post-run loop, in the same order.
-        let mut post_run = OtelRecordAccumulator::new();
-        for (i, (uuid, ingest, errored)) in specs.iter().enumerate() {
-            let mut ingest = ingest.clone();
-            ingest.errored = *errored;
-            ingest.session_num = i as u64;
-            ingest.request_index = Some(i);
-            if ingest.phase == MetricsPhase::Profiling {
-                let captured = CapturedRecord {
-                    uuid: *uuid,
-                    x_correlation_id: "corr".into(),
-                    output: CapturedModelOutput::default(),
-                    raw: None,
-                    ingest,
-                };
-                observe_otel_record(&mut post_run, &captured, &config);
-            }
-        }
-
-        assert!(
-            !folded.is_empty(),
-            "profiling records populate the histograms"
-        );
-        assert_eq!(
-            folded, post_run,
-            "fold-at-completion OTLP must equal the post-run-loop OTLP for the same sequence"
         );
     }
 

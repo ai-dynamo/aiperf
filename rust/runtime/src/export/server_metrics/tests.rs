@@ -231,7 +231,6 @@ fn synthetic_report() -> NativeReport {
         evaluator: None,
         errors: Vec::new(),
         steady_state: None,
-        otel_per_record: None,
     }
 }
 
