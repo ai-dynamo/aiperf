@@ -813,6 +813,38 @@ origin exists (`engine/execute/sharding.rs:476`). A loader-based ingestion would
 have reported `rag_documents_per_second` for embed and index while calling it the
 four-stage pipeline.
 
+**A second dataset plane now exists, and the honest statement names both.** Saying
+only "the loader is eager" implies the loader is the whole dataset surface, and it
+is not: `runtime/src/streaming/` is a complete streaming input contract —
+`StreamingDatasetSourceFactory` → `PreparedStreamingDatasetSource`
+(`streaming/source.rs:174`-`:200`), an incremental
+`StreamingPartitionDecoder::next_batch(DecodeBatchBudget)` returning
+`DecodeStep::{Batch, End}` under `FormatStateRetention::BoundedMemory`
+(`streaming/format.rs:163`-`:186`, `:68`-`:75`), `StreamingSessionProgram` emitting
+`ExecutableDatasetAction` (`streaming/unit.rs:615`), and `StreamingActionSink`
+binding those actions to a transport and endpoint (`streaming/action.rs:227`-`:233`),
+with working implementations for paged HF rows, Parquet, and synthetic prompts. It
+ships in every default build (`rust/cli/Cargo.toml:34`, `:49`), holds five
+registry slots (`extensions/mod.rs:416`-`:431`) and five `register_stream_*`
+methods (`engine/registry.rs:726`, `:738`, `:750`, `:762`, `:774`), and reaches the
+discovery `Catalog` (`engine/protocol.rs:153`-`:174`).
+
+It has **no execution driver**. No code outside `streaming/` names
+`PreparedStreamingDatasetSource`, `StreamingDatasetFormat`, `StreamingSessionProgram`,
+`StreamingActionSink`, or `StreamingCheckpointBackend`; every `register_stream_*`
+call site is a test using fakes, and `extensions/mod.rs:413`-`:415` states the slots
+are "populated only by a real built-in or external extension" — today, none.
+`dataset/loader/mod.rs` and `engine/dataset_input.rs` contain zero streaming
+references and `build_dataset` still fully materializes.
+
+So the current-truth statement is: **ingestion is not a `DatasetLoader` because the
+loader is eager, and not a `StreamingDatasetFormat` because that plane has no
+execution driver. The graph path is the only executable option.** That second
+clause is a condition, not a permanent fact, and it has a checkable trigger:
+`builtin_source_factories()` (`streaming/sources.rs:16`) acquiring a caller. If
+that happens, ingestion-as-a-streaming-format becomes a real alternative to the
+graph path and this section should be re-decided rather than inherited.
+
 **The seam is the staged driver's `next_stage`, not deferred materialization.**
 An earlier draft of this record named `materialize_credit`
 (`engine/turn_execution.rs:2045`, `:2320`) as the worker-side seam, and that was
@@ -931,6 +963,43 @@ The stages:
     topology-*dependent*. Nothing in the tree combines an invariant merge with a
     canonical digest; that combination is what I1 asks for and it is new code.
 
+  **On closer reading the streaming result plane is a counter-example rather than
+  a precedent, and this record no longer treats it as the closest structural fit.**
+  Beyond the topology dependence above, its root is *order*-dependent:
+  `CheckedResultStagePlan::from_partitions`
+  (`streaming/checkpoints/local.rs:1743`-`:1762`) performs no sort, no dedup, and no
+  canonicalization, folding the caller's `Vec` order straight into the hashed
+  object, so staging the same segments in a different order yields a different
+  root. And there is no cross-process merge in that plane at all: `ResultPartition`
+  is not `Serialize` (only its descriptor is, `results.rs:112`-`:114`),
+  `runtime/src/cellular/` contains zero streaming references, and neither shipped
+  backend claims `CheckpointBackendPlacement::SharedAcrossCells`. Its `cell_id` and
+  `worker_id` fields describe a reduction that does not exist.
+
+  Three things from that plane are still worth taking, and they are the parts this
+  record cites going forward. Its **verification ladder** is the strongest
+  fail-closed discipline in the tree — reachability (`checkpoints/local.rs:2290`-`:2292`),
+  length (`:2305`-`:2307`), digest, head re-check (`:2173`-`:2180`), missing object
+  refused at `:1107`-`:1111` — and the seal should copy its shape. Its
+  **length-prefixed domain-separated hashing** at `streaming/identity.rs:12`-`:24`
+  (`domain_hash`/`update_field`) is the better citation than `results.rs:521`-`:546`
+  for constructing a root, because it is the primitive that makes field
+  concatenation unambiguous. And **`StableOrderKey`** (`streaming/identity.rs:88`-`:91`)
+  is already this codebase's name for a "stable topology-independent tie-break key"
+  — exactly the concept the global corpus ordinal needs, and exactly what the
+  result index conspicuously does not use.
+
+  Two further ceilings, both discovered in that plane and both reasons not to route
+  the seal through it. Its byte budget tracks **one tokio semaphore permit per
+  byte** and packs item and byte counters into a single `u64` as two `u32` halves
+  (`streaming/budget.rs:195`, `:17`-`:18`, `:567`-`:572`, `:582`-`:584`), so a
+  category tops out near 4.29 GB simultaneously charged and a W-way merge of 330 MB
+  shards reaches `AccountingOverflow` before topology becomes the limit. And **no
+  chunked write or ranged read exists anywhere**: the store's only write is
+  `write_new(path, bytes: &[u8])` (`checkpoints/local.rs:140`), which copies the
+  whole buffer before handing it to the blocking executor (`:404`-`:410`), so a
+  330 MB publish peaks near 660 MB resident.
+
   Two ceilings bound the design at target scale and neither is negotiable from
   inside AIPerf. The Kubernetes publication path hard-caps a single artifact at
   512 MiB and fails the **entire** results manifest on breach
@@ -974,7 +1043,42 @@ also queueing, so it cannot attribute a slow parser.
 ### The vector index seam
 
 A new registry category, `VectorIndex`, with a two-trait split so the read path is
-`!Send` worker-local and the write path is owned by the ingestion sealer:
+`!Send` worker-local and the write path is owned by the ingestion sealer.
+
+**It is a runtime-owned `AIPerfRegistry` category in `aiperf-runtime` — the same
+`TransactionalRegistry` shape as `RegisteredTraceProgramDrivers::stock()` — and
+deliberately not a plugin category.** `PluginCategory` is sealed at three
+(`Endpoint`, `Transport`, `Exporter`) with the seal stated in the code
+(`rust/plugin-api/src/validation.rs:59`-`:79`) and normatively in the design record
+(`docs/specs/2026-08-26-native-rust-runtime-plugins-design.md:1437`-`:1440`:
+"adding a fourth dynamic category requires a new reviewed API generation"), whose
+`:1434` puts everything else — including native-graph factories — in the
+"host-owned or statically composed" bucket this belongs to. The point is not
+deference to a rule: nothing could ship out-of-tree today regardless, because
+`rust/plugin-host/` has no loader, `plugin-sdk-macros` has no entry macro, and
+`PluginRegistrar` (`rust/plugin-api/src/extension.rs:97`-`:165`) has no
+registration methods at all. The two-trait split below is nonetheless shaped so it
+*could* become a plugin category at a later reviewed API generation; that is a
+property of the design, not a claim about its present status.
+
+**`PassageVector` and `PassageHit` stay out of `aiperf-core` and
+`aiperf-plugin-api`.** `cargo xtask abi-gate` fails on any new `(name, file)` pair
+reachable from a seed (`rust/xtask/src/abi_closure.rs:100`-`:114`) and
+`abi-impl-budget` caps `MAX_ABI_TYPES = 177` / `MAX_ABI_FILES = 56`
+(`rust/xtask/src/abi_impl_budget.rs:12`-`:17`) against a baseline already at
+177/56 — zero headroom. The same ceiling governs the record plane: RAG record
+fields are **scalar fields added to existing types**, never new nominal types hung
+off `RecordIngest`, `Request`, or `PreparedTurn`, because a field addition is
+invisible to the gate and a new type is not re-baselineable without breaking the
+budget.
+
+**`ArtifactWrite`, named in the `seal` signature below, does not exist in the
+tree.** Zero hits across `core/src` and `runtime/src`. The boundary-side
+`ArtifactAccess` (`rust/core/src/artifact.rs:120`-`:133`) offers only whole-buffer
+`read`/`create`/`append`, and routing a 330 MB seal through it materializes the
+whole index in one `Vec<u8>`. The chunked write seam is new work, and it belongs on
+the in-tree `RecordArtifactLane` path this record already anchors the seal against,
+not on `ArtifactAccess`.
 
 ```rust
 pub trait VectorIndexBuilder {
@@ -1277,6 +1381,15 @@ throughput note. The ingestion driver must therefore yield the reactor across it
 parse and chunk stages rather than running them straight through, and I12's claim
 that parse and chunk are *measured* stages carries the additional obligation that
 measuring them does not perturb what else is being measured.
+
+The mechanism for that already exists and should not be hand-rolled:
+`StreamingBlockingExecutor` and `BudgetedBlockingOutput`
+(`runtime/src/streaming/blocking.rs`) are a budgeted seam for moving blocking work
+off the reactor, built for exactly this hazard on the streaming decode path. Route
+parse and chunk through it. The corresponding assertion is behavioral rather than
+structural: a corpus of deliberately slow-to-parse documents must move
+`rag_documents_per_second` (I12's positive half) while leaving the *request*
+latency of co-resident embed nodes unchanged (this obligation).
 
 For a benchmark whose whole subject is overlapping many concurrent tasks across
 heterogeneous accelerators, understating the intra-task critical path understates
