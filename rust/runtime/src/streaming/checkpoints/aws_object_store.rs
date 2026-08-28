@@ -34,14 +34,14 @@ use crate::{
     clock::Clock,
     streaming::{
         aws::{AwsClientSettings, AwsClockProjection, AwsS3ClientFactory},
-        checkpoint::CheckpointError,
         budget::{BudgetLimits, StreamingResourceBudget},
+        checkpoint::CheckpointError,
         checkpoints::object_store::{
             BudgetOwnedObjectChunk, BudgetOwnedObjectPage, BudgetOwnedObjectReader,
             ConditionalObjectStore, ObjectKey, ObjectListBudget, ObjectListCursor, ObjectMetadata,
             ObjectReadBudget, ObjectReadRange, ObjectVersion, PointerObject,
-            conditional_write_unsupported_error, immutable_object_key,
-            object_limit_exceeded_error, provider_error, stale_writer_error,
+            conditional_write_unsupported_error, immutable_object_key, object_limit_exceeded_error,
+            provider_error, stale_writer_error,
         },
     },
 };
@@ -85,9 +85,7 @@ impl AwsObjectStoreSettings {
             return Err(provider_error("bucket must not be empty"));
         }
         if self.multipart_part_bytes.get() < MINIMUM_MULTIPART_PART_BYTES {
-            return Err(provider_error(
-                "multipart part size must be at least 5 MiB",
-            ));
+            return Err(provider_error("multipart part size must be at least 5 MiB"));
         }
         Ok(())
     }
@@ -223,13 +221,19 @@ impl AwsConditionalObjectStore {
                     // have been copied into the bounded part buffer.
                     drop(chunk);
                     if buffer.len() >= part_bytes {
-                        parts.push(self.upload_part(key, upload_id, part_number, &mut buffer).await?);
+                        parts.push(
+                            self.upload_part(key, upload_id, part_number, &mut buffer)
+                                .await?,
+                        );
                         part_number += 1;
                     }
                 }
                 None => {
                     if !buffer.is_empty() || parts.is_empty() {
-                        parts.push(self.upload_part(key, upload_id, part_number, &mut buffer).await?);
+                        parts.push(
+                            self.upload_part(key, upload_id, part_number, &mut buffer)
+                                .await?,
+                        );
                     }
                     return Ok(parts);
                 }
@@ -301,8 +305,8 @@ impl ConditionalObjectStore for AwsConditionalObjectStore {
         // so the caller supplies no key and the store derives one.
         let key = immutable_object_key(&self.settings.prefix, &object.content_digest());
         let threshold = self.settings.single_put_threshold_bytes.get();
-        let declared = usize::try_from(object.content_length())
-            .map_err(|_| object_limit_exceeded_error())?;
+        let declared =
+            usize::try_from(object.content_length()).map_err(|_| object_limit_exceeded_error())?;
         if declared <= threshold {
             let mut assembled = Vec::with_capacity(declared);
             while let Some(chunk) = object.next_chunk(threshold).await? {
@@ -428,7 +432,9 @@ impl ConditionalObjectStore for AwsConditionalObjectStore {
             let (Some(key), Some(e_tag), Some(size)) =
                 (object.key(), object.e_tag(), object.size())
             else {
-                return Err(provider_error("listed object is missing key, etag, or size"));
+                return Err(provider_error(
+                    "listed object is missing key, etag, or size",
+                ));
             };
             retained = retained
                 .checked_add(std::mem::size_of::<ObjectMetadata>() + key.len() + e_tag.len())
