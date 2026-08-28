@@ -33,7 +33,7 @@ use bytes::Bytes;
 use crate::{
     clock::Clock,
     streaming::{
-        aws::{AwsClockProjection, AwsS3ClientFactory},
+        aws::{AwsClientSettings, AwsClockProjection, AwsS3ClientFactory},
         checkpoint::CheckpointError,
         budget::{BudgetLimits, StreamingResourceBudget},
         checkpoints::object_store::{
@@ -509,5 +509,128 @@ fn map_conditional_error<E>(error: &SdkError<E>) -> CheckpointError {
         Some(NOT_IMPLEMENTED_STATUS) => conditional_write_unsupported_error(),
         Some(PRECONDITION_FAILED_STATUS) | Some(CONFLICT_STATUS) => stale_writer_error(),
         _ => provider_error("conditional pointer write"),
+    }
+}
+
+/// Deferred S3 store that resolves its SDK configuration on first provider use.
+///
+/// Backend preparation is synchronous while `SdkConfig` resolution is not, so
+/// the client is built inside the first provider call rather than blocking a
+/// current-thread runtime at startup. Nothing observable is deferred: the first
+/// call that would touch the provider is also the first call that can report a
+/// configuration failure.
+pub struct LazyAwsConditionalObjectStore {
+    client_settings: AwsClientSettings,
+    profile: Option<String>,
+    store_settings: AwsObjectStoreSettings,
+    clock: Rc<dyn Clock>,
+    prepared: tokio::sync::OnceCell<AwsConditionalObjectStore>,
+}
+
+impl std::fmt::Debug for LazyAwsConditionalObjectStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LazyAwsConditionalObjectStore")
+            .field("client_settings", &self.client_settings)
+            .field("store_settings", &self.store_settings)
+            .finish()
+    }
+}
+
+impl LazyAwsConditionalObjectStore {
+    /// Retain validated settings without contacting any provider.
+    pub fn new(
+        client_settings: AwsClientSettings,
+        profile: Option<String>,
+        store_settings: AwsObjectStoreSettings,
+        clock: Rc<dyn Clock>,
+    ) -> Result<Self, CheckpointError> {
+        store_settings.validate()?;
+        Ok(Self {
+            client_settings,
+            profile,
+            store_settings,
+            clock,
+            prepared: tokio::sync::OnceCell::new(),
+        })
+    }
+
+    async fn store(&self) -> Result<&AwsConditionalObjectStore, CheckpointError> {
+        self.prepared
+            .get_or_try_init(|| async {
+                let settings = AwsClientSettings {
+                    region: self.client_settings.region.clone(),
+                    endpoint_url: self.client_settings.endpoint_url.clone(),
+                    force_path_style: self.client_settings.force_path_style,
+                    proxy: self.client_settings.proxy.clone(),
+                    operation_timeout_ns: self.client_settings.operation_timeout_ns,
+                    connect_timeout_ns: self.client_settings.connect_timeout_ns,
+                };
+                let factory =
+                    AwsS3ClientFactory::prepare_default_chain(settings, self.profile.as_deref())
+                        .await
+                        .map_err(|error| provider_error(&format!("prepare s3 client: {error}")))?;
+                AwsConditionalObjectStore::new(
+                    &factory,
+                    Rc::clone(&self.clock),
+                    self.store_settings.clone(),
+                )
+            })
+            .await
+    }
+}
+
+#[async_trait(?Send)]
+impl ConditionalObjectStore for LazyAwsConditionalObjectStore {
+    async fn put_immutable(
+        &self,
+        object: Box<dyn BudgetOwnedObjectReader>,
+    ) -> Result<ObjectVersion, CheckpointError> {
+        self.store().await?.put_immutable(object).await
+    }
+
+    async fn compare_and_swap_pointer(
+        &self,
+        key: &ObjectKey,
+        expected: Option<&ObjectVersion>,
+        next: PointerObject,
+    ) -> Result<ObjectVersion, CheckpointError> {
+        self.store()
+            .await?
+            .compare_and_swap_pointer(key, expected, next)
+            .await
+    }
+
+    async fn get_version_range(
+        &self,
+        key: &ObjectKey,
+        version: &ObjectVersion,
+        range: ObjectReadRange,
+        budget: ObjectReadBudget,
+    ) -> Result<BudgetOwnedObjectChunk, CheckpointError> {
+        self.store()
+            .await?
+            .get_version_range(key, version, range, budget)
+            .await
+    }
+
+    async fn list_versions(
+        &self,
+        prefix: &ObjectKey,
+        cursor: Option<&ObjectListCursor>,
+        budget: ObjectListBudget,
+    ) -> Result<BudgetOwnedObjectPage, CheckpointError> {
+        self.store()
+            .await?
+            .list_versions(prefix, cursor, budget)
+            .await
+    }
+
+    async fn delete_version(
+        &self,
+        key: &ObjectKey,
+        version: &ObjectVersion,
+    ) -> Result<(), CheckpointError> {
+        self.store().await?.delete_version(key, version).await
     }
 }

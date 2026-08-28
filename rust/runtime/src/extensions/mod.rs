@@ -340,6 +340,14 @@ impl AIPerfExtension for BuiltinStreamingExtension {
         registry
             .register_stream_checkpoint_backend(Arc::new(NoneCheckpointBackendFactory))
             .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        // `object_store` exists only where the object-store client is compiled;
+        // without `streaming-s3` the identifier is absent and fails closed.
+        #[cfg(feature = "streaming-s3")]
+        registry
+            .register_stream_checkpoint_backend(Arc::new(
+                crate::streaming::checkpoint_factories::ObjectStoreCheckpointBackendFactory,
+            ))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
         Ok(())
     }
 }
