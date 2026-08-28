@@ -72,7 +72,8 @@ fn product_error_triggers_immediate_failure() {
     );
 }
 
-/// Invalidation rules: max 5 total invalidations, max 3 consecutive.
+/// Invalidation rules: a bounded total budget, and at most 3 consecutive
+/// invalidations before the experiment is abandoned as un-measurable.
 #[test]
 fn invalidation_limits_are_enforced() {
     let spec = ExperimentSpec::synthetic_fixture();
@@ -129,9 +130,10 @@ fn valid_failure_is_not_rerun() {
         matches!(outcome, AttemptOutcome::ConfirmedRegression { .. }),
         "confirmed regression must produce ConfirmedRegression, got {outcome:?}"
     );
-    // Runner must refuse to rerun.
+    // Runner must refuse to rerun: a confirmed regression is a real result,
+    // not a measurement artifact, so rerunning it would launder a failure.
     assert!(
-        runner.would_rerun(),
+        !runner.would_rerun(),
         "runner must NOT offer a rerun after a valid failure"
     );
 }
