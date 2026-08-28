@@ -485,8 +485,10 @@ class DynamoDeployer:
                 )
         frontend_container: dict = {"image": c.effective_image, "env": frontend_envs}
         frontend_pod_spec: dict = {"mainContainer": frontend_container}
-        if c.runtime_class_name:
-            frontend_pod_spec["runtimeClassName"] = c.runtime_class_name
+        # The frontend is a routing/coordination process — it does not use the
+        # GPU and must NOT get runtimeClassName: nvidia, because the scheduler
+        # will place it on a CPU node (no GPU request) where that runtime is
+        # absent, causing permanent FailedCreatePodSandBox errors.
         if c.tolerations:
             frontend_pod_spec["tolerations"] = list(c.tolerations)
         if c.node_selector:
