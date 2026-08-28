@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Synthetic candidate generation for the distribution assembler.
+#
+# The packages here are deliberately fake: `synthetic_bytes` lets a test
+# materialize a byte-exact stand-in for a built cdylib and its manifest, so the
+# assembly pipeline (digest -> inventory -> authenticated publication) is
+# exercised end to end without a real cargo build. A real candidate generation
+# omits `synthetic_bytes` and points at artifacts a build already produced.
+
+schema_version = 1
+generation = 7
+build_id = "candidate-2026.08.27+1"
+
+[[package]]
+id = "nvidia/export-basic"
+version = "0.13.0"
+artifact = "libaiperf_plugin_export_basic.so"
+manifest = "nvidia-export-basic.manifest.json"
+synthetic_bytes = "aiperf-synthetic-artifact:nvidia/export-basic"
+
+[[package]]
+id = "nvidia/transport-http"
+version = "0.13.0"
+artifact = "libaiperf_plugin_transport_http.so"
+manifest = "nvidia-transport-http.manifest.json"
+synthetic_bytes = "aiperf-synthetic-artifact:nvidia/transport-http"

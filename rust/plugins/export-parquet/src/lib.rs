@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Parquet exporter candidate plugin (Task 26).
+//! Parquet exporter candidate plugin (Task 24).
 //!
 //! Stages `rust/plugins/export-parquet` as a loadable `cdylib` exporting
 //! `aiperf_plugin_entry_v1`. The package declares the `export.parquet`
