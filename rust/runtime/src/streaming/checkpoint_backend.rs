@@ -8,6 +8,7 @@ use std::{
     collections::BTreeMap,
     mem::size_of,
     num::{NonZeroU64, NonZeroUsize},
+    rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -15,6 +16,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+
+use crate::clock::Clock;
 
 use super::{
     budget::{BudgetLease, StreamingResourceBudget},
@@ -114,10 +117,27 @@ where
 }
 
 /// Host-owned checkpoint backend preparation context.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct CheckpointBackendPrepareContext {
     /// Exact stable logical run namespace.
     pub run: StreamRunIdentity,
+    /// Run clock every lease deadline and expiry check is read from.
+    ///
+    /// A backend must never call `Instant::now`: lease expiry has to advance
+    /// with virtual time so a simulated run reaches the same generations.
+    pub clock: Rc<dyn Clock>,
+}
+
+// `Clock` has no `Debug` supertrait, so the derived `Debug` is replaced with one
+// that reports the clock's discipline rather than its identity.
+impl std::fmt::Debug for CheckpointBackendPrepareContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CheckpointBackendPrepareContext")
+            .field("run", &self.run)
+            .field("is_virtual_clock", &self.clock.is_virtual())
+            .finish()
+    }
 }
 
 /// Startup checkpoint backend validation and preparation contract.

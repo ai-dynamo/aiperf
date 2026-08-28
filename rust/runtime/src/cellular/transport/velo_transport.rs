@@ -194,6 +194,17 @@ where
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("verified registration proof is missing"))?
         .controller_binding;
+    // Committed inside the one registration transaction: the controller can only
+    // seal a streaming frame for a cell whose session it has bound here, and an
+    // exact retry rebinds the identical value.
+    #[cfg(feature = "streaming")]
+    registration_authority.streaming_sessions().commit(
+        register.cell_id,
+        crate::engine::cellular_registration::derive_controller_streaming_session(
+            binding,
+            registration_authority.run_nonce(),
+        ),
+    )?;
     let attestation = attest(
         binding,
         verified.encoded().as_ref(),
@@ -241,6 +252,26 @@ pub(crate) fn decode_reply(
         registration_frame,
         reply_payload: Bytes::from(wire.payload),
     })
+}
+
+/// Derive the controller streaming session for a verified controller connection.
+///
+/// The session is computed from the binding this cell has already proven, so it
+/// never travels on the wire and cannot be pinned by a hostile controller.
+#[cfg(feature = "streaming")]
+pub(crate) fn controller_streaming_session(
+    controller: &ConnectedController,
+    run_nonce: [u8; 32],
+) -> Result<
+    crate::cellular::streaming_protocol::ControllerStreamingSessionId,
+    CellTransportError,
+> {
+    Ok(
+        crate::engine::cellular_registration::derive_controller_streaming_session(
+            &controller.binding()?,
+            run_nonce,
+        ),
+    )
 }
 
 pub(crate) fn verify_reply(
