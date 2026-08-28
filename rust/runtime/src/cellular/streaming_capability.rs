@@ -720,7 +720,7 @@ mod tests {
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
-        endpoint_retry_safety: crate::streaming::action::EndpointRetrySafety::Unproven,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
     static TRANSPORT: TransportDescriptor = TransportDescriptor {
