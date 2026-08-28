@@ -137,7 +137,8 @@ fn auto_generation_advances_but_refuses_an_unverifiable_prior_inventory() {
 
     // Nothing published yet: the declared generation stands.
     assert_eq!(
-        next_generation(output.path(), fixture.generation).expect("an absent prior is not an error"),
+        next_generation(output.path(), fixture.generation)
+            .expect("an absent prior is not an error"),
         fixture.generation
     );
 

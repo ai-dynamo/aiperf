@@ -223,11 +223,7 @@ impl CandidateFixture {
 }
 
 /// Write one synthetic file, refusing to destroy anything already staged.
-fn write_synthetic_file(
-    package_id: &str,
-    path: &Path,
-    bytes: &[u8],
-) -> Result<(), AssembleError> {
+fn write_synthetic_file(package_id: &str, path: &Path, bytes: &[u8]) -> Result<(), AssembleError> {
     // `symlink_metadata` does not traverse the final component, so a symlink is
     // measured as the link itself and refused here; `create_no_follow` refuses
     // it again at the open, which is the check that actually races safely.
