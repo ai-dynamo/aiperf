@@ -16,6 +16,8 @@ pub mod discovery;
 pub mod error;
 pub mod freeze;
 pub mod inspect;
+pub mod install;
+pub mod inventory;
 pub mod loader;
 pub mod lock;
 pub mod manifest;

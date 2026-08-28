@@ -1423,6 +1423,48 @@ impl CellRecordsShipper {
         self.ship(heartbeat, CellMessage::StorePartition(Box::new(partition)))
     }
 
+    /// Build this cell's ordered capture frames for a completed run.
+    ///
+    /// `requests_exact_records` is the controller's capture decision, taken from
+    /// the run plan's
+    /// [`ExportCapturePlan`](crate::export::capture::ExportCapturePlan): when it is
+    /// false the cell emits no [`CellMessage::CaptureChunk`] at all, and
+    /// `exact_records` is not read. The closing
+    /// [`CellMessage::CaptureBundle`] is emitted unconditionally — including the
+    /// all-[`FoldedProjection::Absent`] shape — because its absence is the
+    /// controller's only signal that this cell never reported.
+    pub fn capture_messages(
+        &self,
+        requests_exact_records: bool,
+        exact_records: &[u8],
+        folded_metrics: crate::cellular::FoldedProjection<serde_json::Value>,
+        folded_summary: crate::cellular::FoldedProjection<serde_json::Value>,
+    ) -> std::result::Result<Vec<crate::cellular::CellMessage>, crate::cellular::CaptureTransferError>
+    {
+        use crate::cellular::{
+            CellCaptureBundleV1, CellMessage, DEFAULT_CAPTURE_CHUNK_BYTES, chunk_exact_records,
+        };
+
+        let chunks = if requests_exact_records {
+            chunk_exact_records(self.cell_id, exact_records, DEFAULT_CAPTURE_CHUNK_BYTES)?
+        } else {
+            Vec::new()
+        };
+        let bundle = CellCaptureBundleV1 {
+            cell_id: self.cell_id,
+            exact_chunk_count: chunks.len() as u32,
+            exact_byte_length: chunks.iter().map(|chunk| chunk.byte_length).sum(),
+            folded_metrics,
+            folded_summary,
+        };
+        let mut messages: Vec<CellMessage> = chunks
+            .into_iter()
+            .map(|chunk| CellMessage::CaptureChunk(Box::new(chunk)))
+            .collect();
+        messages.push(CellMessage::CaptureBundle(Box::new(bundle)));
+        Ok(messages)
+    }
+
     /// Ships one heartbeat then one terminal partition message to the controller over a
     /// fresh, dedicated velo runtime. Shared by [`ship_records`](Self::ship_records) and
     /// [`ship_store`](Self::ship_store): they differ only in the heartbeat's sketches and

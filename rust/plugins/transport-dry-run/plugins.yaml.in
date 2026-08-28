@@ -1,2 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Dry-run transport candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/transport-dry-run"
+    version: "{{VERSION}}"
+    category: transport
+    artifact: "libaiperf_plugin_transport_dry_run.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      Dry-run transport candidate: registers the native socket-free dry_run
+      transport with its canonical ID and alias. Static production dry-run
+      transport authority remains until Task 39a.
+    capabilities:
+      - canonical_id: "dry_run"
+        aliases: ["dry-run", "dryrun"]

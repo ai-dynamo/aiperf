@@ -1,7 +1,40 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Dynosim transport plugin shell.
+//! Dynosim transport plugin candidate shell (Task 34).
 
-/// The source API version exposed by provisional plugin crate shells.
-pub const PLUGIN_SOURCE_API_VERSION: &str = "1.0.0";
+use std::sync::LazyLock;
+
+use aiperf_plugin_sdk::declaration::PluginDeclarationV1;
+use aiperf_plugin_sdk_macros::aiperf_plugin;
+
+static PKG: LazyLock<aiperf_plugin_api::descriptor::PluginPackageDescriptor> =
+    LazyLock::new(|| {
+        aiperf_plugin_api::descriptor::PluginPackageDescriptor::from_authored(
+            "nvidia/transport-dynosim",
+            env!("CARGO_PKG_VERSION"),
+            "Dynosim transport plugin candidate",
+        )
+        .expect("transport-dynosim id must normalize")
+    });
+
+struct DynosimTransportExtension;
+
+impl aiperf_plugin_api::extension::AIPerfExtension for DynosimTransportExtension {
+    fn register(
+        &self,
+        _registrar: &mut aiperf_plugin_api::extension::PluginRegistrar<'_>,
+    ) -> Result<(), aiperf_plugin_api::error::ExtensionError> {
+        Ok(())
+    }
+}
+
+static EXT: DynosimTransportExtension = DynosimTransportExtension;
+
+#[aiperf_plugin]
+fn dynosim_transport_plugin() -> PluginDeclarationV1 {
+    PluginDeclarationV1 {
+        package: &*PKG,
+        extension: &EXT,
+    }
+}

@@ -18,13 +18,7 @@ use aiperf_runtime::engine::cell_launcher::{
 #[test]
 #[cfg(feature = "cellular")]
 fn cell_command_omits_env_when_no_digest() {
-    let ctx = CellLaunchContext::without_roles(
-        2,
-        "file:/tmp/coord",
-        BTreeMap::new(),
-        None,
-        None,
-    );
+    let ctx = CellLaunchContext::without_roles(2, "file:/tmp/coord", BTreeMap::new(), None, None);
     let launcher = LocalLauncher;
     let cmd = launcher.cell_command(&ctx, 0);
     // The debug repr is the only stable way to inspect a tokio::process::Command's

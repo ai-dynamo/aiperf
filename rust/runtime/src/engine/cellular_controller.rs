@@ -1247,26 +1247,52 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         let plan_registration: PlanRegistration = {
             let envelopes = envelopes.clone();
             let registrar = artifact_server.as_ref().map(|server| server.registrar());
-            // Read the digest that was propagated into this process by the parent
-            // profile invocation (Task 20 / Task 21). `None` means no plugins.
+            // The expected digest is the one this controller composed and
+            // verified at bootstrap, not a value re-read from the environment:
+            // comparing env to env would only prove the cell inherited the same
+            // string. `None` means the run was composed without plugins, and any
+            // cell reporting a digest is then rejected.
             let expected_plugin_lock_digest: Option<String> =
-                std::env::var(crate::engine::cell_launcher::CELL_PLUGIN_LOCK_ENV).ok();
+                crate::engine::cell_launcher::composed_plugin_lock_digest();
             std::sync::Arc::new(move |verified| {
                 let register: crate::cellular::transport::CellRegister =
                     verified.decode_payload()?;
                 // Verify plugin lock digest before any envelope is handed to the cell.
                 match (&expected_plugin_lock_digest, &register.plugin_lock_digest) {
                     (Some(expected), Some(actual)) => {
-                        anyhow::ensure!(
-                            expected == actual,
-                            "cell {} plugin lock digest mismatch: expected {expected}, got {actual}",
-                            register.cell_id
-                        );
+                        // Compare parsed hashes: `blake3::Hash`'s `PartialEq` is
+                        // constant-time, while comparing the hex strings would
+                        // short-circuit and leak the matching prefix length as a
+                        // forgery oracle. Malformed hex is a mismatch.
+                        let matches = match (
+                            blake3::Hash::from_hex(expected),
+                            blake3::Hash::from_hex(actual),
+                        ) {
+                            (Ok(expected), Ok(actual)) => expected == actual,
+                            _ => false,
+                        };
+                        if !matches {
+                            // The expected digest stays local; echoing it back
+                            // would hand an unauthenticated peer the value it
+                            // failed to produce.
+                            tracing::warn!(
+                                cell_id = register.cell_id,
+                                "rejecting cell registration on plugin lock digest mismatch"
+                            );
+                            anyhow::bail!(
+                                "cell {} plugin lock digest mismatch",
+                                register.cell_id
+                            );
+                        }
                     }
                     (None, None) => {}
-                    (Some(expected), None) => {
+                    (Some(_expected), None) => {
+                        tracing::warn!(
+                            cell_id = register.cell_id,
+                            "rejecting cell registration that omitted its plugin lock digest"
+                        );
                         anyhow::bail!(
-                            "cell {} omitted plugin lock digest; controller expected {expected}",
+                            "cell {} omitted plugin lock digest; controller expected one",
                             register.cell_id
                         );
                     }
@@ -1368,12 +1394,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                 None
             },
             local_roles: prepared_security.local_roles.take(),
-            // Forward the plugin lock digest this process received from the parent
-            // (set by Task 20 propagation) into each cell subprocess.
-            plugin_lock_digest: std::env::var(
-                crate::engine::cell_launcher::CELL_PLUGIN_LOCK_ENV,
-            )
-            .ok(),
+            // Forward the digest this controller composed and verified, so a cell
+            // inherits the identity the controller will attest it against.
+            plugin_lock_digest: crate::engine::cell_launcher::composed_plugin_lock_digest(),
         };
         startup_probe.before_launcher_execution();
         let handles = select_launcher()
@@ -1457,6 +1480,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // is keyed by cell id so duplicates and out-of-range messages cannot satisfy the
         // all-cells barrier.
         let mut terminal_partitions = TerminalPartitions::new(cell_count);
+        // Capture frames are admitted only from the dense registered cell set, so a
+        // frame naming any other cell is refused before its payload is retained.
+        let mut capture = crate::cellular::CaptureAssembler::new(0..cell_count);
         let mut replay_supplements: Vec<GraphCellSupplement> = Vec::new();
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         // The frontend tails this file into AIPerfJob CR status.
@@ -1489,6 +1515,16 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                             replay_supplements.push(supplement);
                         }
                     }
+                    Some(CellMessage::CaptureChunk(chunk)) => {
+                        capture
+                            .accept_chunk(*chunk)
+                            .map_err(|error| anyhow!("cellular capture refused: {error}"))?;
+                    }
+                    Some(CellMessage::CaptureBundle(bundle)) => {
+                        capture
+                            .accept_bundle(*bundle)
+                            .map_err(|error| anyhow!("cellular capture refused: {error}"))?;
+                    }
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
                         // Emit the running cross-cell aggregate for live CR-status progress.
@@ -1514,6 +1550,19 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             }
         }
         let (partitions, store_partitions) = terminal_partitions.into_parts();
+        // A run whose capture plan asked for nothing produces no capture frames at
+        // all; only a run that started shipping must prove it finished. `finish`
+        // is what refuses a hole, a length disagreement, or a silent cell.
+        if capture.has_activity() {
+            let missing = capture.missing_cells();
+            let assembled = capture.finish().map_err(|error| {
+                anyhow!("cellular capture incomplete (missing cells {missing:?}): {error}")
+            })?;
+            tracing::debug!(
+                capture_bytes = assembled.total_exact_bytes(),
+                "cellular capture assembled"
+            );
+        }
         if let Some(profiler) = profiler.as_mut()
             && profiler.needs_stop()
         {

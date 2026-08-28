@@ -89,8 +89,10 @@ impl fmt::Debug for SensitiveStateKey {
 /// like every other `Arc<dyn …>` host authority.
 pub trait StreamingSensitiveStateKeyResolver: fmt::Debug + Send + Sync {
     /// Resolve one selector, or refuse.
-    fn resolve(&self, key_id: &SensitiveStateKeyId)
-    -> Result<SensitiveStateKey, SensitiveStateError>;
+    fn resolve(
+        &self,
+        key_id: &SensitiveStateKeyId,
+    ) -> Result<SensitiveStateKey, SensitiveStateError>;
 }
 
 /// Complete associated-data context for one envelope.

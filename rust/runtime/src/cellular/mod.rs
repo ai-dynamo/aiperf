@@ -10,6 +10,7 @@
 //! carry registrations, heartbeats, and partitions between cells and controllers.
 
 pub mod broadcast;
+pub mod capture;
 pub mod dataset_session;
 pub mod dispatch_state;
 pub mod heartbeat;
@@ -35,6 +36,11 @@ pub mod streaming_protocol;
 pub mod streaming_transport;
 pub mod transport;
 
+pub use capture::{
+    AssembledCapture, CaptureAssembler, CaptureTransferError, CellCaptureBundleV1,
+    DEFAULT_CAPTURE_CHUNK_BYTES, ExactRecordsChunkV1, FoldedProjection, MAX_CAPTURE_CHUNK_BYTES,
+    chunk_exact_records,
+};
 pub use heartbeat::{
     HeartbeatAccumulator, HeartbeatCounters, HeartbeatSaturation, MetricsHeartbeat,
 };
@@ -66,6 +72,7 @@ pub use streaming_placement::{
     release_at_controller_target,
 };
 #[cfg(all(feature = "streaming", feature = "cellular"))]
+#[allow(unused_imports)]
 pub(crate) use streaming_transport::{
     BindingDiagnostics, CellularBindingContext, CellularExecutionEndpoint,
     CellularPlacementControl, CellularPlacementDriver, CellularPlacementSubmitter,
@@ -77,6 +84,6 @@ pub(crate) use streaming_transport::{
 pub use transport::velo_transport::{VeloCellClient, VeloControllerTransport};
 pub use transport::{
     CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister, CellStorePartitionShip,
-    CellTransportError, ControllerTransport, HANDLER_HEARTBEAT, HANDLER_PARTITION,
-    HANDLER_REGISTER, HANDLER_STORE_PARTITION,
+    CellTransportError, ControllerTransport, HANDLER_CAPTURE_BUNDLE, HANDLER_CAPTURE_CHUNK,
+    HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_REGISTER, HANDLER_STORE_PARTITION,
 };

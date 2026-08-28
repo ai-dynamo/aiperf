@@ -1,2 +1,43 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Endpoint factory candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+#
+# The candidate registers endpoint capabilities with canonical IDs and
+# aliases. Static production endpoint registrations remain unchanged
+# until Task 39a makes an endpoint ID exclusively dynamic.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/endpoints"
+    version: "{{VERSION}}"
+    category: endpoint
+    artifact: "libaiperf_plugin_endpoints.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      Endpoint factory candidate: registers Chat, Responses, Completions,
+      and companion endpoint factories with canonical IDs and effective
+      aliases. Static production endpoint authority remains until Task 39a.
+    capabilities:
+      - canonical_id: "chat"
+        aliases: ["openai.chat", "chat.completions"]
+      - canonical_id: "responses"
+        aliases: ["openai.responses"]
+      - canonical_id: "completions"
+        aliases: ["openai.completions"]
+      - canonical_id: "embeddings"
+        aliases: ["openai.embeddings"]
+      - canonical_id: "sagemaker_chat"
+        aliases: ["sagemaker.chat"]
+    grpc_bindings:
+      - canonical_id: "kserve"
+        aliases: ["kserve_oip", "kserve.grpc"]
+      - canonical_id: "riva_asr"
+        aliases: ["riva.asr"]
+      - canonical_id: "riva_tts"
+        aliases: ["riva.tts"]
+      - canonical_id: "riva_nlp"
+        aliases: ["riva.nlp"]

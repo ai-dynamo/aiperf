@@ -59,6 +59,84 @@ pub const CELL_FLAG: &str = "--cell";
 /// `aiperf --aggregator` refuses unavailable hierarchical aggregation.
 pub const AGGREGATOR_FLAG: &str = "--aggregator";
 
+/// Load and verify the propagated plugin lock, then record it as this process's
+/// composed plugin identity and report provenance.
+///
+/// Records `None` only when the environment carries no lock at all, which is
+/// the no-plugins case. Every other failure is fatal: a half-set or malformed
+/// environment, a bundle that fails to load, or a digest that disagrees with
+/// the parent's. Any of those would otherwise silently downgrade a locked run
+/// to an unlocked one.
+fn record_verified_plugin_lock() {
+    let propagated = match crate::plugins::propagate::read_lock_env() {
+        Ok(propagated) => propagated,
+        Err(error) => {
+            tracing::error!(error = %error, "refusing to run with a corrupt plugin lock environment");
+            std::process::exit(2);
+        }
+    };
+    let Some((lock_path, expected_digest)) = propagated else {
+        aiperf_runtime::metrics_core::report::set_plugin_provenance(None);
+        aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(None);
+        return;
+    };
+    let bundle = match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path)
+    {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            tracing::error!(
+                error = format!("{error:#}"),
+                path = %lock_path.display(),
+                "failed to load plugin lock bundle"
+            );
+            std::process::exit(2);
+        }
+    };
+    let lock = bundle.lock();
+    let actual_digest = lock.digest.hex.as_str();
+    if let Err(error) =
+        crate::plugins::propagate::verify_propagated_digest(&expected_digest, actual_digest)
+    {
+        tracing::error!(error = %error, "plugin lock attestation failed");
+        std::process::exit(2);
+    }
+    let catalog = lock.packages.iter().map(plugin_catalog_entry).collect();
+    aiperf_runtime::metrics_core::report::set_plugin_provenance(Some((
+        actual_digest.to_owned(),
+        catalog,
+    )));
+    aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(Some(
+        actual_digest.to_owned(),
+    ));
+}
+
+/// Project one locked package into the report's catalog summary.
+///
+/// Digests are reported as bare hex, matching the lock digest's own
+/// representation; the lock stores artifact digests with a `blake3:` prefix.
+fn plugin_catalog_entry(
+    package: &aiperf_plugin_host::lock::LockedPackageV1,
+) -> aiperf_runtime::metrics_core::report::PluginCatalogEntry {
+    use aiperf_plugin_host::lock::PackageStatus;
+    aiperf_runtime::metrics_core::report::PluginCatalogEntry {
+        package_id: package.id.clone(),
+        version: package.version.clone(),
+        // A locked package is the resolved winner for its ID; a disabled one
+        // contributed nothing, and a failed one was refused registration.
+        status: match package.status {
+            PackageStatus::Active => "winner",
+            PackageStatus::Disabled => "absent",
+            PackageStatus::Failed => "quarantined",
+        }
+        .to_string(),
+        manifest_digest: package
+            .artifact_digest
+            .strip_prefix("blake3:")
+            .unwrap_or(&package.artifact_digest)
+            .to_string(),
+    }
+}
+
 /// Return whether the arguments select an internal execution mode.
 pub fn is_execution_mode(args: &[String]) -> bool {
     matches!(
@@ -85,6 +163,10 @@ pub fn capabilities_catalog() -> anyhow::Result<aiperf_runtime::engine::protocol
 /// Always terminates the process (`-> !`); callers do not return from here.
 pub fn dispatch(args: &[String]) -> ! {
     crate::diagnostics::register_sigusr1_faulthandler();
+    // Establish this process's plugin identity before any socket, dataset, or
+    // resource open, so every later attestation (cell registration, report
+    // provenance) names a bundle this process actually loaded and verified.
+    record_verified_plugin_lock();
     let flag = args.first().map(String::as_str).unwrap_or("");
     let cell_mode = flag == CELL_FLAG;
     let aggregator_mode = flag == AGGREGATOR_FLAG;
@@ -170,30 +252,8 @@ fn run_cell() -> ! {
         tracing::error!(error = %error, cell_id, "cell security acquisition failed");
         std::process::exit(2);
     }
-    // Verify plugin lock bundle before any socket, dataset, or resource open.
-    if let Some((lock_path, expected_digest)) = crate::plugins::propagate::read_lock_env() {
-        match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path) {
-            Ok(bundle) => {
-                let actual_digest = bundle.lock().digest.hex.as_str();
-                if let Err(error) = crate::plugins::propagate::verify_propagated_digest(
-                    &expected_digest,
-                    actual_digest,
-                ) {
-                    tracing::error!(error = %error, cell_id, "cell plugin lock attestation failed");
-                    std::process::exit(2);
-                }
-            }
-            Err(error) => {
-                tracing::error!(
-                    error = format!("{error:#}"),
-                    cell_id,
-                    path = %lock_path.display(),
-                    "cell failed to load plugin lock bundle"
-                );
-                std::process::exit(2);
-            }
-        }
-    }
+    // The plugin lock bundle was already loaded, verified, and recorded as this
+    // process's composed identity at the top of `dispatch`, before any effect.
     // Drop the fetch runtime before execution creates its thread-per-core runtime.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

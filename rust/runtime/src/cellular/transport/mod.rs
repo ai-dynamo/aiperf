@@ -19,6 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::cellular::capture::{CellCaptureBundleV1, ExactRecordsChunkV1};
 use crate::cellular::heartbeat::MetricsHeartbeat;
 use crate::cellular::shard::{ColumnStorePartition, RecordsShardPartition};
 
@@ -128,6 +129,15 @@ pub enum CellMessage {
     /// [`Heartbeat`](Self::Heartbeat)) so this — the largest variant by far, a whole
     /// folded store — does not inflate every slot of the controller's message channel.
     StorePartition(Box<ColumnStorePartition>),
+    /// One bounded slice of the cell's exact-record capture artifact, sent only
+    /// when the run plan's capture requirements asked for exact records. Boxed
+    /// so its payload buffer does not inflate every slot of the controller's
+    /// message channel.
+    CaptureChunk(Box<ExactRecordsChunkV1>),
+    /// The cell's mandatory folded capture bundle, sent exactly once after its
+    /// last [`Self::CaptureChunk`] — including when it emitted none, since a
+    /// missing bundle is the controller's only signal that a cell went silent.
+    CaptureBundle(Box<CellCaptureBundleV1>),
 }
 
 /// velo handler name: cell → controller registration. The reply carries the
@@ -148,6 +158,13 @@ pub const HANDLER_PARTITION: &str = "aiperf.cell.partition";
 /// [`HANDLER_PARTITION`]: a metrics-only cell ships its folded store, not a record
 /// `Vec`.
 pub const HANDLER_STORE_PARTITION: &str = "aiperf.cell.store_partition";
+/// velo handler name: cell → controller exact-records capture chunk (unary; the
+/// reply is an rmp [`CellAck`]). Unary so a cell cannot outrun the controller's
+/// assembly: each chunk is acknowledged before the next is offered.
+pub const HANDLER_CAPTURE_CHUNK: &str = "aiperf.cell.capture_chunk";
+/// velo handler name: cell → controller folded capture bundle (unary; the reply
+/// is an rmp [`CellAck`]). Closes the cell's capture.
+pub const HANDLER_CAPTURE_BUNDLE: &str = "aiperf.cell.capture_bundle";
 
 /// The cell's registration request: its `cell_id` plus its own serialized
 /// `velo::PeerInfo` (rmp-encoded) so the controller can `register_peer` it and

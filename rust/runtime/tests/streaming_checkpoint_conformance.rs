@@ -45,7 +45,10 @@ use aiperf_runtime::{
             },
             memory::{MemoryCheckpointBackend, TestMemoryFault},
         },
-        failure::{CheckpointAttemptError, OrdinaryStreamingFailure, ResultExportError},
+        failure::{
+            CheckpointAttemptError, CheckpointAttemptFailureCode, OrdinaryStreamingFailure,
+            ResultExportError, ResultExportFailureCode,
+        },
         identity::ContentDigest,
         reliability::{
             BudgetOwnedStreamingIssueReporter, IssueSequenceUpdate, OrdinaryStreamingIssue,
@@ -54,9 +57,7 @@ use aiperf_runtime::{
             StreamingIssueThresholdRule, StreamingTerminalInvariant,
         },
         results::ResultIndexReadBudget,
-        unit::{
-            CheckpointAttemptFailureCode, ResultExportFailureCode, StateBudgetFailureCode,
-        },
+        unit::StateBudgetFailureCode,
     },
 };
 
@@ -180,7 +181,13 @@ fn reliability_fault_matrix() -> Vec<ReliabilityFaultCase> {
     use StreamingIssueDisposition as D;
     vec![
         // Transient durability faults before publication: retry, head unmoved.
-        row(F::ParticipantWrite, D::Retry, C::Retryable, false, G::Previous),
+        row(
+            F::ParticipantWrite,
+            D::Retry,
+            C::Retryable,
+            false,
+            G::Previous,
+        ),
         row(F::ObjectSync, D::Retry, C::Retryable, false, G::Previous),
         row(F::DirectorySync, D::Retry, C::Retryable, false, G::Previous),
         row(F::IndexWrite, D::Retry, C::Retryable, false, G::Previous),
@@ -201,7 +208,13 @@ fn reliability_fault_matrix() -> Vec<ReliabilityFaultCase> {
             G::Successor,
         ),
         // A lost read lease fences the reader and is reopened, never failed.
-        row(F::ReaderLeaseLoss, D::Retry, C::Retryable, false, G::Previous),
+        row(
+            F::ReaderLeaseLoss,
+            D::Retry,
+            C::Retryable,
+            false,
+            G::Previous,
+        ),
         // Capacity: backpressure and admission fencing, head unmoved.
         row(
             F::BackendCapacity,
@@ -513,6 +526,21 @@ impl StreamingCheckpointParticipant for ControlledParticipant {
 /// Matching failures allowed to retry before the checkpoint rule exhausts.
 const CHECKPOINT_RETRY_LIMIT: u32 = 3;
 
+/// Virtual instant past the default reader lease's renew margin.
+///
+/// The local store's default reader lease is 60s with a quarter-lease renew
+/// margin, so a read at this instant is the first that must renew.
+const READER_LEASE_RENEW_NS: i64 = 50_000_000_000;
+
+/// Render one digest as lowercase 64-character hex.
+fn hex_digest(digest: &ContentDigest) -> String {
+    digest
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn component(value: &str) -> StreamingIssueComponentId {
     StreamingIssueComponentId::new(value).expect("valid conformance component id")
 }
@@ -549,12 +577,8 @@ fn conformance_policy() -> PreparedStreamingIssuePolicy {
         None,
     )
     .expect("valid derived export rule");
-    PreparedStreamingIssuePolicy::new(vec![
-        checkpoint_retry,
-        checkpoint_capacity,
-        derived_export,
-    ])
-    .expect("valid conformance policy")
+    PreparedStreamingIssuePolicy::new(vec![checkpoint_retry, checkpoint_capacity, derived_export])
+        .expect("valid conformance policy")
 }
 
 fn ledger(run: StreamRunIdentity) -> BudgetOwnedStreamingIssueReporter {
@@ -657,6 +681,7 @@ struct DrivenScenario {
 fn coordinator_for(
     run: StreamRunIdentity,
     backend: Box<dyn StreamingCheckpointBackend>,
+    initial_expected: Option<CheckpointGeneration>,
 ) -> (StreamingCheckpointCoordinator, Rc<ParticipantControl>) {
     let (participant, control) = ControlledParticipant::new(run);
     let (reporter, _reporter_control) = support::FakeIssueReporter::new(run);
@@ -666,7 +691,7 @@ fn coordinator_for(
         support::expectations(run),
         vec![Box::new(participant)],
         Box::new(reporter),
-        None,
+        initial_expected,
     )
     .expect("valid conformance coordinator");
     (coordinator, control)
@@ -680,7 +705,7 @@ async fn drive_scenario(
     fault: CheckpointFault,
 ) -> DrivenScenario {
     let armed = armed_fault(fault);
-    let (mut coordinator, control) = coordinator_for(run, open());
+    let (mut coordinator, control) = coordinator_for(run, open(), None);
     let baseline = coordinator
         .commit_barrier(
             support::barrier_for_run(run, 1),
@@ -692,14 +717,7 @@ async fn drive_scenario(
 
     if armed.is_foreign_advance {
         // A second, independent writer over the same medium takes the head.
-        let (mut foreign, _foreign_control) = coordinator_for(run, open());
-        foreign
-            .commit_barrier(
-                support::barrier_for_run(run, 1),
-                &mut PreparedCheckpointResultInput::empty(),
-            )
-            .await
-            .expect("foreign writer republishes the baseline epoch");
+        let (mut foreign, _foreign_control) = coordinator_for(run, open(), Some(baseline.clone()));
         foreign
             .commit_barrier(
                 support::barrier_for_run(run, 2),
@@ -768,8 +786,8 @@ async fn reopened_head(
         .scan_result_index(
             None,
             ResultIndexReadBudget {
-                max_descriptors: NonZeroUsize::new(4).expect("nonzero descriptor bound"),
-                max_bytes: NonZeroUsize::new(64 * 1024).expect("nonzero index byte bound"),
+                max_items: NonZeroUsize::new(4).expect("nonzero descriptor bound"),
+                max_bytes: NonZeroU64::new(64 * 1024).expect("nonzero index byte bound"),
             },
         )
         .await
@@ -892,7 +910,7 @@ async fn classify(
         is_admission_fenced: summary.is_admission_fenced,
         baseline_generation: scenario.baseline,
         current_generation,
-        issue_ids: vec![format!("{}", outcome.issue_id())],
+        issue_ids: vec![hex_digest(&outcome.issue_id())],
         notification_callbacks: scenario.notification_callbacks,
         is_resumable,
         is_horizon_contiguous,
@@ -927,7 +945,8 @@ impl TestCheckpointBackend for MemoryConformanceBackend {
         let backend = MemoryCheckpointBackend::new(support::backend_limits())
             .expect("valid memory conformance backend");
         let open_backend = backend.clone();
-        let open = move || -> Box<dyn StreamingCheckpointBackend> { Box::new(open_backend.clone()) };
+        let open =
+            move || -> Box<dyn StreamingCheckpointBackend> { Box::new(open_backend.clone()) };
         let arm_backend = backend.clone();
         let arm = move || {
             arm_backend.arm_test_fault(TestMemoryFault::AfterPrevalidationBeforePublication);
@@ -945,12 +964,16 @@ impl TestCheckpointBackend for MemoryConformanceBackend {
 struct LocalConformanceBackend {
     run: StreamRunIdentity,
     root: PathBuf,
+    /// Every invocation owns a private subtree, so a replay never observes the
+    /// head an earlier invocation published.
+    invocation: Cell<u32>,
 }
 
 fn local_conformance_backend(root: &Path) -> LocalConformanceBackend {
     LocalConformanceBackend {
         run: support::run_id(1),
         root: root.to_path_buf(),
+        invocation: Cell::new(0),
     }
 }
 
@@ -998,8 +1021,10 @@ impl TestCheckpointBackend for LocalConformanceBackend {
     }
 
     async fn run_with_fault(&self, fault: CheckpointFault) -> FaultObservation {
-        // Each row owns a private subtree, so no row can observe another's head.
-        let root = self.root.join(format!("{fault:?}"));
+        // Each invocation owns a private subtree, so no row and no replay can
+        // observe another invocation's head.
+        let invocation = self.invocation.replace(self.invocation.get() + 1);
+        let root = self.root.join(format!("{fault:?}-{invocation}"));
         std::fs::create_dir_all(&root).expect("private conformance store root");
         let clock: Rc<SimClock> = Rc::new(SimClock::new());
         let filesystem = local_filesystem(self.run);
@@ -1019,7 +1044,9 @@ impl TestCheckpointBackend for LocalConformanceBackend {
         let open = || -> Box<dyn StreamingCheckpointBackend> { Box::new(armed.clone()) };
 
         if fault == CheckpointFault::ReaderLeaseLoss {
-            return self.reader_lease_loss(&open_backend, &open).await;
+            return self
+                .reader_lease_loss(&open_backend, &open, clock.as_ref())
+                .await;
         }
 
         let arm_target = armed.clone();
@@ -1044,8 +1071,9 @@ impl LocalConformanceBackend {
         &self,
         open_backend: &dyn Fn() -> LocalCheckpointBackend,
         open: &dyn Fn() -> Box<dyn StreamingCheckpointBackend>,
+        clock: &SimClock,
     ) -> FaultObservation {
-        let (mut coordinator, _control) = coordinator_for(self.run, open());
+        let (mut coordinator, _control) = coordinator_for(self.run, open(), None);
         let baseline = coordinator
             .commit_barrier(
                 support::barrier_for_run(self.run, 1),
@@ -1062,6 +1090,9 @@ impl LocalConformanceBackend {
             .await
             .expect("open the local head")
             .expect("head exists");
+        // Renewal only runs inside the lease's renew margin, so virtual time is
+        // advanced past it before the refusal can be observed at all.
+        clock.advance_to(READER_LEASE_RENEW_NS);
         fenced.fail_next_renewal();
         let LeasedCheckpointGenerationView::CurrentV4(reader) = opened.view() else {
             panic!("local head is current-v4");
@@ -1070,8 +1101,8 @@ impl LocalConformanceBackend {
             .scan_result_index(
                 None,
                 ResultIndexReadBudget {
-                    max_descriptors: NonZeroUsize::new(2).expect("nonzero descriptor bound"),
-                    max_bytes: NonZeroUsize::new(4096).expect("nonzero index byte bound"),
+                    max_items: NonZeroUsize::new(2).expect("nonzero descriptor bound"),
+                    max_bytes: NonZeroU64::new(4096).expect("nonzero index byte bound"),
                 },
             )
             .await
@@ -1130,7 +1161,7 @@ impl TestCheckpointBackend for ObjectConformanceBackend {
     }
 
     async fn run_with_fault(&self, fault: CheckpointFault) -> FaultObservation {
-        use object_support::object_store_support::{FakeConditionalObjectStore, object_backend};
+        use object_support::{FakeConditionalObjectStore, object_backend};
 
         let store = FakeConditionalObjectStore::new(4 * 1024 * 1024);
         let open_store = store.clone();
@@ -1402,12 +1433,22 @@ async fn retry_exhaustion_backpressures_and_fences_without_failing_the_run() {
         summary.is_admission_fenced,
         "exhausted checkpoint retries must fence admission"
     );
-    assert_eq!(summary.by_disposition.get(&StreamingIssueDisposition::FailRun), None);
+    assert_eq!(
+        summary
+            .by_disposition
+            .get(&StreamingIssueDisposition::FailRun),
+        None
+    );
 
     // The head never moved: exhaustion is a pacing decision, not a publication.
     let backend = memory_conformance_backend();
-    let observed = backend.run_with_fault(CheckpointFault::BackendCapacity).await;
-    assert_eq!(observed.disposition, StreamingIssueDisposition::Backpressure);
+    let observed = backend
+        .run_with_fault(CheckpointFault::BackendCapacity)
+        .await;
+    assert_eq!(
+        observed.disposition,
+        StreamingIssueDisposition::Backpressure
+    );
     assert!(!observed.is_run_failed);
     assert_eq!(
         observed.current_generation.as_ref(),
@@ -1419,7 +1460,10 @@ async fn retry_exhaustion_backpressures_and_fences_without_failing_the_run() {
 async fn derived_sink_failure_leaves_execution_head_and_outcome_unchanged() {
     let directory = tempfile::tempdir().expect("scratch directory");
     let backend = local_conformance_backend(directory.path());
-    for fault in [CheckpointFault::Compaction, CheckpointFault::ReportPersistence] {
+    for fault in [
+        CheckpointFault::Compaction,
+        CheckpointFault::ReportPersistence,
+    ] {
         let observed = backend.run_with_fault(fault).await;
         assert_eq!(
             observed.disposition,
@@ -1465,8 +1509,11 @@ async fn reopened_store_recovers_full_generation_identity_and_resumability() {
 
     let published = {
         let backend = open();
-        let (mut coordinator, _control) =
-            coordinator_for(run, Box::new(backend) as Box<dyn StreamingCheckpointBackend>);
+        let (mut coordinator, _control) = coordinator_for(
+            run,
+            Box::new(backend) as Box<dyn StreamingCheckpointBackend>,
+            None,
+        );
         let first = coordinator
             .commit_barrier(
                 support::barrier_for_run(run, 1),
