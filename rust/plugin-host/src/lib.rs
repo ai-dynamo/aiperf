@@ -9,6 +9,7 @@ pub const PLUGIN_SOURCE_API_VERSION: &str = "1.0.0";
 pub mod acquire;
 pub mod closure;
 pub mod error;
+pub mod inspect;
 pub mod manifest;
 pub mod normalize;
 pub mod platform;
