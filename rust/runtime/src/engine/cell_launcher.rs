@@ -66,7 +66,8 @@ pub const CELL_PLUGIN_LOCK_PATH_ENV: &str = "AIPERF_PLUGIN_LOCK_PATH";
 
 /// The plugin lock digest this process composed and verified, recorded once at
 /// bootstrap. `None` inside the `OnceLock` means "composed with no plugins".
-static COMPOSED_PLUGIN_LOCK_DIGEST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+static COMPOSED_PLUGIN_LOCK_DIGEST: std::sync::OnceLock<Option<String>> =
+    std::sync::OnceLock::new();
 
 /// Record the digest of the plugin lock bundle this process loaded and verified.
 ///

@@ -151,9 +151,8 @@ fn expected_window(
 ) -> DuplicateWindow {
     let dedups = capability == TargetIdempotencyCapability::VerifiedLogicalActionKey;
     let uncertain = has_uncertain_action(crash);
-    let reissues = uncertain
-        && reissues_uncertain(mode, dedups)
-        && mode != CheckpointDeliveryMode::None;
+    let reissues =
+        uncertain && reissues_uncertain(mode, dedups) && mode != CheckpointDeliveryMode::None;
     DuplicateWindow {
         may_duplicate_target_effect: reissues && !dedups,
         may_lose_target_effect: uncertain && !reissues,
@@ -297,7 +296,11 @@ fn every_restart_reads_as_failed_degraded_or_export_incomplete() {
                     capability.tag()
                 );
                 if mode == CheckpointDeliveryMode::None {
-                    assert_eq!(observed, OutcomeLabel::Failed, "an undurable cut cannot resume");
+                    assert_eq!(
+                        observed,
+                        OutcomeLabel::Failed,
+                        "an undurable cut cannot resume"
+                    );
                 }
                 if mode == CheckpointDeliveryMode::Acquired {
                     assert_eq!(
@@ -334,7 +337,10 @@ fn idempotency_key_is_run_and_action_only_and_survives_incarnation_change() {
         idempotency_key(run, action),
         "the key must not move when the incarnation does"
     );
-    assert_eq!(key, (*run.logical_replay_run().as_bytes(), *action.as_bytes()));
+    assert_eq!(
+        key,
+        (*run.logical_replay_run().as_bytes(), *action.as_bytes())
+    );
 
     let other_run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x32; 32]));
     assert_ne!(
@@ -402,9 +408,8 @@ fn endpoint_without_proven_idempotency_never_reaches_an_idempotent_claim() {
     );
 
     for mode in CheckpointDeliveryMode::ALL {
-        let restored =
-            support::delivery_fixture(mode, TargetIdempotencyCapability::Unsupported)
-                .crash_and_restore(DeliveryCrashPoint::AfterDispatchBeforeTerminal);
+        let restored = support::delivery_fixture(mode, TargetIdempotencyCapability::Unsupported)
+            .crash_and_restore(DeliveryCrashPoint::AfterDispatchBeforeTerminal);
         assert_ne!(
             restored.claim(),
             DeliveryClaim::IdempotentAtLeastOnceSubmission,
