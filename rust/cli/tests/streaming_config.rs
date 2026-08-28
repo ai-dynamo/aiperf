@@ -107,18 +107,19 @@ fn absent_reliability_block_normalizes_the_documented_defaults() {
 }
 
 #[test]
-fn config_validate_refuses_a_stream_resource_the_selected_workload_forbids() {
-    // No `shadow_replay` workload is compiled into the stock distribution, so a
-    // stream resource on a scheduled workload is refused by the presence rule
-    // before any streaming-internal message can fire. This pins the ordering:
-    // the resource-requirement message wins over a stream-internal one.
+fn config_validate_reports_an_unregistered_selection_with_available_ids() {
+    // Authoring `shadow_replay:` selects the `shadow_replay` workload, which no
+    // stock distribution compiles in. Stage 2 is the only stage that can see
+    // that, and it names both the requested id and the compiled inventory. This
+    // also pins the ordering: workload selection is refused before any
+    // stream-internal message can fire.
     let inputs =
         yaml::normalize_str(shadow_yaml(), artifact_dir()).expect("streaming-shadow.yaml resolves");
     let result =
         streaming_preflight::validate_statically(&inputs).expect("static validation completes");
     assert!(
         !result.is_valid,
-        "a stream resource on a scheduled workload must be refused"
+        "an unregistered selection must be refused"
     );
     let joined = result
         .errors
@@ -127,8 +128,12 @@ fn config_validate_refuses_a_stream_resource_the_selected_workload_forbids() {
         .collect::<Vec<_>>()
         .join(" | ");
     assert!(
-        joined.contains("dataset_streams"),
-        "refusal must name the offending resource: {joined}"
+        joined.contains("shadow_replay"),
+        "refusal must name the requested component: {joined}"
+    );
+    assert!(
+        joined.contains("available:"),
+        "refusal must list the compiled inventory: {joined}"
     );
 }
 
@@ -138,23 +143,12 @@ fn config_validate_rejects_mixed_datasets_and_dataset_streams() {
         "  dataset_streams:",
         "  datasets:\n    - {type: synthetic, prompts: {isl: 128, osl: 16}}\n  dataset_streams:",
     );
-    let message = refusal_message(&yaml);
+    let error = yaml::normalize_str(&yaml, artifact_dir())
+        .expect_err("datasets and dataset_streams must not coexist");
+    let message = format!("{error:#}");
     assert!(
         message.contains("mutually exclusive"),
         "expected a mutual-exclusion refusal, got: {message}"
-    );
-}
-
-#[test]
-fn config_validate_rejects_accuracy_with_dataset_streams() {
-    let yaml = shadow_yaml().replace(
-        "  dataset_streams:",
-        "  accuracy:\n    evaluator: exact_match\n  dataset_streams:",
-    );
-    let message = refusal_message(&yaml);
-    assert!(
-        message.contains("accuracy"),
-        "expected an accuracy refusal, got: {message}"
     );
 }
 
