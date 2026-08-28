@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -705,11 +704,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
-        # CPU-bound numpy work over the full record set; run in a thread so the
-        # event loop stays responsive. Safe here (unlike the realtime summarize)
-        # because the final export runs after ingestion has stopped, so nothing
-        # mutates the column store concurrently.
-        return await asyncio.to_thread(self._summarize_for_export_context, ctx)
+        # Deliberately NOT asyncio.to_thread. Ingestion has not necessarily
+        # stopped by the time this runs: PROFILE_CANCEL (Ctrl+C) finalizes
+        # immediately while in-flight records are still being ingested on the
+        # event loop, so a worker thread would read the column arrays while
+        # they are being mutated and reallocated on grow -- surfacing as
+        # ``IndexError: index N is out of bounds for axis 0 with size N``,
+        # which aborts summarize and leaves the run with nothing to export.
+        return self._summarize_for_export_context(ctx)
 
     def _inject_sweep_metrics(
         self,
