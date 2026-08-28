@@ -831,7 +831,16 @@ Inputs, endpoints, and graph:
   into served and host parts. Prefix-cache effectiveness is read directly from
   the shipped `usage_prompt_cache_read_tokens` plumbing rather than inferred from
   TTFT, and the reference's own measurements put the lever on `check_sufficiency`
-  (56% average hit rate) rather than on the answer role (7%).
+  (56% average hit rate) rather than on the answer role (7%). The accuracy bar
+  lives outside `e2e-rag/` in the submission checker
+  (`tools/submission/submission_checker/constants.py`), where both workloads are
+  registered Offline-only and are alone in carrying pre-multiplied absolute
+  literals (33.95 for QnA, identifying 35 x 0.97, and 98 for ingestion) instead
+  of `reference x fraction` expressions; LoadGen parses `max_async_queries` only
+  under `Server` and pins Offline to 1, so the reference's in-flight bound is
+  its SUT thread pool, not `user.conf`; and TEST09 ships two mutually
+  inconsistent output-length bands whose enforced form rejects the reference's
+  own published mean.
 - [`docs/specs/agentx-rust-port.md`](docs/specs/agentx-rust-port.md) — the standalone,
   always-compiled byte-exact Rust port of the Python AgentX (WEKA replay +
   agentic-replay timing + scenario locks); parallel to and switchable against
