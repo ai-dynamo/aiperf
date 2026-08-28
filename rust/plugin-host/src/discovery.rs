@@ -54,7 +54,10 @@ pub struct DiscoverySourceId {
 /// A plugin manifest discovered from one source.
 #[derive(Debug, Clone)]
 pub struct DiscoveredPackage {
-    /// Absolute path to the `plugin.manifest.yaml` file.
+    /// Path to the `plugin.manifest.yaml` file, made absolute lexically by
+    /// `std::path::absolute` (which never touches the filesystem, so it cannot
+    /// follow a symlink). Symlink refusal happens separately at
+    /// `symlink_metadata` here and at `open_no_follow` on every read.
     pub manifest_path: PathBuf,
     /// Which source this came from.
     pub source_id: DiscoverySourceId,
@@ -98,12 +101,13 @@ pub fn discover_plugins(
                 // symlinked manifest is rejected rather than silently resolved.
                 match path.symlink_metadata() {
                     Ok(m) if m.file_type().is_file() => {
+                        // Lexical absolutization only: `std::path::absolute`
+                        // performs no filesystem access and so cannot follow a
+                        // symlink the way `canonicalize` would. Making the path
+                        // absolute here means `loader.rs` never has to refuse a
+                        // relative `--plugin-manifest` late, at dlopen.
                         results.push(DiscoveredPackage {
-                            // Paths from `read_dir` are already absolute; `open_no_follow`
-                            // downstream enforces no-follow.  `canonicalize` would re-open
-                            // the path following any symlink, defeating the symlink check
-                            // above.
-                            manifest_path: path.clone(),
+                            manifest_path: absolutize(path)?,
                             source_id,
                             priority: priority_for_source(source),
                         });
@@ -161,6 +165,12 @@ fn scan_dir(
     if !dir.exists() {
         return Ok(());
     }
+    // Absolutize the scanned root once so every `dir.join(name)` below inherits
+    // absoluteness regardless of what the caller supplied. `std::path::absolute`
+    // is purely lexical: it prepends the current directory and never resolves
+    // symlinks, so it does not weaken the no-follow checks below.
+    let dir = absolutize(dir)?;
+    let dir = dir.as_path();
     let read = std::fs::read_dir(dir).map_err(|e| DiscoveryError::Io {
         path: dir.to_owned(),
         source: e,
@@ -196,8 +206,9 @@ fn scan_dir(
             match candidate.symlink_metadata() {
                 Ok(m) if m.file_type().is_file() => {
                     out.push(DiscoveredPackage {
-                        // Raw path from `read_dir`; `canonicalize` would follow
-                        // symlinks and defeat the file_type check above.
+                        // Absolute because the scanned root was absolutized;
+                        // `canonicalize` would follow symlinks and defeat the
+                        // file_type check above.
                         manifest_path: candidate,
                         source_id: source_id.clone(),
                         priority,
@@ -218,8 +229,9 @@ fn scan_dir(
                 .unwrap_or(false)
         {
             out.push(DiscoveredPackage {
-                // Raw path from `read_dir`; `canonicalize` would follow
-                // symlinks and defeat the file_type check above.
+                // Absolute because the scanned root was absolutized;
+                // `canonicalize` would follow symlinks and defeat the
+                // file_type check above.
                 manifest_path: path,
                 source_id: source_id.clone(),
                 priority,
@@ -227,6 +239,18 @@ fn scan_dir(
         }
     }
     Ok(())
+}
+
+/// Make `path` absolute lexically, without touching the filesystem.
+///
+/// `std::path::absolute` prepends the current directory and normalizes
+/// separators but never resolves symlinks or `..` against real directories, so
+/// it cannot redirect discovery the way `canonicalize` would.
+fn absolutize(path: &Path) -> Result<PathBuf, DiscoveryError> {
+    std::path::absolute(path).map_err(|e| DiscoveryError::Io {
+        path: path.to_owned(),
+        source: e,
+    })
 }
 
 fn priority_for_source(source: &DiscoverySource) -> i32 {
