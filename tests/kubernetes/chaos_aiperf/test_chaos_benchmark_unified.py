@@ -10,7 +10,7 @@ server through the unified
 calls. Each scenario maps to one unified fault id:
 
 * B1 -> ``workload.set_env`` against the mock-server Deployment to flip
-  ``AIPERF_MOCK_FORCE_STATUS=500``; benchmark must drive the AIPerfJob
+  ``MOCK_SERVER_ERROR_RATE=100``; benchmark must drive the AIPerfJob
   to ``Completed`` and surface non-zero ``error_request_count``.
 * B2 -> ``pod.kill`` against a discovered mock-server pod name; the
   Deployment respawns the pod and the benchmark must tolerate the flap.
@@ -25,9 +25,10 @@ The function-scope :py:data:`faults` registry inherited from
 
 Mock-server contract (see ``tests/aiperf_mock_server/config.py``):
 
-* ``AIPERF_MOCK_FORCE_STATUS`` (int, HTTP status code): force every
-  response to this status. B1 sets it to ``500`` to make the benchmark
-  see a hard error stream.
+* ``MOCK_SERVER_ERROR_RATE`` (float, 0-100 percentage): inject random
+  HTTP 500 errors at the given rate. B1 sets it to ``100`` to force
+  every response to fail. This env var follows the ``MOCK_SERVER_``
+  prefix scheme from :py:class:`MockServerConfig` (``env_prefix``).
 * Deployment + Service name: ``aiperf-mock-server`` in ``default``,
   port 8000 (see ``dev/deploy/mock-server.yaml``).
 """
@@ -189,10 +190,10 @@ async def test_b1_mock_server_500s_mid_run_unified(
     than stalling on the bad endpoint.
 
     Unified mapping:
-        ``mock_server_injector.patch_env("AIPERF_MOCK_FORCE_STATUS", "500")``
+        ``mock_server_injector.patch_env("MOCK_SERVER_ERROR_RATE", "100")``
         becomes ``async with faults.inject("workload.set_env", target={"ns":
         "default", "deployment": "aiperf-mock-server"},
-        env_var="AIPERF_MOCK_FORCE_STATUS", value="500"): ...``.
+        env_var="MOCK_SERVER_ERROR_RATE", value="100"): ...``.
 
     Tolerances:
         - CR phase ``Completed`` within 240 s (benchmark_duration=120 s
@@ -220,8 +221,8 @@ async def test_b1_mock_server_500s_mid_run_unified(
         async with faults.inject(
             "workload.set_env",
             target={"ns": MOCK_SERVER_NAMESPACE, "deployment": MOCK_SERVER_DEPLOYMENT},
-            env_var="AIPERF_MOCK_FORCE_STATUS",
-            value="500",
+            env_var="MOCK_SERVER_ERROR_RATE",
+            value="100",
         ):
             # Wait for the rolling update to publish the faulty replica. A
             # failure here surfaces as a timeout on the Completion wait.

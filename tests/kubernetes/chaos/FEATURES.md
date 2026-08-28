@@ -118,7 +118,7 @@ Both fixtures call a private `_assert_live_operator_env` precondition that diffs
 - `restart(namespace, deployment)` — `kubectl rollout restart` for a rolling kill.
 - `delete_pod(namespace, deployment)` — `--grace-period=0 --force` for ungraceful crash (skips SIGTERM window).
 - `scale(namespace, replicas, deployment)` — change replica count; records prior count for restore.
-- `patch_env(namespace, env_var, value, deployment)` — `kubectl set env` to inject behavior (e.g. `AIPERF_MOCK_FORCE_STATUS=500` to force 5xx responses).
+- `patch_env(namespace, env_var, value, deployment)` — `kubectl set env` to inject behavior (e.g. `MOCK_SERVER_ERROR_RATE=100` to force 100% HTTP 500 responses via `MockServerConfig.error_rate`).
 - `restore()` — reverse every mutation applied during the test in LIFO order. Called automatically by the fixture teardown.
 
 **Pattern worth porting.** Internally the class tracks an `_applied_ops: list[_AppliedOp]` and rolls back in `restore()` based on op kind (`env`, `scale`, `restart-annotation`). Each state-mutating fault method appends one entry; `delete_pod` appends none because the Deployment controller owns pod re-creation and there is nothing to unwind. Tests never track restore state themselves. Generic and worth lifting verbatim for any "perturb a Deployment in tests" use case.
