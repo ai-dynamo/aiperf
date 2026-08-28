@@ -3481,9 +3481,14 @@ impl StreamingCheckpointBackendFactory for LocalCheckpointBackendFactory {
         authored: &serde_json::value::RawValue,
         requirements: &CheckpointBackendRequirements,
     ) -> Result<Box<dyn ValidatedCheckpointBackendConfig>, CheckpointError> {
-        // Both declared requirements are satisfied by a durable generation
-        // store; the check is kept explicit so a future non-durable variant of
-        // this backend cannot inherit the acceptance silently.
+        // Durability is satisfied by a durable generation store, but this
+        // backend writes participant payloads as-is, so it cannot honor a
+        // protection requirement.
+        if requirements.needs_sensitive_state_protection {
+            return Err(config_rejected(
+                "checkpoint backend \"local\" does not protect sensitive participant state at rest",
+            ));
+        }
         let _ = requirements;
         let config: LocalCheckpointBackendConfig = serde_json::from_str(authored.get())
             .map_err(|error| config_rejected(&error.to_string()))?;

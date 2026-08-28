@@ -16,6 +16,12 @@ default = ["parquet", "cellular", "grpc"]
 # dependency surface stay out of their builds.
 engine = []
 streaming = ["engine"]
+# Opt-in protection for sensitive streaming session state. `target_closed_loop`
+# folds live target output into retained participant state, so a run that
+# checkpoints it needs an authenticated envelope. The two crypto crates are
+# reachable only from here: the base `streaming` feature never carries them,
+# which `tests/streaming_dependency_policy.rs` proves.
+streaming-crypto = ["streaming", "dep:chacha20poly1305", "dep:zeroize"]
 streaming-s3 = [
     "streaming",
     "dep:aws-config",
@@ -97,6 +103,7 @@ base64.workspace = true
 bitflags.workspace = true
 blake3.workspace = true
 bytes.workspace = true
+chacha20poly1305 = { workspace = true, optional = true }
 chrono.workspace = true
 csv.workspace = true
 futures.workspace = true
@@ -113,6 +120,7 @@ percent-encoding.workspace = true
 petgraph.workspace = true
 prost.workspace = true
 rand.workspace = true
+zeroize = { workspace = true, optional = true }
 ed25519-dalek.workspace = true
 rcgen.workspace = true
 rand_distr.workspace = true
@@ -338,6 +346,11 @@ required-features = ["streaming"]
 name = "streaming_agent_graph_sessions"
 path = "tests/streaming_agent_graph_sessions.rs"
 required-features = ["streaming"]
+
+[[test]]
+name = "streaming_sensitive_state"
+path = "tests/streaming_sensitive_state.rs"
+required-features = ["streaming-crypto"]
 
 [[test]]
 name = "factory_validation_receipt"
