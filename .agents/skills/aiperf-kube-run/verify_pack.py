@@ -72,6 +72,22 @@ HELM_DEFAULTS = [
     'name: "aiperf-benchmarks"',
 ]
 
+# Literal facts the pack quotes from files outside the chart and env docs.
+# Each entry is (repo path, substring that must still be present, what the pack says).
+SOURCE_FACTS = [
+    ("dev/versions.py", 'JOBSET_VERSION = "v0.8.0"', "JobSet pin is v0.8.0"),
+    (
+        "deploy/helm/aiperf-operator/values.yaml",
+        "value: user-workload",
+        "chart tolerates dedicated=user-workload by default",
+    ),
+    (
+        "deploy/helm/aiperf-operator/templates/deployment.yaml",
+        ".Values.imagePullSecrets",
+        "chart imagePullSecrets applies to the operator Deployment",
+    ),
+]
+
 failures: list[str] = []
 
 
@@ -175,9 +191,14 @@ def main() -> int:
         if line not in values:
             fail(f"Helm default drift: values.yaml no longer contains {line!r}")
 
+    for rel, needle, claim in SOURCE_FACTS:
+        if needle not in (REPO / rel).read_text():
+            fail(f"source drift: {rel} no longer supports the claim that {claim}")
+
     print(
         f"checked {len(ENV_DEFAULTS)} env defaults, "
-        f"{len(CONSTANT_DEFAULTS)} constants, {len(HELM_DEFAULTS)} Helm defaults"
+        f"{len(CONSTANT_DEFAULTS)} constants, {len(HELM_DEFAULTS)} Helm defaults, "
+        f"{len(SOURCE_FACTS)} source facts"
     )
     print("\n" + ("ALL CHECKS PASSED" if not failures else f"{len(failures)} FAILURES"))
     return 1 if failures else 0

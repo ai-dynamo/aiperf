@@ -1,115 +1,196 @@
 ---
 name: aiperf-kube-setup
-description: Use when preparing a Kubernetes cluster for AIPerf - installing or upgrading the aiperf-operator Helm chart, setting up a local Kind cluster with GPU passthrough, wiring JobSet and the NVIDIA device plugin, sizing the results PVC, or loading a locally built AIPerf image.
+description: Use when preparing a real multi-node Kubernetes cluster for AIPerf - installing or upgrading the aiperf-operator Helm chart, installing JobSet, wiring a private registry pull secret, choosing node placement and a storage class for the results PVC, or scoping the operator to namespaces.
 ---
 
-# Preparing a Cluster for AIPerf
+# Preparing a Real Cluster for AIPerf
 
 Everything that happens once per cluster, before any benchmark is submitted.
+This targets a real multi-node cluster (shared dev, DGXC, on-prem, cloud):
+tainted node pools, a private registry, a non-default storage class, RBAC you
+do not fully own.
 
 **Related skills:** `aiperf-kube-run` (submit a benchmark once this is done),
 `aiperf-kube-triage` (operator installed but jobs misbehave).
 
-## Cluster prerequisites
+## 1. Inventory the cluster before you install
+
+Never carry another cluster's manifest over unread. Node pool labels, taints,
+arch, storage classes, and pull-secret names differ per cluster and are the
+top source of "installed fine, every job Pending".
+
+```bash
+CTX=<your-context>                     # always pass --context explicitly
+kubectl --context "$CTX" get nodes -L kubernetes.io/arch -L nvidia.com/gpu.product
+kubectl --context "$CTX" get nodes -o custom-columns=\
+NAME:.metadata.name,GPU:.status.allocatable.nvidia\\.com/gpu,TAINTS:.spec.taints
+kubectl --context "$CTX" get storageclass
+kubectl --context "$CTX" get crd jobsets.jobset.x-k8s.io
+```
 
 | Requirement | Verify |
 |---|---|
-| Kubernetes v1.24+ with `kubectl` configured | `kubectl cluster-info` |
-| NVIDIA device plugin (GPU nodes) | `kubectl get nodes -o custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\\.com/gpu` |
-| JobSet controller | `kubectl get crd jobsets.jobset.x-k8s.io` |
-| Helm v3, AIPerf CLI locally | `helm version`, `aiperf --version` |
+| Kubernetes v1.24+, kubectl authenticated | `kubectl cluster-info` |
+| JobSet controller (hard dependency of operator mode) | `kubectl get crd jobsets.jobset.x-k8s.io` |
+| NVIDIA device plugin, if benchmarking GPU-resident servers | GPU column above is non-empty |
+| Helm v3 and the AIPerf CLI locally | `helm version`, `aiperf --version` |
+| Registry access for the operator image | `docker login <registry>` |
 
-`aiperf kube preflight` checks connectivity, API versions, RBAC, node capacity
-vs worker projection, image pullability, and endpoint reachability in one shot.
-Run it before and after install; `-o json` for CI.
+Record four things before writing any values file: the node pool label you may
+schedule on, the taints you must tolerate, the storage class name, and the
+pull-secret name.
 
-## Install the operator
+## 2. Install JobSet
+
+The chart grants RBAC for `jobset.x-k8s.io` but does **not** install JobSet.
+The pinned version lives in `dev/versions.py` (`JOBSET_VERSION`); bump the pin
+and this step together.
 
 ```bash
-helm install aiperf-operator deploy/helm/aiperf-operator \
-    --namespace aiperf-system --create-namespace
-kubectl get pods -n aiperf-system
+kubectl --context "$CTX" apply --server-side \
+  -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.8.0/manifests.yaml
+kubectl --context "$CTX" -n jobset-system \
+  wait --for=condition=available --timeout=120s deployment/jobset-controller-manager
 ```
 
-Expect `2/2` ready (operator + results-server), or `3/3` with
-`--set dashboard.enabled=true`.
+## 3. Namespaces and the registry pull secret
 
-Key knobs in `deploy/helm/aiperf-operator/values.yaml`:
+Two namespaces: one for the operator, one for benchmark pods. Pre-create both
+when cluster policy forbids chart-managed namespace creation.
+
+```bash
+NS_OP=aiperf-system
+NS_BENCH=aiperf-benchmarks
+kubectl --context "$CTX" create ns "$NS_OP"
+kubectl --context "$CTX" create ns "$NS_BENCH"
+
+for ns in "$NS_OP" "$NS_BENCH"; do
+  kubectl --context "$CTX" -n "$ns" create secret docker-registry regcred \
+    --docker-server=<registry> --docker-username=<user> --docker-password=<token>
+done
+```
+
+The secret is needed in **both**: the operator namespace pulls the operator
+image, the benchmark namespace pulls the benchmark image for every job pod.
+
+## 4. Install the operator from a values file
+
+Use a checked-in overlay, not a pile of `--set` flags — the placement and
+storage fields are the ones you will revisit.
+
+```yaml
+# aiperf-operator-values.yaml
+image:
+  repository: <registry>/aiperf
+  tag: <immutable-tag>
+imagePullSecrets:
+  - name: regcred
+operator:
+  nodeSelector: {nodeGroup: <cpu-pool>}
+  tolerations: []                 # replace the chart defaults; see below
+  watchNamespaces: [aiperf-benchmarks]
+storage:
+  size: 1Ti
+  storageClassName: <class>
+  accessMode: "ReadWriteOnce"
+benchmarkNamespace:
+  create: false                   # you created it in step 3
+  name: "aiperf-benchmarks"
+```
+
+```bash
+helm --kube-context "$CTX" upgrade --install aiperf-operator \
+  deploy/helm/aiperf-operator \
+  --namespace "$NS_OP" -f aiperf-operator-values.yaml --wait --timeout 5m
+```
+
+Other knobs worth knowing, all in
+`deploy/helm/aiperf-operator/values.yaml`:
 
 | Value | Default | Why you'd change it |
 |---|---|---|
-| `image.repository` / `image.tag` / `image.pullPolicy` | `nvcr.io/nvidia/aiperf` / chart appVersion / `IfNotPresent` | local image, pinned release |
-| `storage.size` / `storage.storageClassName` / `storage.accessMode` | `1Ti` / cluster default / `ReadWriteOnce` | results PVC sizing |
-| `benchmarkNamespace.create` / `.name` | `true` / `aiperf-benchmarks` | pre-provisioned tenant namespace |
-| `benchmarkRbacNamespaces` | `[]` | additional namespaces the operator may run jobs in |
-| `operator.watchNamespaces` | `[]` (all) | scope the operator |
-| `kueue.defaultQueueName` / `kueue.createQueues` | `""` / `false` | gang-scheduled admission |
-| `dashboard.enabled` | `false` | Plotly results UI |
-| `serviceMonitor.enabled` | `false` | Prometheus scraping of operator metrics |
+| `defaults.image` | computed from `image.*` | decouple benchmark image from operator image |
+| `benchmarkRbacNamespaces` | `[]` | benchmarks run in more than one namespace |
+| `serverMetricsDiscoveryNamespaces` | `[]` | scrape server metrics from an existing inference namespace |
+| `kueue.defaultQueueName` / `kueue.createQueues` | `""` / `false` | gang-scheduled admission (`docs/kubernetes/kueue.md`) |
+| `serviceMonitor.enabled` | `false` | Prometheus Operator scraping of operator metrics |
+| `operator.priorityClassName` | `""` | keep the operator off the eviction list |
 | `operator.env` | — | per-container resource overrides (`AIPERF_K8S_*`) |
-| `rbac.create`, `networkPolicy.enabled` | `true`, `false` | hardening; see `docs/kubernetes/rbac-security.md` |
+| `rbac.create` / `networkPolicy.enabled` | `true` / `false` | hardening; `docs/kubernetes/rbac-security.md` |
+| `dashboard.enabled` | `false` | Plotly results UI |
 
-Full matrix: `docs/kubernetes/configuration.md`; hardening:
+Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
 `docs/kubernetes/production.md`.
-
-## Local Kind cluster with GPUs
-
-One-time host setup (NVIDIA container runtime as Docker's default):
-
-```bash
-sudo nvidia-ctk config --in-place --set accept-nvidia-visible-devices-as-volume-mounts=true
-sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
-sudo systemctl restart docker
-docker info 2>/dev/null | grep "Default Runtime"   # -> nvidia
-```
-
-Cluster:
-
-```bash
-kind create cluster --name aiperf
-kubectl --context kind-aiperf apply -f \
-  https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/master/deployments/static/nvidia-device-plugin.yml
-kubectl --context kind-aiperf apply --server-side -f \
-  https://github.com/kubernetes-sigs/jobset/releases/latest/download/manifests.yaml
-
-docker build -t aiperf:local .
-kind load docker-image aiperf:local --name aiperf
-
-helm install aiperf-operator deploy/helm/aiperf-operator \
-    --namespace aiperf-system --create-namespace \
-    --set image.repository=aiperf --set image.tag=local --set image.pullPolicy=Never
-```
-
-Teardown: `kind delete cluster --name aiperf`.
-
-**Always pass `--context kind-<name>` (or `--kube-context`) explicitly** rather
-than switching the active context — it keeps a Kind session from leaking into a
-real cluster.
 
 ## Rules that bite
 
-- **A locally built image needs `pullPolicy: Never` AND `kind load`.** Skipping
-  either yields `ErrImagePull` / `ImagePullBackOff` on every benchmark pod, not
-  on the operator.
-- **`kind load` must be re-run after every rebuild.** The tag stays the same, so
-  nothing signals staleness — pods silently run old code.
-- **JobSet is a hard dependency of operator mode.** Without the CRD the operator
-  installs fine and every job fails at JobSet creation.
-- **`storage.accessMode: ReadWriteOnce` pins the operator to one node.** Use a
-  RWX class for multi-replica or node-failure tolerance.
-- **`--set benchmarkNamespace.create=false` requires the namespace to exist**
-  with the operator's RBAC already granted there (`benchmarkRbacNamespaces`).
-- **Upgrading the chart does not restart running benchmarks**; in-flight
+- **The chart's default tolerations are not universal.** `operator.tolerations`
+  ships with `dedicated=user-workload` (`NoSchedule` + `NoExecute`) and
+  `kubernetes.io/arch Exists`. On a cluster that taints differently they are
+  inert, and the operator pod goes `Pending` with no obvious cause. Set the
+  list to your cluster's taints or to `[]` on an untainted pool. Tolerations
+  permit; they do not attract — pair them with `operator.nodeSelector`.
+- **Chart `imagePullSecrets` covers the operator and `helm test` pods only.**
+  Benchmark pods take theirs from the CR (`spec.podTemplate.imagePullSecrets`)
+  or `--image-pull-secrets`. Setting only the chart value yields a healthy
+  operator and `ImagePullBackOff` on every job.
+- **A `WaitForFirstConsumer` storage class makes the PVC pend until the
+  operator pod schedules.** That is normal; a PVC pending *after* the pod is
+  Running means the class or zone is wrong.
+- **`accessMode: ReadWriteOnce` binds results to one node.** Fine for the
+  required single operator replica, but node failure strands the volume — use
+  an RWX class if you need results to survive it.
+- **`benchmarkNamespace.create: true` fails when the namespace already
+  exists.** Pre-created namespaces need `create: false` plus the namespace
+  listed in `benchmarkRbacNamespaces` if it is not `benchmarkNamespace.name`.
+- **`operator.watchNamespaces` does not narrow RBAC.** The ClusterRole still
+  grants cluster-wide reads; a genuinely scoped install also needs
+  `rbac.create=false` and namespace-scoped RBAC applied out of band.
+- **Mutable tags silently deploy old code.** A rebuilt `:latest` with
+  `pullPolicy: IfNotPresent` reuses whatever is on the node. Use immutable
+  tags, and confirm what actually rolled out.
+- **Multi-arch matters on mixed pools.** An amd64-only image lands
+  `exec format error` on arm64 GPU nodes rather than a pull failure.
+- **The per-container CPU defaults are sized for small runs.**
+  `AIPERF_K8S_RECORDS_MANAGER_CPU` and `AIPERF_K8S_SYSTEM_CONTROLLER_CPU`
+  default to `75m`; past a few hundred thousand requests the records manager
+  pegs a core and heartbeats miss. Raise them via `operator.env` before a
+  large campaign, not after it stalls.
+- **Upgrading the chart does not restart running benchmarks.** In-flight
   AIPerfJobs keep their old controller image.
 
 ## Verify the install
 
 ```bash
-kubectl get crd | grep aiperf.nvidia.com          # aiperfjobs + aiperfsweeps
-kubectl get pods -n aiperf-system
-aiperf kube preflight -o json | jq '.checks[] | select(.status != "pass")'
+kubectl --context "$CTX" get crd | grep aiperf.nvidia.com   # aiperfjobs + aiperfsweeps
+kubectl --context "$CTX" -n "$NS_OP" get pods,pvc           # 2/2 ready, PVC Bound
+kubectl --context "$CTX" -n "$NS_OP" logs deploy/aiperf-operator -c operator --tail=20
+helm --kube-context "$CTX" test aiperf-operator -n "$NS_OP"
 ```
 
+Then the online check, with the arguments a real job will use:
+
+```bash
+aiperf kube preflight --kube-context "$CTX" -n "$NS_BENCH" \
+  --image <registry>/aiperf:<tag> --image-pull-secret regcred \
+  --endpoint-url http://<svc>.<ns>.svc.cluster.local:8000 \
+  --workers 16 -o json | jq '.checks[] | select(.status != "pass")'
+```
+
+`preflight` covers connectivity, API versions, RBAC, node capacity against the
+worker projection, image pullability, and endpoint reachability. Re-run it
+whenever the worker count or endpoint changes — capacity is the check that
+goes stale. Finish with a small benchmark from `aiperf-kube-run` before
+handing the cluster to anyone else.
+
 CRDs are generated from Pydantic models — never hand-edit
-`deploy/helm/aiperf-operator/templates/crd-*.yaml`; run
+`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml`; run
 `uv run python tools/generate_crd.py` (`--check` in CI).
+
+## Local Kind clusters
+
+Out of scope here: use it for correctness and lifecycle work, not for
+placement, storage, or performance. The differences are a locally built image
+(`kind load` plus `image.pullPolicy=Never`, re-loaded after every rebuild), no
+pull secret, and the default storage class. Everything above about tolerations,
+node pools, and RWX still needs re-deriving on the real cluster.
