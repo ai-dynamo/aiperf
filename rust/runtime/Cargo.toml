@@ -323,3 +323,8 @@ required-features = ["engine"]
 name = "streaming_dynamo_format"
 path = "tests/streaming_dynamo_format.rs"
 required-features = ["streaming"]
+
+[[test]]
+name = "streaming_agent_graph_sessions"
+path = "tests/streaming_agent_graph_sessions.rs"
+required-features = ["streaming"]

@@ -445,6 +445,15 @@ profiler.
   back before any mutation its payload cannot represent. Coverage is in
   `rust/runtime/tests/streaming_session_continuity.rs` with the reusable seam in
   `rust/runtime/tests/support/streaming_session_conformance.rs`.
+- **How does a streaming agent or graph trace join across chunks?**
+  `rust/runtime/src/streaming/session/agent_graph.rs` (the registered
+  `agent_graph` session program): nodes and edges are append-only and join by
+  `StableRecordId`, an edge naming an undeclared target parks until that node is
+  declared, a node emits `DatasetActionV1::GraphNode` only once every declared
+  predecessor is terminal, recorded agent events are retained as inert nodes
+  that order successors without dispatching, and a cycle-closing or
+  post-release edge is refused at ingest. Coverage is in
+  `rust/runtime/tests/streaming_agent_graph_sessions.rs`.
 - **What makes one streaming conversation turn durable?**
   `rust/runtime/src/streaming/closure.rs` (`ConversationClosureSeam`): a turn
   binds a terminal slot before dispatch, closes only on
@@ -831,7 +840,16 @@ Inputs, endpoints, and graph:
   into served and host parts. Prefix-cache effectiveness is read directly from
   the shipped `usage_prompt_cache_read_tokens` plumbing rather than inferred from
   TTFT, and the reference's own measurements put the lever on `check_sufficiency`
-  (56% average hit rate) rather than on the answer role (7%).
+  (56% average hit rate) rather than on the answer role (7%). The accuracy bar
+  lives outside `e2e-rag/` in the submission checker
+  (`tools/submission/submission_checker/constants.py`), where both workloads are
+  registered Offline-only and are alone in carrying pre-multiplied absolute
+  literals (33.95 for QnA, identifying 35 x 0.97, and 98 for ingestion) instead
+  of `reference x fraction` expressions; LoadGen parses `max_async_queries` only
+  under `Server` and pins Offline to 1, so the reference's in-flight bound is
+  its SUT thread pool, not `user.conf`; and TEST09 ships two mutually
+  inconsistent output-length bands whose enforced form rejects the reference's
+  own published mean.
 - [`docs/specs/agentx-rust-port.md`](docs/specs/agentx-rust-port.md) — the standalone,
   always-compiled byte-exact Rust port of the Python AgentX (WEKA replay +
   agentic-replay timing + scenario locks); parallel to and switchable against

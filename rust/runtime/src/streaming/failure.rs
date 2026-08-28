@@ -151,6 +151,10 @@ failure_codes! {
         UnsupportedMutation => "unsupported_mutation",
         /// A request terminated that no conversation turn claims.
         UnclaimedTerminal => "unclaimed_terminal",
+        /// A declared edge would close a cycle in append-only graph state.
+        GraphCycle => "graph_cycle",
+        /// A declared edge names a node that already released or terminated.
+        EdgeAfterExecution => "edge_after_execution",
     }
 }
 

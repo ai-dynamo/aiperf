@@ -21,9 +21,15 @@ pub mod sketch;
 /// Controller-to-cell streaming capability agreement propagation.
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub mod streaming_capability;
+/// Deterministic sticky session placement and the no-early-issue fence.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub mod streaming_placement;
 /// Strict, authenticated controller-to-cell streaming commands and events.
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub mod streaming_protocol;
+/// Bounded multiplexed controller-to-cell placement transfer.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub mod streaming_transport;
 pub mod transport;
 
 pub use heartbeat::{
@@ -42,6 +48,21 @@ pub use streaming_capability::{
     STREAMING_CAPABILITY_PROPAGATION_VERSION, StreamingCapabilityCategory,
     StreamingCapabilityNegotiationError, StreamingCapabilityPropagation,
     StreamingCapabilityPropagationEncodeError, StreamingCapabilitySealError,
+};
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub use streaming_placement::{
+    ActiveExecutionSet, BudgetOwnedSessionRoute, CellularRouteAdmission, IssueGrant,
+    PlacementError, PlacementRouteCharge, PlacementRouteReservation, ROUTE_ENTRY_BYTES,
+    ReleaseFence, ReleaseSubmitter, SessionPlacementDecision, SessionRoute, StagedState,
+    StickySessionPlacement, StreamingPlacementPolicy, assign_cell, release_at_controller_target,
+};
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub(crate) use streaming_transport::{
+    BindingDiagnostics, CellularBindingContext, CellularExecutionEndpoint,
+    CellularPlacementControl, CellularPlacementDriver, CellularPlacementSubmitter,
+    CellularStreamingError, CellularTransferLimits, PlacementDecision, PlacementEvent,
+    PlacementHandle, PlacementHandleId, PreparedCellRoute, PreparedCellularPlacementBinding,
+    prepare_cellular_placement_binding,
 };
 #[cfg(all(feature = "cellular", feature = "engine"))]
 pub use transport::velo_transport::{VeloCellClient, VeloControllerTransport};
