@@ -310,6 +310,9 @@ comparison.
 | Time (America/Los_Angeles) | Event | Evidence/result |
 |---|---|---|
 | 2026-08-27 | Task 7 allocator provider gated and integrated | `cd394ecc24`; 8/8 conformance on rustc 1.98.0 rig; Graham GO C0/I0/M2; LLD forced to avoid GNU ld dual-anonymous-version-script conflict; A/B pending |
+| 2026-08-27 | Tasks 15+16 gate PASS; integrated | `034fe42455` gate-tip; 20/20 tests (registration 4, lock 5, bundle 3, lock_mismatch 3, lock_input 5) on rustc 1.98.0; FrozenPluginUniverse + PluginLockV1 + LockedCatalogBundle; merged `6a7c99a501`; Graham pending; Tasks 17+18 launched |
+| 2026-08-27 | Graham review Tasks 10+19: C1/I1/M0; fixes committed | C1 NormalizedIdV1::parse rejects `..` (`8c7db8b7d4` RED, `bf1a8c08e1` GREEN+NIT-1); I1 ValidatedRunPlan::from_canonical_bytes_with_capture added (`bfd8870180` on task-19 branch); re-gate Task 10 launched |
+| 2026-08-27 | Graham review Tasks 8+9: C4/I2/M3; fixes committed | C1 proc-macro type mismatch fixed (SDK re-exports API PluginDeclarationV1), C2-C4/I2/M1-M2 fixed in 8 commits (`751796e9a5`–`0e0325e5aa`); re-gate launched |
 | 2026-08-27 | Task 11 gate PASS; Task 12 launched | `8b37d3f238`; 13/13 tests on rustc 1.98.0 (8 acquisition + 5 acquisition_races); O_NOFOLLOW/BLAKE3 immutable acquisition; merged `e602b62c3c`; Graham pending; Task 12 (static ELF/Mach-O/PE inspection) launched from `e602b62c3c` base |
 | 2026-08-27 | Task 10 gate PASS; Task 11 launched | `a759e011cc`; 16/16 tests on rustc 1.98.0; Graham pending; Task 11 (immutable acquisition) launched from `a759e011cc` base |
 | 2026-08-27 | Task 19 gate PASS | `f952c61a98`; 13/13 tests on rustc 1.98.0; OTel per-record accumulator deleted; Graham pending |
