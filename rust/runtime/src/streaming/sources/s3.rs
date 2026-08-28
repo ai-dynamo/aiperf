@@ -660,9 +660,9 @@ impl S3OpClass {
 /// same schedule and no new dependency enters the source path.
 fn backoff_delay_ns(policy: S3RetryPolicy, attempt: u32, class: S3OpClass) -> i64 {
     let shift = attempt.saturating_sub(1).min(16);
-    let scaled = policy
-        .base_backoff_ns
-        .saturating_mul(1_i64.saturating_shl(shift));
+    // `shift` is clamped to 16, so the doubling factor is exact and the only
+    // saturation that matters is the multiply against the authored base.
+    let scaled = policy.base_backoff_ns.saturating_mul(1_i64 << shift);
     let capped = scaled
         .min(policy.max_backoff_ns)
         .max(policy.base_backoff_ns);
