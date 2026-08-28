@@ -28,9 +28,10 @@ use super::{
     ActionAdmissionReceipt, ActionCancelReceipt, ActionDrainReceipt, ActionEventIdentity,
     ActionExecutionError, ActionExecutionEvent, ActionFailureCode, ActionHandleId, ActionPlacement,
     ActionResultRetention, ActionTerminalDisposition, ActionTerminalReceipt, DatasetActionSchema,
-    OrderedDatasetAction, PreparedStreamingActionBinding, StreamingActionDriver,
-    StreamingActionDriverControl, StreamingActionDriverControlOps, StreamingActionSinkDescriptor,
-    StreamingActionSinkFactory, StreamingActionSinkPrepareContext, StreamingActionSubmitter,
+    EndpointRetrySafety, OrderedDatasetAction, PreparedStreamingActionBinding,
+    StreamingActionDriver, StreamingActionDriverControl, StreamingActionDriverControlOps,
+    StreamingActionSinkDescriptor, StreamingActionSinkFactory,
+    StreamingActionSinkPrepareContext, StreamingActionSubmitter,
     SubmittedAction, ValidatedStreamingActionSinkConfig, action_execution_control,
     canonical_action_schema,
 };
@@ -66,6 +67,9 @@ pub static SESSION_STATE_ACTION_SINK: StreamingActionSinkDescriptor =
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        // The sink admits and finalizes without reaching an endpoint, so there is
+        // no target whose duplicate behavior could be proven.
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
 /// Authored configuration accepted by the state-only action sink.
