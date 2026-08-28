@@ -1012,7 +1012,8 @@
           "rate": 5.0,
           "seamless": false,
           "type": "user_centric",
-          "users": 10
+          "users": 10,
+          "grace_period": 30.0
         }
       ],
       "runtime": {
