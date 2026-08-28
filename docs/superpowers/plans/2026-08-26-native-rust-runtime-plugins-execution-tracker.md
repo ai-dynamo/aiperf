@@ -307,6 +307,7 @@ comparison.
 | Time (America/Los_Angeles) | Event | Evidence/result |
 |---|---|---|
 | 2026-08-27 | Task 7 allocator provider gated and integrated | `cd394ecc24`; 8/8 conformance on rustc 1.98.0 rig; Graham GO C0/I0/M2; LLD forced to avoid GNU ld dual-anonymous-version-script conflict; A/B pending |
+| 2026-08-27 | Task 10 gate PASS; Task 11 launched | `a759e011cc`; 16/16 tests on rustc 1.98.0; Graham pending; Task 11 (immutable acquisition) launched from `a759e011cc` base |
 | 2026-08-27 | Task 19 gate PASS | `f952c61a98`; 13/13 tests on rustc 1.98.0; OTel per-record accumulator deleted; Graham pending |
 | 2026-08-27 | Task 9 gate PASS; Task 10 launched | `885af642ae`; 17/17 tests on rustc 1.98.0; Graham pending; Task 10 (strict schema-2.0 manifest decoding, plugin-host crate) launched from `885af642ae` base |
 | 2026-08-27 | Task 8 gate PASS; Task 9 launched | `94480541b9`; 32/32 tests on rustc 1.98.0; Graham pending; Task 9 (#[aiperf_plugin] macro + hermetic build command) launched from `94480541b9` base |
