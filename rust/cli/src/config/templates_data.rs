@@ -15,9 +15,7 @@ pub const TEMPLATES: &[Template] = &[
         title: "DynoSim Offline Trace Replay",
         description: "Deterministic in-process Dynamo co-simulation of a trace — no server, no sockets.",
         category: "Advanced",
-        content: include_str!(
-            "../../templates/dynosim_offline_replay.yaml"
-        ),
+        content: include_str!("../../templates/dynosim_offline_replay.yaml"),
     },
     Template {
         name: "embeddings",
