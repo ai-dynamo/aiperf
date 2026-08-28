@@ -364,6 +364,101 @@ I10 holds today only because the one existing driver constrains itself.
 *Without it:* the benchmark measures a graph the author never wrote, and nothing
 outside the driver would notice.
 
+### Pipeline identity and comparability
+
+I1–I4 protect one axis of comparability — *did these two runs answer from the
+same corpus, chunked the same way, embedded by the same model?* — and nothing
+protects the other. Every parameter that changes the scored number without
+touching a single corpus byte is currently unguarded: hop bound, sub-query
+fan-out, top-`k`, index kind and its build/search parameters, the role→profile
+map, pinned-versus-live, exact-versus-sketch. Two runs can agree on
+`corpus_digest` to the bit and still be measuring different benchmarks. The
+asymmetry is the defect; these two invariants make the second axis as explicit as
+the first.
+
+**I23. Every parameter that changes the scored number is recorded in the run's
+own output, and their canonical digest is `pipeline_digest`.** The digest covers,
+at minimum: the ordered role→profile map with each profile's endpoint kind and
+model identity; the hop bound, sub-query fan-out bound, and top-`k`; the index
+kind and every parameter that changes which passages come back (for `hnsw`, `M`
+and both `ef` values); the retrieval scoring metric; whether the run was pinned
+or live; and the metrics mode. It is a pure function of the resolved
+configuration in exactly the sense I2 requires of `corpus_digest` — no
+wall-clock, no run id, no host, no worker or cell count. `corpus_digest` and
+`pipeline_digest` together name the benchmark; either one alone names half of it.
+*Enforces:* the digest constructor, at run bootstrap, from the resolved plan.
+*Status:* NEW. The carrier already exists — `input_config` is written verbatim
+into the run's JSON (`rust/runtime/src/export/genai_perf.rs:88`-`:89`, `:565`-`:566`,
+and again in `export/timeslice.rs:44`, `:306`-`:307`), so the raw material is
+present and only the canonicalization and the digest are missing.
+*Without it:* a reader compares two numbers that agree on corpus and differ on
+`k`, and the difference is attributed to the system under test.
+
+**I24. A run declares its comparability class.** Either it matches an authored
+reference profile in every parameter I23 covers, and says so, or the report names
+each parameter that diverges and its authored value. There is no third state and
+no silent divergence. The reference profile is a shipped artifact, not a
+constant, so a run can declare itself comparable to the MLPerf reference
+configuration, to a prior AIPerf run, or to nothing.
+*Enforces:* the report writer, from I23's inputs.
+*Status:* NEW.
+*Without it:* every number leaves the tool with the same authority, whether it
+was produced under the reference configuration or under a locally-tuned one, and
+the burden of noticing lands on whoever reads the JSON.
+
+**I25. A run records the served identity it can observe, and states plainly what
+it cannot.** *Status:* NEW, and **partly unachievable today** — which is the
+finding worth recording rather than the invariant worth asserting. Every identity
+field in an AIPerf artifact is client-authored and never server-observed. The
+per-record `model` is the string the client sent: `model: Some(self.model.clone())`
+(`rust/runtime/src/transport/http/sink.rs:604`), with `turn.effective_model`
+falling back to it (`:619`-`:628`); `InferenceDimensions` documents it as "model
+carried by the dispatched request" (`metrics_core/ingest.rs:25`-`:26`);
+`ExactRecordV1.model` as "model named on the request" (`rust/core/src/capture.rs:110`);
+`run_info` as "requested model name" (`metrics_core/report.rs:171`-`:179`); and
+`input_config` as "the authored `BenchmarkConfig` dump"
+(`export/genai_perf.rs:88`-`:89`, echoed by `rust/cli/src/profile.rs:1794`,
+"a reporting-only mirror of the authored config"). The chat response parser
+extracts `data` and `usage` and drops the body's own `"model"` key
+(`endpoints/implementation.rs:319`-`:333`); `reduce.rs` never touches a model
+string and `measure.rs` contains no occurrence of "model" at all.
+
+The trap is that provenance *looks* like it exists, because a discovery call
+genuinely happens on the wire. `/v1/models` is queried
+(`endpoints/implementation.rs:294`-`:297`), the server answers with the full model
+object, and the classifier discards all of it for a boolean —
+`data[].id == self.model` (`engine/readiness.rs:238`-`:261`) — and is skipped
+entirely when `/v1/models` 404s and a base-URL 2xx is accepted (`readiness.rs:661`).
+No quantization, precision, dtype, engine version, or model revision is captured
+anywhere on the served-model path. Two runs at different served precisions under
+the same authored name produce byte-identical identity fields. For a benchmark
+where precision selection is the submitter's primary optimization lever, that is
+a comparability hole and not a cosmetic one.
+
+Three things are available and this design uses all three. Retain the discovery
+response rather than reducing it to a bool, which is a change local to the
+readiness classifier and costs one retained JSON value per profile. Capture
+Prometheus `*_build_info` and `cache_config_info` series when
+`--server-metrics-url` is configured: labels are retained losslessly with no
+allowlist (`server_metrics/prom_text.rs:59`-`:86`,
+`server_metrics/accumulator.rs:721`-`:722`, into `SidecarSeries.labels`,
+`metrics_core/sidecar.rs:62`-`:63`), though derived atlas metrics drop labels
+(`accumulator.rs:303`) and this path is opt-in. And where neither is available,
+the report says so in as many words: `pipeline_digest` covers what the client
+authored, and the served precision behind an authored model name is outside it.
+*Without it:* an archived artifact cannot distinguish an fp8 result from a bf16
+one, and I24's comparability claim silently overstates itself.
+
+This reframes the **index default**, which the rest of this record decides on
+cost grounds alone. `flat` is exact, which removes ANN recall as a confound and
+makes it the right default for AIPerf-internal A/B work, where the question is
+whether *this* change moved the number. `hnsw` matches the MLPerf reference, and
+is therefore the only setting under which a number is comparable across
+harnesses. Both stay; the decision is which question the run is asking, and I24
+is what makes the answer legible — a `flat` run declares itself divergent from
+the reference profile in the index-kind parameter and remains a perfectly valid
+AIPerf measurement.
+
 ### What is deliberately not an invariant
 
 This design introduces **no new trust boundary**, so there is no
@@ -1493,9 +1588,155 @@ new key dimension in `SketchColumns`, a MessagePack wire change, and one t-diges
 per tag per role; it is out of scope here and documented as a limitation beside the
 existing ones.
 
-Offline scenario is the existing concurrency workload sized to the full task set.
-Server scenario is out of scope for this record, exactly as for the first MLPerf
-instantiation.
+**The reasoning-type label.** The reference benchmark's query set partitions
+into reasoning types (numerical, tabular, multi-constraint, post-processing,
+and so on), and the interesting reading of a RAG result is per-type, not
+aggregate: a system can hold aggregate accuracy while collapsing on one type.
+This is the one gap in this record that gets structurally *harder* the longer it
+waits, because the per-record schemas are fixed-column and the ABI budget is at
+its cap, so it is specified here rather than deferred.
+
+There is **no key-value metadata carrier anywhere in the dataset to record to
+export path**. `tags`, `labels`, `custom_fields`, `annotations`, `attributes`,
+and `user_data` do not exist under any spelling. `RequestMetricMetadata`
+(`rust/runtime/src/metrics.rs:33`-`:63`) is the sole issue-time-to-record bridge and
+is a fixed eleven-field struct; `RecordIngest`
+(`rust/runtime/src/metrics_core/ingest.rs:136`-`:221`) is likewise closed;
+`metric_overrides` (`ingest.rs:213`) is `f64`-only and cannot carry a string.
+`Turn.extra_body`/`extra_headers`/`request_parameters` go on the wire, not into
+the record. So this is an addition, and there are exactly three shapes it can
+take, in ascending cost.
+
+*The free breakdown.* `AccuracyAssociation { correlation_id, task }`
+(`rust/runtime/src/dataset/model.rs:207`-`:213`) already flows
+`Conversation.accuracy` to `MaterializedTurn.accuracy`
+(`dataset/request.rs:70`) to `multiturn.rs:1112`-`:1115` to `ProblemAssociation.task`
+(`accuracy.rs:178`) to `CapturedResponse.task` (`:501`) to
+`AccuracyRecord.task` (`metrics_core/accuracy.rs:122`), and per-task rollups
+already exist (`AccuracySummary.per_task`, `accuracy.rs:181`) and are already
+exported (`export/accuracy_csv.rs:65`-`:69`). Authoring `task` = the reasoning
+type yields accuracy-by-reasoning-type with **zero schema change**. That is the
+right first move, and for the accuracy question it may be the only move needed.
+Three constraints ride with it: `task` is single-valued; the evaluator must echo
+it byte-identically or grading fails hard (`accuracy.rs:687`-`:691`); and
+`AccuracyEvaluation.records` -- the per-request grades -- is serialized by no
+exporter in the tree, so there is no per-record accuracy artifact today.
+
+*The zero-file hack, named so it is not mistaken for the design.* `conversation_id`
+is the only authored string that survives into all four per-record formats
+(`RecordMetadata.conversation_id`, `rust/runtime/src/engine/records.rs:117`;
+`RawRecordMetadata`, `:311`; `CSV_METADATA_COLUMNS`, `:517`;
+`PerRecordRow`, `export/per_record_parquet.rs:91`). Folding the label into the
+authored `session_id` therefore works with no code change at all. It also
+pollutes the identity column and forces every consumer to string-split. It is
+recorded as a fallback for an exploratory run, not as this design's answer.
+
+*The column.* One `Option<Arc<str>>` on `RequestMetricMetadata`, materialized to
+`Option<String>` at the `into_record` boundary exactly as `worker_id` already is
+(`metrics.rs:44`-`:51` states the per-request-clone rationale), then
+`Option<String>` on `RecordIngest`. This is roughly eleven production files --
+`dataset/model.rs`, the authoring loader, `dataset/request.rs`,
+`multiturn/model.rs:161` with both construction sites (`multiturn.rs:911`, `:1117`),
+`engine/execute/capture.rs:350`-`:358`, `metrics.rs` (field, `Default` at `:65`,
+`into_record` at `:528`), `metrics_core/ingest.rs` (field and `minimal()` at `:223`),
+`engine/records.rs` in seven places including the paired
+`CSV_METADATA_COLUMNS:513` const and the positional `record_csv_row:598` push,
+`export/per_record_parquet.rs:88`, and on the graph path one
+`metadata_string(&node, ...)` read at `graph_execution.rs:2261` -- plus roughly six
+test fixtures, because `RecordIngest` derives no `Default` and every struct
+literal must be updated to compile.
+
+**It must be a scalar field, not a new type.** `MAX_ABI_TYPES = 177` /
+`MAX_ABI_FILES = 56` (`rust/xtask/src/abi_impl_budget.rs:14`-`:16`) with the
+baseline at exactly 177/56, and `ensure_no_growth`
+(`rust/xtask/src/abi_closure.rs:100`-`:120`) rejects any new `(name, file)` pair
+even at constant count. A `ReasoningType` enum or a `QueryLabels` struct
+reachable from `RecordIngest` or `Request` fails the gate and cannot be
+re-baselined. `Option<String>` introduces no nominal type and the carrier structs
+are already in the closure, so the field addition is invisible to it; adding
+fields raises `type_lines` and therefore *improves* `MAX_BOUNDARY_IMPL_RATIO`.
+For the same reason a `HashMap<String, String>` bag is refused independently of
+the gate: it puts an allocating map on the per-request clone path, and the CSV
+and Parquet writers have fixed column lists a map cannot populate without a
+schema-discovery pass.
+
+**Multi-valued labels are canonicalized to one string, not modeled as a list.**
+A query carrying two reasoning types is recorded as a sorted, `;`-joined single
+value, keeping the Parquet column `Utf8` rather than introducing a
+`List<Utf8>` builder and a `SCHEMA_VERSION` break
+(`per_record_parquet.rs:58`). The separator is `;` or `|` and never `,`:
+`csv_escape` (`engine/records.rs:552`-`:558`) would quote a comma-joined value
+correctly, but naive splitters mangle the result. And the joined value must not
+be fanned out into multiple accuracy buckets: `compute_results_for_context`
+(`metrics_core/accuracy.rs:400`-`:431`) pushes each record into `overall` once and
+into `per_task[task]` once, so a two-bucket record makes
+`sum(per_task.n) != overall.n` and reads as a bug in `accuracy_results.csv`. A
+composite bucket (`numerical+tabular`) is a legitimate additional bucket and
+preserves the identity.
+
+The graph path preserves almost nothing authored per-node into the record, which
+is why the label rides the conversation rather than the node. `dag_jsonl` has no
+metadata field at all -- `DagJsonlTurn` (`graph/dag_source.rs:54`-`:80`) is closed,
+so an authored label dies at parse rather than at lowering.
+`LlmNode.metadata` (`graph/model.rs:168`) *is* a free-form map that survives
+lowering, but only six keys are ever read out (`"model"`, `"endpoint"`,
+`"input_tokens"`, the two recorded-timing keys, `"turn_index"`), and nothing
+generic is projected into `RequestMetricMetadata`. What the graph path does stamp
+is `conversation_id = trace_id` and `correlation_id = "{trace_id}:{node_id}"`
+(`graph_execution.rs:2270`-`:2278`).
+
+**The Offline mapping, stated with what it is not.** Server scenario is out of
+scope for this record, exactly as for the first MLPerf instantiation. Offline is
+approximated by the existing concurrency workload with
+`type: concurrency`, `concurrency == requests == N`, one turn, and no ramp. The
+approximation is good in the one place that matters most and imperfect in four
+places that must be named, because each is a way for a run to look Offline and
+not be.
+
+It is good on admission: `PhaseKind::Concurrency` lowers to
+`ArrivalPattern::ConcurrencyBurst` (`rust/runtime/src/engine/protocol.rs:880`-`:883`)
+whose `next_interval_ns()` returns literal zero
+(`rust/runtime/src/timing/intervals.rs:170`-`:172`), so the issuer never sleeps and
+the only gate is a non-blocking `SlotPool::try_acquire` sized to `concurrency`
+(`rust/runtime/src/phase_runtime.rs:299`-`:308`), which cannot bind at N-of-N. All
+N are admissible from t=0 in policy. The workload named "concurrency" does no
+rate metering at all, which is the opposite of the intuitive reading.
+
+It is not equivalent in these ways. **Issuance is serial**, one request per
+issuer-loop iteration (`rust/runtime/src/request_rate.rs:654`-`:663`), not a single
+handoff of the whole set. **The draw is lazy**: one sample is cached before start
+and the next is drawn only after a successful issue (`:519`-`:525`), so the system
+under test never sees the query set as a set and cannot reorder across it — which
+is precisely the freedom LoadGen's Offline scenario is designed to grant.
+**Multi-turn corrupts it**: continuations take FIFO priority over new sessions
+(`:640`-`:648`) and can block on prefill capacity (`:437`-`:441`), so the property
+holds only for the single-turn shape. **`concurrency_ramp`**
+(`config/model/phase.rs:117`-`:118`) converts admission into genuinely metered and
+destroys the property outright, and seamless warmup carries session guards across
+the phase boundary (`engine/execute/plan.rs:29`-`:34`), so profiling does not start
+cold-empty.
+
+Two derived readings must not be taken from such a run. `concurrency < N`
+silently produces a Server-shaped closed loop with **no diagnostic**, so the
+equality is load-bearing and is checked rather than assumed. And **schedule
+adherence and queue delay are meaningless here**: `bounded_reanchor_target`
+re-anchors the target to `now` once lag exceeds the catch-up window, default 10 ms
+(`request_rate.rs:41`-`:43`, `timing/arrival.rs:88`-`:95`), so after roughly the
+first 10 ms the schedule tracks the wall clock and derived lateness collapses to
+approximately zero by construction. The honest Offline reading of such a run is
+its completion rate, not its arrival statistics.
+
+The one workload that genuinely pre-schedules the entire set with no admission
+gate is `fixed_schedule`, which schedules every entry up front in one pass
+(`rust/runtime/src/fixed_schedule.rs:204`-`:241`) and reports `concurrency() == None`
+(`engine/execute/dataset_build.rs:271`-`:274`). It is also the only workload whose
+arrival time is an authored fact rather than a dispatch observation — everywhere
+else `arrival_ms` is stamped at coordinator dispatch as `clock.now_ns() - origin_ns`
+(`engine/execute/capture.rs:366`), which is why `fixed_schedule` correspondingly
+reports `has_credit_timestamps() == false` (`fixed_schedule.rs:183`-`:185`). An
+all-equal-timestamp fixed schedule is therefore the more literal Offline analogue,
+and is recorded here as the alternative to reach for if the burst approximation
+proves insufficient.
 
 ### Measurement correctness
 
@@ -1527,6 +1768,68 @@ terminal do not exist yet, and adding them must not disturb the request-level
 origin, which is already correct for free. I18 is the discipline that would have
 caught I5 and I7 at introduction: assert the aggregate against the raw records,
 never against another aggregate.
+
+### The stock configuration
+
+The benchmark is one named thing or it is a pile of flags that each reader
+assembles slightly differently, so `rag_e2e` ships as a stock config template
+pinning the corpus source, chunker parameters, embedding and rerank and answer
+profiles, index kind and parameters, hop and fan-out and `k` bounds, phase shape,
+and artifact set — that is, exactly the closure `pipeline_digest` covers, which
+is what makes I24's reference profile a shipped artifact rather than prose.
+
+The template surface is **a compile-time frozen array, not a directory scan**:
+`pub const TEMPLATES: &[Template]` (`rust/cli/src/config/templates_data.rs:5`),
+28 entries, each with hand-written metadata and `content: include_str!(...)`.
+Twenty-seven include out of the Python tree (`src/aiperf/config/templates/*.yaml`)
+and one out of the native-only `rust/cli/templates/`. So the Python YAML *files*
+are live — they are the compiled-in bytes — while the Python *discovery*
+mechanism is dead: `src/aiperf/config/templates/discovery.py:1`-`:40` parses a
+`# @template` sentinel block that nothing in `rust/` reads, and the metadata is
+duplicated by hand into `templates_data.rs`. Lookup is exact-match; an unknown
+name prints and exits 1 (`rust/cli/src/config/mod.rs:95`-`:98`). `init` rewrites
+only `model` and `url` and strips the SPDX header (`:100`-`:105`, `:173`-`:189`).
+
+Two consequences follow, and both are obligations on this work rather than
+observations about it. **Adding the YAML alone does nothing** — the entry must be
+hand-added to `templates_data.rs`, and the only existing test is
+`assert!(TEMPLATES.len() >= 20)` (`config/mod.rs:235`), so there is no
+directory-to-array parity guard and no check that the hand-copied metadata matches
+the `# @template` block. This design adds that parity test rather than relying on
+the discipline that currently holds the count at 28.
+
+**And `config init` never validates its own output.** `config validate` is a
+separate opt-in command, so a template can ship, be listed, be emitted, and fail
+at run time. This is not hypothetical: the shipped `speed_bench_sweep.yaml`
+sweeps `datasets.main.format` over `speed_bench_coding`, `speed_bench_rag`, and
+siblings (`src/aiperf/config/templates/speed_bench_sweep.yaml:52`-`:63`, `:84`),
+while the registered format id is the singular `speed_bench`
+(`rust/runtime/src/dataset/loader/mod.rs:424`-`:427`) with category as a loader
+*option* (`public.rs:890`), and `DatasetFormatRegistry::get` is exact-match
+returning `LoaderNotFound` otherwise (`loader/mod.rs:491`-`:498`). A stock RAG
+config that ships broken in the same way would be worse than no stock config, so
+`rag_e2e` is covered by a test that emits it and runs `config validate` over the
+emitted bytes.
+
+Precedent for pinning a whole benchmark as data exists twice. The named stock
+dataset catalog (`rust/runtime/resources/public_datasets.yaml`, loaded into a
+`BTreeMap<String, PublicMeta>` at
+`rust/runtime/src/config/model/public_catalog.rs:27`-`:30`) pins loader format,
+source repo, subset, split, and revision per name — including a raw URL pinned to
+a git SHA (`public_datasets.yaml:326`-`:333`) — and is the closest existing shape
+to a pinned benchmark definition. SPEED-Bench is the only existing end-to-end
+named benchmark: a stock sweep template plus a dedicated native report command
+that reads `input_config` back out of each run's JSON
+(`rust/cli/src/speed_bench.rs:69`, `:88`). It pins one model rather than a model
+set, which is exactly the axis `rag_e2e` extends.
+
+Adding the stock config touches: the template YAML, `templates_data.rs`, the
+parity test, `public_datasets.yaml` if the corpus is a new stock dataset,
+`register_builtin_formats` (`dataset/loader/mod.rs:379`) for the ingestion format,
+`src/aiperf/config/schema/aiperf-config.schema.json` for any new enum value, and
+then `llms.txt` (which states the embedded-template count at `:177`),
+`docs/specs/README.md`, and both `tools/check_agent_files_sync.py` and
+`tools/check_docs_current.py`.
 
 ### Accuracy and compliance
 
@@ -1568,6 +1871,58 @@ Both are post-run passes over recorded artifacts, native, and off the timed path
   Those roles are covered only by I20's per-role reporting. It depends on step 1 of the role work,
   since attributing OSL to the answer role requires the per-record profile id.
 
+- **The validity gate.** A scored run is valid only if its accuracy reaches an
+  authored fraction of an authored reference accuracy (the MLPerf analogue is
+  99% of the reference, relaxed to 97% for the reasoning models in the first
+  instantiation). `aiperf rag score` evaluates the gate, states the verdict in
+  its output, and returns non-zero when the gate fails.
+
+  **Nothing in AIPerf today turns a measured metric into a run verdict**, so this
+  is genuinely new machinery and must not be mistaken for an extension of
+  something existing. Every non-zero exit in the product is operational — bad
+  flags, missing file, a run that did not complete
+  (`rust/cli/src/main.rs:47`-`:54`; `rust/cli/src/validate.rs:174`, `:183`;
+  `rust/cli/src/sweep/aggregate.rs:89`, `:111`, which counts runs that did not
+  finish, not runs that scored badly). The accuracy plane has no reference value
+  and no run threshold at all: `AccuracyRollup`
+  (`rust/runtime/src/metrics_core/accuracy.rs:144`-`:158`) reports `n`,
+  `correct_count`, `accuracy`, and a CI, and compares them to nothing;
+  `LIGHTEVAL_CORRECTNESS_THRESHOLD` (`:20`) is the per-answer grader cut, not a
+  run gate. `aiperf eval` ends in an unconditional `Ok(0)`
+  (`rust/cli/src/eval.rs:226`, `:418`) with reward reported and never gated.
+
+  Four near-misses are structurally similar and are **not** precedents, each for
+  a specific reason worth recording so the gate is not built on one of them by
+  mistake. Goodput SLOs (`accumulator.rs:1024`-`:1038`) evaluate authored
+  thresholds per request, but the result is a 0/1 counter input — a run can
+  attain 0% and still exit 0. `compare`'s `Verdict`
+  (`rust/cli/src/compare.rs:195`-`:236`, `:265`) is a display column; a 90%
+  regression prints "worse" and exits 0, and a missing result file returns
+  `Ok(0)` (`:57`). `sla_breach_knee` (`rust/cli/src/search/sla_breach.rs:41`-`:56`)
+  does real threshold arithmetic but is a post-process artifact writer whose
+  *write failure* is downgraded to a warning (`rust/cli/src/profile.rs:623`-`:628`).
+  The adaptive controller's `passed`/`sla_passed`
+  (`rust/runtime/src/adaptive_core/controller.rs:105`,
+  `adaptive_core/artifacts.rs:153`, `:434`) is the closest measured boolean in the
+  codebase, but it is a control signal steering concurrency; failing to converge
+  does not fail the run.
+
+  What is reusable is the comparison arithmetic, which already exists three times
+  over and should not be written a fourth: `passes_threshold`
+  (`rust/runtime/src/metrics_core/definition.rs:101`) is the canonical
+  direction-aware policy, with `Slo::passes` (`accumulator.rs:127`) and
+  `SlaFilter::satisfied_by` (`rust/cli/src/search.rs:526`, which treats a missing
+  observation as failure) as its two existing wrappers. What is new is exactly
+  three things: an authored reference accuracy on the config surface, where no
+  such field exists; a run-level assertion evaluated after the accuracy rollup;
+  and a non-zero return plumbed through `dispatch::run` to `main.rs:47`. The last
+  is mechanically cheap — every `run()` already returns `i32` — and its cost is
+  entirely that no caller has ever used it for a measurement, so this becomes the
+  first place in the product where a number can fail a run. It is therefore
+  scoped to `aiperf rag score`, a post-run pass over recorded artifacts, and
+  deliberately not to `aiperf profile`: a benchmark run that measured a system
+  honestly should not exit non-zero because the system scored poorly.
+
 Mock-server fixtures reuse the existing accuracy-fixture mechanism
 (`rust/mock-server/src/accuracy.rs`, flags at `rust/mock-server/src/config.rs:753`-`:817`)
 by adding a RAG format variant, rather than building a parallel canned-answer system.
@@ -1607,6 +1962,11 @@ protects.
 | A driver-authored stage plan that is not a projection of the authored source graph | I10, I22 |
 | An index seal missing any worker or cell part, or whose passage ordinals are not a permutation of `0..N` | I1 |
 | A sealed index exceeding the Kubernetes publication cap of 512 MiB, refused at seal rather than at publish | I1 |
+| A run asserting reference-profile comparability whose resolved parameters diverge from that profile | I24 |
+| A run declaring the Offline scenario whose phase is not single-turn with `concurrency == requests` and no ramp | Offline mapping |
+| `aiperf rag score --gate` without an authored reference accuracy | validity gate |
+| A scored run that reports served-model provenance it did not observe | I25 |
+| A scored run whose resolved plan omits any parameter `pipeline_digest` covers | I23 |
 | A multi-endpoint `rag_qna` run over gRPC | transport limit (`grpc_execution.rs:130`) |
 
 ## Future requirements
