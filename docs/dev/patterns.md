@@ -357,8 +357,15 @@ def export_records_json(records: list[Record], out_path: Path) -> None:
 
 `scrub_non_finite` recursively walks `dict`/`list`/`tuple` containers and
 rewrites non-finite numeric values to `None`. It leaves `str`/`bytes`/`bool`
-alone and handles numpy scalar types correctly (`numpy.float32`,
-`numpy.float64`).
+alone and coerces numpy scalar types to native Python numbers
+(`numpy.float32`, `numpy.float64`, `numpy.int64`, ...).
+
+That coercion is load-bearing, not incidental: `orjson.dumps` **raises**
+`TypeError: Type is not JSON serializable: numpy.float64` rather than
+degrading, so a numpy scalar anywhere in a payload aborts the export and
+takes the run down with it. Any code that hands values to an exporter
+(planners, scorers, analysis helpers) should still return native floats —
+`scrub_non_finite` is the backstop, not the excuse.
 
 ### `is_finite_value` for the canonical finiteness check
 

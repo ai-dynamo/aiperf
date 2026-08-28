@@ -107,14 +107,17 @@ def scrub_non_finite(obj: Any) -> Any:
 
     Walks ``dict``, ``list``, and ``tuple`` containers; leaves ``str``,
     ``bytes``, and ``bytearray`` alone (a string literal ``"nan"`` is not a
-    numeric NaN and must not be rewritten). Coerces numpy floats correctly
-    by checking ``__float__`` and using ``float()`` directly (mirroring
-    :func:`is_finite_value`'s strategy) -- ``isinstance(x, float)`` would
-    miss ``numpy.float32``/``numpy.float64`` on some numpy versions.
+    numeric NaN and must not be rewritten). Numpy scalars are handled two
+    ways: ``numpy.float64`` subclasses ``float`` and is cast explicitly,
+    while every other numpy type (``numpy.float32``, ``numpy.int64``, ...)
+    reaches the duck-typed ``__float__``/``float()`` branch that mirrors
+    :func:`is_finite_value`'s strategy.
 
     Use before ``orjson.dumps`` on any payload that may contain metric
-    values. orjson 3.x silently coerces NaN/inf to JSON ``null`` which is
-    indistinguishable from explicit-None semantics in downstream tooling.
+    values. This is the guard for two distinct orjson behaviors: it
+    silently coerces NaN/inf to JSON ``null`` (indistinguishable from
+    explicit-None semantics downstream), and it raises outright on numpy
+    scalars ("Type is not JSON serializable: numpy.float64").
 
     The returned structure preserves the input container types (dict
     stays dict, tuple stays tuple); numpy scalars are coerced to Python
@@ -132,7 +135,15 @@ def scrub_non_finite(obj: Any) -> Any:
     if isinstance(obj, tuple):
         return tuple(scrub_non_finite(v) for v in obj)
     if isinstance(obj, float):
-        return obj if math.isfinite(obj) else None
+        if not math.isfinite(obj):
+            return None
+        # ``numpy.float64`` is the one numpy scalar type that subclasses
+        # ``float``, so it matches here instead of falling through to the
+        # duck-typed branch below that coerces every other numpy type.
+        # Returning it unconverted leaks it into orjson.dumps(), which
+        # rejects it outright ("Type is not JSON serializable"). float() is
+        # a no-op on an exact float -- CPython hands back the same object.
+        return float(obj)
     # Numpy scalar / other numeric: duck-typed ``float()`` coercion (same
     # strategy as is_finite_value). Non-numeric objects fall through unchanged.
     if hasattr(obj, "__float__") and not isinstance(obj, int):
