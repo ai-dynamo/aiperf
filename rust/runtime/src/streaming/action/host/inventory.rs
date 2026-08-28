@@ -66,7 +66,10 @@ impl ActionInventoryLedger {
     /// [`Self::freeze_through`] tell an outstanding action apart from a
     /// sequence the host never issued: both are `None` in `terminals`, and only
     /// the accepted range is required to be complete.
-    pub fn record_accepted(&mut self, sequence: GlobalSequence) -> Result<(), ActionExecutionError> {
+    pub fn record_accepted(
+        &mut self,
+        sequence: GlobalSequence,
+    ) -> Result<(), ActionExecutionError> {
         self.reserve_through(sequence)?;
         if self
             .accepted_through

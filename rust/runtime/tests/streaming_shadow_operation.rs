@@ -168,10 +168,11 @@ fn pipeline_rejects_reliability_policy_digest_mismatch() {
 
 #[test]
 fn unregistered_selection_fails_closed_against_the_compiled_inventory() {
-    let registered: std::collections::BTreeSet<String> = ["local", "reference_jsonl", "conversation"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    let registered: std::collections::BTreeSet<String> =
+        ["local", "reference_jsonl", "conversation"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
     let supported = ShadowReplaySelection {
         source: "local".to_owned(),
         format: "reference_jsonl".to_owned(),

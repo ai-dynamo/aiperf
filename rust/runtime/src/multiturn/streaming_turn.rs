@@ -25,8 +25,8 @@ use anyhow::{Result, bail};
 use uuid::Uuid;
 
 use super::model::{
-    RuntimeSessionBackend, SampledSession, TurnDataPolicy, TurnEndpoint, TurnMetadata, TurnResponse,
-    TurnToSend,
+    RuntimeSessionBackend, SampledSession, TurnDataPolicy, TurnEndpoint, TurnMetadata,
+    TurnResponse, TurnToSend,
 };
 use crate::body_plan::RequestBody;
 
@@ -60,7 +60,11 @@ impl RuntimeSessionBackend for StreamingActionBackend {
         1
     }
 
-    fn build_first_turn(&self, _owner: &SampledSession, _max_turns: Option<usize>) -> Result<TurnToSend> {
+    fn build_first_turn(
+        &self,
+        _owner: &SampledSession,
+        _max_turns: Option<usize>,
+    ) -> Result<TurnToSend> {
         bail!("a streaming action turn is materialized by its action binding, not rebuilt")
     }
 
