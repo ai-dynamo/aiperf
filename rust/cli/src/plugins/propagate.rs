@@ -151,9 +151,7 @@ fn env_opt(variable: &'static str) -> Result<Option<String>, PropagateError> {
     match std::env::var(variable) {
         Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(PropagateError::NonUnicode { variable })
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(PropagateError::NonUnicode { variable }),
     }
 }
 

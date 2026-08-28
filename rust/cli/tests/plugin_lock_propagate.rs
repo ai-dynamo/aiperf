@@ -125,6 +125,29 @@ fn non_absolute_path_is_rejected() {
 }
 
 #[test]
+fn non_utf8_path_is_rejected() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let _guard = env_guard();
+    let non_utf8 = OsString::from_vec(vec![0xff]);
+    // Safety: all env mutation in this binary is serialized behind `env_guard`.
+    unsafe {
+        std::env::set_var(ENV_LOCK_PATH, &non_utf8);
+        std::env::set_var(ENV_LOCK_DIGEST, VALID_DIGEST);
+    }
+    let result = read_lock_env();
+    unsafe {
+        std::env::remove_var(ENV_LOCK_PATH);
+        std::env::remove_var(ENV_LOCK_DIGEST);
+    }
+    assert!(
+        matches!(result, Err(PropagateError::NonUnicode { .. })),
+        "non-UTF-8 bytes must be refused, not collapsed to an absent lock"
+    );
+}
+
+#[test]
 fn set_lock_env_propagates_to_command() {
     use aiperf_cli::plugins::propagate::set_lock_env;
     use std::process::Command;
