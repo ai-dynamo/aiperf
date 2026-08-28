@@ -24,6 +24,9 @@ pub mod streaming_capability;
 /// Strict, authenticated controller-to-cell streaming commands and events.
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub mod streaming_protocol;
+/// Bounded multiplexed controller-to-cell placement transfer.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub mod streaming_transport;
 pub mod transport;
 
 pub use heartbeat::{
@@ -42,6 +45,14 @@ pub use streaming_capability::{
     STREAMING_CAPABILITY_PROPAGATION_VERSION, StreamingCapabilityCategory,
     StreamingCapabilityNegotiationError, StreamingCapabilityPropagation,
     StreamingCapabilityPropagationEncodeError, StreamingCapabilitySealError,
+};
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub(crate) use streaming_transport::{
+    BindingDiagnostics, CellularBindingContext, CellularExecutionEndpoint,
+    CellularPlacementControl, CellularPlacementDriver, CellularPlacementSubmitter,
+    CellularStreamingError, CellularTransferLimits, PlacementDecision, PlacementEvent,
+    PlacementHandle, PlacementHandleId, PreparedCellRoute, PreparedCellularPlacementBinding,
+    prepare_cellular_placement_binding,
 };
 #[cfg(all(feature = "cellular", feature = "engine"))]
 pub use transport::velo_transport::{VeloCellClient, VeloControllerTransport};
