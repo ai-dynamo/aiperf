@@ -83,6 +83,7 @@ impl HostAbiUniverseRecordV1 {
     ///
     /// All fields except `canonical_digest` contribute; their names are the
     /// exact serde field names, in declaration order.
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_digest(
         rustc_exe_digest: &str,
         rustc_commit: &str,
@@ -189,6 +190,7 @@ pub struct PluginArtifactBuildRecordV1 {
 
 impl PluginArtifactBuildRecordV1 {
     /// Computes and returns the canonical digest for the given field values.
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_digest(
         universe_digest: &str,
         package_name: &str,
