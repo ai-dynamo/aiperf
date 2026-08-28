@@ -302,45 +302,18 @@ pub trait ConditionalObjectStore: Debug {
     ) -> Result<(), CheckpointError>;
 }
 
-/// Kind of one content-addressed checkpoint object.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum CheckpointObjectKind {
-    /// Encoded generation root.
-    Generation,
-    /// Participant state payload.
-    Participant,
-    /// Canonical result index.
-    ResultIndex,
-    /// Result segment payload.
-    ResultPayload,
-}
-
-impl CheckpointObjectKind {
-    const fn segment(self) -> &'static str {
-        match self {
-            Self::Generation => "generation",
-            Self::Participant => "participant",
-            Self::ResultIndex => "result-index",
-            Self::ResultPayload => "result",
-        }
-    }
-}
-
 /// Derive the exact content-addressed key one immutable object lands at.
 ///
 /// The backend and its store must agree on this derivation: `put_immutable`
 /// takes no key because an immutable object's address is a pure function of the
-/// prefix, its kind, and its content digest.
+/// prefix and its content digest. The object's kind is deliberately absent — a
+/// store writing an object knows only its bytes, and a digest already
+/// distinguishes every object the checkpoint plane retains.
 #[must_use]
-pub fn immutable_object_key(
-    prefix: &ObjectKey,
-    kind: CheckpointObjectKind,
-    digest: &ContentDigest,
-) -> ObjectKey {
+pub fn immutable_object_key(prefix: &ObjectKey, digest: &ContentDigest) -> ObjectKey {
     ObjectKey::new(format!(
-        "{}/objects/{}/{}",
+        "{}/objects/{}",
         prefix.as_str(),
-        kind.segment(),
         hex_digest(digest)
     ))
 }
@@ -518,33 +491,31 @@ impl ObjectCheckpointBackend {
         if fixture_run != run || head != *generation.generation() {
             return Err(CheckpointError::ObjectVerification);
         }
-        let mut objects: Vec<(CheckpointObjectKind, ContentDigest, Bytes)> = Vec::new();
-        let (digest, bytes) = generation_object.into_storage_parts();
-        objects.push((CheckpointObjectKind::Generation, digest, bytes));
+        let mut objects: Vec<(ContentDigest, Bytes)> = Vec::new();
+        let (generation_digest, generation_bytes) = generation_object.into_storage_parts();
+        let generation_length = u64::try_from(generation_bytes.len())
+            .map_err(|_| provider_error("object length"))?;
+        objects.push((generation_digest, generation_bytes));
         for object in participant_objects.into_objects() {
             let (digest, bytes) = object.into_storage_parts();
-            objects.push((CheckpointObjectKind::Participant, digest, bytes));
+            objects.push((digest, bytes));
         }
         let (digest, bytes) = result_index_object.into_storage_parts();
-        objects.push((CheckpointObjectKind::ResultIndex, digest, bytes));
+        objects.push((digest, bytes));
         for object in result_objects.into_objects() {
             let (digest, bytes) = object.into_storage_parts();
-            objects.push((CheckpointObjectKind::ResultPayload, digest, bytes));
+            objects.push((digest, bytes));
         }
-        let mut generation_placement = None;
-        for (kind, digest, bytes) in objects {
-            let length = u64::try_from(bytes.len()).map_err(|_| provider_error("object length"))?;
-            let version = self.upload_object(kind, digest, bytes).await?;
-            if kind == CheckpointObjectKind::Generation {
-                generation_placement = Some((
-                    immutable_object_key(&self.prefix, kind, &digest),
-                    version,
-                    length,
-                ));
+        let mut generation_version = None;
+        for (digest, bytes) in objects {
+            let version = self.upload_object(digest, bytes).await?;
+            if digest == generation_digest {
+                generation_version = Some(version);
             }
         }
-        let (generation_key, generation_version, generation_byte_length) =
-            generation_placement.ok_or(CheckpointError::ObjectVerification)?;
+        let generation_version = generation_version.ok_or(CheckpointError::ObjectVerification)?;
+        let generation_key = immutable_object_key(&self.prefix, &generation_digest);
+        let generation_byte_length = generation_length;
         let document = CheckpointPointerDocument {
             run,
             storage_version: PointerStorageVersion::LegacyV3ReadOnly,
@@ -810,10 +781,9 @@ impl ObjectCheckpointBackend {
 
     async fn read_object_by_digest(
         &self,
-        kind: CheckpointObjectKind,
         digest: ContentDigest,
     ) -> Result<BudgetedCheckpointBytes, CheckpointError> {
-        let key = immutable_object_key(&self.prefix, kind, &digest);
+        let key = immutable_object_key(&self.prefix, &digest);
         let metadata = self.resolve_version(&key).await?;
         let (bytes, lease) = self
             .read_exact_version(&key, &metadata.version, metadata.byte_length, digest)
@@ -836,7 +806,6 @@ impl ObjectCheckpointBackend {
     /// Stream one immutable object into the store and verify it reads back.
     async fn upload_object(
         &self,
-        kind: CheckpointObjectKind,
         digest: ContentDigest,
         bytes: Bytes,
     ) -> Result<ObjectVersion, CheckpointError> {
@@ -852,7 +821,7 @@ impl ObjectCheckpointBackend {
             lease,
         };
         let version = self.store.put_immutable(Box::new(reader)).await?;
-        let key = immutable_object_key(&self.prefix, kind, &digest);
+        let key = immutable_object_key(&self.prefix, &digest);
         // Verify before the pointer can ever reference this version: a pointer
         // must only name objects that were written whole and read back exact.
         let (_, verify_lease) = self
@@ -1170,13 +1139,9 @@ impl ObjectGenerationTransaction {
         // pointer replacement below.
         let mut written = BTreeSet::new();
         for participant in &participants {
-            if written.insert((
-                CheckpointObjectKind::Participant,
-                participant.descriptor.content_digest,
-            )) {
+            if written.insert(participant.descriptor.content_digest) {
                 backend
                     .upload_object(
-                        CheckpointObjectKind::Participant,
                         participant.descriptor.content_digest,
                         Bytes::copy_from_slice(participant.payload.as_bytes()),
                     )
@@ -1189,13 +1154,9 @@ impl ObjectGenerationTransaction {
             .iter()
             .zip(&results.payloads)
         {
-            if written.insert((
-                CheckpointObjectKind::ResultPayload,
-                descriptor.payload_digest,
-            )) {
+            if written.insert(descriptor.payload_digest) {
                 backend
                     .upload_object(
-                        CheckpointObjectKind::ResultPayload,
                         descriptor.payload_digest,
                         Bytes::copy_from_slice(payload.as_bytes()),
                     )
@@ -1203,32 +1164,20 @@ impl ObjectGenerationTransaction {
             }
         }
         backend
-            .upload_object(
-                CheckpointObjectKind::ResultIndex,
-                index_root,
-                Bytes::from(index_bytes.into_boxed_slice()),
-            )
+            .upload_object(index_root, Bytes::from(index_bytes.into_boxed_slice()))
             .await?;
         let generation_digest = *prevalidated.generation().digest();
         let generation_length =
             u64::try_from(generation_bytes.len()).map_err(|_| provider_error("object length"))?;
         let generation_version = backend
-            .upload_object(
-                CheckpointObjectKind::Generation,
-                generation_digest,
-                generation_bytes,
-            )
+            .upload_object(generation_digest, generation_bytes)
             .await?;
 
         let document = CheckpointPointerDocument {
             run,
             storage_version: PointerStorageVersion::CurrentV4,
             generation: prevalidated.generation().clone(),
-            generation_object: immutable_object_key(
-                &backend.prefix,
-                CheckpointObjectKind::Generation,
-                &generation_digest,
-            ),
+            generation_object: immutable_object_key(&backend.prefix, &generation_digest),
             generation_version,
             generation_byte_length: generation_length,
         };
@@ -1318,7 +1267,7 @@ impl ObjectResultReadAuthority<'_> {
     async fn reachable_descriptors(&self) -> Result<Vec<ResultSegmentDescriptor>, CheckpointError> {
         let object = self
             .backend
-            .read_object_by_digest(CheckpointObjectKind::ResultIndex, *self.result_index_root)
+            .read_object_by_digest(*self.result_index_root)
             .await?;
         let descriptors: Vec<ResultSegmentDescriptor> =
             serde_json::from_slice(object.as_bytes())
@@ -1423,10 +1372,7 @@ impl ObjectResultReadAuthority<'_> {
         }
         let payload = self
             .backend
-            .read_object_by_digest(
-                CheckpointObjectKind::ResultPayload,
-                descriptor.payload_digest,
-            )
+            .read_object_by_digest(descriptor.payload_digest)
             .await?;
         ResultSegmentReader::new(descriptor, payload)
     }
@@ -1487,7 +1433,7 @@ impl LeasedGenerationReader for ObjectGenerationReader {
         }
         let payload = self
             .backend
-            .read_object_by_digest(CheckpointObjectKind::Participant, descriptor.content_digest)
+            .read_object_by_digest(descriptor.content_digest)
             .await?;
         let context = CurrentV4ParticipantStateContext::for_reachable_descriptor(
             &self.generation,
@@ -1553,7 +1499,7 @@ impl LegacyV3LeasedGenerationReader for ObjectLegacyV3GenerationReader {
         }
         let payload = self
             .backend
-            .read_object_by_digest(CheckpointObjectKind::Participant, descriptor.content_digest)
+            .read_object_by_digest(descriptor.content_digest)
             .await?;
         LegacyParticipantState::from_legacy_v3_reader(descriptor.clone(), payload)
     }
