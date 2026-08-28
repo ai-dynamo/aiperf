@@ -122,10 +122,10 @@ impl StaticComparatorRegistry {
     /// component, so a failing comparator build says what changed rather than
     /// only that something did.
     pub fn assert_census(&self, expected: &[(&str, &str)]) -> Result<(), CensusError> {
-        let expected: BTreeMap<&str, &str> = expected.iter().copied().collect();
+        let expected_map: BTreeMap<&str, &str> = expected.iter().copied().collect();
         let mut differences = Vec::new();
 
-        for (id, version) in &expected {
+        for (id, version) in &expected_map {
             match self.components.get(*id) {
                 None => differences.push(format!("missing `{id}`")),
                 Some(found) if found != version => {
@@ -135,7 +135,7 @@ impl StaticComparatorRegistry {
             }
         }
         for id in self.components.keys() {
-            if !expected.contains_key(id.as_str()) {
+            if !expected_map.contains_key(id.as_str()) {
                 differences.push(format!("unexpected `{id}`"));
             }
         }
