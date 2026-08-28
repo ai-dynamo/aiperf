@@ -9,11 +9,30 @@ reused and tested without constructing a full JobSet spec.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.environment import Environment
-from aiperf.config.deployment import PodTemplateConfig, privilege_escalating_keys
+from aiperf.config.deployment import (
+    PodTemplateConfig,
+    privilege_escalating_keys,
+    risky_security_context_warnings,
+)
 from aiperf.kubernetes.environment import K8sEnvironment
+
+_logger = AIPerfLogger(__name__)
+
+
+@lru_cache(maxsize=256)
+def _warn_once(message: str) -> None:
+    """Log a merge-path warning at most once per distinct message.
+
+    ``build_security_context`` runs once per container, so an unconditional
+    warning would repeat the same line for every control-plane, worker, and
+    record-processor container of every render.
+    """
+    _logger.warning(message)
 
 
 def build_security_context(pod_template: PodTemplateConfig) -> dict[str, Any]:
@@ -39,12 +58,25 @@ def build_security_context(pod_template: PodTemplateConfig) -> dict[str, Any]:
         # at validation time, but this builder is also reachable from templates
         # constructed directly in code, so drop them unconditionally here too.
         escalating = set(privilege_escalating_keys(overrides))
+        # Warn on the merge path as well as at validation time: templates built
+        # in code never pass through PodTemplateConfig's validators, and this is
+        # where the merges below actually widen the baseline.
+        for warning in risky_security_context_warnings(
+            overrides, "podTemplate.containerSecurityContext"
+        ):
+            _warn_once(warning)
         caps = overrides.get("capabilities")
         if isinstance(caps, dict):
             base_caps = dict(ctx.get("capabilities", {}))
             base_caps.update(caps)
             ctx["capabilities"] = base_caps
         for key, value in overrides.items():
+            # capabilities is skipped because it was already merged shallowly
+            # above; it is deliberately not filtered like the escalating keys
+            # are, because a benchmark pod legitimately needs adds such as
+            # SYS_ADMIN for perf/profiling tooling. The warning above is what
+            # surfaces it. Same rationale for readOnlyRootFilesystem=false and
+            # seccompProfile=Unconfined, which fall through the loop untouched.
             if key == "capabilities" or key in escalating:
                 continue
             ctx[key] = value

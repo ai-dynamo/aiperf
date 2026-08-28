@@ -10,10 +10,14 @@ CRD round-tripping.
 from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field, ValidationInfo, field_validator
+from pydantic.alias_generators import to_camel
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.finite import FiniteFloat
 from aiperf.config.base import BaseConfig
 from aiperf.kubernetes.enums import ImagePullPolicy
+
+_logger = AIPerfLogger(__name__)
 
 # PodSpec keys that ``extra_pod_spec`` may not set. A raw ``update()`` of these
 # would silently defeat the pod hardening applied by
@@ -70,6 +74,191 @@ def privilege_escalating_keys(value: dict[str, Any]) -> list[str]:
     return sorted(offenders)
 
 
+# Volume source keys that hand a benchmark pod node-level state. These are NOT
+# denied: GPU benchmarking legitimately needs host mounts (device nodes, driver
+# directories, local NVMe scratch). They are surfaced as warnings so an operator
+# reading the logs can see what a submitted job asked for.
+RISKY_VOLUME_SOURCE_KEYS: frozenset[str] = frozenset(
+    {
+        "hostPath",
+        "nfs",
+        "iscsi",
+        "cephfs",
+        "glusterfs",
+        "rbd",
+        "flexVolume",
+    }
+)
+
+# hostPath prefixes that expose node credentials, the container runtime, or the
+# kubelet's own state. A hostPath under one of these is worth calling out by
+# name in the warning even among other host mounts.
+SENSITIVE_HOST_PATH_PREFIXES: tuple[str, ...] = (
+    "/",
+    "/etc",
+    "/root",
+    "/home",
+    "/boot",
+    "/proc",
+    "/var/run",
+    "/run",
+    "/var/lib/kubelet",
+    "/var/lib/docker",
+    "/var/lib/containerd",
+)
+
+
+def _is_sensitive_host_path(path: str) -> bool:
+    """Return True if a hostPath maps a node directory holding host credentials.
+
+    Args:
+        path: The ``hostPath.path`` value from a user-supplied volume.
+
+    Returns:
+        True when the path is the node root or sits at/inside a directory that
+        carries node credentials, runtime sockets, or kubelet state.
+    """
+    normalized = path.rstrip("/") or "/"
+    if normalized == "/":
+        return True
+    # "/" is exact-match only above: every path starts with it, so treating it as
+    # a prefix would flag benign mounts like /dev/shm.
+    return any(
+        normalized == prefix or normalized.startswith(f"{prefix}/")
+        for prefix in SENSITIVE_HOST_PATH_PREFIXES
+        if prefix != "/"
+    )
+
+
+def risky_volume_warnings(
+    volumes: list[dict[str, Any]], field_path: str = "podTemplate.volumes"
+) -> list[str]:
+    """Describe user-supplied volumes that widen the benchmark pod's blast radius.
+
+    Args:
+        volumes: Pod volumes in K8s Volume format, as supplied by the user.
+        field_path: Dotted config path used to prefix each message.
+
+    Returns:
+        One human-readable warning per risky volume. Empty when nothing is risky.
+    """
+    warnings: list[str] = []
+    for index, volume in enumerate(volumes):
+        if not isinstance(volume, dict):
+            continue
+        name = volume.get("name", "<unnamed>")
+        for source in sorted(RISKY_VOLUME_SOURCE_KEYS & volume.keys()):
+            body = volume.get(source)
+            if source == "hostPath" and isinstance(body, dict):
+                host_path = str(body.get("path", "<unset>"))
+                detail = f"hostPath volume mounting node path {host_path!r}"
+                if _is_sensitive_host_path(host_path):
+                    detail += (
+                        " which exposes node credentials, the container runtime, "
+                        "or kubelet state to the benchmark pod"
+                    )
+            else:
+                detail = f"{source} volume backed by storage outside the pod"
+            warnings.append(
+                f"{field_path}[{index}] ({name!r}): {detail}. This is allowed - "
+                "AIPerf benchmarks legitimately need host access - but it is not "
+                "covered by AIPerf's pod hardening."
+            )
+    return warnings
+
+
+def risky_security_context_details(ctx: dict[str, Any]) -> list[str]:
+    """Describe securityContext entries that widen AIPerf's hardened baseline.
+
+    Covers the constructs that are deliberately *not* rejected: a benchmark pod
+    legitimately needs ``SYS_ADMIN`` for perf/profiling tooling, an unconfined
+    seccomp profile for GPU and tracing workloads, and a writable root
+    filesystem for tools that insist on writing outside a mounted volume.
+
+    Args:
+        ctx: A user-supplied container or pod securityContext mapping.
+
+    Returns:
+        Short phrases naming each widening construct. Empty when there is none.
+    """
+    details: list[str] = []
+    offenders = privilege_escalating_keys(ctx)
+    if offenders:
+        details.append("sets " + ", ".join(f"{key}={ctx[key]!r}" for key in offenders))
+    capabilities = ctx.get("capabilities")
+    if isinstance(capabilities, dict):
+        added = capabilities.get("add") or []
+        if added:
+            details.append(f"adds Linux capabilities {sorted(map(str, added))}")
+        dropped = capabilities.get("drop")
+        if dropped is not None and "ALL" not in {str(item) for item in dropped}:
+            details.append(
+                f"narrows the dropped capability set to {sorted(map(str, dropped))} "
+                "instead of ALL"
+            )
+    if ctx.get("readOnlyRootFilesystem") is False:
+        details.append("disables readOnlyRootFilesystem")
+    seccomp = ctx.get("seccompProfile")
+    if isinstance(seccomp, dict):
+        profile_type = str(seccomp.get("type", ""))
+        if profile_type and profile_type != "RuntimeDefault":
+            details.append(f"sets seccompProfile.type={profile_type!r}")
+    return details
+
+
+def risky_security_context_warnings(ctx: dict[str, Any], field_path: str) -> list[str]:
+    """Build the operator-facing warning for a widening securityContext override.
+
+    Args:
+        ctx: A user-supplied container or pod securityContext mapping.
+        field_path: Dotted config path used to prefix the message.
+
+    Returns:
+        A single-element list when ``ctx`` widens the baseline, else empty.
+    """
+    details = risky_security_context_details(ctx)
+    if not details:
+        return []
+    return [
+        f"{field_path}: {'; '.join(details)}. This is allowed - profiling, GPU, "
+        "and tracing workloads legitimately need it - but it widens the hardened "
+        "container securityContext AIPerf applies to every benchmark container."
+    ]
+
+
+def risky_init_container_warnings(
+    init_containers: list[dict[str, Any]],
+    field_path: str = "podTemplate.initContainers",
+) -> list[str]:
+    """Describe init containers that opt out of the hardened container baseline.
+
+    Args:
+        init_containers: InitContainers in K8s Container format.
+        field_path: Dotted config path used to prefix each message.
+
+    Returns:
+        One human-readable warning per risky init container.
+    """
+    warnings: list[str] = []
+    for index, container in enumerate(init_containers):
+        if not isinstance(container, dict):
+            continue
+        name = container.get("name", "<unnamed>")
+        ctx = container.get("securityContext")
+        if not isinstance(ctx, dict):
+            continue
+        details = risky_security_context_details(ctx) or [
+            "supplies its own securityContext, so AIPerf's hardened container "
+            "baseline is not applied to it"
+        ]
+        warnings.append(
+            f"{field_path}[{index}] ({name!r}): {'; '.join(details)}. This is "
+            "allowed - init containers exist for sysctl tweaks and permission "
+            "fixups - but the container runs outside AIPerf's hardened baseline."
+        )
+    return warnings
+
+
 def _reject_privilege_escalation(value: dict[str, Any], field_name: str) -> None:
     """Raise if a securityContext override would weaken the hardened baseline.
 
@@ -117,7 +306,10 @@ class PodTemplateConfig(BaseConfig):
     )
     volumes: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Pod volumes in K8s Volume format",
+        description="Pod volumes in K8s Volume format. Host-backed sources "
+        "(hostPath, nfs, iscsi, ...) are permitted because GPU benchmarking needs "
+        "them, but they are logged as warnings at validation time because they "
+        "grant access outside AIPerf's pod hardening.",
     )
     volume_mounts: list[dict[str, Any]] = Field(
         default_factory=list,
@@ -155,13 +347,22 @@ class PodTemplateConfig(BaseConfig):
     )
     service_account_name: str | None = Field(
         default=None,
-        description="Service account name for pods",
+        description="Service account name for pods. The named ServiceAccount must "
+        "exist in the benchmark namespace (preflight fails otherwise), and its "
+        "token is projected into every container of every benchmark pod, so any "
+        "RBAC bound to it is reachable from benchmark code. Prefer a dedicated, "
+        "least-privilege ServiceAccount over a shared or default one. See "
+        "docs/kubernetes/rbac-security.md.",
     )
     container_security_context: dict[str, Any] = Field(
         default_factory=dict,
         description="Container securityContext overrides (merged into each container "
         "spec). Privilege-escalating values are rejected: privileged=true, "
-        "allowPrivilegeEscalation=true, runAsNonRoot=false, runAsUser=0, runAsGroup=0.",
+        "allowPrivilegeEscalation=true, runAsNonRoot=false, runAsUser=0, runAsGroup=0. "
+        "Baseline-widening values are permitted but logged as warnings, because "
+        "profiling, GPU, and tracing workloads need them: capabilities.add, a "
+        "capabilities.drop that is not ALL, readOnlyRootFilesystem=false, and a "
+        "seccompProfile.type other than RuntimeDefault.",
     )
     share_process_namespace: bool = Field(
         default=False,
@@ -220,13 +421,19 @@ class PodTemplateConfig(BaseConfig):
         description="Pod-level securityContext (PodSecurityContext format: fsGroup, "
         "runAsUser, runAsNonRoot, supplementalGroups, sysctls, etc.). Distinct from "
         "container_security_context which applies per-container. Privilege-escalating "
-        "values are rejected: runAsNonRoot=false, runAsUser=0, runAsGroup=0.",
+        "values are rejected: runAsNonRoot=false, runAsUser=0, runAsGroup=0. "
+        "Baseline-widening values (seccompProfile.type other than RuntimeDefault, "
+        "etc.) are permitted but logged as warnings.",
     )
     init_containers: list[dict[str, Any]] = Field(
         default_factory=list,
         description="InitContainers that run to completion before the main containers "
         "start. Full K8s Container format. Useful for sysctl tweaks (e.g. bumping "
-        "ip_local_port_range), model pre-fetch, or permission fixups.",
+        "ip_local_port_range), model pre-fetch, or permission fixups. An init "
+        "container that does not declare its own securityContext receives AIPerf's "
+        "hardened container baseline (minus readOnlyRootFilesystem); one that does "
+        "declare a securityContext is passed through verbatim so privileged setup "
+        "work stays possible, and is logged as a warning at validation time.",
     )
     extra_pod_spec: dict[str, Any] = Field(
         default_factory=dict,
@@ -255,13 +462,38 @@ class PodTemplateConfig(BaseConfig):
             )
         return value
 
+    @field_validator("volumes")
+    @classmethod
+    def _warn_on_risky_volumes(
+        cls, value: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Log (never reject) volumes that reach outside the pod sandbox."""
+        for warning in risky_volume_warnings(value):
+            _logger.warning(warning)
+        return value
+
+    @field_validator("init_containers")
+    @classmethod
+    def _warn_on_risky_init_containers(
+        cls, value: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Log (never reject) init containers that bypass the hardened baseline."""
+        for warning in risky_init_container_warnings(value):
+            _logger.warning(warning)
+        return value
+
     @field_validator("pod_security_context", "container_security_context")
     @classmethod
     def _reject_weakened_security_context(
         cls, value: dict[str, Any], info: ValidationInfo
     ) -> dict[str, Any]:
-        """Reject securityContext overrides that escalate privileges."""
-        _reject_privilege_escalation(value, info.field_name or "securityContext")
+        """Reject privilege escalation; warn on other baseline-widening keys."""
+        field_name = info.field_name or "securityContext"
+        _reject_privilege_escalation(value, field_name)
+        for warning in risky_security_context_warnings(
+            value, f"podTemplate.{to_camel(field_name)}"
+        ):
+            _logger.warning(warning)
         return value
 
 

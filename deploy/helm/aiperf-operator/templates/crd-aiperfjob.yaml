@@ -868,7 +868,9 @@ spec:
                       x-kubernetes-preserve-unknown-fields: true
                   volumes:
                     type: array
-                    description: Pod volumes in K8s Volume format
+                    description: Pod volumes in K8s Volume format. Host-backed sources (hostPath, nfs, iscsi, ...) are permitted
+                      because GPU benchmarking needs them, but they are logged as warnings at validation time because they
+                      grant access outside AIPerf's pod hardening.
                     items:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
@@ -913,12 +915,17 @@ spec:
                       x-kubernetes-preserve-unknown-fields: true
                   serviceAccountName:
                     type: string
-                    description: Service account name for pods
+                    description: Service account name for pods. The named ServiceAccount must exist in the benchmark namespace
+                      (preflight fails otherwise), and its token is projected into every container of every benchmark pod,
+                      so any RBAC bound to it is reachable from benchmark code. Prefer a dedicated, least-privilege ServiceAccount
+                      over a shared or default one. See docs/kubernetes/rbac-security.md.
                   containerSecurityContext:
                     type: object
                     description: 'Container securityContext overrides (merged into each container spec). Privilege-escalating
                       values are rejected: privileged=true, allowPrivilegeEscalation=true, runAsNonRoot=false, runAsUser=0,
-                      runAsGroup=0.'
+                      runAsGroup=0. Baseline-widening values are permitted but logged as warnings, because profiling, GPU,
+                      and tracing workloads need them: capabilities.add, a capabilities.drop that is not ALL, readOnlyRootFilesystem=false,
+                      and a seccompProfile.type other than RuntimeDefault.'
                     x-kubernetes-preserve-unknown-fields: true
                   shareProcessNamespace:
                     type: boolean
@@ -973,13 +980,16 @@ spec:
                     type: object
                     description: 'Pod-level securityContext (PodSecurityContext format: fsGroup, runAsUser, runAsNonRoot,
                       supplementalGroups, sysctls, etc.). Distinct from container_security_context which applies per-container.
-                      Privilege-escalating values are rejected: runAsNonRoot=false, runAsUser=0, runAsGroup=0.'
+                      Privilege-escalating values are rejected: runAsNonRoot=false, runAsUser=0, runAsGroup=0. Baseline-widening
+                      values (seccompProfile.type other than RuntimeDefault, etc.) are permitted but logged as warnings.'
                     x-kubernetes-preserve-unknown-fields: true
                   initContainers:
                     type: array
                     description: InitContainers that run to completion before the main containers start. Full K8s Container
                       format. Useful for sysctl tweaks (e.g. bumping ip_local_port_range), model pre-fetch, or permission
-                      fixups.
+                      fixups. An init container that does not declare its own securityContext receives AIPerf's hardened container
+                      baseline (minus readOnlyRootFilesystem); one that does declare a securityContext is passed through verbatim
+                      so privileged setup work stays possible, and is logged as a warning at validation time.
                     items:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true

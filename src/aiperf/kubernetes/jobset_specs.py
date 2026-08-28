@@ -15,6 +15,7 @@ from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.deployment import DENIED_EXTRA_POD_SPEC_KEYS, PodTemplateConfig
 from aiperf.kubernetes.constants import AIPerfLabels
 from aiperf.kubernetes.enums import ImagePullPolicy, RestartPolicy
+from aiperf.kubernetes.jobset_helpers import build_security_context
 
 
 class AIPerfContainerSpec(AIPerfBaseModel):
@@ -66,8 +67,11 @@ class AIPerfContainerSpec(AIPerfBaseModel):
         )
 
 
-# Pod-level security context applied to every replicated job.
-_POD_SECURITY_CONTEXT: dict[str, Any] = {
+# Pod-level security context applied to every replicated job. Public because the
+# AIPerfSweep controller-pod builder (operator/handlers/sweep/create.py) renders
+# its own pod spec and must apply the identical baseline -- the whole class of
+# bug behind the sweep path was it silently diverging from the JobSet path.
+POD_SECURITY_CONTEXT: dict[str, Any] = {
     "runAsNonRoot": True,
     "runAsUser": 1000,
     "runAsGroup": 1000,
@@ -89,8 +93,48 @@ _POD_TEMPLATE_PASSTHROUGH: tuple[tuple[str, str], ...] = (
     ("host_aliases", "hostAliases"),
     ("dns_policy", "dnsPolicy"),
     ("dns_config", "dnsConfig"),
-    ("init_containers", "initContainers"),
 )
+
+
+def merge_pod_security_context(user: dict[str, Any] | None) -> dict[str, Any]:
+    """Merge a user pod-level securityContext over the hardened baseline.
+
+    User keys win per key -- the baseline is a default, not a lock -- and the
+    baseline dict itself is never mutated. Shared with the AIPerfSweep
+    controller-pod builder so both renderers apply one rule.
+
+    Args:
+        user: A user-supplied PodSecurityContext mapping, or None/empty.
+
+    Returns:
+        A new mapping combining the baseline with the user's overrides.
+    """
+    return {**POD_SECURITY_CONTEXT, **(user or {})}
+
+
+def _build_init_containers(tmpl: PodTemplateConfig) -> list[dict[str, Any]]:
+    """Render user init containers with the hardened baseline as a default.
+
+    An init container that declares its own ``securityContext`` is passed through
+    untouched: privileged sysctl tweaks and root permission fixups are legitimate
+    init-container work for a benchmarking tool, and per-key merging would produce
+    API-rejected combinations such as ``privileged: true`` with
+    ``allowPrivilegeEscalation: false``. ``readOnlyRootFilesystem`` is dropped from
+    the default because init containers do not get AIPerf's writable emptyDir
+    layout and commonly write to the image filesystem.
+    """
+    baseline = {
+        key: value
+        for key, value in build_security_context(tmpl).items()
+        if key != "readOnlyRootFilesystem"
+    }
+    rendered: list[dict[str, Any]] = []
+    for container in tmpl.init_containers:
+        if not isinstance(container, dict) or "securityContext" in container:
+            rendered.append(container)
+            continue
+        rendered.append({**container, "securityContext": baseline})
+    return rendered
 
 
 class AIPerfReplicatedJobSpec(AIPerfBaseModel):
@@ -127,7 +171,7 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
             "restartPolicy": str(self.restart_policy),
             "containers": [c.to_k8s_spec() for c in self.containers],
             "volumes": self.volumes,
-            "securityContext": _POD_SECURITY_CONTEXT,
+            "securityContext": merge_pod_security_context(None),
         }
         tmpl = self.pod_template
         if tmpl is None:
@@ -136,6 +180,8 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
             value = getattr(tmpl, attr)
             if value:
                 pod_spec[key] = value
+        if tmpl.init_containers:
+            pod_spec["initContainers"] = _build_init_containers(tmpl)
         if tmpl.image_pull_secrets:
             pod_spec["imagePullSecrets"] = list(tmpl.image_pull_secrets)
         if tmpl.share_process_namespace:
@@ -147,10 +193,9 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
         if tmpl.pod_security_context:
             # Pod-level securityContext; container-level is merged in per-container
             # via build_security_context().
-            pod_spec["securityContext"] = {
-                **_POD_SECURITY_CONTEXT,
-                **tmpl.pod_security_context,
-            }
+            pod_spec["securityContext"] = merge_pod_security_context(
+                tmpl.pod_security_context
+            )
         if tmpl.extra_pod_spec:
             # Defense in depth: PodTemplateConfig already rejects these keys at
             # validation time, but a raw update() here would silently defeat the

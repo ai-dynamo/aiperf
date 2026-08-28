@@ -88,13 +88,14 @@ speculatively.
 | `kueue.x-k8s.io` | `localqueues` | `get, list` | Preflight verifies `scheduling.queueName` resolves to an existing LocalQueue and probes whether Kueue is installed at all | `clusterrole.yaml:38-40` |
 | `batch` | `jobs` | `get, list, watch` | Monitor the Jobs that JobSet creates under the hood | `clusterrole.yaml:43-45` |
 | `apps` | `deployments` | `get, list, watch` | Preflight checks for the JobSet controller and other operators | `clusterrole.yaml:48-50` |
-| `""` (core) | `serviceaccounts` | `get, list, watch, create` | Preflight verifies custom SA; sweep handler creates a per-sweep SA | `clusterrole.yaml:58-60` |
-| `""` (core) | `resourcequotas`, `secrets` | `get, list, watch` | Preflight inspects ResourceQuota headroom and referenced imagePullSecrets / env secrets | `clusterrole.yaml:61-63` |
-| `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml:66-68` |
-| `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Store benchmark configuration ConfigMap consumed by every benchmark pod | `clusterrole.yaml:71-73` |
-| `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:76-78` |
-| `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml:81-83` |
-| `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml:86-88` |
+| `""` (core) | `serviceaccounts` | `get, list, watch, create` | Preflight verifies custom SA; sweep handler creates a per-sweep SA | `clusterrole.yaml:64-66` |
+| `""` (core) | `resourcequotas` | `get, list` | Preflight enumerates ResourceQuota headroom (`list_namespaced_resource_quota`) | `clusterrole.yaml:67-69` |
+| `""` (core) | `secrets` | `get` | Preflight reads named imagePullSecrets / env secrets by name (`read_namespaced_secret`); never enumerates | `clusterrole.yaml:70-72` |
+| `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml:75-77` |
+| `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Store benchmark configuration ConfigMap consumed by every benchmark pod | `clusterrole.yaml:80-82` |
+| `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:85-87` |
+| `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml:90-92` |
+| `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml:95-97` |
 | `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs`. Deliberately no `patch` — see the comment above the rule, and the `test_clusterrole_pods_restart_event_path_is_read_only` guard it names | `clusterrole.yaml:109-111` |
 | `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:114-116` |
 | `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events for AIPerfJob diagnostics | `clusterrole.yaml:119-121` |
@@ -429,7 +430,33 @@ Privilege-escalating values cannot be merged in at all. `privileged: true`,
 `allowPrivilegeEscalation: true`, `runAsNonRoot: false`, `runAsUser: 0`, and
 `runAsGroup: 0` are rejected by `PodTemplateConfig` validation and dropped
 again by the builder as defense in depth -- see
-`privilege_escalating_keys()` in `src/aiperf/config/deployment.py:38-70`.
+`privilege_escalating_keys()` in `src/aiperf/config/deployment.py`.
+
+Other keys **widen** the baseline rather than escalating privilege, and those
+are permitted and warned about rather than rejected -- a benchmark pod
+legitimately needs `SYS_ADMIN` for perf/profiling tooling, and
+`seccompProfile: Unconfined` is a normal requirement for GPU and tracing
+workloads. `risky_security_context_details()` in
+`src/aiperf/config/deployment.py` flags:
+
+| Construct | Effect on the baseline |
+|---|---|
+| `capabilities.add: [...]` | merged over `drop: ["ALL"]`, granting the listed capabilities |
+| `capabilities.drop` without `ALL` | narrows the dropped set |
+| `readOnlyRootFilesystem: false` | container root filesystem becomes writable |
+| `seccompProfile.type` != `RuntimeDefault` | e.g. `Unconfined` removes syscall filtering |
+
+The warning fires twice over a job's life, deliberately: once at CR validation
+(`PodTemplateConfig._reject_weakened_security_context`) and once on the merge
+path in `build_security_context()`, which is also reachable from templates
+constructed directly in code that never pass through Pydantic validation. The
+merge-path warning is deduplicated per distinct message, because
+`build_security_context()` runs once per container.
+
+Note that `capabilities` is intentionally exempt from the escalating-key filter
+in `build_security_context()` -- it is merged shallowly so `add` lists survive.
+Bound it at admission (step 12 of the least-privilege recipe) if your cluster
+must forbid it.
 
 ```yaml
 apiVersion: aiperf.nvidia.com/v1alpha1
@@ -476,6 +503,57 @@ plus writable `/tmp`, which is all it needs.)
 If you supply an alternate `podTemplate.volumeMounts`, ensure each of these
 paths is covered by a writable volume. Otherwise the controller will fail
 to bind IPC sockets on startup and pods will CrashLoopBackOff.
+
+## Unhardened passthroughs: `volumes` and `initContainers`
+
+AIPerf is a benchmarking tool first. `podTemplate.volumes` and
+`podTemplate.initContainers` are deliberately free-form passthroughs: GPU
+benchmarking legitimately needs `hostPath` mounts (device nodes, driver
+directories, local NVMe scratch), and init containers exist for sysctl tweaks
+(e.g. raising `ip_local_port_range`), model pre-fetch, and permission fixups.
+Neither field is restricted, and no construct is rejected.
+
+What AIPerf does instead is **validate and warn**, plus apply a safe default
+where one cannot break a workload:
+
+**Volumes.** `PodTemplateConfig` logs one WARNING per volume whose source
+reaches outside the pod sandbox (`hostPath`, `nfs`, `iscsi`, `cephfs`,
+`glusterfs`, `rbd`, `flexVolume` — see `RISKY_VOLUME_SOURCE_KEYS` in
+`src/aiperf/config/deployment.py`). The message names the field path, the volume
+name, and for `hostPath` the exact node path. A `hostPath` at the node root or
+under a credential/runtime directory (`/etc`, `/root`, `/var/run`, `/run`,
+`/var/lib/kubelet`, `/var/lib/docker`, `/var/lib/containerd`, `/proc`, `/boot`,
+`/home`) is additionally called out as exposing node credentials, the container
+runtime, or kubelet state. The volume is still rendered into the PodSpec.
+
+```
+podTemplate.volumes[0] ('node-root'): hostPath volume mounting node path '/'
+which exposes node credentials, the container runtime, or kubelet state to the
+benchmark pod. This is allowed - AIPerf benchmarks legitimately need host
+access - but it is not covered by AIPerf's pod hardening.
+```
+
+**Init containers.** An init container that declares **no** `securityContext`
+receives AIPerf's hardened container baseline as a default — the same context
+`build_security_context()` produces for regular containers, minus
+`readOnlyRootFilesystem` (init containers do not get AIPerf's writable emptyDir
+mount layout, and commonly write to the image filesystem). An init container
+that **does** declare a `securityContext` is passed through verbatim so
+privileged setup work stays possible; it is not merged key-by-key, because
+merging the baseline's `allowPrivilegeEscalation: false` under a user's
+`privileged: true` produces a combination the Kubernetes API rejects outright.
+Such a container is logged as a WARNING naming the escalating keys and any added
+capabilities. See `_build_init_containers()` in
+`src/aiperf/kubernetes/jobset_specs.py`.
+
+Note that the pod-level `securityContext` (`runAsNonRoot: true`,
+`runAsUser: 1000`, `seccompProfile: RuntimeDefault`) applies to init containers
+too unless they override it, so even a passthrough init container is non-root
+by default.
+
+If your cluster must forbid these constructs, enforce them at admission
+(PodSecurity `restricted`, or a Gatekeeper/Kyverno policy on `hostPath`) rather
+than expecting AIPerf to refuse the spec.
 
 ## NetworkPolicy expectations
 
@@ -671,7 +749,8 @@ A hardened rollout checklist:
 
 With this profile, a compromised benchmark pod cannot escape its namespace,
 cannot read cluster-wide resources, cannot read Secrets, cannot write outside
-its emptyDir volumes, cannot escalate privilege or run as root, cannot create,
+its emptyDir volumes (unless the CR author added a writable `hostPath` or other
+host-backed volume — see "Unhardened passthroughs" above), cannot escalate privilege or run as root, cannot create,
 replace, or delete any Kubernetes object, and can only reach the LLM endpoint and
 its own peers. Two capabilities remain inside the namespace: it can read the
 metadata of every pod, ConfigMap, Service, Endpoint, Event, and Job there, and it
