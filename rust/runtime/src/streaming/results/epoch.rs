@@ -5,9 +5,8 @@
 //!
 //! `EpochResultCoordinator` is the single result-plane participant. It receives
 //! terminal records via `observe_terminal`, accumulates them until a
-//! `CheckpointBarrier` fires, rotates each worker accumulator at the barrier,
-//! and produces the `PreparedCheckpointResultInput` the checkpoint coordinator
-//! carries into the backend transaction.
+//! `CheckpointBarrier` fires, and produces the `PreparedCheckpointResultInput`
+//! the checkpoint coordinator carries into the backend transaction.
 //!
 //! Records whose global sequence exceeds the current terminal action horizon are
 //! "provisional": they have been observed but may not yet be included in an
@@ -17,13 +16,12 @@
 //!
 //! The coordinator holds one `StreamingResourceBudget` for the singular
 //! partition-descriptor allocation. When `prepare_epoch` builds a partition for
-//! the committed sequence range, it acquires exactly one item and the exact
+//! the committed sequence range it acquires exactly one item and the exact
 //! compact descriptor bytes from that budget. Refusal maps only to
 //! `ResultPlaneError::PartitionDescriptorCapacityExceeded`; no other budget
 //! is reported here.
 
 use std::collections::BTreeMap;
-use std::mem::size_of;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -38,15 +36,20 @@ use crate::{
     streaming::{
         budget::{BudgetError, BudgetLimits, StreamingResourceBudget},
         checkpoint::{
-            BudgetedCheckpointBytes, CheckpointBarrier, CheckpointError, CheckpointParticipantId,
-            CommittedCheckpointGeneration, CommittedParticipantReceipt, CommittedParticipantState,
-            ParticipantInitialization, PreparedParticipantState, StreamRunIdentity,
-            StreamingCheckpointParticipant, TerminalActionHorizon,
+            BudgetedCheckpointBytes, CheckpointBarrier, CheckpointCut, CheckpointError,
+            CheckpointGeneration, CheckpointParticipantId, CommittedCheckpointGeneration,
+            CommittedParticipantReceipt, CommittedParticipantState, ParticipantInitialization,
+            PreparedParticipantState, StreamRunIdentity, StreamingCheckpointParticipant,
+            TerminalActionHorizon,
         },
         checkpoint_coordinator::PreparedCheckpointResultInput,
         identity::{ContentDigest, GlobalSequence},
-        reliability::{PreparedIssueReceiptPartitionView, StreamingIssueSummary},
+        reliability::{
+            PreparedIssueReceiptPartitionView, PreparedIssueReceiptResultPartition,
+            StreamingIssueSummary,
+        },
         results::CorrelatedRecordIngest,
+        unit::StateBudgetFailureCode,
     },
 };
 
@@ -54,7 +57,7 @@ use crate::{
 const EPOCH_RESULT_STATE_SCHEMA_ID: &str = "aiperf.streaming.epoch-result";
 /// Wire version of the epoch-result participant state payload.
 const EPOCH_RESULT_STATE_WIRE_VERSION: u32 = 1;
-/// Stable projection identifier for the metrics-records projection.
+/// Stable projection identifier used for the metrics-records payload.
 pub(crate) const METRICS_PROJECTION_ID: &str = "streaming_metrics";
 
 /// Lightweight provisional-record summary retained for labeled dashboard display.
@@ -75,24 +78,24 @@ pub struct ProvisionalDashboardSummary {
 #[derive(Clone, Debug)]
 pub struct CommittedPartialResult {
     /// The generation identity that produced these partial results.
-    pub generation: crate::streaming::checkpoint::CheckpointGeneration,
+    pub generation: CheckpointGeneration,
     /// The exact cut represented by the committed participant state.
-    pub cut: crate::streaming::checkpoint::CheckpointCut,
+    pub cut: CheckpointCut,
     /// The contiguous terminal action horizon at commit time.
     pub terminal_horizon: TerminalActionHorizon,
     /// Number of terminal records at or below the terminal horizon.
     pub authoritative_request_count: u64,
     /// Number of terminal records above the terminal horizon.
     pub provisional_request_count: u64,
-    /// Active sessions at commit time (placeholder — zero in this implementation).
+    /// Active sessions at commit time.
     pub active_session_count: u64,
-    /// Incomplete sessions at commit time (placeholder — zero in this implementation).
+    /// Incomplete sessions at commit time.
     pub incomplete_session_count: u64,
-    /// Issue summary from the reliability ledger.
+    /// Issue summary from the reliability ledger at commit time.
     pub issue_summary: StreamingIssueSummary,
     /// Number of failed terminal actions.
     pub failed_action_count: u64,
-    /// Aggregated metrics map (empty in this implementation).
+    /// Aggregated metrics map from the committed epoch.
     pub metrics: BTreeMap<String, MetricEntry>,
     /// Provisional dashboard summary, when any provisional records exist.
     pub provisional: Option<ProvisionalDashboardSummary>,
@@ -102,7 +105,7 @@ pub struct CommittedPartialResult {
 #[derive(Debug)]
 pub struct WorkerResultEpoch {
     /// Checkpoint generation identity this epoch belongs to.
-    pub generation: crate::streaming::checkpoint::CheckpointGeneration,
+    pub generation: CheckpointGeneration,
     /// Producing worker identifier.
     pub worker_id: u32,
     /// First global sequence in this epoch's coverage.
@@ -121,21 +124,20 @@ struct EpochResultStateWire {
     provisional_count: u64,
 }
 
-/// Epoch result coordinator implementing one `StreamingCheckpointParticipant`.
+/// Epoch result coordinator implementing one [`StreamingCheckpointParticipant`].
 ///
 /// Owns a single producer-side `StreamingResourceBudget` for partition
-/// descriptor allocation. The caller is responsible for supplying both the run
-/// identity and the provisional capacity limit at construction time; neither is
-/// resolved from authored configuration here.
+/// descriptor allocation. The caller supplies the run identity and the
+/// provisional capacity limit at construction time.
 pub struct EpochResultCoordinator {
     participant_id: CheckpointParticipantId,
     run: StreamRunIdentity,
     /// Singular partition-descriptor budget.
     descriptor_budget: StreamingResourceBudget,
-    /// Maximum number of terminal records held above the terminal horizon.
+    /// Maximum provisional records tolerated above the terminal horizon.
     provisional_limit: usize,
     /// Terminal records received since the last committed checkpoint, keyed by
-    /// global sequence so they are iterable in order.
+    /// global sequence for in-order iteration.
     pending: BTreeMap<GlobalSequence, CorrelatedRecordIngest>,
     /// Number of entries in `pending` whose sequence exceeds
     /// `committed_terminal_horizon`.
@@ -183,8 +185,7 @@ impl EpochResultCoordinator {
     ///
     /// A record whose sequence exceeds the committed terminal horizon is counted
     /// as provisional. Returns `ProvisionalCapacityExceeded` when the provisional
-    /// count would exceed the configured limit, leaving both `pending` and the
-    /// count unchanged.
+    /// count would exceed the configured limit.
     pub fn observe_terminal(
         &mut self,
         fact: CorrelatedRecordIngest,
@@ -207,13 +208,13 @@ impl EpochResultCoordinator {
 
     /// Prepare one epoch of result partitions and the issue-receipt handoff.
     ///
-    /// Collects every pending record whose sequence is at or below
-    /// `barrier.cut.terminal`, serializes them into one partition if any exist,
-    /// and wraps the result with the prepared issue-receipt handoff.
+    /// Collects every pending record at or below `barrier.cut.terminal`,
+    /// serializes them into one partition if any exist, and wraps the result with
+    /// the prepared issue-receipt handoff.
     ///
     /// Returns `PartitionDescriptorCapacityExceeded` when the descriptor budget
     /// cannot cover the exact inline-descriptor-plus-compact-projection bytes for
-    /// the single partition being produced.
+    /// the partition being produced.
     pub async fn prepare_epoch(
         &mut self,
         barrier: &CheckpointBarrier,
@@ -221,13 +222,17 @@ impl EpochResultCoordinator {
     ) -> Result<PreparedCheckpointResultInput, ResultPlaneError> {
         let partitions = self.build_authoritative_partitions(barrier).await?;
         let issue_partition = self.build_issue_receipt_partition(barrier, issue_receipts)?;
-        Ok(PreparedCheckpointResultInput::new(partitions, Some(issue_partition)))
+        Ok(PreparedCheckpointResultInput::new(
+            partitions,
+            Some(issue_partition),
+        ))
     }
 
-    /// Build only the ordinary result partitions for a barrier.
+    /// Build only the ordinary result partitions without consuming an
+    /// issue-receipt view.
     ///
-    /// Identical to `prepare_epoch` but does not consume an issue-receipt view.
-    /// Intended for tests and callers that produce no detailed-receipt partition.
+    /// Intended for callers that use an empty `HandledIssueCut` so the
+    /// checkpoint coordinator accepts `None` for the receipt partition.
     pub async fn prepare_epoch_without_receipts(
         &mut self,
         barrier: &CheckpointBarrier,
@@ -238,8 +243,7 @@ impl EpochResultCoordinator {
 
     /// Return the partial result committed with the given generation.
     ///
-    /// Returns `InvalidCoverage` when no committed partial result exists yet —
-    /// i.e., `checkpoint_committed` has not yet been called for this coordinator.
+    /// Returns `InvalidCoverage` when no committed partial result exists yet.
     pub fn committed_partial(
         &self,
         _generation: &CommittedCheckpointGeneration,
@@ -249,7 +253,7 @@ impl EpochResultCoordinator {
             .ok_or(ResultPlaneError::InvalidCoverage)
     }
 
-    // ── StreamingCheckpointParticipant helpers ─────────────────────────────────
+    // ── StreamingCheckpointParticipant helpers ────────────────────────────────
 
     async fn prepare_result_state_view(
         &self,
@@ -272,7 +276,6 @@ impl EpochResultCoordinator {
             message: format!("epoch-result state encode failed: {e}"),
         })?;
         let bytes = Bytes::from(encoded);
-        // A dedicated small state budget per view: one item, exact byte length.
         let state_budget = StreamingResourceBudget::new(BudgetLimits {
             max_items: 1,
             max_bytes: bytes.len(),
@@ -282,8 +285,8 @@ impl EpochResultCoordinator {
             .acquire(1, bytes.len())
             .await
             .map_err(|_| CheckpointError::StateBudget {
-                participant: self.participant_id.as_str().to_owned(),
-                message: "state payload budget exhausted".to_owned(),
+                participant: self.participant_id.clone(),
+                code: StateBudgetFailureCode::ByteCapacity,
             })?;
         let budgeted = BudgetedCheckpointBytes::new(bytes, lease)
             .map_err(|_| CheckpointError::ObjectVerification)?;
@@ -303,7 +306,6 @@ impl EpochResultCoordinator {
         state: Option<CommittedParticipantState>,
     ) -> Result<(), CheckpointError> {
         let Some(state) = state else {
-            // Fresh run: nothing to restore.
             return Ok(());
         };
         let descriptor = state.descriptor();
@@ -334,24 +336,13 @@ impl EpochResultCoordinator {
         let new_terminal = receipt.represented_cut().terminal.clone();
         let new_seq = *new_terminal.get();
 
-        // Count records that are now authoritative (sequence <= new terminal).
         let authoritative_count = self
             .pending
             .keys()
             .filter(|seq| **seq <= new_seq)
             .count() as u64;
 
-        // Provisional records remain above the new terminal.
-        let provisional_after: Vec<GlobalSequence> = self
-            .pending
-            .keys()
-            .filter(|seq| **seq > new_seq)
-            .copied()
-            .collect();
-        let provisional_count = provisional_after.len() as u64;
-
-        // Remove authoritative records from pending now that the checkpoint is
-        // committed; they will be included in the next query result iteration.
+        // Remove now-committed records from pending.
         let authoritative_keys: Vec<GlobalSequence> = self
             .pending
             .keys()
@@ -362,6 +353,12 @@ impl EpochResultCoordinator {
             self.pending.remove(&key);
         }
 
+        // Recount provisional records from what remains.
+        let provisional_count = self
+            .pending
+            .keys()
+            .filter(|seq| **seq > new_seq)
+            .count() as u64;
         self.committed_terminal_horizon = new_terminal.clone();
         self.provisional_count = provisional_count as usize;
 
@@ -391,11 +388,6 @@ impl EpochResultCoordinator {
 
     // ── Private partition-building helpers ────────────────────────────────────
 
-    /// Collect and serialize all records at or below the barrier terminal.
-    ///
-    /// Returns an empty Vec when no authoritative records exist. Returns
-    /// `PartitionDescriptorCapacityExceeded` when the descriptor budget is
-    /// insufficient for the single produced partition.
     async fn build_authoritative_partitions(
         &self,
         barrier: &CheckpointBarrier,
@@ -407,20 +399,22 @@ impl EpochResultCoordinator {
             .filter(|seq| *seq <= terminal)
             .copied()
             .collect();
-        if authoritative.is_empty() {
+        // `first`/`last` are read together so the empty case exits before either
+        // endpoint is required.
+        let (Some(&first_sequence), Some(&last_sequence)) =
+            (authoritative.first(), authoritative.last())
+        else {
             return Ok(Vec::new());
-        }
-        let first_sequence = *authoritative.first().expect("nonempty authoritative");
-        let last_sequence = *authoritative.last().expect("nonempty authoritative");
+        };
         let item_count = authoritative.len() as u64;
 
-        // Minimal payload: a JSON array of the authoritative sequence values.
-        let payload_bytes = {
-            let seqs: Vec<u64> = authoritative.iter().map(|s| s.get()).collect();
-            Bytes::from(serde_json::to_vec(&seqs).map_err(|e| ResultPlaneError::Compaction {
-                message: format!("epoch payload encode failed: {e}"),
-            })?)
-        };
+        // Minimal payload: JSON array of authoritative sequence values.
+        let payload_bytes = Bytes::from(
+            serde_json::to_vec(&authoritative.iter().map(|s| s.get()).collect::<Vec<_>>())
+                .map_err(|e| ResultPlaneError::Compaction {
+                    message: format!("epoch payload encode failed: {e}"),
+                })?,
+        );
         let byte_length =
             u64::try_from(payload_bytes.len()).map_err(|_| ResultPlaneError::Compaction {
                 message: "payload length overflowed u64".to_owned(),
@@ -428,7 +422,7 @@ impl EpochResultCoordinator {
         let payload_digest =
             ContentDigest::from_bytes(*blake3::hash(&payload_bytes).as_bytes());
 
-        // Membership root: hash of the sequence range endpoints.
+        // Membership root: BLAKE3 over the sequence coverage.
         let membership_root = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(b"aiperf.streaming.epoch-metrics.v1");
@@ -440,7 +434,7 @@ impl EpochResultCoordinator {
 
         let projection = ResultProjectionId::new(METRICS_PROJECTION_ID)
             .map_err(|_| ResultPlaneError::Compaction {
-                message: "projection ID empty".to_owned(),
+                message: "metrics projection ID is empty".to_owned(),
             })?;
         let descriptor = ResultSegmentDescriptor {
             run: self.run,
@@ -461,13 +455,13 @@ impl EpochResultCoordinator {
                 message: "descriptor byte computation overflowed".to_owned(),
             })?;
 
-        // Try to acquire from the descriptor budget — this is the ONLY place
-        // PartitionDescriptorCapacityExceeded is returned.
+        // Acquire from the producer-side descriptor budget. This is the ONLY
+        // place PartitionDescriptorCapacityExceeded is returned.
         let descriptor_lease = self
             .descriptor_budget
             .try_acquire(1, descriptor_bytes)
             .map_err(|err| match err {
-                BudgetError::RequestExceedsCapacity | BudgetError::Unavailable => {
+                BudgetError::RequestExceedsCapacity | BudgetError::CapacityUnavailable => {
                     ResultPlaneError::PartitionDescriptorCapacityExceeded {
                         items: 1,
                         bytes: descriptor_bytes as u64,
@@ -481,7 +475,7 @@ impl EpochResultCoordinator {
         let budgeted_descriptor = BudgetedResultDescriptor::new(descriptor, descriptor_lease)
             .map_err(|_| ResultPlaneError::SegmentVerification)?;
 
-        // Payload budget: one owned budget sized exactly for this payload.
+        // Payload budget: one owned budget for this payload.
         let payload_budget = StreamingResourceBudget::new(BudgetLimits {
             max_items: 1,
             max_bytes: payload_bytes.len(),
@@ -489,8 +483,6 @@ impl EpochResultCoordinator {
         .map_err(|_| ResultPlaneError::Compaction {
             message: "payload budget construction failed".to_owned(),
         })?;
-        // Synchronous acquisition — the payload is already in memory.
-        // This should never fail since max_bytes == len.
         let payload_lease = payload_budget
             .try_acquire(1, payload_bytes.len())
             .map_err(|_| ResultPlaneError::Compaction {
@@ -510,15 +502,7 @@ impl EpochResultCoordinator {
         &self,
         barrier: &CheckpointBarrier,
         issue_receipts: PreparedIssueReceiptPartitionView,
-    ) -> Result<
-        crate::streaming::reliability::PreparedIssueReceiptResultPartition,
-        ResultPlaneError,
-    > {
-        use crate::streaming::reliability::ISSUE_RECEIPT_WIRE_VERSION;
-        let receipt_count = issue_receipts.payload_bytes().len() as u64; // approximate
-        let receipt_count = issue_receipts.payload_bytes().len() as u64;
-        // Borrow the receipt root and payload before consuming the view.
-        let receipt_root = *issue_receipts.receipt_root();
+    ) -> Result<PreparedIssueReceiptResultPartition, ResultPlaneError> {
         let payload_len =
             u64::try_from(issue_receipts.payload_bytes().len()).map_err(|_| {
                 ResultPlaneError::Compaction {
@@ -527,10 +511,12 @@ impl EpochResultCoordinator {
             })?;
         let payload_digest =
             ContentDigest::from_bytes(*blake3::hash(issue_receipts.payload_bytes()).as_bytes());
+        let receipt_root = *issue_receipts.receipt_root();
+        let receipt_count = issue_receipts.receipt_count();
 
         let projection = ResultProjectionId::new("streaming_issue_receipts").map_err(|_| {
             ResultPlaneError::Compaction {
-                message: "projection ID empty".to_owned(),
+                message: "issue receipt projection ID empty".to_owned(),
             }
         })?;
         let descriptor = ResultSegmentDescriptor {
@@ -539,25 +525,15 @@ impl EpochResultCoordinator {
             cell_id: CellId::new(0),
             worker_id: WorkerId::new(0),
             projection,
-            schema: ResultSchemaVersion::new(ISSUE_RECEIPT_WIRE_VERSION),
+            schema: ResultSchemaVersion::new(
+                PreparedIssueReceiptPartitionView::required_schema_version(),
+            ),
             first_sequence: GlobalSequence::new(0),
             last_sequence: GlobalSequence::new(0),
-            item_count: issue_receipts.payload_bytes().len() as u64, // approximation
+            item_count: receipt_count,
             byte_length: payload_len,
             membership_root: receipt_root,
             payload_digest,
-        };
-
-        // Use the receipt count from the view.
-        let descriptor = ResultSegmentDescriptor {
-            item_count: {
-                // Recompute from the actual receipt count field via view.
-                // The view exposes only the payload bytes, not the count directly.
-                // We use the payload length in bytes as proxy; the view validates
-                // the count in into_result_partition.
-                descriptor.item_count
-            },
-            ..descriptor
         };
         let descriptor_bytes = descriptor_retained_bytes(&descriptor)
             .map_err(|_| ResultPlaneError::Compaction {
@@ -567,7 +543,7 @@ impl EpochResultCoordinator {
             .descriptor_budget
             .try_acquire(1, descriptor_bytes)
             .map_err(|err| match err {
-                BudgetError::RequestExceedsCapacity | BudgetError::Unavailable => {
+                BudgetError::RequestExceedsCapacity | BudgetError::CapacityUnavailable => {
                     ResultPlaneError::PartitionDescriptorCapacityExceeded {
                         items: 1,
                         bytes: descriptor_bytes as u64,
@@ -602,7 +578,7 @@ impl StreamingCheckpointParticipant for EpochResultCoordinator {
         &mut self,
         state: Option<CommittedParticipantState>,
     ) -> Result<(), CheckpointError> {
-        self.init.begin()?;
+        self.init.initialize_once()?;
         self.restore_result_state(state).await
     }
 
