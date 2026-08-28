@@ -3,7 +3,10 @@
 
 //! Content-neutral checkpoint result descriptors and budgeted read values.
 
+pub mod index;
+
 use std::{
+    fmt,
     mem::size_of,
     num::{NonZeroU64, NonZeroUsize},
 };
@@ -13,9 +16,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer as _, ser::Serializ
 use super::{
     budget::BudgetLease,
     checkpoint::{BudgetedCheckpointBytes, CheckpointEpoch, CheckpointError, StreamRunIdentity},
-    identity::{ContentDigest, GlobalSequence},
+    identity::{
+        ActionAttemptId, ContentDigest, GlobalSequence, SessionOwnershipEpoch, StableActionId,
+    },
     reliability::PreparedIssueReceiptEpochBinding,
+    unit::DatasetActionKind,
 };
+use crate::{engine::records::CapturedRecord, metrics_core::RecordIngest};
 
 /// Stable cell coordinate attached to one result segment.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -476,6 +483,338 @@ impl ResultIndexPage {
         (self.descriptors, self.next)
     }
 }
+
+/// Result-plane membership of one correlated terminal record.
+///
+/// Membership decides which projections may retain a record, not whether the
+/// record is truthful. A state-only terminal is a real, complete fact; it simply
+/// contributes no request metric.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResultMembership {
+    /// A materialized endpoint request with a terminal transport outcome.
+    Request,
+    /// A host-owned graph action that reached an endpoint.
+    EndpointGraphAction,
+    /// A session-state transition with no endpoint request of its own.
+    SessionStateOnly,
+    /// Per-attempt telemetry retained for provenance, never for request metrics.
+    AttemptTelemetry,
+}
+
+impl ResultMembership {
+    /// Classify a dataset action kind that reached an endpoint.
+    #[must_use]
+    pub const fn for_endpoint_action(kind: DatasetActionKind) -> Self {
+        match kind {
+            DatasetActionKind::Request => Self::Request,
+            DatasetActionKind::GraphNode => Self::EndpointGraphAction,
+            DatasetActionKind::SessionTerminal => Self::SessionStateOnly,
+        }
+    }
+
+    /// Whether this membership contributes to request-shaped metrics.
+    #[must_use]
+    pub const fn is_request_shaped(self) -> bool {
+        matches!(self, Self::Request | Self::EndpointGraphAction)
+    }
+
+    /// Stable lowercase tag used in diagnostics and canonical encodings.
+    #[must_use]
+    pub const fn tag(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::EndpointGraphAction => "endpoint_graph_action",
+            Self::SessionStateOnly => "session_state_only",
+            Self::AttemptTelemetry => "attempt_telemetry",
+        }
+    }
+}
+
+/// Stable identity joining one terminal record to its logical action.
+///
+/// `logical_action_id` is incarnation-free and therefore stable across restart;
+/// `attempt_id` is not, and never enters a membership key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingRecordCorrelation {
+    /// Semantic identity of the logical action this record completes.
+    pub logical_action_id: StableActionId,
+    /// Incarnation-local attempt that produced this record.
+    pub attempt_id: ActionAttemptId,
+    /// Dense host-assigned position in global replay order.
+    pub global_sequence: GlobalSequence,
+    /// Fencing epoch of the session route that owned the attempt.
+    pub ownership_epoch: SessionOwnershipEpoch,
+    /// Which projections may retain this record.
+    pub membership: ResultMembership,
+}
+
+/// One terminal record joined to its correlation and optional captured facts.
+///
+/// The captured terminal facts are optional because artifact retention is
+/// configured: a run with no per-record artifact keeps the correlation and the
+/// metric ingest and drops the capture.
+pub struct CorrelatedRecordIngest {
+    /// Stable logical identity of the completed action.
+    pub correlation: StreamingRecordCorrelation,
+    /// Native metric ingestion record.
+    pub record: RecordIngest,
+    /// Retained terminal capture, when artifacts require it.
+    pub captured: Option<CapturedRecord>,
+}
+
+impl CorrelatedRecordIngest {
+    /// Join a captured terminal record to its correlation.
+    #[must_use]
+    pub fn from_captured(
+        correlation: StreamingRecordCorrelation,
+        captured: CapturedRecord,
+    ) -> Self {
+        Self {
+            correlation,
+            record: captured.record_ingest().clone(),
+            captured: Some(captured),
+        }
+    }
+}
+
+/// Initial immutable result payload schema.
+pub const RESULT_SCHEMA_V1: ResultSchemaVersion = ResultSchemaVersion::new(1);
+
+/// Metrics retention selected for one checkpointed result plan.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MetricsCheckpointProjection {
+    /// Exact per-record retention as configured artifacts require.
+    #[default]
+    Exact,
+    /// Mergeable t-digest retention; percentiles and deviation are estimates.
+    Sketch,
+}
+
+impl MetricsCheckpointProjection {
+    /// Whether this projection retains a record of the given membership.
+    #[must_use]
+    pub const fn accepts(self, membership: ResultMembership) -> bool {
+        membership.is_request_shaped()
+    }
+}
+
+/// Exact per-record result projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExactRecordProjection {
+    /// Immutable payload schema version.
+    pub schema: ResultSchemaVersion,
+}
+
+impl Default for ExactRecordProjection {
+    fn default() -> Self {
+        Self {
+            schema: RESULT_SCHEMA_V1,
+        }
+    }
+}
+
+impl ExactRecordProjection {
+    /// Whether this projection retains a record of the given membership.
+    #[must_use]
+    pub const fn accepts(self, membership: ResultMembership) -> bool {
+        membership.is_request_shaped()
+    }
+}
+
+/// Verbatim request/response projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RawRecordProjection {
+    /// Immutable payload schema version.
+    pub schema: ResultSchemaVersion,
+    /// Semantic digest of the redaction policy applied before retention.
+    pub redaction_policy_digest: ContentDigest,
+}
+
+impl RawRecordProjection {
+    /// Whether this projection retains a record of the given membership.
+    ///
+    /// Raw wire exists only for a materialized request; a graph action that
+    /// reached an endpoint is retained through the exact-record projection.
+    #[must_use]
+    pub const fn accepts(&self, membership: ResultMembership) -> bool {
+        matches!(membership, ResultMembership::Request)
+    }
+}
+
+/// Session-scoped result projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionResultProjection {
+    /// Immutable payload schema version.
+    pub schema: ResultSchemaVersion,
+}
+
+impl Default for SessionResultProjection {
+    fn default() -> Self {
+        Self {
+            schema: RESULT_SCHEMA_V1,
+        }
+    }
+}
+
+impl SessionResultProjection {
+    /// Whether this projection retains a record of the given membership.
+    #[must_use]
+    pub const fn accepts(self, membership: ResultMembership) -> bool {
+        !matches!(membership, ResultMembership::AttemptTelemetry)
+    }
+}
+
+/// Provenance projection retained for every membership.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingProvenanceProjection {
+    /// Immutable payload schema version.
+    pub schema: ResultSchemaVersion,
+}
+
+impl Default for StreamingProvenanceProjection {
+    fn default() -> Self {
+        Self {
+            schema: RESULT_SCHEMA_V1,
+        }
+    }
+}
+
+impl StreamingProvenanceProjection {
+    /// Whether this projection retains a record of the given membership.
+    #[must_use]
+    pub const fn accepts(self, _membership: ResultMembership) -> bool {
+        true
+    }
+}
+
+/// Barrier cadence selected for one run's result plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckpointInterval {
+    /// Publish one generation per completed phase only.
+    PerPhase,
+    /// Publish after the stated number of terminal actions.
+    EveryActions {
+        /// Terminal actions between barriers.
+        actions: NonZeroU64,
+    },
+    /// Publish after the stated elapsed `Clock` duration.
+    EveryDuration {
+        /// Nanoseconds of clock-driven time between barriers.
+        nanos: NonZeroU64,
+    },
+}
+
+/// Durability required from the checkpoint backend by one result plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckpointDurability {
+    /// Results survive only while the producing process lives.
+    ProcessLocal,
+    /// Committed generations survive process replacement.
+    Restartable,
+}
+
+/// Complete result-plane plan frozen for one logical run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointResultPlan {
+    /// Metrics retention mode.
+    pub metrics: MetricsCheckpointProjection,
+    /// Exact per-record projection, when configured artifacts require one.
+    pub exact_records: Option<ExactRecordProjection>,
+    /// Verbatim projection, when configured artifacts require one.
+    pub raw_records: Option<RawRecordProjection>,
+    /// Session-scoped projection.
+    pub session_results: SessionResultProjection,
+    /// Provenance projection.
+    pub provenance: StreamingProvenanceProjection,
+    /// Barrier cadence.
+    pub interval: CheckpointInterval,
+    /// Required backend durability.
+    pub durability: CheckpointDurability,
+}
+
+impl CheckpointResultPlan {
+    /// Whether any configured projection retains this membership.
+    #[must_use]
+    pub fn retains(&self, membership: ResultMembership) -> bool {
+        self.metrics.accepts(membership)
+            || self
+                .exact_records
+                .is_some_and(|projection| projection.accepts(membership))
+            || self
+                .raw_records
+                .as_ref()
+                .is_some_and(|projection| projection.accepts(membership))
+            || self.session_results.accepts(membership)
+            || self.provenance.accepts(membership)
+    }
+}
+
+/// Result-plane membership, capacity, coverage, and verification failure.
+///
+/// Deliberately distinct from [`CheckpointError`]: the result plane and the
+/// checkpoint backend do not share a failure vocabulary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResultPlaneError {
+    /// One reachable membership was associated with conflicting content.
+    MembershipConflict {
+        /// Canonical membership root under contention.
+        membership_root: ContentDigest,
+    },
+    /// Provisional index capacity was exhausted.
+    ProvisionalCapacityExceeded {
+        /// Provisional items requested.
+        items: u64,
+        /// Provisional retained bytes requested.
+        bytes: u64,
+    },
+    /// Declared sequence coverage is empty, inverted, or overlapping.
+    InvalidCoverage,
+    /// A descriptor's declared membership root did not re-derive.
+    SegmentVerification,
+    /// Canonical index encoding or block assembly failed.
+    Compaction {
+        /// Stable, user-readable compaction context.
+        message: String,
+    },
+}
+
+impl ResultPlaneError {
+    /// Return the stable machine-readable error code.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::MembershipConflict { .. } => "membership_conflict",
+            Self::ProvisionalCapacityExceeded { .. } => "provisional_capacity_exceeded",
+            Self::InvalidCoverage => "invalid_coverage",
+            Self::SegmentVerification => "segment_verification",
+            Self::Compaction { .. } => "compaction",
+        }
+    }
+}
+
+impl fmt::Display for ResultPlaneError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MembershipConflict { membership_root } => write!(
+                formatter,
+                "{}: membership {:?} already holds different content",
+                self.code(),
+                membership_root
+            ),
+            Self::ProvisionalCapacityExceeded { items, bytes } => write!(
+                formatter,
+                "{}: {items} items and {bytes} bytes exceed provisional index capacity",
+                self.code()
+            ),
+            Self::InvalidCoverage | Self::SegmentVerification => {
+                write!(formatter, "{}", self.code())
+            }
+            Self::Compaction { message } => write!(formatter, "{}: {message}", self.code()),
+        }
+    }
+}
+
+impl std::error::Error for ResultPlaneError {}
 
 pub(crate) fn descriptor_retained_bytes(
     descriptor: &ResultSegmentDescriptor,
