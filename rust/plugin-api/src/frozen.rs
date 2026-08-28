@@ -9,6 +9,8 @@
 //! host then merges multiple per-package snapshots into a
 //! [`FrozenAIPerfRegistry`] through `freeze_universe` in `aiperf-plugin-host`.
 
+use std::collections::HashMap;
+
 use crate::descriptor::{PluginCategoryDescriptor, PluginPackageDescriptor};
 
 /// Immutable snapshot of all registrations produced by one plugin package.
