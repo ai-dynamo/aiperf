@@ -1,0 +1,79 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Local follow source whose sessions span a partition boundary, replayed by the
+# incremental `agent_graph` session program under a periodic `local` checkpoint.
+#
+# This is the restart row: partition A is published before the run starts and
+# partition B is published by atomic rename while the run is parked on the
+# source's inotify descriptor, so the resumed run must consume strictly more
+# than the committed prefix.
+#
+# Rendered tokens: $ARTIFACT_DIR, $SOURCE_ROOT, $CHECKPOINT_ROOT.
+schemaVersion: "2.0"
+benchmark:
+  model: openai/gpt-oss-120b
+  tokenizer: {name: cl100k_base}
+  transport:
+    type: dry_run
+    clock: sim
+    ttft_ms: 10
+    itl_ms: 2
+  endpoint:
+    type: chat
+    url: http://127.0.0.1:8000
+    streaming: true
+  dataset_streams:
+    items:
+      - id: replay
+        source:
+          id: local
+          config:
+            root: $SOURCE_ROOT
+            mode:
+              kind: follow
+              seal_marker: SEALED
+            suffix: .parquet
+            max_partition_bytes: 16777216
+            max_scan_entries: 256
+        format:
+          id: baseten_trace
+        session_program:
+          id: agent_graph
+        limits:
+          acquired_partitions: 4
+          decoded_fragments: 64
+          decoded_bytes: 1048576
+          state_memory: 1048576
+          state_disk: 0
+    reliability:
+      partition_retry_limit: 3
+      endpoint_retry_limit: 0
+      checkpoint_retry_limit: 3
+      export_retry_limit: 3
+      retry_backoff_ms: 10
+  shadow_replay:
+    stream: replay
+    actions:
+      request:
+        id: scheduled_request
+    time:
+      mode: relative
+    ordering:
+      watermark: source_order
+      late: drop
+    overload:
+      mode: backpressure
+    checkpoint:
+      mode: periodic
+      interval_seconds: 0.25
+      backend:
+        id: local
+        config:
+          root: $CHECKPOINT_ROOT
+  phases:
+    type: concurrency
+    requests: 8
+    concurrency: 2
+  artifacts:
+    dir: $ARTIFACT_DIR
