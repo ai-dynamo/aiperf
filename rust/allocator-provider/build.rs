@@ -134,6 +134,13 @@ fn export_linux(out_dir: &PathBuf) {
         "cargo:rustc-link-arg=-Wl,--version-script={}",
         script_path.display()
     );
+    // GNU ld (≥2.35) rejects two anonymous version-script blocks with
+    // "anonymous version tag cannot be combined with other version tags".
+    // Rust 1.76+ injects its own anonymous block; ours is a second.
+    // LLD (available on Linux ≥ Debian 11) merges anonymous blocks without
+    // error.  Force LLD so the version-script global: clause can override
+    // --exclude-libs=ALL on both old and new GNU toolchains.
+    println!("cargo:rustc-link-arg=-fuse-ld=lld");
 }
 
 fn export_macos(out_dir: &PathBuf) {
