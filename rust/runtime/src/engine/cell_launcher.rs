@@ -99,7 +99,17 @@ pub fn composed_plugin_lock_digest() -> Option<String> {
 }
 
 /// Read [`CELL_PLUGIN_LOCK_ENV`] only when it is accompanied by a structurally
-/// valid [`CELL_PLUGIN_LOCK_PATH_ENV`] and is itself 64 hex characters.
+/// valid [`CELL_PLUGIN_LOCK_PATH_ENV`] and is itself 64 hex characters, **and**
+/// the lock bundle at that path records exactly that digest.
+///
+/// The shape check alone would leave the attested value an environment-to-
+/// environment comparison: both variables are inherited, so a digest could name
+/// a bundle that does not exist. The bundle is therefore opened (without
+/// following a symlink on the final component) and its recorded digest is
+/// compared against the environment's before anything is attested. Recomputing
+/// the package digest from the bundle contents stays with the composing process,
+/// which owns the plugin-host catalog; this path only proves the named bundle
+/// exists and agrees.
 fn validated_plugin_lock_digest_from_env() -> Option<String> {
     let path = std::path::PathBuf::from(std::env::var(CELL_PLUGIN_LOCK_PATH_ENV).ok()?);
     let digest = std::env::var(CELL_PLUGIN_LOCK_ENV).ok()?;
@@ -116,7 +126,73 @@ fn validated_plugin_lock_digest_from_env() -> Option<String> {
         );
         return None;
     }
+    let recorded = match plugin_lock_digest_at(&path) {
+        Ok(recorded) => recorded,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "ignoring {CELL_PLUGIN_LOCK_ENV}: the lock bundle it names did not load"
+            );
+            return None;
+        }
+    };
+    // Constant-time over the parsed hashes, matching the propagation check, so a
+    // mismatch cannot be probed byte by byte.
+    let (Ok(env_hash), Ok(file_hash)) = (
+        blake3::Hash::from_hex(&digest),
+        blake3::Hash::from_hex(&recorded),
+    ) else {
+        tracing::warn!(
+            path = %path.display(),
+            "ignoring {CELL_PLUGIN_LOCK_ENV}: the lock bundle's recorded digest is malformed"
+        );
+        return None;
+    };
+    if env_hash != file_hash {
+        tracing::warn!(
+            path = %path.display(),
+            "ignoring {CELL_PLUGIN_LOCK_ENV}: it disagrees with the lock bundle at its path"
+        );
+        return None;
+    }
     Some(digest)
+}
+
+/// Read the digest a published plugin lock bundle records for itself.
+///
+/// The final path component is opened without following a symlink, so a lock
+/// path planted in an attacker-writable directory cannot redirect the read at a
+/// file the caller never named.
+fn plugin_lock_digest_at(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::{Error, ErrorKind, Read};
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path)?;
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)?;
+    let document: serde_json::Value = serde_json::from_slice(&raw)
+        .map_err(|error| Error::new(ErrorKind::InvalidData, error.to_string()))?;
+    match document.pointer("/schema_version").and_then(|v| v.as_str()) {
+        Some("1.0") => {}
+        other => {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!("unsupported plugin lock schema version {other:?}"),
+            ));
+        }
+    }
+    document
+        .pointer("/digest/hex")
+        .and_then(|value| value.as_str())
+        .map(str::to_owned)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "plugin lock has no digest.hex"))
 }
 
 /// Everything a launcher needs to start (or expect) a run's cells. The controller

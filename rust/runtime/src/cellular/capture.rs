@@ -45,6 +45,21 @@ pub const DEFAULT_CAPTURE_CHUNK_BYTES: usize = 1 << 20;
 /// buggy cell cannot drive controller memory with one frame.
 pub const MAX_CAPTURE_CHUNK_BYTES: usize = 8 << 20;
 
+/// Hard upper bound on the number of chunks one cell may declare or index.
+///
+/// `total_chunks` and `chunk_index` arrive on the wire as `u32`, so an unbounded
+/// declaration lets one cell name ~4.29 billion distinct, individually valid
+/// chunk slots. Each retained slot costs controller memory, so the total is
+/// bounded before any slot is admitted.
+pub const MAX_CHUNKS_PER_CELL: u32 = 65_536;
+
+/// Hard upper bound on the exact-record byte total one cell may declare.
+///
+/// The bundle's `exact_byte_length` is unauthenticated wire input that would
+/// otherwise reach `Vec::with_capacity` directly; an oversized declaration is
+/// refused before any allocation is sized from it.
+pub const MAX_CAPTURE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
 /// One bounded slice of a cell's exact-record artifact.
 ///
 /// `digest` is the BLAKE3 hash of `bytes` alone (no framing), so the controller
@@ -70,18 +85,16 @@ pub struct ExactRecordsChunkV1 {
     pub bytes: Vec<u8>,
 }
 
-/// A folded projection that is always transmitted, tagged with its presence.
+/// A folded projection that is always transmitted, carrying its presence.
 ///
 /// A cell that has nothing for a projection sends [`Self::Absent`] rather than
 /// omitting the field, so "the cell had no data" and "the cell never reported"
 /// stay distinguishable at the controller.
+///
+/// The serde representation is deliberately the default externally-tagged one:
+/// the frames travel as MessagePack, and `rmp_serde` cannot decode an adjacently
+/// tagged enum because that representation needs `deserialize_any`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "presence",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
 pub enum FoldedProjection<T> {
     /// The cell produced this projection.
     Present(T),
@@ -182,6 +195,27 @@ pub enum CaptureTransferError {
         chunk_index: u32,
         /// The refused payload length.
         byte_length: u64,
+    },
+    /// The chunk's declared `total_chunks` exceeds [`MAX_CHUNKS_PER_CELL`].
+    TotalChunksExceedsLimit {
+        /// The offending cell.
+        cell_id: u32,
+        /// The refused declared total.
+        total_chunks: u32,
+    },
+    /// The chunk's `chunk_index` is not below [`MAX_CHUNKS_PER_CELL`].
+    ChunkIndexExceedsLimit {
+        /// The offending cell.
+        cell_id: u32,
+        /// The refused chunk index.
+        chunk_index: u32,
+    },
+    /// The bundle's declared `exact_byte_length` exceeds [`MAX_CAPTURE_BYTES`].
+    CaptureTooLarge {
+        /// The offending cell.
+        cell_id: u32,
+        /// The refused declared length.
+        declared: u64,
     },
     /// `chunk_index` is not below the chunk's declared `total_chunks`.
     ChunkIndexOutOfRange {
@@ -295,6 +329,24 @@ impl fmt::Display for CaptureTransferError {
             } => write!(
                 formatter,
                 "cell {cell_id} chunk {chunk_index} of {byte_length} bytes exceeds the {MAX_CAPTURE_CHUNK_BYTES} byte limit"
+            ),
+            Self::TotalChunksExceedsLimit {
+                cell_id,
+                total_chunks,
+            } => write!(
+                formatter,
+                "cell {cell_id} declared {total_chunks} chunks, above the {MAX_CHUNKS_PER_CELL} limit"
+            ),
+            Self::ChunkIndexExceedsLimit {
+                cell_id,
+                chunk_index,
+            } => write!(
+                formatter,
+                "cell {cell_id} chunk index {chunk_index} is not below the {MAX_CHUNKS_PER_CELL} limit"
+            ),
+            Self::CaptureTooLarge { cell_id, declared } => write!(
+                formatter,
+                "cell {cell_id} declared {declared} capture bytes, above the {MAX_CAPTURE_BYTES} byte limit"
             ),
             Self::ChunkIndexOutOfRange {
                 cell_id,
@@ -447,6 +499,20 @@ impl CaptureAssembler {
             });
         }
         let actual = chunk.bytes.len() as u64;
+        // Bound the declared and indexed chunk space before any per-slot state is
+        // retained: a u32 total is otherwise ~4.29 billion individually valid slots.
+        if chunk.total_chunks > MAX_CHUNKS_PER_CELL {
+            return Err(CaptureTransferError::TotalChunksExceedsLimit {
+                cell_id,
+                total_chunks: chunk.total_chunks,
+            });
+        }
+        if chunk_index >= MAX_CHUNKS_PER_CELL {
+            return Err(CaptureTransferError::ChunkIndexExceedsLimit {
+                cell_id,
+                chunk_index,
+            });
+        }
         if actual > MAX_CAPTURE_CHUNK_BYTES as u64 {
             return Err(CaptureTransferError::ChunkTooLarge {
                 cell_id,
@@ -519,6 +585,15 @@ impl CaptureAssembler {
         Ok(())
     }
 
+    /// Whether every expected cell has closed with its mandatory bundle.
+    ///
+    /// The controller's drain uses this as the capture-side completion predicate:
+    /// capture frames arrive on their own velo handlers, so the work-partition
+    /// barrier alone does not prove the capture stream is finished.
+    pub fn is_complete(&self) -> bool {
+        self.cells.values().all(|state| state.bundle.is_some())
+    }
+
     /// Expected cells that have not yet closed with their mandatory bundle.
     pub fn missing_cells(&self) -> Vec<u32> {
         self.cells
@@ -544,8 +619,18 @@ impl CaptureAssembler {
                     received: bundle.exact_chunk_count,
                 });
             }
-            let mut assembled = Vec::with_capacity(bundle.exact_byte_length as usize);
-            for chunk_index in 0..total {
+            // The bundle's declared total is unauthenticated wire input. Refuse an
+            // oversized declaration outright, then size the buffer from the bytes
+            // that actually arrived — never from the declaration — so a hostile
+            // cell cannot drive an allocation it never has to back with traffic.
+            if bundle.exact_byte_length > MAX_CAPTURE_BYTES {
+                return Err(CaptureTransferError::CaptureTooLarge {
+                    cell_id,
+                    declared: bundle.exact_byte_length,
+                });
+            }
+            let retained_bytes: usize = state.chunks.values().map(|chunk| chunk.bytes.len()).sum();
+            let mut assembled = Vec::with_capacity(retained_bytes);            for chunk_index in 0..total {
                 let chunk =
                     state
                         .chunks
@@ -654,6 +739,42 @@ mod tests {
                 chunk_index: 0,
                 declared: 3,
                 actual: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn declared_chunk_total_is_bounded_before_any_slot_is_retained() {
+        let mut chunk = chunk_exact_records(0, b"abcd", 16).expect("chunked")[0].clone();
+        chunk.total_chunks = MAX_CHUNKS_PER_CELL + 1;
+        chunk.is_terminal = false;
+        let mut assembler = CaptureAssembler::new([0]);
+        assert_eq!(
+            assembler.accept_chunk(chunk),
+            Err(CaptureTransferError::TotalChunksExceedsLimit {
+                cell_id: 0,
+                total_chunks: MAX_CHUNKS_PER_CELL + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn declared_capture_length_is_bounded_before_assembly_allocates() {
+        let mut assembler = CaptureAssembler::new([0]);
+        assembler
+            .accept_bundle(CellCaptureBundleV1 {
+                cell_id: 0,
+                exact_chunk_count: 0,
+                exact_byte_length: MAX_CAPTURE_BYTES + 1,
+                folded_metrics: FoldedProjection::Absent,
+                folded_summary: FoldedProjection::Absent,
+            })
+            .expect("bundle accepted");
+        assert_eq!(
+            assembler.finish().map(|_| ()),
+            Err(CaptureTransferError::CaptureTooLarge {
+                cell_id: 0,
+                declared: MAX_CAPTURE_BYTES + 1,
             })
         );
     }
