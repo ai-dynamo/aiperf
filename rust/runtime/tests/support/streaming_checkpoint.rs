@@ -1614,10 +1614,7 @@ impl DeliveryFixture {
         DeliveryRestartRequest {
             mode: self.mode,
             capability: self.capability,
-            cut: self
-                .mode
-                .has_authoritative_results()
-                .then_some(&self.cut),
+            cut: self.mode.has_authoritative_results().then_some(&self.cut),
             result_index_root: self
                 .mode
                 .has_authoritative_results()

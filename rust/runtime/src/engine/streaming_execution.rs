@@ -150,9 +150,9 @@ pub fn ensure_single_profiling_phase(phases: &[PhaseSpec]) -> Result<()> {
     match phases.len() {
         1 => Ok(()),
         0 => bail!("shadow_replay requires exactly one profiling phase, but none was authored"),
-        other => bail!(
-            "shadow_replay accepts exactly one profiling phase, but {other} were authored"
-        ),
+        other => {
+            bail!("shadow_replay accepts exactly one profiling phase, but {other} were authored")
+        }
     }
 }
 

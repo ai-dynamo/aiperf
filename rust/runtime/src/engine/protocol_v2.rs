@@ -2478,6 +2478,10 @@ mod transport_component_tests {
             Transport::DynosimOnline(DynosimConfig::default()),
             Transport::DryRun(DryRunConfig::default()),
             Transport::Websocket(WebSocketTransportConfig::default()),
+            Transport::Plugin {
+                id: "vendor/test-transport:1.0".to_owned(),
+                parameters: serde_json::json!({"key": "val"}),
+            },
         ]
     }
 
