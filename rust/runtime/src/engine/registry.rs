@@ -1651,6 +1651,96 @@ impl AIPerfRegistry {
     }
 }
 
+/// The coordinator-facing adapter over [`AIPerfRegistry::validate_dataset_streams`].
+///
+/// It assembles the descriptor context the pure check needs and prepares the
+/// host reliability policy from the resource's own resolved fields. Every
+/// failure it returns is a refusal before source polling, factory preparation,
+/// or endpoint issue.
+#[cfg(feature = "streaming")]
+impl AIPerfRegistry {
+    /// Validate the run's `dataset_streams` resource, or `Ok(None)` when absent.
+    pub fn validate_dataset_streams_for_run(
+        &self,
+        run: &AuthoredRunSpecV2,
+        context: &RunContext,
+        selection: &ValidatedRunnerSelection,
+    ) -> Result<Option<PreparedStreamingResourcePlan>> {
+        let Some(spec) = run.dataset_streams.as_ref() else {
+            return Ok(None);
+        };
+
+        let transport = self
+            .transport_factory(selection.transport_id())
+            .ok_or_else(|| {
+                anyhow!(
+                    "transport {:?} disappeared from the frozen registry",
+                    selection.transport_id()
+                )
+            })?
+            .descriptor();
+
+        // A stream run always authors endpoints, so the default profile is
+        // present; resolving it here keeps `validate_dataset_streams` a pure
+        // function of descriptors.
+        let profile = context.default_endpoint_profile()?;
+        let endpoint = Some(
+            self.endpoints()
+                .resolve_factory(&profile.endpoint_id)?
+                .descriptor(),
+        );
+
+        let reliability_policy =
+            crate::engine::streaming_policy::prepare_streaming_policy(&spec.reliability)
+                .map_err(|error| {
+                    anyhow!("run.resources.dataset_streams.reliability: {error:?}")
+                })?;
+
+        self.check_endpoint_retry_safety(spec)?;
+
+        self.validate_dataset_streams(
+            spec,
+            StreamingResourceContext {
+                transport,
+                endpoint,
+                reliability_policy: &reliability_policy,
+            },
+        )
+        .map(Some)
+        .map_err(|error| anyhow!("{error}"))
+    }
+
+    /// Refuse an authored endpoint retry the selected action sink cannot honor.
+    ///
+    /// Checked here rather than inside the descriptor-only agreement because it
+    /// is a policy-versus-capability question: the agreement decides whether the
+    /// combination can run at all, this decides whether it can be retried.
+    fn check_endpoint_retry_safety(
+        &self,
+        spec: &crate::engine::protocol_v2::DatasetStreamsSpecV2,
+    ) -> Result<()> {
+        if spec.reliability.endpoint_retry_limit == 0 {
+            return Ok(());
+        }
+        for component in spec.shadow_replay.actions.values() {
+            let Some(factory) = self.stream_action_sink_factory(component.id.as_str()) else {
+                // The unknown-component refusal is `validate_dataset_streams`'
+                // job and produces a better message; defer to it.
+                return Ok(());
+            };
+            ensure!(
+                factory.descriptor().endpoint_retry_safety
+                    != crate::streaming::action::EndpointRetrySafety::Unproven,
+                "dataset_streams.reliability.endpoint_retry_limit must be 0: action sink {:?} \
+                 proves neither pre-acceptance nor logical idempotency, so retrying would \
+                 duplicate work at the target",
+                component.id.as_str()
+            );
+        }
+        Ok(())
+    }
+}
+
 #[cfg(feature = "streaming")]
 fn joined_streaming_ids<'a>(ids: impl Iterator<Item = &'a str>) -> String {
     let joined = ids.collect::<Vec<_>>().join(", ");

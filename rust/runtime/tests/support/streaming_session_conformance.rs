@@ -73,6 +73,8 @@ pub struct SessionConformanceCases {
     pub program_semantic_digest: ContentDigest,
     /// Semantic namespace of the selected stream.
     pub stream_semantic_digest: ContentDigest,
+    /// Immutable source authority bound into the prepare context.
+    pub source_identity: aiperf_runtime::streaming::identity::ImmutableObjectIdentity,
     /// Budget charged for live session state.
     pub session_state_budget: StreamingResourceBudget,
     /// Budget charged for prepared checkpoint payloads.
@@ -344,6 +346,7 @@ pub async fn assert_session_conformance(
         run: cases.run,
         participant_id: cases.participant_id.clone(),
         stream_semantic_digest: cases.stream_semantic_digest,
+        source_identity: cases.source_identity,
         session_state_budget: cases.session_state_budget.clone(),
         checkpoint_budget: cases.checkpoint_budget.clone(),
         issue_reporter: handle,
