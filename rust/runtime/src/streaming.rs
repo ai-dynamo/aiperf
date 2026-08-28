@@ -20,6 +20,7 @@ pub mod reliability;
 pub mod results;
 pub mod session;
 pub mod source;
+pub mod sources;
 pub mod unit;
 
 /// Whether the lightweight native streaming runtime is compiled.
