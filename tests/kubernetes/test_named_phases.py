@@ -5,13 +5,29 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
+import pytest_asyncio
 import yaml
 
 from tests.kubernetes.conftest import _gpu_node_tolerations
+from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
+
+# Session-unique namespace keeps concurrent sessions from purging each other's jobs.
+_SESSION_ID = uuid.uuid4().hex[:8]
+
+
+@pytest_asyncio.fixture
+async def phases_namespace(kubectl: KubectlClient) -> AsyncGenerator[str, None]:
+    ns = f"aiperf-phases-{_SESSION_ID}"
+    await kubectl.run("create", "namespace", ns, check=False)
+    yield ns
+    await kubectl.run(
+        "delete", "namespace", ns, "--ignore-not-found", "--wait=false", check=False
+    )
 
 
 def _named_phase_manifest(
@@ -62,13 +78,13 @@ def _named_phase_manifest(
 async def test_named_phases_are_complete_and_profiling_results_are_filtered(
     operator_ready: OperatorDeployer,
     k8s_settings: Any,
-    operator_job_namespace: str,
+    phases_namespace: str,
 ) -> None:
     """Track all named phases while excluding warmup-kind records from results."""
     name = f"named-{uuid.uuid4().hex[:8]}"
     manifest = _named_phase_manifest(
         name=name,
-        namespace=operator_job_namespace,
+        namespace=phases_namespace,
         image=k8s_settings.aiperf_image,
         image_pull_policy=k8s_settings.image_pull_policy,
         tolerations=_gpu_node_tolerations()
@@ -80,7 +96,7 @@ async def test_named_phases_are_complete_and_profiling_results_are_filtered(
     try:
         status = await operator_ready.wait_for_job_completion(
             name,
-            operator_job_namespace,
+            phases_namespace,
             timeout=k8s_settings.benchmark_timeout,
         )
 
@@ -113,4 +129,4 @@ async def test_named_phases_are_complete_and_profiling_results_are_filtered(
         )
         assert request_count_avg == 5, status.results
     finally:
-        await operator_ready.delete_job(name, operator_job_namespace)
+        await operator_ready.delete_job(name, phases_namespace)

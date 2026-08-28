@@ -7,15 +7,37 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import uuid
+from collections.abc import AsyncGenerator
 from copy import deepcopy
 from typing import Any
 
 import orjson
 import pytest
+import pytest_asyncio
 import yaml
 
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
+
+# Use a session-unique namespace so concurrent pytest sessions sharing the same
+# xdist worker suffix cannot purge each other's in-flight CRs.
+_SESSION_ID = uuid.uuid4().hex[:8]
+
+
+@pytest_asyncio.fixture
+async def immut_namespace(kubectl: KubectlClient) -> AsyncGenerator[str, None]:
+    """Create a unique namespace for this test session and delete it afterward."""
+    ns = f"aiperf-immut-{_SESSION_ID}"
+    await kubectl.run("create", "namespace", ns, check=False)
+    yield ns
+    await kubectl.run(
+        "delete",
+        "namespace",
+        ns,
+        "--ignore-not-found",
+        "--wait=false",
+        check=False,
+    )
 
 
 def _patch_body(body: dict[str, Any]) -> str:
@@ -96,7 +118,7 @@ def _job_manifest(
 async def test_create_time_fields_are_immutable_but_live_controls_reconcile(
     operator_ready: OperatorDeployer,
     k8s_settings: Any,
-    operator_job_namespace: str,
+    immut_namespace: str,
 ) -> None:
     """Reject ignored edits while accepting and acknowledging live controls."""
     suffix = uuid.uuid4().hex[:8]
@@ -104,6 +126,7 @@ async def test_create_time_fields_are_immutable_but_live_controls_reconcile(
     sweep_name = f"immutable-sweep-{suffix}"
     missing_priority_class = f"aiperf-admission-only-{suffix}"
     kubectl = operator_ready.kubectl
+    operator_job_namespace = immut_namespace
 
     job = _job_manifest(
         name=job_name,
