@@ -29,8 +29,11 @@
 //! transition would not observe the drop-and-reopen the state machine exists to
 //! survive.
 
-use std::{cell::RefCell, collections::BTreeMap, mem::size_of, num::NonZeroUsize, rc::Rc};
+use std::{
+    cell::RefCell, collections::BTreeMap, fmt::Debug, mem::size_of, num::NonZeroUsize, rc::Rc,
+};
 
+use async_trait::async_trait;
 use bytes::Bytes;
 
 use super::ResultPlaneError;
@@ -40,11 +43,14 @@ use crate::streaming::{
         BudgetedCheckpointBytes, CheckpointGeneration, CommittedCheckpointGeneration,
         StreamRunIdentity,
     },
+    failure::{OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode},
     identity::ContentDigest,
     reliability::{
-        BudgetOwnedExportIssueReceipt, DerivedExportReceiptReference,
-        DurableExportReceiptValidationContext, PreparedExportReceiptPersistence,
-        PreparedStreamingIssuePolicy, StreamingIssueComponentId, VerifiedDerivedSinkAttemptStatus,
+        BudgetOwnedExportIssueReceipt, BudgetOwnedStreamingIssueReporter,
+        DerivedExportReceiptReference, DurableExportReceiptValidationContext,
+        OrdinaryStreamingIssue, PreparedExportReceiptPersistence, PreparedStreamingIssuePolicy,
+        ResultSinkAttemptOutcome, StreamingIssueClass, StreamingIssueComponentId,
+        StreamingIssueReporter, VerifiedDerivedSinkAttemptStatus,
         restore_durable_export_issue_receipt,
     },
 };
@@ -112,6 +118,8 @@ pub enum SinkFinalizationFailureCode {
     MissingOutput,
     /// Exact capacity for the attempt, receipt, or parse was unavailable.
     Budget,
+    /// The reliability plane could not prepare the closed attempt's receipt.
+    ReceiptPreparation,
 }
 
 impl SinkFinalizationFailureCode {
@@ -131,7 +139,235 @@ impl SinkFinalizationFailureCode {
             Self::TamperedReceipt => "tampered_receipt",
             Self::MissingOutput => "missing_output",
             Self::Budget => "budget",
+            Self::ReceiptPreparation => "receipt_preparation",
         }
+    }
+}
+
+/// Stable machine-readable reason one derived result-sink attempt failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SinkFailureReason {
+    /// The authoritative report could not be built, written, or renamed.
+    ReportPersistence,
+    /// A configured optional export sink failed to produce its output.
+    Export,
+    /// The post-persistence report lifecycle commit failed.
+    ReportCommit,
+}
+
+impl SinkFailureReason {
+    /// Return the stable lowercase reason.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReportPersistence => "report_persistence",
+            Self::Export => "export",
+            Self::ReportCommit => "report_commit",
+        }
+    }
+
+    const fn export_failure_code(self) -> ResultExportFailureCode {
+        match self {
+            Self::ReportPersistence => ResultExportFailureCode::Io,
+            Self::Export => ResultExportFailureCode::Attempt,
+            Self::ReportCommit => ResultExportFailureCode::Unavailable,
+        }
+    }
+}
+
+/// Reported finalization state of one derived result sink.
+///
+/// [`DerivedSinkStatus`] is the durable compare-and-swap state; this is what the
+/// report-persistence path reports back to its caller. It carries the failure
+/// reason, which the durable state deliberately does not, and it distinguishes
+/// exhaustion — an authored-policy disposition rather than a durable state, so
+/// an exhausted sink is still retained as `PendingRetry` on the medium.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResultSinkState {
+    /// The authoritative output is durable and the sink is terminal.
+    Complete {
+        /// Raw BLAKE3 digest of the durable authoritative output.
+        output_digest: ContentDigest,
+        /// Exact durable authoritative output length.
+        output_length: u64,
+    },
+    /// An ordinary failure closed one attempt and the sink owes a retry.
+    PendingRetry {
+        /// Dense ordinal of the attempt that closed.
+        attempt: u32,
+        /// Reason the closed attempt failed.
+        last_failure: SinkFailureReason,
+    },
+    /// The authored retry threshold is exhausted and the export is incomplete.
+    ///
+    /// Only the optional-export attempt lease is released; the committed
+    /// generation and its checkpoint authority are retained unchanged.
+    Exhausted {
+        /// Total number of closed attempts.
+        attempts: u32,
+        /// Reason the last attempt failed.
+        last_failure: SinkFailureReason,
+    },
+}
+
+impl ResultSinkState {
+    /// Derive the reported state of one closed ordinary failure.
+    #[must_use]
+    pub const fn from_closed_failure(
+        attempt: u32,
+        last_failure: SinkFailureReason,
+        is_exhausted: bool,
+    ) -> Self {
+        if is_exhausted {
+            Self::Exhausted {
+                // The dense ordinal is zero-based, so the closed attempt count
+                // is one greater. Saturation names the same exhausted state.
+                attempts: attempt.saturating_add(1),
+                last_failure,
+            }
+        } else {
+            Self::PendingRetry {
+                attempt,
+                last_failure,
+            }
+        }
+    }
+
+    /// Whether the sink still owes the bounded retry supervisor work.
+    #[must_use]
+    pub const fn is_pending(self) -> bool {
+        matches!(self, Self::PendingRetry { .. })
+    }
+}
+
+/// Records one ordinary report-persistence failure as a durable pending retry.
+///
+/// The authority never rolls execution back: it closes the current attempt
+/// against the committed final generation and leaves that generation, its
+/// leased reader, and the diagnostic root exactly as it found them.
+#[async_trait(?Send)]
+pub trait ReportRetryAuthority: Debug {
+    /// Atomically close the open attempt and return the reported sink state.
+    async fn record_failure(
+        &mut self,
+        reason: SinkFailureReason,
+    ) -> Result<ResultSinkState, ResultPlaneError>;
+}
+
+/// Domain separator for report-sink issue identity.
+const REPORT_SINK_ISSUE_DOMAIN: &[u8] = b"aiperf.streaming.report-sink.issue.v1";
+
+/// Durable [`ReportRetryAuthority`] over one committed final generation.
+pub struct DurableReportRetryAuthority {
+    store: DerivedSinkStatusStore,
+    final_generation: CommittedCheckpointGeneration,
+    sink_id: StreamingIssueComponentId,
+    reporter: BudgetOwnedStreamingIssueReporter,
+    export_budget: StreamingResourceBudget,
+}
+
+impl std::fmt::Debug for DurableReportRetryAuthority {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DurableReportRetryAuthority")
+            .field("generation", &self.final_generation.generation())
+            .field("sink_id", &self.sink_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DurableReportRetryAuthority {
+    /// Bind a retry authority to one status owner, generation, and sink.
+    #[must_use]
+    pub const fn new(
+        store: DerivedSinkStatusStore,
+        final_generation: CommittedCheckpointGeneration,
+        sink_id: StreamingIssueComponentId,
+        reporter: BudgetOwnedStreamingIssueReporter,
+        export_budget: StreamingResourceBudget,
+    ) -> Self {
+        Self {
+            store,
+            final_generation,
+            sink_id,
+            reporter,
+            export_budget,
+        }
+    }
+
+    /// Borrow the durable status owner this authority commits through.
+    #[must_use]
+    pub const fn store(&self) -> &DerivedSinkStatusStore {
+        &self.store
+    }
+
+    fn semantic_context_digest(&self, reason: SinkFailureReason) -> ContentDigest {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(REPORT_SINK_ISSUE_DOMAIN);
+        hasher.update(self.sink_id.as_str().as_bytes());
+        hasher.update(reason.as_str().as_bytes());
+        ContentDigest::from_bytes(*hasher.finalize().as_bytes())
+    }
+}
+
+#[async_trait(?Send)]
+impl ReportRetryAuthority for DurableReportRetryAuthority {
+    async fn record_failure(
+        &mut self,
+        reason: SinkFailureReason,
+    ) -> Result<ResultSinkState, ResultPlaneError> {
+        self.store
+            .reconcile_initial(&self.final_generation, &self.sink_id)
+            .await?;
+        // The token proves the attempt was admitted against the attempt budget;
+        // it is released once the closing compare-and-swap is durable.
+        let token = self
+            .store
+            .open_attempt(&self.final_generation, &self.sink_id)
+            .await?;
+        let attempt_ordinal = token.ordinal();
+        let run = *self.final_generation.run();
+        let generation = self.final_generation.generation();
+        let issue = OrdinaryStreamingIssue::export(
+            run,
+            self.sink_id.clone(),
+            generation.clone(),
+            StreamingIssueClass::Retryable,
+            self.semantic_context_digest(reason),
+            attempt_ordinal,
+            generation.digest,
+            OrdinaryStreamingFailure::Export(ResultExportError::failure(
+                reason.export_failure_code(),
+            )),
+        )
+        .map_err(|_| ResultPlaneError::SinkFinalization {
+            code: SinkFinalizationFailureCode::ReceiptPreparation,
+        })?;
+        let prepared = self
+            .reporter
+            .prepare_export_attempt_failure(
+                &run,
+                &generation,
+                &self.sink_id,
+                attempt_ordinal,
+                ResultSinkAttemptOutcome::Failed(issue),
+                &self.export_budget,
+            )
+            .await
+            .map_err(|_| ResultPlaneError::SinkFinalization {
+                code: SinkFinalizationFailureCode::ReceiptPreparation,
+            })?;
+        let is_exhausted = prepared.is_exhausted();
+        let persistence = prepared.into_persistence();
+        self.store
+            .commit_retry(&self.final_generation, &self.sink_id, &persistence)
+            .await?;
+        drop(token);
+        Ok(ResultSinkState::from_closed_failure(
+            attempt_ordinal,
+            reason,
+            is_exhausted,
+        ))
     }
 }
 
@@ -912,25 +1148,82 @@ impl DurableSinkOutputProbe {
     }
 }
 
+/// Build one committed final generation for in-crate tests.
+///
+/// The report-persistence ordering tests live beside the coordinator, so the
+/// committed authority they exercise is minted here rather than reconstructed
+/// from checkpoint internals in a second place.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) fn committed_final_generation_for_test(
+    run: StreamRunIdentity,
+    epoch: u64,
+) -> CommittedCheckpointGeneration {
     use crate::streaming::{
-        budget::BudgetLimits,
         checkpoint::{
             AcquisitionHorizon, AdmissionHorizon, CheckpointCut, CheckpointEpoch,
             CheckpointGenerationCandidate, CheckpointGenerationPublicationProof,
             CheckpointParticipantPlan, CheckpointTerminalReason, DecodeHorizon, DiscoveryHorizon,
             EventTimeWatermark, OrderedActionHorizon, TerminalActionHorizon,
         },
-        failure::{OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode},
-        identity::{GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
-        reliability::{
-            BudgetOwnedStreamingIssueReporter, HandledIssueCut, OrdinaryStreamingIssue,
-            ResultSinkAttemptOutcome, StreamingIssueClass, StreamingIssueDisposition,
-            StreamingIssueReporter, StreamingIssueScopeKind, StreamingIssueThresholdRule,
-        },
+        identity::{GlobalSequence, SessionCausalFrontier},
+        reliability::HandledIssueCut,
         unit::{EventTimeUtc, SourcePosition},
+    };
+
+    let event_time = EventTimeUtc::new(1).expect("valid event time");
+    let cut = CheckpointCut {
+        discovered: DiscoveryHorizon::new(SourcePosition::new(1)),
+        acquired: AcquisitionHorizon::new(SourcePosition::new(1)),
+        decoded: DecodeHorizon::new(SourcePosition::new(1)),
+        ordered: OrderedActionHorizon::new(GlobalSequence::new(1)),
+        admitted: AdmissionHorizon::new(GlobalSequence::new(1)),
+        terminal: TerminalActionHorizon::new(GlobalSequence::new(1)),
+        event_watermark: EventTimeWatermark::Hard {
+            through: event_time,
+        },
+        causal_frontier: SessionCausalFrontier {
+            through_sequence: GlobalSequence::new(1),
+            event_time: Some(event_time),
+            digest: ContentDigest::from_bytes([0xe1; 32]),
+        },
+        handled_issues: HandledIssueCut::empty(),
+    };
+    let plan = CheckpointParticipantPlan::new([]).expect("valid empty participant plan");
+    let candidate = CheckpointGenerationCandidate::new(
+        run,
+        CheckpointEpoch::new(epoch),
+        None,
+        cut,
+        &plan,
+        ContentDigest::from_bytes([0xe2; 32]),
+        ContentDigest::from_bytes([0xe3; 32]),
+        Vec::new(),
+        ContentDigest::from_bytes([0xe4; 32]),
+        true,
+        Some(CheckpointTerminalReason::Completed),
+    )
+    .expect("valid generation candidate");
+    let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
+    candidate
+        .promote(
+            &run,
+            &plan,
+            &ContentDigest::from_bytes([0xe2; 32]),
+            &ContentDigest::from_bytes([0xe3; 32]),
+            proof,
+        )
+        .expect("promote committed generation")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::streaming::{
+        budget::BudgetLimits,
+        identity::LogicalReplayRunId,
+        reliability::{
+            StreamingIssueDisposition, StreamingIssueScopeKind, StreamingIssueThresholdRule,
+        },
     };
 
     fn component(value: &str) -> StreamingIssueComponentId {
@@ -952,49 +1245,7 @@ mod tests {
     }
 
     fn committed_final(run: StreamRunIdentity, epoch: u64) -> CommittedCheckpointGeneration {
-        let event_time = EventTimeUtc::new(1).expect("valid event time");
-        let cut = CheckpointCut {
-            discovered: DiscoveryHorizon::new(SourcePosition::new(1)),
-            acquired: AcquisitionHorizon::new(SourcePosition::new(1)),
-            decoded: DecodeHorizon::new(SourcePosition::new(1)),
-            ordered: OrderedActionHorizon::new(GlobalSequence::new(1)),
-            admitted: AdmissionHorizon::new(GlobalSequence::new(1)),
-            terminal: TerminalActionHorizon::new(GlobalSequence::new(1)),
-            event_watermark: EventTimeWatermark::Hard {
-                through: event_time,
-            },
-            causal_frontier: SessionCausalFrontier {
-                through_sequence: GlobalSequence::new(1),
-                event_time: Some(event_time),
-                digest: ContentDigest::from_bytes([0xe1; 32]),
-            },
-            handled_issues: HandledIssueCut::empty(),
-        };
-        let plan = CheckpointParticipantPlan::new([]).expect("valid empty participant plan");
-        let candidate = CheckpointGenerationCandidate::new(
-            run,
-            CheckpointEpoch::new(epoch),
-            None,
-            cut,
-            &plan,
-            ContentDigest::from_bytes([0xe2; 32]),
-            ContentDigest::from_bytes([0xe3; 32]),
-            Vec::new(),
-            ContentDigest::from_bytes([0xe4; 32]),
-            true,
-            Some(CheckpointTerminalReason::Completed),
-        )
-        .expect("valid generation candidate");
-        let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
-        candidate
-            .promote(
-                &run,
-                &plan,
-                &ContentDigest::from_bytes([0xe2; 32]),
-                &ContentDigest::from_bytes([0xe3; 32]),
-                proof,
-            )
-            .expect("promote committed generation")
+        committed_final_generation_for_test(run, epoch)
     }
 
     fn budget(items: usize, bytes: usize) -> StreamingResourceBudget {

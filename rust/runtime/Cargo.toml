@@ -333,3 +333,8 @@ required-features = ["streaming"]
 name = "streaming_agent_graph_sessions"
 path = "tests/streaming_agent_graph_sessions.rs"
 required-features = ["streaming"]
+
+[[test]]
+name = "factory_validation_receipt"
+path = "tests/factory_validation_receipt.rs"
+required-features = ["engine"]
