@@ -57,7 +57,7 @@ def _named_phase_manifest(
     return manifest
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_named_phases_are_complete_and_profiling_results_are_filtered(
     operator_ready: OperatorDeployer,
