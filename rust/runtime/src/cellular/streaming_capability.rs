@@ -24,7 +24,7 @@ use crate::engine::registry::{
     StreamingSelectedDescriptors,
 };
 use crate::extensions::AIPerfRegistry;
-use crate::streaming::action::{ActionPlacement, ActionResultRetention};
+use crate::streaming::action::{ActionPlacement, ActionResultRetention, EndpointRetrySafety};
 use crate::streaming::format::{FormatProjection, FormatStateRetention};
 use crate::streaming::session::{SessionPlacement, SessionStateRetention};
 use crate::streaming::source::StreamingSourceRetention;
@@ -720,6 +720,7 @@ mod tests {
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
     static TRANSPORT: TransportDescriptor = TransportDescriptor {

@@ -335,6 +335,7 @@ impl GraphSessionScope {
         );
         match self.nodes.get_mut(&to) {
             Some(node) => {
+                // A predecessor that is already terminal never contributes a count.
                 if !is_source_terminal {
                     node.pending_predecessors = node.pending_predecessors.saturating_add(1);
                 }
@@ -692,11 +693,13 @@ impl StreamingAgentGraphCoordinator {
                 self.declare_node(session_key, node_key, request, role)?;
             }
             AcceptedGraphMutation::Edge { from, to } => {
+                // Read the authored bound before borrowing the session scope:
+                // the limits live on `self`, which `session_mut` borrows.
                 let max_orphan_edges = self.limits.max_orphan_edges_per_session;
                 let scope = self.session_mut(session_key)?;
                 let from_id = scope.node_record_id(&from);
                 let to_id = scope.node_record_id(&to);
-                if scope.nodes.get(&to_id).is_none()
+                if !scope.nodes.contains_key(&to_id)
                     && scope.orphan_edge_count() >= max_orphan_edges
                 {
                     return Err(SessionCoordinatorError::state_budget(

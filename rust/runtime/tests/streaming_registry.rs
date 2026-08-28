@@ -18,10 +18,9 @@ use aiperf_runtime::extensions::{
 use aiperf_runtime::streaming::{
     action::{
         ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
-        EndpointRetrySafety,
-        DatasetActionSchema, PreparedStreamingActionBinding, StreamingActionSinkDescriptor,
-        StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
-        ValidatedStreamingActionSinkConfig,
+        DatasetActionSchema, EndpointRetrySafety, PreparedStreamingActionBinding,
+        StreamingActionSinkDescriptor, StreamingActionSinkFactory,
+        StreamingActionSinkPrepareContext, ValidatedStreamingActionSinkConfig,
     },
     checkpoint::CheckpointError,
     checkpoint_backend::{
@@ -539,7 +538,7 @@ fn catalog_omits_streaming_maps_when_no_streaming_factory_is_registered() {
 }
 
 #[test]
-fn builtin_registry_exposes_only_the_conversation_session_program() {
+fn builtin_registry_exposes_the_stock_session_programs() {
     let registry = BuiltinAIPerfRegistryFactory
         .build()
         .expect("stock registry universe");
@@ -548,10 +547,15 @@ fn builtin_registry_exposes_only_the_conversation_session_program() {
         .into_iter()
         .map(|descriptor| descriptor.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, ["conversation"]);
+    assert_eq!(ids, ["agent_graph", "conversation"]);
     assert!(
         registry
             .stream_session_program_factory("conversation")
+            .is_some()
+    );
+    assert!(
+        registry
+            .stream_session_program_factory("agent_graph")
             .is_some()
     );
     // The stock catalog registers no action-sink binding, so no streaming
