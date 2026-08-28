@@ -62,7 +62,7 @@ from tests.kubernetes.chaos.conftest import (  # noqa: F401
     operator_ready_toxiproxy_routed,
     toxiproxy_injector,
 )
-from tests.kubernetes.chaos.toxiproxy import ToxiproxyError, ToxiproxyInjector
+from tests.kubernetes.chaos.toxiproxy import ToxiproxyInjector
 from tests.kubernetes.chaos_common.injectors.client import ClientInjector
 from tests.kubernetes.chaos_common.injectors.cluster import ClusterInjector
 from tests.kubernetes.chaos_common.injectors.crd import CRDInjector
@@ -152,13 +152,7 @@ async def faults(
     finally:
         try:
             await asyncio.wait_for(toxiproxy_injector.reset(), timeout=10.0)
-        except (
-            TimeoutError,
-            ToxiproxyError,
-            aiohttp.ClientError,
-            RuntimeError,
-            OSError,
-        ) as exc:
+        except Exception as exc:
             logger.warning(lambda exc=exc: f"faults teardown reset failed: {exc!r}")
 
 
