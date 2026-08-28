@@ -28,10 +28,30 @@ impl ValidatedRunPlan {
     /// This is the only constructor: it performs no I/O, opens no file, and
     /// binds no opaque factory state.  The resulting plan is immutable.
     pub fn from_canonical_bytes(run_bytes: &[u8], receipt_bytes: &[&[u8]]) -> Self {
+        Self::from_canonical_bytes_with_capture(
+            run_bytes,
+            receipt_bytes,
+            ExportCapturePlan::default(),
+        )
+    }
+
+    /// Construct from raw canonical run bytes, factory-receipt bytes, and the
+    /// combined capture requirements from all configured exporters.
+    ///
+    /// Use this constructor when the caller has already assembled the
+    /// [`ExportCapturePlan`] from the registered exporter set.
+    /// [`from_canonical_bytes`] is a convenience shorthand that supplies an
+    /// empty plan, suitable for callers that have not yet wired exporter
+    /// capture requirements.
+    pub fn from_canonical_bytes_with_capture(
+        run_bytes: &[u8],
+        receipt_bytes: &[&[u8]],
+        capture_plan: ExportCapturePlan,
+    ) -> Self {
         let digest = compute_digest(run_bytes, receipt_bytes);
         Self {
             canonical_digest: digest,
-            capture_plan: ExportCapturePlan::default(),
+            capture_plan,
         }
     }
 }
