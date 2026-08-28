@@ -334,6 +334,9 @@ async fn binding_map_must_cover_every_emitted_schema_exactly_once() {
 
     let mut unexpected = StreamingActionBindingSet::new();
     unexpected
+        .insert(fake_binding(canonical_action_schema(DatasetActionKind::Request)).0)
+        .expect("request binding");
+    unexpected
         .insert(fake_binding(canonical_action_schema(DatasetActionKind::GraphNode)).0)
         .expect("graph binding");
     let error = StreamingActionHost::new(
