@@ -1566,3 +1566,109 @@ class TestResourceQuotaErrorHandling:
         ):
             result = await check_resource_quotas(MagicMock(), namespace="ns", workers=1)
         assert result.status is CheckStatus.WARN
+
+
+class TestCheckAIPerfOperator:
+    """`check_aiperf_operator` must never block a legitimate submission.
+
+    It is advisory (direct mode needs no operator), so every failure mode has to
+    resolve to WARN or PASS -- an exception escaping to `_run_check` becomes
+    FAIL, which makes `PreflightResults.passed` False and stops the run.
+    """
+
+    @staticmethod
+    def _api(pods: list[Any] | None = None, *, pod_error: Exception | None = None):
+        api = MagicMock(spec=ApiClient)
+        ext = MagicMock(spec=ApiextensionsV1Api)
+        ext.read_custom_resource_definition = AsyncMock(
+            return_value=V1CustomResourceDefinition(
+                spec=MagicMock(), metadata=V1ObjectMeta(name="aiperfjobs")
+            )
+        )
+        core = MagicMock(spec=CoreV1Api)
+        if pod_error is not None:
+            core.list_pod_for_all_namespaces = AsyncMock(side_effect=pod_error)
+        else:
+            core.list_pod_for_all_namespaces = AsyncMock(
+                return_value=MagicMock(items=pods or [])
+            )
+        return api, ext, core
+
+    @staticmethod
+    def _pod(phase: str, namespace: str = "aiperf-system"):
+        pod = MagicMock()
+        pod.metadata = V1ObjectMeta(name="aiperf-operator-0", namespace=namespace)
+        pod.status = MagicMock(phase=phase)
+        return pod
+
+    @staticmethod
+    def _patched(ext, core):
+        return (
+            patch("kubernetes_asyncio.client.ApiextensionsV1Api", return_value=ext),
+            patch("kubernetes_asyncio.client.CoreV1Api", return_value=core),
+        )
+
+    async def _run(self, api, ext, core):
+        from aiperf.kubernetes.preflight_checks import check_aiperf_operator
+
+        p1, p2 = self._patched(ext, core)
+        with p1, p2:
+            return await check_aiperf_operator(api)
+
+    @pytest.mark.asyncio
+    async def test_running_operator_passes(self) -> None:
+        api, ext, core = self._api([self._pod("Running")])
+        result = await self._run(api, ext, core)
+
+        assert result.status == CheckStatus.PASS
+        assert "aiperf-system" in result.message
+
+    @pytest.mark.asyncio
+    async def test_forbidden_pod_list_passes_rather_than_warning(self) -> None:
+        """A namespaced-only user is the audience for preflight, not a failure.
+
+        Cluster-wide `list pods` is commonly denied; reporting "no operator pod
+        found" against a healthy operator would be actively misleading.
+        """
+        api, ext, core = self._api(pod_error=ApiException(status=403))
+        result = await self._run(api, ext, core)
+
+        assert result.status == CheckStatus.PASS
+        assert "not verified" in result.message
+
+    @pytest.mark.asyncio
+    async def test_crashlooping_operator_warns(self) -> None:
+        """Presence is not health: this is the never-reconciled state itself."""
+        api, ext, core = self._api([self._pod("Pending")])
+        result = await self._run(api, ext, core)
+
+        assert result.status == CheckStatus.WARN
+        assert "Pending" in result.message
+
+    @pytest.mark.asyncio
+    async def test_no_operator_pod_warns(self) -> None:
+        api, ext, core = self._api([])
+        result = await self._run(api, ext, core)
+
+        assert result.status == CheckStatus.WARN
+        assert "no operator pod found" in result.message
+
+    @pytest.mark.asyncio
+    async def test_missing_crd_warns(self) -> None:
+        api, ext, core = self._api([])
+        ext.read_custom_resource_definition = AsyncMock(
+            side_effect=ApiException(status=404)
+        )
+        result = await self._run(api, ext, core)
+
+        assert result.status == CheckStatus.WARN
+        assert "not found" in result.message
+
+    @pytest.mark.asyncio
+    async def test_transport_error_on_crd_read_warns_not_fails(self) -> None:
+        """A network blip must not block submission on an advisory check."""
+        api, ext, core = self._api([])
+        ext.read_custom_resource_definition = AsyncMock(side_effect=TimeoutError())
+        result = await self._run(api, ext, core)
+
+        assert result.status == CheckStatus.WARN

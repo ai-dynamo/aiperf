@@ -13,7 +13,11 @@ from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client_selectors import controller_selector
-from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE, JobSetLabels
+from aiperf.kubernetes.constants import (
+    DEFAULT_OPERATOR_NAMESPACE,
+    OPERATOR_POD_LABEL_SELECTOR,
+    JobSetLabels,
+)
 from aiperf.kubernetes.enums import PodPhase
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.models import PodSummary
@@ -53,7 +57,7 @@ async def get_pod_summary(
 async def find_operator_pod(
     api: ApiClient,
     namespace: str = DEFAULT_OPERATOR_NAMESPACE,
-    label_selector: str = "app.kubernetes.io/name=aiperf-operator",
+    label_selector: str = OPERATOR_POD_LABEL_SELECTOR,
 ) -> tuple[str, PodPhase] | None:
     """Find the operator pod; returns (name, phase) or None."""
     core = client.CoreV1Api(api)
@@ -67,7 +71,7 @@ async def find_operator_pod(
 
 async def find_operator_namespace(
     api: ApiClient,
-    label_selector: str = "app.kubernetes.io/name=aiperf-operator",
+    label_selector: str = OPERATOR_POD_LABEL_SELECTOR,
 ) -> str | None:
     """Cluster-wide search for an aiperf-operator pod; returns its namespace.
 

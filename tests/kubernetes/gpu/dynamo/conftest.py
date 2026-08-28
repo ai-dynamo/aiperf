@@ -426,8 +426,8 @@ async def dynamo_config(
         "namespace": s.dynamo_namespace,
         "backend": backend,
         "tolerations": s.tolerations,
-        # disagg-1gpu requests no nvidia.com/gpu resource, so nothing pins these
-        # pods to a GPU node even though runtimeClassName: nvidia requires one.
+        # Use dynamo_node_selector when set (e.g. multi-tenant clusters),
+        # otherwise fall back to the global node_selector.
         "node_selector": (
             s.dynamo_node_selector
             if s.dynamo_node_selector is not None
@@ -443,11 +443,29 @@ async def dynamo_config(
         common_overrides["image"] = image_override
 
     if mode == DynamoMode.DISAGGREGATED_1GPU:
-        # Single-GPU disaggregated runs prefill + decode concurrently on the same
-        # physical GPU. Use gpu_memory_utilization from settings (default 0.2) so
-        # larger models (e.g. Llama 3.1 8B, ~16 GiB) have room for KV cache.
-        # Two workers at 0.2 each claim ~38 GiB on a 192 GiB GB200 — well within
-        # the 96 GiB / 192 GiB per-GPU budgets.
+        if s.external_existing_operator:
+            # On a real multi-pool cluster, disagg-1gpu is unsafe: setting
+            # gpu_count=0 removes the nvidia.com/gpu resource request, which is
+            # also the only scheduler signal that pins the pod to a GPU node,
+            # while runtimeClassName: nvidia still requires one.  Upgrade to
+            # proper disaggregated mode where each worker gets its own GPU so
+            # the resource request does the pinning.
+            logger.info(
+                "External cluster detected: upgrading disagg-1gpu → disagg "
+                f"(gpu_count={s.count} per worker)"
+            )
+            return DynamoConfig(
+                **common_overrides,
+                mode=DynamoMode.DISAGGREGATED,
+                gpu_count=s.count,
+                max_model_len=s.max_model_len,
+                enforce_eager=True,
+                gpu_memory_utilization=s.mem_util,
+                runtime_class_name=s.runtime_class,
+            )
+        # Local / single-node: share one physical GPU across prefill and decode.
+        # Use gpu_memory_utilization from settings (default 0.2) so larger models
+        # (e.g. Llama 3.1 8B, ~16 GiB) have room for KV cache.
         return DynamoConfig.single_gpu_disagg(
             **common_overrides,
             max_model_len=s.max_model_len,

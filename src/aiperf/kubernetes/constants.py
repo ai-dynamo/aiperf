@@ -179,6 +179,9 @@ DEFAULT_BENCHMARK_NAMESPACE = "aiperf-benchmarks"
 # for chart-default installs.
 DEFAULT_OPERATOR_NAMESPACE = "aiperf-system"
 
+OPERATOR_POD_LABEL_SELECTOR = "app.kubernetes.io/name=aiperf-operator"
+"""Label selector identifying an aiperf-operator controller pod."""
+
 # JobSet CRD install command surfaced by preflight when the CRD is missing.
 # Uses GitHub's `releases/latest/download/` redirect rather than a pinned tag,
 # matching docs/kubernetes/getting-started.md. Full install instructions live

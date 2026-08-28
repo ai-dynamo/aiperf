@@ -22,7 +22,10 @@ from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.redact import redact_url
-from aiperf.kubernetes.constants import JOBSET_INSTALL_HINT
+from aiperf.kubernetes.constants import (
+    JOBSET_INSTALL_HINT,
+    OPERATOR_POD_LABEL_SELECTOR,
+)
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_GROUP,
     AIPERF_JOB_PLURAL,
@@ -345,8 +348,14 @@ async def check_aiperf_operator(api: ApiClient) -> CheckResult:
     AIPerfJob CRD accepts nothing: `aiperf kube profile` fails at CR creation
     with a bare 404 from the apiserver. Direct mode still works without it,
     hence WARN rather than FAIL.
+
+    The pod search is done here rather than through
+    ``client_pods.find_operator_namespace``: that helper deliberately swallows
+    a 403 and returns ``None`` so its callers can fall back to a default
+    namespace, which would make a namespaced-only user -- exactly the audience
+    for `aiperf kube preflight` -- see "no operator pod found" against a
+    perfectly healthy operator.
     """
-    from aiperf.kubernetes.client_pods import find_operator_namespace
     from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 
     name = "AIPerf Operator"
@@ -368,16 +377,44 @@ async def check_aiperf_operator(api: ApiClient) -> CheckResult:
             status=CheckStatus.WARN,
             message=f"Error checking AIPerfJob CRD: HTTP {e.status}",
         )
+    except _CLUSTER_API_ERRORS as e:
+        # Anything but ApiException would escape to the runner, which turns any
+        # exception into FAIL and blocks submission -- the opposite of this
+        # check's advisory intent.
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            message=f"Could not verify AIPerfJob CRD: {e}",
+        )
 
     try:
-        operator_ns = await find_operator_namespace(api)
+        pod_list = await client.CoreV1Api(api).list_pod_for_all_namespaces(
+            label_selector=OPERATOR_POD_LABEL_SELECTOR,
+        )
+    except ApiException as e:
+        if e.status == 403:
+            return CheckResult(
+                name=name,
+                status=CheckStatus.PASS,
+                message=(
+                    "AIPerfJob CRD installed; operator pod not verified "
+                    "(cluster-wide pod list forbidden)"
+                ),
+            )
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            message=f"AIPerfJob CRD installed; could not locate operator pod: HTTP {e.status}",
+        )
     except _CLUSTER_API_ERRORS as e:
         return CheckResult(
             name=name,
             status=CheckStatus.WARN,
             message=f"AIPerfJob CRD installed; could not locate operator pod: {e}",
         )
-    if operator_ns is None:
+
+    pods = [p for p in (pod_list.items or []) if p.metadata]
+    if not pods:
         return CheckResult(
             name=name,
             status=CheckStatus.WARN,
@@ -387,10 +424,41 @@ async def check_aiperf_operator(api: ApiClient) -> CheckResult:
                 "Check the aiperf-operator Deployment, or submit with --direct",
             ],
         )
+
+    running = [
+        p
+        for p in pods
+        if p.status
+        and p.status.phase == "Running"
+        and not (p.metadata.deletion_timestamp)
+    ]
+    if not running:
+        # A CrashLoopBackOff or unschedulable operator is precisely the
+        # "accepted then never reconciled" state this check exists to catch,
+        # and it is invisible if presence alone counts as healthy.
+        phases = sorted(
+            {(p.status.phase if p.status else None) or "Unknown" for p in pods}
+        )
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            message=f"AIPerf operator pod is not Running (phase: {', '.join(phases)})",
+            hints=[
+                "CRs will be accepted and then never reconciled",
+                "kubectl describe pod -l "
+                f"{OPERATOR_POD_LABEL_SELECTOR} --all-namespaces",
+            ],
+        )
+
+    operator_ns = sorted(
+        {p.metadata.namespace for p in running if p.metadata.namespace}
+    )
     return CheckResult(
         name=name,
         status=CheckStatus.PASS,
-        message=f"AIPerf operator running in namespace '{operator_ns}'",
+        message=f"AIPerf operator running in namespace '{operator_ns[0]}'"
+        if operator_ns
+        else "AIPerf operator running",
     )
 
 
