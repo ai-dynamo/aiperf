@@ -8,14 +8,14 @@ the rest of the run. Propagating that out of ``_finalize_local_artifacts`` cost
 the run ``profile_export.jsonl`` *and* the CSV/JSON/console exports and exited
 1, where main lost the one line and kept every artifact.
 
-``_finalize_local_artifacts`` makes no Kubernetes-vs-local distinction: it
-always degrades gracefully (log at ERROR, keep finalizing the rest) and only
-ever propagates ``CancelledError``, regardless of deployment mode. There is no
-``_is_group_managed_mode`` (or equivalent) on ``RecordProcessor`` -- an earlier
-version of this file fabricated that attribute via ``MagicMock(spec=...)``,
-which permits setting attributes absent from the spec, so the "local" and
-"kubernetes" parametrized runs were byte-identical and tested nothing about
-Kubernetes behavior.
+Under the operator the tradeoff inverts: a written results marker is
+authoritative, so a partial export must fail closed as an ``ExceptionGroup``
+and surface as a failed CR. ``_finalize_local_artifacts`` therefore branches on
+``RecordProcessor._is_group_managed_mode``, which every test here stubs
+explicitly -- ``MagicMock(spec=RecordProcessor)`` otherwise auto-creates it as a
+truthy Mock and silently drives every case down the fail-closed path.
+``CancelledError`` is shutdown, not a degraded artifact, and propagates in both
+modes.
 """
 
 import asyncio
@@ -27,11 +27,12 @@ from pytest import param
 from aiperf.records.record_processor_service import RecordProcessor
 
 
-def _make_processor(*, children: list) -> MagicMock:
+def _make_processor(*, children: list, kubernetes: bool = False) -> MagicMock:
     """A RecordProcessor stub carrying only what _finalize_local_artifacts reads."""
     processor = MagicMock(spec=RecordProcessor)
     processor._children = children
     processor.error = MagicMock()
+    processor._is_group_managed_mode = MagicMock(return_value=kubernetes)
     return processor
 
 
@@ -65,7 +66,7 @@ async def test_finalize_local_artifacts_kubernetes_failure_fails_closed() -> Non
     """A partial artifact set under the operator must surface as a failure."""
     bad = _child("raw_record_writer", RuntimeError("orjson: unserializable value"))
     good = _child("accuracy_writer", None)
-    processor = _make_processor(kubernetes=True, children=[bad, good])
+    processor = _make_processor(children=[bad, good], kubernetes=True)
 
     with pytest.raises(ExceptionGroup) as excinfo:
         await RecordProcessor._finalize_local_artifacts(processor)
@@ -86,7 +87,7 @@ async def test_finalize_local_artifacts_cancellation_always_propagates(
 ) -> None:
     """Cancellation is shutdown, not a degraded artifact; never swallow it."""
     child = _child("raw_record_writer", asyncio.CancelledError())
-    processor = _make_processor(children=[child])
+    processor = _make_processor(children=[child], kubernetes=kubernetes)
 
     with pytest.raises(asyncio.CancelledError):
         await RecordProcessor._finalize_local_artifacts(processor)
