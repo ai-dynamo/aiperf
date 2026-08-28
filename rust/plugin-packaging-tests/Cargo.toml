@@ -13,5 +13,12 @@ aiperf-plugin-host.workspace = true
 aiperf-plugin-sdk.workspace = true
 
 [dev-dependencies]
+tempfile = { workspace = true }
+
+[[test]]
+name = "distribution_lifecycle"
+path = "tests/distribution_lifecycle.rs"
+
+[dev-dependencies]
 serde_json = { workspace = true }
 tempfile = { workspace = true }
