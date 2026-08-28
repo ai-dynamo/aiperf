@@ -196,12 +196,14 @@ fn inspect_elf(
     };
 
     // Check for entry symbol in dynsyms and syms.
-    let entry_symbol_present = elf.dynsyms.iter().any(|sym| {
-        elf.dynstrtab.get_at(sym.st_name) == Some(ENTRY_SYMBOL)
-    }) || elf
-        .syms
+    let entry_symbol_present = elf
+        .dynsyms
         .iter()
-        .any(|sym| elf.strtab.get_at(sym.st_name) == Some(ENTRY_SYMBOL));
+        .any(|sym| elf.dynstrtab.get_at(sym.st_name) == Some(ENTRY_SYMBOL))
+        || elf
+            .syms
+            .iter()
+            .any(|sym| elf.strtab.get_at(sym.st_name) == Some(ENTRY_SYMBOL));
 
     if !entry_symbol_present {
         return Err(StaticInspectionError::MissingEntrySymbol);
@@ -305,10 +307,7 @@ fn inspect_pe(
     }
 
     // Check export directory.
-    let entry_symbol_present = pe
-        .exports
-        .iter()
-        .any(|e| e.name == Some(ENTRY_SYMBOL));
+    let entry_symbol_present = pe.exports.iter().any(|e| e.name == Some(ENTRY_SYMBOL));
 
     if !entry_symbol_present {
         return Err(StaticInspectionError::MissingEntrySymbol);
