@@ -15,8 +15,7 @@ fn load_fixture(name: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/manifests")
         .join(name);
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read fixture {name}: {e}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read fixture {name}: {e}"))
 }
 
 fn parse_yaml(yaml: &str) -> Result<PluginManifestV2, serde_yaml::Error> {
@@ -24,8 +23,8 @@ fn parse_yaml(yaml: &str) -> Result<PluginManifestV2, serde_yaml::Error> {
 }
 
 fn parse_and_normalize(yaml: &str) -> Result<PluginManifestV2, ManifestError> {
-    let raw: PluginManifestV2 = serde_yaml::from_str(yaml)
-        .map_err(|e| ManifestError::ParseError(e.to_string()))?;
+    let raw: PluginManifestV2 =
+        serde_yaml::from_str(yaml).map_err(|e| ManifestError::ParseError(e.to_string()))?;
     normalize_manifest(raw)
 }
 
@@ -54,7 +53,10 @@ fn python_schema_1_0_returns_stable_code() {
         "expected PythonManifest, got: {err:?}"
     );
     let msg = err.to_string();
-    assert!(msg.contains("python-plugin-manifest-not-native"), "stable code missing: {msg}");
+    assert!(
+        msg.contains("python-plugin-manifest-not-native"),
+        "stable code missing: {msg}"
+    );
 }
 
 #[test]
@@ -240,10 +242,10 @@ packages:
 
 #[test]
 fn schema_golden_file_exists_and_is_valid_json() {
-    let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("schema/plugins-2.0.schema.json");
-    let content = std::fs::read_to_string(&schema_path)
-        .expect("schema/plugins-2.0.schema.json must exist");
+    let schema_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schema/plugins-2.0.schema.json");
+    let content =
+        std::fs::read_to_string(&schema_path).expect("schema/plugins-2.0.schema.json must exist");
     let parsed: serde_json::Value =
         serde_json::from_str(&content).expect("schema file must be valid JSON");
     assert_eq!(
@@ -252,7 +254,10 @@ fn schema_golden_file_exists_and_is_valid_json() {
     );
     // Verify schema_version const is present
     let schema_ver = &parsed["properties"]["schema_version"]["const"];
-    assert_eq!(schema_ver, "2.0", "schema must constrain schema_version to 2.0");
+    assert_eq!(
+        schema_ver, "2.0",
+        "schema must constrain schema_version to 2.0"
+    );
 }
 
 // --- canonical serialization ---
