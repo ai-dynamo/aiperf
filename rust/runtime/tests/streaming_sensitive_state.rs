@@ -20,9 +20,10 @@ use aiperf_runtime::streaming::policy::{
     SensitiveStateKeyId, SessionTargetPolicy, fold_target_reply, validate_target_policy,
 };
 use aiperf_runtime::streaming::sensitive_state::{
-    MAX_SENSITIVE_MATERIAL_BYTES, NativeSensitiveStateKeyResolver, RefusingSensitiveStateKeyResolver,
-    SensitiveStateContext, StreamingSensitiveStateKeyResolver, decrypt_sensitive, encrypt_sensitive,
-    read_bounded, read_private_key_file, acquire_process_sensitive_state,
+    MAX_SENSITIVE_MATERIAL_BYTES, NativeSensitiveStateKeyResolver,
+    RefusingSensitiveStateKeyResolver, SensitiveStateContext, StreamingSensitiveStateKeyResolver,
+    acquire_process_sensitive_state, decrypt_sensitive, encrypt_sensitive, read_bounded,
+    read_private_key_file,
 };
 use zeroize::Zeroizing;
 
@@ -95,15 +96,17 @@ fn target_state_requires_authenticated_external_key_and_bound_aad() {
     );
 
     let rendered = format!("{envelope:?}");
-    assert!(!rendered.contains("customer"), "envelope Debug leaks content");
+    assert!(
+        !rendered.contains("customer"),
+        "envelope Debug leaks content"
+    );
 }
 
 #[test]
 fn wrong_key_and_single_bit_tamper_both_fail_authentication() {
     let resolver = resolver_with(&[(KEY_ID, 0x5a), ("other", 0x17)]);
     let context = context();
-    let envelope =
-        encrypt_sensitive(&resolver, &key_id(), &context, b"protected").expect("seal");
+    let envelope = encrypt_sensitive(&resolver, &key_id(), &context, b"protected").expect("seal");
 
     let mut wrong_key = envelope.clone();
     wrong_key.key_id = SensitiveStateKeyId::new("other");
@@ -246,7 +249,9 @@ fn key_file_must_be_regular_exact_0600_and_not_a_symlink() {
     let link = root.path().join("link.key");
     std::os::unix::fs::symlink(&private, &link).expect("symlink");
     assert_eq!(
-        read_private_key_file(&link).expect_err("symlink refused").failure(),
+        read_private_key_file(&link)
+            .expect_err("symlink refused")
+            .failure(),
         SensitiveStateFailureCode::KeyNotPrivate
     );
 
@@ -262,7 +267,9 @@ fn key_file_must_be_regular_exact_0600_and_not_a_symlink() {
     // SAFETY: `c_path` is a valid NUL-terminated path inside the temp dir.
     assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
     assert_eq!(
-        read_private_key_file(&fifo).expect_err("fifo refused").failure(),
+        read_private_key_file(&fifo)
+            .expect_err("fifo refused")
+            .failure(),
         SensitiveStateFailureCode::KeyNotPrivate
     );
 }
@@ -300,14 +307,23 @@ fn oversized_key_source_is_refused_without_full_read() {
 #[test]
 fn parsed_material_resolves_only_declared_selectors() {
     let mut material = Zeroizing::new(
-        format!("{KEY_ID} {}\nsecondary {}\n", "5a".repeat(32), "17".repeat(32)).into_bytes(),
+        format!(
+            "{KEY_ID} {}\nsecondary {}\n",
+            "5a".repeat(32),
+            "17".repeat(32)
+        )
+        .into_bytes(),
     );
     let resolver = NativeSensitiveStateKeyResolver::parse(&mut material).expect("parse");
     // The parse buffer is wiped, so the key bytes do not survive in it.
     assert!(material.iter().all(|byte| *byte == 0));
 
     assert_eq!(
-        resolver.resolve(&key_id()).expect("declared").key.as_slice(),
+        resolver
+            .resolve(&key_id())
+            .expect("declared")
+            .key
+            .as_slice(),
         &[0x5a; 32]
     );
     assert_eq!(
@@ -430,7 +446,10 @@ fn recorded_inputs_does_not_mutate_later_requests() {
         &recorded,
         observed.clone(),
     );
-    assert!(fold.divergence().is_divergent, "divergence is still reported");
+    assert!(
+        fold.divergence().is_divergent,
+        "divergence is still reported"
+    );
     assert_eq!(fold.divergence().recorded_len, recorded.len());
     assert_eq!(fold.divergence().observed_len, observed.len());
     // Nothing observed is retained, so the next request is byte-identical to

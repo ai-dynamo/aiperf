@@ -1277,7 +1277,6 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                             // failed to produce.
                             tracing::warn!(
                                 cell_id = register.cell_id,
-                                expected = %expected,
                                 "rejecting cell registration on plugin lock digest mismatch"
                             );
                             anyhow::bail!(
@@ -1287,10 +1286,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                         }
                     }
                     (None, None) => {}
-                    (Some(expected), None) => {
+                    (Some(_expected), None) => {
                         tracing::warn!(
                             cell_id = register.cell_id,
-                            expected = %expected,
                             "rejecting cell registration that omitted its plugin lock digest"
                         );
                         anyhow::bail!(
@@ -1482,6 +1480,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // is keyed by cell id so duplicates and out-of-range messages cannot satisfy the
         // all-cells barrier.
         let mut terminal_partitions = TerminalPartitions::new(cell_count);
+        // Capture frames are admitted only from the dense registered cell set, so a
+        // frame naming any other cell is refused before its payload is retained.
+        let mut capture = crate::cellular::CaptureAssembler::new(0..cell_count);
         let mut replay_supplements: Vec<GraphCellSupplement> = Vec::new();
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         // The frontend tails this file into AIPerfJob CR status.
@@ -1514,6 +1515,16 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                             replay_supplements.push(supplement);
                         }
                     }
+                    Some(CellMessage::CaptureChunk(chunk)) => {
+                        capture
+                            .accept_chunk(*chunk)
+                            .map_err(|error| anyhow!("cellular capture refused: {error}"))?;
+                    }
+                    Some(CellMessage::CaptureBundle(bundle)) => {
+                        capture
+                            .accept_bundle(*bundle)
+                            .map_err(|error| anyhow!("cellular capture refused: {error}"))?;
+                    }
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
                         // Emit the running cross-cell aggregate for live CR-status progress.
@@ -1539,6 +1550,19 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             }
         }
         let (partitions, store_partitions) = terminal_partitions.into_parts();
+        // A run whose capture plan asked for nothing produces no capture frames at
+        // all; only a run that started shipping must prove it finished. `finish`
+        // is what refuses a hole, a length disagreement, or a silent cell.
+        if capture.has_activity() {
+            let missing = capture.missing_cells();
+            let assembled = capture.finish().map_err(|error| {
+                anyhow!("cellular capture incomplete (missing cells {missing:?}): {error}")
+            })?;
+            tracing::debug!(
+                capture_bytes = assembled.total_exact_bytes(),
+                "cellular capture assembled"
+            );
+        }
         if let Some(profiler) = profiler.as_mut()
             && profiler.needs_stop()
         {

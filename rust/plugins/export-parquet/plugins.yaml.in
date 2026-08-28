@@ -1,2 +1,24 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Parquet exporter candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+#
+# NOTE: Requires --features parquet (feature-gated in the workspace).
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/export-parquet"
+    version: "{{VERSION}}"
+    category: export
+    artifact: "libaiperf_plugin_export_parquet.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      Parquet exporter candidate: Parquet per-record output as a plugin
+      package (requires parquet feature). Static production exporter
+      authority remains until Task 39b.
+    capabilities:
+      - canonical_id: "export.parquet"
+        aliases: ["parquet", "parquet_records"]

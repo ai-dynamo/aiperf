@@ -45,9 +45,9 @@ use super::connect::{
 };
 use super::{
     ArtifactChannelServerConfig, CellAck, CellClient, CellMessage, CellPartitionShip, CellRegister,
-    CellStorePartitionShip, CellTransportError, ControllerTransport, HANDLER_HEARTBEAT,
-    HANDLER_PARTITION, HANDLER_PHASE_SIGNAL, HANDLER_PREFLIGHT, HANDLER_REGISTER,
-    HANDLER_STORE_PARTITION,
+    CellStorePartitionShip, CellTransportError, ControllerTransport, HANDLER_CAPTURE_BUNDLE,
+    HANDLER_CAPTURE_CHUNK, HANDLER_HEARTBEAT, HANDLER_PARTITION, HANDLER_PHASE_SIGNAL,
+    HANDLER_PREFLIGHT, HANDLER_REGISTER, HANDLER_STORE_PARTITION,
 };
 use crate::engine::artifact_shipping::ArtifactRegistrationPlan;
 use crate::engine::cellular_registration::{
@@ -419,6 +419,8 @@ impl VeloControllerTransport {
         let register_authority = registration_authority.clone();
         let partition_authority = registration_authority.clone();
         let store_partition_authority = registration_authority.clone();
+        let capture_chunk_authority = registration_authority.clone();
+        let capture_bundle_authority = registration_authority.clone();
         // `_hello` publishes the messenger peer. `Velo::peer_info()` augments it
         // with streaming addresses the connected cell never observed.
         let controller_peer = velo.messenger().peer_info();
@@ -588,7 +590,7 @@ impl VeloControllerTransport {
 
         // store_partition is the exact-fold sibling of `partition`; push
         // the decoded folded column-store partition, reply with an ack.
-        let store_partition_sender = sender;
+        let store_partition_sender = sender.clone();
         velo.register_handler(
             Handler::unary_handler_async(HANDLER_STORE_PARTITION, move |ctx: Context| {
                 let sender = store_partition_sender.clone();
@@ -619,6 +621,82 @@ impl VeloControllerTransport {
                         .await;
                     let ack = rmp_serde::to_vec(&CellAck { ok: true })
                         .map_err(|error| anyhow::anyhow!("encode store ack: {error}"))?;
+                    Ok(Some(Bytes::from(ack)))
+                }
+            })
+            .build(),
+        )
+        .map_err(io)?;
+
+        // capture_chunk (unary): admit one bounded exact-records chunk from the
+        // cell that signed it, push it to the controller, reply with an ack. The
+        // ack is what bounds a cell's in-flight capture.
+        let capture_chunk_sender = sender.clone();
+        velo.register_handler(
+            Handler::unary_handler_async(HANDLER_CAPTURE_CHUNK, move |ctx: Context| {
+                let sender = capture_chunk_sender.clone();
+                let registration_authority = capture_chunk_authority.clone();
+                async move {
+                    let opened = registration_authority
+                        .open_payload::<crate::cellular::capture::ExactRecordsChunkV1>(
+                            AdmissionPurpose::CaptureChunk,
+                            &ctx.payload,
+                        )
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let (role, _, authenticated_peer, chunk) = opened.into_parts();
+                    ensure!(
+                        role == crate::engine::cellular_bootstrap::CellularRole::Cell(
+                            chunk.cell_id
+                        ),
+                        "AdmissionRejected"
+                    );
+                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    ctx.msg.register_peer(peer).map_err(|error| {
+                        anyhow::anyhow!("register_peer capture chunk shipper: {error}")
+                    })?;
+                    let _ = sender
+                        .send(Ok(CellMessage::CaptureChunk(Box::new(chunk))))
+                        .await;
+                    let ack = rmp_serde::to_vec(&CellAck { ok: true })
+                        .map_err(|error| anyhow::anyhow!("encode capture chunk ack: {error}"))?;
+                    Ok(Some(Bytes::from(ack)))
+                }
+            })
+            .build(),
+        )
+        .map_err(io)?;
+
+        // capture_bundle (unary): the cell's mandatory closing frame.
+        let capture_bundle_sender = sender;
+        velo.register_handler(
+            Handler::unary_handler_async(HANDLER_CAPTURE_BUNDLE, move |ctx: Context| {
+                let sender = capture_bundle_sender.clone();
+                let registration_authority = capture_bundle_authority.clone();
+                async move {
+                    let opened = registration_authority
+                        .open_payload::<crate::cellular::capture::CellCaptureBundleV1>(
+                            AdmissionPurpose::CaptureBundle,
+                            &ctx.payload,
+                        )
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    let (role, _, authenticated_peer, bundle) = opened.into_parts();
+                    ensure!(
+                        role == crate::engine::cellular_bootstrap::CellularRole::Cell(
+                            bundle.cell_id
+                        ),
+                        "AdmissionRejected"
+                    );
+                    let peer: PeerInfo = rmp_serde::from_slice(&authenticated_peer)
+                        .map_err(|_| anyhow::anyhow!("AdmissionRejected"))?;
+                    ctx.msg.register_peer(peer).map_err(|error| {
+                        anyhow::anyhow!("register_peer capture bundle shipper: {error}")
+                    })?;
+                    let _ = sender
+                        .send(Ok(CellMessage::CaptureBundle(Box::new(bundle))))
+                        .await;
+                    let ack = rmp_serde::to_vec(&CellAck { ok: true })
+                        .map_err(|error| anyhow::anyhow!("encode capture bundle ack: {error}"))?;
                     Ok(Some(Bytes::from(ack)))
                 }
             })
@@ -888,6 +966,45 @@ impl VeloCellClient {
             .map(Bytes::from)
             .map_err(encode)
     }
+
+    /// Seal and ship one capture frame, refusing to speak for another cell.
+    ///
+    /// Unary like the partition ships: the controller acknowledges each frame, so
+    /// a cell cannot outrun the controller's bounded assembly buffer.
+    async fn ship_capture_frame<T: Serialize + Sync>(
+        &self,
+        purpose: AdmissionPurpose,
+        handler: &'static str,
+        frame_cell_id: u32,
+        payload: &T,
+        label: &'static str,
+    ) -> Result<(), CellTransportError> {
+        let credential = self.credential.as_ref().ok_or_else(|| {
+            CellTransportError::Io(format!(
+                "{label} shipping requires an authenticated credential"
+            ))
+        })?;
+        if credential.cell_id() != frame_cell_id {
+            return Err(CellTransportError::Io(format!(
+                "{label} credential does not match the cell identity"
+            )));
+        }
+        let body = self.seal_payload(purpose, payload)?;
+        let reply: Bytes = self
+            .velo
+            .unary(handler)
+            .map_err(io)?
+            .raw_payload(body)
+            .instance(self.controller.instance_id())
+            .send()
+            .await
+            .map_err(io)?;
+        let ack: CellAck = rmp_serde::from_slice(&reply).map_err(decode)?;
+        if !ack.ok {
+            return Err(CellTransportError::Io(format!("controller nacked {label}")));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -994,6 +1111,26 @@ impl CellClient for VeloCellClient {
                         "controller nacked store partition".to_owned(),
                     ));
                 }
+            }
+            CellMessage::CaptureChunk(chunk) => {
+                self.ship_capture_frame(
+                    AdmissionPurpose::CaptureChunk,
+                    HANDLER_CAPTURE_CHUNK,
+                    chunk.cell_id,
+                    chunk.as_ref(),
+                    "capture chunk",
+                )
+                .await?;
+            }
+            CellMessage::CaptureBundle(bundle) => {
+                self.ship_capture_frame(
+                    AdmissionPurpose::CaptureBundle,
+                    HANDLER_CAPTURE_BUNDLE,
+                    bundle.cell_id,
+                    bundle.as_ref(),
+                    "capture bundle",
+                )
+                .await?;
             }
         }
         Ok(())

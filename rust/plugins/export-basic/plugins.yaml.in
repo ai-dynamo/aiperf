@@ -1,2 +1,32 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Basic exporter candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/export-basic"
+    version: "{{VERSION}}"
+    category: export
+    artifact: "libaiperf_plugin_export_basic.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      Basic exporter candidate: JSON, CSV, console, analysis-HTML/TXT,
+      accuracy-CSV, and timeslice exporters as a plugin package.
+      Static production exporter authority remains until Task 39b.
+    capabilities:
+      - canonical_id: "export.json"
+        aliases: ["json", "json_records"]
+      - canonical_id: "export.csv"
+        aliases: ["csv", "csv_records"]
+      - canonical_id: "export.console"
+        aliases: ["console", "console_txt"]
+      - canonical_id: "export.analysis"
+        aliases: ["analysis", "analysis_txt", "analysis_html"]
+      - canonical_id: "export.timeslice"
+        aliases: ["timeslice"]
+      - canonical_id: "export.accuracy_csv"
+        aliases: ["accuracy_csv"]

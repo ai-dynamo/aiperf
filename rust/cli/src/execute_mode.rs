@@ -80,7 +80,8 @@ fn record_verified_plugin_lock() {
         aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(None);
         return;
     };
-    let bundle = match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path) {
+    let bundle = match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path)
+    {
         Ok(bundle) => bundle,
         Err(error) => {
             tracing::error!(

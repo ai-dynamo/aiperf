@@ -22,10 +22,12 @@
 //! — and the authority checks in [`crate::platform`] are what prove nobody else
 //! can either.
 
+use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::InstallError;
 use crate::inventory::{AuthenticatedInventory, validate_inventory};
+use crate::platform::fs::open_no_follow;
 
 /// Name of the file whose presence proves a generation is complete.
 pub const READY_MARKER: &str = "generation.marker";
@@ -413,8 +415,18 @@ fn generation_ids(dir: &Path, require_marker: bool) -> Result<Vec<u64>, InstallE
 /// Resolve a pointer file to the complete generation it names.
 fn read_pointer(root: &Path, name: &str) -> Result<Option<InstallGeneration>, InstallError> {
     let pointer = root.join(name);
-    let text = match std::fs::read_to_string(&pointer) {
-        Ok(text) => text,
+    // Open with O_NOFOLLOW so a racing symlink at the pointer path cannot
+    // redirect the resolver to an arbitrary location.
+    let text = match open_no_follow(&pointer) {
+        Ok(mut f) => {
+            let mut buf = String::new();
+            f.read_to_string(&mut buf)
+                .map_err(|source| InstallError::Io {
+                    path: pointer.clone(),
+                    source,
+                })?;
+            buf
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
             return Err(InstallError::Io {
@@ -442,7 +454,14 @@ fn read_pointer(root: &Path, name: &str) -> Result<Option<InstallGeneration>, In
 /// Atomically point `name` at `dir`.
 fn write_pointer(root: &Path, name: &str, dir: &Path) -> Result<(), InstallError> {
     let pointer = root.join(name);
-    let temp = root.join(format!(".{name}.{}.tmp", std::process::id()));
+    let temp = root.join(format!(
+        ".{name}.{}-{}.tmp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos()
+    ));
     write_file(&temp, format!("{}\n", dir.display()).as_bytes())?;
     std::fs::rename(&temp, &pointer).map_err(|source| {
         let _ = std::fs::remove_file(&temp);

@@ -32,10 +32,14 @@ fn main() {
     if let Some(target_dir) = out_dir.ancestors().nth(4) {
         let profile_dir = target_dir.join("debug");
         println!(
-            "cargo:rustc-env=AIPERF_CARGO_PROFILE_TARGET_DIR={}",
-            profile_dir.display()
-        );
+        "cargo:rustc-env=AIPERF_CARGO_PROFILE_TARGET_DIR={}",
+        profile_dir.display()
+    );
     }
+
+    // Inject the target triple for use in integration tests.
+    let target = env::var("TARGET").unwrap_or_default();
+    println!("cargo:rustc-env=AIPERF_BUILD_TARGET={target}");
 
     // Rerun if the provider Cargo.toml changes (new exports, version bump).
     println!(

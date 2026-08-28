@@ -93,7 +93,10 @@ impl fmt::Display for SoakError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingEnv { name } => {
-                write!(formatter, "required soak environment variable {name} is unset")
+                write!(
+                    formatter,
+                    "required soak environment variable {name} is unset"
+                )
             }
             Self::InvalidEnv {
                 name,
