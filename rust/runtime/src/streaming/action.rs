@@ -31,16 +31,22 @@ mod reliability_view_seal {
 mod host;
 
 #[cfg(test)]
-pub(crate) use host::{
-    CheckedActionFailureTerminalEvidence, CheckedActionTerminalMembership, FrozenActionInventory,
-};
+pub(crate) use host::{CheckedActionFailureTerminalEvidence, CheckedActionTerminalMembership};
+
+/// The sealed frozen inventory value minted by [`ActionInventoryLedger`].
+///
+/// The type name is public so the ledger's return type is nameable; its
+/// constructor stays private to the action-host subtree, so naming it confers
+/// no ability to forge one.
+pub use host::FrozenActionInventory;
 
 /// State-only built-in action sink.
 pub mod session_state;
 
 pub use host::{
-    ActionEventBatch, ActiveExecution, ActiveExecutionSet, BudgetOwnedActionTerminalReceipt,
-    StreamingActionBindingSet, StreamingActionHost, action_kind, canonical_action_schema,
+    ActionEventBatch, ActionInventoryLedger, ActiveExecution, ActiveExecutionSet,
+    BudgetOwnedActionTerminalReceipt, StreamingActionBindingSet, StreamingActionHost, action_kind,
+    canonical_action_schema,
 };
 
 /// Borrowed checked evidence that one failed action attempt reached terminal.
