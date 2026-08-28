@@ -1619,9 +1619,7 @@ class TestTopologyRecordProcessorDerivation:
             num_pods = apply_worker_config(config, total_workers)
         except ValueError:
             with pytest.raises(ValueError):
-                MemoryEstimationParams.from_config(
-                    config, total_workers=total_workers
-                )
+                MemoryEstimationParams.from_config(config, total_workers=total_workers)
             return
         params = MemoryEstimationParams.from_config(config, total_workers=total_workers)
 

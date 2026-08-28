@@ -1947,7 +1947,7 @@ Image pull policy (Always, IfNotPresent, Never). Use 'Never' for minikube (or lo
 
 #### `--total-workers` `<int>`
 
-Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod runs on a single pod instead: --total-workers 25 = 1 pod × 25 workers.
+Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A total at or below runtime.workersPerPod runs on a single pod. Above it, a JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod is rejected: --total-workers 25 is an error, use 20 or 30.
 <br/>_Constraints: > 0_
 <br/>_Default: `10`_
 
@@ -3540,7 +3540,7 @@ Image pull policy (Always, IfNotPresent, Never). Use 'Never' for minikube (or lo
 
 #### `--total-workers` `<int>`
 
-Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod runs on a single pod instead: --total-workers 25 = 1 pod × 25 workers.
+Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A total at or below runtime.workersPerPod runs on a single pod. Above it, a JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod is rejected: --total-workers 25 is an error, use 20 or 30.
 <br/>_Constraints: > 0_
 <br/>_Default: `10`_
 
@@ -5129,7 +5129,7 @@ Image pull policy (Always, IfNotPresent, Never). Use 'Never' for minikube (or lo
 
 #### `--total-workers` `<int>`
 
-Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod runs on a single pod instead: --total-workers 25 = 1 pod × 25 workers.
+Total number of workers, distributed across pods based on runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 workers. A total at or below runtime.workersPerPod runs on a single pod. Above it, a JobSet cannot express a partial final pod, so a total that is not a multiple of runtime.workersPerPod is rejected: --total-workers 25 is an error, use 20 or 30.
 <br/>_Constraints: > 0_
 <br/>_Default: `10`_
 

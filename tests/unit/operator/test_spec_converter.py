@@ -563,42 +563,40 @@ class TestApplyWorkerConfig:
         assert config.benchmark.runtime.workers_per_pod == 10
         assert config.benchmark.runtime.workers == 50
 
-    def test_non_divisible_total_is_not_rounded_up(
+    def test_non_divisible_total_is_rejected(
         self, minimal_aiperfjob_spec: dict[str, Any]
     ) -> None:
-        """A requested worker total must match the rendered worker capacity."""
-        config = AIPerfJobSpecConverter(
-            minimal_aiperfjob_spec, "test-job", "default"
-        ).to_aiperf_config()
+        """A total that cannot fill uniform pods must fail, not be reshaped.
 
-        num_pods = apply_worker_config(config, 11)
-        runtime = config.model_dump(mode="python")["benchmark"]["runtime"]
-
-        assert runtime["workers"] == 11
-        assert num_pods * runtime["workers_per_pod"] == 11
-
-    def test_non_divisible_total_warns_about_single_pod_collapse(
-        self, minimal_aiperfjob_spec: dict[str, Any], caplog
-    ) -> None:
-        """The collapse to one pod must be warned about, not silent.
-
-        It is deliberate (a JobSet has no partial final replica) and documented
-        in the --total-workers help text, but putting 25 workers on one pod when
-        the user asked for a spread is the kind of surprise that only shows up
-        as a saturated node.
+        11 workers at the default 10 per pod has no JobSet representation: a
+        replicated job cannot carry a partial final replica.
         """
         config = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"
         ).to_aiperf_config()
 
-        with caplog.at_level(
-            logging.WARNING, logger="aiperf.kubernetes.spec_converter"
-        ):
-            num_pods = apply_worker_config(config, 25)
+        with pytest.raises(ValueError, match="not a multiple of"):
+            apply_worker_config(config, 11)
 
-        assert num_pods == 1
-        assert config.benchmark.runtime.workers_per_pod == 25
-        assert "single pod" in caplog.text
+    def test_non_divisible_total_error_names_the_usable_totals(
+        self, minimal_aiperfjob_spec: dict[str, Any]
+    ) -> None:
+        """The rejection has to tell the user what to type instead.
+
+        A bare "invalid" leaves them guessing at a number that is only derivable
+        from runtime.workersPerPod, which they may never have set explicitly.
+        """
+        config = AIPerfJobSpecConverter(
+            minimal_aiperfjob_spec, "test-job", "default"
+        ).to_aiperf_config()
+
+        with pytest.raises(ValueError) as excinfo:
+            apply_worker_config(config, 25)
+
+        message = str(excinfo.value)
+        assert "20" in message
+        assert "30" in message
+        assert "workers_per_pod" in message
 
     def test_divisible_total_does_not_warn(
         self, minimal_aiperfjob_spec: dict[str, Any], caplog
