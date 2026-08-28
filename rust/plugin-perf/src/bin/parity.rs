@@ -178,7 +178,10 @@ fn run(args: &Args) -> Result<ParityResult> {
     }
 
     let mut retained_pairs = Vec::with_capacity(args.pairs);
-    for (index, order) in runner.schedule().iter().enumerate() {
+    // The schedule is fixed at freeze time, so it is taken by value here and
+    // the runner stays free to accept the pairs it produces.
+    let retained_schedule = runner.schedule().clone();
+    for (index, order) in retained_schedule.iter().enumerate() {
         let pair = measure_pair(args, *order, index as u32, false)?;
         // Every AB pair is followed by its BA counterpart in the same retained
         // slot, so the runner is fed both orientations together.
