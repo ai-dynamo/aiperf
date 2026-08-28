@@ -73,6 +73,64 @@ _ENVELOPE_FIELDS = {
 # Top-level spec fields: deployment + envelope + benchmark.
 KNOWN_SPEC_FIELDS = _DEPLOYMENT_FIELDS | _ENVELOPE_FIELDS | {"benchmark"}
 
+# Top-level keys of a *bare* Config-v2 document (the shape `aiperf kube sweep
+# --config` consumes) that belong to the AIPerfConfig envelope rather than to
+# the benchmark body. Snake_case spellings are accepted because the loader
+# accepts both wire forms.
+_BARE_ENVELOPE_TO_ALIAS = {
+    name: (model_field.alias or name)
+    for name, model_field in AIPerfConfig.model_fields.items()
+    if name != "benchmark"
+} | {
+    (model_field.alias or name): (model_field.alias or name)
+    for name, model_field in AIPerfConfig.model_fields.items()
+    if name != "benchmark"
+}
+
+# Fallback CR name used when validating a bare config, which has no
+# metadata.name to check. Kept RFC-1123 valid so name validation is a no-op
+# rather than a spurious error the user cannot act on.
+_BARE_CONFIG_PLACEHOLDER_NAME = "bare-config"
+
+
+def looks_like_bare_config(doc: Any) -> bool:
+    """Return True if ``doc`` is a bare AIPerfConfig rather than a wrapped CR.
+
+    ``aiperf kube sweep --config`` accepts a Config-v2 document with the
+    benchmark body at the top level and no ``apiVersion``/``kind``/``metadata``
+    wrapper. Reporting three missing-CR-field errors for that document tells
+    the user nothing actionable, so validate detects the shape and validates it
+    on its own terms instead.
+    """
+    if not isinstance(doc, dict):
+        return False
+    if doc.get("apiVersion") is not None or doc.get("kind") is not None:
+        return False
+    return any(key in doc for key in ("models", "endpoint", "benchmark"))
+
+
+def bare_config_to_spec(doc: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Convert a bare AIPerfConfig document into a (kind, CR spec) pair.
+
+    Envelope keys (``sweep``, ``multiRun``, ``variables``, ...) stay at the
+    spec level; everything else becomes the ``benchmark`` body, mirroring the
+    hoist ``aiperf kube sweep`` performs. The kind is inferred from the
+    presence of a ``sweep`` block so the same cardinality contract applies.
+    """
+    body = dict(doc)
+    spec: dict[str, Any] = {}
+    for key in list(body):
+        # Normalize to the camelCase wire alias so the spec-level checks
+        # (unknown-field detection, kind cardinality) see the CR spelling.
+        alias = _BARE_ENVELOPE_TO_ALIAS.get(key)
+        if alias is not None:
+            spec[alias] = body.pop(key)
+    # An envelope-style document already nests the body under `benchmark:`.
+    nested = body.pop("benchmark", None)
+    spec["benchmark"] = nested if isinstance(nested, dict) else body
+    kind = KIND_AIPERFSWEEP if spec.get("sweep") else KIND_AIPERFJOB
+    return kind, spec
+
 
 def validate_cr(kind: str, spec: dict[str, Any]) -> AIPerfJobSpec | AIPerfSweepSpec:
     """Validate a CR spec dict against the kind-specific Pydantic schema.
@@ -409,6 +467,54 @@ def validate_kind_spec(
         result.errors.append(safe_error_text(e))
 
 
+def _validate_spec_body(
+    kind: str | None,
+    name: str,
+    spec: dict[str, Any],
+    result: ValidationResult,
+    *,
+    strict: bool,
+) -> None:
+    """Run the kind-agnostic spec checks, then the kind-specific ones.
+
+    Shared by the CR path and the bare-config path so a bare Config-v2
+    document is held to the same contract as the CR it would become.
+    """
+    validate_k8s_name(name, result)
+    validate_unknown_spec_fields(spec, result, strict=strict)
+    validation_error_count = len(result.errors)
+    validate_aiperf_config(spec, name, result)
+    validate_deployment_config(spec, name, result)
+    if len(result.errors) == validation_error_count:
+        validate_endpoint_credential_transport(spec, name, result)
+    validate_worker_count(spec, name, result)
+
+    # Kind-specific checks come last so the user sees structural issues first.
+    if kind in SUPPORTED_KINDS:
+        validate_kind_sweep_cardinality(kind, spec, result)
+        validate_kind_spec(kind, spec, result)
+
+
+def _validate_bare_config(
+    doc: dict[str, Any], result: ValidationResult, *, strict: bool
+) -> ValidationResult:
+    """Validate a bare AIPerfConfig document on its own terms.
+
+    The document carries no CR wrapper, so there is no metadata.name to check
+    and no apiVersion to match; everything else is the same contract.
+    """
+    kind, spec = bare_config_to_spec(doc)
+    result.warnings.append(
+        f"No apiVersion/kind: validating as a bare AIPerf config (the shape "
+        f"`aiperf kube sweep --config` accepts), against the {kind} contract. "
+        f"Wrap it in an explicit {kind} CR to validate deployment fields too."
+    )
+    _validate_spec_body(
+        kind, _BARE_CONFIG_PLACEHOLDER_NAME, spec, result, strict=strict
+    )
+    return result
+
+
 def validate_manifest(doc: dict[str, Any], *, strict: bool = False) -> ValidationResult:
     """Validate a parsed AIPerfJob or AIPerfSweep manifest dict.
 
@@ -425,6 +531,9 @@ def validate_manifest(doc: dict[str, Any], *, strict: bool = False) -> Validatio
     """
     result = ValidationResult(path=Path("<manifest>"))
 
+    if looks_like_bare_config(doc):
+        return _validate_bare_config(doc, result, strict=strict)
+
     if not validate_yaml_structure(doc, result):
         return result
 
@@ -432,19 +541,7 @@ def validate_manifest(doc: dict[str, Any], *, strict: bool = False) -> Validatio
     name = doc["metadata"]["name"]
     spec = doc["spec"]
 
-    validate_k8s_name(name, result)
-    validate_unknown_spec_fields(spec, result, strict=strict)
-    validation_error_count = len(result.errors)
-    validate_aiperf_config(spec, name, result)
-    validate_deployment_config(spec, name, result)
-    if len(result.errors) == validation_error_count:
-        validate_endpoint_credential_transport(spec, name, result)
-    validate_worker_count(spec, name, result)
-
-    if kind in SUPPORTED_KINDS:
-        validate_kind_sweep_cardinality(kind, spec, result)
-        validate_kind_spec(kind, spec, result)
-
+    _validate_spec_body(kind, name, spec, result, strict=strict)
     return result
 
 
@@ -484,6 +581,9 @@ def validate_file(path: Path, *, strict: bool = False) -> ValidationResult:
         result.errors.append(f"YAML parse error: {e}")
         return result
 
+    if looks_like_bare_config(doc):
+        return _validate_bare_config(doc, result, strict=strict)
+
     if not validate_yaml_structure(doc, result):
         return result
 
@@ -491,20 +591,7 @@ def validate_file(path: Path, *, strict: bool = False) -> ValidationResult:
     name = doc["metadata"]["name"]
     spec = doc["spec"]
 
-    validate_k8s_name(name, result)
-    validate_unknown_spec_fields(spec, result, strict=strict)
-    validation_error_count = len(result.errors)
-    validate_aiperf_config(spec, name, result)
-    validate_deployment_config(spec, name, result)
-    if len(result.errors) == validation_error_count:
-        validate_endpoint_credential_transport(spec, name, result)
-    validate_worker_count(spec, name, result)
-
-    # Kind-specific checks come last so the user sees structural issues first.
-    if kind in SUPPORTED_KINDS:
-        validate_kind_sweep_cardinality(kind, spec, result)
-        validate_kind_spec(kind, spec, result)
-
+    _validate_spec_body(kind, name, spec, result, strict=strict)
     return result
 
 

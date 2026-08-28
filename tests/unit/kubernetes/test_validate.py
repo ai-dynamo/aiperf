@@ -677,3 +677,84 @@ class TestCredentialRedactionInValidationErrors:
         joined = "\n".join(result.errors)
         assert "not-a-number" in joined
         assert "endpoint.timeout" in joined
+
+
+_BARE_CONFIG = {
+    "models": ["m"],
+    "endpoint": {"urls": ["http://x"], "type": "chat", "streaming": True},
+    "datasets": [
+        {"name": "main", "type": "synthetic", "prompts": {"isl": 64, "osl": 32}}
+    ],
+    "phases": [
+        {"name": "profiling", "type": "concurrency", "duration": 10, "concurrency": 8}
+    ],
+}
+
+
+class TestBareConfigDocuments:
+    """`aiperf kube sweep --config` accepts a bare Config-v2 document; validate
+    must hold that same document to the same contract instead of reporting
+    three unactionable missing-CR-field errors."""
+
+    def test_bare_config_validates_without_cr_wrapper(self) -> None:
+        result = validate_manifest(dict(_BARE_CONFIG))
+
+        assert result.passed, result.errors
+        assert not any("apiVersion" in e or "kind:" in e for e in result.errors)
+
+    def test_bare_config_warns_which_contract_it_used(self) -> None:
+        result = validate_manifest(dict(_BARE_CONFIG))
+
+        assert any("bare AIPerf config" in w for w in result.warnings)
+        assert any("AIPerfJob" in w for w in result.warnings)
+
+    def test_bare_config_with_sweep_uses_the_sweep_contract(self) -> None:
+        doc = dict(_BARE_CONFIG) | {
+            "sweep": {
+                "type": "grid",
+                "parameters": {"phases.profiling.concurrency": [4, 8]},
+            }
+        }
+
+        result = validate_manifest(doc)
+
+        assert result.passed, result.errors
+        assert any("AIPerfSweep" in w for w in result.warnings)
+
+    def test_bare_config_snake_case_envelope_key_is_not_an_unknown_field(self) -> None:
+        """`multi_run` must normalize to the `multiRun` wire alias, otherwise
+        the spec-level unknown-field check flags a key the loader accepts."""
+        doc = dict(_BARE_CONFIG) | {"multi_run": {"count": 2}}
+
+        result = validate_manifest(doc)
+
+        assert not any("multi_run" in w for w in result.warnings), result.warnings
+
+    def test_bare_config_still_reports_real_errors(self) -> None:
+        doc = dict(_BARE_CONFIG) | {
+            "endpoint": {"urls": ["ftp://x"], "type": "chat", "streaming": True}
+        }
+
+        result = validate_manifest(doc)
+
+        assert not result.passed
+
+    def test_wrapped_cr_is_not_treated_as_a_bare_config(self) -> None:
+        result = validate_manifest(_valid_doc())
+
+        assert result.passed, result.errors
+        assert not any("bare AIPerf config" in w for w in result.warnings)
+
+    def test_document_with_neither_wrapper_nor_config_keys_still_errors(self) -> None:
+        result = validate_manifest({"unrelated": True})
+
+        assert not result.passed
+        assert any("apiVersion" in e for e in result.errors)
+
+    def test_bare_config_file_round_trips(self, tmp_path: Path) -> None:
+        path = tmp_path / "bare.yaml"
+        path.write_text(yaml.safe_dump(_BARE_CONFIG))
+
+        result = validate_file(path)
+
+        assert result.passed, result.errors
