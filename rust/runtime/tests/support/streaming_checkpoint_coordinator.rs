@@ -435,7 +435,7 @@ impl StreamingCheckpointBackend for FaultingCheckpointBackend {
             .begin_generation(run, expected, expectations)
             .await?;
         Ok(Box::new(FaultingTransaction {
-            inner,
+            inner: Box::new(inner),
             control: Rc::clone(&self.control),
         }))
     }
