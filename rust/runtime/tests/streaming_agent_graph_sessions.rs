@@ -109,6 +109,7 @@ fn prepare_context(
         run: run_id(),
         participant_id: CheckpointParticipantId::new("session_coordinator"),
         stream_semantic_digest: stream_digest(),
+        source_identity: ImmutableObjectIdentity::from_bytes([0x40; 32]),
         session_state_budget: state_budget.clone(),
         checkpoint_budget: checkpoint_budget.clone(),
         issue_reporter,
