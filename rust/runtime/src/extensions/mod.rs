@@ -44,6 +44,12 @@ use crate::eval::{
     SuiteSchedulerFactory, SupervisedEnvironmentStepperBinder, TerminalV1ExternalDriverFactory,
 };
 use crate::export::ExporterRegistry;
+#[cfg(feature = "streaming")]
+use crate::streaming::{
+    action::StreamingActionSinkFactory, checkpoint_backend::StreamingCheckpointBackendFactory,
+    format::StreamingDatasetFormatFactory, session::StreamingSessionProgramFactory,
+    source::StreamingDatasetSourceFactory,
+};
 
 /// Error returned while constructing or extending an [`AIPerfRegistry`].
 #[derive(Debug)]
@@ -404,6 +410,25 @@ pub struct AIPerfRegistry {
     #[cfg(feature = "engine")]
     pub(crate) native_graph_provider_recoveries:
         TransactionalRegistry<Arc<dyn NativeGraphProviderRecoveryFactory>>,
+    /// Id-keyed streaming dataset source factories. Populated only by a real
+    /// built-in or external extension; a feature-off or unimplemented source is
+    /// absent rather than registered as a rejecting placeholder.
+    #[cfg(feature = "streaming")]
+    pub(crate) stream_sources: TransactionalRegistry<Arc<dyn StreamingDatasetSourceFactory>>,
+    /// Id-keyed streaming format/decoder factories.
+    #[cfg(feature = "streaming")]
+    pub(crate) stream_formats: TransactionalRegistry<Arc<dyn StreamingDatasetFormatFactory>>,
+    /// Id-keyed streaming session-program factories.
+    #[cfg(feature = "streaming")]
+    pub(crate) stream_session_programs:
+        TransactionalRegistry<Arc<dyn StreamingSessionProgramFactory>>,
+    /// Id-keyed streaming action-sink binding factories.
+    #[cfg(feature = "streaming")]
+    pub(crate) stream_action_sinks: TransactionalRegistry<Arc<dyn StreamingActionSinkFactory>>,
+    /// Id-keyed streaming checkpoint backend factories.
+    #[cfg(feature = "streaming")]
+    pub(crate) stream_checkpoint_backends:
+        TransactionalRegistry<Arc<dyn StreamingCheckpointBackendFactory>>,
     extension_names: BTreeSet<String>,
 }
 
@@ -440,6 +465,16 @@ impl AIPerfRegistry {
             native_graph_fidelity_observers: TransactionalRegistry::new(),
             #[cfg(feature = "engine")]
             native_graph_provider_recoveries: TransactionalRegistry::new(),
+            #[cfg(feature = "streaming")]
+            stream_sources: TransactionalRegistry::new(),
+            #[cfg(feature = "streaming")]
+            stream_formats: TransactionalRegistry::new(),
+            #[cfg(feature = "streaming")]
+            stream_session_programs: TransactionalRegistry::new(),
+            #[cfg(feature = "streaming")]
+            stream_action_sinks: TransactionalRegistry::new(),
+            #[cfg(feature = "streaming")]
+            stream_checkpoint_backends: TransactionalRegistry::new(),
             extension_names: BTreeSet::new(),
         }
     }

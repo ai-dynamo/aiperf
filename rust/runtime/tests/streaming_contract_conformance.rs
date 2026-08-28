@@ -737,6 +737,7 @@ async fn conformance_reporter_is_released_before_each_await() {
             expects_frontier: true,
             expected_issue_count: 0,
             run: run_identity(),
+            stream_semantic_digest: ContentDigest::from_bytes([0x51; 32]),
             advance: Rc::new(move || gate.open()),
         },
     )
@@ -755,6 +756,7 @@ async fn host_stop_wakes_pending_source_without_issue_or_seal() {
         clock: RealClock::new(),
         acquisition_budget: harness_acquisition_budget(),
         issue_reporter: reporter.handle(),
+        clock: RealClock::new(),
     };
     let validated = factory
         .validate(&raw(serde_json::json!({ "partitions": 1 })))

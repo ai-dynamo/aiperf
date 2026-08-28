@@ -70,6 +70,8 @@ pub struct SourceConformanceCases {
     pub expected_issue_count: u64,
     /// Logical run the harness binds into checkpoint barriers.
     pub run: StreamRunIdentity,
+    /// Semantic namespace the harness binds into source preparation.
+    pub stream_semantic_digest: ContentDigest,
     /// Hook releasing one parked discovery step.
     pub advance: SourceAdvance,
 }

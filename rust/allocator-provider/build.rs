@@ -58,16 +58,6 @@ fn main() {
             println!("cargo:warning=aiperf-allocator-provider: unknown target_os={other}; skipping symbol export");
         }
     }
-
-    // Emit the cdylib filename pattern so that conformance tests can locate
-    // the built artifact without hard-coding platform-specific names.
-    let cdylib_name = cdylib_filename(&target_os);
-    println!("cargo:CDYLIB_NAME={cdylib_name}");
-
-    // Propagate the mimalloc include directory for any C bridge consumers.
-    if let Ok(include) = env::var("DEP_LIBMIMALLOC_SYS_INCLUDE_DIR") {
-        println!("cargo:MIMALLOC_INCLUDE_DIR={include}");
-    }
 }
 
 fn export_linux(out_dir: &PathBuf) {
@@ -119,12 +109,4 @@ fn export_windows(out_dir: &PathBuf) {
     }
 
     println!("cargo:rustc-link-arg=/DEF:{}", def_path.display());
-}
-
-fn cdylib_filename(target_os: &str) -> String {
-    match target_os {
-        "windows" => "aiperf_alloc_v1.dll".to_string(),
-        "macos" | "ios" => "libaiperf_alloc_v1.dylib".to_string(),
-        _ => "libaiperf_alloc_v1.so".to_string(),
-    }
 }

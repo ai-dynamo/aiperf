@@ -113,9 +113,9 @@ fn main() {
     drop(fut);
     eprintln!("host: trait object and boxed future allocation passed");
 
-    // ── 7. Error type allocation ──────────────────────────────────────────
+    // ── 7. Trait object error allocation ─────────────────────────────────
     let err: Box<dyn std::error::Error> = Box::new(std::fmt::Error);
-    assert!(err.to_string().is_empty() || !err.to_string().is_empty());
+    drop(err);
 
     eprintln!("host: all allocator conformance checks passed");
 }
