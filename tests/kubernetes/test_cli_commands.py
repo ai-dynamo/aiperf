@@ -519,7 +519,6 @@ class TestKubeCommandHelp:
             param("profile", id="profile"),
             param("sweep", id="sweep"),
             param("generate", id="generate"),
-            param("setup", id="setup"),
             param("delete", id="delete"),
             param("cleanup", id="cleanup"),
             param("shutdown", id="shutdown"),
