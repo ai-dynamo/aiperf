@@ -21,8 +21,7 @@ use aiperf_runtime::streaming::{
     identity::{ContentDigest, ImmutableObjectIdentity},
     reliability::StreamingIssueReporter,
     source::{
-        PartitionAccessRequest, SourceEvent, StreamingDatasetSourceFactory,
-        StreamingSourceMode,
+        PartitionAccessRequest, SourceEvent, StreamingDatasetSourceFactory, StreamingSourceMode,
     },
     sources::local::{LOCAL_SOURCE_ID, LocalSourceFactory},
 };
@@ -64,15 +63,24 @@ async fn finite_scan_is_byte_sorted_and_seals_once() {
     fixture.publish("001.jsonl", SECOND);
 
     let reporter = CountingReporter::new(fixture.run);
-    let mut opened = fixture.open(&fixture.finite_config(), reporter.handle()).await;
+    let mut opened = fixture
+        .open(&fixture.finite_config(), reporter.handle())
+        .await;
     let snapshot_digest = opened.source.snapshot().digest;
 
     let mut ordered = Vec::new();
     let mut frontiers = 0_usize;
     let seal = loop {
-        match opened.source.next_event().await.expect("finite source drains") {
+        match opened
+            .source
+            .next_event()
+            .await
+            .expect("finite source drains")
+        {
             SourceEvent::Partition(partition) => {
-                let bytes = read_partition(&partition).await.expect("partition acquires");
+                let bytes = read_partition(&partition)
+                    .await
+                    .expect("partition acquires");
                 ordered.push((partition.position().get(), bytes));
             }
             SourceEvent::Frontier(_) => frontiers += 1,
@@ -124,7 +132,8 @@ async fn follow_parks_while_quiet_and_never_seals_without_marker() {
     }
 
     // The frontier follows, then the source parks again: no marker, no seal.
-    let SourceEvent::Frontier(frontier) = opened.source.next_event().await.expect("frontier") else {
+    let SourceEvent::Frontier(frontier) = opened.source.next_event().await.expect("frontier")
+    else {
         panic!("a drained follow batch publishes a frontier");
     };
     assert_eq!(frontier.through.get(), 0);
@@ -172,7 +181,8 @@ async fn restore_resumes_after_committed_object_without_duplicates() {
         .initialize(Some(committed))
         .await
         .expect("committed state restores");
-    let (next_position, next_identity, next_bytes) = expect_partition(restored.source.as_mut()).await;
+    let (next_position, next_identity, next_bytes) =
+        expect_partition(restored.source.as_mut()).await;
     assert_eq!(
         next_bytes,
         SECOND.to_vec(),
@@ -283,10 +293,17 @@ async fn symlinked_partition_is_never_discovered() {
     fixture.symlink("999.jsonl", "000.jsonl");
 
     let reporter = CountingReporter::new(fixture.run);
-    let mut opened = fixture.open(&fixture.finite_config(), reporter.handle()).await;
+    let mut opened = fixture
+        .open(&fixture.finite_config(), reporter.handle())
+        .await;
     let mut discovered = 0_usize;
     loop {
-        match opened.source.next_event().await.expect("finite source drains") {
+        match opened
+            .source
+            .next_event()
+            .await
+            .expect("finite source drains")
+        {
             SourceEvent::Partition(_) => discovered += 1,
             SourceEvent::Frontier(_) => {}
             SourceEvent::Seal(_) => break,
@@ -319,7 +336,10 @@ async fn reference_manifest_orders_and_verifies_declared_digests() {
 
     let reporter = CountingReporter::new(fixture.run);
     let mut opened = fixture
-        .open(&fixture.reference_config("index.manifest"), reporter.handle())
+        .open(
+            &fixture.reference_config("index.manifest"),
+            reporter.handle(),
+        )
         .await;
     let (first_position, _, first_bytes) = expect_partition(opened.source.as_mut()).await;
     assert_eq!(first_position.get(), 0);
@@ -387,7 +407,9 @@ async fn seekable_local_access_reads_exact_immutable_ranges() {
     fixture.publish("000.jsonl", FIRST);
 
     let reporter = CountingReporter::new(fixture.run);
-    let mut opened = fixture.open(&fixture.finite_config(), reporter.handle()).await;
+    let mut opened = fixture
+        .open(&fixture.finite_config(), reporter.handle())
+        .await;
     let SourceEvent::Partition(partition) = opened.source.next_event().await.expect("partition")
     else {
         panic!("the published object is announced");
@@ -420,7 +442,9 @@ async fn same_object_under_two_streams_has_distinct_input_domains() {
     fixture.publish("000.jsonl", FIRST);
 
     let reporter = CountingReporter::new(fixture.run);
-    let mut first = fixture.open(&fixture.finite_config(), reporter.handle()).await;
+    let mut first = fixture
+        .open(&fixture.finite_config(), reporter.handle())
+        .await;
     let (_, first_identity, _) = expect_partition(first.source.as_mut()).await;
 
     let mut other = LocalFixture::new("two-streams-b");

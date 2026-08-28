@@ -574,7 +574,9 @@ impl Inventory {
                 max_manifest_bytes,
             } => Self::from_manifest(config, root, executor, manifest, *max_manifest_bytes).await?,
             LocalSourceMode::Finite => Self::from_scan(config, root, executor, true).await?,
-            LocalSourceMode::Follow { .. } => Self::from_scan(config, root, executor, false).await?,
+            LocalSourceMode::Follow { .. } => {
+                Self::from_scan(config, root, executor, false).await?
+            }
         };
         inventory.freeze_members(config, stream_identity);
         Ok(inventory)
@@ -708,7 +710,11 @@ impl Inventory {
     }
 
     /// Absorb one rescan, appending only names never observed before.
-    fn absorb(&mut self, config: &LocalSourceConfig, scan: ScanResult) -> Result<(), StreamSourceError> {
+    fn absorb(
+        &mut self,
+        config: &LocalSourceConfig,
+        scan: ScanResult,
+    ) -> Result<(), StreamSourceError> {
         if scan.has_seal_marker {
             self.is_complete = true;
         }
@@ -723,7 +729,10 @@ impl Inventory {
                 ));
             }
             let ordinal = self.next_ordinal;
-            self.next_ordinal = self.next_ordinal.checked_add(1).ok_or_else(snapshot_error)?;
+            self.next_ordinal = self
+                .next_ordinal
+                .checked_add(1)
+                .ok_or_else(snapshot_error)?;
             self.observed.insert(relative_path.clone());
             self.ready.push_back(InventoryEntry {
                 relative_path,
@@ -1130,7 +1139,10 @@ impl LocalSource {
     }
 
     /// Freeze identity, deduplicate, and bind a partition to a stable position.
-    fn announce(&mut self, entry: InventoryEntry) -> Result<Option<SourceEvent>, StreamSourceError> {
+    fn announce(
+        &mut self,
+        entry: InventoryEntry,
+    ) -> Result<Option<SourceEvent>, StreamSourceError> {
         let identity = entry.identity(&self.stream_identity);
         if let Some(previous) = self.emitted.get(&entry.relative_path) {
             // Rediscovery of an already-announced name never mutates identity
@@ -1150,7 +1162,10 @@ impl LocalSource {
             ));
         }
         let position = SourcePosition::new(self.next_position);
-        self.next_position = self.next_position.checked_add(1).ok_or_else(snapshot_error)?;
+        self.next_position = self
+            .next_position
+            .checked_add(1)
+            .ok_or_else(snapshot_error)?;
         self.emitted.insert(entry.relative_path.clone(), identity);
         self.last_emitted = Some(LocalSourceCursor {
             next_position: self.next_position,
@@ -1421,9 +1436,9 @@ impl SourcePartitionContent for LocalPartitionContent {
             }
             // The descriptor advertises no range access, so a request for it is
             // a compatibility fault, not an I/O fault.
-            PartitionAccessRequest::RangeReadable => Err(StreamSourceError::acquisition(
-                AcquisitionFailureCode::Open,
-            )),
+            PartitionAccessRequest::RangeReadable => {
+                Err(StreamSourceError::acquisition(AcquisitionFailureCode::Open))
+            }
         }
     }
 }
@@ -1440,8 +1455,7 @@ impl LocalPartitionContent {
             match self.open_once().await {
                 Ok(file) => return Ok(file),
                 Err(error)
-                    if error
-                        == StreamSourceError::acquisition(AcquisitionFailureCode::Open) =>
+                    if error == StreamSourceError::acquisition(AcquisitionFailureCode::Open) =>
                 {
                     attempt = attempt.saturating_add(1);
                     if attempt >= self.config.max_open_attempts {
@@ -1713,8 +1727,7 @@ struct DirectoryWatch {
 impl DirectoryWatch {
     /// Install a rename-only (optionally close-write) watch on an open root.
     fn install(root_fd: RawFd, accepts_close_write: bool) -> Result<Self, StreamSourceError> {
-        let unavailable =
-            || StreamSourceError::source(SourceFailureCode::SourceUnavailable);
+        let unavailable = || StreamSourceError::source(SourceFailureCode::SourceUnavailable);
         // SAFETY: `inotify_init1` allocates a new descriptor and borrows nothing.
         let raw = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
         if raw < 0 {
@@ -1741,8 +1754,7 @@ impl DirectoryWatch {
 
     /// Await one readiness edge and drain the queued event buffer.
     async fn await_publication(&self) -> Result<(), StreamSourceError> {
-        let unavailable =
-            || StreamSourceError::source(SourceFailureCode::SourceUnavailable);
+        let unavailable = || StreamSourceError::source(SourceFailureCode::SourceUnavailable);
         loop {
             let mut guard = self
                 .descriptor
@@ -1767,8 +1779,7 @@ fn drain_inotify(fd: &OwnedFd) -> std::io::Result<()> {
     let mut total = 0_usize;
     loop {
         // SAFETY: `fd` is live and `buffer` is valid for its full length.
-        let read =
-            unsafe { libc::read(fd.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
+        let read = unsafe { libc::read(fd.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
         if read < 0 {
             let error = std::io::Error::last_os_error();
             if error.kind() == std::io::ErrorKind::WouldBlock {
