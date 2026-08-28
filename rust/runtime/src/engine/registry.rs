@@ -143,10 +143,15 @@ pub struct ResourceRequirementsV2 {
     pub artifacts: ResourceRequirementV2,
     /// Sidecar resources.
     pub sidecars: ResourceRequirementV2,
+    /// Native streaming dataset resources.
+    pub dataset_streams: ResourceRequirementV2,
 }
 
 impl ResourceRequirementsV2 {
     /// Resource matrix shared by inference workloads in protocol v2.
+    ///
+    /// Streams stay forbidden here: a finite inference workload that received a
+    /// stream resource would silently ignore it.
     #[must_use]
     pub const fn inference() -> Self {
         Self {
@@ -155,16 +160,31 @@ impl ResourceRequirementsV2 {
             metrics: ResourceRequirementV2::Optional,
             artifacts: ResourceRequirementV2::Optional,
             sidecars: ResourceRequirementV2::Optional,
+            dataset_streams: ResourceRequirementV2::Forbidden,
         }
     }
 
-    fn entries(self) -> [(RunResourceV2, ResourceRequirementV2); 5] {
+    /// Resource matrix for a native streaming shadow-replay workload.
+    #[must_use]
+    pub const fn shadow_replay() -> Self {
+        Self {
+            models: ResourceRequirementV2::Required,
+            endpoints: ResourceRequirementV2::Required,
+            metrics: ResourceRequirementV2::Optional,
+            artifacts: ResourceRequirementV2::Optional,
+            sidecars: ResourceRequirementV2::Optional,
+            dataset_streams: ResourceRequirementV2::Required,
+        }
+    }
+
+    fn entries(self) -> [(RunResourceV2, ResourceRequirementV2); 6] {
         [
             (RunResourceV2::Models, self.models),
             (RunResourceV2::Endpoints, self.endpoints),
             (RunResourceV2::Metrics, self.metrics),
             (RunResourceV2::Artifacts, self.artifacts),
             (RunResourceV2::Sidecars, self.sidecars),
+            (RunResourceV2::DatasetStreams, self.dataset_streams),
         ]
     }
 }
@@ -1429,6 +1449,251 @@ const fn closure_is_provable(
     }
 }
 
+/// Descriptor-only resolution of one authored dataset-stream resource.
+#[cfg(feature = "streaming")]
+#[derive(Debug)]
+pub struct PreparedStreamingResourcePlan {
+    stream_id: String,
+    plans: Vec<StreamingCapabilityPlan>,
+    selection_digest: crate::streaming::identity::ContentDigest,
+}
+
+#[cfg(feature = "streaming")]
+impl PreparedStreamingResourcePlan {
+    /// Name of the stream selected by shadow replay.
+    #[must_use]
+    pub fn stream_id(&self) -> &str {
+        &self.stream_id
+    }
+
+    /// Accepted agreements, one per bound action kind, in canonical kind order.
+    #[must_use]
+    pub fn plans(&self) -> &[StreamingCapabilityPlan] {
+        &self.plans
+    }
+
+    /// Frozen digest of the complete admitted selection.
+    #[must_use]
+    pub const fn selection_digest(&self) -> crate::streaming::identity::ContentDigest {
+        self.selection_digest
+    }
+}
+
+/// Refusal produced while resolving an authored dataset-stream resource.
+#[cfg(feature = "streaming")]
+#[derive(Debug)]
+pub enum StreamingResourceError {
+    /// The authored resource was validated against a different reliability policy.
+    ReliabilityPolicyDigestMismatch,
+    /// A named component is not compiled into this distribution.
+    UnknownComponent {
+        /// Component category (`source`, `format`, …).
+        kind: &'static str,
+        /// Requested identifier.
+        requested: String,
+        /// Compiled identifiers, comma-separated.
+        available: String,
+    },
+    /// The descriptor-only agreement refused the combination.
+    Incompatible(StreamingCapabilityError),
+}
+
+#[cfg(feature = "streaming")]
+impl Display for StreamingResourceError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReliabilityPolicyDigestMismatch => write!(
+                formatter,
+                "dataset_streams was authored against a different reliability policy"
+            ),
+            Self::UnknownComponent {
+                kind,
+                requested,
+                available,
+            } => write!(
+                formatter,
+                "streaming {kind} {requested:?} is not compiled into this distribution; \
+                 available: {available}"
+            ),
+            Self::Incompatible(error) => Display::fmt(error, formatter),
+        }
+    }
+}
+
+#[cfg(feature = "streaming")]
+impl std::error::Error for StreamingResourceError {}
+
+/// Descriptor inputs the host already owns when a stream resource is resolved.
+///
+/// The endpoint descriptor is resolved by the caller rather than here, which is
+/// what keeps [`AIPerfRegistry::validate_dataset_streams`] a pure function of
+/// frozen descriptors.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug)]
+pub struct StreamingResourceContext<'a> {
+    /// Selected protocol-v2 transport.
+    pub transport: &'static TransportDescriptor,
+    /// Selected endpoint dialect, when the run authored one.
+    pub endpoint: Option<&'static EndpointDescriptor>,
+    /// Host-prepared reliability policy for this run.
+    pub reliability_policy: &'a crate::streaming::reliability::PreparedStreamingIssuePolicy,
+}
+
+#[cfg(feature = "streaming")]
+impl AIPerfRegistry {
+    /// Resolve and admit one authored dataset-stream resource, descriptors only.
+    ///
+    /// Performs no I/O, opens no source, calls no factory `validate`/`prepare`,
+    /// allocates no lease, and reads no clock. It resolves each named component
+    /// exactly once, runs the descriptor-only agreement per bound action kind,
+    /// and freezes one digest over the admitted selection.
+    ///
+    /// The reliability-policy digest is compared first, before any lookup, so a
+    /// resource authored against a different policy cannot cause any effect at
+    /// all.
+    pub fn validate_dataset_streams(
+        &self,
+        spec: &crate::engine::protocol_v2::DatasetStreamsSpecV2,
+        context: StreamingResourceContext<'_>,
+    ) -> std::result::Result<PreparedStreamingResourcePlan, StreamingResourceError> {
+        if let Some(authored) = spec.reliability_policy_digest
+            && authored.as_bytes() != context.reliability_policy.digest().as_bytes()
+        {
+            return Err(StreamingResourceError::ReliabilityPolicyDigestMismatch);
+        }
+
+        let replay = &spec.shadow_replay;
+        // `validate_dataset_streams_outer` already proved this reference
+        // resolves; treat a miss as an unknown component rather than panicking.
+        let stream = spec
+            .items
+            .iter()
+            .find(|item| item.id == replay.stream)
+            .ok_or_else(|| StreamingResourceError::UnknownComponent {
+                kind: "stream",
+                requested: replay.stream.clone(),
+                available: joined_streaming_ids(spec.items.iter().map(|item| item.id.as_str())),
+            })?;
+
+        let source = self
+            .stream_source_factory(stream.source.id.as_str())
+            .ok_or_else(|| self.unknown_stream("source", stream.source.id.as_str()))?
+            .descriptor();
+        let format = self
+            .stream_format_factory(stream.format.id.as_str())
+            .ok_or_else(|| self.unknown_stream("format", stream.format.id.as_str()))?
+            .descriptor();
+        let session = self
+            .stream_session_program_factory(stream.session_program.id.as_str())
+            .ok_or_else(|| {
+                self.unknown_stream("session_program", stream.session_program.id.as_str())
+            })?
+            .descriptor();
+        let checkpoint_backend = match replay.checkpoint.backend.as_ref() {
+            Some(backend) => Some(
+                self.stream_checkpoint_backend_factory(backend.id.as_str())
+                    .ok_or_else(|| self.unknown_stream("checkpoint_backend", backend.id.as_str()))?
+                    .descriptor(),
+            ),
+            None => None,
+        };
+
+        let mut plans = Vec::with_capacity(replay.actions.len());
+        for component in replay.actions.values() {
+            let action_sink = self
+                .stream_action_sink_factory(component.id.as_str())
+                .ok_or_else(|| self.unknown_stream("action_sink", component.id.as_str()))?
+                .descriptor();
+            let plan = StreamingCapabilityAgreement::validate(StreamingSelectedDescriptors {
+                source,
+                format,
+                session,
+                action_sink,
+                transport: context.transport,
+                endpoint: context.endpoint,
+                checkpoint_backend,
+            })
+            .map_err(StreamingResourceError::Incompatible)?;
+            plans.push(plan);
+        }
+
+        let selection_digest = streaming_selection_digest(&stream.id, &plans);
+        Ok(PreparedStreamingResourcePlan {
+            stream_id: stream.id.clone(),
+            plans,
+            selection_digest,
+        })
+    }
+
+    fn unknown_stream(&self, kind: &'static str, requested: &str) -> StreamingResourceError {
+        let available = match kind {
+            "source" => joined_streaming_ids(self.stream_source_descriptors().iter().map(|d| d.id)),
+            "format" => joined_streaming_ids(self.stream_format_descriptors().iter().map(|d| d.id)),
+            "session_program" => joined_streaming_ids(
+                self.stream_session_program_descriptors()
+                    .iter()
+                    .map(|d| d.id),
+            ),
+            "action_sink" => {
+                joined_streaming_ids(self.stream_action_sink_descriptors().iter().map(|d| d.id))
+            }
+            _ => joined_streaming_ids(
+                self.stream_checkpoint_backend_descriptors()
+                    .iter()
+                    .map(|d| d.id),
+            ),
+        };
+        StreamingResourceError::UnknownComponent {
+            kind,
+            requested: requested.to_owned(),
+            available,
+        }
+    }
+}
+
+#[cfg(feature = "streaming")]
+fn joined_streaming_ids<'a>(ids: impl Iterator<Item = &'a str>) -> String {
+    let joined = ids.collect::<Vec<_>>().join(", ");
+    if joined.is_empty() {
+        "<none>".to_owned()
+    } else {
+        joined
+    }
+}
+
+/// Freeze one digest over the complete admitted selection.
+///
+/// Field-length prefixing matches the established streaming digest idiom in
+/// `streaming/identity.rs`, so no two distinct selections collide by
+/// concatenation.
+#[cfg(feature = "streaming")]
+fn streaming_selection_digest(
+    stream_id: &str,
+    plans: &[StreamingCapabilityPlan],
+) -> crate::streaming::identity::ContentDigest {
+    fn update(hasher: &mut blake3::Hasher, field: &[u8]) {
+        hasher.update(&(field.len() as u64).to_le_bytes());
+        hasher.update(field);
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    update(&mut hasher, b"aiperf.streaming.selection.v1");
+    update(&mut hasher, stream_id.as_bytes());
+    for plan in plans {
+        let ids = plan.selected_ids();
+        update(&mut hasher, ids.source.as_bytes());
+        update(&mut hasher, ids.format.as_bytes());
+        update(&mut hasher, ids.session.as_bytes());
+        update(&mut hasher, ids.action_sink.as_bytes());
+        update(&mut hasher, ids.transport.as_bytes());
+        update(&mut hasher, ids.endpoint.unwrap_or("").as_bytes());
+        update(&mut hasher, ids.checkpoint_backend.unwrap_or("").as_bytes());
+        update(&mut hasher, plan.agreed_action_schema().as_bytes());
+        update(&mut hasher, plan.agreed_fragment_schema().as_bytes());
+    }
+    crate::streaming::identity::ContentDigest::from_bytes(*hasher.finalize().as_bytes())
+}
+
 fn checked_descriptor_id(value: &str, kind: &str) -> Result<ComponentId> {
     value
         .parse()
@@ -2690,6 +2955,7 @@ mod tests {
             metrics: ResourceRequirementV2::Forbidden,
             artifacts: ResourceRequirementV2::Optional,
             sidecars: ResourceRequirementV2::Forbidden,
+            dataset_streams: ResourceRequirementV2::Forbidden,
         };
         let error = validate_resource_requirements(&source_only, models_forbidden)
             .unwrap_err()

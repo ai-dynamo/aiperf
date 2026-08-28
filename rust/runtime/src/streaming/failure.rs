@@ -147,6 +147,8 @@ failure_codes! {
         ConflictingMutation => "conflicting_mutation",
         /// Causal state cannot be retained within a proven bound.
         UnboundedCausalityState => "unbounded_causality_state",
+        /// The mutation vocabulary is not accepted by the selected program.
+        UnsupportedMutation => "unsupported_mutation",
     }
 }
 

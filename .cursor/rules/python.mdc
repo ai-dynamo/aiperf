@@ -134,6 +134,7 @@ The main `aiperf_runtime` module groups are:
 - `extensions`: `AIPerfRegistry`, `AIPerfExtension`, and transactional registries.
 - `engine` under the `engine` feature: protocol v2, application bootstrap, transport and workload factories, execution coordination, cellular launch, and control-plane integration.
 - `dynosim` under the `dynosim` feature and `aic_runtime` under `dynamo-aic-forward-pass`: Dynamo execution integrations.
+- `streaming` under the `streaming` feature: immutable-source acquisition, decode, session coordination, action binding, checkpointing, and reliability contracts; its registered `conversation` session program (`rust/runtime/src/streaming/session/conversation.rs`) joins fragments across source partitions by stable session key, folds observed endpoint replies into the same durable transcript as authored turns, and re-emits an in-flight turn under its identical stable action identity after a restart.
 
 See `docs/module-organization.md` for the complete module map.
 
