@@ -299,6 +299,89 @@ class TestMultiProcessServiceManager:
             )
 
     @pytest.mark.asyncio
+    async def test_wait_blocks_until_all_replicas_of_a_type_register(
+        self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
+    ):
+        """Regression: a scaled service type (e.g.
+        RECORD_PROCESSOR, replicated based on worker count) must have every
+        replica registered before the wait returns -- not just the first one.
+
+        Failure mode: RECORD_PROCESSOR replicas register asynchronously as
+        their subprocesses finish starting up. The old check
+        (``required_types.issubset(registered_types)``) treated the type as
+        satisfied the moment ANY one replica registered, letting
+        ProfileConfigureCommand -- and with it DatasetManager's one-shot
+        DatasetConfiguredNotification -- fire while other replicas were
+        still starting. Those late replicas silently missed the
+        notification and hung for DATASET.CONFIGURATION_TIMEOUT (300s).
+        """
+        from aiperf.common.enums import ServiceRegistrationStatus
+        from aiperf.common.models.service_models import ServiceRunInfo
+
+        replica_1 = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.RECORD_PROCESSOR,
+            service_id="record_processor_1",
+        )
+        replica_2 = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.RECORD_PROCESSOR,
+            service_id="record_processor_2",
+        )
+        service_manager.multi_process_info = [replica_1, replica_2]
+        # Only the first replica has registered so far -- the second is
+        # still spinning up its subprocess.
+        service_manager.service_id_map = {
+            "record_processor_1": ServiceRunInfo(
+                service_type=ServiceType.RECORD_PROCESSOR,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                service_id="record_processor_1",
+            ),
+        }
+
+        # Pre-fix: wait would return immediately -- the type RECORD_PROCESSOR
+        # is present in registered_types via the first replica alone.
+        # Post-fix: wait times out because only 1/2 replicas registered.
+        with pytest.raises(AIPerfError, match="failed to register within timeout"):
+            await service_manager.wait_for_all_services_registration(
+                stop_event=asyncio.Event(), timeout_seconds=1.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_once_all_replicas_of_a_type_register(
+        self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
+    ):
+        """Companion to the regression above: once every replica of a
+        scaled type has registered, the wait must return cleanly."""
+        from aiperf.common.enums import ServiceRegistrationStatus
+        from aiperf.common.models.service_models import ServiceRunInfo
+
+        replica_1 = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.RECORD_PROCESSOR,
+            service_id="record_processor_1",
+        )
+        replica_2 = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.RECORD_PROCESSOR,
+            service_id="record_processor_2",
+        )
+        service_manager.multi_process_info = [replica_1, replica_2]
+        service_manager.service_id_map = {
+            f"record_processor_{i}": ServiceRunInfo(
+                service_type=ServiceType.RECORD_PROCESSOR,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                service_id=f"record_processor_{i}",
+            )
+            for i in (1, 2)
+        }
+
+        # Should NOT raise or time out -- both replicas are registered.
+        await service_manager.wait_for_all_services_registration(
+            stop_event=asyncio.Event(), timeout_seconds=2.0
+        )
+
+    @pytest.mark.asyncio
     async def test_stop_event_cancels_registration_wait(
         self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
     ):
