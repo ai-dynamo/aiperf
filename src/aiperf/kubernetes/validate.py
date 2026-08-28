@@ -127,7 +127,14 @@ def bare_config_to_spec(doc: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             spec[alias] = body.pop(key)
     # An envelope-style document already nests the body under `benchmark:`.
     nested = body.pop("benchmark", None)
-    spec["benchmark"] = nested if isinstance(nested, dict) else body
+    if isinstance(nested, dict):
+        spec["benchmark"] = nested
+        # Siblings of an explicit `benchmark:` are neither envelope keys nor
+        # benchmark fields. Keep them at the spec level so unknown-field
+        # detection reports them instead of silently discarding them.
+        spec.update(body)
+    else:
+        spec["benchmark"] = body
     kind = KIND_AIPERFSWEEP if spec.get("sweep") else KIND_AIPERFJOB
     return kind, spec
 
@@ -507,7 +514,8 @@ def _validate_bare_config(
     result.warnings.append(
         f"No apiVersion/kind: validating as a bare AIPerf config (the shape "
         f"`aiperf kube sweep --config` accepts), against the {kind} contract. "
-        f"Wrap it in an explicit {kind} CR to validate deployment fields too."
+        f"apiVersion/kind and metadata.name are not checked; wrap it in an "
+        f"explicit {kind} CR to validate those too."
     )
     _validate_spec_body(
         kind, _BARE_CONFIG_PLACEHOLDER_NAME, spec, result, strict=strict

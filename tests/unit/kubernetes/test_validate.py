@@ -708,6 +708,22 @@ class TestBareConfigDocuments:
         assert any("bare AIPerf config" in w for w in result.warnings)
         assert any("AIPerfJob" in w for w in result.warnings)
 
+    def test_bare_config_reports_stray_sibling_of_nested_benchmark(self) -> None:
+        """Siblings of an explicit ``benchmark:`` must not be silently dropped."""
+        doc = {"benchmark": dict(_BARE_CONFIG), "totallyBogus": 5}
+
+        result = validate_manifest(doc)
+
+        assert any("totallyBogus" in w for w in result.warnings)
+
+    def test_bare_config_keeps_deployment_siblings_at_spec_level(self) -> None:
+        """A known deployment field beside ``benchmark:`` is not an unknown field."""
+        doc = {"benchmark": dict(_BARE_CONFIG), "image": "aiperf:latest"}
+
+        result = validate_manifest(doc)
+
+        assert not any("Unknown spec fields" in w for w in result.warnings)
+
     def test_bare_config_with_sweep_uses_the_sweep_contract(self) -> None:
         doc = dict(_BARE_CONFIG) | {
             "sweep": {

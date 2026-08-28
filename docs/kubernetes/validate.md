@@ -103,13 +103,17 @@ Every bare config emits a warning naming the contract that was applied:
 ```text
 WARN: No apiVersion/kind: validating as a bare AIPerf config (the shape
 `aiperf kube sweep --config` accepts), against the AIPerfSweep contract.
-Wrap it in an explicit AIPerfSweep CR to validate deployment fields too.
+apiVersion/kind and metadata.name are not checked; wrap it in an explicit
+AIPerfSweep CR to validate those too.
 ```
 
-Because a bare config has no CR wrapper, the wrapper-only checks do not run:
-`metadata.name` is not validated, and deployment fields (`image`,
-`podTemplate`, `scheduling`, ...) are absent so their checks are no-ops. Wrap
-the config in a CR when you want those covered too.
+Because a bare config has no CR wrapper, only the wrapper-only checks are
+skipped: `apiVersion`/`kind` and `metadata.name` are not validated. Everything
+else runs identically, including deployment-field and worker-count checks,
+credential transport, and unknown-field detection. A document that nests
+`benchmark:` explicitly may carry deployment fields (`image`, `podTemplate`,
+...) as its siblings; those stay at the spec level and are checked there, so a
+misspelled sibling is reported rather than silently dropped.
 
 Under `--strict` this warning is **not** promoted to an error — `--strict`
 governs unknown spec fields only.
@@ -119,7 +123,8 @@ governs unknown spec fields only.
 `validate` runs the following checks on each file, in order. Structural errors
 that make later checks impossible short-circuit the file (remaining checks are
 skipped for that file only). Bare AIPerf configs skip steps 3 and 4 (see
-[Bare AIPerf configs](#bare-aiperf-configs)).
+[Bare AIPerf configs](#bare-aiperf-configs)), except for the
+`spec.benchmark`-shape rule in step 3, which still applies.
 
 1. **File reachability** — the path exists, is a regular file, and passes the
    shared `safe_read_template_path` safety check.
