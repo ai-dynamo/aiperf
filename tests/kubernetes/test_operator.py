@@ -26,7 +26,10 @@ from tests.kubernetes.helpers.deadline import (
     await_before_deadline,
     delete_and_observe_until_deadline,
 )
-from tests.kubernetes.helpers.kubectl import KubectlClient
+from tests.kubernetes.helpers.kubectl import (
+    KubectlClient,
+    assert_clusterrole_grants,
+)
 from tests.kubernetes.helpers.operator import (
     AIPerfJobConfig,
     OperatorDeployer,
@@ -91,20 +94,12 @@ class TestOperatorDeployment:
         kubectl: KubectlClient,
     ) -> None:
         """Verify operator has necessary RBAC permissions."""
-        # Read the ClusterRole rules directly: kubectl auth can-i impersonation
-        # is denied on remote clusters (403 Forbidden). Inspecting the
-        # ClusterRole object is equivalent and works everywhere.
-        cr_result = await kubectl.run(
-            "get",
-            "clusterrole",
+        await assert_clusterrole_grants(
+            kubectl,
             "aiperf-operator",
-            "-o",
-            "jsonpath={.rules[*].apiGroups}",
-            check=False,
-        )
-        assert "jobset.x-k8s.io" in cr_result.stdout, (
-            f"ClusterRole 'aiperf-operator' does not grant access to jobset.x-k8s.io; "
-            f"rules apiGroups: {cr_result.stdout!r}"
+            api_group="jobset.x-k8s.io",
+            resource="jobsets",
+            verbs={"create", "delete", "get", "list", "watch"},
         )
 
 

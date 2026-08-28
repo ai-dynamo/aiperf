@@ -27,7 +27,10 @@ from tests.kubernetes.helpers.deadline import (
     delete_and_observe_until_deadline,
 )
 from tests.kubernetes.helpers.helm import HelmDeployer
-from tests.kubernetes.helpers.kubectl import KubectlClient
+from tests.kubernetes.helpers.kubectl import (
+    KubectlClient,
+    assert_clusterrole_grants,
+)
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorJobResult
 
 # Test timeout for individual test phases (not full job completion)
@@ -137,21 +140,12 @@ class TestHelmChartDeployment:
         )
         sa_name = result.stdout.strip()
 
-        # Verify the ClusterRole bound to this SA grants create on JobSets.
-        # `kubectl auth can-i --as` requires impersonation rights which are
-        # commonly restricted on shared clusters; inspect the ClusterRole
-        # rules directly instead.
-        cr_result = await kubectl.run(
-            "get",
-            "clusterrole",
+        await assert_clusterrole_grants(
+            kubectl,
             sa_name,
-            "-o",
-            "jsonpath={.rules[*].apiGroups}",
-            check=False,
-        )
-        assert "jobset.x-k8s.io" in cr_result.stdout, (
-            f"ClusterRole '{sa_name}' does not grant access to jobset.x-k8s.io; "
-            f"rules apiGroups: {cr_result.stdout!r}"
+            api_group="jobset.x-k8s.io",
+            resource="jobsets",
+            verbs={"create", "delete", "get", "list", "watch"},
         )
 
 

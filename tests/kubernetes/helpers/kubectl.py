@@ -1082,3 +1082,42 @@ class KubectlClient:
             logger.info(f"[LIVE] {', '.join(parts)}")
         except Exception:
             pass
+
+
+async def assert_clusterrole_grants(
+    kubectl: KubectlClient,
+    name: str,
+    *,
+    api_group: str,
+    resource: str,
+    verbs: set[str],
+) -> None:
+    """Assert a ClusterRole grants ``verbs`` on ``api_group``/``resource``.
+
+    ``kubectl auth can-i --as`` would be the direct check, but impersonation is
+    commonly denied on shared clusters (403). Reading the ClusterRole rules is
+    equivalent and works everywhere -- but only if the verbs are checked too:
+    matching the apiGroup alone passes even when the granted verbs are
+    read-only.
+    """
+    result = await kubectl.run("get", "clusterrole", name, "-o", "json", check=False)
+    assert result.returncode == 0, (
+        f"ClusterRole {name!r} is not readable: {result.stderr!r}"
+    )
+
+    granted: set[str] = set()
+    for rule in orjson.loads(result.stdout).get("rules") or []:
+        groups = rule.get("apiGroups") or []
+        resources = rule.get("resources") or []
+        if (api_group in groups or "*" in groups) and (
+            resource in resources or "*" in resources
+        ):
+            granted.update(rule.get("verbs") or [])
+
+    if "*" in granted:
+        return
+    missing = verbs - granted
+    assert not missing, (
+        f"ClusterRole {name!r} does not grant {sorted(missing)} on "
+        f"{api_group}/{resource}; granted verbs: {sorted(granted)}"
+    )
