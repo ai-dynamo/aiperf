@@ -249,7 +249,7 @@ fn different_sessions_distribute_deterministically() {
     );
 }
 
-const EXPECTED_ASSIGNMENT: [u32; 16] = [0; 16];
+const EXPECTED_ASSIGNMENT: [u32; 16] = [2, 0, 3, 0, 3, 2, 0, 1, 3, 3, 1, 0, 1, 0, 0, 3];
 
 #[test]
 fn stale_release_cannot_issue() {
