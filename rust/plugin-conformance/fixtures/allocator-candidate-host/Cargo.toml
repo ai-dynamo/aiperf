@@ -22,6 +22,3 @@ path = "src/main.rs"
 # resolved at link time from the provider cdylib (via the build.rs below).
 aiperf-allocator-shim = { path = "../../../allocator-shim" }
 libloading = "0.8"
-
-[build-dependencies]
-# cc is unused but included so the build.rs compiles without extra setup.

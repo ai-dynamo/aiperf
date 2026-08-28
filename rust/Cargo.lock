@@ -48,18 +48,19 @@ dependencies = [
 
 [[package]]
 name = "aiperf-allocator-provider"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
+ "cc",
  "libmimalloc-sys",
 ]
 
 [[package]]
 name = "aiperf-allocator-shim"
-version = "0.12.0"
+version = "0.13.0"
 
 [[package]]
 name = "aiperf-bench-tools"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "blake3",
  "bytes",
@@ -85,15 +86,15 @@ dependencies = [
 
 [[package]]
 name = "aiperf-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
+ "aiperf-allocator-shim",
  "aiperf-runtime",
  "anyhow",
  "async-trait",
  "axum",
  "base64 0.22.1",
  "bytes",
- "cc",
  "chrono",
  "clap",
  "futures",
@@ -104,8 +105,6 @@ dependencies = [
  "include_dir",
  "jsonschema",
  "libc",
- "libmimalloc-sys",
- "mimalloc",
  "minijinja",
  "nix 0.29.0",
  "prost 0.14.4",
@@ -133,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -149,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-dry-run-tests"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "flate2",
  "serde_json",
@@ -158,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-e2e-tests"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-cli",
  "aiperf-mock-server",
@@ -186,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-endpoint-sdk"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-plugin-api",
@@ -194,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-export-sdk"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-plugin-api",
@@ -207,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-mock-server"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-runtime",
  "anyhow",
@@ -253,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-api"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "blake3",
@@ -264,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-conformance"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-allocator-provider",
  "aiperf-allocator-shim",
@@ -282,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-endpoints"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
@@ -291,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-export-basic"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
@@ -300,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-export-mlflow"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
@@ -309,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-export-otel"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
@@ -318,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-export-parquet"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
@@ -327,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-export-wandb"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-export-sdk",
@@ -336,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-host"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-plugin-api",
@@ -345,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-packaging-tests"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-plugin-host",
  "aiperf-plugin-sdk",
@@ -353,14 +352,14 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-perf"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-bench-tools",
 ]
 
 [[package]]
 name = "aiperf-plugin-sdk"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-plugin-api",
@@ -369,15 +368,15 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-sdk-macros"
-version = "0.12.0"
+version = "0.13.0"
 
 [[package]]
 name = "aiperf-plugin-static-comparator"
-version = "0.12.0"
+version = "0.13.0"
 
 [[package]]
 name = "aiperf-plugin-test-support"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "tempfile",
@@ -385,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-transport-dry-run"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-plugin-api",
@@ -394,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-transport-dynosim"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
@@ -404,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-transport-grpc"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
@@ -414,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-transport-http"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
@@ -424,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-plugin-transport-websocket"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
@@ -434,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-runtime"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiconfigurator-core",
  "aiperf-core",
@@ -523,7 +522,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-transport-sdk"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
@@ -539,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-xtask"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "proc-macro2",

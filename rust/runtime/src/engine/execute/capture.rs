@@ -125,8 +125,39 @@ pub(crate) struct RunCapture {
 }
 
 impl RunCapture {
+    /// Construct from a named policy, an explicit ordinal issuer, and explicit
+    /// per-phase ordinal bases.
+    ///
+    /// This is the single constructor
+    /// [`CaptureService::build`](super::CaptureService::build) uses. The
+    /// env-reading wrappers ([`Self::new`], [`Self::new_with_issuance`]) remain
+    /// for this module's unit tests and delegate to the same explicit
+    /// constructor. `sharding` cannot use the env wrappers because a worker
+    /// thread's `(cell_id, cell_count)` partition is inexpressible in
+    /// process-global environment variables.
+    pub(crate) fn from_policy(
+        clock: Rc<dyn Clock>,
+        origin_ns: i64,
+        config: MetricsConfig,
+        policy: RunCapturePolicy,
+        issuance: Rc<dyn IssuanceAuthority>,
+        phase_ordinal_bases: HashMap<MetricsPhase, usize>,
+    ) -> Self {
+        Self::new_with_issuance_and_bases(
+            clock,
+            origin_ns,
+            config,
+            policy.is_raw_enabled,
+            policy.needs_live_record,
+            policy.needs_adaptive_record,
+            policy.is_exact_fold,
+            issuance,
+            phase_ordinal_bases,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    fn new(
         clock: Rc<dyn Clock>,
         origin_ns: i64,
         config: MetricsConfig,
@@ -157,7 +188,7 @@ impl RunCapture {
     /// express. Per-phase ordinal bases come from the environment and carry no
     /// partition.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_with_issuance(
+    fn new_with_issuance(
         clock: Rc<dyn Clock>,
         origin_ns: i64,
         config: MetricsConfig,
@@ -193,7 +224,7 @@ impl RunCapture {
     /// map into every thread's capture. Controller children use the global,
     /// partition-independent environment bases for every thread.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_with_issuance_and_bases(
+    fn new_with_issuance_and_bases(
         clock: Rc<dyn Clock>,
         origin_ns: i64,
         config: MetricsConfig,

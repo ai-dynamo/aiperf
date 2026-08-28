@@ -30,6 +30,15 @@ serving stack — exactly the surface a submitter optimizes through model
 placement, co-residency, cross-stage scheduling, precision selection, and prefix
 caching.
 
+That position holds without qualification for `rag_qna`, where every stage of the
+scored pipeline is a request. It holds only partially for `rag_ingest`, whose
+measured window contains AIPerf's own parser, chunker, and index build, with the
+embedding leg as the only part that leaves the process. `rag_ingest` is therefore
+a real, fully measured workload, but its throughput is a property of the harness
+and its host as much as of the system under test, and this record labels it that
+way everywhere it is reported. The reasoning, and the reference's contrasting
+position, are in `### Where the announcement post binds what the code does not`.
+
 ### What this design optimizes for
 
 AIPerf is a benchmarking tool. The bar this record holds itself to is **the
@@ -213,6 +222,16 @@ composer can be timed by this benchmark.
 *Without it:* `rag_documents_per_second` names the reference's four-stage
 pipeline and measures two of them, which is a wrong number wearing the right
 label.
+
+**I12b. `rag_documents_per_second` is reported as harness-and-host throughput and
+never as a comparable submission result.** Every artifact carrying the metric —
+console, JSON, CSV, Parquet — carries alongside it the fact that only the
+embedding stage is served remotely. The reference's claim that documents per
+second is comparable across systems rests on submitters implementing their own
+ingestion pipeline; ours is fixed in the binary, so the claim does not transfer
+and must not be implied by omission.
+*Enforces:* the exporter plane. *Status:* NEW.
+*Without it:* a correctly measured number invites a comparison it cannot support.
 
 **I13. In-flight tasks and in-flight requests are separate curves, and any window
 derived from concurrency names which one it used.** `--steady-state` reads the
@@ -895,6 +914,21 @@ shape follows `rust/runtime/src/eval/native_graph/artifacts.rs:62`-`:83`
 (`FrozenArtifact { digest, length }`, `FrozenArtifactManifest`, digest-mismatch
 refusal) without inheriting that module's episode-scoped quota model.
 
+The digest is computed **per element first, then folded over the sorted element
+digests with a `\x00` delimiter**, over raw bytes with no normalization. This is
+the MLPerf reference's `_corpus_set_sha256` construction
+(`db_manifest.py:106`-`:127`) and it is adopted deliberately: order-independence
+falls out by construction rather than by sorting a large intermediate, and the
+sealer can maintain it incrementally as passages land.
+
+The manifest additionally carries a **seeded retrieval probe set** — 50 queries
+sampled deterministically from the query set, each with its top-`k` result
+identities — and the index-integrity check asserts mean overlap against it. The
+digest and the probe set answer different questions: the digest proves the
+passages are the same, the probe set proves the index *retrieves* the same, which
+a content digest cannot establish for an insertion-order-dependent structure like
+HNSW. The reference ships both and gates only on the probe set; we gate on both.
+
 ### Ingestion: parse → chunk → embed → index
 
 The client-side stages are pure functions run on the worker inside the measured
@@ -960,6 +994,12 @@ is not available anywhere else on the graph path. So:
 - The **loader** fetches and interns raw article bytes. It does not parse. Its
   only job is to make each document a frozen, content-addressed handle.
 - The **worker** parses, chunks, and issues that document's passage batches.
+  Parsing **flattens tables and lists into text row by row rather than dropping
+  them**, and this is a behavioural requirement rather than an extraction
+  preference: non-prose structure survives into chunks, competes for retrieval
+  slots, and is discarded downstream by a grader call that costs tokens. A parser
+  that drops tables yields a different corpus, a different `corpus_digest`, a
+  different index, and a different token bill for every QnA run built on it.
 
 The unit that makes this work is the document. Chunk count is not known until
 parse completes, so batch membership cannot be computed ahead of dispatch — and in
@@ -1215,14 +1255,22 @@ Three registered implementations:
   runs and `flat` is retained as the exactness reference the index-integrity check
   runs against. That decision is made from the measurement, not from this record.
   It is *exact*, which removes approximate-search recall from the
-  list of things that can silently differ between two submissions. The kernel is
+  list of things that can silently differ between two submissions. The gate
+  settles the AIPerf-internal default only: the MLPerf reference has no flat path
+  at all, so a run asserting reference comparability resolves to `hnsw` with the
+  reference parameters or declares the divergence under I24. See
+  `## Compared to the MLPerf reference implementation`. The kernel is
   hand-written `f32` over slices; no linear-algebra dependency is available or
   needed. `rayon` is available if the scan needs parallelism. Memory-mapping
   requires adding `memmap2`; a plain read is the fallback if that dependency is
   refused.
 - `hnsw`: approximate graph index for corpora where the exact scan stops being
-  negligible against the model calls. Parameters are recorded in the manifest and
-  the report; a run using it is flagged approximate. This needs a new dependency
+  negligible against the model calls, and the only cross-harness-comparable
+  configuration. Parameters are recorded in the manifest and the report; a run
+  using it is flagged approximate. The reference profile is `M = 32`,
+  `efConstruction = 200`, `efSearch = 100` over an L2 metric on normalized
+  vectors (`retrieve/vectordb.py:263`-`:266`, `:201`), which is order-equivalent
+  to cosine. This needs a new dependency
   or a hand-rolled implementation and is explicitly last in the delivery order.
 - `http`: retrieval delegated to an external vector database over the existing
   HTTP transport. This is the path where the vector DB *is* part of the system
@@ -1688,7 +1736,19 @@ is `conversation_id = trace_id` and `correlation_id = "{trace_id}:{node_id}"`
 **The Offline mapping, stated with what it is not.** Server scenario is out of
 scope for this record, exactly as for the first MLPerf instantiation. Offline is
 approximated by the existing concurrency workload with
-`type: concurrency`, `concurrency == requests == N`, one turn, and no ramp. The
+`type: concurrency`, `concurrency == requests == N`, one turn, and no ramp.
+
+That mapping is exact for both workloads. LoadGen hands the SUT the entire query
+set in a single `issue_queries` call under Offline, and the reference's
+concurrency of 10 is its own `ThreadPoolExecutor` width applied *after* delivery
+(`reference_SUT.py:204`, `:334`-`:349`), not a bound on admission. The AIPerf
+analogue of that 10 is a worker count, not a `concurrency` setting, so a
+comparable run still declares `concurrency == requests == N` and expresses the
+reference's pool width as workers. `pipeline_digest` records both, because two
+runs over the same corpus that differ in how much of the delivered set they hold
+in flight are not the same measurement. The four imperfections below apply to
+both, and the full comparison is in
+`## Compared to the MLPerf reference implementation`. The
 approximation is good in the one place that matters most and imperfect in four
 places that must be named, because each is a way for a run to look Offline and
 not be.
@@ -1963,11 +2023,507 @@ protects.
 | An index seal missing any worker or cell part, or whose passage ordinals are not a permutation of `0..N` | I1 |
 | A sealed index exceeding the Kubernetes publication cap of 512 MiB, refused at seal rather than at publish | I1 |
 | A run asserting reference-profile comparability whose resolved parameters diverge from that profile | I24 |
-| A run declaring the Offline scenario whose phase is not single-turn with `concurrency == requests` and no ramp | Offline mapping |
+| Any `rag_*` run declaring the Offline scenario whose phase is not single-turn with `concurrency == requests` and no ramp | Offline mapping |
+| A scored run whose in-flight width is not recorded alongside its throughput | Offline mapping, I23 |
 | `aiperf rag score --gate` without an authored reference accuracy | validity gate |
 | A scored run that reports served-model provenance it did not observe | I25 |
 | A scored run whose resolved plan omits any parameter `pipeline_digest` covers | I23 |
 | A multi-endpoint `rag_qna` run over gRPC | transport limit (`grpc_execution.rs:130`) |
+
+## Compared to the MLPerf reference implementation
+
+The reference implementation is public: `mlcommons/inference`, directory
+`e2e-rag/`, read at commit `cfb0df14b21a3898521891f021a1c6aadec2ab2c`
+(2026-08-26), 61 files and roughly 15,000 lines of Python. Every file reference below is
+relative to `e2e-rag/`. Claims are attributed to their source: the code unless a
+sentence says the announcement post, which is treated as a second published
+source rather than as commentary, because it states several bounds and tolerances
+the code leaves implicit. Where the reference's own
+documentation disagrees with its code, the code is what is recorded here and the
+disagreement is noted, because a design that matches a stale doc matches nothing.
+
+This section exists because the comparison changes the design in four places. It
+is ordered by consequence: what the reference forces us to change, what it
+confirms, what it validates, and what it binds less tightly than we do.
+
+### What the reference forces us to change
+
+**The index default is a comparability decision, not a performance one.** The
+reference has exactly one index constructor — `faiss.IndexHNSWFlat(dimension, 32)`
+with `efConstruction = 200` and `efSearch = 100`, all three hardcoded literals
+(`retrieve/vectordb.py:263`-`:266`) — against `faiss-cpu` (`requirements.txt`).
+There is no flat path and no IVF path in the code at all. The `--vector_index_method`
+flag advertising `choices=["flat","hnsw","ivf"]`
+(`reference_mlperf_datasetup.py:133`-`:138`) is forwarded into `VectorDB.__init__`,
+absorbed by `**kwargs`, and never read (`retrieve/vectordb.py:152`-`:163`);
+`measure_indexing_with_chunking.py:229` is honest and prints `HNSW (fixed)`. The
+shipped manifest confirms the scored values: `IndexHNSWFlat`, dim 768,
+`metric_type: 1`, efC 200, efS 100, M 32.
+
+The consequence for `### The vector index seam` is that the T7 bandwidth gate
+decides the right default for *AIPerf-internal A/B*, where exactness removes
+approximate-recall as a confound, and decides nothing about *cross-harness*
+comparability, where `hnsw` at M=32/efC=200/efS=100 is the only comparable
+configuration. Those are two different questions and this record previously
+conflated them. `flat` therefore remains the default and remains the exactness
+reference, and a run asserting reference-profile comparability under I24 must
+resolve to `hnsw` with those three parameters or declare the divergence. The
+`faiss-cpu` fact also invalidates the bandwidth arithmetic's implicit
+accelerator-memory framing: the reference's own retrieval is host-memory-bound,
+so our ceiling estimate is the *right shape* against the wrong bandwidth number,
+and T7 measures rather than assumes.
+
+**The Offline mapping holds for both workloads, and an earlier reading of this
+record said otherwise.** `user.conf` carries two LoadGen models whose
+`max_async_queries` values look like opposite admission policies:
+
+```
+e2e-rag-db.Offline.min_query_count  = 2515    max_async_queries = 2515
+e2e-rag-qna.Offline.min_query_count = 824     max_async_queries = 10
+```
+
+Reading the QnA line as a concurrency-10 closed loop, and therefore as something
+this record's Offline refusal would reject, was **wrong**. Under Offline, LoadGen
+delivers the entire sample set to the SUT in one `issue_queries` call; the
+reference sorts it and submits every sample to a `ThreadPoolExecutor` whose width
+is 10 (`reference_SUT.py:202`-`:205`, `:334`-`:349`). The announcement post states
+the same thing from the other side: LoadGen provides all 824 tasks at once, and
+how a submitter spreads them across cores and accelerators is named as the
+optimization opportunity. So admission is genuinely unmetered in both workloads
+and the 10 is an implementation choice inside the reference SUT.
+
+The consequence is that the refusal needs no per-workload scope and `rag_qna`
+needs no special admission bound. The AIPerf analogue of the reference's 10 is a
+**worker count**, not a `concurrency` setting: both express how much of an
+already-delivered set is in flight, but only one of them is an admission gate, and
+conflating them would have had us declare `concurrency = 10` and thereby measure a
+closed loop the reference does not run. `pipeline_digest` still records the
+in-flight width, because two runs over the same corpus that hold different amounts
+in flight are not the same measurement and the reference's artifact set does not
+distinguish them.
+
+**The hop bound is load-bearing on the score, and that is measured rather than
+argued.** `max_iterations` defaults to 10 in three signatures
+(`multi_shot_retrieval.py:1186`, `reference_SUT.py:58`, `reference_mlperf.py:111`)
+and is set to **5** by every submission script
+(`reference_mlperf_perf.sh:41`, `config.template.sh:31`). At 5, **45.8% of the 824
+queries hit the cap** (`CLAUDE.md:291`-`:300`). A run at 5 and a run at 10 share a
+corpus bit-for-bit and are different benchmarks — which is the comparability
+asymmetry this record identified, demonstrated on the reference's own numbers
+rather than by construction. I23 keeps the hop bound inside `pipeline_digest`;
+this is the evidence for why.
+
+**Sub-query fan-out is prompt-enforced in the reference and code-enforced here.**
+`max_sub_queries = 3` (`reference_mlperf_perf.sh:42`, `config.template.sh:32`)
+reaches the model only as prompt text (`multi_shot_retrieval.py:126`); the returned
+list is consumed without a clamp (`:1416`), under `temperature = 1.0`. I9 refuses
+an unbounded fan-out, so we are stricter, and deliberately: an advisory bound
+inside a sampled prompt is not a bound on the measured request count. The fallback
+when query generation yields nothing is `[original_query]` (`:1474`-`:1477`), which
+is the total-decoder behavior I11 requires, arrived at ad hoc.
+
+### What the reference confirms
+
+**Per-node endpoint-profile routing is the reference's literal topology.** Two
+vLLM servers on distinct ports serve distinct models per role: `gpt-oss-20b-mxfp4`
+on `:8192` grades document relevance at a hardcoded 4096 max tokens
+(`multi_shot_retrieval.py:468`, `:479`-`:481`), and `gpt-oss-120b-mxfp4` on `:8123`
+handles sufficiency (`:576`, `:600`-`:602`), query generation (`:799`,
+`:812`-`:814`), and answering — where the answerer shares the *sufficiency*
+endpoint and model rather than a separately configured one (`:707`, `:724`-`:726`).
+The judge is a third model (`meta-llama/Llama-3.1-8B-Instruct`) run after the fact
+and outside the SUT. So the `metadata["endpoint"]` per-node selector this record
+bets on is not a generalization we invented; it is what the reference needs, and
+the role→profile map that `pipeline_digest` binds is a map the reference also has
+but records nowhere.
+
+**The reference ships a tunable search space, which is the sharpest argument for
+I23 and I24.** `params.py` carries `optuna_suggest` ranges on retrieval
+parameters — `top_k_retriever` defaults to 10 and is tunable 5→100. A harness whose
+own parameter file invites search over the pipeline cannot rely on convention to
+keep two submissions comparable. `pipeline_digest` is the artifact that makes the
+resulting divergence visible instead of silent.
+
+**Ingestion is a scored phase with parse and chunk inside the timed window.**
+`measure_indexing_with_chunking.py:387`-`:391` sums chunking + indexing + save and
+reports `throughput_passages_per_second`; only post-hoc validation is excluded.
+That is this record's `rag_ingest` window, including I12's insistence that parse
+and chunk are measured stages rather than dataset-loader work. One divergence
+worth keeping: the reference times with `time.time()` throughout
+(`ingestion_monitor.py:99`, `:115`, `:141`, `:204`, `:250`), so its KPI is
+vulnerable to a wall-clock step; AIPerf routes all measurement through `Clock` and
+derives UTC from a single anchor, so ours is not.
+
+### What the reference validates
+
+**The reference contains a live instance of the failure I21 exists to prevent.**
+If `kept_docs` is still empty at the final iteration, the sufficiency call is
+skipped, no answer is generated, and the SUT reports an empty string that falls
+through to `max(1, len(answer.split()))` — a **1-token** result
+(`reference_SUT.py:318`-`:320`). A query that retrieved nothing contributes a
+one-token success to the scored tokens/sec figure. This is exactly a failed hop
+reported as a completed one, and it is in the reference, not hypothetical.
+
+**Verdict totality is achieved by forcing one direction, which I11 permits only if
+the direction is authored.** `check_sufficiency` returns `sufficient = True` on the
+final iteration (`multi_shot_retrieval.py:683`-`:686`, marked `[OVERRIDE]`), on
+empty output (`:655`), on missing JSON (`:673`), and on exception (`:701`). The
+decoder is total, which I11 requires, but the default is "terminate and answer" and
+it is implicit at four separate sites. Our verdict-set declaration makes the same
+choice explicit and one-place, which is the difference between a design and a
+convergent accident.
+
+**The "mechanism exists, is cited correctly, and is inert exactly where it is
+needed" pattern is not an AIPerf peculiarity.** This record found it five times in
+our tree. The reference has at least five of its own:
+
+- `--reasoning` / `reasoning_effort` is plumbed end-to-end
+  (`reference_mlperf.py:188` → `reference_SUT.py:247` →
+  `multi_shot_retrieval.py:1190`) and never read; all four call sites pass a
+  literal `"medium"` (`:516`-`:518`, `:632`-`:634`, `:764`-`:766`, `:857`-`:859`).
+  `CLAUDE.md:230`-`:231` documents temperatures of 0.0/0.1 while the code runs at
+  1.0 — a stale doc over a live default.
+- `evaluation.py:145` gates reranking on `rag_db._reranker_model`, an attribute no
+  class defines (`retrieve/ragdb.py:27`, `:32` define `_reranker_model_name` and
+  `_reranker_queue`), so the single-shot path silently never reranks.
+- `--mlperf_conf` is parsed (`reference_mlperf.py:50`-`:54`) and never used; only
+  `user.conf` reaches `settings.FromConfig`.
+- `db_manifest.py` accepts `--cosine_threshold` and `--top_k_depth` and documents
+  them as ignored (`:307`-`:310`) — while
+  `reference_mlperf_datasetup_accuracy.sh:50`-`:52` still passes
+  `--cosine_threshold 0.9999`, so the accuracy script appears to enforce a gate it
+  does not.
+- `llm_logger.py:216`-`:227` computes accuracy from a `judge_score >= 4` rubric
+  threshold; nothing in the repo ever writes `judge_score`. The shipped
+  `logs_result.json` accordingly reports `queries_correct: 0` alongside
+  `accuracy: 0.317` — a summary that is internally inconsistent and should not be
+  quoted as a result.
+
+The lesson we take is procedural: I23's obligation is not "record the parameters"
+but "record the parameters that were *resolved and used*," and the parity test in
+`### The stock configuration` earns its place precisely because four of the five
+cases above are a value that is authored, threaded, and then dropped.
+
+### Where the reference binds less than we do
+
+`db_manifest.py` is the direct `corpus_digest` analogue, and comparing it is the
+most useful part of this exercise because it built the strict thing and then
+shipped the loose one.
+
+Its stated intent is behavioral equivalence, explicitly *not* byte identity
+(`db_manifest.py:18`-`:51`). It computes `_corpus_set_sha256` (`:106`-`:127`) with a
+construction worth adopting: SHA-256 per passage over **raw text with no
+normalization**, then the sorted per-passage digests folded with a `\x00`
+delimiter — order-independent by construction and cheap to maintain incrementally.
+Our `corpus_digest` is BLAKE3 over a sorted document projection, which has the same
+order-independence property; the reference's per-element-then-sort shape is the
+better one for an incremental sealer and this record adopts it in
+`### One corpus identity`.
+
+Then `verify` never compares it. The corpus hash is **reported from the manifest
+and never recomputed against the database** (`db_manifest.py:373`-`:377`, comment:
+"informational only, never gated"). The four gated checks are `total_passages`
+equality, `embedding_dim` equality, `index_params` dict equality, and a mean
+top-K URL set-overlap ≥ 0.95 over 50 seeded probe queries (`:350`-`:408`). A
+stricter path exists — `cmd_compare` (`:428`-`:477`) *does* gate on corpus-set
+equality at `:456` — and is not the one on the submission path.
+
+So the reference binds passage count, embedding dimension, exact index
+parameters, and observable retrieval behavior on a fixed probe set. It leaves
+unbound: the corpus content digest, the chunk size and overlap and text-boundary
+mode (absent from the manifest entirely), the parser, the source HTML, passage
+metadata, and the vectors. `total_passages` carries the load as a proxy for "same
+chunking, same parsing, same corpus," which compensating changes defeat.
+
+Two things follow. First, I1 and I2 are stronger than the reference and should
+stay that way — a digest that is computed, recorded, and never checked is the
+inert-mechanism pattern again, in the one place where it decides whether two
+submissions mean the same thing. Second, the reference's probe-set retrieval gate
+is a genuinely good idea we do not have: 50 seeded queries, deterministic sample
+(`random.Random(0xC0FFEE)`, `:185`-`:189`), top-10 URL overlap with normalization
+that strips scheme and anchors so metadata formatting cannot fail it. It catches
+the class of divergence a content digest cannot — an index built from identical
+passages that nonetheless retrieves differently, which HNSW's insertion-order
+dependence makes real. This record adopts it as an index-integrity check
+alongside the digest rather than instead of it.
+
+Corpus and chunker constants, for the pinned `rag_e2e` profile: 2515 frozen
+Wikipedia HTML pages shipped as a tarball with re-scraping explicitly forbidden
+(`scripts/download_dataset_and_models.sh:53`-`:72`), 768-character chunks with
+32-character overlap under word-boundary optimization
+(`config.template.sh:17`-`:18`; note the `read_docs.py` CLI default is
+`sentence`, so the scored config overrides it), yielding 108,711 passages in the
+shipped manifest. Chunking is **character-based, not token-based**
+(`text_splitter.py:143`-`:151`), which matters because our chunker is too and the
+embedding model's 512-token limit is what makes 768 characters safe. Acquisition
+is pinned by artifact with **no checksum on any downloaded asset** — our
+acquire-once-into-a-private-snapshot path with a digest is stronger, and nothing
+about the reference's approach recommends relaxing it.
+
+### The scored metric and the validity gate
+
+The headline number is LoadGen's, not the reference code's: the SUT returns a
+zero-filled `int32` buffer sized to the answer call's real
+`usage.completion_tokens` (`reference_SUT.py:309`-`:330`), so Offline reports
+tokens/s alongside samples/s. Only the final `answer_generator` call is reported;
+the three upstream roles that dominate token volume are invisible to LoadGen. Our
+per-role attribution (I16) is therefore a superset of what the reference scores,
+and the aggregate-only compliance scope in `### Accuracy and compliance` matches
+the reference's actual granularity.
+
+Accuracy is a binary LLM-as-judge verdict, with retrieval scored separately and
+then **discarded**: `accuracy_eval.py:129`-`:150` computes precision/recall/F1 over
+retrieved-vs-ground-truth URL sets and prints them, but the MLPerf-format
+`accuracy.txt` written at `:353`-`:355` contains only the judge accuracy line.
+Reference results are P@N 72%, R@N 67%, F1@N 66%, judge accuracy 36%, against an
+oracle-context ceiling of 68% (`CLAUDE.md:207`-`:214`). The announcement post
+publishes a different set for the same reference pipeline — answer accuracy 35%,
+P/R/F1 75%/70%/69% — and does not say which run either set describes. Both are
+recorded here because the validity gate is a ratio against "the reference
+accuracy" and the choice of denominator moves the bar: 97% of 35 and 97% of 36
+are different numbers. Our `aiperf rag score --gate` takes the reference accuracy
+as an authored input for exactly this reason, and the authored value must carry
+its provenance rather than being hardcoded to either figure. Two different judges with
+different prompts, schemas, and defaults exist in the tree (`accuracy_eval.py` for
+the LoadGen path, `evaluate.py:127`-`:163` for the non-LoadGen path) and are not
+consistent with each other; the judge model is not pinned, and three defaults
+disagree — including one that self-judges with the SUT's own answer model. Judge
+failures score `correct = False` (`:118`-`:119`, `:124`-`:126`), so a judge outage
+depresses accuracy rather than erroring. Our design pins the judge inside
+`pipeline_digest` and refuses rather than silently scoring zero, and this is the
+clearest place where matching the reference exactly would be the wrong call.
+
+**The 97% validity gate is not in `e2e-rag/`.** It is delegated by comment to
+`tools/submission/submission_checker.py` (`accuracy_eval.py:348`-`:352`), which
+parses the `Accuracy:` line out of `accuracy.txt`. Within `e2e-rag/`,
+`accuracy_eval.py:284`-`:356` has no threshold, no comparison, and no `sys.exit` —
+a 0% run exits 0, and `reference_mlperf.py:271` propagates only a crash. The one
+real pass/fail gate in the tree is on ingestion:
+`datasetup_accuracy_eval.py:406`-`:413` requires ≥99% file success **and** an MD5
+match, prints `FAILED`, writes `Overall Result: PASS|FAIL`, and exits 1
+(`:645`-`:648`). That MD5 is a self-consistency check — the SUT's reported hash
+versus the file it wrote — never a comparison against a reference value, which it
+could not be since the artifact is not reproducible across runs.
+
+This confirms the scoping in `### Accuracy and compliance`: the gate belongs in
+`aiperf rag score --gate` against an authored reference accuracy, not in
+`aiperf profile`, and the reference's own separation of "run" from "check" is the
+same shape. The 97% constant itself must come from the full `mlcommons/inference`
+checkout; it is not quotable from `e2e-rag/` and this record does not assert it.
+
+Output-length compliance is TEST09's, and `run_compliance_test09.sh` runs a
+verification script that is not vendored in this directory. The mechanism is
+clear from the SUT side: TEST09's `audit.config` makes LoadGen sample responses
+into `mlperf_log_accuracy.json` during a *performance* run, and because the SUT
+encodes `n_tokens` int32 slots, the verifier can recover generated lengths and
+prove the SUT generated what it claimed while running at speed. The tolerance is
+not in this directory but is published with the benchmark: mean output length
+273.81 with a plus-or-minus 10 percent band, 246.43 to 301.19. That band is
+answer-generator-only, which settles the ambiguity below in favour of the
+per-role figure. The reference OSL
+figure of 273.81 is the `answer_generator`-only mean of one specific logged run
+(`ISL_OSL_statistics.txt:107`) — not a pipeline aggregate, which is 551.58 for the
+same run, and not a mean across the five logged runs, which is about 235. Any
+comparison we publish must name which of the three it is.
+
+### Per-query reasoning-type labels
+
+The label exists in the query set and never reaches the score. FRAMES ships a
+`reasoning_types` column, pipe-delimited for multi-label queries
+(`evaluation.py:615`, `:769`, `:840`). But `QSL.py:47`-`:61` loads only `Prompt`,
+`Answer`, and the `wikipedia_link_*` columns, so the label cannot reach the SUT or
+LoadGen; `accuracy_eval.py` never mentions it, and the scored path produces no
+breakdown at all. Per-tag analysis exists only in `evaluation.py:565`-`:645`, a
+retrieval-only non-LoadGen evaluator that never sees an answer or a judge score.
+
+Two consequences for the reasoning-type work in `### Metrics`. The multi-valued
+canonicalization this record specifies — sorted, `;`-joined, never `,`, never a
+list type — is the right call and the reference's `|` delimiter is a compatible
+input encoding to normalize from. And the free path through
+`AccuracyAssociation.task`, which gives per-reasoning-type judge accuracy with
+zero schema change, produces a breakdown the reference does not have on its scored
+path at all. That is the strongest form of the argument for doing it early: it is
+cheap, it is additive, and it is a capability rather than parity work.
+
+### Hop-loop mechanics the code makes explicit
+
+The published pipeline diagram fixes the stage order this record already
+specifies — rewrite, embed, retrieve, rerank, grade, check sufficiency, and on
+"no" return to the rewriter — and the worked multi-hop example published with it
+shows the loop carrying state forward rather than restarting. The code confirms
+that and pins four mechanics the diagrams only imply.
+
+**The kept set is cumulative and the three downstream roles see three different
+views of it.** `kept_docs` is created once before the loop
+(`multi_shot_retrieval.py:1231`) and appended to as documents are graded relevant
+(`:1333`), so it grows monotonically across hops; the worked example's final
+answer draws on one passage kept in hop 1 and one kept in hop 2. But the grader
+sees at most five kept documents, each truncated to 300 characters
+(`:491`-`:495`); the query rewriter sees at most the last twelve
+(`MAX_DOCS_FOR_QUERY_GEN = 12`, `:1399`-`:1401`); and the answer generator sees
+**all** of them at **full** content with no cap and no truncation
+(`:729`-`:734`). That asymmetry is the ISL driver: answer-call input length grows
+without bound in the number of hops while the two upstream roles stay flat. Our
+per-role ISL attribution (I16) is what makes this visible, and a per-role ISL
+series that does not rise with hop index is evidence of a wiring error rather
+than of a fast system.
+
+**The grader is binary, not scored.** It is a "simple binary relevance
+classification" (`:475`) returning a list of 1 and 0 per new document; the
+relevance-0 drops in the worked example are that 0, not a threshold on a
+continuous score. There is no cosine cutoff and no rank cutoff at this stage.
+
+**The grader fails open, in four places.** Empty output (`:536`), no JSON in the
+response (`:551`), and two further failure paths (`:559`, `:573`) all
+`return {"relevance": [1] * len(new_documents)}` — every failure marks every new
+document relevant. The consequence compounds: a fail-open grader inflates the
+kept set, which inflates the uncapped answer ISL, which changes the scored token
+count, with nothing in the artifact recording that the grader failed. This is the
+counterpart to the sufficiency checker's fail-closed-to-`True`, and it is a
+second instance of the class I21 names — a silent fallback that moves a scored
+number. Our design refuses instead, and I21's coverage requirement now has two
+reference instances to point at, not one.
+
+**Two distinct paths produce a one-token completed query.** If `kept_docs` is
+empty the entire sufficiency-and-answer block is skipped (`:1342`), the loop exits
+on the iteration cap, and no answer is generated at all. Separately,
+`generate_answer` returns the literal string `"Unknown"` without issuing any LLM
+call when handed an empty document list (`:735`). Both arrive at LoadGen as a
+completed sample with a completion-token count of about one. The announcement post
+describes returning "Unknown" as the pipeline's honest answer when evidence falls
+short, and the judge scores it incorrect; the code reaches the same string through
+a path that never consults a model, and reaches an empty answer through another.
+Distinguishing "the model said Unknown" from "no model was asked" is not possible
+from the reference artifact, and I20's per-node terminal classification is what
+makes it possible in ours.
+
+Two smaller mechanics worth recording. Retrieval deduplicates across the
+sub-queries of a hop and against everything already seen, which is why three
+sub-queries can yield one new passage. And the retrieval metric is computed on a
+kept-URL list truncated to `top_k_reranking` (`:1607`), not on the full kept set,
+so the reference's own precision and recall are computed over a different
+document set than the one the answer was written from.
+
+One further constraint applies to pinned runs specifically: with a performance
+cache present, any LLM call that fails or times out is fatal rather than retried
+or degraded, on the stated grounds that performance benchmarking requires every
+call to succeed for run-to-run equivalency (`:412`-`:416`, `:435`-`:437`,
+`:449`-`:453`). Our pinned mode should adopt the same posture — a pinned run with
+a failed call is not a slower run, it is a different run — and this is consistent
+with the refusal policy in `### Refusals` rather than an exception to it.
+
+### Where the announcement post binds what the code does not
+
+The post states several things the source leaves implicit, and one of them
+settles an open question in this record.
+
+**Ingestion is a first-class workload whose throughput is claimed comparable
+across systems.** The post presents two workloads, gives each its own throughput
+metric — documents per second for ingestion, tasks per second for QnA — and
+argues the unit directly: the document is the fixed unit of work every submitter
+starts from, which is what makes documents per second comparable. It also says,
+in describing the retrieval integrity check, that the check confirms *a
+submitter's independently built vector database* behaves like the reference. That
+is the load-bearing sentence. Submitters implement their own ingestion pipeline;
+`reference_SUT_datasetup.py` is a reference to be replaced, and documents per
+second is comparable precisely because the implementation varies.
+
+AIPerf cannot occupy that position. Our parse, chunk, and index stages are
+harness-owned and fixed in a shipped binary, and making them submitter-variable
+would break the guarantee `corpus_digest` exists to provide — that two runs
+chunked the corpus identically. The resolution this record adopts is to keep
+`rag_ingest` in full — its graph form, staged driver, measured window, manifest,
+and integrity gate are all unchanged — while reporting
+`rag_documents_per_second` as harness-and-host throughput rather than as a
+comparable submission result. The embedding leg is the only part of that window
+that varies with the system under test, and the artifact must say so at the point
+the number is emitted, not only here. What does transfer cleanly is the corpus
+integrity check, which the post confirms is the actual purpose of the retrieval
+overlap metric.
+
+**The published passage count does not match the shipped manifest.** The post says
+roughly 107,000 passages; the manifest records 108,711. `total_passages` is one of
+the four *gated* manifest checks, so this is not a cosmetic disagreement — a run
+built to the published figure fails verification against the shipped artifact. The
+manifest is what a run reproduces, and our `corpus_digest` binds the actual count
+rather than a documented one.
+
+**Retrieval quality is not an official metric.** The post states it plainly: the
+precision, recall, and F1 figures are a database-integrity check, not a score.
+This vindicates adopting the seeded probe set as a gated check in
+`### One corpus identity` while leaving retrieval quality out of the scored
+surface, and it explains the code's otherwise odd shape — computing P/R/F1 and
+then omitting them from `accuracy.txt` is deliberate, not an oversight.
+
+**Pinned performance runs are the scored performance mode, not an option.** The
+post describes recorded reference inputs supplied for each stage of each hop,
+fixing both the hop count and the documents retrieved, with outputs still
+generated normally and then discarded. That is I19 as specified. It also changes
+the weight of the measured 45.8% cap-hit rate recorded above: that figure
+characterises accuracy runs, where the loop is live, and does not describe a
+performance run, where the hop count comes from the recording. Both readings are
+correct for their own mode and the record should not conflate them.
+
+**Precision is an explicit submitter lever.** The post gives the reference
+precision of each component — FP32 embedder and reranker, MXFP4 for both
+GPT-OSS models, BF16 for the judge — and permits submitters to run any of them at
+a different precision provided the end-to-end accuracy criterion is met. This is
+I25's provenance hole stated as a benchmark feature: the dimension submitters are
+expected to vary is the one our identity capture cannot currently observe, so two
+runs differing only in serving precision are byte-identical in identity. That
+raises I25 from a completeness concern to a correctness one for any comparison
+across submissions.
+
+**Bounds and the gate.** The canonical configuration is up to three sub-queries
+per hop and up to five hops, which matches the scripts rather than the code's
+dead default of ten. The 97% validity gate is confirmed and located in
+`inference_rules.adoc`, under the datacenter minimum-requirements section —
+outside `e2e-rag/`, consistent with the delegation the code comments describe.
+Offline is the only scenario in scope; Server is future work.
+
+**Parsing must flatten tables and lists into text row by row rather than dropping
+them.** The worked example shows why this is load-bearing rather than cosmetic:
+retrieved candidates include a navigation sidebar rendered as a link list and an
+infobox rendered as fields, both of which reach the grader and are dropped there.
+Non-prose structure survives parsing, becomes chunks, competes for retrieval
+slots, and is discarded by a model call that costs tokens. A parser that drops
+tables produces a different corpus, a different index, and a different token bill,
+so the flattening requirement belongs in `### Ingestion: parse -> chunk -> embed
+-> index` as a behavioural requirement and not merely as an extraction
+preference.
+
+**The post names our per-role reporting as the reference's own future work.** It
+states that TEST09 is a single aggregate on one pipeline stage, providing no guard
+on retrieval, reranking, or the intermediate query and sufficiency calls, and that
+future revisions could add distribution-level or per-component compliance
+coverage. That is exactly the gap I16 and I20 close here: per-role mean and p90
+output length beside every scored rate, and per-node terminal classification. Our
+scope for `aiperf rag compliance` still matches the reference's aggregate check so
+the numbers are comparable, but the per-role series exists underneath it, so the
+distribution-level and per-component coverage the post anticipates is a reporting
+change here rather than new measurement.
+
+**Growing multi-hop context is stated design intent, and prefix caching is the
+named lever.** The post calls out that the multi-hop context grows each hop, so
+reusing the shared prefix trades compute-bound prefills for memory-bound work.
+That confirms the ISL asymmetry measured above as intentional rather than
+incidental, and it makes the per-role ISL series the direct diagnostic for whether
+a submitter's prefix caching is working: the answer role's input length should
+climb with hop index while the grader and rewriter stay flat, and the answer
+role's TTFT should not climb with it. AIPerf's existing prefix-reuse controls and
+prefix-dependent segment identity are the levers on our side of that measurement.
+
+**A per-reasoning-type breakdown is published.** The post reports five reasoning
+types with per-type accuracy, labelled insights only and noted as multi-label.
+The scored code path produces no such breakdown, so this is the reference project
+publishing an analysis its own harness does not compute. Our free path through
+`AccuracyAssociation.task` produces the same breakdown as a first-class artifact.
+
+Finally, one thing the post does not mention that the code does: the QnA
+configuration admits ten queries concurrently against a minimum query count of
+824. The asymmetry with ingestion, which admits its full 2515, is visible only in
+`user.conf`. Where the post and the code differ in emphasis this way, the code is
+what a run reproduces.
 
 ## Future requirements
 
@@ -1987,6 +2543,20 @@ figures intact through chunking; tool use in the answer step; per-component or
 distribution-level compliance beyond the single answer-role aggregate; per-role
 statistics under sketch mode; per-hop partial-failure resilience (placement has no
 substrate for it); and cross-host sharding of a single index across cells.
+
+Two further deferrals come from the reference comparison and are named because
+they are divergences rather than oversights. **Sparse retrieval** — the reference
+treats `bm25s` as a first-class alternative retrieval method (`params.py:449`,
+`:569`) — has no analogue here; the `VectorIndex` category is shaped to accept a
+sparse implementation later, and until one exists a BM25 configuration is outside
+our comparability class. **In-process embedding and reranking**: the reference
+embeds locally with sentence-transformers and reranks with a ColBERTv2.0 MaxSim
+worker (`reranker_worker.py:126`-`:128`), while this design routes both through
+endpoint profiles over HTTP. That is a deliberate difference — it puts embedding
+and rerank latency on the measured request timeline, which is the property a
+benchmarking tool wants — but it means embed and rerank cost is not directly
+comparable to a reference number, and a run asserting I24 comparability declares
+it.
 
 ## Source anchors
 
@@ -2081,3 +2651,46 @@ substrate for it); and cross-host sharding of a single index across cells.
   `docs/specs/conditional-graph-lowering.md`.
 - Graph plane determinism live branching must not disturb:
   `docs/specs/graph-runtime.md`.
+
+MLPerf reference implementation, `mlcommons/inference`, directory `e2e-rag/` at
+commit `cfb0df14b21a3898521891f021a1c6aadec2ab2c` (2026-08-26). Paths below are
+relative to that directory.
+
+- Index construction and its hardcoded parameters: `retrieve/vectordb.py:263`-`:266`;
+  normalized embeddings `:201`; unread `vector_index_method` `:152`-`:163` against
+  `reference_mlperf_datasetup.py:133`-`:138`.
+- Chunker: `text_splitter.py:120`-`:155`; scored constants `config.template.sh:17`-`:18`;
+  parser and boundary handling `read_docs.py:126`-`:133`, `:256`-`:320`, `:415`-`:417`.
+- Corpus acquisition: `scripts/download_dataset_and_models.sh:53`-`:72`; floating
+  alternative `download_docs.py:578`, `:412`-`:565`.
+- Database manifest, digest construction, and the four gated checks:
+  `db_manifest.py:106`-`:127`, `:185`-`:189`, `:350`-`:408`; ungated corpus hash
+  `:373`-`:377`; stricter unused comparison `:428`-`:477`.
+- Ingestion as a timed phase: `measure_indexing_with_chunking.py:387`-`:391`;
+  wall-clock timing `ingestion_monitor.py:99`, `:115`, `:141`, `:204`, `:250`.
+- Ingestion pass/fail gate: `datasetup_accuracy_eval.py:406`-`:413`, `:645`-`:648`.
+- Multi-hop loop, its bounds, and the fallbacks:
+  `multi_shot_retrieval.py:1252`, `:1271`-`:1308`, `:1310`-`:1424`, `:1464`-`:1477`,
+  `:1495`-`:1569`; sufficiency forcing `:655`, `:673`, `:683`-`:686`, `:701`;
+  unclamped fan-out `:1416`.
+- Role-to-endpoint map: `multi_shot_retrieval.py:468`, `:479`-`:481`, `:576`,
+  `:600`-`:602`, `:707`, `:724`-`:726`, `:799`, `:812`-`:814`.
+- Scenario declaration and admission bounds: `user.conf`;
+  `reference_mlperf_perf.sh:31`-`:32`, `:41`-`:42`; `reference_mlperf.py:159`-`:162`,
+  `:204`-`:241`.
+- Token accounting handed to LoadGen: `reference_SUT.py:261`-`:262`, `:309`-`:330`;
+  empty-answer fallback `:318`-`:320`.
+- Accuracy, judges, and the absent gate: `accuracy_eval.py:43`-`:65`, `:129`-`:150`,
+  `:284`-`:356`; second judge `evaluate.py:127`-`:163`.
+- Reasoning-type labels present in the data and absent from the score:
+  `evaluation.py:565`-`:645`; `QSL.py:47`-`:61`.
+- Reranker: `reranker_worker.py:111`-`:128`; sparse alternative `params.py:449`, `:569`.
+- Cumulative kept set and its three asymmetric views: `multi_shot_retrieval.py:1231`,
+  `:1333`; grader view `:491`-`:495`; query-rewriter view `:1399`-`:1401`; uncapped
+  answer view `:729`-`:734`.
+- Grader binarity and its fail-open paths: `multi_shot_retrieval.py:475`, `:536`,
+  `:551`, `:559`, `:573`.
+- One-token completion paths: `multi_shot_retrieval.py:1342`, `:735`.
+- Retrieval metric computed on a truncated kept-URL list: `multi_shot_retrieval.py:1607`.
+- Pinned-run call-failure fatality: `multi_shot_retrieval.py:412`-`:416`,
+  `:435`-`:437`, `:449`-`:453`.

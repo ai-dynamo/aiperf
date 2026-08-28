@@ -97,12 +97,11 @@ uuid = { version = "1", features = ["v4"] }
 tracing.workspace = true
 regex.workspace = true
 minijinja = { version = "2.21", features = ["json"] }
-# mimalloc as the global allocator for the unified `aiperf` binary: the execution
-# hot path's per-request allocation churn was the top profiled hotspot (moved here
-# from the former runner crate). `libmimalloc-sys` exposes the experimental
-# option constants the arena-preinit C shim (build.rs) resolves.
-mimalloc = "0.1"
-libmimalloc-sys.workspace = true
+# The shared allocator provider (libaiperf_alloc_v1.so) is the authoritative
+# mimalloc instance for the `aiperf` binary and all its plugin cdylibs.  The
+# shim provides the GlobalAlloc impl; the provider cdylib is linked at build
+# time via build.rs (not as a Cargo dep, to avoid embedding the rlib).
+aiperf-allocator-shim = { path = "../allocator-shim" }
 # Async streaming HTTP client for the native `chat` subcommand (hyper, matching
 # the transport stack — no reqwest so loopback is never proxied). `rt-multi-thread`
 # also backs the `--cell`/`--aggregator` envelope-fetch runtimes in `execute_mode`.
@@ -142,9 +141,10 @@ nix = { version = "0.29", features = ["signal"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [build-dependencies]
-# Compiles the typed bridge to libmimalloc-sys experimental option constants
-# (src/mimalloc_options.c), moved from the former runner crate.
-cc = "1"
+# Links the provider cdylib (libaiperf_alloc_v1.so) at build time so the
+# aiperf binary's mi_* extern "C" references are satisfied at final link.
+# No cc/C compilation is needed here; the provider's build script handles
+# the options.c compilation.
 
 [dev-dependencies]
 tempfile = "3"

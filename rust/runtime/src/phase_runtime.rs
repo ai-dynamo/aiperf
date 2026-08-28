@@ -961,20 +961,86 @@ impl ScheduledPhaseExecutionFactory {
     }
 }
 
-impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
-    fn create(&self, config: &PhaseConfig, context: PhaseContext) -> Rc<dyn PhaseExecution> {
-        let Some(mut plan) = self.plans.borrow_mut().remove(&config.id) else {
-            return Rc::new(MissingScheduledPhaseExecution {
-                phase_id: config.id.clone(),
-            });
-        };
-        plan.ancillary.phase = match config.kind {
-            PhaseKind::Warmup => crate::timing::Phase::Warmup,
-            PhaseKind::Profiling => crate::timing::Phase::Profiling,
-        };
-        let tracker = Rc::new(PhaseDispatchTracker::new(context));
-        let phase_start_ns = self.clock.now_ns();
-        let start_ns = plan.start_ns.unwrap_or(phase_start_ns);
+/// Inputs for one phase's runtime construction.
+///
+/// Borrowed rather than owned where the current inline body borrows, so the
+/// default implementation performs the same moves in the same order.
+pub(crate) struct PhaseRuntimeBuildRequest<'a> {
+    /// The pipeline clock.
+    pub clock: Rc<dyn crate::clock::Clock>,
+    /// The pipeline's bound turn dispatcher.
+    pub dispatcher: Rc<dyn TurnDispatcher>,
+    /// The orchestrator's config for this phase.
+    pub config: &'a PhaseConfig,
+    /// The phase plan, consumed by construction.
+    pub plan: ScheduledPhasePlan,
+    /// Shared transport timeline origin for this phase.
+    pub start_ns: i64,
+    /// This phase's own boundary, used as the realtime block's origin.
+    pub phase_start_ns: i64,
+    /// Per-phase dispatch tracker installed as the lifecycle observer.
+    pub tracker: Rc<PhaseDispatchTracker>,
+}
+
+/// One phase's constructed runtime and the controls its finalization needs.
+pub(crate) struct BuiltPhaseRuntime {
+    /// The constructed scheduled runtime.
+    pub runtime: Rc<ScheduledRuntime>,
+    /// The phase controller, possibly replaced by a runtime extension.
+    pub controller: Rc<dyn ScheduledPhaseController>,
+    /// The phase's workload.
+    pub workload: Rc<dyn Workload>,
+    /// Shared phase resources.
+    pub resources: Rc<dyn ScheduledPhaseResources>,
+    /// Ordered phase sidecars; finalization runs them before the terminal join.
+    pub sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>>,
+    /// Whether the phase waits for natural drain rather than stop enforcement.
+    pub wait_for_natural_drain: bool,
+    /// Live-metrics accumulator for the periodic realtime block, when enabled.
+    pub realtime_live: Option<crate::realtime::LiveMetrics>,
+    /// Origin the realtime block measures elapsed time from.
+    pub realtime_origin_ns: i64,
+}
+
+/// Why a phase runtime could not be constructed.
+///
+/// Carries the same message the inline body puts into
+/// `FailedScheduledPhaseExecution`, so the failure text is unchanged.
+#[derive(Debug)]
+pub(crate) struct PhaseRuntimeBuildError(String);
+
+impl std::fmt::Display for PhaseRuntimeBuildError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for PhaseRuntimeBuildError {}
+
+/// Construction seam for one scheduled phase's runtime.
+///
+/// The default implementation is the finite path: observers, the observer tee
+/// collapse, the optional runtime extension, the realtime processor, and the
+/// `ScheduledRuntime` with its ancillary configuration. The trait exists so a
+/// later streaming phase factory can override construction — for example to
+/// install a terminal processing lane and its single drain owner — without
+/// forking phase orchestration, credit dispatch, or finalization ordering. The
+/// finite factory overrides nothing.
+pub(crate) trait ScheduledPhaseRuntimeBuilder {
+    /// Build one phase's runtime and finalization controls.
+    fn build_phase_runtime(
+        &self,
+        request: PhaseRuntimeBuildRequest<'_>,
+    ) -> Result<BuiltPhaseRuntime, PhaseRuntimeBuildError> {
+        let PhaseRuntimeBuildRequest {
+            clock,
+            dispatcher,
+            config,
+            mut plan,
+            start_ns,
+            phase_start_ns,
+            tracker,
+        } = request;
         let mut controller = plan.controller.clone();
         // Live metrics for the profiling phase's periodic realtime block: a
         // persistent accumulator fed one complete record per completion (see
@@ -995,7 +1061,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         // when the realtime block is enabled (see `realtime_live`).
         let realtime_observer = realtime_live.as_ref().map(|_| {
             Rc::new(NativeMetricsObserver::new(
-                self.clock.clone(),
+                clock.clone(),
                 start_ns,
                 plan.metrics_config.clone(),
             ))
@@ -1005,12 +1071,12 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         ));
         let native_metrics = Rc::new(if !plan.policy.needs_native_record_dimensions {
             NativeMetricsObserver::new_aggregate_only(
-                self.clock.clone(),
+                clock.clone(),
                 start_ns,
                 plan.metrics_config,
             )
         } else {
-            NativeMetricsObserver::new(self.clock.clone(), start_ns, plan.metrics_config)
+            NativeMetricsObserver::new(clock.clone(), start_ns, plan.metrics_config)
         });
         let mut delegates: Vec<Rc<dyn RequestObserver>> = Vec::with_capacity(
             usize::from(plan.policy.needs_performance_summary)
@@ -1037,7 +1103,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         let (observer, issuance_gate, extension_processors) =
             if let Some(extension) = plan.runtime_extension.take() {
                 let extension = match extension.build(
-                    self.clock.clone(),
+                    clock.clone(),
                     start_ns,
                     phase_start_ns,
                     delegate,
@@ -1045,10 +1111,9 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
                 ) {
                     Ok(extension) => extension,
                     Err(error) => {
-                        return Rc::new(FailedScheduledPhaseExecution {
-                            phase_id: config.id.clone(),
-                            error: format!("building phase runtime extension: {error:#}"),
-                        });
+                        return Err(PhaseRuntimeBuildError(format!(
+                            "building phase runtime extension: {error:#}"
+                        )));
                     }
                 };
                 controller = extension.controller;
@@ -1074,9 +1139,9 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
                     )) as Rc<dyn TurnRecordProcessor>
                 });
         let runtime = ScheduledRuntime::new_with_observer(
-            self.clock.clone(),
+            clock,
             start_ns,
-            self.dispatcher.clone(),
+            dispatcher,
             config.stop,
             plan.policy.is_stop_enforced,
             collector,
@@ -1088,7 +1153,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         runtime.set_timing_record_capture(plan.policy.needs_timing_records);
         runtime.set_local_measurement_discarded(plan.policy.is_local_measurement_discarded);
         runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
-        runtime.set_turn_lifecycle_observer(tracker.clone());
+        runtime.set_turn_lifecycle_observer(tracker);
         for processor in plan.record_processors {
             runtime.add_record_processor(processor);
         }
@@ -1108,31 +1173,77 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         if plan.policy.is_credit_dispatch_enabled
             && let Err(error) = runtime.enable_credit_dispatch()
         {
-            return Rc::new(FailedScheduledPhaseExecution {
-                phase_id: config.id.clone(),
-                error: format!("{error:#}"),
-            });
+            return Err(PhaseRuntimeBuildError(format!("{error:#}")));
         }
-        self.runtimes.borrow_mut().push(runtime.clone());
-        Rc::new(ScheduledPhaseExecution {
-            phase_id: config.id.clone(),
-            clock: self.clock.clone(),
-            workload: plan.workload,
+        Ok(BuiltPhaseRuntime {
             runtime,
-            tracker,
-            wait_for_natural_drain: !plan.policy.is_stop_enforced,
-            credit_returns: RefCell::new(None),
             controller,
+            workload: plan.workload,
             resources: plan.resources,
             sidecars: plan.sidecars,
-            reports: self.reports.clone(),
-            defer_report: self.defer_reports,
-            finalized: Cell::new(false),
+            wait_for_natural_drain: !plan.policy.is_stop_enforced,
             realtime_live,
             // Elapsed for the realtime line is measured from the actual phase
             // boundary, not the (possibly earlier) shared transport timeline
             // origin `start_ns` warmup and profiling share.
             realtime_origin_ns: phase_start_ns,
+        })
+    }
+}
+
+impl ScheduledPhaseRuntimeBuilder for ScheduledPhaseExecutionFactory {}
+
+impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
+    fn create(&self, config: &PhaseConfig, context: PhaseContext) -> Rc<dyn PhaseExecution> {
+        let Some(mut plan) = self.plans.borrow_mut().remove(&config.id) else {
+            return Rc::new(MissingScheduledPhaseExecution {
+                phase_id: config.id.clone(),
+            });
+        };
+        plan.ancillary.phase = match config.kind {
+            PhaseKind::Warmup => crate::timing::Phase::Warmup,
+            PhaseKind::Profiling => crate::timing::Phase::Profiling,
+        };
+        let tracker = Rc::new(PhaseDispatchTracker::new(context));
+        let phase_start_ns = self.clock.now_ns();
+        // `plan` is moved into the request, so read its authored origin first.
+        let start_ns = plan.start_ns.unwrap_or(phase_start_ns);
+        let built = match self.build_phase_runtime(PhaseRuntimeBuildRequest {
+            clock: self.clock.clone(),
+            dispatcher: self.dispatcher.clone(),
+            config,
+            plan,
+            start_ns,
+            phase_start_ns,
+            tracker: tracker.clone(),
+        }) {
+            Ok(built) => built,
+            Err(error) => {
+                return Rc::new(FailedScheduledPhaseExecution {
+                    phase_id: config.id.clone(),
+                    error: error.to_string(),
+                });
+            }
+        };
+        // Registration stays with the factory: `finalize_terminal_processing`
+        // iterates it, and a builder override must not mutate factory state.
+        self.runtimes.borrow_mut().push(built.runtime.clone());
+        Rc::new(ScheduledPhaseExecution {
+            phase_id: config.id.clone(),
+            clock: self.clock.clone(),
+            workload: built.workload,
+            runtime: built.runtime,
+            tracker,
+            wait_for_natural_drain: built.wait_for_natural_drain,
+            credit_returns: RefCell::new(None),
+            controller: built.controller,
+            resources: built.resources,
+            sidecars: built.sidecars,
+            reports: self.reports.clone(),
+            defer_report: self.defer_reports,
+            finalized: Cell::new(false),
+            realtime_live: built.realtime_live,
+            realtime_origin_ns: built.realtime_origin_ns,
         })
     }
 

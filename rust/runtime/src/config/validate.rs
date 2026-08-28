@@ -9,7 +9,7 @@
 //! default-fillers (tokenizer defaulting, seed defaulting, …) are intentionally
 //! not ported here — this pass only rejects, it never rewrites.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 
 use super::model::config::BenchmarkConfig;
 use super::model::dataset::{CacheBustTarget, Dataset, RecordedAgentSourceFormat};
@@ -34,6 +34,7 @@ pub fn validate(cfg: &BenchmarkConfig) -> Result<()> {
     validate_warmup_isolation_system(cfg)?;
     validate_recorded_agent_replay(cfg)?;
     validate_agentic_cache_warmup(cfg)?;
+    validate_dataset_streams(cfg)?;
     Ok(())
 }
 
@@ -568,6 +569,76 @@ fn validate_agentic_cache_warmup(cfg: &BenchmarkConfig) -> Result<()> {
              lowers this run, so the accelerated cache-warmup substage reaches no \
              consumer."
         );
+    }
+    Ok(())
+}
+
+/// Reject stream configurations whose other authored sections cannot hold.
+///
+/// This is the raise-only offline pass: it never rewrites. Each rejection names
+/// the feature that is structurally incompatible with an unbounded source, not
+/// merely unimplemented.
+fn validate_dataset_streams(cfg: &BenchmarkConfig) -> Result<()> {
+    let Some(streams) = cfg.dataset_streams.as_ref() else {
+        ensure!(
+            cfg.shadow_replay.is_none(),
+            "shadow_replay requires dataset_streams"
+        );
+        return Ok(());
+    };
+    ensure!(
+        cfg.datasets.as_ref().is_none_or(|d| d.is_empty()),
+        "datasets and dataset_streams are mutually exclusive; author exactly one"
+    );
+    ensure!(
+        cfg.shadow_replay.is_some(),
+        "dataset_streams requires shadow_replay"
+    );
+    ensure!(
+        !streams.items.is_empty(),
+        "dataset_streams.items must contain at least one stream"
+    );
+    // Accuracy grades a complete, finite, ground-truth-labelled dataset. A
+    // stream has no complete input, so a stream accuracy score would silently
+    // grade a prefix.
+    ensure!(
+        cfg.accuracy.is_none(),
+        "accuracy benchmarking requires a finite dataset and is not supported with dataset_streams"
+    );
+    // Resident exporters read the whole authored dataset or the whole recorded
+    // trace before emitting. Per-record exporters (`records_path`,
+    // `records_csv_path`, `records_parquet_path`, `raw_path`) append per record
+    // and are exactly the streaming-compatible output shape, so they stay
+    // accepted.
+    if let Some(artifacts) = cfg.artifacts.as_ref() {
+        for (field, is_set) in [
+            (
+                "artifacts.dataset_analysis_path",
+                artifacts.dataset_analysis_path.is_some(),
+            ),
+            (
+                "artifacts.graph_tool_time_path",
+                artifacts.graph_tool_time_path.is_some(),
+            ),
+            (
+                "artifacts.graph_trace_summary_path",
+                artifacts.graph_trace_summary_path.is_some(),
+            ),
+            (
+                "artifacts.graph_replay_metrics_path",
+                artifacts.graph_replay_metrics_path.is_some(),
+            ),
+            (
+                "artifacts.graph_replay_provenance_path",
+                artifacts.graph_replay_provenance_path.is_some(),
+            ),
+        ] {
+            ensure!(
+                !is_set,
+                "{field} requires the complete dataset resident and is not supported with \
+                 dataset_streams"
+            );
+        }
     }
     Ok(())
 }
