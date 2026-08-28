@@ -115,7 +115,7 @@ static FIXTURES_BUILT: OnceLock<bool> = OnceLock::new();
 
 fn ensure_provider_built() {
     PROVIDER_BUILT.get_or_init(|| {
-        let status = Command::new("cargo")
+        let status = Command::new(env!("CARGO"))
             .args(["build", "-p", "aiperf-allocator-provider"])
             .current_dir(workspace_rust_dir())
             .status()
@@ -134,7 +134,7 @@ fn ensure_fixtures_built() {
         // Build the fixture host into the main workspace target dir so that
         // fixture_host_path() finds it under PROFILE_TARGET_DIR.
         let manifest = fixtures_dir().join("allocator-candidate-host/Cargo.toml");
-        let status = Command::new("cargo")
+        let status = Command::new(env!("CARGO"))
             .args([
                 "build",
                 "--manifest-path",
@@ -149,7 +149,7 @@ fn ensure_fixtures_built() {
 
         // Build the fixture plugin into the main workspace target dir.
         let manifest = fixtures_dir().join("allocator-candidate-plugin/Cargo.toml");
-        let status = Command::new("cargo")
+        let status = Command::new(env!("CARGO"))
             .args([
                 "build",
                 "--manifest-path",
@@ -399,4 +399,13 @@ fn shared_allocator_instance_requirement_is_documented() {
     // exported plugin function, and asserts they are equal before exiting 0.
     //
     // If this test is the only failure, fix fixture_host_subprocess_exits_zero.
+
+    // Verify the documented contract at the shim level: two calls to
+    // mi_subproc_main() within the same process return the same pointer.
+    let a = unsafe { aiperf_allocator_shim::mi_subproc_main() };
+    let b = unsafe { aiperf_allocator_shim::mi_subproc_main() };
+    assert_eq!(
+        a, b,
+        "mi_subproc_main() must return the same pointer on repeated calls within one process"
+    );
 }
