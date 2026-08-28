@@ -1694,7 +1694,7 @@ pub struct StreamingIssueSummary {
 }
 
 impl StreamingIssueSummary {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             total: 0,
             by_scope: BTreeMap::new(),
