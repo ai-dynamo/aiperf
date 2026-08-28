@@ -60,7 +60,7 @@ use super::{
         DecodeBatchBudget, DecodeStep, FormatEvent, FormatEventSink, StreamingDatasetFormat,
         StreamingPartitionDecoder,
     },
-    identity::{ContentDigest, GlobalSequence, SessionCausalFrontier},
+    identity::{ContentDigest, GlobalSequence, SessionCausalFrontier, StableSessionKey},
     placement::{
         PlacementError, PlacementEvent, PlacementHandle, PlacementHandleId,
         PreparedStreamingPlacementBinding, StreamingPlacementAdmission, StreamingPlacementControl,
@@ -471,6 +471,9 @@ pub struct StreamingPipeline {
     control: StreamingPipelineControl,
     /// Placements retained until their action reaches terminal.
     placements: RefCell<std::collections::BTreeMap<super::identity::StableActionId, PlacementHandle>>,
+    /// In-flight action count per placed session, so route capacity is released
+    /// at the session's causal terminal rather than at each action's.
+    session_inflight: RefCell<std::collections::BTreeMap<StableSessionKey, usize>>,
     accepted: Cell<u64>,
     settled: Cell<u64>,
     source_pulls: Cell<u64>,
@@ -585,6 +588,7 @@ impl StreamingPipeline {
             decoder: RefCell::new(None),
             control: control.clone(),
             placements: RefCell::new(std::collections::BTreeMap::new()),
+            session_inflight: RefCell::new(std::collections::BTreeMap::new()),
             accepted: Cell::new(0),
             settled: Cell::new(0),
             source_pulls: Cell::new(0),
@@ -683,9 +687,21 @@ impl StreamingPipeline {
             let is_admitting = matches!(state, PipelinePhase::Pulling)
                 && !this.control.is_admission_fenced()
                 && !this.is_source_sealed.get();
-            if inflight.is_none() && is_admitting {
+            if !is_admitting {
+                // A fenced or sealed pipeline pulls nothing, so a parked
+                // admission cycle is dropped rather than retained: the unit it
+                // was building was never accepted and nothing settles for it.
+                inflight = None;
+            } else if inflight.is_none() {
                 inflight = Some(this.admit_next_unit().boxed_local());
             }
+            // The action host owns submission and its multiplexed event stream
+            // behind one exclusive borrow, so the event arm is armed only when
+            // no admission cycle can be holding that borrow. While admission is
+            // live the events keep accumulating in the drivers; the loop
+            // consumes them as soon as admission fences, which every terminal
+            // path does before it waits for quiescence.
+            let is_event_arm_live = inflight.is_none();
 
             let step = select_biased! {
                 // 1. Settlement first: it is the only arm that returns capacity.
@@ -697,7 +713,7 @@ impl StreamingPipeline {
                 }
                 // 2. Action events, republished as the single `PlacementEvent::Action`
                 //    route back into session state.
-                event = next_action_event(&this.action).fuse() => {
+                event = next_action_event(&this.action, is_event_arm_live).fuse() => {
                     LoopStep::Action(event)
                 }
                 // 3. Shutdown, which fences admission but never drops accepted work.
@@ -955,6 +971,11 @@ impl StreamingPipeline {
         };
         let action_id = action.action_id();
         self.placements.borrow_mut().insert(action_id, handle);
+        *self
+            .session_inflight
+            .borrow_mut()
+            .entry(handle.session)
+            .or_insert(0) += 1;
 
         // Reservations 6 and 7: the active-execution lease and, transitively
         // inside the binding's own `submit`, the terminal-record permit. The
@@ -1006,6 +1027,20 @@ impl StreamingPipeline {
                 .map_err(StreamingPipelineError::Placement)?;
         }
         Ok(())
+    }
+
+    /// Decrement one session's in-flight count and report whether it reached zero.
+    fn is_session_causally_terminal(&self, session: StableSessionKey) -> bool {
+        let mut inflight = self.session_inflight.borrow_mut();
+        let Some(count) = inflight.get_mut(&session) else {
+            return false;
+        };
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            inflight.remove(&session);
+            return true;
+        }
+        false
     }
 
     /// Apply one settle event.
@@ -1061,8 +1096,14 @@ impl StreamingPipeline {
         if let Some((action_id, disposition)) = terminal {
             let handle = self.placements.borrow().get(&action_id).copied();
             if let Some(handle) = handle {
+                // A route serves a session, not an action, so it is fenced only
+                // once every action placed on it has reached terminal. Releasing
+                // per action would fence the epoch out from under the session's
+                // own siblings.
                 let frontier = self.sink.borrow().frontier.clone();
-                if let Some(frontier) = frontier {
+                if self.is_session_causally_terminal(handle.session)
+                    && let Some(frontier) = frontier
+                {
                     // Route capacity returns here, which is what wakes a pending
                     // reservation in the next reserve phase.
                     self.policy
@@ -1250,10 +1291,19 @@ async fn next_placement_event(
     driver.next_event().await
 }
 
-/// Await the next action event without holding a borrow across the loop body.
+/// Await the next action event, or park when the host borrow belongs elsewhere.
+///
+/// The caller arms this only when no admission cycle is in flight, because the
+/// action host serves both submission and the event stream through one
+/// exclusive borrow. Parking without touching the cell keeps that discipline a
+/// property of the loop rather than a runtime borrow check.
 async fn next_action_event(
     cell: &RefCell<StreamingActionHost>,
+    is_live: bool,
 ) -> Result<ActionExecutionEvent, ActionExecutionError> {
+    if !is_live {
+        return std::future::pending().await;
+    }
     let mut host = cell.borrow_mut();
     host.next_event().await
 }

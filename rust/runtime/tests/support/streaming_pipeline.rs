@@ -846,21 +846,18 @@ pub fn build(spec: FixtureSpec) -> Result<PipelineFixture, StreamingPipelineErro
     });
     let mut bindings = StreamingActionBindingSet::new();
     bindings
-        .insert(
-            schema.clone(),
-            PreparedStreamingActionBinding {
-                submitter: Box::new(FakeSubmitter {
-                    schema: schema.clone(),
-                    probes: Rc::clone(&probes),
-                }),
-                driver: Box::new(FakeDriver {
-                    participant_id: CheckpointParticipantId::new("action_driver"),
-                    run,
-                    probes: Rc::clone(&probes),
-                }),
-                control,
-            },
-        )
+        .insert(PreparedStreamingActionBinding {
+            submitter: Box::new(FakeSubmitter {
+                schema: schema.clone(),
+                probes: Rc::clone(&probes),
+            }),
+            driver: Box::new(FakeDriver {
+                participant_id: CheckpointParticipantId::new("action_driver"),
+                run,
+                probes: Rc::clone(&probes),
+            }),
+            control,
+        })
         .expect("one binding per schema");
     let emitted: BTreeSet<_> = [schema].into_iter().collect();
     let (action, _controls) =
