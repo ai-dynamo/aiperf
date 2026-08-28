@@ -1364,7 +1364,8 @@
           },
           "seamless": false,
           "smoothness": 1.5,
-          "type": "gamma"
+          "type": "gamma",
+          "grace_period": 30.0
         }
       ],
       "runtime": {

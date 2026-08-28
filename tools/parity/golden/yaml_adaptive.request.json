@@ -1066,7 +1066,8 @@
           "kind": "profiling",
           "name": "profiling",
           "seamless": false,
-          "type": "concurrency"
+          "type": "concurrency",
+          "grace_period": 30.0
         }
       ],
       "runtime": {
