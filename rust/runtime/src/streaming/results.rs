@@ -6,6 +6,11 @@
 pub mod epoch;
 pub mod index;
 
+pub use epoch::{
+    CommittedPartialResult, EpochResultCoordinator, ProvisionalDashboardSummary,
+    ProvisionalResultStore, ResultEpochPlacement, WorkerResultEpoch,
+};
+
 use std::{
     fmt,
     mem::size_of,
