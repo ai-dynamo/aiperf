@@ -187,14 +187,17 @@ def format_pod_failure_reason(
     return " | ".join(parts)
 
 
-#: Containers in the controller pod that are not aiperf services: the control
-#: plane is us, and the rest are infrastructure sidecars whose exit is handled
-#: elsewhere. Everything else in that pod is a service whose death strands the
-#: configure wait.
+#: Containers in the controller pod whose non-zero termination is handled
+#: elsewhere or is not a fatal signal:
+#:  - CONTROL_PLANE: that IS us; death is handled by the operator, not here.
+#:  - RESULTS_SIDECAR: can exit cleanly at run end after artifact upload.
+#:  - WORKER_MANAGER: legacy name; handled elsewhere.
+#: EVENT_BUS_PROXY is intentionally NOT in this set: it must never exit during
+#: a live benchmark, so an unexpected termination (e.g. kill -9 in chaos tests)
+#: should be detected and abort the controller.
 _INFRA_CONTAINERS: frozenset[str] = frozenset(
     {
         Containers.CONTROL_PLANE,
-        Containers.EVENT_BUS_PROXY,
         Containers.RESULTS_SIDECAR,
         Containers.WORKER_MANAGER,  # legacy name for worker-group-manager
     }
