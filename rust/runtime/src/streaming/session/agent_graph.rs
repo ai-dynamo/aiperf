@@ -343,6 +343,8 @@ impl GraphSessionScope {
             None => {
                 self.orphan_edges.entry(to).or_default().push(from);
             }
+        } else {
+            self.orphan_edges.entry(to).or_default().push(from);
         }
         self.version = self.version.saturating_add(1);
         Ok(())
@@ -693,6 +695,8 @@ impl StreamingAgentGraphCoordinator {
                 self.declare_node(session_key, node_key, request, role)?;
             }
             AcceptedGraphMutation::Edge { from, to } => {
+                // Read the authored bound before borrowing the session scope:
+                // the limits live on `self`, which `session_mut` borrows.
                 let max_orphan_edges = self.limits.max_orphan_edges_per_session;
                 let scope = self.session_mut(session_key)?;
                 let from_id = scope.node_record_id(&from);
