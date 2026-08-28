@@ -663,6 +663,15 @@ async def test_h4_missing_jobset_crd_surfaces_error_unified(
         # Restore JobSet CRD so downstream tests are not wrecked.
         with contextlib.suppress(Exception):
             await kubectl.apply_server_side(crd_url)
+        # Wait for the CRD to be Established before returning. Without this,
+        # the next test (K1/K2/K3 unified) starts before the JobSet CRD is
+        # ready and the operator can't create JobSets.
+        await kubectl.wait_for_condition(
+            "crd",
+            "jobsets.jobset.x-k8s.io",
+            "Established",
+            timeout=30,
+        )
         await kubectl.run(
             "delete",
             "aiperfjob",
