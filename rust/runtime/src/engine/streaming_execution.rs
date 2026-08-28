@@ -88,7 +88,7 @@ impl SynthesisAuthority {
 }
 
 /// Strict authored configuration for a shadow-replay run.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShadowReplayWorkloadConfigV2 {
     /// Number of local execution workers.
@@ -114,6 +114,21 @@ pub struct ShadowReplayWorkloadConfigV2 {
 
 fn unbound_authority() -> SynthesisAuthority {
     SynthesisAuthority::Unbound
+}
+
+// `PhaseSpec` is not `Debug`, and the authored phase objects are not what a
+// diagnostic needs anyway: the selection and phase count are.
+impl std::fmt::Debug for ShadowReplayWorkloadConfigV2 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ShadowReplayWorkloadConfigV2")
+            .field("worker_count", &self.worker_count)
+            .field("source", &self.source)
+            .field("format", &self.format)
+            .field("session_program", &self.session_program)
+            .field("phase_count", &self.phases.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Refuse anything but exactly one profiling phase.
