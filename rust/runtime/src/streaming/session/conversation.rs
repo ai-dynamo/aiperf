@@ -562,10 +562,9 @@ impl StreamingConversationCoordinator {
         receipt: LogicalRecordReceipt,
     ) -> Result<(), SessionCoordinatorError> {
         let limits = self.limits;
-        let session = self
-            .sessions
-            .get_mut(&scope)
-            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))?;
+        let session = self.sessions.get_mut(&scope).ok_or_else(|| {
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
+        })?;
         let next_version = session.continuity.version.next()?;
 
         match accepted {
@@ -677,14 +676,12 @@ impl StreamingConversationCoordinator {
         ordinal: u64,
     ) -> Result<(), SessionCoordinatorError> {
         let lease = self.acquire_state_lease(self.pending_content_len(&scope, ordinal)?)?;
-        let session = self
-            .sessions
-            .get_mut(&scope)
-            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))?;
-        let turn = session
-            .pending
-            .remove(&ordinal)
-            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))?;
+        let session = self.sessions.get_mut(&scope).ok_or_else(|| {
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
+        })?;
+        let turn = session.pending.remove(&ordinal).ok_or_else(|| {
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
+        })?;
         session.transcript_bytes = session.transcript_bytes.saturating_add(turn.content.len());
         session.transcript.push(TranscriptEntry {
             role: turn.role,
@@ -723,10 +720,9 @@ impl StreamingConversationCoordinator {
     ) -> Result<(), SessionCoordinatorError> {
         self.in_flight.insert(action_id, scope);
         self.next_global_sequence = self.next_global_sequence.saturating_add(1);
-        let session = self
-            .sessions
-            .get_mut(&scope)
-            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))?;
+        let session = self.sessions.get_mut(&scope).ok_or_else(|| {
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
+        })?;
         session.continuity.emitted_through_turn = Some(ordinal);
         session.continuity.next_causal_ordinal = ordinal.saturating_add(1);
         session.last_action = Some(action_id);
@@ -744,10 +740,9 @@ impl StreamingConversationCoordinator {
         scope: ConversationSessionScope,
         causal_ordinal: u64,
     ) -> Result<ExecutableDatasetAction, SessionCoordinatorError> {
-        let session = self
-            .sessions
-            .get(&scope)
-            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))?;
+        let session = self.sessions.get(&scope).ok_or_else(|| {
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
+        })?;
         let request = encode_transcript(&session.transcript)?;
         let causes: Vec<StableRecordId> = session.receipts.keys().copied().collect();
         let action_id = stable_action_id(
@@ -784,7 +779,8 @@ impl StreamingConversationCoordinator {
         let Some(session) = self.sessions.get(&scope) else {
             return Ok(());
         };
-        if !session.continuity.has_pending_close() || session.continuity.in_flight_turn().is_some() {
+        if !session.continuity.has_pending_close() || session.continuity.in_flight_turn().is_some()
+        {
             return Ok(());
         }
         if !session.pending.is_empty() {
@@ -803,15 +799,16 @@ impl StreamingConversationCoordinator {
         &self,
         scope: ConversationSessionScope,
     ) -> Result<ExecutableDatasetAction, SessionCoordinatorError> {
-        let session = self
-            .sessions
-            .get(&scope)
-            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))?;
+        let session = self.sessions.get(&scope).ok_or_else(|| {
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
+        })?;
         let reason = session
             .continuity
             .pending_close_reason
             .clone()
-            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))?;
+            .ok_or_else(|| {
+                SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
+            })?;
         let causes: Vec<StableRecordId> = session.receipts.keys().copied().collect();
         let action_id = stable_action_id(
             self.program_semantic_digest.as_bytes(),
@@ -1096,8 +1093,8 @@ impl StreamingConversationCoordinator {
         };
         let decoded: ConversationCheckpointStateV1 = rmp_serde::from_slice(state.payload_bytes())
             .map_err(|error| CheckpointError::Storage {
-                message: format!("could not decode conversation session state: {error}"),
-            })?;
+            message: format!("could not decode conversation session state: {error}"),
+        })?;
         if decoded.program_semantic_digest != self.program_semantic_digest
             || decoded.stream_identity != self.stream_identity
         {
@@ -1240,9 +1237,9 @@ impl AcceptedMutation {
             SessionMutationV1::AgentEvent(_)
             | SessionMutationV1::GraphNode(_)
             | SessionMutationV1::GraphEdge(_)
-            | SessionMutationV1::DeferredRecordedRequest(_) => Err(SessionCoordinatorError::session(
-                SessionFailureCode::UnsupportedMutation,
-            )),
+            | SessionMutationV1::DeferredRecordedRequest(_) => Err(
+                SessionCoordinatorError::session(SessionFailureCode::UnsupportedMutation),
+            ),
         }
     }
 
@@ -1287,9 +1284,7 @@ fn logical_receipt(
 ///
 /// `ExecutableDatasetAction::new` charges the payload's `Vec` capacity, so the
 /// buffer is trimmed to its exact length before it is handed over.
-fn encode_transcript(
-    transcript: &[TranscriptEntry],
-) -> Result<Vec<u8>, SessionCoordinatorError> {
+fn encode_transcript(transcript: &[TranscriptEntry]) -> Result<Vec<u8>, SessionCoordinatorError> {
     let encoded = rmp_serde::to_vec(transcript).map_err(|_| {
         SessionCoordinatorError::state_budget(StateBudgetFailureCode::PermanentError)
     })?;

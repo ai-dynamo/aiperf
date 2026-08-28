@@ -15,21 +15,19 @@ mod support;
 use aiperf_runtime::engine::registry::WorkloadDescriptor;
 use aiperf_runtime::streaming::{
     action::{
-        ActionEventIdentity, ActionExecutionEvent, ActionTerminalDisposition, ActionTerminalReceipt,
-        BudgetedActionUpdate, EndpointSessionUpdate,
+        ActionEventIdentity, ActionExecutionEvent, ActionTerminalDisposition,
+        ActionTerminalReceipt, BudgetedActionUpdate, EndpointSessionUpdate,
     },
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
-        CheckpointParticipantId, StreamRunIdentity, StreamingCheckpointParticipant,
-        PreparedParticipantState,
+        CheckpointParticipantId, PreparedParticipantState, StreamRunIdentity,
+        StreamingCheckpointParticipant,
     },
     failure::{
         SessionCoordinatorError, SessionFailureCode, StreamingIssueReporter,
         StreamingIssueReporterHandle,
     },
-    format::{
-        FormatProjection, FormatStateRetention, SessionWatermark, StreamingFormatDescriptor,
-    },
+    format::{FormatProjection, FormatStateRetention, SessionWatermark, StreamingFormatDescriptor},
     identity::{
         ActionAttemptId, ContentDigest, ImmutableObjectIdentity, LogicalReplayRunId,
         SessionOwnershipEpoch, StableActionId, StableOrderKey, stable_record_id_from_key,
@@ -41,7 +39,8 @@ use aiperf_runtime::streaming::{
         StreamingIssueThresholdRule, submission_queue_charge_bytes,
     },
     session::{
-        StreamingSessionCoordinator, StreamingSessionPrepareContext, StreamingSessionProgramFactory,
+        StreamingSessionCoordinator, StreamingSessionPrepareContext,
+        StreamingSessionProgramFactory,
         conversation::{
             ConversationProgramConfig, ConversationSessionScope, StreamingConversationCoordinator,
             StreamingConversationProgramFactory, TranscriptOrigin,
@@ -96,18 +95,16 @@ fn budget(items: usize, bytes: usize) -> StreamingResourceBudget {
 
 fn reporter() -> BudgetOwnedStreamingIssueReporter {
     let reporter_budget = budget(65, submission_queue_charge_bytes() + 64 * 1024);
-    let policy = PreparedStreamingIssuePolicy::new([
-        StreamingIssueThresholdRule::new(
-            StreamingIssueComponentId::new("record_default").expect("valid rule ID"),
-            StreamingIssueScopeKind::Record,
-            StreamingIssueClass::Permanent,
-            None,
-            0,
-            StreamingIssueDisposition::Quarantine,
-            None,
-        )
-        .expect("valid record rule"),
-    ])
+    let policy = PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+        StreamingIssueComponentId::new("record_default").expect("valid rule ID"),
+        StreamingIssueScopeKind::Record,
+        StreamingIssueClass::Permanent,
+        None,
+        0,
+        StreamingIssueDisposition::Quarantine,
+        None,
+    )
+    .expect("valid record rule")])
     .expect("valid record policy");
     BudgetOwnedStreamingIssueReporter::new(run_id(), policy, reporter_budget)
         .expect("budget-owned reporter")
@@ -197,7 +194,9 @@ fn fragment(
         session_key: stable_session_key(NAMESPACE, producer_session.as_bytes()),
         source_position: SourcePosition::new(position),
         source_partition: ImmutableObjectIdentity::from_bytes([partition; 32]),
-        event_time: Some(EventTimeUtc::new(i64::try_from(position).unwrap_or(0) + 1).expect("time")),
+        event_time: Some(
+            EventTimeUtc::new(i64::try_from(position).unwrap_or(0) + 1).expect("time"),
+        ),
         stable_tie_break: StableOrderKey::from_bytes([partition; 32]),
         predecessors: SmallVec::new(),
         mutation,
@@ -515,7 +514,10 @@ async fn conflicting_mutation_content_is_refused() {
             .version(),
         version
     );
-    assert_eq!(coordinator.transcript(&scope).expect("live session"), transcript);
+    assert_eq!(
+        coordinator.transcript(&scope).expect("live session"),
+        transcript
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -649,7 +651,16 @@ async fn checkpoint_rolls_back_the_decoded_horizon_when_state_does_not_fit() {
         {
             coordinator
                 .ingest(
-                    turn(&state_budget, session, record, 0, position, "user", content, 0),
+                    turn(
+                        &state_budget,
+                        session,
+                        record,
+                        0,
+                        position,
+                        "user",
+                        content,
+                        0,
+                    ),
                     &mut sink,
                 )
                 .await
@@ -712,7 +723,10 @@ async fn endpoint_reply_is_folded_into_the_next_turn_transcript() {
         .action_id;
 
     coordinator
-        .observe_execution(session_update(&update_budget, action_id, "world"), &mut sink)
+        .observe_execution(
+            session_update(&update_budget, action_id, "world"),
+            &mut sink,
+        )
         .await
         .expect("an endpoint reply folds into the transcript");
 
