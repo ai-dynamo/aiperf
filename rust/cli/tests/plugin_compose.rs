@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use aiperf_cli::plugins::compose::{compose_plugin_universe, ComposeError};
+use aiperf_cli::plugins::compose::{ComposeError, compose_plugin_universe};
 use aiperf_cli::plugins::lock_path::default_lock_path;
 
 /// An absent lock file is a valid no-plugin configuration: compose returns an
@@ -20,7 +20,10 @@ fn no_lock_file_is_noop() {
         "compose_plugin_universe on absent lock should succeed: {result:?}"
     );
     let universe = result.unwrap();
-    assert!(universe.is_empty(), "absent lock should yield empty universe");
+    assert!(
+        universe.is_empty(),
+        "absent lock should yield empty universe"
+    );
 }
 
 /// The default lock path is a sibling of the config file, with the same stem
