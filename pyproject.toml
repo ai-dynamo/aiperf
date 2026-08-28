@@ -299,4 +299,4 @@ skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integratio
 # "unparseable" is an accepted English variant and the established spelling
 # across ~20 test names, param ids, and docstrings here; "okat" is the JS
 # identifier `okAt` (timestamp of last ok poll), not a misspelling of "okay".
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen,anull,aks,ot,genrate,bu,anumber,datas,unparseable,okat,thirdParty"
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen,anull,aks,ot,genrate,bu,anumber,datas,unparseable,okat"
