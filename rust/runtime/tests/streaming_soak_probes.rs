@@ -74,11 +74,16 @@ fn sample_process_reports_plausible_rss_and_descriptors() {
 #[test]
 #[cfg(target_os = "linux")]
 fn peak_rss_is_at_least_the_sampled_rss() {
-    let peak = support::peak_rss_bytes().expect("VmHWM readable");
+    // The sample is read first so that any growth from a concurrently running
+    // test thread lands inside the later peak rather than outside it.
     let sample = support::sample_process().expect("procfs probe readable");
+    let peak = support::peak_rss_bytes().expect("VmHWM readable");
 
+    // `VmHWM` is refreshed at kernel accounting points rather than on every
+    // page fault, so it can trail the current resident size by a small margin.
+    const HIGH_WATER_LAG_TOLERANCE: u64 = MIB;
     assert!(
-        peak >= sample.rss_bytes,
+        peak + HIGH_WATER_LAG_TOLERANCE >= sample.rss_bytes,
         "peak {peak} below sampled {}",
         sample.rss_bytes
     );

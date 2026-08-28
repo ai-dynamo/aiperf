@@ -214,3 +214,37 @@ fn staged_bytes_match_original() {
     let read_back = fs::read(&staged.staged_path).unwrap();
     assert_eq!(read_back, bytes);
 }
+
+// ── test 9 (RED M1): staged file must have mode 0600 on Unix ─────────────────
+//
+// Plugin binaries are private host-owned objects; world-readable (0644) or
+// group-readable modes allow other processes to exfiltrate the binary before
+// the loader verifies it.  The staging layer must create files with exactly
+// 0600 (owner rw only).
+
+#[cfg(unix)]
+#[test]
+fn staged_file_has_mode_0600() {
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let stage_dir = tmp.path().join("stage");
+    fs::create_dir_all(&stage_dir).unwrap();
+    let mut map = CanonicalObjectMap::new(stage_dir);
+
+    let bytes: &[u8] = b"private-plugin-object";
+    let artifact = AcquiredArtifact {
+        raw_bytes: bytes.to_vec(),
+        source_path: PathBuf::from("/fake/priv.so"),
+        digest: b3(bytes),
+        target: "x86_64-unknown-linux-gnu".to_string(),
+    };
+
+    let staged = map.stage(&artifact, "loader-sec").unwrap();
+    let meta = fs::metadata(&staged.staged_path).unwrap();
+    let mode = meta.mode() & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "staged plugin binary must be 0600 (owner rw only), got {mode:#o}"
+    );
+}
