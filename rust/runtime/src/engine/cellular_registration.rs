@@ -13,6 +13,15 @@ use rand::TryRngCore;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+#[cfg(feature = "streaming")]
+use crate::cellular::streaming_protocol::{
+    AuthenticatedStreamingPayload, BindContentSynthesisProfileV1, BudgetOwnedFrame,
+    BudgetOwnedPrepareAction, BudgetOwnedSynthesisProfileBinding,
+    CONTROLLER_FRAME_TRANSCRIPT_DOMAIN, CONTROLLER_SESSION_DOMAIN,
+    CONTROLLER_STREAMING_PURPOSE_COUNT, ControllerAuthenticatedFrame, ControllerStreamingPurpose,
+    ControllerStreamingSessionId, FrameBudgetReservation, PrepareActionSeed,
+    STREAMING_CELLULAR_PROTOCOL_VERSION, StreamingCellularLimits,
+};
 use crate::cellular::transport::connect::ControllerPeerBinding;
 use crate::cellular::transport::{CellRegister, CellRegistrationProof, HANDLER_STORE_PARTITION};
 use crate::engine::cellular_bootstrap::CellularRole;
@@ -20,7 +29,7 @@ use crate::engine::cellular_bootstrap::CellularRole;
 const REGISTRATION_PROTOCOL_VERSION: u8 = 1;
 const TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-registration-v1\0";
 const AUTHENTICATED_FRAME_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-frame-v1\0";
-pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 12;
+pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 14;
 const VELO_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
 pub(crate) const MAX_AUTHENTICATED_FRAME_BYTES: usize =
@@ -40,6 +49,13 @@ pub(crate) struct CellSecurityContext {
     session_nonce: [u8; 32],
     authority: ProcessSecurityAuthority,
     send_sequences: [AtomicU64; ADMISSION_PURPOSE_COUNT],
+    // Controller-to-cell streaming sequences and the cell's inbound session
+    // pin plus replay windows. Disjoint from `send_sequences`, which the
+    // controller never uses.
+    #[cfg(feature = "streaming")]
+    controller_streaming: ControllerStreamingSequences,
+    #[cfg(feature = "streaming")]
+    inbound_streaming: ControllerStreamingAdmission,
 }
 
 enum ProcessSecurityAuthority {
@@ -67,6 +83,10 @@ impl CellSecurityContext {
         Ok(Self {
             run_nonce,
             session_nonce: random_nonce("process session nonce")?,
+            #[cfg(feature = "streaming")]
+            controller_streaming: ControllerStreamingSequences::for_roster(&role_verifiers),
+            #[cfg(feature = "streaming")]
+            inbound_streaming: ControllerStreamingAdmission::default(),
             authority: ProcessSecurityAuthority::Controller {
                 signer,
                 role_verifiers,
@@ -84,6 +104,10 @@ impl CellSecurityContext {
         Ok(Self {
             run_nonce,
             session_nonce: random_nonce("process session nonce")?,
+            #[cfg(feature = "streaming")]
+            controller_streaming: ControllerStreamingSequences::empty(),
+            #[cfg(feature = "streaming")]
+            inbound_streaming: ControllerStreamingAdmission::default(),
             authority: ProcessSecurityAuthority::Worker {
                 role,
                 signer,
@@ -226,6 +250,361 @@ fn random_nonce(class: &str) -> Result<[u8; 32]> {
     Ok(nonce)
 }
 
+/// Controller-owned outbound streaming sequences, one array per destination cell.
+///
+/// A single shared counter would advance one cell's replay window on another
+/// cell's traffic, so the counters are indexed by cell id. The outer slice is
+/// sized once from the roster and never grows.
+#[cfg(feature = "streaming")]
+struct ControllerStreamingSequences {
+    per_cell: Box<[[AtomicU64; CONTROLLER_STREAMING_PURPOSE_COUNT]]>,
+}
+
+#[cfg(feature = "streaming")]
+impl ControllerStreamingSequences {
+    fn for_roster(role_verifiers: &[RoleVerifyingKey]) -> Self {
+        let capacity = role_verifiers
+            .iter()
+            .filter_map(|entry| match entry.role {
+                CellularRole::Cell(cell_id) => Some(cell_id as usize + 1),
+                CellularRole::Aggregator { .. } => None,
+            })
+            .max()
+            .unwrap_or(0);
+        Self {
+            per_cell: (0..capacity)
+                .map(|_| std::array::from_fn(|_| AtomicU64::new(1)))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            per_cell: Vec::new().into_boxed_slice(),
+        }
+    }
+
+    fn next(&self, destination: CellularRole, purpose: ControllerStreamingPurpose) -> Result<u64> {
+        let CellularRole::Cell(cell_id) = destination else {
+            anyhow::bail!("streaming placement targets benchmark cells only");
+        };
+        let slot = self
+            .per_cell
+            .get(cell_id as usize)
+            .ok_or_else(|| anyhow::anyhow!("streaming destination is outside the roster"))?;
+        next_sequence(&slot[purpose.index()])
+    }
+}
+
+/// Worker-local controller-session pin and fixed inbound replay windows.
+///
+/// The session is installed exactly once, from the controller peer binding the
+/// cell already proved during registration. A differing second install and any
+/// frame that arrives before the first install both fail closed.
+#[cfg(feature = "streaming")]
+#[derive(Default)]
+struct ControllerStreamingAdmission {
+    session: std::sync::OnceLock<[u8; 32]>,
+    replay: parking_lot::Mutex<[ReplayWindow; CONTROLLER_STREAMING_PURPOSE_COUNT]>,
+}
+
+/// Per-cell controller streaming sessions, committed with registration.
+#[cfg(feature = "streaming")]
+pub(crate) struct ControllerStreamingSessionTable {
+    sessions: parking_lot::Mutex<Box<[Option<[u8; 32]>]>>,
+}
+
+#[cfg(feature = "streaming")]
+impl ControllerStreamingSessionTable {
+    fn new(capacity: usize) -> Self {
+        Self {
+            sessions: parking_lot::Mutex::new(vec![None; capacity].into_boxed_slice()),
+        }
+    }
+
+    /// Bind one cell's streaming session.
+    ///
+    /// An identical rebind is idempotent so an exact registration retry stays a
+    /// no-op; a conflicting rebind fails closed.
+    pub(crate) fn commit(&self, cell_id: u32, session: ControllerStreamingSessionId) -> Result<()> {
+        let mut sessions = self.sessions.lock();
+        let slot = sessions
+            .get_mut(cell_id as usize)
+            .ok_or_else(|| anyhow::anyhow!("streaming session cell is outside the roster"))?;
+        match slot {
+            Some(existing) if existing != session.as_bytes() => {
+                anyhow::bail!("streaming session rebind conflicts with the committed session")
+            }
+            Some(_) => Ok(()),
+            None => {
+                *slot = Some(*session.as_bytes());
+                Ok(())
+            }
+        }
+    }
+
+    /// Look up one cell's committed streaming session.
+    pub(crate) fn get(&self, cell_id: u32) -> Option<ControllerStreamingSessionId> {
+        self.sessions
+            .lock()
+            .get(cell_id as usize)
+            .and_then(|slot| slot.map(ControllerStreamingSessionId::from_bytes))
+    }
+}
+
+/// Transcript signed over one controller-to-cell streaming frame.
+///
+/// A separate domain and the opposite signing key make a frame from either
+/// direction structurally unusable in the other, even at an identical sequence.
+#[cfg(feature = "streaming")]
+fn controller_frame_transcript(
+    run_nonce: [u8; 32],
+    destination: CellularRole,
+    purpose: ControllerStreamingPurpose,
+    controller_session: [u8; 32],
+    sequence: u64,
+    peer_info: &[u8],
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut transcript = Vec::with_capacity(
+        CONTROLLER_FRAME_TRANSCRIPT_DOMAIN.len() + 2 + 32 + 13 + 1 + 32 + 8 + 64,
+    );
+    transcript.extend_from_slice(CONTROLLER_FRAME_TRANSCRIPT_DOMAIN);
+    transcript.extend_from_slice(&STREAMING_CELLULAR_PROTOCOL_VERSION.to_le_bytes());
+    transcript.extend_from_slice(&run_nonce);
+    match destination {
+        CellularRole::Cell(cell_id) => {
+            transcript.push(1);
+            transcript.extend_from_slice(&cell_id.to_le_bytes());
+        }
+        CellularRole::Aggregator { tier, id } => {
+            transcript.push(2);
+            transcript.extend_from_slice(&tier.to_le_bytes());
+            transcript.extend_from_slice(&id.to_le_bytes());
+        }
+    }
+    transcript.push(purpose as u8);
+    transcript.extend_from_slice(&controller_session);
+    transcript.extend_from_slice(&sequence.to_le_bytes());
+    transcript.extend_from_slice(blake3::hash(peer_info).as_bytes());
+    transcript.extend_from_slice(blake3::hash(payload).as_bytes());
+    transcript
+}
+
+/// Derive the controller streaming session from material both sides proved.
+///
+/// The binding covers the controller's per-process velo instance identity, its
+/// worker address, and the resolved dial target, so a restarted controller or a
+/// frame replayed onto a different connection cannot reuse an old session.
+#[cfg(feature = "streaming")]
+pub(crate) fn derive_controller_streaming_session(
+    binding: &ControllerPeerBinding,
+    run_nonce: [u8; 32],
+) -> ControllerStreamingSessionId {
+    let mut binding_bytes = Vec::new();
+    binding.append_transcript(&mut binding_bytes);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&(CONTROLLER_SESSION_DOMAIN.len() as u64).to_le_bytes());
+    hasher.update(CONTROLLER_SESSION_DOMAIN);
+    hasher.update(&(binding_bytes.len() as u64).to_le_bytes());
+    hasher.update(&binding_bytes);
+    hasher.update(&(run_nonce.len() as u64).to_le_bytes());
+    hasher.update(&run_nonce);
+    ControllerStreamingSessionId::from_bytes(*hasher.finalize().as_bytes())
+}
+
+// The streaming frame boundary is complete and unit-tested here; the transport
+// handlers that call it are the next cellular streaming task.
+#[cfg(feature = "streaming")]
+#[allow(dead_code)]
+impl CellSecurityContext {
+    /// Seal one controller-signed streaming command for an exact destination.
+    ///
+    /// The reservation is acquired by the async caller and moved in, so this
+    /// synchronous path can never allocate a frame without capacity. The lease
+    /// is shrunk to the encoded length and moves out with the bytes.
+    pub(crate) fn seal_streaming_to_cell<T: Serialize>(
+        &self,
+        purpose: ControllerStreamingPurpose,
+        destination: CellularRole,
+        session: ControllerStreamingSessionId,
+        peer: &velo::PeerInfo,
+        payload: &T,
+        reservation: FrameBudgetReservation,
+    ) -> Result<BudgetOwnedFrame> {
+        ensure!(
+            matches!(self.authority, ProcessSecurityAuthority::Controller { .. }),
+            "worker security context cannot seal controller streaming frames"
+        );
+        ensure!(
+            purpose.supports(destination),
+            "streaming purpose cannot target this destination role"
+        );
+        let sequence = self.controller_streaming.next(destination, purpose)?;
+        let peer_info = rmp_serde::to_vec(peer)
+            .map_err(|error| anyhow::anyhow!("encode streaming frame peer: {error}"))?;
+        // Named encoding: `deny_unknown_fields` is inert against a positional
+        // MessagePack array, which has no field names to reject.
+        let payload = rmp_serde::to_vec_named(payload)
+            .map_err(|error| anyhow::anyhow!("encode streaming payload: {error}"))?;
+        let transcript = controller_frame_transcript(
+            self.run_nonce,
+            destination,
+            purpose,
+            *session.as_bytes(),
+            sequence,
+            &peer_info,
+            &payload,
+        );
+        let frame = ControllerAuthenticatedFrame {
+            version: STREAMING_CELLULAR_PROTOCOL_VERSION,
+            destination,
+            controller_session: *session.as_bytes(),
+            sequence,
+            peer_info,
+            payload,
+            signature: self.sign_controller(&transcript)?.to_bytes().to_vec(),
+        };
+        let encoded = rmp_serde::to_vec_named(&frame)
+            .map_err(|error| anyhow::anyhow!("encode streaming frame: {error}"))?;
+        let lease = reservation
+            .into_lease_for(encoded.len())
+            .map_err(|_| anyhow::anyhow!("streaming frame exceeds its reservation"))?;
+        Ok(BudgetOwnedFrame::new(bytes::Bytes::from(encoded), lease))
+    }
+
+    /// Pin the controller streaming session derived from the proven binding.
+    ///
+    /// Set-once: a second install with different bytes, or any streaming frame
+    /// that arrives before the first install, fails closed.
+    pub(crate) fn install_controller_streaming_session(
+        &self,
+        session: ControllerStreamingSessionId,
+    ) -> Result<()> {
+        if self
+            .inbound_streaming
+            .session
+            .set(*session.as_bytes())
+            .is_err()
+        {
+            ensure!(
+                self.inbound_streaming.session.get() == Some(session.as_bytes()),
+                "controller streaming session changed after installation"
+            );
+        }
+        Ok(())
+    }
+
+    /// Authenticate one controller-signed streaming frame.
+    ///
+    /// Order is deliberate and load-bearing: size, outer decode, destination,
+    /// purpose, peer, signature, session, replay — and only then may a caller
+    /// decode the typed payload.
+    pub(crate) fn authenticate_streaming_from_controller(
+        &self,
+        purpose: ControllerStreamingPurpose,
+        expected_destination: CellularRole,
+        peer: &velo::PeerInfo,
+        frame: BudgetOwnedFrame,
+        limits: StreamingCellularLimits,
+    ) -> Result<AuthenticatedStreamingPayload, AdmissionRejection> {
+        if frame.as_slice().len() > limits.max_frame_bytes {
+            return Err(AdmissionRejection::Oversized);
+        }
+        let decoded: ControllerAuthenticatedFrame =
+            rmp_serde::from_slice(frame.as_slice()).map_err(|_| AdmissionRejection::Malformed)?;
+        if decoded.version != STREAMING_CELLULAR_PROTOCOL_VERSION
+            || decoded.destination != expected_destination
+            || self.role() != Some(expected_destination)
+            || !purpose.supports(decoded.destination)
+        {
+            return Err(AdmissionRejection::Role);
+        }
+        let expected_peer = rmp_serde::to_vec(peer).map_err(|_| AdmissionRejection::Malformed)?;
+        if decoded.peer_info != expected_peer {
+            return Err(AdmissionRejection::Role);
+        }
+        if decoded.payload.len() > limits.max_payload_bytes {
+            return Err(AdmissionRejection::Oversized);
+        }
+        if decoded.signature.len() != Signature::BYTE_SIZE {
+            return Err(AdmissionRejection::Malformed);
+        }
+        let signature =
+            Signature::from_slice(&decoded.signature).map_err(|_| AdmissionRejection::Malformed)?;
+        let verifier = self
+            .controller_verifier()
+            .map_err(|_| AdmissionRejection::Role)?;
+        verifier
+            .verify(
+                &controller_frame_transcript(
+                    self.run_nonce,
+                    decoded.destination,
+                    purpose,
+                    decoded.controller_session,
+                    decoded.sequence,
+                    &decoded.peer_info,
+                    &decoded.payload,
+                ),
+                &signature,
+            )
+            .map_err(|_| AdmissionRejection::Signature)?;
+        let Some(session) = self.inbound_streaming.session.get() else {
+            return Err(AdmissionRejection::Session);
+        };
+        if *session != decoded.controller_session {
+            return Err(AdmissionRejection::Session);
+        }
+        {
+            // Fixed 64-slot sliding window per purpose. The critical section is
+            // a shift, a mask, and a compare, with no `.await` inside it. The
+            // bound is defensible only together with the transport's in-order
+            // per-purpose issuance: a gap wider than the window fails the route
+            // rather than being patched up.
+            let mut replay = self.inbound_streaming.replay.lock();
+            if !replay[purpose.index()].accept(decoded.sequence) {
+                return Err(AdmissionRejection::Replay);
+            }
+        }
+        let (_, lease) = frame.into_parts();
+        Ok(AuthenticatedStreamingPayload::new(decoded.payload, lease))
+    }
+
+    /// Decode one authenticated prepare payload through its bounded seed.
+    pub(crate) fn decode_prepare_action(
+        &self,
+        payload: AuthenticatedStreamingPayload,
+        limits: StreamingCellularLimits,
+    ) -> Result<BudgetOwnedPrepareAction, AdmissionRejection> {
+        let action = PrepareActionSeed::new(limits).decode(payload.as_slice())?;
+        Ok(BudgetOwnedPrepareAction::new(action, payload.into_lease()))
+    }
+
+    /// Decode one authenticated synthesis profile binding.
+    ///
+    /// The payload is a fixed-size record, so the whole encoding is length
+    /// checked before the derived decoder runs.
+    pub(crate) fn decode_content_synthesis_profile_binding(
+        &self,
+        payload: AuthenticatedStreamingPayload,
+        limits: StreamingCellularLimits,
+    ) -> Result<BudgetOwnedSynthesisProfileBinding, AdmissionRejection> {
+        if payload.as_slice().len() > limits.max_payload_bytes {
+            return Err(AdmissionRejection::Oversized);
+        }
+        let binding: BindContentSynthesisProfileV1 =
+            rmp_serde::from_slice(payload.as_slice()).map_err(|_| AdmissionRejection::Malformed)?;
+        if binding.version != STREAMING_CELLULAR_PROTOCOL_VERSION {
+            return Err(AdmissionRejection::Malformed);
+        }
+        Ok(BudgetOwnedSynthesisProfileBinding::new(
+            binding,
+            payload.into_lease(),
+        ))
+    }
+}
+
 /// One authenticated cell-to-controller application operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
@@ -254,6 +633,13 @@ pub enum AdmissionPurpose {
     ArtifactDone = 11,
     /// Delivers an aggregator-owned upstream partition.
     AggregatorStorePartition = 12,
+    /// Delivers one ordered cell placement event for a streaming action.
+    StreamingPlacementEvent = 13,
+    /// Delivers one streaming result partition to the controller.
+    ///
+    /// Reserved with its sequence and replay slot here; the partition body is
+    /// authored by the streaming checkpoint-convergence work.
+    StreamingResultPartition = 14,
 }
 
 impl AdmissionPurpose {
@@ -321,6 +707,8 @@ pub(crate) enum AdmissionRejection {
     Signature,
     Session,
     Replay,
+    /// A declared item count or byte length exceeded its fixed limit.
+    ContentLimitExceeded,
 }
 
 impl std::fmt::Display for AdmissionRejection {
@@ -621,6 +1009,8 @@ pub(crate) struct CellRegistrationAuthority {
     role_verifiers: Box<[RoleVerifyingKey]>,
     reply_attestor: ControllerRegisterAttestor,
     admission_ledger: AdmissionLedger,
+    #[cfg(feature = "streaming")]
+    streaming_sessions: ControllerStreamingSessionTable,
 }
 
 /// The private, cell-specific signing key delivered only by a trusted launcher.
@@ -967,9 +1357,15 @@ impl CellRegistrationAuthority {
         Ok((authority, credentials))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "streaming"))]
     pub(crate) fn run_nonce(&self) -> [u8; 32] {
         self.run_nonce
+    }
+
+    /// Borrow the per-cell controller streaming session table.
+    #[cfg(feature = "streaming")]
+    pub(crate) fn streaming_sessions(&self) -> &ControllerStreamingSessionTable {
+        &self.streaming_sessions
     }
 
     fn from_controller_context(context: &Arc<CellSecurityContext>) -> Result<Self> {
@@ -978,11 +1374,22 @@ impl CellRegistrationAuthority {
             !role_verifiers.is_empty(),
             "cell registration roster requires at least one public key"
         );
+        #[cfg(feature = "streaming")]
+        let streaming_capacity = role_verifiers
+            .iter()
+            .filter_map(|entry| match entry.role {
+                CellularRole::Cell(cell_id) => Some(cell_id as usize + 1),
+                CellularRole::Aggregator { .. } => None,
+            })
+            .max()
+            .unwrap_or(0);
         Ok(Self {
             run_nonce: context.run_nonce,
             admission_ledger: AdmissionLedger::new(context.run_nonce, &role_verifiers),
             role_verifiers,
             reply_attestor: context.reply_attestor()?,
+            #[cfg(feature = "streaming")]
+            streaming_sessions: ControllerStreamingSessionTable::new(streaming_capacity),
         })
     }
 
@@ -1544,6 +1951,260 @@ mod tests {
             .flat_map(|thread| thread.join().unwrap())
             .collect::<HashSet<_>>();
         assert_eq!(sequences.len(), 1024);
+    }
+
+    #[cfg(feature = "streaming")]
+    mod streaming {
+        use std::sync::Arc;
+
+        use super::super::{
+            ADMISSION_PURPOSE_COUNT, AdmissionPurpose, AdmissionRejection, CellSecurityContext,
+            ControllerStreamingSessionTable, RoleVerifyingKey, derive_controller_streaming_session,
+            random_nonce,
+        };
+        use super::{application_peer, controller_binding};
+        use crate::cellular::streaming_protocol::{
+            BudgetOwnedFrame, ContentLeaseDescriptor, ControllerStreamingPurpose,
+            ControllerStreamingSessionId, FrameBudgetReservation, PrepareAction,
+            PreparedActionContent, STREAMING_CELLULAR_PROTOCOL_VERSION, StreamingCellularLimits,
+        };
+        use crate::engine::cellular_bootstrap::CellularRole;
+        use crate::streaming::action::DatasetActionSchema;
+        use crate::streaming::budget::{BudgetLimits, StreamingResourceBudget};
+        use crate::streaming::identity::{
+            ActionAttemptId, GlobalSequence, SessionOwnershipEpoch, StableActionId,
+        };
+        use crate::streaming::session::conversation::SessionStateVersion;
+        use ed25519_dalek::SigningKey;
+
+        const LIMITS: StreamingCellularLimits = StreamingCellularLimits {
+            max_frame_bytes: 64 * 1024,
+            max_payload_bytes: 32 * 1024,
+            max_content_items: 4,
+            max_content_bytes: 4096,
+        };
+
+        fn pair() -> (Arc<CellSecurityContext>, Arc<CellSecurityContext>) {
+            let run_nonce = random_nonce("test run").unwrap();
+            let controller_signer = SigningKey::from_bytes(&random_nonce("controller").unwrap());
+            let cell_signer = SigningKey::from_bytes(&random_nonce("cell").unwrap());
+            let roster = vec![RoleVerifyingKey {
+                role: CellularRole::Cell(0),
+                verifier: cell_signer.verifying_key(),
+            }]
+            .into_boxed_slice();
+            let controller_verifier = controller_signer.verifying_key();
+            (
+                Arc::new(
+                    CellSecurityContext::controller(run_nonce, controller_signer, roster).unwrap(),
+                ),
+                Arc::new(
+                    CellSecurityContext::worker(
+                        run_nonce,
+                        CellularRole::Cell(0),
+                        cell_signer,
+                        controller_verifier,
+                    )
+                    .unwrap(),
+                ),
+            )
+        }
+
+        fn reservation(budget: &StreamingResourceBudget) -> FrameBudgetReservation {
+            FrameBudgetReservation::new(
+                budget.try_acquire(1, LIMITS.max_frame_bytes).unwrap(),
+                LIMITS.max_frame_bytes,
+            )
+            .unwrap()
+        }
+
+        fn prepare_action() -> PrepareAction {
+            let leases: Vec<ContentLeaseDescriptor> = Vec::new();
+            let mut content = PreparedActionContent {
+                schema: DatasetActionSchema::new("aiperf.stream.action.v1"),
+                canonical_request: b"{}".to_vec(),
+                item_count: leases.len() as u64,
+                byte_length: 2,
+                content_leases: leases,
+                digest: [0; 32],
+            };
+            content.digest = content.compute_digest();
+            PrepareAction {
+                version: STREAMING_CELLULAR_PROTOCOL_VERSION,
+                plan_digest: [7; 32],
+                synthesis_profile_digest: None,
+                route_id: 1,
+                destination_cell: 0,
+                action_id: StableActionId::from_bytes([1; 32]),
+                attempt_id: ActionAttemptId::from_bytes([2; 32]),
+                global_sequence: GlobalSequence::new(9),
+                ownership_epoch: SessionOwnershipEpoch::new(3),
+                prior_session_state_version: SessionStateVersion::INITIAL,
+                content,
+            }
+        }
+
+        #[test]
+        fn streaming_purposes_extend_without_moving_existing_slots() {
+            assert_eq!(ADMISSION_PURPOSE_COUNT, 14);
+            assert_eq!(AdmissionPurpose::StorePartition.index(), 5);
+            assert_eq!(AdmissionPurpose::StreamingPlacementEvent.index(), 12);
+            assert!(AdmissionPurpose::StreamingPlacementEvent.supports(CellularRole::Cell(0)));
+            assert!(
+                !AdmissionPurpose::StreamingResultPartition
+                    .supports(CellularRole::Aggregator { tier: 1, id: 0 })
+            );
+        }
+
+        #[test]
+        fn controller_frame_authenticates_once_and_then_fails_closed() {
+            let (controller, cell) = pair();
+            let budget = StreamingResourceBudget::new(BudgetLimits {
+                max_items: 8,
+                max_bytes: 8 * LIMITS.max_frame_bytes,
+            })
+            .unwrap();
+            let peer = application_peer(0x21);
+            let session = ControllerStreamingSessionId::from_bytes([0x5A; 32]);
+            cell.install_controller_streaming_session(session).unwrap();
+            let action = prepare_action();
+
+            let frame = controller
+                .seal_streaming_to_cell(
+                    ControllerStreamingPurpose::PrepareAction,
+                    CellularRole::Cell(0),
+                    session,
+                    &peer,
+                    &action,
+                    reservation(&budget),
+                )
+                .unwrap();
+            let encoded = frame.as_slice().to_vec();
+            let payload = cell
+                .authenticate_streaming_from_controller(
+                    ControllerStreamingPurpose::PrepareAction,
+                    CellularRole::Cell(0),
+                    &peer,
+                    frame,
+                    LIMITS,
+                )
+                .unwrap();
+            let decoded = cell.decode_prepare_action(payload, LIMITS).unwrap();
+            assert_eq!(decoded.action(), &action);
+
+            // The identical sequence is refused by the fixed replay window.
+            let replayed = BudgetOwnedFrame::new(
+                bytes::Bytes::from(encoded.clone()),
+                budget.try_acquire(1, encoded.len()).unwrap(),
+            );
+            assert_eq!(
+                cell.authenticate_streaming_from_controller(
+                    ControllerStreamingPurpose::PrepareAction,
+                    CellularRole::Cell(0),
+                    &peer,
+                    replayed,
+                    LIMITS,
+                )
+                .err(),
+                Some(AdmissionRejection::Replay)
+            );
+
+            // A different purpose reads a different transcript and a different
+            // replay slot, so the same bytes fail on the signature.
+            let cross_purpose = BudgetOwnedFrame::new(
+                bytes::Bytes::from(encoded.clone()),
+                budget.try_acquire(1, encoded.len()).unwrap(),
+            );
+            assert_eq!(
+                cell.authenticate_streaming_from_controller(
+                    ControllerStreamingPurpose::ReleaseAction,
+                    CellularRole::Cell(0),
+                    &peer,
+                    cross_purpose,
+                    LIMITS,
+                )
+                .err(),
+                Some(AdmissionRejection::Signature)
+            );
+
+            // A different peer never reaches the signature check.
+            let wrong_peer = BudgetOwnedFrame::new(
+                bytes::Bytes::from(encoded),
+                budget.try_acquire(1, 16).unwrap(),
+            );
+            assert_eq!(
+                cell.authenticate_streaming_from_controller(
+                    ControllerStreamingPurpose::PrepareAction,
+                    CellularRole::Cell(0),
+                    &application_peer(0x22),
+                    wrong_peer,
+                    LIMITS,
+                )
+                .err(),
+                Some(AdmissionRejection::Role)
+            );
+        }
+
+        #[test]
+        fn an_unpinned_or_changed_controller_session_fails_closed() {
+            let (controller, cell) = pair();
+            let budget = StreamingResourceBudget::new(BudgetLimits {
+                max_items: 4,
+                max_bytes: 4 * LIMITS.max_frame_bytes,
+            })
+            .unwrap();
+            let peer = application_peer(0x31);
+            let session = ControllerStreamingSessionId::from_bytes([0x11; 32]);
+            let frame = controller
+                .seal_streaming_to_cell(
+                    ControllerStreamingPurpose::ReleaseAction,
+                    CellularRole::Cell(0),
+                    session,
+                    &peer,
+                    &prepare_action(),
+                    reservation(&budget),
+                )
+                .unwrap();
+            // Nothing is installed yet, so an otherwise valid frame is refused.
+            assert_eq!(
+                cell.authenticate_streaming_from_controller(
+                    ControllerStreamingPurpose::ReleaseAction,
+                    CellularRole::Cell(0),
+                    &peer,
+                    frame,
+                    LIMITS,
+                )
+                .err(),
+                Some(AdmissionRejection::Session)
+            );
+
+            cell.install_controller_streaming_session(session).unwrap();
+            cell.install_controller_streaming_session(session).unwrap();
+            assert!(
+                cell.install_controller_streaming_session(
+                    ControllerStreamingSessionId::from_bytes([0x12; 32])
+                )
+                .is_err()
+            );
+        }
+
+        #[test]
+        fn the_session_table_is_idempotent_and_refuses_a_conflicting_rebind() {
+            let (_, binding) = controller_binding();
+            let run_nonce = [0x44; 32];
+            let session = derive_controller_streaming_session(&binding, run_nonce);
+            let table = ControllerStreamingSessionTable::new(2);
+            table.commit(0, session).unwrap();
+            table.commit(0, session).unwrap();
+            assert_eq!(table.get(0), Some(session));
+            assert!(
+                table
+                    .commit(0, derive_controller_streaming_session(&binding, [0x45; 32]))
+                    .is_err()
+            );
+            assert!(table.commit(9, session).is_err());
+            assert_eq!(table.get(1), None);
+        }
     }
 
     fn controller_binding() -> (velo::PeerInfo, ControllerPeerBinding) {

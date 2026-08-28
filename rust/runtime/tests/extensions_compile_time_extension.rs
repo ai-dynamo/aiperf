@@ -337,6 +337,7 @@ mod streaming_categories {
     use aiperf_runtime::streaming::{
         action::{
             ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
+            EndpointRetrySafety,
             DatasetActionSchema, PreparedStreamingActionBinding, StreamingActionSinkDescriptor,
             StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
             ValidatedStreamingActionSinkConfig,
@@ -421,6 +422,7 @@ mod streaming_categories {
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
     static EXTERNAL_BACKEND: StreamingCheckpointBackendDescriptor =
@@ -645,6 +647,14 @@ mod streaming_categories {
     #[test]
     fn duplicate_streaming_extension_leaves_no_streaming_registration() {
         let mut registry = AIPerfRegistry::builtin().expect("builtin registry");
+        // The stock distribution already populates some streaming categories,
+        // so the invariant under test is that the rejected duplicate adds
+        // nothing beyond the one accepted application — not an absolute count.
+        let builtin_sources = registry.stream_source_descriptors().len();
+        let builtin_formats = registry.stream_format_descriptors().len();
+        let builtin_sessions = registry.stream_session_program_descriptors().len();
+        let builtin_sinks = registry.stream_action_sink_descriptors().len();
+        let builtin_backends = registry.stream_checkpoint_backend_descriptors().len();
         registry
             .register_extension(&ExternalStreamingExtension)
             .expect("first application");
@@ -652,10 +662,25 @@ mod streaming_categories {
             .register_extension(&ExternalStreamingExtension)
             .expect_err("duplicate extension name");
         assert!(error.to_string().contains("duplicate AIPerf extension"));
-        assert_eq!(registry.stream_source_descriptors().len(), 1);
-        assert_eq!(registry.stream_format_descriptors().len(), 1);
-        assert_eq!(registry.stream_session_program_descriptors().len(), 1);
-        assert_eq!(registry.stream_action_sink_descriptors().len(), 1);
-        assert_eq!(registry.stream_checkpoint_backend_descriptors().len(), 1);
+        assert_eq!(
+            registry.stream_source_descriptors().len(),
+            builtin_sources + 1
+        );
+        assert_eq!(
+            registry.stream_format_descriptors().len(),
+            builtin_formats + 1
+        );
+        assert_eq!(
+            registry.stream_session_program_descriptors().len(),
+            builtin_sessions + 1
+        );
+        assert_eq!(
+            registry.stream_action_sink_descriptors().len(),
+            builtin_sinks + 1
+        );
+        assert_eq!(
+            registry.stream_checkpoint_backend_descriptors().len(),
+            builtin_backends + 1
+        );
     }
 }

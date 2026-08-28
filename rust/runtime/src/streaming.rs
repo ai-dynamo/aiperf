@@ -11,6 +11,7 @@ pub mod budget;
 pub mod checkpoint;
 pub mod checkpoint_backend;
 pub mod checkpoint_coordinator;
+pub mod checkpoint_factories;
 pub mod checkpoints;
 pub mod closure;
 pub mod failure;
