@@ -1117,7 +1117,16 @@ class TestAnthropicMessagesRawSystem:
     def model_endpoint(self):
         return create_model_endpoint(EndpointType.MESSAGES)
 
-    def test_raw_system_overrides_string_system_message(self, endpoint, model_endpoint):
+    def test_raw_system_preserved_and_system_message_prepended(
+        self, endpoint, model_endpoint
+    ):
+        """A conversation-level system_message leads; raw_system blocks follow.
+
+        The string used to be discarded, which silently dropped a verbatim
+        --system-prompt. Anthropic's ``system`` is already a block list, so the
+        string becomes a leading text block instead -- raw_system's authored
+        blocks (and their cache_control) still round-trip untouched.
+        """
         system_blocks = [
             {
                 "type": "text",
@@ -1132,12 +1141,37 @@ class TestAnthropicMessagesRawSystem:
         request_info = create_request_info(
             model_endpoint=model_endpoint,
             turns=[turn],
-            system_message="this string should be ignored",
+            system_message="custom system prompt",
+        )
+        payload = endpoint.format_payload(request_info)
+        assert payload["system"] == [
+            {"type": "text", "text": "custom system prompt"},
+            *system_blocks,
+        ]
+        # Cache_control round-trips verbatim on the authored block.
+        assert payload["system"][1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_raw_system_passes_through_without_system_message(
+        self, endpoint, model_endpoint
+    ):
+        """No conversation-level prompt -> raw_system is emitted unchanged."""
+        system_blocks = [
+            {
+                "type": "text",
+                "text": "you are concise",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        turn = Turn(
+            texts=[Text(contents=["hi"])],
+            raw_system=system_blocks,
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
         )
         payload = endpoint.format_payload(request_info)
         assert payload["system"] == system_blocks
-        # Cache_control round-trips verbatim.
-        assert payload["system"][0]["cache_control"] == {"type": "ephemeral"}
 
     def test_raw_system_falls_back_to_system_message_when_unset(
         self, endpoint, model_endpoint

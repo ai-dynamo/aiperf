@@ -16,6 +16,14 @@ from aiperf.common.control_hooks import (
     stop_server_profiler,
 )
 from aiperf.common.control_plane_http import ControlPlaneHttpError
+from aiperf.config.control_hooks import (
+    DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS,
+    DEFAULT_RESET_KV_CACHE_MAX_RETRY_SECONDS,
+    DEFAULT_RETRY_BACKOFF_CAP_SECONDS,
+    DEFAULT_RETRY_BACKOFF_MULTIPLIER,
+    DEFAULT_RETRY_BACKOFF_SECONDS,
+    RESET_KV_CACHE_RETRYABLE_STATUS_CODES,
+)
 from aiperf.config.endpoint import EndpointConfig
 
 
@@ -31,6 +39,51 @@ def test_prepared_control_hooks_join_relative_paths_against_endpoint_origins() -
     assert hooks.reset_urls == ["http://127.0.0.1:8000/reset_prefix_cache"]
     assert hooks.profiler_start_urls == ["http://127.0.0.1:8000/start_profile"]
     assert hooks.profiler_stop_urls == ["http://127.0.0.1:8000/stop_profile"]
+
+
+def test_prepared_control_hooks_timeout_does_not_inherit_large_endpoint_timeout() -> (
+    None
+):
+    """reset_kv_cache/server_profiler timeouts must not inherit endpoint.timeout.
+
+    endpoint.timeout defaults to 6 hours (tuned for inference requests). If
+    reset_kv_cache/server_profiler fall back to it when their own
+    timeout_seconds is unset, a stalled control-hook POST blocks for hours
+    instead of failing fast.
+    """
+    endpoint = EndpointConfig.model_validate(
+        {
+            "urls": ["http://127.0.0.1:8000/v1/chat/completions"],
+            "timeout": 6 * 60 * 60,
+            "reset_kv_cache": True,
+            "server_profiler": True,
+        }
+    )
+    hooks = prepare_endpoint_control_hooks(endpoint)
+    assert hooks.timeout_s == DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
+    assert hooks.profiler_timeout_s == DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
+
+
+def test_prepared_control_hooks_reset_max_retry_seconds_defaults() -> None:
+    endpoint = EndpointConfig.model_validate(
+        {
+            "urls": ["http://127.0.0.1:8000/v1/chat/completions"],
+            "reset_kv_cache": True,
+        }
+    )
+    hooks = prepare_endpoint_control_hooks(endpoint)
+    assert hooks.reset_max_retry_seconds == DEFAULT_RESET_KV_CACHE_MAX_RETRY_SECONDS
+
+
+def test_prepared_control_hooks_reset_max_retry_seconds_honors_override() -> None:
+    endpoint = EndpointConfig.model_validate(
+        {
+            "urls": ["http://127.0.0.1:8000/v1/chat/completions"],
+            "reset_kv_cache": {"max_retry_seconds": 5.0},
+        }
+    )
+    hooks = prepare_endpoint_control_hooks(endpoint)
+    assert hooks.reset_max_retry_seconds == 5.0
 
 
 def test_prepared_control_hooks_dedupe_same_origin_across_url_paths() -> None:
@@ -65,6 +118,7 @@ def _hooks(
     reset_urls: list[str] | None = None,
     profiler_start_urls: list[str] | None = None,
     profiler_stop_urls: list[str] | None = None,
+    reset_max_retry_seconds: float = 5.0,
 ) -> PreparedEndpointControlHooks:
     return PreparedEndpointControlHooks(
         timeout_s=1.5,
@@ -72,6 +126,7 @@ def _hooks(
         profiler_start_urls=profiler_start_urls or [],
         profiler_stop_urls=profiler_stop_urls or [],
         profiler_timeout_s=2.5,
+        reset_max_retry_seconds=reset_max_retry_seconds,
     )
 
 
@@ -129,6 +184,180 @@ async def test_run_reset_kv_cache_stops_after_first_failure() -> None:
         headers=headers,
         timeout_s=1.5,
     )
+
+
+@pytest.mark.asyncio
+async def test_run_reset_kv_cache_does_not_retry_non_retryable_failure() -> None:
+    hooks = _hooks(reset_urls=["http://a:8000/reset_prefix_cache"])
+    headers = {"Authorization": "Bearer t"}
+    error = ControlPlaneHttpError("status 500", retryable=False)
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ) as post,
+        patch(
+            "aiperf.common.control_hooks.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+        pytest.raises(ControlPlaneHttpError) as exc_info,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert exc_info.value is error
+    post.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_reset_kv_cache_retries_retryable_failure_then_succeeds() -> None:
+    hooks = _hooks(
+        reset_urls=["http://a:8000/reset_prefix_cache"],
+        reset_max_retry_seconds=100.0,
+    )
+    headers = {"Authorization": "Bearer t"}
+    retryable_error = ControlPlaneHttpError("timeout", retryable=True)
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=[retryable_error, retryable_error, None],
+        ) as post,
+        patch(
+            "aiperf.common.control_hooks.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert post.await_count == 3
+    assert sleep.await_args_list == [
+        call(DEFAULT_RETRY_BACKOFF_SECONDS),
+        call(DEFAULT_RETRY_BACKOFF_SECONDS * DEFAULT_RETRY_BACKOFF_MULTIPLIER),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_reset_kv_cache_gives_up_once_retry_budget_exhausted() -> None:
+    hooks = _hooks(
+        reset_urls=["http://a:8000/reset_prefix_cache"],
+        reset_max_retry_seconds=DEFAULT_RETRY_BACKOFF_SECONDS
+        + DEFAULT_RETRY_BACKOFF_SECONDS * DEFAULT_RETRY_BACKOFF_MULTIPLIER,
+    )
+    headers = {"Authorization": "Bearer t"}
+    retryable_error = ControlPlaneHttpError("timeout", retryable=True)
+
+    class _FakeClock:
+        def __init__(self) -> None:
+            self.now = 0.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+        async def sleep(self, seconds: float) -> None:
+            self.now += seconds
+
+    clock = _FakeClock()
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=retryable_error,
+        ) as post,
+        patch("aiperf.common.control_hooks.time.monotonic", clock.monotonic),
+        patch("aiperf.common.control_hooks.asyncio.sleep", clock.sleep),
+        pytest.raises(ControlPlaneHttpError) as exc_info,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert exc_info.value is retryable_error
+    assert post.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", sorted(RESET_KV_CACHE_RETRYABLE_STATUS_CODES))
+async def test_run_reset_kv_cache_retries_known_transient_status_codes(
+    status_code: int,
+) -> None:
+    hooks = _hooks(
+        reset_urls=["http://a:8000/reset_prefix_cache"],
+        reset_max_retry_seconds=100.0,
+    )
+    headers = {"Authorization": "Bearer t"}
+    status_error = ControlPlaneHttpError(
+        f"status {status_code}", retryable=False, status_code=status_code
+    )
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=[status_error, None],
+        ) as post,
+        patch(
+            "aiperf.common.control_hooks.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert post.await_count == 2
+    sleep.assert_awaited_once_with(DEFAULT_RETRY_BACKOFF_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_run_reset_kv_cache_does_not_retry_unknown_status_code() -> None:
+    hooks = _hooks(reset_urls=["http://a:8000/reset_prefix_cache"])
+    headers = {"Authorization": "Bearer t"}
+    assert 404 not in RESET_KV_CACHE_RETRYABLE_STATUS_CODES
+    error = ControlPlaneHttpError("status 404", retryable=False, status_code=404)
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ) as post,
+        patch(
+            "aiperf.common.control_hooks.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+        pytest.raises(ControlPlaneHttpError) as exc_info,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert exc_info.value is error
+    post.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_reset_kv_cache_backoff_growth_caps_at_defined_ceiling() -> None:
+    hooks = _hooks(
+        reset_urls=["http://a:8000/reset_prefix_cache"],
+        reset_max_retry_seconds=1000.0,
+    )
+    headers = {"Authorization": "Bearer t"}
+    retryable_error = ControlPlaneHttpError("timeout", retryable=True)
+    # Enough retryable failures for backoff to exceed the cap by uncapped growth
+    # (1 -> 2 -> 4 -> 8 -> 16), then one success.
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=[retryable_error] * 5 + [None],
+        ),
+        patch(
+            "aiperf.common.control_hooks.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    expected_backoffs = []
+    backoff = DEFAULT_RETRY_BACKOFF_SECONDS
+    for _ in range(5):
+        expected_backoffs.append(backoff)
+        backoff = min(
+            backoff * DEFAULT_RETRY_BACKOFF_MULTIPLIER,
+            DEFAULT_RETRY_BACKOFF_CAP_SECONDS,
+        )
+    assert expected_backoffs[-1] == DEFAULT_RETRY_BACKOFF_CAP_SECONDS  # cap is reached
+    assert sleep.await_args_list == [call(b) for b in expected_backoffs]
 
 
 @pytest.mark.asyncio

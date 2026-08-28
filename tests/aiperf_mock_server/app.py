@@ -54,6 +54,7 @@ from aiperf_mock_server.models import (
     ImageGenerationRequest,
     ImageRetrievalRequest,
     RankingRequest,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
@@ -212,6 +213,7 @@ _AUTH_PROTECTED_PATHS: frozenset[str] = frozenset(
         "/generate_stream",
         "/rag/api/prompt",
         "/rerank",
+        "/v1/audio/transcriptions",
         "/v1/chat/completions",
         "/v1/chat/embeddings",
         "/v1/completions",
@@ -627,29 +629,6 @@ async def _text_stream_wrapper(ctx: RequestCtx, req: CompletionRequest, endpoint
 # ============================================================================
 
 
-def _extract_responses_prompt(payload: dict[str, Any]) -> str:
-    input_value = payload.get("input", "")
-    if isinstance(input_value, str):
-        return input_value
-    if isinstance(input_value, list):
-        parts: list[str] = []
-        for item in input_value:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                content = item.get("content", "")
-                if isinstance(content, str):
-                    parts.append(content)
-                elif isinstance(content, list):
-                    parts.extend(
-                        str(part.get("text", ""))
-                        for part in content
-                        if isinstance(part, dict)
-                    )
-        return "\n".join(part for part in parts if part)
-    return str(input_value)
-
-
 def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
     return {
         "id": ctx.request_id,
@@ -670,17 +649,12 @@ def _build_responses_response_data(ctx: RequestCtx) -> dict[str, Any]:
 
 @app.post("/v1/responses", response_model=None)
 @with_error_injection
-async def responses(req: dict[str, Any], request: Request) -> ORJSONResponse:
+async def responses(req: ResponsesRequest, request: Request) -> ORJSONResponse:
     """Mock OpenAI Responses endpoint."""
     endpoint = "/v1/responses"
-    model = str(req.get("model") or "test-model")
-    mock_req = ChatCompletionRequest(
-        model=model,
-        messages=[{"role": "user", "content": _extract_responses_prompt(req)}],
-    )
-    ctx = make_ctx(mock_req, endpoint, request.state.start_time)
+    ctx = make_ctx(req, endpoint, request.state.start_time)
 
-    with track_llm_request(ctx, model, endpoint):
+    with track_llm_request(ctx, ctx.model, endpoint):
         await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
         response_data = _build_responses_response_data(ctx)
         record_request_bytes(
@@ -1327,6 +1301,51 @@ async def image_edits(
             body["true_cfg_scale"] = true_cfg_scale
         if seed is not None:
             body["seed"] = seed
+        return ORJSONResponse(body)
+
+
+# ============================================================================
+# AUDIO TRANSCRIPTION
+# ============================================================================
+
+
+@app.post("/v1/audio/transcriptions", response_model=None)
+@with_error_injection
+async def audio_transcriptions(
+    request: Request,
+    file: UploadFile = File(...),  # noqa: B008
+    model: str = Form("mock-model"),  # noqa: B008
+    language: str | None = Form(None),  # noqa: B008
+    temperature: float | None = Form(None),  # noqa: B008
+    response_format: str = Form("json"),  # noqa: B008
+) -> ORJSONResponse:
+    """Mock OpenAI Audio Transcription endpoint.
+
+    Drains the uploaded audio file so multipart parsing is exercised, then
+    returns a deterministic transcript as ``{"text": ...}`` with usage.
+    """
+    endpoint = "/v1/audio/transcriptions"
+    upload_bytes = await file.read()
+
+    start_time = request.state.start_time
+    mock_req = ChatCompletionRequest(
+        model=model, messages=[{"role": "user", "content": "transcribe"}]
+    )
+    ctx = make_ctx(mock_req, endpoint, start_time)
+
+    with track_llm_request(ctx, model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        body: dict[str, Any] = {
+            "text": ctx.content,
+            "input_audio_bytes": len(upload_bytes),
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": len(ctx.tokens),
+                "total_tokens": len(ctx.tokens),
+            },
+        }
+        if language is not None:
+            body["language"] = language
         return ORJSONResponse(body)
 
 

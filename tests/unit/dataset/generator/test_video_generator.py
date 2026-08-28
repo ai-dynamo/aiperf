@@ -224,7 +224,7 @@ class TestVideoGenerator:
     @pytest.mark.parametrize(
         "video_format,codec,expected_movflags",
         [
-            (VideoFormat.MP4, "libx264", "faststart"),
+            (VideoFormat.MP4, "libvpx-vp9", "faststart"),
             (VideoFormat.WEBM, "libvpx-vp9", None),
         ],
     )
@@ -377,7 +377,7 @@ class TestVideoGeneratorAudio:
         "video_format,expected_codec",
         [
             (VideoFormat.WEBM, VideoAudioCodec.LIBVORBIS),
-            (VideoFormat.MP4, VideoAudioCodec.AAC),
+            (VideoFormat.MP4, VideoAudioCodec.LIBOPUS),
         ],
     )
     def test_resolve_audio_codec_auto_select(self, video_format, expected_codec):
@@ -388,7 +388,7 @@ class TestVideoGeneratorAudio:
             duration=0.5,
             fps=2,
             format=video_format,
-            codec="libvpx-vp9" if video_format == VideoFormat.WEBM else "libx264",
+            codec="libvpx-vp9",
             synth_type=VideoSynthType.MOVING_SHAPES,
             audio=VideoAudioConfig(channels=1, codec=None),
         )
@@ -414,7 +414,8 @@ class TestVideoGeneratorAudio:
             generator._resolve_audio_codec()
 
     @pytest.mark.parametrize(
-        "explicit_codec", [VideoAudioCodec.LIBOPUS, VideoAudioCodec.AAC]
+        "explicit_codec",
+        [VideoAudioCodec.LIBOPUS, VideoAudioCodec.LIBVORBIS, VideoAudioCodec.AAC],
     )
     def test_resolve_audio_codec_explicit_override(self, explicit_codec):
         """Explicit codec beats auto-select."""

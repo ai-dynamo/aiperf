@@ -15,6 +15,8 @@ optuna = pytest.importorskip("optuna")
 
 # Imports below depend on optuna being importable. pytest.importorskip must
 # precede them so the whole module is skipped when the `optuna` extra is absent.
+from pydantic import ValidationError  # noqa: E402
+
 from aiperf.common.models.export_models import JsonMetricResult  # noqa: E402
 from aiperf.config.config import BenchmarkConfig  # noqa: E402
 from aiperf.config.sweep import (  # noqa: E402
@@ -617,3 +619,107 @@ def test_ask_preserves_url_userinfo() -> None:
     assert cfg.endpoint.urls == [
         "http://alice:s3cret@host1.example.com/v1/chat/completions"
     ]
+
+
+def test_ask_with_shape_mismatched_search_space_raises_clear_error() -> None:
+    """Safety net: if a search-space dimension still doesn't fit the base
+    phase's shape (e.g. a hand-written dotted path our lightweight CLI-time
+    inference can't see, since this planner is constructed directly here
+    with no CLI conversion in between), ask() must raise a clear, actionable
+    ValueError -- not let a raw pydantic extra_forbidden ValidationError
+    propagate to the user."""
+    base = _base_config()  # phases[0].type == "concurrency"
+    cfg = _cfg(
+        extra_dims=[
+            SearchSpaceDimension(
+                path="phases.profiling.rate", lo=1, hi=100, kind="real"
+            )
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValueError, match="shape"):
+        planner.ask()
+
+
+def test_ask_with_ordinary_bounds_violation_raises_original_error() -> None:
+    """A search-space dimension that samples an out-of-bounds value for
+    a field that DOES belong on the base phase (e.g. concurrency=0 on a
+    ConcurrencyPhase, which requires ge=1) is not a shape mismatch --
+    the original pydantic ValidationError must propagate unreframed,
+    not get relabeled as a 'shape' problem."""
+    # SearchSpaceDimension itself enforces hi > lo strictly, so lo=hi=0 isn't
+    # constructible; lo=-1, hi=0 is the smallest range where every integer
+    # in [lo, hi] still violates concurrency's ge=1, so the outcome is
+    # deterministic regardless of which value the sampler picks. This
+    # replaces (rather than extends) _cfg's default 'concurrency' dimension,
+    # since AdaptiveSearchSweep forbids duplicate-path dimensions.
+    base = _base_config()  # phases[0].type == "concurrency"
+    cfg = _cfg(
+        search_space=[
+            SearchSpaceDimension(
+                path="phases.profiling.concurrency", lo=-1, hi=0, kind="int"
+            )
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValidationError):
+        planner.ask()
+
+
+def test_ask_shape_mismatch_names_profiling_phase_not_warmup() -> None:
+    """phases[0] is the warmup phase whenever one exists (warmup is
+    appended before profiling), so naming self._base.phases[0].type in
+    the shape-mismatch message would blame the wrong phase. The message
+    must name the PROFILING phase's shape, matched by kind (like
+    BenchmarkConfig.validate_profiling_phase_required does), not by
+    list position."""
+    base = BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {"urls": ["http://x"], "type": "chat"},
+            "datasets": [{"name": "profiling", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 5,
+                },
+                {
+                    "name": "profiling",
+                    "type": "poisson",
+                    "rate": 10.0,
+                    "requests": 10,
+                },
+            ],
+        }
+    )
+    cfg = _cfg(
+        extra_dims=[
+            SearchSpaceDimension(path="phases.profiling.users", lo=1, hi=50, kind="int")
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValueError, match=r"shape \('poisson'\)"):
+        planner.ask()
+
+
+def test_ask_with_root_level_extra_field_raises_original_error() -> None:
+    """extra_forbidden also fires for a malformed path that lands as a
+    phantom ROOT-level key (e.g. a bare, non-dotted path unrelated to any
+    phase field) -- that's not a phase-shape mismatch, and reframing it
+    as one would be actively wrong. Must propagate the original
+    ValidationError unreframed, same as an ordinary bounds violation."""
+    base = _base_config()  # phases[0].type == "concurrency"
+    cfg = _cfg(
+        search_space=[
+            SearchSpaceDimension(path="bogus_root_field", lo=1, hi=100, kind="real")
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValidationError):
+        planner.ask()

@@ -27,6 +27,36 @@ When multiple options are specified, AIPerf uses this priority:
 3. `--request-rate` → Rate-based scheduling with arrival patterns
 4. `--concurrency` only → Burst mode (as fast as possible within limits)
 
+---
+
+## High-Resolution Rate Pacing
+
+At high request rates (≥ 500 req/s), event-loop timers quantize sub-millisecond
+sleeps to ~1ms intervals, causing AIPerf to silently under-deliver the target QPS.
+High-resolution pacing bypasses the timer wheel with a platform-specific mechanism:
+
+| Platform | Pacer | Precision |
+|----------|-------|-----------|
+| Linux | `TimerFdPacer` — `timerfd_create(CLOCK_MONOTONIC)` kernel hrtimer | ~50µs |
+| macOS / Windows / other | `ThreadPacer` — dedicated sleep thread with `clock_nanosleep` / waitable timer | ~100µs (POSIX), ~500µs (Windows) |
+
+High-res pacing is **enabled by default** when `--request-rate` is used. The
+selection is automatic: timerfd on Linux, thread-based elsewhere.
+
+### Pacing env vars
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AIPERF_TIMING_HIGH_RES_TIMER` | `true` | Set to `false` to force event-loop timer pacing (useful for isolating scheduling behaviour). |
+| `AIPERF_TIMING_MAX_CATCHUP_SECONDS` | `0.01` | Maximum schedule backlog (seconds) the rate loop may catch up on before re-anchoring to the current time. Without a catch-up window, every oversleep permanently forfeits one schedule slot — at 5,000 req/s the loop falls behind on each tick. Increase if you see a schedule-backlog warning; decrease toward `0` for strict no-burst behaviour (at the cost of some under-delivery). |
+
+### Diagnosing under-delivery at high QPS
+
+If measured QPS is consistently lower than `--request-rate`:
+
+1. **Confirm the pacer is active.** Check the startup log for `"Using TimerFdPacer"` or `"Using ThreadPacer"`. If absent, `AIPERF_TIMING_HIGH_RES_TIMER` may be `false`.
+2. **Check for schedule-backlog warnings.** If present, the pacer is waking on time but the event loop is stalling between wake and dispatch. Try `uvloop` (`pip install uvloop`) or reduce `--concurrency`.
+3. **Widen the catch-up window.** At very high rates (≥ 5,000 req/s), increase `AIPERF_TIMING_MAX_CATCHUP_SECONDS` (e.g. `0.05`) to let the loop absorb brief stalls without re-anchoring too eagerly.
 
 ---
 

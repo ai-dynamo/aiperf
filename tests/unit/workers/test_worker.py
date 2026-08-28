@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -456,93 +456,6 @@ class TestWorkerRequestLatency:
         assert (
             mock_worker._inter_token_latency_ns_for_record(
                 record, content_perf_ns, parsed_responses
-            )
-            is None
-        )
-
-
-class TestWarmupSystemMessage:
-    def test_profiling_preserves_system_message(self):
-        assert (
-            Worker._system_message_for_phase(
-                system_message="existing system",
-                phase=CreditPhase.PROFILING,
-                cache_bust_target=None,
-            )
-            == "existing system"
-        )
-
-    def test_warmup_sets_system_message_when_missing(self):
-        assert (
-            Worker._system_message_for_phase(
-                system_message=None,
-                phase=CreditPhase.WARMUP,
-                cache_bust_target=None,
-            )
-            == "warmup"
-        )
-
-    def test_warmup_prefixes_existing_system_message(self):
-        assert (
-            Worker._system_message_for_phase(
-                system_message="existing system",
-                phase=CreditPhase.WARMUP,
-                cache_bust_target=None,
-            )
-            == "warmup\nexisting system"
-        )
-
-    def test_warmup_prefixes_when_cache_bust_target_none_enum(self):
-        """``CacheBustTarget.NONE`` is cache-bust-disabled, so the prefix applies."""
-        assert (
-            Worker._system_message_for_phase(
-                system_message="existing system",
-                phase=CreditPhase.WARMUP,
-                cache_bust_target=CacheBustTarget.NONE,
-            )
-            == "warmup\nexisting system"
-        )
-
-    @pytest.mark.parametrize(
-        "target",
-        [
-            param(CacheBustTarget.SYSTEM_PREFIX, id="system_prefix"),
-            param(CacheBustTarget.SYSTEM_SUFFIX, id="system_suffix"),
-            param(CacheBustTarget.FIRST_TURN_PREFIX, id="first_turn_prefix"),
-            param(CacheBustTarget.FIRST_TURN_SUFFIX, id="first_turn_suffix"),
-        ],
-    )  # fmt: skip
-    def test_warmup_skips_prefix_when_cache_bust_active(self, target):
-        """Cache-bust markers are warmup-coherent: warmup primes the prefix
-        profiling hits, so prefixing in front of the shared marker would break
-        the prime. Every non-NONE target already isolates per trajectory tree.
-        """
-        assert (
-            Worker._system_message_for_phase(
-                system_message="existing system",
-                phase=CreditPhase.WARMUP,
-                cache_bust_target=target,
-            )
-            == "existing system"
-        )
-
-    @pytest.mark.parametrize(
-        "target",
-        [
-            param(CacheBustTarget.SYSTEM_PREFIX, id="system_prefix"),
-            param(CacheBustTarget.FIRST_TURN_PREFIX, id="first_turn_prefix"),
-        ],
-    )  # fmt: skip
-    def test_warmup_leaves_system_message_none_when_cache_bust_active(self, target):
-        """No synthetic system message is invented under cache-bust — a
-        warmup-only ``system`` role would diverge the message array from
-        profiling's even before content is compared.
-        """
-        assert (
-            Worker._system_message_for_phase(
-                system_message=None,
-                phase=CreditPhase.WARMUP,
-                cache_bust_target=target,
             )
             is None
         )

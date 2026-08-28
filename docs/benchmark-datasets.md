@@ -67,6 +67,11 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
       <td style="text-align: center;">✅</td>
       <td>Synthetic multi-turn coding-agent traces with shared prompt layers, repository context, and cache-aware turn growth. Generated via <a href="tutorials/agentic-code-generator.md"><code>aiperf synthesize agentic-code</code></a> and replayed as a Mooncake trace.</td>
     </tr>
+    <tr>
+      <td><strong>TraceLab</strong></td>
+      <td style="text-align: center;">✅</td>
+      <td>Real agentic coding sessions from the <a href="https://github.com/uw-syfi/TraceLab">TraceLab</a> corpus, replayed with synthesized KV-cache block IDs and recovered subagent nesting <a href="tutorials/tracelab-trace.md"><code>--input-file syfi_coding_trace.jsonl.gz --custom-dataset-type tracelab</code></a></td>
+    </tr>
   </tbody>
 </table>
 

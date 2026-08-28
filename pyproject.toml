@@ -11,7 +11,7 @@ allow-direct-references = true
 
 [project]
 name = "aiperf"
-version = "0.12.0"
+version = "0.13.0"
 description = "AIPerf is a package for performance testing of AI models"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -22,7 +22,7 @@ authors = [
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "aiofiles~=24.1.0",
-  "aiohttp~=3.13.3",
+  "aiohttp>=3.14.3,<4",
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
@@ -266,4 +266,4 @@ filterwarnings = [
 
 [tool.codespell]
 skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/config/schema/aiperf-config.schema.json"
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen"
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen,anull"

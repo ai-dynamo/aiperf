@@ -13,6 +13,7 @@ Returns a *dict* (not a wrapped ``DatasetConfig``) — wrapping with
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiperf.config.flags._section_fields import (
@@ -21,6 +22,7 @@ from aiperf.config.flags._section_fields import (
 
 if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
+    from aiperf.plugin.enums import CustomDatasetType
 
 
 def _normalize_sample_rate_khz(value: float | int) -> float:
@@ -265,6 +267,10 @@ _VERBATIM_DATASET_FIELDS = (
     ("open_loop_strict", "open_loop_strict", False),
     ("omit_kv_hints", "omit_kv_hints", False),
     ("force_min_tokens", "force_min_tokens", False),
+    # SystemPromptMixin fields live on all three dataset variants, so unlike the
+    # synthetic-only subtables below they must NOT be popped per-type.
+    ("system_prompt", "system_prompt", False),
+    ("system_prompt_file", "system_prompt_file", False),
 )
 
 
@@ -421,6 +427,45 @@ def _apply_sequence_distribution(d: dict[str, Any], cli: CLIConfig) -> None:
     ]
 
 
+def _apply_random_corpus_style_and_range_ratio(
+    d: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Write ``random_corpus_style`` and ``random_range_ratio`` onto the prompts dict.
+
+    The style is written FIRST, before the ratio gate. It is not merely a
+    modifier of the ratio: with no ratio set it still selects the token pool
+    (``valid_token_ids`` vs ``all_token_ids``), which is then the only thing it
+    selects. Writing it after an early return meant ``--random-corpus-style
+    sglang`` alone was silently discarded and the user got vLLM's pool.
+
+    Only the sglang request was observably lost, since vllm is the default and
+    a dropped write lands there anyway -- which is why this survived so long.
+    """
+    if "prompt_random_corpus_style" in cli.model_fields_set:
+        d.setdefault("prompts", {})["random_corpus_style"] = (
+            cli.prompt_random_corpus_style
+        )
+
+    if not cli.prompt_random_range_ratio:
+        return
+    from aiperf.common.enums import RandomCorpusStyle
+    from aiperf.common.models.sequence_distribution import (
+        _parse_sglang_ratio_string,
+        _parse_vllm_ratio_string,
+    )
+
+    parser = (
+        _parse_sglang_ratio_string
+        if cli.prompt_random_corpus_style == RandomCorpusStyle.SGLANG
+        else _parse_vllm_ratio_string
+    )
+    try:
+        parser(cli.prompt_random_range_ratio)
+    except ValueError as e:
+        raise ValueError(f"Invalid --random-range-ratio value: {e}") from e
+    d.setdefault("prompts", {})["random_range_ratio"] = cli.prompt_random_range_ratio
+
+
 def _apply_turns(d: dict[str, Any], cli: CLIConfig) -> None:
     fields_set = cli.model_fields_set
     if (
@@ -546,6 +591,7 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
     ("image_batch_size", "--image-batch-size"),
     ("image_source", "--image-source"),
     ("image_source_sampling", "--image-source-sampling"),
@@ -562,6 +608,13 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Batch-size flags are synthetic-only for trace/single-turn datasets, but
+# random_pool supports them to control how many items are packed per request.
+_RANDOM_POOL_BATCH_SIZE_FLAGS: frozenset[str] = frozenset(
+    {"prompt_batch_size", "image_batch_size", "audio_batch_size", "video_batch_size"}
+)
+
+
 def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     """Reject synthetic-only flags on FILE or PUBLIC (trace) datasets.
 
@@ -574,6 +627,11 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     AIPerfConfig validation with ``extra_forbidden``). Surface a clear message
     instead.
 
+    Exception: batch-size flags (--prompt-batch-size, --image-batch-size,
+    --audio-batch-size, --video-batch-size) are allowed when
+    ``--custom-dataset-type random_pool`` is set; they control per-modality
+    packing in ``RandomPoolDatasetLoader``.
+
     --osl / --osl-stddev are NOT rejected — they're routed onto
     ``FileDataset.osl`` / ``PublicDataset.osl`` by ``_apply_file_osl`` as a
     per-record fallback.
@@ -581,16 +639,87 @@ def _reject_file_dataset_incompatible(cli: CLIConfig) -> None:
     if not cli.input_file and not _implies_public_dataset(cli):
         return
     s = cli.model_fields_set
-    violations = [
-        flag for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS if attr in s
+    from aiperf.plugin.enums import CustomDatasetType
+
+    is_random_pool = (
+        cli.input_file is not None
+        and cli.custom_dataset_type == CustomDatasetType.RANDOM_POOL
+    )
+    batch_size_attrs = _RANDOM_POOL_BATCH_SIZE_FLAGS
+    non_batch_violations = [
+        flag
+        for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
+        if attr in s and attr not in batch_size_attrs
     ]
-    if violations:
+    batch_violations = [
+        flag
+        for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
+        if attr in s and attr in batch_size_attrs and not is_random_pool
+    ]
+    if non_batch_violations:
         raise ValueError(
-            f"{', '.join(violations)} is only supported with synthetic datasets; "
+            f"{', '.join(non_batch_violations)} is only supported with synthetic datasets; "
             "remove --input-file / --public-dataset (use a synthetic dataset) to "
             "apply synthetic-only prompt shaping (ISL, prefix prompts, multimodal "
             "generation, multi-turn conversation, etc)."
         )
+    # Directory input is decidable here, before any service starts: each file forms
+    # a separately named pool and batching flattens them all into one anonymous pool
+    # per modality. Checked ahead of the random_pool gating below so a directory is
+    # not first told to add --custom-dataset-type random_pool and only then rejected
+    # at load time. The loader repeats an equivalent check for the pool shapes that
+    # are only visible once the files are parsed (inline records, named entries).
+    set_batch_flags = [
+        flag
+        for attr, flag in _FILE_DATASET_INCOMPATIBLE_TRIGGERS
+        if attr in s and attr in batch_size_attrs and getattr(cli, attr) != 1
+    ]
+    if set_batch_flags and cli.input_file is not None and Path(cli.input_file).is_dir():
+        raise ValueError(
+            f"{', '.join(set_batch_flags)} is not supported when --input-file is a "
+            "directory: each file forms a separately named pool, and batching "
+            "flattens them into one anonymous pool per modality. Point --input-file "
+            "at a single random_pool file, or drop the batch-size flags."
+        )
+    if batch_violations and cli.input_file is not None:
+        remedy = (
+            "Either add --custom-dataset-type random_pool to keep --input-file"
+            if cli.custom_dataset_type is None
+            else f"Either change --custom-dataset-type from {cli.custom_dataset_type} "
+            "to random_pool to keep --input-file"
+        )
+        raise ValueError(
+            f"{', '.join(batch_violations)} requires --custom-dataset-type random_pool "
+            f"when used with --input-file. {remedy}, or remove --input-file to use a "
+            "synthetic dataset."
+        )
+    if batch_violations:
+        raise ValueError(
+            f"{', '.join(batch_violations)} is only supported with synthetic datasets "
+            "or --input-file --custom-dataset-type random_pool; remove --public-dataset "
+            "to use a synthetic dataset."
+        )
+
+
+def _apply_random_pool_batch_sizes(d: dict[str, Any], cli: CLIConfig) -> None:
+    """Route batch-size CLI flags onto FileDataset fields when format is random_pool.
+
+    FileDataset has no prompts/images/audio/video sub-configs, so batch sizes
+    live as flat fields and are threaded directly to RandomPoolDatasetLoader.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if not cli.input_file or cli.custom_dataset_type != CustomDatasetType.RANDOM_POOL:
+        return
+    s = cli.model_fields_set
+    if "prompt_batch_size" in s:
+        d["prompt_batch_size"] = cli.prompt_batch_size
+    if "image_batch_size" in s:
+        d["image_batch_size"] = cli.image_batch_size
+    if "audio_batch_size" in s:
+        d["audio_batch_size"] = cli.audio_batch_size
+    if "video_batch_size" in s:
+        d["video_batch_size"] = cli.video_batch_size
 
 
 _BASETEN_ONLY_TRACE_FLAGS: tuple[tuple[str, str], ...] = (
@@ -647,7 +776,12 @@ def _reject_baseten_only_trace_flags(cli: CLIConfig) -> None:
         )
 
 
-def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
+def _reject_baseten_trace_unsupported_synthesis(
+    cli: CLIConfig,
+    dataset_format: CustomDatasetType | str | None,
+    *,
+    dataset_format_source: str = "--custom-dataset-type baseten_trace",
+) -> None:
     """Reject synthesis knobs that cannot apply to baseten_trace replay.
 
     baseten_trace replay is paced by --replay-speedup; synthesis speedup
@@ -659,16 +793,19 @@ def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
     from the prompt. Output-length synthesis and the max-ISL/OSL filter/cap
     remain valid. The auto-detected dataset-type path is guarded at load
     time by the loader.
+
+    ``dataset_format`` is the resolved loader identity: the CLI
+    ``--custom-dataset-type`` or the YAML ``format`` field being overlaid.
+    ``dataset_format_source`` is its user-facing spelling in error messages.
     """
     from aiperf.plugin.enums import CustomDatasetType
 
-    if cli.custom_dataset_type != CustomDatasetType.BASETEN_TRACE:
+    if dataset_format != CustomDatasetType.BASETEN_TRACE:
         return
     if cli.synthesis_speedup_ratio != 1.0:
         raise ValueError(
             "--synthesis-speedup-ratio is not supported with "
-            "--custom-dataset-type baseten_trace; use --replay-speedup to "
-            "scale replay pacing."
+            f"{dataset_format_source}; use --replay-speedup to scale replay pacing."
         )
     reshaping_flags = [
         flag
@@ -695,7 +832,7 @@ def _reject_baseten_trace_unsupported_synthesis(cli: CLIConfig) -> None:
         verb = "is" if len(reshaping_flags) == 1 else "are"
         raise ValueError(
             f"{', '.join(reshaping_flags)} {verb} not supported with "
-            "--custom-dataset-type baseten_trace: it replays recorded "
+            f"{dataset_format_source}: it replays recorded "
             "prompts verbatim, so hash-reshaping synthesis cannot change "
             "the sent prompt and would desync the forwarded hash_ids KV "
             "hints."
@@ -901,8 +1038,8 @@ _BLOCK_SIZE_TRACE_FORMATS = frozenset(
     {
         "mooncake_trace",
         "bailian_trace",
-        "burst_gpt_trace",
-        "sagemaker_data_capture",
+        "baseten_trace",
+        "tracelab",
     }
 )
 
@@ -911,8 +1048,8 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
     """Route ``--isl-block-size`` onto ``FileDataset.block_size`` for hash-id
     trace datasets.
 
-    block_size is fundamentally a TRACE field: the mooncake/bailian/burst_gpt/
-    sagemaker loaders decode each ``hash_id`` into a cached block of this many
+    block_size is fundamentally a TRACE field: the mooncake/bailian/baseten/
+    tracelab loaders decode each ``hash_id`` into a cached block of this many
     tokens (default 512 / 16 from plugin metadata). Synthetic datasets carry it
     on ``prompts.block_size`` (written by ``_build_prompts``, then stripped for
     FILE/PUBLIC by ``_apply_dataset_type``), so for FILE traces it must be
@@ -958,9 +1095,9 @@ def _apply_block_size(d: dict[str, Any], cli: CLIConfig) -> None:
         return
     raise ValueError(
         "--isl-block-size only applies to synthetic generation or hash-id trace "
-        "replay (mooncake_trace, bailian_trace, burst_gpt_trace, "
-        "sagemaker_data_capture). The selected dataset does not decode hash-id "
-        "token blocks; drop --isl-block-size."
+        "replay (mooncake_trace, bailian_trace, baseten_trace, tracelab). "
+        "The selected dataset does not decode hash-id token blocks; "
+        "drop --isl-block-size."
     )
 
 
@@ -982,6 +1119,7 @@ _NON_TEXT_TEXT_TRIGGERS: tuple[tuple[str, str], ...] = (
     ),
     ("prompt_batch_size", "--prompt-batch-size/--batch-size-text"),
     ("prompt_sequence_distribution", "--seq-dist/--sequence-distribution"),
+    ("prompt_random_range_ratio", "--random-range-ratio"),
 )
 
 # Tokenizer options are also rejected for non-tokenizing endpoints
@@ -1043,7 +1181,8 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     flat input fields and sub-config holders on ``cli``, then assembles the
     sub-fields into the correct dataset shape. Rejects synthetic-only
     flags (prefix, ISL shaping, batch_size, seq-dist, multimodal batch_size)
-    when --input-file is set.
+    when --input-file is set, except batch-size flags when
+    ``--custom-dataset-type random_pool`` is the custom dataset type.
 
     Returns:
         A dict suitable for ``DatasetConfig.model_validate({"name": "main", **out})``.
@@ -1051,7 +1190,7 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     needs_text = _determine_needs_text(cli)
     _reject_file_dataset_incompatible(cli)
     _reject_baseten_only_trace_flags(cli)
-    _reject_baseten_trace_unsupported_synthesis(cli)
+    _reject_baseten_trace_unsupported_synthesis(cli, cli.custom_dataset_type)
     _reject_baseten_trace_extra_input_collisions(cli)
     if cli.dataset_filters and not _implies_public_dataset(cli):
         raise ValueError("--dataset-filter requires --public-dataset")
@@ -1060,10 +1199,12 @@ def build_dataset(cli: CLIConfig) -> dict[str, Any]:
     _attach_subtables(d, cli)
     _apply_dataset_type(d, cli, needs_text)
     _apply_sequence_distribution(d, cli)
+    _apply_random_corpus_style_and_range_ratio(d, cli)
     _apply_turns(d, cli)
     _apply_synthesis(d, cli)
     _apply_implicit_media_batch(d, cli)
     _apply_file_osl(d, cli)
+    _apply_random_pool_batch_sizes(d, cli)
     # block_size for FILE hash-id traces is owned by _apply_block_size (which
     # also rejects weka / non-hash-id formats). Do not also call
     # _apply_file_block_size — that helper is broader and redundant here.

@@ -81,6 +81,20 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
     constraints = []
     description = "—"
 
+    if (
+        isinstance(node.annotation, ast.Subscript)
+        and isinstance(node.annotation.value, ast.Name)
+        and node.annotation.value.id == "Literal"
+    ):
+        values = (
+            node.annotation.slice.elts
+            if isinstance(node.annotation.slice, ast.Tuple)
+            else [node.annotation.slice]
+        )
+        constraints.append(
+            f"one of: {' / '.join(ast.unparse(value) for value in values)}"
+        )
+
     if isinstance(node.value, ast.Call):
         func = node.value.func
         if isinstance(func, ast.Name) and func.id == "Field":

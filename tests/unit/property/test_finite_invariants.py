@@ -380,6 +380,14 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # are non-negative by construction (summed from the neutral record's histogram).
     "ProfileResults.pooled_spec_decode_acceptance_histogram",
     "JsonExportData.pooled_spec_decode_acceptance_histogram",
+    # _Environment.ENDPOINT: nested _EndpointSettings object, not a numeric
+    # leaf. The heuristic fires because "int" appears in "_EndpointSettings".
+    "_Environment.ENDPOINT",
+    # VLLMRatioConfig.range_ratio / SGLangRatioConfig.range_ratio: tuple[float, float]
+    # container — a field-level ge/lt cannot apply to the tuple; bounds [0.0, 1.0)
+    # are enforced by the field_validator on each component.
+    "VLLMRatioConfig.range_ratio",
+    "SGLangRatioConfig.range_ratio",
 }
 
 

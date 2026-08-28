@@ -82,6 +82,12 @@ class AudioGenerator(BaseGenerator):
         self._format_rng = rng.derive("dataset.audio.format")
         self._data_rng = rng.derive("dataset.audio.data")
 
+        # Duration (seconds) sampled by the most recent ``generate()`` call.
+        # The composer hoists it onto ``Turn.audio_duration_seconds`` so ASR
+        # metrics (RTFx) work for synthetic audio, mirroring what ASR dataset
+        # loaders set (see ``hf_asr``).
+        self.last_audio_duration_seconds: float = 0.0
+
     def _validate_sampling_rate(
         self, sampling_rate_hz: int, audio_format: AudioFormat
     ) -> None:
@@ -144,6 +150,7 @@ class AudioGenerator(BaseGenerator):
         audio_length = self._duration_rng.sample_normal(
             length_mean, length_stddev, lower=0.01
         )
+        self.last_audio_duration_seconds = audio_length
 
         # Randomly select sampling rate and bit depth
         sampling_rate_hz = int(

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,8 @@ from aiperf.timing.strategies.adaptive_scale_types import (
 if TYPE_CHECKING:
     from aiperf.config.sweep.adaptive import SLAFilter
 
+
+_LOGGER = logging.getLogger(__name__)
 
 LATENCY_STATS = {
     "avg",
@@ -222,11 +225,26 @@ class AdaptiveScaleSLAEvaluator:
 
     @staticmethod
     def error_rate_value(stats: WindowStats, stat: str) -> float:
+        """Window error rate in percentage points, matching the exported metric.
+
+        The exported ``request_error_rate`` metric is ``100 * errors /
+        (successes + errors)``, so the adaptive-scale evaluator uses the same
+        unit, and the same successes+errors denominator shape: a threshold of
+        ``1`` means 1%, and cancellations are excluded.
+
+        The counts are window-local and not identical to the exported metric's
+        inputs: ``WindowStats.errors`` also counts requests that completed
+        without the required latency data, which the exported metric credits as
+        successes; pre-sustain requests are dropped from the window entirely;
+        and this returns ``0.0`` on zero completions where the exported metric
+        raises ``NoMetricValue``.
+        """
         match stat:
             case "avg" | "min" | "max":
-                if stats.total == 0:
+                completed = len(stats.samples) + stats.errors
+                if completed == 0:
                     return 0.0
-                return stats.errors / stats.total
+                return 100.0 * stats.errors / completed
         raise ValueError(f"Unsupported error_rate SLA stat: {stat}")
 
     @staticmethod
@@ -325,6 +343,20 @@ class AdaptiveScaleSLAEvaluator:
         )
         if sla.stat not in allowed_stats:
             raise ValueError(f"Unsupported {metric_name} SLA stat: {sla.stat}")
+        if sla.metric_tag in {"error_rate", "request_error_rate"}:
+            if not 0.0 <= sla.threshold <= 100.0:
+                raise ValueError(
+                    "error_rate SLA threshold is in percentage points and must be "
+                    f"within [0, 100], got {sla.threshold}"
+                )
+            if 0.0 < sla.threshold < 1.0:
+                _LOGGER.warning(
+                    "error_rate SLA threshold %s is below 1 percentage point. "
+                    "Adaptive-scale error_rate thresholds are percentage points "
+                    "(1 means 1%%), not fractions; a config written for the old "
+                    "0-1 fraction scale should be multiplied by 100.",
+                    sla.threshold,
+                )
 
     @staticmethod
     def _stat_family_for_metric(metric_tag: str) -> tuple[set[str], str]:

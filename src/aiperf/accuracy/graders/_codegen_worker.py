@@ -5,11 +5,11 @@
 
 Runs as ``python -m aiperf.accuracy.graders._codegen_worker``. A fresh,
 single-threaded interpreter that forces the ``fork`` start method once at
-startup, then reads one JSONL grading request per line from stdin and writes one
-JSONL response per line to a private protocol fd. Executing lighteval's
-``codegen_metrics`` here (not in the multithreaded record-processor daemon)
-avoids both the nested-function pickle failure under spawn/forkserver and the
-multithreaded-fork hang. See issue #1145.
+startup, then reads JSONL grading requests from stdin (batching queued
+requests) and writes one JSONL response per request to a private protocol fd.
+Executing lighteval's ``codegen_metrics`` here (not in the multithreaded
+record-processor daemon) avoids both the nested-function pickle failure under
+spawn/forkserver and the multithreaded-fork hang. See issue #1145.
 """
 
 from __future__ import annotations
@@ -24,6 +24,13 @@ import threading
 from collections.abc import Callable
 from typing import Any, BinaryIO
 
+try:
+    import fcntl as _fcntl
+
+    _HAS_FCNTL = True
+except ImportError:  # Windows (worker unsupported there, but import must not crash)
+    _HAS_FCNTL = False
+
 import orjson
 
 _LCB_PASS_AT_K = (1,)
@@ -37,38 +44,6 @@ _DEATH_FD_ENV = "AIPERF_CODEGEN_DEATH_FD"
 # A pathological lighteval exception could stringify to megabytes; bound the
 # error so a single response line stays well under the client's stream limit.
 _MAX_ERROR_CHARS = 4096
-
-
-def handle_request(
-    req: Any,
-    codegen_fn: Callable[..., tuple[dict[str, Any], Any]],
-) -> dict[str, Any]:
-    """Run one grading request. Never raises: all failures become an error
-    response so a single bad problem cannot kill the worker loop."""
-    if not isinstance(req, dict):
-        # A valid-but-non-object JSON frame (e.g. ``[]``) would raise on the
-        # ``.get`` below and kill the loop; return the promised error instead.
-        return {"id": None, "ok": False, "error": "malformed request: expected object"}
-    req_id = req.get("id")
-    try:
-        evaluation_sample = req["evaluation_sample"]
-        generated_code = req["generated_code"]
-    except (KeyError, TypeError) as exc:
-        return {"id": req_id, "ok": False, "error": f"malformed request: {exc!r}"}
-
-    try:
-        metrics, _ = codegen_fn(
-            evaluation_sample,
-            generated_code,
-            k_list=list(_LCB_PASS_AT_K),
-            num_process_evaluate=_LCB_NUM_PROCESSES,
-        )
-    except Exception as exc:
-        # A single bad problem must never crash the worker loop.
-        error = f"{type(exc).__name__}: {exc}"
-        return {"id": req_id, "ok": False, "error": _truncate_error(error)}
-
-    return {"id": req_id, "ok": True, "metrics": _coerce_metrics(metrics)}
 
 
 def _truncate_error(error: str) -> str:
@@ -102,27 +77,175 @@ def _is_number(value: Any) -> bool:
         return False
 
 
+def handle_batch(
+    reqs: list[Any],
+    codegen_fn: Callable[..., tuple[dict[str, Any], Any]],
+    compute_metrics_fn: Callable[..., dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Grade a batch of requests with a single codegen_fn call.
+
+    Calls codegen_fn once with all well-formed requests batched together so
+    lighteval's ProcessPoolExecutor can process multiple problems in parallel.
+    Never raises: all failures become error responses so a bad batch cannot
+    kill the worker loop.
+    """
+    all_samples: list[Any] = []
+    all_generations: list[Any] = []
+    # (req_idx, req_id, start, count) — start/count index into the flat lists.
+    # evaluation_sample and generated_code are already lists (one element each for
+    # the current single-problem-per-request grader), so extend, not append, to
+    # keep all_samples flat and avoid the double-nesting that causes pass@1 = 0.0.
+    id_map: list[tuple[int, Any, int, int]] = []
+    responses: list[dict[str, Any] | None] = [None] * len(reqs)
+
+    for i, req in enumerate(reqs):
+        if isinstance(req, dict) and "_parse_error" in req:
+            responses[i] = {
+                "id": None,
+                "ok": False,
+                "error": f"bad json: {req['_parse_error']}",
+            }
+            continue
+        if not isinstance(req, dict):
+            responses[i] = {
+                "id": None,
+                "ok": False,
+                "error": "malformed request: expected object",
+            }
+            continue
+        req_id = req.get("id")
+        try:
+            sample = req["evaluation_sample"]
+            generation = req["generated_code"]
+            start = len(all_samples)
+            all_samples.extend(sample)
+            all_generations.extend(generation)
+        except (KeyError, TypeError) as exc:
+            responses[i] = {
+                "id": req_id,
+                "ok": False,
+                "error": f"malformed request: {exc!r}",
+            }
+            continue
+        id_map.append((i, req_id, start, len(all_samples) - start))
+
+    if all_samples:
+        batch_error: str | None = None
+        raw_results: dict[int, Any] = {}
+        try:
+            _, raw_results = codegen_fn(
+                all_samples,
+                all_generations,
+                k_list=list(_LCB_PASS_AT_K),
+                num_process_evaluate=_LCB_NUM_PROCESSES,
+            )
+        except Exception as exc:
+            batch_error = _truncate_error(f"{type(exc).__name__}: {exc}")
+
+        for req_idx, req_id, start, count in id_map:
+            if batch_error is not None:
+                responses[req_idx] = {"id": req_id, "ok": False, "error": batch_error}
+            else:
+                try:
+                    metrics = compute_metrics_fn(
+                        {j: raw_results[start + j] for j in range(count)},
+                        k_list=list(_LCB_PASS_AT_K),
+                    )
+                    responses[req_idx] = {
+                        "id": req_id,
+                        "ok": True,
+                        "metrics": _coerce_metrics(metrics),
+                    }
+                except Exception as exc:
+                    responses[req_idx] = {
+                        "id": req_id,
+                        "ok": False,
+                        "error": _truncate_error(f"{type(exc).__name__}: {exc}"),
+                    }
+
+    return [r for r in responses if r is not None]
+
+
+def _drain_in_memory(stdin: BinaryIO) -> list[bytes]:
+    """Drain an in-memory stream (e.g. BytesIO in tests) by reading it all at once."""
+    return [r for r in (ln.strip() for ln in stdin.read().split(b"\n")) if r]
+
+
+def _drain_buffered(stdin: BinaryIO) -> list[bytes]:
+    """Drain all lines already buffered in stdin without blocking.
+
+    For BufferedReader (sys.stdin.buffer in production), peek(0) issues a raw
+    read when the userspace buffer is empty, which blocks on a pipe until the
+    next request arrives. To avoid this, we temporarily set the underlying fd to
+    O_NONBLOCK so that peek() raises BlockingIOError (instead of blocking) when
+    the kernel pipe buffer is empty. readline() then operates on the BufferedReader
+    normally, consuming data already in its userspace buffer without extra raw reads.
+    Blocking mode is restored after the drain so the outer readline() in
+    run_worker_loop can block on the next cycle.
+
+    For in-memory streams without a raw fd (e.g. BytesIO in tests), delegates to
+    _drain_in_memory. When a real fd exists but fcntl is unavailable, skips the
+    drain to avoid blocking on a real pipe.
+    """
+    raw = getattr(stdin, "raw", None)
+    fd = raw.fileno() if raw is not None else -1
+
+    if not _HAS_FCNTL or fd < 0:
+        return _drain_in_memory(stdin) if fd < 0 else []
+
+    lines: list[bytes] = []
+    flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+    _fcntl.fcntl(fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    try:
+        while True:
+            # BufferedReader.peek() catches BlockingIOError internally and returns
+            # b"" when the kernel pipe buffer is empty — so b"" means "no more data
+            # available now" (WouldBlock) or EOF. Both stop the drain.
+            available = stdin.peek(0)  # type: ignore[union-attr]
+            if not available:
+                break
+            if b"\n" not in available:
+                # Only a partial line is buffered; leave it for the next cycle's
+                # blocking readline() to complete.
+                break
+            line = stdin.readline()
+            line = line.strip()
+            if line:
+                lines.append(line)
+    finally:
+        _fcntl.fcntl(fd, _fcntl.F_SETFL, flags)  # Restore blocking for next cycle
+    return lines
+
+
 def run_worker_loop(
     stdin: BinaryIO,
     out: BinaryIO,
     codegen_fn: Callable[..., tuple[dict[str, Any], Any]],
+    compute_metrics_fn: Callable[..., dict[str, Any]],
 ) -> None:
-    """Serve JSONL grading requests until stdin EOF. One response per request."""
-    for line in stdin:
-        line = line.strip()
-        if not line:
+    """Serve JSONL grading requests until stdin EOF.
+
+    Blocks on the first request of each cycle, then non-blocking drains any
+    already-queued requests to form a batch. Calls codegen_fn once per batch so
+    lighteval's ProcessPoolExecutor can process multiple problems in parallel.
+    """
+    while True:
+        first = stdin.readline()
+        if not first:
+            break  # EOF: client closed stdin, clean exit
+        first = first.strip()
+        if not first:
             continue
-        try:
-            req = orjson.loads(line)
-        except orjson.JSONDecodeError as exc:
-            resp: dict[str, Any] = {
-                "id": None,
-                "ok": False,
-                "error": f"bad json: {exc}",
-            }
-        else:
-            resp = handle_request(req, codegen_fn)
-        out.write(orjson.dumps(resp) + b"\n")
+        batch_raw: list[bytes] = [first]
+        batch_raw.extend(_drain_buffered(stdin))
+        reqs: list[Any] = []
+        for raw in batch_raw:
+            try:
+                reqs.append(orjson.loads(raw))
+            except orjson.JSONDecodeError as exc:
+                reqs.append({"_parse_error": str(exc)})
+        for resp in handle_batch(reqs, codegen_fn, compute_metrics_fn):
+            out.write(orjson.dumps(resp) + b"\n")
         out.flush()
 
 
@@ -200,9 +323,14 @@ def main() -> None:
     # reaps the worker even if the (heavy) import is still in flight.
     _start_death_watcher()
     _force_fork()
-    from lighteval.tasks.tasks.lcb.codegen_metrics import codegen_metrics
+    from lighteval.tasks.tasks.lcb.codegen_metrics import (
+        codegen_metrics,
+        compute_metrics_from_results,
+    )
 
-    run_worker_loop(sys.stdin.buffer, protocol_out, codegen_metrics)
+    run_worker_loop(
+        sys.stdin.buffer, protocol_out, codegen_metrics, compute_metrics_from_results
+    )
 
 
 if __name__ == "__main__":

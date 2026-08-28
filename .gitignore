@@ -57,3 +57,4 @@ src/aiperf/_build_info.py
 
 # Chaos/adversarial test run artifacts
 tests/scripts/.chaos_runs/
+.worktrees/

@@ -9,13 +9,12 @@ from typing import TYPE_CHECKING, Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.constants import BYTES_PER_MIB, WARMUP_SYSTEM_MESSAGE_PREFIX
+from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
     CommandType,
     ConversationBranchMode,
-    CreditPhase,
     MemoryMapFormat,
     MessageType,
 )
@@ -146,7 +145,10 @@ def _apply_cache_bust_to_system_message(
     """
     if not marker or target == CacheBustTarget.NONE or system_message is None:
         return system_message
-    if target == CacheBustTarget.SYSTEM_PREFIX:
+    if target in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+    ):
         return marker + system_message
     if target == CacheBustTarget.SYSTEM_SUFFIX:
         return system_message + marker
@@ -432,10 +434,16 @@ def _apply_cache_bust(
     is_prefix = target in (
         CacheBustTarget.SYSTEM_PREFIX,
         CacheBustTarget.FIRST_TURN_PREFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+        CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
     )
     prefix_turns = _effective_prefix_turns(session)
 
-    if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.SYSTEM_SUFFIX):
+    if target in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.SYSTEM_SUFFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+    ):
         return _apply_system_target_cache_bust(
             prefix_turns,
             all_turns=session.turn_list,
@@ -462,7 +470,7 @@ def _apply_system_target_cache_bust(
     target: CacheBustTarget,
     is_prefix: bool,
 ) -> str | None:
-    """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` marker for one credit.
+    """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` / ``WARMUP_ISOLATION_SYSTEM`` marker for one credit.
 
     ``prefix_turns`` is the effective wire prefix slice (see
     :func:`_effective_prefix_turns`). Four sub-paths, ordered to match how the
@@ -1097,13 +1105,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         system_message = _apply_cache_bust(
             session,
             credit,
-            self._system_message_for_phase(
-                system_message=session.conversation.system_message,
-                phase=credit.phase,
-                cache_bust_target=credit.cache_bust_target
-                if credit.cache_bust_marker is not None
-                else None,
-            ),
+            session.conversation.system_message,
         )
         self._maybe_warn_cache_bust_silent_drop(session, credit)
 
@@ -1403,36 +1405,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.session_manager.evict_if_unpinned(x_correlation_id)
         else:
             self.session_manager.evict(x_correlation_id)
-
-    @staticmethod
-    def _system_message_for_phase(
-        *,
-        system_message: str | None,
-        phase: CreditPhase,
-        cache_bust_target: CacheBustTarget | None,
-    ) -> str | None:
-        """Prefix warmup system messages so warmup cannot reuse profiling's
-        prefix cache — unless cache-bust already owns prefix isolation.
-
-        Cache-bust is deliberately warmup-coherent: ``build_cache_bust_marker``
-        keeps the phase out of its digest and the marker ledger survives the
-        WARMUP -> PROFILING boundary, so a trajectory's warmup turn ``k_i`` and
-        its first profiling turn ``k_i+1`` share one marker and warmup PRIMES
-        the cache profiling then hits. Injecting this prefix in front of that
-        shared marker diverges the two prefixes at token 0, so warmup primes an
-        entry profiling never touches — the round-trip is spent for nothing.
-
-        Any non-NONE target already guarantees warmup cannot collide with
-        another trajectory's prefix (the marker digests per trajectory tree), so
-        standing down here costs no isolation.
-        """
-        if phase != CreditPhase.WARMUP:
-            return system_message
-        if cache_bust_target not in (None, CacheBustTarget.NONE):
-            return system_message
-        if not system_message:
-            return WARMUP_SYSTEM_MESSAGE_PREFIX
-        return f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{system_message}"
 
     def _maybe_warn_cache_bust_silent_drop(
         self,

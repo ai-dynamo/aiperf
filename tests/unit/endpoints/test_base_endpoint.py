@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.models import ParsedResponse, TextResponse, TextResponseData
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
@@ -329,3 +330,41 @@ class TestBuildMessagesResetContext:
         ]
         messages = endpoint.build_messages(turns)
         assert [m["content"] for m in messages] == ["A", "B", "C"]
+
+
+class TestRenderTurnContent:
+    """Tests for _render_turn_content scalar vs. parts selection."""
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="http://localhost:8000/v1/test"
+        )
+        return create_endpoint_with_mock_transport(MockEndpoint, model_endpoint)
+
+    def test_single_text_emits_scalar_by_default(self, endpoint):
+        """Default: single-text turn produces a plain string, not a parts list."""
+        from aiperf.common.models import Text, Turn
+
+        turn = Turn(role="user", texts=[Text(contents=["hello"])])
+        content = endpoint._render_turn_content(turn)
+        assert content == "hello"
+
+    def test_force_content_parts_emits_parts_array(self, endpoint, monkeypatch):
+        """FORCE_CONTENT_PARTS=True: single-text turn produces a parts list."""
+        from aiperf.common.models import Text, Turn
+
+        monkeypatch.setattr(Environment.ENDPOINT, "FORCE_CONTENT_PARTS", True)
+        turn = Turn(role="user", texts=[Text(contents=["hello"])])
+        content = endpoint._render_turn_content(turn)
+        assert content == [{"type": "text", "text": "hello"}]
+
+    def test_endpoint_settings_env_var(self, monkeypatch):
+        """AIPERF_ENDPOINT_FORCE_CONTENT_PARTS=true populates _EndpointSettings."""
+        from aiperf.common.environment import (
+            _EndpointSettings,  # type: ignore[attr-defined]
+        )
+
+        monkeypatch.setenv("AIPERF_ENDPOINT_FORCE_CONTENT_PARTS", "true")
+        settings = _EndpointSettings()
+        assert settings.FORCE_CONTENT_PARTS is True

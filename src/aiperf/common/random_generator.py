@@ -57,6 +57,7 @@ from aiperf.common.exceptions import InvalidStateError
 __all__ = [
     "RandomGenerator",
     "derive",
+    "fold_seed_to_uint32",
     "init",
     "reset",
 ]
@@ -424,6 +425,28 @@ class _RNGManager:
 _manager: _RNGManager | None = None
 
 
+def fold_seed_to_uint32(seed: int) -> int:
+    """Fold a seed of any width into numpy's legacy 32-bit seeding range.
+
+    ``numpy.random.seed`` (MT19937 global state) rejects anything outside
+    ``[0, 2**32 - 1]``, but AIPerf seeds are 64-bit: ``derive_variation_seed``
+    returns ``int.from_bytes(sha256(...)[:8])`` for adaptive-sweep variations
+    and for ``multi_run.vary_seed_per_trial``, and ``--random-seed`` itself is
+    only bounded ``ge=0``. XOR-folding the high half into the low half keeps
+    every input bit contributing to the result while landing in range.
+
+    Seeds already below ``2**32`` are returned unchanged, so folding never
+    perturbs an existing reproducible run.
+
+    Args:
+        seed: Non-negative seed of any width.
+
+    Returns:
+        Equivalent seed in ``[0, 2**32 - 1]``, suitable for ``numpy.random.seed``.
+    """
+    return (seed ^ (seed >> 32)) & 0xFFFFFFFF
+
+
 def init(seed: int | None) -> None:
     """Initialize global RNG manager. Called once at startup (bootstrap.py).
 
@@ -450,9 +473,7 @@ def init(seed: int | None) -> None:
     # This protects against third-party code or future changes that might use global state
     if seed is not None:
         random.seed(seed)
-        # Normalize seed to numpy's 32-bit range by folding high and low bits
-        np_seed = (seed ^ (seed >> 32)) & 0xFFFFFFFF
-        np.random.seed(np_seed)
+        np.random.seed(fold_seed_to_uint32(seed))
 
     _manager = _RNGManager(seed)
 

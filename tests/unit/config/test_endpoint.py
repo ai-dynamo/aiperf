@@ -51,6 +51,47 @@ def test_uuid_and_strip_rejects_non_chat_endpoint() -> None:
         )
 
 
+def test_per_chunk_usage_requires_server_token_count() -> None:
+    with pytest.raises(ValueError, match="requires --use-server-token-count"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            per_chunk_usage=True,
+            use_server_token_count=False,
+        )
+
+
+def test_per_chunk_usage_requires_chat_endpoint() -> None:
+    with pytest.raises(ValueError, match="requires endpoint type 'chat'"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.COMPLETIONS,
+            per_chunk_usage=True,
+            use_server_token_count=True,
+        )
+
+
+def test_per_chunk_usage_requires_streaming() -> None:
+    with pytest.raises(ValueError, match="requires --streaming"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.CHAT,
+            per_chunk_usage=True,
+            use_server_token_count=True,
+            streaming=False,
+        )
+
+
+def test_per_chunk_usage_with_server_token_count_is_valid() -> None:
+    endpoint = EndpointConfig(
+        urls=["http://localhost:8000"],
+        type=EndpointType.CHAT,
+        per_chunk_usage=True,
+        use_server_token_count=True,
+        streaming=True,
+    )
+    assert endpoint.per_chunk_usage is True
+
+
 def _make_model_endpoint(
     base_url: str, transport: TransportType | None = None
 ) -> ModelEndpointInfo:

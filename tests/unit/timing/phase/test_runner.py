@@ -792,13 +792,15 @@ class TestSeamlessMode:
         cancel: MagicMock,
         cb: MagicMock,
     ) -> None:
-        r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         with patch(
             "aiperf.timing.phase.runner.plugins.get_class",
             return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
-            result = await asyncio.wait_for(r.run(is_final_phase=False), timeout=1.0)
+            result = await asyncio.wait_for(
+                r.run(is_final_phase=False, seamless_to_next=True), timeout=1.0
+            )
             assert isinstance(result, CreditPhaseStats)
 
     async def test_waits_for_returns_on_final_phase(
@@ -810,7 +812,7 @@ class TestSeamlessMode:
         cancel: MagicMock,
         cb: MagicMock,
     ) -> None:
-        r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         with patch(
             "aiperf.timing.phase.runner.plugins.get_class",
             return_value=lambda **kw: MockStrategy(),

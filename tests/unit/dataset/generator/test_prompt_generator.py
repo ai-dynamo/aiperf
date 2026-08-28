@@ -8,15 +8,18 @@ This test file provides complete coverage of all methods in the PromptGenerator 
 including edge cases, error conditions, and integration scenarios.
 """
 
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
+import numpy as np
 import pytest
 
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import (
     ConfigurationError,
     InvalidStateError,
     NotInitializedError,
 )
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.prompt import PromptGenerator
 
@@ -29,12 +32,18 @@ def _make_generator(
     prompts: PromptConfig | None = None,
     prefix_prompts: PrefixPromptConfig | None = None,
 ) -> PromptGenerator:
-    """Construct a PromptGenerator with the v2 keyword-only signature."""
-    return PromptGenerator(
+    """Construct a fully initialized PromptGenerator.
+
+    Mirrors the composer, which calls initialize_prefix_pool() once the generator
+    is seeded; the pool is no longer built during __init__.
+    """
+    generator = PromptGenerator(
         prompts=prompts,
         prefix_prompts=prefix_prompts,
         tokenizer=tokenizer,
     )
+    generator.initialize_prefix_pool()
+    return generator
 
 
 @patch("builtins.open", mock_open(read_data=MOCK_CORPUS_CONTENT))
@@ -161,13 +170,14 @@ class TestPromptGeneratorComprehensive:
         assert result.startswith("token_")
 
     def testgenerate_prompt_zero_tokens(self, basic_config):
-        """Test generate_prompt with zero tokens."""
+        """generate_prompt raises on num_tokens <= 0 rather than silently returning empty."""
         tokenizer, prompts, prefix_prompts = basic_config
         generator = _make_generator(
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
         )
 
-        generator.generate_prompt(0)
+        with pytest.raises(ValueError, match="num_tokens must be > 0"):
+            generator.generate_prompt(0)
 
     def testgenerate_prompt_large_number(self, basic_config):
         """Test generate_prompt with large number of tokens."""
@@ -177,6 +187,48 @@ class TestPromptGeneratorComprehensive:
         )
 
         generator.generate_prompt(1000)
+
+    def test_generate_prompt_retries_when_encode_drifts_long(self, basic_config):
+        """generate_prompt trims and retries when re-encode returns too many tokens."""
+        tokenizer, prompts, prefix_prompts = basic_config
+
+        # First encode call returns 2 extra tokens; subsequent calls are accurate.
+        real_encode = tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def drifting_encode(text, **kwargs):
+            call_count["n"] += 1
+            ids = real_encode(text, **kwargs)
+            if call_count["n"] == 1:
+                return ids + [998, 999]
+            return ids
+
+        tokenizer.encode = drifting_encode
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        result = generator.generate_prompt(3)
+        assert isinstance(result, str)
+        assert call_count["n"] >= 2
+
+    def test_generate_prompt_accepts_mismatch_after_budget(self, basic_config):
+        """generate_prompt accepts result after exhausting _max_retries."""
+        tokenizer, prompts, prefix_prompts = basic_config
+
+        # encode always returns one extra token — convergence is impossible.
+        real_encode = tokenizer._mock_encode
+
+        def always_drifting_encode(text, **kwargs):
+            return real_encode(text, **kwargs) + [999]
+
+        tokenizer.encode = always_drifting_encode
+        generator = _make_generator(
+            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
+        )
+
+        result = generator.generate_prompt(3, _max_retries=3)
+        assert isinstance(result, str)
 
     # ============================================================================
     # _generate_cached_prompt Method Tests
@@ -521,11 +573,11 @@ class TestPromptGeneratorComprehensive:
         assert all(isinstance(token, int) for token in generator._tokenized_corpus)
 
     # ============================================================================
-    # _create_prefix_prompt_pool Method Tests
+    # initialize_prefix_pool Method Tests
     # ============================================================================
 
-    def test_create_prefix_prompt_pool_success(self, prefix_config):
-        """Test _create_prefix_prompt_pool successful creation."""
+    def test_initialize_prefix_pool_success(self, prefix_config):
+        """Test initialize_prefix_pool successful creation."""
         tokenizer, prompts, prefix_prompts = prefix_config
         generator = _make_generator(
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
@@ -534,8 +586,8 @@ class TestPromptGeneratorComprehensive:
         assert len(generator._prefix_prompts) == 5
         assert all(isinstance(prompt, str) for prompt in generator._prefix_prompts)
 
-    def test_create_prefix_prompt_pool_no_corpus(self, prefix_config):
-        """Test _create_prefix_prompt_pool when corpus is not initialized."""
+    def test_initialize_prefix_pool_no_corpus(self, prefix_config):
+        """Test initialize_prefix_pool when corpus is not initialized."""
         tokenizer, prompts, prefix_prompts = prefix_config
         generator = _make_generator(
             tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
@@ -543,10 +595,10 @@ class TestPromptGeneratorComprehensive:
         generator._tokenized_corpus = None
 
         with pytest.raises(NotInitializedError):
-            generator._create_prefix_prompt_pool()
+            generator.initialize_prefix_pool()
 
-    def test_create_prefix_prompt_pool_zero_length(self, mock_tokenizer):
-        """Test _create_prefix_prompt_pool with zero length prompts.
+    def test_initialize_prefix_pool_zero_length(self, mock_tokenizer):
+        """Test initialize_prefix_pool with zero length prompts.
 
         v2 PrefixPromptConfig requires length >= 1, so we mutate the value
         post-init via Pydantic's allow-attribute-assignment behavior; if the
@@ -564,7 +616,7 @@ class TestPromptGeneratorComprehensive:
             pool_size=5, length=0
         )
         generator._prefix_prompts = []
-        generator._create_prefix_prompt_pool()
+        generator.initialize_prefix_pool()
 
         assert len(generator._prefix_prompts) == 5
         assert all(prompt == "" for prompt in generator._prefix_prompts)
@@ -795,3 +847,429 @@ class TestPromptGeneratorComprehensive:
         # This should raise same error as _generate_cached_prompt
         with pytest.raises(ConfigurationError):
             generator._build_token_sequence(10, [1, 2, 3], 5)  # final_block_size = 0
+
+
+class TestPromptGeneratorRandomCorpus:
+    """Tests for PromptCorpus.RANDOM generate_prompt top-up behavior."""
+
+    @pytest.fixture
+    def random_tokenizer(self, mock_tokenizer_cls):
+        tok = mock_tokenizer_cls.from_pretrained("gpt2")
+        tok._tokenizer.vocab_size = 100
+        return tok
+
+    @pytest.fixture
+    def random_generator(self, random_tokenizer):
+        return PromptGenerator(
+            prompts=None,
+            prefix_prompts=None,
+            tokenizer=random_tokenizer,
+            corpus=PromptCorpus.RANDOM,
+        )
+
+    def test_generate_prompt_random_retries_when_encode_is_short(
+        self, random_tokenizer, random_generator
+    ):
+        """RANDOM generate_prompt re-enters the loop when BPE re-encode yields fewer tokens."""
+        real_encode = random_tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def shrink_first(text, **kwargs):
+            call_count["n"] += 1
+            ids = real_encode(text, **kwargs)
+            if call_count["n"] == 1:
+                return ids[:-1]
+            return ids
+
+        random_tokenizer.encode = shrink_first
+
+        result = random_generator.generate_prompt(3)
+
+        assert isinstance(result, str)
+        assert call_count["n"] >= 2
+
+    def test_generate_prompt_random_converges_when_exact_on_first_try(
+        self, random_tokenizer, random_generator
+    ):
+        """RANDOM generate_prompt exits after the first iteration when re-encode is exact."""
+        real_encode = random_tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def counting_encode(text, **kwargs):
+            call_count["n"] += 1
+            return real_encode(text, **kwargs)
+
+        random_tokenizer.encode = counting_encode
+
+        random_generator.generate_prompt(3)
+
+        assert call_count["n"] == 1
+
+    def test_generate_prompt_random_trims_when_encode_is_long(
+        self, random_tokenizer, random_generator
+    ):
+        """RANDOM generate_prompt trims and retries when BPE re-encode yields extra tokens."""
+        real_encode = random_tokenizer._mock_encode
+        call_count = {"n": 0}
+
+        def grow_first(text, **kwargs):
+            call_count["n"] += 1
+            ids = real_encode(text, **kwargs)
+            if call_count["n"] == 1:
+                return ids + [998]
+            return ids
+
+        random_tokenizer.encode = grow_first
+
+        result = random_generator.generate_prompt(3)
+
+        assert isinstance(result, str)
+        assert call_count["n"] >= 2
+
+    def test_random_corpus_prefix_pool_does_not_raise(self, random_tokenizer):
+        """RANDOM corpus can generate a prefix prompt pool without a text corpus."""
+        from aiperf.config.dataset.content import PrefixPromptConfig
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=PrefixPromptConfig(pool_size=3, length=5),
+            tokenizer=random_tokenizer,
+            corpus=PromptCorpus.RANDOM,
+        )
+        generator.initialize_prefix_pool()
+        assert len(generator._prefix_prompts) == 3
+        assert all(isinstance(p, str) for p in generator._prefix_prompts)
+
+    def test_random_corpus_shared_system_prompt_does_not_raise(self, random_tokenizer):
+        """RANDOM corpus can generate a shared system prompt without a text corpus."""
+        from aiperf.config.dataset.content import PrefixPromptConfig
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=PrefixPromptConfig(shared_system_length=10),
+            tokenizer=random_tokenizer,
+            corpus=PromptCorpus.RANDOM,
+        )
+        assert generator._shared_system_prompt is not None
+        assert isinstance(generator._shared_system_prompt, str)
+
+    def test_random_corpus_excludes_special_tokens_from_sampling_pool(
+        self, mock_tokenizer_cls
+    ):
+        """_allowed_tokens must not contain any special token IDs."""
+        from aiperf.common.enums import RandomCorpusStyle
+
+        tok = mock_tokenizer_cls.from_pretrained("gpt2")
+        tok._tokenizer.vocab_size = 100
+        tok._tokenizer.all_special_ids = [1, 2]
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=None,
+            tokenizer=tok,
+            corpus=PromptCorpus.RANDOM,
+            corpus_style=RandomCorpusStyle.VLLM,
+        )
+
+        allowed = set(generator._allowed_tokens)
+        assert 1 not in allowed
+        assert 2 not in allowed
+        assert len(generator._allowed_tokens) == 98
+
+    def test_random_corpus_sglang_uses_full_vocab(self, mock_tokenizer_cls):
+        """SGLANG style uses all_token_ids (full vocab_size range, no special-token exclusion)."""
+        from aiperf.common.enums import RandomCorpusStyle
+
+        tok = mock_tokenizer_cls.from_pretrained("gpt2")
+        tok._tokenizer.vocab_size = 100
+        tok._tokenizer.all_special_ids = [1, 2]
+
+        generator = PromptGenerator(
+            prompts=None,
+            prefix_prompts=None,
+            tokenizer=tok,
+            corpus=PromptCorpus.RANDOM,
+            corpus_style=RandomCorpusStyle.SGLANG,
+        )
+
+        # SGLANG does not exclude special tokens — full range(vocab_size)
+        assert len(generator._allowed_tokens) == 100
+
+    def test_offset_cache_exhaustion_falls_back_to_live_draw(self, random_generator):
+        """Preseed sizes the offset cache per conversation but it is read once
+        per prompt, so multi-turn / batched / prefix-pool runs outrun it.
+
+        Exhaustion must degrade to a live `_corpus_rng` draw rather than raising
+        `IndexError` out of the dataset composer.
+        """
+        import numpy as np
+
+        random_generator.preseed(2, np.random.default_rng(42))
+        assert len(random_generator._offset_cache) == 2
+
+        for _ in range(2):
+            random_generator._sample_tokens(4)
+        assert random_generator._offset_idx == 2
+
+        # Third read is past the end of the cache.
+        tokens = random_generator._sample_tokens(4)
+
+        assert len(tokens) == 4
+        assert all(t in random_generator._allowed_tokens for t in tokens)
+
+    def test_offset_cache_exhaustion_warns_once(self, random_generator, caplog):
+        """The fallback is silent-by-default degradation otherwise, so it warns
+        exactly once naming the cause rather than per prompt."""
+        import logging
+
+        import numpy as np
+
+        random_generator.preseed(1, np.random.default_rng(42))
+        random_generator._sample_tokens(4)
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                random_generator._sample_tokens(4)
+
+        exhausted = [
+            r for r in caplog.records if "offset cache exhausted" in r.getMessage()
+        ]
+        assert len(exhausted) == 1
+        assert "consumed once per prompt" in exhausted[0].getMessage()
+
+    def test_offset_cache_within_bounds_is_unaffected(self, random_generator):
+        """Reads inside the cache must still come from the preseed stream."""
+        import numpy as np
+
+        random_generator.preseed(4, np.random.default_rng(42))
+        expected = list(random_generator._offset_cache)
+
+        random_generator._sample_tokens(4)
+        random_generator._sample_tokens(4)
+
+        assert random_generator._offset_idx == 2
+        assert random_generator._offset_cache == expected
+
+    def test_topup_draws_stay_inside_the_decodable_pool(self, random_generator):
+        """Top-up must never emit an ID outside the tokenizer's decodable set.
+
+        vLLM tops up from raw `[0, vocab_size)`, which is safe only because HF
+        vocabularies are dense. tiktoken's ID space is sparse -- cl100k_base has
+        16 undecodable gap IDs -- and those raise `KeyError` inside
+        `_decode_to_exact_len`, aborting dataset generation.
+        """
+        import numpy as np
+
+        random_generator.preseed(4, np.random.default_rng(42))
+        allowed = set(random_generator._topup_tokens)
+        tokens = random_generator._sample_topup_tokens(5000)
+
+        assert len(tokens) == 5000
+        assert not [t for t in tokens if t not in allowed]
+
+    def test_topup_pool_is_the_full_vocab_not_the_vllm_subset(self, random_generator):
+        """vLLM's top-up does not exclude special tokens, so the narrower
+        VLLM-style `_allowed_tokens` would be the wrong pool and would change
+        the draw bound, breaking byte parity."""
+        tok = random_generator.tokenizer
+        assert random_generator._topup_tokens == tok.all_token_ids
+        assert len(random_generator._topup_tokens) == tok.vocab_size
+
+    def test_indexed_draw_equals_raw_draw_on_dense_vocab(self, random_generator):
+        """The parity guarantee: for a dense vocabulary `all_token_ids` is
+        `range(vocab_size)`, so indexing into it is bit-for-bit the same
+        sequence as drawing raw `[0, vocab_size)` from the same generator.
+        """
+        import numpy as np
+
+        tok = random_generator.tokenizer
+        pool = random_generator._topup_tokens
+        raw = np.random.default_rng(7).integers(0, tok.vocab_size, size=500).tolist()
+        indexed = [
+            pool[int(i)]
+            for i in np.random.default_rng(7).integers(0, len(pool), size=500)
+        ]
+        assert indexed == raw
+
+    def test_generate_with_exact_length_bypasses_the_floor(self, random_generator):
+        """`exact_length` uses the value verbatim instead of resampling.
+
+        Without it, an already-decided 0 is floored to 1 by
+        `sample_positive_normal_integer`, emitting one more token than vLLM.
+        """
+        import numpy as np
+
+        random_generator.preseed(4, np.random.default_rng(42))
+        random_generator._prefix_prompt_tokens = [[7]]
+        random_generator._prefix_prompts = ["x"]
+        # body 0 + a 1-token prefix -> prefix-only, which is what vLLM emits
+        text = random_generator.generate(
+            mean=0, stddev=0, with_prefix=True, exact_length=True
+        )
+        assert isinstance(text, str)
+
+    def test_generate_prompt_rejects_zero_without_a_prefix(self, random_generator):
+        """The relaxation is scoped: with no prefix there is nothing to carry
+        the request, and the degenerate-config guard already rejects that
+        combination upstream."""
+        with pytest.raises(ValueError, match="without a prefix"):
+            random_generator.generate_prompt(0)
+
+    def test_generate_prompt_still_rejects_negative(self, random_generator):
+        with pytest.raises(ValueError):
+            random_generator.generate_prompt(-1)
+
+    def test_exact_length_off_still_floors(self, random_generator):
+        """Default path is untouched: a mean of 0 without `exact_length`
+        continues to floor at 1, which is correct for a sampled length."""
+        assert random_generator.calculate_num_tokens(0, 0) == 1
+
+
+class _SeamTokenizer(Tokenizer):
+    """Deterministic BPE-like tokenizer that charges a token for a joined space.
+
+    Token id ``t`` in ``[0, VOCAB_SIZE)`` maps to the unique two-letter string
+    ``chr(97 + t // 10) + chr(97 + t % 10)``. Decoding concatenates those pairs
+    with no separator, so a decoded run of N tokens is exactly 2N letters.
+    Encoding walks the text two letters at a time and emits ``SPACE_ID`` for any
+    literal space.
+
+    This models the one property AIP-1118 turns on: joining two independently
+    decoded segments with ``" "`` costs one extra token, while concatenating
+    their token IDs costs nothing. The shared ``mock_tokenizer_cls`` fixture
+    splits on whitespace and therefore cannot express a seam at all.
+    """
+
+    VOCAB_SIZE = 100
+    SPACE_ID = 100
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._tokenizer = MagicMock()
+        self._tokenizer.vocab_size = self.VOCAB_SIZE
+        self._tokenizer.all_special_ids = []
+
+    @property
+    def vocab_size(self) -> int:
+        return self.VOCAB_SIZE
+
+    @property
+    def all_special_ids(self) -> set[int]:
+        return set()
+
+    @property
+    def valid_token_ids(self) -> list[int]:
+        return list(range(self.VOCAB_SIZE))
+
+    @property
+    def all_token_ids(self) -> list[int]:
+        return list(range(self.VOCAB_SIZE))
+
+    def decode(self, token_ids, **kwargs) -> str:
+        return "".join(
+            " " if t == self.SPACE_ID else chr(97 + t // 10) + chr(97 + t % 10)
+            for t in token_ids
+        )
+
+    def encode(self, text: str, **kwargs) -> list[int]:
+        out: list[int] = []
+        i = 0
+        while i < len(text):
+            if text[i] == " ":
+                out.append(self.SPACE_ID)
+                i += 1
+            else:
+                pair = text[i : i + 2]
+                out.append((ord(pair[0]) - 97) * 10 + (ord(pair[1]) - 97))
+                i += 2
+        return out
+
+
+class TestPromptGeneratorPrefixVLLMParity:
+    """AIP-1118: prefix prompts must match vLLM's RandomDataset token accounting.
+
+    vLLM concatenates the prefix and body at the TOKEN-ID level and runs a single
+    decode/re-encode correction over the combined sequence targeting exactly
+    ``prefix_len + input_len``. aiperf historically decoded each segment
+    independently and joined the strings with a space, which cost ~0.84 extra
+    tokens per request and shifted the per-request token index.
+    """
+
+    PREFIX_LEN = 5
+    BODY_LEN = 20
+    POOL_SIZE = 4
+    SEED = 0
+
+    def _make(self, pool_size: int | None, length: int | None) -> PromptGenerator:
+        from aiperf.common.enums import RandomCorpusStyle
+
+        return PromptGenerator(
+            prompts=None,
+            prefix_prompts=PrefixPromptConfig(pool_size=pool_size, length=length),
+            tokenizer=_SeamTokenizer(),
+            corpus=PromptCorpus.RANDOM,
+            corpus_style=RandomCorpusStyle.VLLM,
+        )
+
+    def test_generate_with_prefix_yields_exact_total_token_count(self):
+        """prefix + body must tokenize to exactly prefix_len + body_len.
+
+        The string join ``f"{prefix} {content}"`` charged one extra token for the
+        separator on ~81% of requests (mean +0.84).
+        """
+        gen = self._make(pool_size=1, length=self.PREFIX_LEN)
+        gen.preseed(8, np.random.default_rng(self.SEED))
+        gen.initialize_prefix_pool()
+
+        content = gen.generate(mean=self.BODY_LEN, stddev=0, with_prefix=True)
+
+        assert (
+            len(gen.tokenizer.encode(content, add_special_tokens=False))
+            == self.PREFIX_LEN + self.BODY_LEN
+        )
+
+    def test_prefix_pool_build_does_not_advance_request_index(self):
+        """Pool construction must not consume per-request token indices.
+
+        vLLM builds its prefix from a standalone draw; the per-request index
+        starts at 0 for request 0 regardless of prefix configuration.
+        """
+        gen = self._make(pool_size=self.POOL_SIZE, length=self.PREFIX_LEN)
+        gen.preseed(8, np.random.default_rng(self.SEED))
+        gen.initialize_prefix_pool()
+
+        assert gen._random_request_index == 0
+
+    def test_prefix_pool_does_not_shift_body_token_sequence(self):
+        """Body content must be byte-identical with and without a prefix pool."""
+        with_pool = self._make(pool_size=self.POOL_SIZE, length=self.PREFIX_LEN)
+        with_pool.preseed(8, np.random.default_rng(self.SEED))
+        with_pool.initialize_prefix_pool()
+
+        without_pool = self._make(pool_size=None, length=None)
+        without_pool.preseed(8, np.random.default_rng(self.SEED))
+        without_pool.initialize_prefix_pool()
+
+        assert with_pool.generate(
+            mean=self.BODY_LEN, stddev=0
+        ) == without_pool.generate(mean=self.BODY_LEN, stddev=0)
+
+    def test_prefix_pool_matches_vllm_get_prefix_draw_order(self):
+        """Prefix tokens must come from the shared stream, after the offset draws.
+
+        vLLM's ``RandomDataset.get_prefix`` draws with
+        ``rng.integers(0, len(allowed_tokens), size=prefix_len)`` — bounded by
+        the allowed-token count, not vocab_size — immediately after
+        ``get_sampling_params`` has drawn ISLs, OSLs and offsets.
+        """
+        n = 8
+        gen = self._make(pool_size=1, length=self.PREFIX_LEN)
+        gen.preseed(n, np.random.default_rng(self.SEED))
+        gen.initialize_prefix_pool()
+
+        ref = np.random.default_rng(self.SEED)
+        ref.integers(0, _SeamTokenizer.VOCAB_SIZE, size=n)  # offsets
+        allowed = np.array(gen._allowed_tokens)
+        expected = allowed[ref.integers(0, len(allowed), size=self.PREFIX_LEN)].tolist()
+
+        assert gen.get_random_prefix_prompt_tokens() == expected

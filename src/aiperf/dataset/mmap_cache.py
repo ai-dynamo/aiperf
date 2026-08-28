@@ -78,6 +78,13 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v27: streaming chat/completions payloads now always carry
+    # stream_options.include_usage, not just when use_server_token_count is set
+    # (vLLM only emits the trailing usage chunk -- which carries per-request
+    # spec-decode metrics -- when it is present). Under PREFORMAT_PAYLOADS the
+    # payload bytes are baked at build time, and the key's preformat_endpoint
+    # dict is unchanged for a streaming + use_server_token_count=False run, so
+    # a warm entry would keep serving payloads without the field.
     # v26: weka inter-turn delays are now always end-to-start
     # (t_k - (t_{k-1} + api_{k-1}), floored at 0) instead of start-to-start.
     # The use_end_to_start_delays flag was removed, so Turn.delay decodes to
@@ -174,7 +181,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    26
+    27
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -200,6 +207,7 @@ TRACE_VERBATIM_DATASET_TYPES = frozenset(
         "raw_payload",
         "inputs_json",
         "weka_trace",
+        "tracelab",
     }
 )
 
@@ -755,8 +763,21 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         if records
         else None
     )
+    # The composer bakes the verbatim system prompt into
+    # ``Conversation.system_message``, which round-trips through the stored mmap
+    # (model_dump_json on write, model_validate_json on read). A cache HIT skips
+    # the composer entirely, so two runs differing only in
+    # --system-prompt/--system-prompt-file must NOT share an entry or the second
+    # silently replays the first one's prompt. Hashed rather than inlined because
+    # production system prompts run to many KB.
+    #
+    # The key is OMITTED (not set to None) when no system prompt is configured:
+    # ``compute_cache_key`` orjson-dumps this payload, which would serialize an
+    # explicit None as ``null`` and shift every existing key, needlessly cold-
+    # starting warm caches for runs that never touch the feature.
+    system_prompt = cfg.get_system_prompt()
 
-    return {
+    payload: dict[str, object] = {
         "num_dataset_entries": getattr(dataset, "entries", None),
         "dataset_sampling_strategy": str(getattr(dataset, "sampling", "")),
         "custom_dataset_type": (
@@ -782,16 +803,19 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # When preformat_payloads is on, endpoint.format_payload() bakes the
         # stream flag, endpoint.extra, the max_tokens-vs-max_completion_tokens
         # field name, and (for streaming OpenAI-compatible endpoints)
-        # stream_options.include_usage from use_server_token_count into the
-        # stored bytes, so those knobs must key the cache or a warm entry serves
-        # bytes the run never asked for (e.g. "stream": true). Gated on the flag
-        # so the common non-preformat key stays stable.
+        # stream_options.include_usage into the stored bytes, so those knobs
+        # must key the cache or a warm entry serves bytes the run never asked
+        # for (e.g. "stream": true). include_usage now follows streaming alone,
+        # but use_server_token_count still keys the cache because it selects
+        # the token-count source baked into the run. Gated on the flag so the
+        # common non-preformat key stays stable.
         "preformat_endpoint": (
             {
                 "streaming": cfg.endpoint.streaming,
                 "use_legacy_max_tokens": cfg.endpoint.use_legacy_max_tokens,
                 "use_server_token_count": cfg.endpoint.use_server_token_count,
                 "extra": cfg.endpoint.extra,
+                "force_content_parts": Environment.ENDPOINT.FORCE_CONTENT_PARTS,
             }
             if Environment.DATASET.PREFORMAT_PAYLOADS
             else None
@@ -799,7 +823,7 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "inline_records_sha256": records_hash,
         "prompt": prompt_dump,
         "endpoint_type": str(cfg.endpoint.type),
-        "model_name": model_names[0] if model_names else "",
+        "model_names": model_names,
         "fixed_schedule_start_offset": start_offset,
         "fixed_schedule_end_offset": end_offset,
         # Load-time timing knobs bake into the cached Turn timestamps/delays
@@ -832,11 +856,32 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "weka_seam_min_overlap_ratio": (
             Environment.DATASET.WEKA_SEAM_MIN_OVERLAP_RATIO
         ),
+        # --isl-block-size lands here for the hash-id trace formats. It sets
+        # the token width every hash_id decodes to, so it rewrites the cached
+        # prompt bytes outright; without it in the key, changing the flag
+        # serves the previous run's mmap unchanged.
+        "block_size": getattr(dataset, "block_size", None),
+        # TraceLab synthesizes its block ids and recovers its subagent nesting
+        # at load time, so these select between reconstructions that are baked
+        # into the cached conversations.
+        "tracelab_subagent_join": Environment.DATASET.TRACELAB_SUBAGENT_JOIN,
+        "tracelab_codex_subagent_join": (
+            Environment.DATASET.TRACELAB_CODEX_SUBAGENT_JOIN
+        ),
+        "tracelab_min_spawn_ms": Environment.DATASET.TRACELAB_MIN_SPAWN_MS,
         # Full synthesis dump: max_isl/max_osl caps AND the speedup_ratio /
         # *_multiplier transforms, all of which rewrite the decoded trace bytes.
         "synthesis": synthesis_dump,
         "max_context_length": getattr(dataset, "max_context_length", None),
+        "entries_explicit": getattr(dataset, "entries_explicit", False),
     }
+
+    if system_prompt is not None:
+        payload["system_prompt_sha256"] = hashlib.sha256(
+            system_prompt.encode("utf-8")
+        ).hexdigest()
+
+    return payload
 
 
 def compute_cache_key_from_run(run: BenchmarkRun) -> str | None:

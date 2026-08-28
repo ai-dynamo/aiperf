@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from aiperf.common.constants import WARMUP_SYSTEM_MESSAGE_PREFIX
-from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.models import (
     BaseResponseData,
     InferenceServerResponse,
@@ -39,16 +37,6 @@ class CompletionsEndpoint(BaseEndpoint):
         prompts = [
             content for text in turn.texts for content in text.contents if content
         ]
-        # Skipped when cache-bust owns prefix isolation: its markers are
-        # warmup-coherent by design (warmup primes the prefix profiling hits),
-        # and prefixing in front of the shared marker would break that prime.
-        # See ``Worker._system_message_for_phase``.
-        if request_info.credit_phase == CreditPhase.WARMUP and (
-            request_info.cache_bust_target in (None, CacheBustTarget.NONE)
-        ):
-            prompts = [
-                f"{WARMUP_SYSTEM_MESSAGE_PREFIX}\n{prompt}" for prompt in prompts
-            ]
 
         extra = model_endpoint.endpoint.extra or []
 
@@ -69,18 +57,30 @@ class CompletionsEndpoint(BaseEndpoint):
         if turn.extra_body:
             payload.update(turn.extra_body)
 
-        if (
-            model_endpoint.endpoint.streaming
-            and model_endpoint.endpoint.use_server_token_count
-        ):
-            # Automatically set stream_options to include usage when using server token counts
-            if "stream_options" not in payload:
-                payload["stream_options"] = {"include_usage": True}
-            elif (
-                isinstance(payload["stream_options"], dict)
-                and "include_usage" not in payload["stream_options"]
-            ):
-                payload["stream_options"]["include_usage"] = True
+        # Read the merged payload, not endpoint.streaming: the extras above can
+        # override "stream", and a server rejects stream_options when stream is
+        # false ("Stream options can only be defined when stream=True").
+        if payload.get("stream"):
+            # Requested for every streaming run, not just server-token-count
+            # ones: vLLM rides per-request metrics (including
+            # metrics.speculative_decoding) on the trailing usage chunk and
+            # only emits that chunk when include_usage is set, so gating it on
+            # an unrelated flag would silently drop those metrics. Authors who
+            # want it off can set stream_options.include_usage explicitly.
+            stream_options = payload.get("stream_options")
+            # An explicit null parses straight from the CLI
+            # (--extra-inputs '{"stream_options": null}'); treat it as absent so
+            # this endpoint agrees with chat instead of silently skipping.
+            if stream_options is None:
+                stream_options = {}
+            if isinstance(stream_options, dict):
+                # Copy rather than mutate: the payload merge aliases
+                # endpoint.extra / turn.extra_body, which are long-lived config
+                # reused across every request, so an in-place edit would rewrite
+                # the author's config and leak into every subsequent request.
+                merged = {**stream_options}
+                merged.setdefault("include_usage", True)
+                payload["stream_options"] = merged
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload

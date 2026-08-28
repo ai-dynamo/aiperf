@@ -26,7 +26,7 @@ def trace_file(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize(
     "fmt",
-    ["mooncake_trace", "bailian_trace", "burst_gpt_trace", "sagemaker_data_capture"],
+    ["mooncake_trace", "bailian_trace", "baseten_trace", "tracelab"],
 )
 def test_block_size_routed_onto_filedataset_for_hash_id_traces(
     trace_file: Path, fmt: str
@@ -43,6 +43,23 @@ def test_block_size_routed_onto_filedataset_for_hash_id_traces(
     assert out["type"] == "file"
     assert out["block_size"] == 256
     assert "prompts" not in out
+
+
+@pytest.mark.parametrize(
+    "fmt",
+    ["burst_gpt_trace", "sagemaker_data_capture"],
+)
+def test_block_size_rejected_for_non_hash_id_traces(trace_file: Path, fmt: str) -> None:
+    with pytest.raises(ValueError, match="--isl-block-size"):
+        build_dataset(
+            CLIConfig(
+                model_names=["m"],
+                input_file=str(trace_file),
+                custom_dataset_type=fmt,
+                prompt_input_tokens_block_size=256,
+                prompt_output_tokens_mean=64,
+            )
+        )
 
 
 def test_block_size_routed_onto_autodetected_file_trace(trace_file: Path) -> None:

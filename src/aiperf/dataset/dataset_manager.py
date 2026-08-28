@@ -270,11 +270,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         per-turn payloads are verbatim or synthesized at runtime and would be
         huge (and for weka, meaningless) in inputs.json. Uses the loader's
         DETECTED type so auto-detected traces (e.g. a bare BurstGPT CSV) are
-        skipped too. Same predicate the mmap cache uses
-        (``mmap_cache.is_trace_or_verbatim_dataset``), but the cache gate keys
-        off the pre-load CONFIG type: an explicitly-typed trace is both cached
-        and skipped, while an auto-detected trace is skipped-but-uncached (a
-        re-tokenize perf miss, never a correctness issue).
+        skipped too. Most formats share the mmap cache predicate
+        (``mmap_cache.is_trace_or_verbatim_dataset``), but Baseten is a
+        deliberate skip-only special case: its large recorded prompts make
+        ``inputs.json`` prohibitively expensive, while it remains outside the
+        mmap cache. The cache gate keys off the pre-load CONFIG type, so other
+        explicitly-typed traces are cached and skipped while auto-detected
+        traces are skipped-but-uncached (a re-tokenize perf miss, never a
+        correctness issue).
         """
         default_dataset = self.run.cfg.get_default_dataset()
         public_dataset = (
@@ -282,8 +285,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             if isinstance(default_dataset, PublicDataset)
             else None
         )
-        return mmap_cache.is_trace_or_verbatim_dataset(
-            self._detected_dataset_type, public_dataset
+        return (
+            self._detected_dataset_type == CustomDatasetType.BASETEN_TRACE
+            or mmap_cache.is_trace_or_verbatim_dataset(
+                self._detected_dataset_type, public_dataset
+            )
         )
 
     def _lookup_under_lock(self) -> mmap_cache.CacheHit | None:

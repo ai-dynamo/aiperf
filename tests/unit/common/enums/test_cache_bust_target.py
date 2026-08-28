@@ -28,3 +28,17 @@ def test_cache_bust_target_case_insensitive(raw, expected):
 
 def test_cache_bust_target_default_is_none():
     assert CacheBustTarget.NONE.value == "none"
+
+
+def test_warmup_isolation_system_in_cache_bust_target():
+    assert (
+        CacheBustTarget("warmup_isolation_system")
+        == CacheBustTarget.WARMUP_ISOLATION_SYSTEM
+    )
+
+
+def test_warmup_isolation_first_turn_in_cache_bust_target():
+    assert (
+        CacheBustTarget("warmup_isolation_first_turn")
+        == CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN
+    )

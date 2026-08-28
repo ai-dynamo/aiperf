@@ -51,8 +51,9 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
     )
     acceptance_histogram: dict[NonNegativeInt, NonNegativeInt] = Field(
         description="Sparse map from accepted draft count j to the number of "
-        "verification steps that accepted exactly j draft tokens. Keys are "
-        "integers (int-cast from the string JSON object keys on the wire); "
+        "verification steps that accepted exactly j draft tokens. Engine "
+        "adapters populate it (e.g. vLLM inflates its dense on-the-wire "
+        "list[int], dropping zero-count buckets); keys are integers and "
         "zero-count buckets are omitted. Excludes the bonus token.",
     )
     num_accepted_draft_tokens: int = Field(

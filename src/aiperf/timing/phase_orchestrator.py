@@ -368,14 +368,17 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         3. Runner handles setup, execution, and cleanup
 
         Seamless Mode:
-            With seamless=True, a phase can start before the previous phase
-            completes waiting for returns. This allows smooth phase transitions
-            without gaps in request issuance. Multiple runners may be active
-            simultaneously (old phase waiting for returns while new phase sends).
+            When the next phase has seamless=True, it can start before the current
+            phase completes waiting for returns. This allows smooth phase
+            transitions without gaps in request issuance. Multiple runners may be
+            active simultaneously (old phase waiting for returns while new phase
+            sends).
         """
         for i, phase_config in enumerate(self._ordered_phase_configs):
             is_final_phase = i == len(self._ordered_phase_configs) - 1
-            is_seamless_non_final = phase_config.seamless and not is_final_phase
+            seamless_to_next = (
+                not is_final_phase and self._ordered_phase_configs[i + 1].seamless
+            )
 
             runner = PhaseRunner(
                 config=phase_config,
@@ -395,7 +398,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             # Seamless non-final profiling: stop after drain (phase-complete
             # callback), not when run() returns at send-complete.
             profiler_will_defer_stop = (
-                is_seamless_non_final
+                seamless_to_next
                 and phase_config.phase == CreditPhase.PROFILING
                 and self._control_hooks is not None
                 and bool(self._control_hooks.profiler_start_urls)
@@ -407,7 +410,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             # post-loop barrier only inspects runners still in _active_runners,
             # and the complete-callback removes the runner from that list, so a
             # drained phase can only surface a fatal error through this callback.
-            if is_seamless_non_final:
+            if seamless_to_next:
                 runner.set_phase_complete_callback(
                     self._phase_runner_cleanup_and_stop_profiler_callback(runner)
                     if profiler_will_defer_stop
@@ -421,10 +424,11 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             async def _run(
                 phase_runner: PhaseRunner = runner,
                 final: bool = is_final_phase,
+                seamless: bool = seamless_to_next,
             ) -> None:
                 # Execute phase (runner.run() returns after sending complete for seamless,
                 # or after all returns complete for non-seamless/final phases)
-                await phase_runner.run(is_final_phase=final)
+                await phase_runner.run(is_final_phase=final, seamless_to_next=seamless)
 
             async def _start_profiler(
                 hooks: PreparedEndpointControlHooks,
@@ -462,7 +466,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
             # Remove from active runners when fully complete
             # For seamless phases, this happens after returns complete (background task)
-            if not is_seamless_non_final:
+            if not seamless_to_next:
                 self._active_runners.remove(runner)
 
         # Barrier: a seamless phase's return-wait runs detached and

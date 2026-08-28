@@ -59,6 +59,7 @@ class EndpointDefaults:
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False
     USE_SERVER_TOKEN_COUNT = False
+    PER_CHUNK_USAGE = False
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
@@ -245,6 +246,21 @@ class EndpointConfig(BaseConfig):
             description="Use server-reported token counts from response usage field. "
             "When true, trusts usage.prompt_tokens and usage.completion_tokens. "
             "When false, counts tokens locally using configured tokenizer.",
+        ),
+    ]
+
+    per_chunk_usage: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Request per-chunk token usage on streaming responses by "
+            "setting stream_options.continuous_usage_stats. When true, the server "
+            "reports cumulative usage on every chunk (not just the final one), which "
+            "lets inter-token latency subtract the first content chunk's real token "
+            "count instead of assuming one token. Requires a server that supports "
+            "continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. "
+            "Requires use_server_token_count so OSL and the first-chunk count share "
+            "the server source.",
         ),
     ]
 
@@ -530,6 +546,33 @@ class EndpointConfig(BaseConfig):
         """Require image UUID reuse to use the Chat Completions endpoint."""
         if self.uuid_and_strip and self.type != EndpointType.CHAT:
             raise ValueError("--uuid-and-strip requires endpoint type 'chat'")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_per_chunk_usage(self) -> Self:
+        """Require server token counts when per-chunk usage is requested.
+
+        The first content chunk's token count is read only from server-reported
+        per-chunk usage (in the server-token-count path). Without
+        ``--use-server-token-count`` the client-tokenization path never populates
+        it, so ``--per-chunk-usage`` would silently have no effect on inter-token
+        latency."""
+        if self.per_chunk_usage and not self.use_server_token_count:
+            raise ValueError(
+                "--per-chunk-usage requires --use-server-token-count "
+                "(the first-chunk token count comes from server-reported per-chunk usage)"
+            )
+        if self.per_chunk_usage and self.type != EndpointType.CHAT:
+            raise ValueError(
+                "--per-chunk-usage requires endpoint type 'chat' "
+                "(continuous_usage_stats is only injected on the chat endpoint)"
+            )
+        if self.per_chunk_usage and not self.streaming:
+            raise ValueError(
+                "--per-chunk-usage requires --streaming "
+                "(continuous_usage_stats and inter-token latency apply only to "
+                "streaming responses)"
+            )
         return self
 
     @model_validator(mode="after")

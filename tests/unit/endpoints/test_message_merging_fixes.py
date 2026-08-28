@@ -11,7 +11,6 @@ from __future__ import annotations
 import orjson
 import pytest
 
-from aiperf.common.enums import CreditPhase
 from aiperf.common.models import (
     RequestRecord,
     Text,
@@ -333,11 +332,16 @@ class TestResponsesFailedStreamShortCircuits:
 
 # ---------------------------------------------------------------------------
 # P3 #11: chat de-dups leading system when raw_messages already starts with system
+#
+# The de-dup invariant (never emit two system messages) still holds; what the
+# single message CONTAINS changed. The conversation-level system_message used to
+# be discarded outright, which silently dropped a verbatim --system-prompt on
+# raw-payload/DAG datasets. It is now prepended into the authored message.
 # ---------------------------------------------------------------------------
 
 
 class TestChatDeDupsLeadingSystem:
-    def test_authored_leading_system_wins(self, chat_endpoint):
+    def test_authored_leading_system_merges_with_request_info(self, chat_endpoint):
         authored = [
             {"role": "system", "content": "authored system"},
             {"role": "user", "content": "hi"},
@@ -349,12 +353,16 @@ class TestChatDeDupsLeadingSystem:
             system_message="request_info system",
         )
         payload = chat_endpoint.format_payload(request_info)
-        # Exactly one system message, and it's the authored one.
+        # Still exactly one system message, now carrying both parts with the
+        # conversation-level prompt first (token 0 for prefix-cache purposes).
         systems = [m for m in payload["messages"] if m["role"] == "system"]
         assert len(systems) == 1
-        assert systems[0]["content"] == "authored system"
+        assert systems[0]["content"] == "request_info system\n\nauthored system"
 
-    def test_warmup_marker_merges_into_raw_messages_leading_system(self, chat_endpoint):
+    def test_authored_leading_system_untouched_without_request_info(
+        self, chat_endpoint
+    ):
+        """No conversation-level prompt -> the authored message passes through."""
         authored = [
             {"role": "system", "content": "authored system"},
             {"role": "user", "content": "hi"},
@@ -363,42 +371,33 @@ class TestChatDeDupsLeadingSystem:
         request_info = create_request_info(
             model_endpoint=chat_endpoint.model_endpoint,
             turns=[turn],
-            credit_phase=CreditPhase.WARMUP,
-            system_message="warmup",
         )
         payload = chat_endpoint.format_payload(request_info)
-
         systems = [m for m in payload["messages"] if m["role"] == "system"]
         assert len(systems) == 1
-        assert systems[0]["content"] == "warmup\nauthored system"
-        assert authored[0]["content"] == "authored system"
+        assert systems[0]["content"] == "authored system"
 
-    def test_warmup_marker_merges_into_raw_messages_leading_system_list_content(
-        self, chat_endpoint
-    ):
+    def test_authored_leading_system_not_restacked_across_calls(self, chat_endpoint):
+        """Formatting twice must not stack the prefix onto shared turn state.
+
+        ``raw_messages`` is reused across credits within a session, so the merge
+        copies the message rather than mutating it in place.
+        """
         authored = [
-            {
-                "role": "system",
-                "content": [{"type": "text", "text": "authored system"}],
-            },
+            {"role": "system", "content": "authored system"},
             {"role": "user", "content": "hi"},
         ]
         turn = Turn(role="user", raw_messages=authored)
         request_info = create_request_info(
             model_endpoint=chat_endpoint.model_endpoint,
             turns=[turn],
-            credit_phase=CreditPhase.WARMUP,
-            system_message="warmup",
+            system_message="request_info system",
         )
+        chat_endpoint.format_payload(request_info)
         payload = chat_endpoint.format_payload(request_info)
-
         systems = [m for m in payload["messages"] if m["role"] == "system"]
-        assert len(systems) == 1
-        assert systems[0]["content"] == [
-            {"type": "text", "text": "warmup"},
-            {"type": "text", "text": "authored system"},
-        ]
-        assert authored[0]["content"] == [{"type": "text", "text": "authored system"}]
+        assert systems[0]["content"] == "request_info system\n\nauthored system"
+        assert authored[0]["content"] == "authored system"
 
 
 # ---------------------------------------------------------------------------

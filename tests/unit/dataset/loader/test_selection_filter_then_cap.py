@@ -11,6 +11,7 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.selection import SelectionStats, filter_then_cap
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 from tests.unit.dataset.loader.conftest import make_weka_run
@@ -49,6 +50,7 @@ def test_filter_then_cap_skips_rejects_until_n_eligible() -> None:
     assert stats.eligible == _NUM_ENTRIES
     assert stats.loaded == _NUM_ENTRIES
     assert stats.largest_observed == _OVER_INPUT + _OUTPUT
+    assert stats.smallest_observed == _UNDER_INPUT + _OUTPUT
 
 
 def test_filter_then_cap_both_none_keeps_scan_order() -> None:
@@ -57,7 +59,9 @@ def test_filter_then_cap_both_none_keeps_scan_order() -> None:
         candidates, num_dataset_entries=None, max_context_length=None
     )
     assert kept == [0, 1, 2, 3, 4]
-    assert stats == SelectionStats(scanned=5, eligible=5, loaded=5, largest_observed=1)
+    assert stats == SelectionStats(
+        scanned=5, eligible=5, loaded=5, largest_observed=1, smallest_observed=1
+    )
 
 
 def _weka_trace_dict(index: int) -> dict:
@@ -144,3 +148,33 @@ def test_weka_file_loader_filter_then_cap(
             max_context_length=max_ctx,
         )
     assert list(data.keys()) == expected_ids
+
+
+def test_weka_file_loader_all_rejected_raises_with_smallest_observed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _write_weka_dir(tmp_path / "weka")
+    # Set max_context_length very small so all are rejected (smallest trace peak context is 110)
+    run = make_weka_run(
+        model_names=["m"],
+        tokenizer_name="t",
+        max_context_length=5,
+        entries=None,
+    )
+    loader = _make_loader(root, run, monkeypatch)
+    data = loader.load_dataset()
+
+    with pytest.raises(DatasetLoaderError) as exc_info:
+        loader._select_traces_filter_then_cap(
+            data,
+            num_dataset_entries=None,
+            max_context_length=5,
+        )
+
+    err_msg = str(exc_info.value)
+    assert "No eligible traces in weka_trace" in err_msg
+    assert (
+        "Smallest trace requires 110 tokens; raise --max-context-length to at least that (e.g. --max-context-length 110) to admit any trace."
+        in err_msg
+    )

@@ -415,5 +415,53 @@ class TestDeriveVariationSeedFormula:
         assert 0 <= seed < 2**64
 
 
+class TestFoldSeedToUint32:
+    """`fold_seed_to_uint32` bridges 64-bit AIPerf seeds to numpy's legacy seeder.
+
+    `numpy.random.seed` (MT19937 global state) rejects anything outside
+    [0, 2**32 - 1], but `derive_variation_seed` returns a full uint64 for
+    adaptive-sweep variations and `vary_seed_per_trial` runs.
+    """
+
+    def test_small_seed_is_unchanged(self):
+        """Seeds already in range must round-trip identically, so folding
+        never perturbs an existing reproducible run."""
+        from aiperf.common.random_generator import fold_seed_to_uint32
+
+        for seed in (0, 1, 42, 2**32 - 1):
+            assert fold_seed_to_uint32(seed) == seed
+
+    def test_uint64_seed_folds_into_range(self):
+        from aiperf.common.random_generator import (
+            derive_variation_seed,
+            fold_seed_to_uint32,
+        )
+
+        seed = derive_variation_seed(42, "concurrency_10:trial:1")
+        assert seed >= 2**32
+        assert 0 <= fold_seed_to_uint32(seed) < 2**32
+
+    def test_folded_seed_is_accepted_by_numpy_legacy_seeder(self):
+        import numpy as np
+
+        from aiperf.common.random_generator import (
+            derive_variation_seed,
+            fold_seed_to_uint32,
+        )
+
+        seed = derive_variation_seed(42, "concurrency_10")
+        with pytest.raises(ValueError, match=r"2\*\*32"):
+            np.random.seed(seed)
+        np.random.seed(fold_seed_to_uint32(seed))
+
+    def test_high_bits_contribute_to_result(self):
+        """XOR-fold, not truncation: two seeds sharing a low half must not collide."""
+        from aiperf.common.random_generator import fold_seed_to_uint32
+
+        low = 0x0000_0000_DEAD_BEEF
+        high = 0x1234_5678_DEAD_BEEF
+        assert fold_seed_to_uint32(low) != fold_seed_to_uint32(high)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

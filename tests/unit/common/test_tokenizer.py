@@ -5,6 +5,7 @@
 from unittest.mock import patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 from aiperf.common.tokenizer import (
@@ -65,6 +66,84 @@ class TestBuiltinTokenizer:
         self, tokenizer: Tokenizer
     ) -> None:
         assert tokenizer.block_separation_token_id == tokenizer.eos_token_id
+
+    def test_num_prompt_special_tokens_returns_zero_when_no_bos(
+        self, tokenizer: Tokenizer
+    ) -> None:
+        """Builtin (tiktoken) tokenizer has no BOS — zero special tokens to add."""
+        assert tokenizer.num_prompt_special_tokens() == 0
+
+    def test_num_prompt_special_tokens_delegates_to_hf_method(self) -> None:
+        """Returns whatever HF's num_special_tokens_to_add(pair=False) reports.
+
+        For BERT-like tokenizers this is 2 (CLS+SEP); the BOS heuristic alone
+        would under-count it.
+        """
+        from types import SimpleNamespace
+
+        mock_inner = SimpleNamespace(
+            bos_token_id=101,
+            eos_token_id=102,
+            num_special_tokens_to_add=lambda pair=False: 2 if not pair else 3,
+        )
+        tok = Tokenizer()
+        with patch.object(tok, "_tokenizer", mock_inner):
+            assert tok.num_prompt_special_tokens() == 2
+
+    def test_num_prompt_special_tokens_returns_zero_when_hf_method_says_zero(
+        self,
+    ) -> None:
+        """GPT-2 has bos_token_id but doesn't auto-prepend it; HF method returns 0."""
+        from types import SimpleNamespace
+
+        mock_inner = SimpleNamespace(
+            bos_token_id=50256,
+            eos_token_id=50256,
+            num_special_tokens_to_add=lambda pair=False: 0,
+        )
+        tok = Tokenizer()
+        with patch.object(tok, "_tokenizer", mock_inner):
+            assert tok.num_prompt_special_tokens() == 0
+
+    def test_num_prompt_special_tokens_falls_back_to_zero(self) -> None:
+        """Tokenizers without num_special_tokens_to_add always return 0 — bos_token_id
+        being defined does not mean the tokenizer prepends it (e.g. GPT-2)."""
+        from types import SimpleNamespace
+
+        with_bos = SimpleNamespace(bos_token_id=1, eos_token_id=2)
+        without_bos = SimpleNamespace(bos_token_id=None, eos_token_id=2)
+
+        tok = Tokenizer()
+        with patch.object(tok, "_tokenizer", with_bos):
+            assert tok.num_prompt_special_tokens() == 0
+        with patch.object(tok, "_tokenizer", without_bos):
+            assert tok.num_prompt_special_tokens() == 0
+
+    def test_num_prompt_special_tokens_falls_back_when_hf_method_raises(self) -> None:
+        """Stubbed (NotImplementedError) or signature-mismatched (TypeError) methods
+        fall back to 0; other exceptions propagate as real bugs."""
+        from types import SimpleNamespace
+
+        def _not_impl(pair: bool = False) -> int:
+            raise NotImplementedError
+
+        def _bad_sig() -> int:  # rejects pair kwarg → TypeError
+            return 0
+
+        bos = {"bos_token_id": 1, "eos_token_id": 2}
+        tok = Tokenizer()
+        with patch.object(
+            tok,
+            "_tokenizer",
+            SimpleNamespace(**bos, num_special_tokens_to_add=_not_impl),
+        ):
+            assert tok.num_prompt_special_tokens() == 0
+        with patch.object(
+            tok,
+            "_tokenizer",
+            SimpleNamespace(**bos, num_special_tokens_to_add=_bad_sig),
+        ):
+            assert tok.num_prompt_special_tokens() == 0
 
     def test_call_returns_input_ids(self, tokenizer: Tokenizer) -> None:
         result = tokenizer("hello")
@@ -285,3 +364,72 @@ class TestTiktokenUrlsMatchTiktokenSource:
                 f"tiktoken_ext.openai_public.{target} — tiktoken changed the URL; "
                 f"update _TIKTOKEN_ENCODING_URLS in src/aiperf/common/tokenizer.py"
             )
+
+
+class TestTiktokenInternalAttributeGuard:
+    """tiktoken privates must fail loudly, not as AttributeError/KeyError.
+
+    `valid_token_ids` / `all_token_ids` / `all_special_ids` read
+    `_mergeable_ranks` and `_special_token_values` off `tiktoken.Encoding`.
+    tiktoken exposes no public equivalent, and its sparse ID space means
+    `range(n_vocab)` is not a usable substitute -- gap IDs are not decodable.
+    A rename in tiktoken previously broke `--prompt-corpus random` at runtime,
+    with a traceback pointing nowhere useful.
+    """
+
+    @pytest.fixture
+    def tiktoken_tokenizer(self):
+        return Tokenizer.from_pretrained("o200k_base")
+
+    @pytest.mark.parametrize(
+        "missing",
+        [
+            param("_mergeable_ranks", id="mergeable-ranks"),
+            param("_special_token_values", id="special-token-values"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "accessor",
+        [
+            param("valid_token_ids", id="valid-token-ids"),
+            param("all_token_ids", id="all-token-ids"),
+        ],
+    )  # fmt: skip
+    def test_missing_internal_raises_tokenizer_error(
+        self, tiktoken_tokenizer, accessor, missing
+    ):
+        encoding = tiktoken_tokenizer._tokenizer._encoding
+
+        class _Stripped:
+            """Encoding proxy with one attribute removed, mimicking a rename."""
+
+            def __getattr__(self, name):
+                if name == missing:
+                    raise AttributeError(name)
+                return getattr(encoding, name)
+
+        tiktoken_tokenizer._tokenizer._encoding = _Stripped()
+        with pytest.raises(TokenizerError, match=missing):
+            getattr(tiktoken_tokenizer, accessor)
+
+    def test_error_names_the_affected_flag(self, tiktoken_tokenizer):
+        """The message has to be actionable from a benchmark run, so it names
+        the flag that breaks rather than only the attribute."""
+        encoding = tiktoken_tokenizer._tokenizer._encoding
+
+        class _Stripped:
+            def __getattr__(self, name):
+                if name == "_mergeable_ranks":
+                    raise AttributeError(name)
+                return getattr(encoding, name)
+
+        tiktoken_tokenizer._tokenizer._encoding = _Stripped()
+        with pytest.raises(TokenizerError) as exc:
+            _ = tiktoken_tokenizer.valid_token_ids
+        assert "--prompt-corpus random" in str(exc.value)
+
+    def test_intact_encoding_is_unaffected(self, tiktoken_tokenizer):
+        """Guard must be transparent when the attributes are present."""
+        assert len(tiktoken_tokenizer.valid_token_ids) == 199998
+        assert len(tiktoken_tokenizer.all_token_ids) == 200000
+        assert len(tiktoken_tokenizer.all_special_ids) == 2
