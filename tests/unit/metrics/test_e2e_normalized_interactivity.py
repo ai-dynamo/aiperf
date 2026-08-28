@@ -205,3 +205,85 @@ def test_metric_metadata() -> None:
     assert E2ENormalizedInteractivityP90Metric.percentile == 90.0
     assert E2ENormalizedInteractivityP75Metric.percentile == 75.0
     assert E2ENormalizedInteractivityP90Metric.flags & MetricFlags.LARGER_IS_BETTER
+
+
+def test_drop_log_attributes_failed_requests_separately(caplog) -> None:
+    """A failed request occupies a row with absent (NaN) columns, so it is
+    excluded by the same finite check as a genuine TTFT/ISL data-quality
+    problem. The debug log is the only signal for a shrunken sample -- ``count``
+    is pinned to 1 and dropped on export -- so it must name the dominant cause
+    rather than sending the reader after a problem that isn't there."""
+    store = ColumnStore(initial_capacity=5)
+    for idx in range(3):
+        store.ingest(
+            idx=idx,
+            record_metrics={
+                "request_latency": 2.0 * NANOS_PER_SECOND,
+                "output_sequence_length": 100.0,
+                "time_to_first_token": 0.05 * NANOS_PER_SECOND,
+                "input_sequence_length": 100.0,
+            },
+            start_ns=float(idx),
+            end_ns=float(idx),
+            generation_start_ns=None,
+        )
+    # Error-shaped rows: ingested unconditionally, but carry no metrics.
+    for idx in (3, 4):
+        store.ingest(
+            idx=idx,
+            record_metrics={},
+            start_ns=float(idx),
+            end_ns=float(idx),
+            generation_start_ns=None,
+        )
+
+    with caplog.at_level("DEBUG"):
+        _inject(store)
+
+    drop_logs = [r.getMessage() for r in caplog.records if "dropped" in r.getMessage()]
+    assert drop_logs, "expected a debug log reporting the dropped requests"
+    message = drop_logs[0]
+    assert "2 of 5 requests dropped" in message
+    assert "2 with no recorded latency/OSL" in message
+    assert "computed over 3 requests" in message
+
+
+def test_drop_log_does_not_count_non_positive_values_as_missing(caplog) -> None:
+    """A finite-but-non-positive latency is a different cause from an absent
+    one, and the log must not conflate them: ``missing`` counts only rows with
+    no recorded latency/OSL, so a zero-latency row belongs in the remainder."""
+    store = ColumnStore(initial_capacity=5)
+    for idx in range(3):
+        store.ingest(
+            idx=idx,
+            record_metrics={
+                "request_latency": 2.0 * NANOS_PER_SECOND,
+                "output_sequence_length": 100.0,
+            },
+            start_ns=float(idx),
+            end_ns=float(idx),
+            generation_start_ns=None,
+        )
+    store.ingest(
+        idx=3,
+        record_metrics={"request_latency": 0.0, "output_sequence_length": 100.0},
+        start_ns=3.0,
+        end_ns=3.0,
+        generation_start_ns=None,
+    )
+    store.ingest(
+        idx=4,
+        record_metrics={},
+        start_ns=4.0,
+        end_ns=4.0,
+        generation_start_ns=None,
+    )
+
+    with caplog.at_level("DEBUG"):
+        _inject(store)
+
+    message = next(r.getMessage() for r in caplog.records if "dropped" in r.getMessage())
+    assert "2 of 5 requests dropped" in message
+    # Only the absent row is "missing"; the zero-latency row is not.
+    assert "1 with no recorded latency/OSL" in message
+    assert "non-positive or non-finite latency" in message

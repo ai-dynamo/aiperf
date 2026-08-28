@@ -113,10 +113,19 @@ def _compute_finite_ratios(
     dropped = int(latency_ns.size - ratio.size)
     if dropped > 0:
         total, kept = latency_ns.size, ratio.size
+        # A failed request still occupies a row, with its metric columns absent
+        # (NaN), so it is excluded by the same finite check as a genuine
+        # data-quality problem. Report the two separately: this log is the only
+        # signal for a shrunken sample (``count`` is pinned to 1 and dropped on
+        # export), and pointing a user at TTFT/ISL when the real cause is a high
+        # error rate sends them looking for a problem that isn't there.
+        missing = int((~np.isfinite(latency_ns) | ~np.isfinite(osl)).sum())
         _logger.debug(
             lambda: f"E2E normalized interactivity: {dropped} of {total} requests "
-            f"dropped by the positive/finite filter (TTFT<=0, ISL<=0, or non-finite "
-            f"ratio); percentiles computed over {kept} requests."
+            f"dropped ({missing} with no recorded latency/OSL -- typically failed "
+            f"requests; the remainder for a non-positive or non-finite latency, "
+            f"OSL, TTFT, or ISL, or a non-finite ratio); percentiles computed "
+            f"over {kept} requests."
         )
     return ratio
 
