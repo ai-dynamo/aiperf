@@ -7,9 +7,8 @@ use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     action::{
         ActionCancelReceipt, ActionFailureCode, ActionPlacement, ActionResultRetention,
-        EndpointRetrySafety,
-        BudgetedActionUpdate, PreparedStreamingActionBinding, StreamingActionDriver,
-        StreamingActionDriverControl, StreamingActionDriverControlOps,
+        BudgetedActionUpdate, EndpointRetrySafety, PreparedStreamingActionBinding,
+        StreamingActionDriver, StreamingActionDriverControl, StreamingActionDriverControlOps,
         StreamingActionSinkDescriptor, StreamingActionSinkFactory, StreamingActionSubmitter,
         ValidatedStreamingActionSinkConfig, action_execution_control,
     },
@@ -1144,7 +1143,6 @@ async fn source_factory_strictly_validates_downcasts_and_prepares_real_behavior(
                 clock: RealClock::new(),
                 acquisition_budget,
                 issue_reporter: reporter,
-                clock: RealClock::new(),
             },
         )
         .unwrap_or_else(|error| panic!("prepare: {error}"));

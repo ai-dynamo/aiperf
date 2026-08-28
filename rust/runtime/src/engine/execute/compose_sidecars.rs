@@ -285,9 +285,6 @@ pub(crate) async fn execute_native_inner(
         sketch_mode,
         "record retention path selected"
     );
-    // Per-record OTLP folded at completion by the single-thread exact-fold
-    // capture; every other arm leaves this `None` and folds `captured` post-run.
-    let mut folded_otel: Option<OtelRecordAccumulator> = None;
     // Static-accuracy terminal captures, collected by whichever arm runs: the
     // single-thread arm drains its one processor; the sharded arm concatenates the
     // per-shard captures. Graded once at finalize (order-independent by problem id).
@@ -357,9 +354,7 @@ pub(crate) async fn execute_native_inner(
                     .artifacts
                     .records_parquet_path
                     .as_ref()
-                    .map(|path| {
-                        artifact_path(&request.artifact_dir, path, "records_parquet_path")
-                    })
+                    .map(|path| artifact_path(&request.artifact_dir, path, "records_parquet_path"))
                     .transpose()?,
                 // outputs.json streams through the lane at completion.
                 outputs: request
@@ -394,7 +389,6 @@ pub(crate) async fn execute_native_inner(
             issuance: crate::engine::cellular_cell::issuance_authority_from_env(),
             phase_ordinal_bases: crate::engine::cellular_cell::phase_ordinal_bases_from_env(),
             lane_paths,
-            is_native_otel_enabled: request.native_otel_enabled,
             execution_backend: execution_backend.clone(),
             model: primary_model.clone(),
             // `workers == 1` has no distinct worker thread to name.
@@ -562,10 +556,6 @@ pub(crate) async fn execute_native_inner(
             // lane at completion; flush and close it now that every record has
             // folded. A no-op when no lane is attached (sketch, or no lane artifact).
             capture.finish_record_lane()?;
-            // Exact-fold accumulates profiling-record OTLP histograms at completion;
-            // take that accumulator for the report tail. It is absent in sketch mode
-            // and when native OTLP is disabled.
-            folded_otel = capture.take_otel();
             let (streamed, errored) = capture.take_streamed();
             accumulator
                 .merge(&streamed)
@@ -1042,36 +1032,7 @@ pub(crate) async fn execute_native_inner(
         outcome.evaluator = Some(evaluation.evaluator_report);
         outcome.errors = accuracy_report_errors(&evaluation.failures);
     }
-    let mut report = NativeReport::from_outcome(&profiling_metrics, &outcome);
-    // Per-record OTLP histograms: accumulate the same profiling-record metric
-    // projection the aggregate report is built from (and the live-streaming sink
-    // forwards to Python) so the post-report OTLP sink emits populated
-    // `bucket_counts` instead of zeros. Gated on the native OTLP sink being
-    // enabled so no per-record recompute happens otherwise. Merged here (the
-    // scheduled online path runs one current-thread worker set that already
-    // joins its per-worker records into `captured`).
-    if request.native_otel_enabled {
-        // The single-thread exact-fold arm already folded each profiling record at
-        // completion; reuse that order-independent accumulator, which produces the
-        // same histograms as folding a retained set. Otherwise fold `captured` —
-        // the full record set on the retain path, and (a known gap) only the
-        // retained errored subset on the sharded exact-fold path.
-        let otel_records = match folded_otel.take() {
-            Some(folded) => folded,
-            None => {
-                let mut otel_records = OtelRecordAccumulator::new();
-                for record in &captured {
-                    if record.ingest.phase == MetricsPhase::Profiling {
-                        observe_otel_record(&mut otel_records, record, &metrics_config);
-                    }
-                }
-                otel_records
-            }
-        };
-        if !otel_records.is_empty() {
-            report.otel_per_record = Some(otel_records);
-        }
-    }
+    let report = NativeReport::from_outcome(&profiling_metrics, &outcome);
     Ok(report)
 }
 

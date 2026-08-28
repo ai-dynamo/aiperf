@@ -22,7 +22,7 @@
   "workspace_packages": [
     {
       "name": "aiperf-bench-tools",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "direct_dependency_count": 16,
       "dependency_kind_counts": {
         "normal": 16
@@ -114,7 +114,7 @@
     },
     {
       "name": "aiperf-cli",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "direct_dependency_count": 45,
       "dependency_kind_counts": {
         "build": 1,
@@ -372,7 +372,7 @@
     },
     {
       "name": "aiperf-dry-run-tests",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "direct_dependency_count": 3,
       "dependency_kind_counts": {
         "dev": 3
@@ -399,7 +399,7 @@
     },
     {
       "name": "aiperf-e2e-tests",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "direct_dependency_count": 22,
       "dependency_kind_counts": {
         "dev": 22
@@ -525,7 +525,7 @@
     },
     {
       "name": "aiperf-mock-server",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "direct_dependency_count": 43,
       "dependency_kind_counts": {
         "dev": 4,
@@ -757,7 +757,7 @@
     },
     {
       "name": "aiperf-runtime",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "direct_dependency_count": 83,
       "dependency_kind_counts": {
         "dev": 9,
@@ -1202,7 +1202,7 @@
   "cargo_projection": [
     {
       "name": "aiperf-bench-tools",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "edition": "2024",
       "dependencies": [
         {
@@ -1449,7 +1449,7 @@
     },
     {
       "name": "aiperf-cli",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "edition": "2024",
       "dependencies": [
         {
@@ -2209,7 +2209,7 @@
     },
     {
       "name": "aiperf-dry-run-tests",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "edition": "2024",
       "dependencies": [
         {
@@ -2259,7 +2259,7 @@
     },
     {
       "name": "aiperf-e2e-tests",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "edition": "2024",
       "dependencies": [
         {
@@ -2594,7 +2594,7 @@
     },
     {
       "name": "aiperf-mock-server",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "edition": "2024",
       "dependencies": [
         {
@@ -3261,7 +3261,7 @@
     },
     {
       "name": "aiperf-runtime",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "edition": "2024",
       "dependencies": [
         {

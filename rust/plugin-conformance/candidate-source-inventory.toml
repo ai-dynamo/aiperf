@@ -916,7 +916,7 @@ candidate_path = "plugins/transport-websocket/src/transport/ws/sink.rs"
 owner_task = 33
 classification = "implementation_leaf"
 state = "present"
-blake3 = "fb1b58e62c555f1188ac6d781bcf8613504dc9a2e017c89957f93786db488857"
+blake3 = "1d310bda07ef81e4f446c23589e9b606b459f14ddebe2db9c1d5fd3c95c5dfd3"
 
 [[source]]
 source_path = "runtime/tests/websocket_transport_config.rs"
@@ -932,7 +932,7 @@ candidate_path = "plugins/transport-dry-run/src/transport/dry_run.rs"
 owner_task = 33
 classification = "implementation_leaf"
 state = "present"
-blake3 = "edf0777ab53042cd7f1999e0ce91e1b6bd317ccce742ebd7b4f498b9e76b6a20"
+blake3 = "06ae248e3b33ef5ea9b328238273fc1632e96cec9cedb6c18d26da0649cf29ec"
 
 [[source]]
 source_path = "dry-run-tests/tests/common/mod.rs"

@@ -4,6 +4,7 @@
 //! Built-in checkpoint backend factory inventory and `none` refusal behavior.
 
 use aiperf_runtime::{
+    clock::{Clock, RealClock},
     extensions::{AIPerfRegistry, AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory},
     streaming::{
         checkpoint::{CheckpointError, StreamRunIdentity},
@@ -15,6 +16,12 @@ use aiperf_runtime::{
     },
 };
 use serde_json::value::RawValue;
+use std::rc::Rc;
+
+/// Virtual clock every prepared backend reads lease deadlines from.
+fn test_clock() -> Rc<dyn aiperf_runtime::clock::Clock> {
+    Rc::new(aiperf_runtime::clock::SimClock::new())
+}
 
 #[path = "support/streaming_checkpoint.rs"]
 mod support;
@@ -46,6 +53,7 @@ fn none_backend() -> Box<dyn StreamingCheckpointBackend> {
             config,
             &CheckpointBackendPrepareContext {
                 run: support::run_id(7),
+                clock: test_clock(),
             },
         )
         .expect("prepared none backend")
@@ -184,6 +192,7 @@ fn local_factory_prepares_storage_for_an_absolute_root() {
         config,
         &CheckpointBackendPrepareContext {
             run: support::run_id(3),
+            clock: test_clock(),
         },
     );
     assert!(prepared.is_ok());

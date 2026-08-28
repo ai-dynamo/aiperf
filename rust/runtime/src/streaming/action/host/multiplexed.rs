@@ -27,7 +27,7 @@ use std::{
 use super::CheckedActionTerminalMembership;
 use crate::streaming::{
     action::{
-        ActionCancelReceipt, ActionDrainReceipt, ActionExecutionEvent, ActionExecutionError,
+        ActionCancelReceipt, ActionDrainReceipt, ActionExecutionError, ActionExecutionEvent,
         ActionFailureCode, ActionTerminalDisposition, ActionTerminalMembershipOutcomeView,
         ActionTerminalReceipt, CheckedActionTerminalMembershipView, DatasetActionSchema,
         OrderedDatasetAction, PreparedStreamingActionBinding, StreamingActionDriver,
@@ -258,8 +258,8 @@ impl ActiveExecutionSet {
         if self.entries.contains_key(&action_id) {
             return Err(ActionExecutionError::action(ActionFailureCode::Dispatch));
         }
-        let entry_bytes = ordered_map_entry_bytes::<StableActionId, ActiveExecution>()
-            .map_err(budget_failure)?;
+        let entry_bytes =
+            ordered_map_entry_bytes::<StableActionId, ActiveExecution>().map_err(budget_failure)?;
         let lease = self
             .budget
             .try_acquire(1, entry_bytes)
@@ -636,7 +636,8 @@ impl StreamingActionHost {
             let mut pending: Vec<
                 Pin<
                     Box<
-                        dyn Future<Output = Result<ActionExecutionEvent, ActionExecutionError>> + '_,
+                        dyn Future<Output = Result<ActionExecutionEvent, ActionExecutionError>>
+                            + '_,
                     >,
                 >,
             > = Vec::with_capacity(self.bindings.len());
@@ -711,7 +712,10 @@ impl StreamingActionHost {
     /// Borrow the schema bound to one binding index, for diagnostics.
     #[must_use]
     pub fn bound_schemas(&self) -> Vec<&DatasetActionSchema> {
-        self.bindings.iter().map(|binding| &binding.schema).collect()
+        self.bindings
+            .iter()
+            .map(|binding| &binding.schema)
+            .collect()
     }
 
     fn apply_event(&mut self, event: &ActionExecutionEvent) -> Result<(), ActionExecutionError> {

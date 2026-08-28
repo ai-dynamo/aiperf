@@ -285,6 +285,27 @@ pub struct Export {
     /// Server-metrics Parquet sink.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parquet: Option<ParquetExport>,
+    /// Plugin-provided exporter sinks (empty when none are configured).
+    ///
+    /// Each entry identifies a plugin-registered exporter by `id` and passes
+    /// `parameters` opaquely to that exporter. Dispatch is deferred to
+    /// execution preparation when the frozen plugin universe is available.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugin_exporters: Vec<PluginExport>,
+}
+
+/// A plugin-provided post-report exporter sink.
+///
+/// The `id` selects a factory registered by a loaded plugin; `parameters` is
+/// forwarded opaquely to that factory. Static validation accepts any
+/// syntactically valid ID; full registry lookup is deferred to runtime.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PluginExport {
+    /// Plugin-registered exporter ID (e.g. `"vendor/metrics-out:1.0"`).
+    pub id: String,
+    /// Freeform parameters forwarded to the plugin exporter factory.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub parameters: serde_json::Value,
 }
 
 /// Server-metrics summary sink policy.
@@ -484,6 +505,7 @@ impl Export {
             wandb: None,
             server_metrics: None,
             parquet: None,
+            plugin_exporters: Vec::new(),
         }
     }
 }

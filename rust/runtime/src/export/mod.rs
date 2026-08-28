@@ -221,6 +221,7 @@ pub(crate) fn default_run_name(
 
 pub mod accuracy_csv;
 pub mod analysis_html;
+pub mod capture;
 pub mod analysis_txt;
 pub mod console_txt;
 pub mod dataset_analysis;

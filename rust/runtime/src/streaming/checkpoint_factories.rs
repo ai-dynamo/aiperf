@@ -279,3 +279,232 @@ impl StreamingCheckpointBackendFactory for NoneCheckpointBackendFactory {
         Ok(Box::new(NoneCheckpointBackend::new()))
     }
 }
+
+/// Registry identifier of the conditional object-store checkpoint backend.
+#[cfg(feature = "streaming-s3")]
+pub const OBJECT_STORE_CHECKPOINT_BACKEND_ID: &str =
+    crate::streaming::checkpoints::object_store::OBJECT_STORE_CHECKPOINT_BACKEND_ID;
+
+#[cfg(feature = "streaming-s3")]
+static OBJECT_STORE_CHECKPOINT_BACKEND_DESCRIPTOR: StreamingCheckpointBackendDescriptor =
+    StreamingCheckpointBackendDescriptor {
+        id: OBJECT_STORE_CHECKPOINT_BACKEND_ID,
+        description: "Conditional object-store generation pointer with bounded object I/O",
+        is_durable: true,
+        has_leased_readers: true,
+        has_atomic_generations: true,
+        has_result_segments: true,
+        // Objects land with the bucket's own encryption policy; the backend
+        // provides atomicity and reachability, not confidentiality at rest.
+        protects_sensitive_state: false,
+        retention: CheckpointRetention::GenerationReachability,
+        // One conditional pointer is authoritative for every cell that can
+        // reach the bucket, so the backend is shared rather than controller-local.
+        placement: CheckpointBackendPlacement::SharedAcrossCells,
+        // Provider round trips advance only with wall time.
+        supports_virtual_clock: false,
+    };
+
+/// Strictly authored configuration for the object-store checkpoint backend.
+#[cfg(feature = "streaming-s3")]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectStoreCheckpointBackendConfig {
+    /// Bucket owning every checkpoint object.
+    pub bucket: String,
+    /// Checkpoint prefix every object address derives from.
+    pub prefix: String,
+    /// Authored region; absent defers to the SDK region chain.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Authored endpoint override for S3-compatible gateways.
+    #[serde(default)]
+    pub endpoint_url: Option<String>,
+    /// Path-style addressing, required by most S3-compatible gateways.
+    #[serde(default)]
+    pub force_path_style: bool,
+    /// Named credential profile; absent uses the default chain.
+    #[serde(default)]
+    pub profile: Option<String>,
+    /// Maximum simultaneously retained objects per backend budget.
+    #[serde(default = "default_max_items")]
+    pub max_items: usize,
+    /// Maximum simultaneously retained bytes per backend budget.
+    #[serde(default = "default_max_bytes")]
+    pub max_bytes: usize,
+    /// Largest chunk one upload or restore retains from one provider response.
+    #[serde(default = "default_max_chunk_bytes")]
+    pub max_chunk_bytes: usize,
+    /// Largest object sent in one `PutObject` request.
+    #[serde(default = "default_single_put_threshold_bytes")]
+    pub single_put_threshold_bytes: usize,
+    /// Bytes buffered per multipart part above that threshold.
+    #[serde(default = "default_multipart_part_bytes")]
+    pub multipart_part_bytes: usize,
+    /// Bounded per-operation-attempt timeout, in nanoseconds.
+    #[serde(default = "default_operation_timeout_ns")]
+    pub operation_timeout_ns: i64,
+    /// Bounded connect timeout, in nanoseconds.
+    #[serde(default = "default_connect_timeout_ns")]
+    pub connect_timeout_ns: i64,
+}
+
+#[cfg(feature = "streaming-s3")]
+const fn default_max_chunk_bytes() -> usize {
+    8 * 1_024 * 1_024
+}
+
+#[cfg(feature = "streaming-s3")]
+const fn default_single_put_threshold_bytes() -> usize {
+    8 * 1_024 * 1_024
+}
+
+#[cfg(feature = "streaming-s3")]
+const fn default_multipart_part_bytes() -> usize {
+    8 * 1_024 * 1_024
+}
+
+#[cfg(feature = "streaming-s3")]
+const fn default_operation_timeout_ns() -> i64 {
+    30_000_000_000
+}
+
+#[cfg(feature = "streaming-s3")]
+const fn default_connect_timeout_ns() -> i64 {
+    10_000_000_000
+}
+
+/// Validated object-store configuration carrying its already-checked limits.
+#[cfg(feature = "streaming-s3")]
+#[derive(Debug)]
+struct ValidatedObjectStoreConfig {
+    client: crate::streaming::aws::AwsClientSettings,
+    profile: Option<String>,
+    store: crate::streaming::checkpoints::aws_object_store::AwsObjectStoreSettings,
+    prefix: crate::streaming::checkpoints::object_store::ObjectKey,
+    limits: crate::streaming::checkpoints::object_store::ObjectCheckpointLimits,
+}
+
+#[cfg(feature = "streaming-s3")]
+impl ObjectStoreCheckpointBackendConfig {
+    fn validate_config(&self) -> Result<ValidatedObjectStoreConfig, CheckpointError> {
+        use crate::streaming::{
+            aws::{AwsClientSettings, AwsProxySelection},
+            checkpoints::{
+                aws_object_store::AwsObjectStoreSettings,
+                object_store::{ObjectCheckpointLimits, ObjectKey, ObjectListBudget},
+            },
+        };
+
+        if self.bucket.is_empty() {
+            return Err(configuration_error(
+                "object-store checkpoint backend bucket must not be empty",
+            ));
+        }
+        if self.prefix.is_empty() || self.prefix.ends_with('/') {
+            return Err(configuration_error(
+                "object-store checkpoint backend prefix must be nonempty and unterminated",
+            ));
+        }
+        let nonzero = |value: usize, field: &str| {
+            NonZeroUsize::new(value).ok_or_else(|| {
+                configuration_error(format!(
+                    "object-store checkpoint backend {field} must be greater than zero"
+                ))
+            })
+        };
+        let limits = BudgetLimits {
+            max_items: nonzero(self.max_items, "max_items")?.get(),
+            max_bytes: nonzero(self.max_bytes, "max_bytes")?.get(),
+        };
+        let prefix = ObjectKey::new(self.prefix.clone());
+        Ok(ValidatedObjectStoreConfig {
+            client: AwsClientSettings {
+                region: self.region.clone(),
+                endpoint_url: self.endpoint_url.clone(),
+                force_path_style: self.force_path_style,
+                // Checkpoint traffic never adopts the ambient proxy environment.
+                proxy: AwsProxySelection::Disabled,
+                operation_timeout_ns: self.operation_timeout_ns,
+                connect_timeout_ns: self.connect_timeout_ns,
+            },
+            profile: self.profile.clone(),
+            store: AwsObjectStoreSettings {
+                bucket: self.bucket.clone(),
+                prefix: prefix.clone(),
+                max_retained_bytes: nonzero(self.max_bytes, "max_bytes")?,
+                max_retained_items: nonzero(self.max_items, "max_items")?,
+                single_put_threshold_bytes: nonzero(
+                    self.single_put_threshold_bytes,
+                    "single_put_threshold_bytes",
+                )?,
+                multipart_part_bytes: nonzero(self.multipart_part_bytes, "multipart_part_bytes")?,
+            },
+            prefix: prefix.clone(),
+            limits: ObjectCheckpointLimits {
+                transactions: limits,
+                prepared_indexes: limits,
+                storage: limits,
+                result_summaries: limits,
+                reads: limits,
+                max_chunk_bytes: nonzero(self.max_chunk_bytes, "max_chunk_bytes")?,
+                list: ObjectListBudget {
+                    max_items: nonzero(self.max_items, "max_items")?,
+                    max_metadata_bytes: nonzero(self.max_bytes, "max_bytes")?,
+                },
+            },
+        })
+    }
+}
+
+/// Startup validator and preparer for the object-store checkpoint backend.
+#[cfg(feature = "streaming-s3")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ObjectStoreCheckpointBackendFactory;
+
+#[cfg(feature = "streaming-s3")]
+impl StreamingCheckpointBackendFactory for ObjectStoreCheckpointBackendFactory {
+    fn descriptor(&self) -> &'static StreamingCheckpointBackendDescriptor {
+        &OBJECT_STORE_CHECKPOINT_BACKEND_DESCRIPTOR
+    }
+
+    fn validate(
+        &self,
+        authored: &RawValue,
+        _requirements: &CheckpointBackendRequirements,
+    ) -> Result<Box<dyn ValidatedCheckpointBackendConfig>, CheckpointError> {
+        // A conditional pointer is durable and keeps partial results reachable
+        // from committed roots, so it satisfies every requirement a run states.
+        let config: ObjectStoreCheckpointBackendConfig = serde_json::from_str(authored.get())
+            .map_err(|error| {
+                configuration_error(format!("invalid object-store backend config: {error}"))
+            })?;
+        Ok(Box::new(config.validate_config()?))
+    }
+
+    fn prepare(
+        &self,
+        config: Box<dyn ValidatedCheckpointBackendConfig>,
+        context: &CheckpointBackendPrepareContext,
+    ) -> Result<Box<dyn StreamingCheckpointBackend>, CheckpointError> {
+        use crate::streaming::checkpoints::{
+            aws_object_store::LazyAwsConditionalObjectStore, object_store::ObjectCheckpointBackend,
+        };
+
+        let config = *config
+            .into_any()
+            .downcast::<ValidatedObjectStoreConfig>()
+            .map_err(|_| configuration_error("object-store backend config type mismatch"))?;
+        let store = LazyAwsConditionalObjectStore::new(
+            config.client,
+            config.profile,
+            config.store,
+            Rc::clone(&context.clock),
+        )?;
+        Ok(Box::new(ObjectCheckpointBackend::new(
+            Rc::new(store),
+            config.prefix,
+            config.limits,
+        )?))
+    }
+}
