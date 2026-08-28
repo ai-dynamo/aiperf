@@ -65,6 +65,7 @@ pub static SESSION_STATE_ACTION_SINK: StreamingActionSinkDescriptor =
         endpoint_kinds: &[],
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
+        endpoint_retry_safety: crate::streaming::action::EndpointRetrySafety::Unproven,
         supports_virtual_clock: true,
     };
 
