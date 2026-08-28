@@ -388,8 +388,12 @@ version = "0.13.0"
 dependencies = [
  "aiperf-plugin-host",
  "aiperf-plugin-sdk",
+ "blake3",
+ "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
+ "toml",
 ]
 
 [[package]]
@@ -426,6 +430,9 @@ dependencies = [
 [[package]]
 name = "aiperf-plugin-static-comparator"
 version = "0.13.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "aiperf-plugin-test-support"

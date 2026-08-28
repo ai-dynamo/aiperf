@@ -108,7 +108,8 @@ pub enum AssembleError {
 impl CandidateFixture {
     /// Parse a candidate generation from its TOML text.
     pub fn parse(text: &str) -> Result<Self, AssembleError> {
-        let fixture: Self = toml::from_str(text).map_err(|e| AssembleError::Fixture(e.to_string()))?;
+        let fixture: Self =
+            toml::from_str(text).map_err(|e| AssembleError::Fixture(e.to_string()))?;
         if fixture.schema_version != CANDIDATE_FIXTURE_SCHEMA_VERSION {
             return Err(AssembleError::UnsupportedSchemaVersion(
                 fixture.schema_version,
@@ -130,8 +131,10 @@ impl CandidateFixture {
                     package.id
                 )));
             }
-            for (name, value) in [("artifact", &package.artifact), ("manifest", &package.manifest)]
-            {
+            for (name, value) in [
+                ("artifact", &package.artifact),
+                ("manifest", &package.manifest),
+            ] {
                 if !is_plain_relative_name(value) {
                     return Err(AssembleError::UnsafeRelativePath {
                         package_id: package.id.clone(),

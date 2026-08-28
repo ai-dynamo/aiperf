@@ -29,10 +29,14 @@ use aiperf_plugin_static_comparator::static_inventory::{
 
 const USAGE: &str = "usage: aiperf-plugin-static-comparator [--full]";
 
+/// A census as `(id, version)` pairs in canonical id order.
+type Census = Vec<(&'static str, &'static str)>;
+
+/// The registry a distribution links, paired with the census it must match.
+type SelectedDistribution = (StaticComparatorRegistry, Census);
+
 /// Build the registry and expected census the requested distribution demands.
-fn selected_distribution(
-    is_full: bool,
-) -> Result<(StaticComparatorRegistry, Vec<(&'static str, &'static str)>), String> {
+fn selected_distribution(is_full: bool) -> Result<SelectedDistribution, String> {
     if is_full {
         let registry = full_distribution_registry().map_err(|e| e.to_string())?;
         Ok((registry, full_distribution_census()))

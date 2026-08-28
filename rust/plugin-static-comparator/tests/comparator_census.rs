@@ -21,7 +21,10 @@ fn static_census_matches_dynamic_default() {
         .assert_census(DEFAULT_DISTRIBUTION_CENSUS)
         .expect("the static census matches the dynamic default census");
 
-    let ids: Vec<&str> = DEFAULT_DISTRIBUTION_CENSUS.iter().map(|(id, _)| *id).collect();
+    let ids: Vec<&str> = DEFAULT_DISTRIBUTION_CENSUS
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
     assert!(ids.contains(&"nvidia/transport-http"));
     assert!(ids.contains(&"nvidia/transport-grpc"));
     assert!(ids.contains(&"nvidia/transport-dry-run"));
