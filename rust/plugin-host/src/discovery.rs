@@ -99,7 +99,11 @@ pub fn discover_plugins(
                 match path.symlink_metadata() {
                     Ok(m) if m.file_type().is_file() => {
                         results.push(DiscoveredPackage {
-                            manifest_path: path.canonicalize().unwrap_or_else(|_| path.clone()),
+                            // Paths from `read_dir` are already absolute; `open_no_follow`
+                            // downstream enforces no-follow.  `canonicalize` would re-open
+                            // the path following any symlink, defeating the symlink check
+                            // above.
+                            manifest_path: path.clone(),
                             source_id,
                             priority: priority_for_source(source),
                         });
@@ -192,7 +196,9 @@ fn scan_dir(
             match candidate.symlink_metadata() {
                 Ok(m) if m.file_type().is_file() => {
                     out.push(DiscoveredPackage {
-                        manifest_path: candidate.canonicalize().unwrap_or(candidate),
+                        // Raw path from `read_dir`; `canonicalize` would follow
+                        // symlinks and defeat the file_type check above.
+                        manifest_path: candidate,
                         source_id: source_id.clone(),
                         priority,
                     });
@@ -212,7 +218,9 @@ fn scan_dir(
                 .unwrap_or(false)
         {
             out.push(DiscoveredPackage {
-                manifest_path: path.canonicalize().unwrap_or(path),
+                // Raw path from `read_dir`; `canonicalize` would follow
+                // symlinks and defeat the file_type check above.
+                manifest_path: path,
                 source_id: source_id.clone(),
                 priority,
             });

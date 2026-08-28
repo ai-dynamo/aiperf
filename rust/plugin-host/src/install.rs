@@ -262,6 +262,15 @@ impl InstallRoot {
 /// This is the pointer-free half of an install: the generation lands complete
 /// and marked ready, but nothing yet resolves to it.  Use
 /// [`rollback_to_generation`] to publish it.
+///
+/// # Warning: caller owns id uniqueness
+///
+/// If `generation` reuses an id of a previously materialized generation this
+/// call silently removes the old directory before writing the new one, so any
+/// reader that resolved the old generation may observe an empty or partial tree.
+/// Callers that need monotonic ids should query existing generation directories
+/// (or use [`InstallRoot::atomic_install`], which handles id allocation) before
+/// calling this function.
 pub fn install_generation(
     root: &Path,
     generation: u64,
@@ -344,11 +353,15 @@ fn materialize(
         set_read_only(&path)?;
     }
     if let Some(digest) = inventory_digest {
-        write_file(&staging.join(INVENTORY_DIGEST_FILE), digest.as_bytes())?;
+        let digest_path = staging.join(INVENTORY_DIGEST_FILE);
+        write_file(&digest_path, digest.as_bytes())?;
+        set_read_only(&digest_path)?;
     }
     // The marker is written last: its presence is the proof that every other
     // file in this generation is already on disk.
-    write_file(&staging.join(READY_MARKER), format!("{id}\n").as_bytes())?;
+    let marker_path = staging.join(READY_MARKER);
+    write_file(&marker_path, format!("{id}\n").as_bytes())?;
+    set_read_only(&marker_path)?;
 
     std::fs::rename(&staging, &target).map_err(|source| InstallError::Io {
         path: target.clone(),
