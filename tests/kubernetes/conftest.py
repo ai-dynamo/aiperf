@@ -826,6 +826,7 @@ async def _purge_stale_aiperf_resources(
     k8s_settings: K8sTestSettings,
     worker_namespace_suffix: str,
     operator_job_namespace: str,
+    benchmark_namespace: str,
 ) -> AsyncGenerator[None, None]:
     """Aggressively purge any stale AIPerf resources from prior aborted runs.
 
@@ -840,7 +841,7 @@ async def _purge_stale_aiperf_resources(
         return
 
     await _purge_reused_cluster_resources(
-        kubectl, worker_namespace_suffix, operator_job_namespace
+        kubectl, worker_namespace_suffix, operator_job_namespace, benchmark_namespace
     )
 
     yield
@@ -850,6 +851,7 @@ async def _purge_reused_cluster_resources(
     kubectl: KubectlClient,
     worker_namespace_suffix: str,
     operator_job_namespace: str,
+    benchmark_namespace: str,
 ) -> None:
     """Remove stale workloads from namespaces owned by this pytest session.
 
@@ -931,11 +933,11 @@ async def _purge_reused_cluster_resources(
                 check=False,
             )
 
-    # Purge shared namespaces and this session's own operator namespace.
+    # Purge shared namespaces and this session's own namespaces.
     for ns in (
         "default",
         "aiperf-benchmarks",
-        f"aiperf-bench-{worker_namespace_suffix}",
+        benchmark_namespace,
         operator_job_namespace,
     ):
         await _purge_ns(ns)
@@ -944,6 +946,10 @@ async def _purge_reused_cluster_resources(
     # (killed sessions leave stale resources behind under their PID-suffixed ns).
     await _purge_dead_session_operator_namespaces(
         kubectl, worker_namespace_suffix, operator_job_namespace
+    )
+    # Also clean up benchmark namespaces from dead pytest sessions.
+    await _purge_dead_session_benchmark_namespaces(
+        kubectl, worker_namespace_suffix, benchmark_namespace
     )
 
 
@@ -982,6 +988,70 @@ async def _purge_dead_session_operator_namespaces(
         suffix_part = ns[len(prefix) :]
         # Only touch UUID-style namespaces (8 lowercase hex chars); leave old
         # PID-suffixed ones alone since those are 5-digit numeric.
+        if len(suffix_part) != 8 or not all(
+            c in "0123456789abcdef" for c in suffix_part
+        ):
+            continue
+        try:
+            import datetime
+
+            dt = datetime.datetime.fromisoformat(created_ts.replace("Z", "+00:00"))
+            age_seconds = now - dt.timestamp()
+        except (ValueError, AttributeError):
+            continue
+        if age_seconds < stale_ttl_seconds:
+            continue
+        # Namespace is stale (>2h old) — purge it.
+        await kubectl.run(
+            "delete",
+            "aiperfjobs,aiperfsweeps,jobsets",
+            "--all",
+            "-n",
+            ns,
+            "--ignore-not-found",
+            check=False,
+        )
+        await kubectl.run(
+            "delete",
+            "namespace",
+            ns,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
+
+
+async def _purge_dead_session_benchmark_namespaces(
+    kubectl: KubectlClient,
+    worker_namespace_suffix: str,
+    current_benchmark_ns: str,
+) -> None:
+    """Delete benchmark namespaces left by killed pytest sessions.
+
+    Namespaces matching ``aiperf-bench-{suffix}-{8-hex}`` older than 2 hours
+    are safe to purge — their session is definitely gone.
+    """
+    result = await kubectl.run(
+        "get",
+        "namespaces",
+        "-o",
+        "jsonpath={range .items[*]}{.metadata.name}{'\\t'}{.metadata.creationTimestamp}{'\\n'}{end}",
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return
+    prefix = f"aiperf-bench-{worker_namespace_suffix}-"
+    now = time.time()
+    stale_ttl_seconds = 7200  # 2 hours
+    for line in result.stdout.strip().splitlines():
+        parts = line.strip().split("\t", 1)
+        if len(parts) != 2:
+            continue
+        ns, created_ts = parts[0], parts[1]
+        if ns == current_benchmark_ns or not ns.startswith(prefix):
+            continue
+        suffix_part = ns[len(prefix) :]
+        # Only touch UUID-style namespaces (8 lowercase hex chars).
         if len(suffix_part) != 8 or not all(
             c in "0123456789abcdef" for c in suffix_part
         ):
@@ -1535,9 +1605,13 @@ def _session_uuid() -> str:
 
 
 @pytest.fixture(scope="session")
-def benchmark_namespace(worker_namespace_suffix: str) -> str:
-    """Per-worker namespace used by BenchmarkDeployer (xdist isolation)."""
-    return f"aiperf-bench-{worker_namespace_suffix}"
+def benchmark_namespace(worker_namespace_suffix: str, _session_uuid: str) -> str:
+    """Per-session namespace used by BenchmarkDeployer (xdist + session isolation).
+
+    Includes a session UUID so concurrent pytest sessions cannot purge each
+    other's live benchmarks via _ensure_clean_namespace in BenchmarkDeployer.
+    """
+    return f"aiperf-bench-{worker_namespace_suffix}-{_session_uuid}"
 
 
 @pytest.fixture(scope="session")
