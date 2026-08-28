@@ -345,6 +345,9 @@ pub trait Exporter {
 
     /// Detail this sink wants recorded alongside its [`ExporterOutcome`].
     ///
+    /// Called only when [`Exporter::export`] returns `Ok`; on failure the
+    /// outcome's metadata is always empty.
+    ///
     /// Defaulted to empty: a sink opts in only when it has something a caller
     /// can act on (an upload URL, a written path, a skipped-artifact count).
     fn outcome_metadata(&self, _cfg: &ExportConfig) -> HashMap<String, serde_json::Value> {
@@ -519,11 +522,7 @@ impl ExporterRegistry {
             let outcome = match exporter.export(report, artifact_dir, cfg) {
                 Ok(()) => {
                     // Export completion is visible at the normal log level.
-                    tracing::info!(
-                        exporter = exporter.name(),
-                        "Exported {} data",
-                        exporter.name()
-                    );
+                    tracing::info!(exporter = exporter.name(), "exporter complete");
                     ExporterOutcome {
                         descriptor_id,
                         success: true,
