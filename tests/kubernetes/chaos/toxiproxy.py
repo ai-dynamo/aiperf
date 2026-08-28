@@ -312,7 +312,7 @@ class ToxiproxyInjector:
                 if resp.status != 200:
                     return
                 body = await resp.read()
-        except aiohttp.ClientError as exc:
+        except (TimeoutError, aiohttp.ClientError) as exc:
             logger.warning("toxiproxy reset: list failed: %s", exc)
             return
         try:
@@ -322,7 +322,7 @@ class ToxiproxyInjector:
         for proxy_name in proxies:
             try:
                 await self._delete(f"/proxies/{proxy_name}")
-            except aiohttp.ClientError as exc:
+            except (TimeoutError, aiohttp.ClientError) as exc:
                 logger.warning(
                     "toxiproxy reset: failed to delete proxy %s: %s",
                     proxy_name,

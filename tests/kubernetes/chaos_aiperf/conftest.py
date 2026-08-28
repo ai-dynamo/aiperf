@@ -151,8 +151,14 @@ async def faults(
         yield reg
     finally:
         try:
-            await toxiproxy_injector.reset()
-        except (ToxiproxyError, aiohttp.ClientError, RuntimeError) as exc:
+            await asyncio.wait_for(toxiproxy_injector.reset(), timeout=10.0)
+        except (
+            TimeoutError,
+            ToxiproxyError,
+            aiohttp.ClientError,
+            RuntimeError,
+            OSError,
+        ) as exc:
             logger.warning(lambda exc=exc: f"faults teardown reset failed: {exc!r}")
 
 
