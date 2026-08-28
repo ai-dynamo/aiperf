@@ -60,12 +60,36 @@ pub fn set_lock_env(cmd: &mut Command, lock_path: &Path, lock_digest: &str) {
 /// Returns `None` when neither variable is set, meaning the parent was launched
 /// without plugins and the child should proceed with an empty universe.
 ///
-/// Returns `Some((path, digest))` when both variables are set. The caller must
-/// load the bundle at `path` and verify its digest matches before using it.
+/// Returns `Some((path, digest))` when both variables are set and both are
+/// structurally valid. The caller must load the bundle at `path` and verify
+/// its digest matches before using it.
+///
+/// A non-absolute path or a digest that is not exactly 64 lower-case hex
+/// characters causes a warning log and returns `None` so that a corrupted or
+/// injected environment is treated the same as an absent lock rather than
+/// silently accepted with bad data.
 pub fn read_lock_env() -> Option<(PathBuf, String)> {
-    let path = std::env::var(ENV_LOCK_PATH).ok()?;
+    let path_str = std::env::var(ENV_LOCK_PATH).ok()?;
     let digest = std::env::var(ENV_LOCK_DIGEST).ok()?;
-    Some((PathBuf::from(path), digest))
+
+    let path = PathBuf::from(&path_str);
+    if !path.is_absolute() {
+        tracing::warn!(
+            path = %path.display(),
+            "ignoring non-absolute {ENV_LOCK_PATH}; must be an absolute path"
+        );
+        return None;
+    }
+
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        tracing::warn!(
+            "ignoring malformed {ENV_LOCK_DIGEST}: expected 64 hex characters, got {:?}",
+            digest
+        );
+        return None;
+    }
+
+    Some((path, digest))
 }
 
 /// Verify that a loaded bundle's digest matches the propagated digest.

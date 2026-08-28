@@ -47,15 +47,15 @@ pub use ingest::{
 pub use kernel::{DistributionStats, PERCENTILES, linear_distribution, nearest_distribution};
 pub use report::{
     EvaluatorDatasetReportInfo, EvaluatorReportInfo, FiniteReportValue, MetricEntry, MetricSeries,
-    NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReportInput, NativeReporter, ReportClockKind,
-    ReportCounterStats, ReportDistributionStats, ReportDynamoCapacityInfo, ReportDynamoParityInfo,
-    ReportDynamoRouter, ReportDynamoRunInfo, ReportDynamoTopology, ReportEndpointProfileIdentity,
-    ReportError, ReportExtensionIdentity, ReportGraphOutcomeInfo, ReportGraphRunInfo,
-    ReportMetadataError, ReportPairRunFacts, ReportRun, ReportRunInfo, ReportRunMetadata,
-    ReportScalarStats, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
-    ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState, ReportStreamingDistribution,
-    ReportStreamingHorizons, ReportStreamingPlane, ReportQueueHighWater, ReportSummary,
-    ReportTimeslice, ReportValue, Reporter, RunOutcome,
+    NATIVE_REPORT_SCHEMA_VERSION, NativeReport, NativeReportInput, NativeReporter,
+    PluginCatalogEntry, ReportClockKind, ReportCounterStats, ReportDistributionStats,
+    ReportDynamoCapacityInfo, ReportDynamoParityInfo, ReportDynamoRouter, ReportDynamoRunInfo,
+    ReportDynamoTopology, ReportEndpointProfileIdentity, ReportError, ReportExtensionIdentity,
+    ReportGraphOutcomeInfo, ReportGraphRunInfo, ReportMetadataError, ReportPairRunFacts, ReportRun,
+    ReportRunInfo, ReportRunMetadata, ReportScalarStats, ReportServerMetricsEndpointInfo,
+    ReportServerMetricsMetadata, ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState,
+    ReportStreamingDistribution, ReportStreamingHorizons, ReportStreamingPlane,
+    ReportQueueHighWater, ReportSummary, ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
 pub use report_view::ReportView;
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};

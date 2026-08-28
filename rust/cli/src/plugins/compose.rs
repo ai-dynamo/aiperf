@@ -100,6 +100,10 @@ pub enum ComposeError {
 /// the empty-universe fast path are fully implemented and tested.
 pub fn compose_plugin_universe(lock_path: &Path) -> Result<FrozenPluginUniverse, ComposeError> {
     if !lock_path.exists() {
+        tracing::debug!(
+            path = %lock_path.display(),
+            "no plugin lock file found; starting with empty plugin universe"
+        );
         return Ok(FrozenPluginUniverse::empty());
     }
 

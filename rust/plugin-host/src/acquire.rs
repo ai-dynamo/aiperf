@@ -94,12 +94,13 @@ impl AcquiredArtifact {
         let digest = hash.to_hex().to_string();
         // Parse both sides to blake3::Hash so comparison is constant-time
         // (blake3::Hash implements PartialEq with a fixed-time byte compare).
-        let expected_hash = expected_digest
-            .parse::<blake3::Hash>()
-            .map_err(|_| AcquireError::DigestMismatch {
-                expected: expected_digest.to_string(),
-                actual: digest.clone(),
-            })?;
+        let expected_hash =
+            expected_digest
+                .parse::<blake3::Hash>()
+                .map_err(|_| AcquireError::DigestMismatch {
+                    expected: expected_digest.to_string(),
+                    actual: digest.clone(),
+                })?;
         if hash != expected_hash {
             return Err(AcquireError::DigestMismatch {
                 expected: expected_digest.to_string(),

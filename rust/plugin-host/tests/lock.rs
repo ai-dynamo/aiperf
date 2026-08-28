@@ -62,6 +62,32 @@ fn disabled_package_roundtrips_through_json() {
 }
 
 #[test]
+fn lock_rejects_unknown_top_level_field() {
+    let lock = minimal_lock();
+    let mut value: serde_json::Value = serde_json::to_value(&lock).expect("serializes");
+    value["surprise"] = serde_json::Value::Bool(true);
+    let err = serde_json::from_value::<PluginLockV1>(value)
+        .expect_err("unknown top-level field must be rejected");
+    assert!(
+        err.to_string().contains("surprise"),
+        "error must name the unknown field: {err}"
+    );
+}
+
+#[test]
+fn locked_package_rejects_unknown_field() {
+    let lock = minimal_lock();
+    let mut value: serde_json::Value = serde_json::to_value(&lock).expect("serializes");
+    value["packages"][0]["surprise"] = serde_json::Value::Bool(true);
+    let err = serde_json::from_value::<PluginLockV1>(value)
+        .expect_err("unknown package field must be rejected");
+    assert!(
+        err.to_string().contains("surprise"),
+        "error must name the unknown field: {err}"
+    );
+}
+
+#[test]
 fn lock_digest_field_matches_recomputed() {
     let lock = minimal_lock();
     let recomputed = PluginLockDigest::compute(&lock.packages);

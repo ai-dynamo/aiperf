@@ -82,6 +82,7 @@ full = ["streaming-s3", "dynosim", "parquet", "cellular", "grpc", "websocket"]
 [dependencies]
 tempfile = "3"
 aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }
+aiperf-plugin-host = { path = "../plugin-host" }
 anyhow.workspace = true
 thiserror.workspace = true
 clap = { version = "4", features = ["derive", "string"] }
@@ -149,6 +150,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 tempfile = "3"
+rmp-serde = "1"
 # The relocated `aiperf --execute` stdio integration tests (from the deleted
 # former runner crate) spin up in-process mock servers. axum/hyper/hyper-util/
 # rustls/tokio-rustls/http-body-util are already normal deps above; their

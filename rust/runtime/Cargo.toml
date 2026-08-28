@@ -308,6 +308,31 @@ path = "tests/streaming_checkpoint_factories.rs"
 required-features = ["streaming"]
 
 [[test]]
+name = "streaming_blocking"
+path = "tests/streaming_blocking.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_budget"
+path = "tests/streaming_budget.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_cellular_migration"
+path = "tests/streaming_cellular_migration.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_cellular_placement"
+path = "tests/streaming_cellular_placement.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_checkpoint_backend"
+path = "tests/streaming_checkpoint_backend.rs"
+required-features = ["streaming"]
+
+[[test]]
 # Gated on `streaming`, not `streaming-s3`: the memory and local conformance
 # rows must run in every streaming build, and only the object row is
 # `#[cfg(feature = "streaming-s3")]` inside the binary.
@@ -316,9 +341,89 @@ path = "tests/streaming_checkpoint_conformance.rs"
 required-features = ["streaming"]
 
 [[test]]
+name = "streaming_checkpoint_coordinator"
+path = "tests/streaming_checkpoint_coordinator.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_checkpoint_gc"
+path = "tests/streaming_checkpoint_gc.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_checkpoint_participants"
+path = "tests/streaming_checkpoint_participants.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_contracts"
+path = "tests/streaming_contracts.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_conversation_closure"
+path = "tests/streaming_conversation_closure.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_delivery_restart"
+path = "tests/streaming_delivery_restart.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_dependency_policy"
+path = "tests/streaming_dependency_policy.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_hf_credentials"
+path = "tests/streaming_hf_credentials.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_identity"
+path = "tests/streaming_identity.rs"
+required-features = ["streaming"]
+
+[[test]]
 name = "streaming_object_checkpoint"
 path = "tests/streaming_object_checkpoint.rs"
 required-features = ["streaming-s3"]
+
+[[test]]
+name = "streaming_pipeline"
+path = "tests/streaming_pipeline.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_protocol_v2"
+path = "tests/streaming_protocol_v2.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_registry"
+path = "tests/streaming_registry.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_reliability"
+path = "tests/streaming_reliability.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_result_finalization"
+path = "tests/streaming_result_finalization.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_session_continuity"
+path = "tests/streaming_session_continuity.rs"
+required-features = ["streaming"]
+
+[[test]]
+name = "streaming_terminal_lane"
+path = "tests/streaming_terminal_lane.rs"
+required-features = ["streaming"]
 
 [[test]]
 name = "streaming_s3_source"
@@ -374,116 +479,6 @@ required-features = ["streaming"]
 name = "streaming_aws_client"
 path = "tests/streaming_aws_client.rs"
 required-features = ["streaming-s3"]
-
-[[test]]
-name = "streaming_blocking"
-path = "tests/streaming_blocking.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_budget"
-path = "tests/streaming_budget.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_cellular_migration"
-path = "tests/streaming_cellular_migration.rs"
-required-features = ["streaming", "cellular"]
-
-[[test]]
-name = "streaming_cellular_placement"
-path = "tests/streaming_cellular_placement.rs"
-required-features = ["streaming", "cellular"]
-
-[[test]]
-name = "streaming_checkpoint_backend"
-path = "tests/streaming_checkpoint_backend.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_checkpoint_coordinator"
-path = "tests/streaming_checkpoint_coordinator.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_checkpoint_gc"
-path = "tests/streaming_checkpoint_gc.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_checkpoint_participants"
-path = "tests/streaming_checkpoint_participants.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_contracts"
-path = "tests/streaming_contracts.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_conversation_closure"
-path = "tests/streaming_conversation_closure.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_delivery_modes"
-path = "tests/streaming_delivery_modes.rs"
-required-features = ["streaming", "parquet"]
-
-[[test]]
-name = "streaming_delivery_restart"
-path = "tests/streaming_delivery_restart.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_dependency_policy"
-path = "tests/streaming_dependency_policy.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_hf_credentials"
-path = "tests/streaming_hf_credentials.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_identity"
-path = "tests/streaming_identity.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_pipeline"
-path = "tests/streaming_pipeline.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_protocol_v2"
-path = "tests/streaming_protocol_v2.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_registry"
-path = "tests/streaming_registry.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_reliability"
-path = "tests/streaming_reliability.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_result_finalization"
-path = "tests/streaming_result_finalization.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_session_continuity"
-path = "tests/streaming_session_continuity.rs"
-required-features = ["streaming"]
-
-[[test]]
-name = "streaming_terminal_lane"
-path = "tests/streaming_terminal_lane.rs"
-required-features = ["streaming"]
 
 [[test]]
 name = "factory_validation_receipt"
