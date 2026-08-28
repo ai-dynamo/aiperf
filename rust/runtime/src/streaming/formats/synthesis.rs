@@ -914,6 +914,8 @@ mod tests {
 
     use crate::dataset::error::{DatasetError, Result as DatasetResult};
     use crate::streaming::budget::BudgetLimits;
+    use crate::streaming::checkpoint::StreamRunIdentity;
+    use crate::streaming::identity::LogicalReplayRunId;
     use crate::streaming::reliability::{
         OrdinaryStreamingIssue, StreamingIssueReportError, StreamingIssueReportStatus,
         StreamingIssueReporterEndpoint,
@@ -1065,9 +1067,13 @@ mod tests {
     }
 
     fn prepare_context() -> StreamingFormatPrepareContext {
+        let budgets = budgets();
         StreamingFormatPrepareContext {
+            run: StreamRunIdentity::new(LogicalReplayRunId::from_bytes([3_u8; 32])),
             stream_semantic_digest: ContentDigest::from_bytes([3_u8; 32]),
+            fragment_budget: budgets.fragment,
             issue_reporter: StreamingIssueReporterHandle::new(SilentReporter),
+            acquisition_budget: budgets.acquisition,
         }
     }
 
