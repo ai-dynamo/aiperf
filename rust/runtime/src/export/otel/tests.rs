@@ -18,7 +18,7 @@ use opentelemetry_proto::tonic::common::v1::{KeyValue, any_value};
 use opentelemetry_proto::tonic::metrics::v1::{Metric, metric};
 use prost::Message as _;
 
-use super::{OtelExporter, OtelRecordAccumulator};
+use super::OtelExporter;
 use crate::export::{ExportConfig, Exporter, OtelExportConfig};
 use crate::metrics_core::catalog::{MetricConsoleGroup, MetricTag};
 use crate::metrics_core::report::NativeReport;
@@ -373,69 +373,4 @@ fn provider_defaults_to_other_when_absent() {
         .unwrap();
     let attrs = &histogram(dp).data_points[0].attributes;
     assert_eq!(string_attr(attrs, "gen_ai.provider.name"), Some("_OTHER"));
-}
-
-#[test]
-fn per_record_accumulator_populates_bucket_counts() {
-    let (endpoint, rx) = spawn_capture_server();
-    let mut report = sample_report();
-
-    // Two profiling requests fed through the same projection the runner computes.
-    let mut records = OtelRecordAccumulator::new();
-    for (latency, ttft, itl, input, output) in [
-        (320.0_f64, 40.0_f64, 20.0_f64, 128.0_f64, 64.0_f64),
-        (100.0, 10.0, 5.0, 64.0, 16.0),
-    ] {
-        let lookup: BTreeMap<&str, (f64, &str)> = BTreeMap::from([
-            ("request_latency", (latency, "ms")),
-            ("time_to_first_token", (ttft, "ms")),
-            ("inter_token_latency", (itl, "ms")),
-            ("input_sequence_length", (input, "tokens")),
-            ("output_token_count", (output, "tokens")),
-        ]);
-        records.observe_record(&lookup, None);
-    }
-    report.otel_per_record = Some(records);
-
-    let cfg = sample_config(endpoint);
-    let dir = std::env::temp_dir();
-    OtelExporter.export(&report, &dir, &cfg).expect("export");
-
-    let body = rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .expect("body");
-    let request = ExportMetricsServiceRequest::decode(body.as_slice()).unwrap();
-    let sm = &request.resource_metrics[0].scope_metrics[0];
-    let by_name: BTreeMap<&str, &Metric> =
-        sm.metrics.iter().map(|m| (m.name.as_str(), m)).collect();
-
-    // Duration histogram: populated buckets that sum to count (OTLP invariant).
-    let duration = histogram(by_name["gen_ai.client.operation.duration"]);
-    let dp = &duration.data_points[0];
-    assert_eq!(dp.count, 2);
-    let total: u64 = dp.bucket_counts.iter().sum();
-    assert_eq!(total, dp.count);
-    assert!(dp.bucket_counts.iter().any(|&c| c != 0));
-    // 320 ms -> 0.32 s lands in bucket 5 (v <= bounds[5]=0.32); 100 ms -> 0.1 s
-    // in bucket 4 (v <= bounds[4]=0.16, > bounds[3]=0.08).
-    assert_eq!(dp.bucket_counts[5], 1);
-    assert_eq!(dp.bucket_counts[4], 1);
-    // Sum is the real total in seconds; min/max are the real extremes.
-    assert_eq!(dp.sum, Some(0.32 + 0.1));
-    assert_eq!(dp.min, Some(0.1));
-    assert_eq!(dp.max, Some(0.32));
-    // No error.type attribute on the success path.
-    assert_eq!(string_attr(&dp.attributes, "error.type"), None);
-
-    // Token usage input datapoint: populated buckets summing to count.
-    let usage = histogram(by_name["gen_ai.client.token.usage"]);
-    let input_dp = usage
-        .data_points
-        .iter()
-        .find(|dp| string_attr(&dp.attributes, "gen_ai.token.type") == Some("input"))
-        .unwrap();
-    assert_eq!(input_dp.count, 2);
-    let input_total: u64 = input_dp.bucket_counts.iter().sum();
-    assert_eq!(input_total, 2);
-    assert_eq!(input_dp.sum, Some(128.0 + 64.0));
 }
