@@ -24,11 +24,28 @@ pub fn feed_str(hasher: &mut Hasher, name: &str, value: &str) {
     feed_field(hasher, name, value.as_bytes());
 }
 
-/// Feeds an optional string field (encodes `"null"` when absent).
+/// Feeds an optional string field.
+///
+/// Encoding: 1-byte discriminant (`0x00` = absent, `0x01` = present),
+/// followed by the standard length-prefixed field bytes when present.
+/// Using a discriminant prefix ensures `None` and `Some("null")` hash
+/// to different values.
 pub fn feed_opt_str(hasher: &mut Hasher, name: &str, value: Option<&str>) {
     match value {
-        None => feed_field(hasher, name, b"null"),
-        Some(s) => feed_field(hasher, name, s.as_bytes()),
+        None => {
+            // Absent: discriminant only, no value bytes.
+            hasher.update(&(name.len() as u64).to_le_bytes());
+            hasher.update(name.as_bytes());
+            hasher.update(&[0x00]);
+        }
+        Some(s) => {
+            // Present: discriminant prefix then normal field encoding.
+            hasher.update(&(name.len() as u64).to_le_bytes());
+            hasher.update(name.as_bytes());
+            hasher.update(&[0x01]);
+            hasher.update(&(s.len() as u64).to_le_bytes());
+            hasher.update(s.as_bytes());
+        }
     }
 }
 
