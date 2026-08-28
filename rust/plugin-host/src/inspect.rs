@@ -213,10 +213,10 @@ fn collect_dependencies(obj: &ObjectFile<'_>) -> (Vec<String>, SearchPolicy) {
     let mut deps: Vec<String> = vec![];
 
     // ELF: scan `.dynamic` section for DT_NEEDED entries (64-bit LE).
-    if let Some(sec) = obj.section_by_name(".dynamic") {
-        if let Ok(data) = sec.data() {
-            deps.extend(parse_elf_needed_le64(data, obj));
-        }
+    if let Some(sec) = obj.section_by_name(".dynamic")
+        && let Ok(data) = sec.data()
+    {
+        deps.extend(parse_elf_needed_le64(data, obj));
     }
 
     let has_absolute = deps.iter().any(|d| d.starts_with('/'));

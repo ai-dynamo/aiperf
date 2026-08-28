@@ -135,7 +135,7 @@ pub fn resolve_catalog(
 
     for (pkg_id, mut entries) in by_id {
         // Sort descending by priority.
-        entries.sort_by(|a, b| b.0.cmp(&a.0));
+        entries.sort_by_key(|a| std::cmp::Reverse(a.0));
         let top_priority = entries[0].0;
 
         let (top_entries, losers): (Vec<_>, Vec<_>) = entries

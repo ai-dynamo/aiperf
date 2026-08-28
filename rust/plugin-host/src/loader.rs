@@ -26,9 +26,11 @@ pub struct LoadedHandle {
     pub digest: String,
     /// Raw dlopen handle.  Never passed to dlclose.
     #[cfg(unix)]
+    #[allow(dead_code)]
     pub(crate) raw: *mut libc::c_void,
     /// On non-Unix platforms, a placeholder to keep the struct non-empty.
     #[cfg(not(unix))]
+    #[allow(dead_code)]
     pub(crate) raw: *mut std::ffi::c_void,
 }
 

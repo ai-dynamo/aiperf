@@ -44,6 +44,7 @@ pub struct StagedObject {
 /// but a different `digest` is a `ConflictingLoaderIdentity` error.
 #[allow(dead_code)]
 pub struct CanonicalObjectMap {
+    #[allow(dead_code)]
     inner: HashMap<(String, String), StagedObject>,
     staging_dir: PathBuf,
 }
