@@ -26,6 +26,10 @@ aiperf-allocator-shim = { path = "../allocator-shim" }
 # #[link(name = "mimalloc", kind = "static")] attribute in allocator.rs.
 # Cargo suppresses cargo:rustc-link-lib from dev-dep build scripts, which is
 # why the #[link] attr emits the -lmimalloc flag directly.
+aiperf-allocator-shim = { path = "../allocator-shim" }
+# Blake3 is needed for the native_boundary tests: compute live digest of the
+# minimal-plugin fixture to pass into AcquiredArtifact::acquire.
+blake3.workspace = true
 libmimalloc-sys.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
