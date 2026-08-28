@@ -43,7 +43,7 @@ pub fn feed_u32(hasher: &mut Hasher, name: &str, value: u32) {
 }
 
 /// Feeds an arbitrary JSON-serializable value (vecs, structs, etc.).
-pub fn feed_json<T: serde::Serialize>(hasher: &mut Hasher, name: &str, value: &T) {
+pub fn feed_json<T: serde::Serialize + ?Sized>(hasher: &mut Hasher, name: &str, value: &T) {
     let json = serde_json::to_vec(value).expect("record serialization cannot fail");
     feed_field(hasher, name, &json);
 }
