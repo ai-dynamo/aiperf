@@ -4,6 +4,7 @@
 //! Built-in checkpoint backend factory inventory and `none` refusal behavior.
 
 use aiperf_runtime::{
+    clock::{Clock, RealClock},
     extensions::{AIPerfRegistry, AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory},
     streaming::{
         checkpoint::{CheckpointError, StreamRunIdentity},
