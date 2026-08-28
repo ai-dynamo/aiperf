@@ -1475,8 +1475,8 @@ class TestRunAllChecks:
         assert len(results.checks) == 1
 
     @pytest.mark.asyncio
-    async def test_all_checks_runs_all_thirteen(self) -> None:
-        """When connectivity passes, all 13 checks should run."""
+    async def test_all_checks_runs_all_fourteen(self) -> None:
+        """When connectivity passes, all 14 checks should run."""
         checker = _make_checker(
             image="img:1",
             secrets=["s1"],
@@ -1533,7 +1533,7 @@ class TestRunAllChecks:
         ):
             results = await checker.run_all_checks()
 
-        assert len(results.checks) == 13
+        assert len(results.checks) == 14
 
 
 class TestResourceQuotaErrorHandling:

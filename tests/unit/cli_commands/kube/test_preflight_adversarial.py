@@ -508,7 +508,7 @@ class TestPreflightAggregation:
             results = await checker.run_all_checks()
 
         assert results.passed is False
-        assert len(results.checks) == 13
+        assert len(results.checks) == 14
         version = results.checks[1]
         assert version.name == "Kubernetes Version"
         assert version.status == CheckStatus.FAIL

@@ -23,7 +23,14 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.redact import redact_url
 from aiperf.kubernetes.constants import JOBSET_INSTALL_HINT
-from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
+from aiperf.kubernetes.cr_refs import (
+    AIPERF_JOB_GROUP,
+    AIPERF_JOB_PLURAL,
+    AIPERF_JOB_VERSION,
+    JOBSET_GROUP,
+    JOBSET_PLURAL,
+    JOBSET_VERSION,
+)
 from aiperf.kubernetes.preflight_capacity_checks import (
     check_image,
     check_node_resources,
@@ -329,6 +336,62 @@ async def check_jobset_controller(api: ApiClient) -> CheckResult:
             status=CheckStatus.WARN,
             message=f"Could not verify controller: HTTP {e.status}",
         )
+
+
+async def check_aiperf_operator(api: ApiClient) -> CheckResult:
+    """Check that the AIPerf operator CRD is installed and a controller is running.
+
+    Operator mode is the default submission path, so a cluster without the
+    AIPerfJob CRD accepts nothing: `aiperf kube profile` fails at CR creation
+    with a bare 404 from the apiserver. Direct mode still works without it,
+    hence WARN rather than FAIL.
+    """
+    from aiperf.kubernetes.client_pods import find_operator_namespace
+    from aiperf.kubernetes.preflight import CheckResult, CheckStatus
+
+    name = "AIPerf Operator"
+    crd_name = f"{AIPERF_JOB_PLURAL}.{AIPERF_JOB_GROUP}"
+    try:
+        await client.ApiextensionsV1Api(api).read_custom_resource_definition(crd_name)
+    except ApiException as e:
+        if e.status == 404:
+            return CheckResult(
+                name=name,
+                status=CheckStatus.WARN,
+                message=f"AIPerfJob CRD ({AIPERF_JOB_GROUP}/{AIPERF_JOB_VERSION}) not found",
+                hints=[
+                    "Install the aiperf-operator Helm chart, or submit with --direct",
+                ],
+            )
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            message=f"Error checking AIPerfJob CRD: HTTP {e.status}",
+        )
+
+    try:
+        operator_ns = await find_operator_namespace(api)
+    except _CLUSTER_API_ERRORS as e:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            message=f"AIPerfJob CRD installed; could not locate operator pod: {e}",
+        )
+    if operator_ns is None:
+        return CheckResult(
+            name=name,
+            status=CheckStatus.WARN,
+            message="AIPerfJob CRD installed but no operator pod found",
+            hints=[
+                "CRs will be accepted and then never reconciled",
+                "Check the aiperf-operator Deployment, or submit with --direct",
+            ],
+        )
+    return CheckResult(
+        name=name,
+        status=CheckStatus.PASS,
+        message=f"AIPerf operator running in namespace '{operator_ns}'",
+    )
 
 
 async def check_network_policies(api: ApiClient, *, namespace: str) -> CheckResult:

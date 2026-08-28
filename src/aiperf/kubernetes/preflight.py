@@ -311,6 +311,7 @@ class CLIPreflightChecker:
             ("RBAC Permissions", self._check_rbac_permissions),
             ("JobSet CRD", self._check_jobset_crd),
             ("JobSet Controller", self._check_jobset_controller),
+            ("AIPerf Operator", self._check_aiperf_operator),
             ("Resource Quotas", self._check_resource_quotas),
             ("Node Resources", self._check_node_resources),
             ("Secrets", self._check_secrets),
@@ -381,6 +382,10 @@ class CLIPreflightChecker:
         return await preflight_checks.check_rbac_permissions(
             self._api, namespace=self.namespace
         )
+
+    async def _check_aiperf_operator(self) -> CheckResult:
+        """Check the AIPerfJob CRD is installed and an operator pod is running."""
+        return await preflight_checks.check_aiperf_operator(self._api)
 
     async def _check_jobset_crd(self) -> CheckResult:
         """Check if JobSet CRD is installed."""
