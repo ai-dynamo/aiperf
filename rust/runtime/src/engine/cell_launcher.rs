@@ -463,6 +463,7 @@ mod tests {
             phase_ordinal_bases: bases,
             artifact_authority: Some("controller.local:9600".to_owned()),
             local_roles: None,
+            plugin_lock_digest: None,
         }
     }
 
