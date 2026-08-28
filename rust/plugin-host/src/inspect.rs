@@ -170,7 +170,7 @@ fn inspect_elf(
     elf: &goblin::elf::Elf<'_>,
     target: &str,
 ) -> Result<InspectedArtifact, StaticInspectionError> {
-    use goblin::elf::dynamic::{DF_BIND_NOW, DF_1_NOW, DT_FLAGS, DT_FLAGS_1};
+    use goblin::elf::dynamic::{DF_1_NOW, DF_BIND_NOW, DT_FLAGS, DT_FLAGS_1};
 
     // Verify architecture.
     let expected_machine = elf_machine_for_target(target).unwrap_or(u16::MAX);
@@ -294,8 +294,7 @@ fn inspect_pe(
     let expected_machine = pe_machine_for_target(target).unwrap_or(u16::MAX);
     let arch_matches = pe.header.coff_header.machine == expected_machine;
     if !arch_matches {
-        let detected =
-            arch_name_from_pe_machine(pe.header.coff_header.machine).to_string();
+        let detected = arch_name_from_pe_machine(pe.header.coff_header.machine).to_string();
         return Err(StaticInspectionError::ArchMismatch {
             declared: target.to_string(),
             detected,
@@ -303,10 +302,10 @@ fn inspect_pe(
     }
 
     // Check export directory.
-    let entry_symbol_present = pe.exports.iter().any(|e| {
-        e.name
-            .map_or(false, |n| n == ENTRY_SYMBOL)
-    });
+    let entry_symbol_present = pe
+        .exports
+        .iter()
+        .any(|e| e.name.map_or(false, |n| n == ENTRY_SYMBOL));
 
     if !entry_symbol_present {
         return Err(StaticInspectionError::MissingEntrySymbol);

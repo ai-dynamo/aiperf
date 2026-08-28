@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use aiperf_plugin_host::acquire::AcquiredArtifact;
-use aiperf_plugin_host::inspect::{statically_inspect, StaticInspectionError};
+use aiperf_plugin_host::inspect::{StaticInspectionError, statically_inspect};
 
 /// Build an `AcquiredArtifact` from raw bytes without going through the
 /// acquire path (used for testing the inspection logic only).
@@ -43,8 +43,7 @@ fn elf64_x86_64_header() -> Vec<u8> {
         // e_phoff (8 bytes): 0 → no program headers
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         // e_shoff (8 bytes): 0 → no section headers
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, // e_flags
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // e_flags
         0x40, 0x00, // e_ehsize: 64
         0x38, 0x00, // e_phentsize: 56
         0x00, 0x00, // e_phnum: 0
@@ -69,7 +68,10 @@ fn elf64_aarch64_header() -> Vec<u8> {
 
 #[test]
 fn unsupported_format_rejected() {
-    let artifact = make_artifact(b"not a binary at all XYZZY".to_vec(), "x86_64-unknown-linux-gnu");
+    let artifact = make_artifact(
+        b"not a binary at all XYZZY".to_vec(),
+        "x86_64-unknown-linux-gnu",
+    );
     let err = statically_inspect(&artifact).unwrap_err();
     assert!(
         matches!(err, StaticInspectionError::UnsupportedFormat(_)),
