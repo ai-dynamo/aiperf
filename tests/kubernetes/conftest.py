@@ -786,11 +786,30 @@ async def local_cluster(
             await cluster.delete()
         except RuntimeError as exc:
             # Docker occasionally refuses to kill kind containers on Linux
-            # (containerd cgroup race). The cluster is effectively dead; warn
-            # and move on so the teardown error doesn't mask real test failures.
+            # (containerd cgroup race). Force-remove the container so the next
+            # test run can create a new cluster with the same name; without
+            # this, `kind create cluster` silently reuses the dead container.
             logger.warning(
                 f"[cleanup] cluster delete failed (stale Docker state): {exc}"
             )
+            node_container = f"{cluster.name}-control-plane"
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker",
+                    "rm",
+                    "-f",
+                    node_container,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+                logger.info(
+                    f"[cleanup] force-removed Docker container: {node_container}"
+                )
+            except Exception as docker_exc:
+                logger.warning(
+                    f"[cleanup] docker rm -f {node_container} also failed: {docker_exc}"
+                )
     else:
         logger.info(f"Keeping cluster: {cluster.name}")
 

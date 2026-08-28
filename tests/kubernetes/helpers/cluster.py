@@ -550,6 +550,10 @@ class KindBackend:
 
     async def create(self) -> None:
         _strip_localhost_proxy()
+        # Purge any stale control-plane container left by a previous failed delete.
+        # `kind create cluster` silently reuses an Exited container with the same
+        # name instead of creating a fresh one, leaving the cluster dead on arrival.
+        await _run_quiet(["docker", "rm", "-f", self._node_container])
         async with timed_operation(f"Creating Kind cluster '{self._config.name}'"):
             cmd = self._base_create_cmd()
             if self._config.gpus:

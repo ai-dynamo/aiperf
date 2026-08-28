@@ -31,6 +31,7 @@ RECIPES_DIR = Path(__file__).parents[2] / "recipes"
 MOCK_SERVER_URL = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
 MOCK_MODEL = "mock-model"
 MOCK_TOKENIZER = "gpt2"
+pytestmark = [pytest.mark.timeout(1200)]
 
 # Small load for test environment
 TEST_CONCURRENCY = 2

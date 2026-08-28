@@ -45,6 +45,8 @@ CLEANUP_DELETION_POLL_RESERVE = 60  # seconds reserved from the shared deadline
 CLEANUP_FAILURE_TEARDOWN_TIMEOUT = 20  # seconds from pytest's reporting buffer
 CLEANUP_FAILURE_TEARDOWN_POLL_INTERVAL = 1  # seconds between absence checks
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 class TestOperatorDeployment:
     """Tests for operator deployment and CRD installation."""
