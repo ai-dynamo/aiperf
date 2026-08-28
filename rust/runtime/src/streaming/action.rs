@@ -43,6 +43,9 @@ pub use host::FrozenActionInventory;
 /// State-only built-in action sink.
 pub mod session_state;
 
+/// Endpoint-executing built-in action sink over the scheduled issuer.
+pub mod scheduled_request;
+
 pub use host::{
     ActionEventBatch, ActionInventoryLedger, ActiveExecution, ActiveExecutionSet,
     BudgetOwnedActionTerminalReceipt, StreamingActionBindingSet, StreamingActionHost, action_kind,
