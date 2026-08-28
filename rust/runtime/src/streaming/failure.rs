@@ -181,6 +181,16 @@ failure_codes! {
         Cancelled => "cancelled",
         /// Retained payload bytes and their capacity lease disagree.
         BudgetInvariant => "budget_invariant",
+        /// More than one prepared binding claims the same action schema.
+        DuplicateBinding => "duplicate_binding",
+        /// A prepared binding claims a schema the run cannot emit.
+        UnexpectedBinding => "unexpected_binding",
+        /// An event referenced an action the host never admitted.
+        UnknownAction => "unknown_action",
+        /// An event ordinal repeated, went backwards, or followed the terminal.
+        EventOrder => "event_order",
+        /// A second terminal receipt was emitted for one action.
+        DuplicateTerminal => "duplicate_terminal",
     }
 }
 
