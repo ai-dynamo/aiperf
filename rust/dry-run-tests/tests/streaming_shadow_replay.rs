@@ -146,7 +146,11 @@ fn registered_streaming_composition_validates_without_python_or_socket() {
     );
     // A refusal is acceptable here — what is not acceptable is a refusal that
     // blames an identifier the fixture never authored.
-    for absent in ["no_such_source", "no_such_format", "no_such_session_program"] {
+    for absent in [
+        "no_such_source",
+        "no_such_format",
+        "no_such_session_program",
+    ] {
         assert!(
             !output.contains(absent),
             "validation named an identifier this fixture never authored: {absent}"

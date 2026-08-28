@@ -35,9 +35,7 @@ mod common;
 #[path = "support/streaming_product.rs"]
 mod support;
 
-use support::{
-    LEAK_NEEDLES, StreamingServerCase, StreamingServerHarness, StreamingTransport,
-};
+use support::{LEAK_NEEDLES, StreamingServerCase, StreamingServerHarness, StreamingTransport};
 
 /// The transport-invariance contract: HTTP and gRPC reach the same product
 /// decision, for the same reason, with the same absence of side effects.
