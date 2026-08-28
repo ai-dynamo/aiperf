@@ -2058,6 +2058,97 @@ mod tests {
                     )
                     .await;
                 }
+                HANDLER_CAPTURE_CHUNK => {
+                    let chunk = crate::cellular::capture::ExactRecordsChunkV1 {
+                        cell_id: 0,
+                        chunk_index: 0,
+                        total_chunks: 1,
+                        byte_offset: 0,
+                        byte_length: 0,
+                        digest: [0u8; 32],
+                        is_terminal: true,
+                        bytes: Vec::new(),
+                    };
+                    let body = credential
+                        .seal_payload(AdmissionPurpose::CaptureChunk, &cell_peer, &chunk)
+                        .expect("seal capture chunk");
+                    let reply = send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("valid capture chunk");
+                    let ack: CellAck =
+                        rmp_serde::from_slice(&reply).expect("capture chunk ack");
+                    assert!(ack.ok);
+                    assert!(matches!(
+                        tokio::time::timeout(Duration::from_secs(2), controller.recv())
+                            .await
+                            .expect("capture chunk effect timed out")
+                            .expect("capture chunk recv"),
+                        Some(CellMessage::CaptureChunk(_))
+                    ));
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::CaptureChunk,
+                        &body,
+                        false,
+                        true,
+                        false,
+                    )
+                    .await;
+                    assert_no_controller_message(&mut controller).await;
+                }
+                HANDLER_CAPTURE_BUNDLE => {
+                    let bundle = crate::cellular::capture::CellCaptureBundleV1 {
+                        cell_id: 0,
+                        exact_chunk_count: 0,
+                        exact_byte_length: 0,
+                        folded_metrics: crate::cellular::capture::FoldedProjection::Absent,
+                        folded_summary: crate::cellular::capture::FoldedProjection::Absent,
+                    };
+                    let body = credential
+                        .seal_payload(AdmissionPurpose::CaptureBundle, &cell_peer, &bundle)
+                        .expect("seal capture bundle");
+                    let reply = send_unary(
+                        &cell_velo,
+                        &controller_peer,
+                        &handler,
+                        Bytes::copy_from_slice(&body),
+                    )
+                    .await
+                    .expect("valid capture bundle");
+                    let ack: CellAck =
+                        rmp_serde::from_slice(&reply).expect("capture bundle ack");
+                    assert!(ack.ok);
+                    assert!(matches!(
+                        tokio::time::timeout(Duration::from_secs(2), controller.recv())
+                            .await
+                            .expect("capture bundle effect timed out")
+                            .expect("capture bundle recv"),
+                        Some(CellMessage::CaptureBundle(_))
+                    ));
+                    reject_invalid_frames(
+                        &cell_velo,
+                        &controller_peer,
+                        &authority,
+                        &trace_events,
+                        &handler,
+                        AdmissionPurpose::CaptureBundle,
+                        &body,
+                        false,
+                        true,
+                        false,
+                    )
+                    .await;
+                    assert_no_controller_message(&mut controller).await;
+                }
                 _ => panic!(
                     "live production handler {handler} has no authentication behavior adapter"
                 ),
