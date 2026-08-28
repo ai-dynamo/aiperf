@@ -31,6 +31,9 @@ mod host;
 /// Cross-partition conversation session program.
 pub mod conversation;
 
+/// Append-only cross-chunk agent and graph session program.
+pub mod agent_graph;
+
 #[cfg(test)]
 pub(crate) use host::CheckedSessionQuarantineTombstoneView;
 
