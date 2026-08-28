@@ -13,6 +13,7 @@
 //! protocol-v2 layer owns the bridge.
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +66,90 @@ pub struct DatasetStream {
 pub struct DatasetStreams {
     /// Authored streams in authored order.
     pub items: Vec<DatasetStream>,
+    /// Fault-handling policy for every stream in this resource.
+    #[serde(default)]
+    pub reliability: StreamingReliabilityPolicy,
+}
+
+/// The authored `dataset_streams.reliability:` block.
+///
+/// Reliability-first by construction: there is no authored disposition field of
+/// any kind, so an ordinary data, endpoint, checkpoint, or export fault can
+/// never be configured to fail the run. Only the private host classifier can
+/// reach a terminal outcome, and it does so from verified invariants rather
+/// than from authored policy.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamingReliabilityPolicy {
+    /// Retries before an immutable partition becomes a durable hole.
+    #[serde(default = "default_partition_retry_limit")]
+    pub partition_retry_limit: u32,
+    /// Retries before one endpoint action is finalized as a failed terminal
+    /// receipt. Zero unless the selected action sink proves retry safety.
+    #[serde(default)]
+    pub endpoint_retry_limit: u32,
+    /// Retries before a checkpoint attempt applies backpressure and fences
+    /// admission.
+    #[serde(default = "default_checkpoint_retry_limit")]
+    pub checkpoint_retry_limit: u32,
+    /// Retries before a derived export is marked incomplete.
+    #[serde(default = "default_export_retry_limit")]
+    pub export_retry_limit: u32,
+    /// Clock-driven delay between retry attempts, in milliseconds.
+    #[serde(default = "default_retry_backoff_ms")]
+    pub retry_backoff_ms: u64,
+    /// Cumulative partition holes before admission is fenced.
+    #[serde(default)]
+    pub partition_holes_before_admission_fence: Option<NonZeroU64>,
+    /// Cumulative record/session quarantines before admission is fenced.
+    #[serde(default)]
+    pub quarantines_before_admission_fence: Option<NonZeroU64>,
+    /// Cumulative committed failed-action receipts before admission is fenced.
+    ///
+    /// Cumulative, never consecutive: a consecutive counter would silently
+    /// reset on an interleaved success and would therefore report a different
+    /// threshold for the same fault set under a different arrival order.
+    #[serde(default)]
+    pub endpoint_failures_before_admission_fence: Option<NonZeroU64>,
+    /// Cumulative checkpoint-attempt failures before admission is fenced.
+    #[serde(default = "default_checkpoint_fence")]
+    pub checkpoint_failures_before_admission_fence: Option<NonZeroU64>,
+}
+
+impl Default for StreamingReliabilityPolicy {
+    fn default() -> Self {
+        Self {
+            partition_retry_limit: default_partition_retry_limit(),
+            endpoint_retry_limit: 0,
+            checkpoint_retry_limit: default_checkpoint_retry_limit(),
+            export_retry_limit: default_export_retry_limit(),
+            retry_backoff_ms: default_retry_backoff_ms(),
+            partition_holes_before_admission_fence: None,
+            quarantines_before_admission_fence: None,
+            endpoint_failures_before_admission_fence: None,
+            checkpoint_failures_before_admission_fence: default_checkpoint_fence(),
+        }
+    }
+}
+
+const fn default_partition_retry_limit() -> u32 {
+    3
+}
+
+const fn default_checkpoint_retry_limit() -> u32 {
+    3
+}
+
+const fn default_export_retry_limit() -> u32 {
+    3
+}
+
+const fn default_retry_backoff_ms() -> u64 {
+    100
+}
+
+fn default_checkpoint_fence() -> Option<NonZeroU64> {
+    NonZeroU64::new(3)
 }
 
 /// Action family a session program may emit.

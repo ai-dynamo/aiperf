@@ -42,8 +42,23 @@ pub(crate) fn resolve_str(
     resolve_expanded_value(expanded, artifact_dir, None)
 }
 
-fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {
-    if let Some(value) = value {
+/// Normalize config text into authoring [`Inputs`] without resolving them.
+///
+/// `config validate` needs the *unresolved* inputs so the runtime performs the
+/// same single authoritative resolution `--execute` performs; resolving here
+/// and again there would validate a run nobody executes.
+pub fn normalize_str(text: &str, artifact_dir: Option<PathBuf>) -> anyhow::Result<Inputs> {
+    let raw: serde_json::Value =
+        serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    validate_schema_version(
+        raw.get("schemaVersion")
+            .or_else(|| raw.get("schema_version")),
+    )?;
+    let expanded = crate::expand::expand_config(raw)?;
+    resolve_expanded_inputs(expanded, artifact_dir, None)
+}
+
+fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {    if let Some(value) = value {
         anyhow::ensure!(
             value.as_str() == Some("2.0"),
             "unsupported schema version {value:?}; expected \"2.0\""

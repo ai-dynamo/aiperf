@@ -77,6 +77,10 @@ fn stream_digest() -> ContentDigest {
     ContentDigest::from_bytes([0x0b; 32])
 }
 
+fn source_identity() -> aiperf_runtime::streaming::identity::ImmutableObjectIdentity {
+    aiperf_runtime::streaming::identity::ImmutableObjectIdentity::from_bytes([0x0d; 32])
+}
+
 fn format_digest() -> ContentDigest {
     ContentDigest::from_bytes([0x0c; 32])
 }
@@ -120,6 +124,7 @@ fn prepare_context(
         run: run_id(),
         participant_id: participant(),
         stream_semantic_digest: stream_digest(),
+        source_identity: source_identity(),
         session_state_budget: state_budget.clone(),
         checkpoint_budget: checkpoint_budget.clone(),
         issue_reporter,
@@ -900,6 +905,7 @@ async fn conversation_program_satisfies_the_session_conformance_contract() {
             participant_id: participant(),
             program_semantic_digest: program_digest(),
             stream_semantic_digest: stream_digest(),
+            source_identity: source_identity(),
             session_state_budget: state_budget.clone(),
             checkpoint_budget: checkpoint_budget.clone(),
             fragments,

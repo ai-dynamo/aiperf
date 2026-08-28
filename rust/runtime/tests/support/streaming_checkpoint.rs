@@ -1161,3 +1161,296 @@ pub async fn issue_receipt_partition(
         .expect("move issue receipt partition");
     (reporter_budget, handoff, payload_bytes)
 }
+
+// ── Task 6C1: deterministic finalization and compaction fixtures ─────────────
+
+use aiperf_runtime::streaming::{
+    checkpoint_backend::StreamingCheckpointBackend,
+    reliability::{
+        PreparedExportAttemptFailure, PreparedExportReceiptPersistence,
+        PreparedStreamingIssuePolicy, ResultSinkAttemptOutcome, StreamingIssueComponentId,
+        StreamingReliabilityError,
+    },
+    results::ResultIndexReadBudget,
+};
+
+/// Construct the in-memory checkpoint backend used by finalization tests.
+pub fn streaming_backend() -> MemoryCheckpointBackend {
+    MemoryCheckpointBackend::new(backend_limits()).expect("valid memory checkpoint backend")
+}
+
+/// Return the authoritative head generation for one run, when one exists.
+pub async fn latest_generation(
+    backend: &MemoryCheckpointBackend,
+    run: StreamRunIdentity,
+) -> Option<CheckpointGeneration> {
+    backend
+        .open_latest(&run, &expectations(run))
+        .await
+        .expect("open latest generation")
+        .map(|opened| opened.generation().clone())
+}
+
+/// Commit metadata for one final generation with the given terminal reason.
+pub fn final_metadata(
+    previous: Option<CheckpointGeneration>,
+    epoch: u64,
+    reason: CheckpointTerminalReason,
+) -> CheckpointCommitMetadata {
+    CheckpointCommitMetadata {
+        previous,
+        epoch: CheckpointEpoch::new(epoch),
+        cut: cut_at(epoch),
+        execution_plan_digest: ContentDigest::from_bytes([0x31; 32]),
+        result_plan_digest: ContentDigest::from_bytes([0x32; 32]),
+        is_final: true,
+        terminal_reason: Some(reason),
+    }
+}
+
+/// Commit one final generation carrying three distinguishable result segments.
+///
+/// The segments differ only in projection identity, so the compaction key must
+/// order them rather than relying on staging order.
+pub async fn committed_final_generation(
+    backend: &MemoryCheckpointBackend,
+    run: StreamRunIdentity,
+    epoch: u64,
+) -> CommittedCheckpointGeneration {
+    let mut transaction = StreamingCheckpointBackend::begin_generation(
+        backend,
+        run,
+        None,
+        expectations(run),
+    )
+    .await
+    .expect("begin final generation");
+    transaction
+        .stage_participant(prepared_participant(run, epoch).await)
+        .await
+        .expect("stage participant");
+    let mut partitions = Vec::new();
+    // Staged in reverse projection order on purpose.
+    for projection in ["zeta_records", "mu_records", "alpha_records"] {
+        partitions.push(
+            result_partition_with_projection_for(run, epoch, projection)
+                .await
+                .1,
+        );
+    }
+    transaction
+        .stage_results(&mut partitions, &mut None)
+        .await
+        .expect("stage final results");
+    transaction
+        .commit(final_metadata(None, epoch, CheckpointTerminalReason::Completed))
+        .await
+        .expect("commit final generation")
+}
+
+/// Open the leased read authority for one committed generation.
+pub async fn open_leased(
+    backend: &MemoryCheckpointBackend,
+    run: StreamRunIdentity,
+    committed: &CommittedCheckpointGeneration,
+) -> LeasedCheckpointGeneration {
+    let opened = backend
+        .open_latest(&run, &expectations(run))
+        .await
+        .expect("open latest generation")
+        .expect("committed head exists");
+    assert_eq!(opened.generation(), committed.generation_ref());
+    opened
+}
+
+/// Stage a transaction plus metadata for one safe abort at the given epoch.
+pub async fn staged_abort_transaction(
+    backend: &MemoryCheckpointBackend,
+    run: StreamRunIdentity,
+    previous: &CommittedCheckpointGeneration,
+    epoch: u64,
+) -> (
+    Box<dyn StreamingGenerationTransaction>,
+    CheckpointCommitMetadata,
+) {
+    let opened = backend
+        .open_latest(&run, &expectations(run))
+        .await
+        .expect("open latest generation")
+        .expect("committed head exists");
+    let expected = current_v4_predecessor(&opened, previous.generation_ref())
+        .expect("current-v4 predecessor authority");
+    drop(opened);
+    let mut transaction = StreamingCheckpointBackend::begin_generation(
+        backend,
+        run,
+        Some(expected),
+        expectations(run),
+    )
+    .await
+    .expect("begin abort generation");
+    transaction
+        .stage_participant(prepared_participant(run, epoch).await)
+        .await
+        .expect("stage participant");
+    (
+        transaction,
+        final_metadata(
+            Some(previous.generation()),
+            epoch,
+            CheckpointTerminalReason::Aborted,
+        ),
+    )
+}
+
+/// Bounded result-index page budget holding at most `items` descriptors.
+pub fn page_budget(items: usize) -> ResultIndexReadBudget {
+    ResultIndexReadBudget {
+        max_items: NonZeroUsize::new(items).expect("nonzero page items"),
+        max_bytes: NonZeroU64::new(1_048_576).expect("nonzero page bytes"),
+    }
+}
+
+/// Budget the prepared report's retained lease is charged against.
+pub fn report_budget() -> StreamingResourceBudget {
+    StreamingResourceBudget::new(BudgetLimits {
+        max_items: 4,
+        max_bytes: 256 * 1024,
+    })
+    .expect("valid report budget")
+}
+
+/// Budget for one export receipt's encoded and parsed charges.
+pub fn export_budget() -> StreamingResourceBudget {
+    StreamingResourceBudget::new(BudgetLimits {
+        max_items: 8,
+        max_bytes: 64 * 1024,
+    })
+    .expect("valid export budget")
+}
+
+/// Budget admitting several derived-sink attempt tokens.
+pub fn sink_attempt_budget() -> StreamingResourceBudget {
+    StreamingResourceBudget::new(BudgetLimits {
+        max_items: 8,
+        max_bytes: 4096,
+    })
+    .expect("valid attempt budget")
+}
+
+/// Budget that cannot admit even one derived-sink attempt token.
+pub fn exhausted_attempt_budget() -> StreamingResourceBudget {
+    StreamingResourceBudget::new(BudgetLimits {
+        max_items: 1,
+        max_bytes: 1,
+    })
+    .expect("valid exhausted attempt budget")
+}
+
+/// Construct a checked lowercase component identity.
+pub fn component(value: &str) -> StreamingIssueComponentId {
+    StreamingIssueComponentId::new(value).expect("valid component identity")
+}
+
+/// Frozen export policy retrying a retryable export failure three times.
+pub fn export_policy() -> PreparedStreamingIssuePolicy {
+    PreparedStreamingIssuePolicy::new([
+        StreamingIssueThresholdRule::new(
+            component("export_retryable"),
+            StreamingIssueScopeKind::Export,
+            StreamingIssueClass::Retryable,
+            None,
+            3,
+            StreamingIssueDisposition::ExportIncomplete,
+            None,
+        )
+        .expect("valid retryable export rule"),
+    ])
+    .expect("valid export policy")
+}
+
+/// Prepare one export failure, allowing the issue-side and call-side authority
+/// to diverge so foreign run, generation, sink, and ordinal are reachable.
+#[allow(clippy::too_many_arguments)]
+pub async fn try_prepared_export_failure_for(
+    reporter_run: StreamRunIdentity,
+    issue_run: StreamRunIdentity,
+    issue_generation: &CheckpointGeneration,
+    issue_sink: &StreamingIssueComponentId,
+    issue_ordinal: u32,
+    call_run: StreamRunIdentity,
+    call_generation: &CheckpointGeneration,
+    call_sink: &StreamingIssueComponentId,
+    call_ordinal: u32,
+    budget: &StreamingResourceBudget,
+) -> Result<PreparedExportAttemptFailure, StreamingReliabilityError> {
+    let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+        reporter_run,
+        export_policy(),
+        StreamingResourceBudget::new(BudgetLimits {
+            max_items: 64,
+            max_bytes: 128 * 1024,
+        })
+        .expect("valid reporter budget"),
+    )
+    .expect("budget-owned reporter");
+    let issue = OrdinaryStreamingIssue::export(
+        issue_run,
+        issue_sink.clone(),
+        issue_generation.clone(),
+        StreamingIssueClass::Retryable,
+        ContentDigest::from_bytes([0xc3; 32]),
+        issue_ordinal,
+        ContentDigest::from_bytes([0xc4; 32]),
+        OrdinaryStreamingFailure::Export(ResultExportError::failure(ResultExportFailureCode::Io)),
+    )
+    .expect("valid export issue");
+    reporter
+        .prepare_export_attempt_failure(
+            &call_run,
+            call_generation,
+            call_sink,
+            call_ordinal,
+            ResultSinkAttemptOutcome::Failed(issue),
+            budget,
+        )
+        .await
+}
+
+/// Prepare one well-formed export failure at the given dense ordinal.
+pub async fn prepared_export_failure(
+    run: StreamRunIdentity,
+    committed: &CommittedCheckpointGeneration,
+    sink: &StreamingIssueComponentId,
+    attempt_ordinal: u32,
+    budget: &StreamingResourceBudget,
+) -> PreparedExportAttemptFailure {
+    let generation = committed.generation();
+    try_prepared_export_failure_for(
+        run,
+        run,
+        &generation,
+        sink,
+        attempt_ordinal,
+        run,
+        &generation,
+        sink,
+        attempt_ordinal,
+        budget,
+    )
+    .await
+    .expect("prepare export failure")
+}
+
+/// Prepare one well-formed export failure and consume it into persistence.
+pub async fn prepared_export_persistence(
+    run: StreamRunIdentity,
+    committed: &CommittedCheckpointGeneration,
+    sink: &StreamingIssueComponentId,
+    attempt_ordinal: u32,
+    budget: &StreamingResourceBudget,
+) -> PreparedExportReceiptPersistence {
+    prepared_export_failure(run, committed, sink, attempt_ordinal, budget)
+        .await
+        .into_persistence()
+}

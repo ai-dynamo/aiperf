@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::num::NonZeroU64;
 use std::path::Component;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -579,25 +580,38 @@ impl BenchmarkRunWireV2 {
 /// rather than silently downstream. This matches the established
 /// `artifacts`/`export`/`sidecars` projections.
 ///
-/// The reliability-policy digest is deliberately left `None`: the public
-/// Config-v2 reliability fields are owned by a later product task, and inventing
-/// a default here would let a mismatched policy pass the registry gate.
+/// The reliability-policy digest is derived here, never authored: it binds this
+/// resource to the exact policy the host prepares from the same fields, so a
+/// hand-edited wire that changes one without the other is refused before any
+/// registry lookup.
 fn project_dataset_streams(
     streams: crate::config::model::dataset_stream::DatasetStreams,
     replay: crate::config::model::dataset_stream::ShadowReplay,
 ) -> Result<DatasetStreamsSpecV2> {
+    let reliability = streams.reliability;
     let value = serde_json::to_value(DatasetStreamsAuthored {
         items: streams.items,
         shadow_replay: replay,
+        reliability,
     })
     .map_err(|error| anyhow!("run.cfg.dataset_streams: {error}"))?;
-    serde_json::from_value(value).map_err(|error| anyhow!("run.cfg.dataset_streams: {error}"))
+    #[allow(unused_mut)]
+    let mut spec: DatasetStreamsSpecV2 = serde_json::from_value(value)
+        .map_err(|error| anyhow!("run.cfg.dataset_streams: {error}"))?;
+    #[cfg(feature = "streaming")]
+    {
+        let prepared = crate::engine::streaming_policy::prepare_streaming_policy(&spec.reliability)
+            .map_err(|error| anyhow!("run.cfg.dataset_streams.reliability: {error:?}"))?;
+        spec.reliability_policy_digest = Some((*prepared.digest()).into());
+    }
+    Ok(spec)
 }
 
 #[derive(Serialize)]
 struct DatasetStreamsAuthored {
     items: Vec<crate::config::model::dataset_stream::DatasetStream>,
     shadow_replay: crate::config::model::dataset_stream::ShadowReplay,
+    reliability: crate::config::model::dataset_stream::StreamingReliabilityPolicy,
 }
 
 /// Build the runner's transport component from the typed [`Transport`].
@@ -1145,17 +1159,93 @@ pub struct DatasetStreamsSpecV2 {
     pub items: Vec<DatasetStreamSpecV2>,
     /// Shadow-replay policy binding one of [`Self::items`].
     pub shadow_replay: ShadowReplaySpecV2,
+    /// Resolved reliability policy for every stream in this resource.
+    #[serde(default = "default_reliability_policy_v2")]
+    pub reliability: StreamingReliabilityPolicyV2,
     /// Digest of the host-prepared reliability policy this resource was
     /// authored against.
     ///
-    /// Absent on the Config-v2 projection today: the public reliability-policy
-    /// fields and their exact projection into this seam are owned by a later
-    /// product task. When present, it is compared against the prepared policy
-    /// digest before any registry lookup, factory call, source poll, or issue
-    /// report. A `None` digest means "not yet bound", never "matches whatever
-    /// policy is prepared".
+    /// Derived by [`project_dataset_streams`] from [`Self::reliability`]. When
+    /// present, it is compared against the prepared policy digest before any
+    /// registry lookup, factory call, source poll, or issue report. A `None`
+    /// digest means "not yet bound", never "matches whatever policy is
+    /// prepared".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reliability_policy_digest: Option<ReliabilityPolicyDigestV2>,
+}
+
+/// Resolved reliability policy carried on the protocol-v2 stream resource.
+///
+/// Field-for-field identical to
+/// [`crate::config::model::dataset_stream::StreamingReliabilityPolicy`]; the
+/// duplication is the deliberate second, authoritative strict decode that makes
+/// Config-v2 drift a loud projection failure rather than a silent downstream
+/// one. Same rationale as the `artifacts`/`export`/`sidecars` projections.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamingReliabilityPolicyV2 {
+    /// Retries before an immutable partition becomes a durable hole.
+    pub partition_retry_limit: u32,
+    /// Retries before one endpoint action is finalized as a failed receipt.
+    pub endpoint_retry_limit: u32,
+    /// Retries before a checkpoint attempt applies backpressure.
+    pub checkpoint_retry_limit: u32,
+    /// Retries before a derived export is marked incomplete.
+    pub export_retry_limit: u32,
+    /// Clock-driven delay between retry attempts, in milliseconds.
+    pub retry_backoff_ms: u64,
+    /// Cumulative partition holes before admission is fenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_holes_before_admission_fence: Option<NonZeroU64>,
+    /// Cumulative quarantines before admission is fenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantines_before_admission_fence: Option<NonZeroU64>,
+    /// Cumulative committed failed-action receipts before admission is fenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_failures_before_admission_fence: Option<NonZeroU64>,
+    /// Cumulative checkpoint-attempt failures before admission is fenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_failures_before_admission_fence: Option<NonZeroU64>,
+}
+
+impl StreamingReliabilityPolicyV2 {
+    /// Validate the arithmetic invariants this layer can decide alone.
+    ///
+    /// Capability questions (may this action sink be retried at all?) need a
+    /// frozen registry and belong to the registry stage, not here.
+    pub fn validate_outer(&self, field: &str) -> Result<()> {
+        let has_retries = self.partition_retry_limit > 0
+            || self.endpoint_retry_limit > 0
+            || self.checkpoint_retry_limit > 0
+            || self.export_retry_limit > 0;
+        ensure!(
+            !(has_retries && self.retry_backoff_ms == 0),
+            "{field}.retry_backoff_ms must be positive when any retry limit is nonzero"
+        );
+        // The exact nanosecond-representable ceiling; the retry owner converts
+        // this to nanoseconds and would otherwise overflow past it.
+        ensure!(
+            self.retry_backoff_ms <= u64::MAX / 1_000_000,
+            "{field}.retry_backoff_ms {} is not representable as a duration",
+            self.retry_backoff_ms
+        );
+        Ok(())
+    }
+}
+
+/// The documented defaults an absent `reliability` block projects.
+fn default_reliability_policy_v2() -> StreamingReliabilityPolicyV2 {
+    StreamingReliabilityPolicyV2 {
+        partition_retry_limit: 3,
+        endpoint_retry_limit: 0,
+        checkpoint_retry_limit: 3,
+        export_retry_limit: 3,
+        retry_backoff_ms: 100,
+        partition_holes_before_admission_fence: None,
+        quarantines_before_admission_fence: None,
+        endpoint_failures_before_admission_fence: None,
+        checkpoint_failures_before_admission_fence: NonZeroU64::new(3),
+    }
 }
 
 fn empty_raw_object() -> Box<RawValue> {
@@ -1277,6 +1367,9 @@ fn validate_dataset_streams_outer(streams: &DatasetStreamsSpecV2) -> Result<()> 
             bail!("shadow_replay.checkpoint.mode 'periodic' requires interval_seconds and backend");
         }
     }
+    streams
+        .reliability
+        .validate_outer("dataset_streams.reliability")?;
     Ok(())
 }
 

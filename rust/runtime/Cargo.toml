@@ -290,6 +290,11 @@ path = "tests/streaming_local_checkpoint.rs"
 required-features = ["streaming"]
 
 [[test]]
+name = "streaming_checkpoint_factories"
+path = "tests/streaming_checkpoint_factories.rs"
+required-features = ["streaming"]
+
+[[test]]
 name = "streaming_s3_source"
 path = "tests/streaming_s3_source.rs"
 required-features = ["streaming-s3"]
