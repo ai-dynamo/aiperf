@@ -6,6 +6,15 @@
 /// The source API version exposed by provisional plugin crate shells.
 pub const PLUGIN_SOURCE_API_VERSION: &str = "1.0.0";
 
+pub mod acquire;
+pub mod authority;
+pub mod catalog;
+pub mod discovery;
 pub mod error;
+pub mod inspect;
+pub mod loader;
 pub mod manifest;
 pub mod normalize;
+pub mod priority;
+pub mod residency;
+pub mod stage;

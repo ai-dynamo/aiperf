@@ -11,6 +11,9 @@ license.workspace = true
 aiperf-core.workspace = true
 aiperf-plugin-api.workspace = true
 aiperf-plugin-sdk.workspace = true
+blake3 = { workspace = true }
+libc = { workspace = true }
+object = { version = "0.36", features = ["read"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -20,3 +23,4 @@ thiserror = { workspace = true }
 [dev-dependencies]
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+tempfile = { workspace = true }
