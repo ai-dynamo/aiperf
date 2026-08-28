@@ -1306,12 +1306,19 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
             _hub_server = Some(server);
             transport
         } else {
-            VeloControllerTransport::bind_controller(
+            // One run-scoped seal, bound before any cell registers or
+            // preflights. There is no controller-side streaming selection to
+            // seal yet, so this is `None` on every current path; the seam is
+            // here so the streaming controller supplies a selection at exactly
+            // one site instead of threading bytes through per-cell plans.
+            let streaming_capability = seal_streaming_capability();
+            VeloControllerTransport::bind_controller_with_streaming(
                 velo,
                 registration_authority.clone(),
                 plan_registration,
                 cell_count,
                 start_handle,
+                streaming_capability,
             )
             .context("binding controller transport")?
         };
@@ -1841,6 +1848,20 @@ fn hub_http_bind() -> std::net::SocketAddr {
 /// the phaser and dataset planes mounted, a hub-mode run is a complete replacement of the
 /// standalone control/data planes on the one anchor.
 #[allow(clippy::too_many_arguments)]
+/// Seal this run's accepted streaming capability agreement for propagation to
+/// every cell, when the run has one.
+///
+/// Returns `None` on every current path: a non-streaming build has no selection
+/// to make, and no controller-side streaming selection producer is wired yet.
+/// This is the single site that will supply
+/// `StreamingSelectedDescriptors` to
+/// `StreamingCapabilityPropagation::seal`, so the agreement is sealed exactly
+/// once per run rather than once per registering cell.
+#[cfg(feature = "cellular")]
+fn seal_streaming_capability() -> Option<std::sync::Arc<[u8]>> {
+    None
+}
+
 async fn build_cellular_hub(
     velo: std::sync::Arc<velo::Velo>,
     registration_authority: std::sync::Arc<

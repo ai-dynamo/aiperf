@@ -166,9 +166,33 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &crate::engine::registry::WebSocketExtension,
             #[cfg(all(feature = "engine", feature = "dynosim"))]
             &crate::engine::registry::DynosimExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingExtension,
             #[cfg(feature = "engine")]
             &BuiltinNativeGraphExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingSessionExtension,
         ])
+    }
+}
+
+/// Built-in streaming session programs (`conversation`).
+#[cfg(feature = "streaming")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinStreamingSessionExtension;
+
+#[cfg(feature = "streaming")]
+impl AIPerfExtension for BuiltinStreamingSessionExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.streaming-sessions"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_stream_session_program(std::sync::Arc::new(
+                crate::streaming::session::conversation::StreamingConversationProgramFactory,
+            ))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
     }
 }
 
@@ -254,10 +278,42 @@ impl AIPerfExtension for BuiltinActuatorsExtension {
     }
 }
 
+/// Streaming dataset sources, formats, and checkpoint backends whose decode
+/// authority is entirely compiled in.
+///
+/// Adapters that must bind host-resolved authority before they can exist —
+/// `hf_rows` (credentialed page transport), `synthesis` (resolved tokenizer and
+/// its receipt), and `streaming_dynamo` (prepared synthesis-profile digest) —
+/// are deliberately absent. A startup-only registry cannot fabricate that
+/// authority, so the run's composition root constructs and registers them.
+#[cfg(feature = "streaming")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinStreamingExtension;
+
+#[cfg(feature = "streaming")]
+impl AIPerfExtension for BuiltinStreamingExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.streaming"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        for factory in crate::streaming::sources::builtin_source_factories() {
+            registry
+                .register_stream_source(factory)
+                .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        }
+        for factory in crate::streaming::formats::builtin_format_factories() {
+            registry
+                .register_stream_format(factory)
+                .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        }
+        Ok(())
+    }
+}
+
 /// Built-in NativeGraph-only factories selected by the evaluation composition
 /// layer. Existing endpoint, transport, graph, clock, and observer factories
-/// remain owned by their established product registries.
-#[cfg(feature = "engine")]
+/// remain owned by their established product registries.#[cfg(feature = "engine")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuiltinNativeGraphExtension;
 
@@ -492,6 +548,8 @@ impl AIPerfRegistry {
             &BuiltinEndpointsExtension,
             &BuiltinExportersExtension,
             &BuiltinActuatorsExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingExtension,
         ])
     }
 

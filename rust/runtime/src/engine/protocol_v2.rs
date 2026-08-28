@@ -345,12 +345,25 @@ impl BenchmarkRunWireV2 {
             !self.artifact_dir.as_os_str().is_empty(),
             "run.artifact_dir cannot be empty"
         );
+        // A stream-only run authors no finite dataset; the two input shapes are
+        // mutually exclusive and the mix is a rejection, not a precedence rule.
+        let has_datasets = self
+            .cfg
+            .datasets
+            .as_ref()
+            .is_some_and(|datasets| !datasets.is_empty());
+        let has_streams = self.cfg.dataset_streams.is_some();
         ensure!(
-            self.cfg
-                .datasets
-                .as_ref()
-                .is_some_and(|datasets| !datasets.is_empty()),
-            "run.cfg.datasets must contain exactly one dataset"
+            !(has_datasets && has_streams),
+            "run.cfg cannot author both datasets and dataset_streams"
+        );
+        ensure!(
+            has_datasets || has_streams,
+            "run.cfg must contain exactly one dataset or one dataset_streams resource"
+        );
+        ensure!(
+            has_streams == self.cfg.shadow_replay.is_some(),
+            "run.cfg.dataset_streams and run.cfg.shadow_replay must be authored together"
         );
         Ok(())
     }
@@ -362,14 +375,32 @@ impl BenchmarkRunWireV2 {
         // graph-format set stays sourced from `config::model::workload_kind`.
         let workload_kind = workload_kind(&self.cfg);
         let cfg = self.cfg;
+        let dataset_streams = match (workload_kind, cfg.dataset_streams, cfg.shadow_replay) {
+            (WorkloadKind::ShadowReplay, Some(streams), Some(replay)) => {
+                Some(project_dataset_streams(streams, replay)?)
+            }
+            // `validate_outer` already rejected the partial and mixed shapes, so
+            // the remaining arms are the finite path.
+            (WorkloadKind::ShadowReplay, _, _) => {
+                bail!("run.cfg.dataset_streams and run.cfg.shadow_replay must be authored together")
+            }
+            _ => None,
+        };
         // The runner builds exactly one dataset; take the first and re-serialize it
-        // as the dataset-factory-owned authored object.
-        let dataset = cfg
-            .datasets
-            .and_then(|datasets| datasets.into_iter().next())
-            .ok_or_else(|| anyhow!("run.cfg.datasets must contain one dataset"))?;
-        let dataset = serde_json::to_value(&dataset)
-            .map_err(|error| anyhow!("run.cfg.datasets[0]: {error}"))?;
+        // as the dataset-factory-owned authored object. A stream run has no
+        // authored finite dataset: its input is the `dataset_streams` resource.
+        let dataset = match dataset_streams {
+            Some(_) => None,
+            None => Some(
+                cfg.datasets
+                    .and_then(|datasets| datasets.into_iter().next())
+                    .ok_or_else(|| anyhow!("run.cfg.datasets must contain one dataset"))
+                    .and_then(|dataset| {
+                        serde_json::to_value(&dataset)
+                            .map_err(|error| anyhow!("run.cfg.datasets[0]: {error}"))
+                    })?,
+            ),
+        };
         let workload_id = workload_kind.workload_id();
         let transport = transport_component(cfg.transport.as_ref())?;
         // `transport_component` already rejected the unset case, so this clone
@@ -403,13 +434,25 @@ impl BenchmarkRunWireV2 {
             .map_err(|error| anyhow!("run.cfg.phases: {error}"))?;
         let failure_policy = serde_json::to_value(&cfg.failure_policy)
             .map_err(|error| anyhow!("run.cfg.failure_policy: {error}"))?;
-        let mut workload_config = serde_json::json!({
-            "worker_count": worker_count,
-            "dataset": dataset,
-            "tokenizer": tokenizer,
-            "phases": phases,
-            "failure_policy": failure_policy,
-        });
+        // `serde_json` is built with `preserve_order`, so the emitted key order is
+        // insertion order. The finite branch keeps its original five-key literal
+        // verbatim so existing projection bytes are unchanged; the stream branch
+        // gets its own four-key literal rather than mutating a shared map.
+        let mut workload_config = match dataset {
+            Some(dataset) => serde_json::json!({
+                "worker_count": worker_count,
+                "dataset": dataset,
+                "tokenizer": tokenizer,
+                "phases": phases,
+                "failure_policy": failure_policy,
+            }),
+            None => serde_json::json!({
+                "worker_count": worker_count,
+                "tokenizer": tokenizer,
+                "phases": phases,
+                "failure_policy": failure_policy,
+            }),
+        };
         // `weka_semantics` selects the graph reconstruction pipeline and exists
         // only on the graph workload's config DTO. The scheduled workload DTO is
         // strict (`deny_unknown_fields`), so emitting the field there — even as
@@ -521,9 +564,40 @@ impl BenchmarkRunWireV2 {
                 metrics: true,
                 artifacts: true,
                 sidecars: sidecars_present,
+                dataset_streams: dataset_streams.is_some(),
             },
+            dataset_streams,
         })
     }
+}
+
+/// Project the authored Config-v2 stream resource onto its protocol-v2 spec.
+///
+/// The `Value` round-trip is deliberate and startup-only: it makes the strict
+/// protocol DTO the second, authoritative decode of the authored shape, so a
+/// Config-v2 type that drifts from the protocol DTO fails loudly at projection
+/// rather than silently downstream. This matches the established
+/// `artifacts`/`export`/`sidecars` projections.
+///
+/// The reliability-policy digest is deliberately left `None`: the public
+/// Config-v2 reliability fields are owned by a later product task, and inventing
+/// a default here would let a mismatched policy pass the registry gate.
+fn project_dataset_streams(
+    streams: crate::config::model::dataset_stream::DatasetStreams,
+    replay: crate::config::model::dataset_stream::ShadowReplay,
+) -> Result<DatasetStreamsSpecV2> {
+    let value = serde_json::to_value(DatasetStreamsAuthored {
+        items: streams.items,
+        shadow_replay: replay,
+    })
+    .map_err(|error| anyhow!("run.cfg.dataset_streams: {error}"))?;
+    serde_json::from_value(value).map_err(|error| anyhow!("run.cfg.dataset_streams: {error}"))
+}
+
+#[derive(Serialize)]
+struct DatasetStreamsAuthored {
+    items: Vec<crate::config::model::dataset_stream::DatasetStream>,
+    shadow_replay: crate::config::model::dataset_stream::ShadowReplay,
 }
 
 /// Build the runner's transport component from the typed [`Transport`].
@@ -669,6 +743,10 @@ pub struct AuthoredRunSpecV2 {
     /// [`HopRouting::default`] (`RoundRobin`) placement; inert under
     /// `Sharded`/`Global` and for `workers == 1`.
     pub hop_routing: Option<HopRouting>,
+    /// Resolved native streaming dataset resources; `None` when the resource was
+    /// absent. Presence is authoritative through
+    /// [`Self::resource_is_present`]; this field is the resolved value.
+    pub dataset_streams: Option<DatasetStreamsSpecV2>,
     resource_presence: ResourcePresenceV2,
 }
 
@@ -691,6 +769,9 @@ pub struct AuthoredRunResourcesV2 {
     /// Optional prepared telemetry/process sidecars.
     #[serde(default)]
     pub sidecars: Option<SidecarSpecV2>,
+    /// Native streaming dataset resources.
+    #[serde(default)]
+    pub dataset_streams: Option<DatasetStreamsSpecV2>,
 }
 
 #[derive(Deserialize)]
@@ -715,6 +796,7 @@ struct ResourcePresenceV2 {
     metrics: bool,
     artifacts: bool,
     sidecars: bool,
+    dataset_streams: bool,
 }
 
 impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
@@ -729,6 +811,7 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             metrics: wire.resources.metrics.is_some(),
             artifacts: wire.resources.artifacts.is_some(),
             sidecars: wire.resources.sidecars.is_some(),
+            dataset_streams: wire.resources.dataset_streams.is_some(),
         };
         Ok(Self {
             identity: wire.identity,
@@ -745,6 +828,7 @@ impl<'de> Deserialize<'de> for AuthoredRunSpecV2 {
             export: crate::export::ExportConfig::default(),
             dispatch: wire.dispatch,
             hop_routing: wire.hop_routing,
+            dataset_streams: wire.resources.dataset_streams,
             resource_presence,
         })
     }
@@ -770,6 +854,8 @@ pub enum RunResourceV2 {
     Artifacts,
     /// Sidecar resources.
     Sidecars,
+    /// Native streaming dataset resources.
+    DatasetStreams,
 }
 
 impl RunResourceV2 {
@@ -782,8 +868,416 @@ impl RunResourceV2 {
             Self::Metrics => "metrics",
             Self::Artifacts => "artifacts",
             Self::Sidecars => "sidecars",
+            Self::DatasetStreams => "dataset_streams",
         }
     }
+}
+
+/// Canonical 32-byte reliability-policy digest carried on the wire.
+///
+/// This mirrors [`crate::streaming::identity::ContentDigest`] without importing
+/// it, so protocol-v2 decoding stays independent of the `streaming` feature. The
+/// gated `From` below is the only conversion; there is no `FromStr` and no
+/// authored-hex spelling, because generation one never authors this value in
+/// Config v2 — it is injected internally (and by tests) so a stream resource
+/// cannot be admitted against a different reliability policy than the one the
+/// host prepared.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct ReliabilityPolicyDigestV2([u8; 32]);
+
+impl ReliabilityPolicyDigestV2 {
+    /// Construct from canonical digest bytes.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow canonical digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+#[cfg(feature = "streaming")]
+impl From<crate::streaming::identity::ContentDigest> for ReliabilityPolicyDigestV2 {
+    fn from(digest: crate::streaming::identity::ContentDigest) -> Self {
+        Self(*digest.as_bytes())
+    }
+}
+
+/// One named component selection inside a dataset-stream resource.
+///
+/// The `config` body is retained as an opaque `RawValue` so the owning factory
+/// performs the single strict decode during preparation. Protocol-v2 validation
+/// never inspects it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamComponentSpecV2 {
+    /// Stable registry identifier of the selected implementation.
+    pub id: ComponentId,
+    /// Factory-owned opaque configuration.
+    #[serde(default = "empty_raw_object")]
+    pub config: Box<RawValue>,
+}
+
+impl StreamComponentSpecV2 {
+    /// Validate the component identity without decoding its opaque config.
+    pub fn validate_outer(&self, field: &str) -> Result<()> {
+        ensure!(
+            !self.id.as_str().trim().is_empty(),
+            "{field}.id cannot be empty"
+        );
+        Ok(())
+    }
+}
+
+/// Frozen per-stream retention capacities.
+///
+/// Every value is an exact count or byte capacity. This layer checks
+/// representability and non-zero-ness only; binding these onto
+/// [`crate::streaming::budget::BudgetLimits`] belongs to the pipeline layer that
+/// owns budget construction, which is the only layer allowed to allocate.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamLimitsSpecV2 {
+    /// Simultaneously acquired immutable partitions.
+    pub acquired_partitions: u64,
+    /// Simultaneously retained decoded fragments.
+    pub decoded_fragments: u64,
+    /// Simultaneously retained decoded bytes.
+    pub decoded_bytes: u64,
+    /// In-memory session/decoder state bytes.
+    pub state_memory: u64,
+    /// Validated spill bytes for session/decoder state.
+    pub state_disk: u64,
+}
+
+impl StreamLimitsSpecV2 {
+    /// Validate that every capacity is non-zero and host-representable.
+    pub fn validate_outer(&self, field: &str) -> Result<()> {
+        for (name, value) in [
+            ("acquired_partitions", self.acquired_partitions),
+            ("decoded_fragments", self.decoded_fragments),
+            ("decoded_bytes", self.decoded_bytes),
+            ("state_memory", self.state_memory),
+            ("state_disk", self.state_disk),
+        ] {
+            ensure!(value > 0, "{field}.{name} must be positive");
+            ensure!(
+                usize::try_from(value).is_ok(),
+                "{field}.{name} exceeds this host's addressable capacity"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// One authored dataset stream.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetStreamSpecV2 {
+    /// Run-unique stream name referenced by shadow replay.
+    pub id: String,
+    /// Selected streaming source implementation.
+    pub source: StreamComponentSpecV2,
+    /// Selected streaming format implementation.
+    pub format: StreamComponentSpecV2,
+    /// Selected streaming session program.
+    pub session_program: StreamComponentSpecV2,
+    /// Frozen retention capacities for this stream.
+    pub limits: StreamLimitsSpecV2,
+}
+
+/// Closed generation-one family of actions a session program may emit.
+///
+/// Mirrors [`crate::streaming::unit::DatasetActionKind`] so protocol-v2 decoding
+/// stays independent of the `streaming` feature.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetActionKindV2 {
+    /// Materialize and issue one endpoint request.
+    Request,
+    /// Execute one host-owned graph node.
+    GraphNode,
+    /// Publish a terminal session update.
+    SessionTerminal,
+}
+
+impl DatasetActionKindV2 {
+    /// Stable authored field name for one action kind.
+    #[must_use]
+    pub const fn field_name(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::GraphNode => "graph_node",
+            Self::SessionTerminal => "session_terminal",
+        }
+    }
+}
+
+#[cfg(feature = "streaming")]
+impl From<DatasetActionKindV2> for crate::streaming::unit::DatasetActionKind {
+    fn from(kind: DatasetActionKindV2) -> Self {
+        match kind {
+            DatasetActionKindV2::Request => Self::Request,
+            DatasetActionKindV2::GraphNode => Self::GraphNode,
+            DatasetActionKindV2::SessionTerminal => Self::SessionTerminal,
+        }
+    }
+}
+
+/// Wall/event-time interpretation for shadow replay.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayTimeModeV2 {
+    /// Recorded offsets are relative to the run's replay origin.
+    Relative,
+    /// Recorded event times are absolute UTC instants.
+    Absolute,
+}
+
+/// Time policy for shadow replay.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayTimeSpecV2 {
+    /// Selected time interpretation.
+    pub mode: ReplayTimeModeV2,
+}
+
+/// Completeness signal that advances the replay watermark.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WatermarkSourceV2 {
+    /// Source partition order is the completeness proof.
+    SourceOrder,
+    /// Decoded event time is the completeness proof.
+    EventTime,
+}
+
+/// Disposition for a unit that arrives behind the watermark.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LateUnitPolicyV2 {
+    /// A late unit fails the run.
+    Fail,
+    /// A late unit is dropped with explicitly lossy semantics.
+    Drop,
+}
+
+/// Ordering policy for shadow replay.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayOrderingSpecV2 {
+    /// Selected watermark source.
+    pub watermark: WatermarkSourceV2,
+    /// Selected late-unit disposition.
+    pub late: LateUnitPolicyV2,
+}
+
+/// Behavior when admission cannot keep up with the source.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverloadModeV2 {
+    /// Stall acquisition until capacity is returned.
+    Backpressure,
+    /// Shed admitted work with explicitly lossy semantics.
+    Shed,
+}
+
+/// Overload policy for shadow replay.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayOverloadSpecV2 {
+    /// Selected overload behavior.
+    pub mode: OverloadModeV2,
+}
+
+/// Checkpoint cadence for shadow replay.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointModeV2 {
+    /// No checkpoint backend is selected.
+    None,
+    /// Commit one atomic generation on a fixed cadence.
+    Periodic,
+}
+
+/// Checkpoint policy for shadow replay.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayCheckpointSpecV2 {
+    /// Selected checkpoint cadence.
+    pub mode: CheckpointModeV2,
+    /// Commit cadence in seconds; required by and exclusive to `periodic`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_seconds: Option<f64>,
+    /// Selected checkpoint backend; required by and exclusive to `periodic`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<StreamComponentSpecV2>,
+}
+
+/// Shadow-replay execution policy over one named dataset stream.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShadowReplaySpecV2 {
+    /// Name of the selected [`DatasetStreamSpecV2::id`].
+    pub stream: String,
+    /// Action-sink binding per emitted action kind, in canonical kind order.
+    #[serde(deserialize_with = "unique_action_bindings")]
+    pub actions: BTreeMap<DatasetActionKindV2, StreamComponentSpecV2>,
+    /// Time interpretation.
+    pub time: ReplayTimeSpecV2,
+    /// Ordering and late-unit policy.
+    pub ordering: ReplayOrderingSpecV2,
+    /// Overload behavior.
+    pub overload: ReplayOverloadSpecV2,
+    /// Checkpoint policy.
+    pub checkpoint: ReplayCheckpointSpecV2,
+}
+
+/// The `dataset_streams` authored run resource.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatasetStreamsSpecV2 {
+    /// Authored streams in authored order; IDs are run-unique.
+    pub items: Vec<DatasetStreamSpecV2>,
+    /// Shadow-replay policy binding one of [`Self::items`].
+    pub shadow_replay: ShadowReplaySpecV2,
+    /// Digest of the host-prepared reliability policy this resource was
+    /// authored against.
+    ///
+    /// Absent on the Config-v2 projection today: the public reliability-policy
+    /// fields and their exact projection into this seam are owned by a later
+    /// product task. When present, it is compared against the prepared policy
+    /// digest before any registry lookup, factory call, source poll, or issue
+    /// report. A `None` digest means "not yet bound", never "matches whatever
+    /// policy is prepared".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reliability_policy_digest: Option<ReliabilityPolicyDigestV2>,
+}
+
+fn empty_raw_object() -> Box<RawValue> {
+    // A `{}` literal is always valid JSON, so this cannot fail; keep it an
+    // explicit fallback rather than an `expect` on the decode path.
+    RawValue::from_string("{}".to_owned()).unwrap_or_else(|_| RawValue::NULL.to_owned())
+}
+
+/// Deserialize the action bindings, rejecting a repeated action kind.
+///
+/// Collecting straight into a `BTreeMap` would silently keep the last binding
+/// for a repeated key, which would make two conflicting authored action sinks
+/// look like one valid selection. A `Vec<(K, V)>` cannot stand in here: serde's
+/// JSON and YAML deserializers reject a map for a sequence-shaped type, and the
+/// authored spelling is a map (`actions: { request: {...} }`).
+fn unique_action_bindings<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<DatasetActionKindV2, StreamComponentSpecV2>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ActionBindingsVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for ActionBindingsVisitor {
+        type Value = BTreeMap<DatasetActionKindV2, StreamComponentSpecV2>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a map of action kind to action-sink selection")
+        }
+
+        fn visit_map<A>(self, mut access: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut bindings = BTreeMap::new();
+            while let Some((kind, component)) =
+                access.next_entry::<DatasetActionKindV2, StreamComponentSpecV2>()?
+            {
+                if bindings.insert(kind, component).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate shadow_replay action binding {:?}",
+                        kind.field_name()
+                    )));
+                }
+            }
+            Ok(bindings)
+        }
+    }
+
+    deserializer.deserialize_map(ActionBindingsVisitor)
+}
+
+/// Wire-only invariants for the dataset-stream resource.
+///
+/// This is structure and arithmetic only: uniqueness, cross-references,
+/// representable capacities, and finite durations. Every capability question is
+/// answered later by the descriptor-only agreement, which needs a frozen
+/// registry this function does not have.
+fn validate_dataset_streams_outer(streams: &DatasetStreamsSpecV2) -> Result<()> {
+    ensure!(
+        !streams.items.is_empty(),
+        "dataset_streams.items must contain at least one stream"
+    );
+    let mut seen = BTreeSet::new();
+    for (index, stream) in streams.items.iter().enumerate() {
+        ensure!(
+            !stream.id.trim().is_empty(),
+            "dataset_streams.items[{index}].id cannot be empty"
+        );
+        ensure!(
+            seen.insert(stream.id.as_str()),
+            "duplicate dataset_streams.items id {:?}",
+            stream.id
+        );
+        stream
+            .source
+            .validate_outer(&format!("dataset_streams.items[{index}].source"))?;
+        stream
+            .format
+            .validate_outer(&format!("dataset_streams.items[{index}].format"))?;
+        stream
+            .session_program
+            .validate_outer(&format!("dataset_streams.items[{index}].session_program"))?;
+        stream
+            .limits
+            .validate_outer(&format!("dataset_streams.items[{index}].limits"))?;
+    }
+
+    let replay = &streams.shadow_replay;
+    ensure!(
+        seen.contains(replay.stream.as_str()),
+        "shadow_replay.stream {:?} names no configured dataset stream",
+        replay.stream
+    );
+    ensure!(
+        !replay.actions.is_empty(),
+        "shadow_replay.actions must bind at least one action kind"
+    );
+    for (kind, component) in &replay.actions {
+        component.validate_outer(&format!("shadow_replay.actions.{}", kind.field_name()))?;
+    }
+    match (
+        replay.checkpoint.mode,
+        replay.checkpoint.interval_seconds,
+        replay.checkpoint.backend.as_ref(),
+    ) {
+        (CheckpointModeV2::None, None, None) => {}
+        (CheckpointModeV2::None, _, _) => {
+            bail!("shadow_replay.checkpoint.mode 'none' forbids interval_seconds and backend");
+        }
+        (CheckpointModeV2::Periodic, Some(interval), Some(backend)) => {
+            ensure!(
+                interval.is_finite() && interval > 0.0,
+                "shadow_replay.checkpoint.interval_seconds must be finite and positive"
+            );
+            backend.validate_outer("shadow_replay.checkpoint.backend")?;
+        }
+        (CheckpointModeV2::Periodic, _, _) => {
+            bail!("shadow_replay.checkpoint.mode 'periodic' requires interval_seconds and backend");
+        }
+    }
+    Ok(())
 }
 
 impl AuthoredRunSpecV2 {
@@ -814,6 +1308,12 @@ impl AuthoredRunSpecV2 {
         if self.resource_is_present(RunResourceV2::Sidecars) {
             self.sidecars.validate_outer()?;
         }
+        if self.resource_is_present(RunResourceV2::DatasetStreams) {
+            let Some(streams) = self.dataset_streams.as_ref() else {
+                bail!("run.resources.dataset_streams is present but unresolved");
+            };
+            validate_dataset_streams_outer(streams)?;
+        }
         Ok(())
     }
 
@@ -826,6 +1326,7 @@ impl AuthoredRunSpecV2 {
             RunResourceV2::Metrics => self.resource_presence.metrics,
             RunResourceV2::Artifacts => self.resource_presence.artifacts,
             RunResourceV2::Sidecars => self.resource_presence.sidecars,
+            RunResourceV2::DatasetStreams => self.resource_presence.dataset_streams,
         }
     }
 }

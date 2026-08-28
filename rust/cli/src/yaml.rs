@@ -698,6 +698,12 @@ struct Benchmark {
     dataset: Option<DatasetSection>,
     /// Expanded `datasets:` list (first entry used on the single-run path).
     datasets: Option<Vec<DatasetSection>>,
+    /// Native streaming dataset resources.
+    #[serde(default, alias = "datasetStreams")]
+    dataset_streams: Option<aiperf_runtime::config::model::dataset_stream::DatasetStreams>,
+    /// Shadow-replay execution policy.
+    #[serde(default, alias = "shadowReplay")]
+    shadow_replay: Option<aiperf_runtime::config::model::dataset_stream::ShadowReplay>,
     tokenizer: Option<TokenizerSection>,
     /// Advanced multi-phase list (mutually exclusive with `warmup`/`profiling`).
     phases: Option<Phases>,
@@ -2527,6 +2533,8 @@ impl Benchmark {
                     mlflow,
                     wandb,
                     dataset: load::DatasetInputs {
+                        dataset_streams: self.dataset_streams.clone(),
+                        shadow_replay: self.shadow_replay.clone(),
                         api_key: self.endpoint.api_key,
                         headers: self.endpoint.headers.unwrap_or_default(),
                         tokenizer_name,
