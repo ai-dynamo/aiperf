@@ -55,6 +55,18 @@ fn receipt_order_is_sorted_for_determinism() {
 }
 
 #[test]
+fn framing_prevents_concatenation_collision() {
+    // Without length framing, hashing "ab" with no receipts and "a" with the
+    // receipt "b" would stream the identical byte sequence.
+    let joined = ValidatedRunPlan::from_canonical_bytes(b"ab", &[]);
+    let split = ValidatedRunPlan::from_canonical_bytes(b"a", &[b"b".as_ref()]);
+    assert_ne!(
+        joined.canonical_digest, split.canonical_digest,
+        "boundary-ambiguous inputs must not collide"
+    );
+}
+
+#[test]
 fn canonical_digest_is_hex_string() {
     let plan = ValidatedRunPlan::from_canonical_bytes(RUN_BYTES_A, &[]);
     // BLAKE3 hex is 64 lowercase hex chars
