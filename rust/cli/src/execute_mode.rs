@@ -40,10 +40,11 @@ use aiperf_runtime::engine::protocol_v2::{
 use aiperf_runtime::engine::redaction::redact_diagnostic;
 use serde_json::Value;
 
-// The C shim resolves this option against the same mimalloc header as the linked
-// allocator.
+// The C shim resolves this option against the exact mimalloc version linked
+// into the provider cdylib, so callers never hard-code the numeric value.
 unsafe extern "C" {
-    fn aiperf_mi_option_purge_delay() -> libmimalloc_sys::mi_option_t;
+    fn mi_option_set(option: i32, value: i64);
+    fn mi_aiperf_option_purge_delay() -> i32;
 }
 
 /// The internal re-exec flag: `aiperf --execute` reads one protocol-v2 execute
@@ -503,11 +504,12 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
         // The process exits immediately after committing its report, so purging
         // temporary sweep pages during the run only adds syscalls and cannot
-        // improve a later phase's footprint. The C shim resolves the option
-        // against the same exact mimalloc header as the linked allocator.
+        // improve a later phase's footprint.  The provider exports the option
+        // index from the exact mimalloc version it carries; consumers never
+        // duplicate the numeric value.
         // SAFETY: option mutation is not thread-safe, so it is performed here on
         // the sole process thread before Rayon or any benchmark runtime exists.
-        unsafe { libmimalloc_sys::mi_option_set(aiperf_mi_option_purge_delay(), -1) };
+        unsafe { mi_option_set(mi_aiperf_option_purge_delay(), -1) };
     }
 }
 

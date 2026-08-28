@@ -7,32 +7,12 @@
 
 use aiperf_cli::{dispatch, execute_mode};
 
-// Per-request allocation dominates the execution hot path.
+// The shared allocator provider (libaiperf_alloc_v1.so) is loaded as a
+// mandatory non-delay dependency before any Rust code runs.  Its priority-100
+// ELF constructor sets mimalloc options before mimalloc's own priority-101
+// constructor; no per-binary preinit hook is needed.
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-#[cfg(target_os = "linux")]
-#[used]
-#[unsafe(link_section = ".init_array.00100")]
-static AIPERF_MIMALLOC_PREINIT: unsafe extern "C" fn() = configure_mimalloc_before_process_init;
-
-#[cfg(target_os = "linux")]
-unsafe extern "C" fn configure_mimalloc_before_process_init() {
-    // mimalloc's Linux constructor has priority 101. This priority-100 hook
-    // changes its default before that constructor commits the initial arena.
-    // Leaving the option uninitialized lets mimalloc parse supported environment
-    // spellings.
-    // The C shim (build.rs) resolves the experimental enum from the exact header
-    // compiled by libmimalloc-sys instead of duplicating its unstable numeric value.
-    // SAFETY: mimalloc has not run process initialization and no Rust heap
-    // allocation can precede an ELF init-array constructor.
-    unsafe { libmimalloc_sys::mi_option_set_default(aiperf_mi_option_arena_eager_commit(), 0) };
-}
-
-#[cfg(target_os = "linux")]
-unsafe extern "C" {
-    fn aiperf_mi_option_arena_eager_commit() -> libmimalloc_sys::mi_option_t;
-}
+static GLOBAL: aiperf_allocator_shim::MiMallocShim = aiperf_allocator_shim::MiMallocShim;
 
 fn main() {
     aiperf_cli::diagnostics::register_sigusr1_faulthandler();
