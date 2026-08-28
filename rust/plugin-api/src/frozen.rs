@@ -94,9 +94,7 @@ impl FrozenAIPerfRegistry {
 
     /// Flat iterator over every registered category descriptor, in load order.
     pub fn all_registrations(&self) -> impl Iterator<Item = &PluginCategoryDescriptor> {
-        self.universes
-            .iter()
-            .flat_map(|u| u.registrations().iter())
+        self.universes.iter().flat_map(|u| u.registrations().iter())
     }
 
     /// Total number of registrations across all packages.

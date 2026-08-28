@@ -28,7 +28,10 @@ impl fmt::Display for RegistrationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateCapability(id) => {
-                write!(f, "capability {id:?} registered more than once by the same package")
+                write!(
+                    f,
+                    "capability {id:?} registered more than once by the same package"
+                )
             }
             Self::Extension(e) => write!(f, "plugin registration failed: {e}"),
         }

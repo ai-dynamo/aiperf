@@ -80,13 +80,10 @@ impl LockedCatalogBundle {
     /// rename is atomic on all POSIX systems; a concurrent reader never
     /// observes a partial write.
     pub fn publish(lock: PluginLockV1, path: &Path) -> Result<Self, BundleError> {
-        let json = serde_json::to_vec_pretty(&lock)
-            .expect("PluginLockV1 serializes infallibly");
+        let json = serde_json::to_vec_pretty(&lock).expect("PluginLockV1 serializes infallibly");
 
         // Write to a temp file in the same directory so rename is atomic.
-        let parent = path
-            .parent()
-            .unwrap_or_else(|| Path::new("."));
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
         let tmp = parent.join(format!(
             ".tmp-plugin-lock-{}",
             std::time::SystemTime::now()
