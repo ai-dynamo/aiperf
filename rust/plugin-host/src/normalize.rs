@@ -29,6 +29,12 @@ impl NormalizedIdV1 {
         if raw.is_empty() {
             return Err(ManifestError::MissingField("id".into()));
         }
+        // Reject parent-traversal sequences (e.g. "..", "../", "..dangerous")
+        if raw == ".." || raw.contains("..") {
+            return Err(ManifestError::InvalidPath(format!(
+                "id contains parent-traversal sequence: {raw}"
+            )));
+        }
         // Reject path-like characters
         if raw.starts_with('/') || raw.starts_with('\\') || raw.contains(':') {
             return Err(ManifestError::InvalidPath(format!(
