@@ -218,9 +218,16 @@ pub enum InventoryError {
     #[error("unsupported inventory schema version: {0}")]
     UnsupportedSchemaVersion(u32),
 
-    /// The stored digest is not a canonical BLAKE3 hex string.
-    #[error("malformed inventory digest")]
-    MalformedDigest,
+    /// A digest is not a canonical 64-character BLAKE3 hex string.  The host
+    /// refuses rather than normalizing, because a digest it had to repair is a
+    /// digest it cannot attribute to the publisher.
+    #[error("malformed digest for {context}: {value}")]
+    MalformedDigest {
+        /// What the digest was supposed to authenticate.
+        context: String,
+        /// Digest text observed.
+        value: String,
+    },
 
     /// The stored digest does not authenticate the stored payload.
     #[error("inventory digest mismatch")]
@@ -261,15 +268,6 @@ pub enum InventoryError {
         package_id: String,
         /// Dependency that has no entry.
         missing: String,
-    },
-
-    /// An entry digest is not a canonical 64-character BLAKE3 hex string.
-    #[error("package {package_id} carries a malformed digest: {value}")]
-    InvalidEntryDigest {
-        /// Offending package.
-        package_id: String,
-        /// Digest text observed.
-        value: String,
     },
 }
 
