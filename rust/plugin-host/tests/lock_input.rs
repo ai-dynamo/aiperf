@@ -4,7 +4,7 @@
 //! Tests for diff_locks — added, removed, and changed packages (Task 16).
 
 use aiperf_plugin_host::{
-    diff::{LockDiff, diff_locks},
+    diff::diff_locks,
     lock::{LockedPackageV1, PackageStatus, PluginLockV1},
 };
 
