@@ -41,6 +41,26 @@ pub struct PluginCatalogEntry {
     pub manifest_digest: String,
 }
 
+/// The plugin universe this process composed and verified at bootstrap, or
+/// `None` when the run has no plugins.
+static COMPOSED_PLUGIN_PROVENANCE: std::sync::OnceLock<Option<(String, Vec<PluginCatalogEntry>)>> =
+    std::sync::OnceLock::new();
+
+/// Record the run's plugin provenance so every report built afterwards carries it.
+///
+/// Called once by the CLI bootstrap after the plugin lock bundle is loaded and
+/// verified, with `None` when the run composed no plugins. Later calls are
+/// ignored: provenance names the universe the run executed under and cannot be
+/// redefined once any report may have observed it.
+pub fn set_plugin_provenance(provenance: Option<(String, Vec<PluginCatalogEntry>)>) {
+    let _ = COMPOSED_PLUGIN_PROVENANCE.set(provenance);
+}
+
+/// The recorded plugin provenance, or `None` when bootstrap recorded none.
+pub fn plugin_provenance() -> Option<&'static (String, Vec<PluginCatalogEntry>)> {
+    COMPOSED_PLUGIN_PROVENANCE.get()?.as_ref()
+}
+
 /// A present report value: finite numbers serialize normally; non-finite tails
 /// serialize as JSON null without colliding with structurally absent fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1159,7 +1179,7 @@ impl Reporter for NativeReporter {
         if run_summary.duration_s.is_none() {
             run_summary.duration_s = metrics.finite_value(MetricTag::BenchmarkDuration);
         }
-        NativeReport {
+        let report = NativeReport {
             schema_version: NATIVE_REPORT_SCHEMA_VERSION,
             aiperf_version: env!("CARGO_PKG_VERSION").to_string(),
             run: ReportRun::unfinalized(outcome.run.clone()),
@@ -1183,6 +1203,14 @@ impl Reporter for NativeReporter {
             streaming: outcome.streaming.clone(),
             plugin_lock_digest: None,
             plugin_catalog: Vec::new(),
+        };
+        // Stamp the universe this process composed and verified at bootstrap.
+        // Absent provenance is the no-plugins run and leaves both fields absent.
+        match plugin_provenance() {
+            Some((lock_digest, catalog)) => {
+                report.with_plugin_provenance(lock_digest.clone(), catalog.clone())
+            }
+            None => report,
         }
     }
 }
@@ -1240,7 +1268,7 @@ pub struct NativeReport {
     pub plugin_lock_digest: Option<String>,
     /// Brief catalog summary of loaded plugin packages. Absent when no plugins
     /// were loaded or the catalog is empty.
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub plugin_catalog: Vec<PluginCatalogEntry>,
 }
 
