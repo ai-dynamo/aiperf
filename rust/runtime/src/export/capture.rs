@@ -79,7 +79,9 @@ pub enum ExportCapturePlanError {
 impl fmt::Display for ExportCapturePlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SketchIncompatible { conflicting_exporters } => write!(
+            Self::SketchIncompatible {
+                conflicting_exporters,
+            } => write!(
                 f,
                 "sketch metrics mode is incompatible with exact-record requirements from: {}",
                 conflicting_exporters.join(", ")

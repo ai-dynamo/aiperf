@@ -89,7 +89,10 @@ fn sketch_incompatible_with_exact_requirements() {
     );
     let result = ExportCapturePlan::merge_with_sketch_check([plan], /*sketch=*/ true);
     assert!(
-        matches!(result, Err(ExportCapturePlanError::SketchIncompatible { .. })),
+        matches!(
+            result,
+            Err(ExportCapturePlanError::SketchIncompatible { .. })
+        ),
         "exact requirement in sketch mode must be rejected"
     );
 }
