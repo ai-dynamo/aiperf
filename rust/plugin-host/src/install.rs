@@ -26,7 +26,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{InstallError, InventoryError};
-use crate::inventory::{AuthenticatedInventory, PluginInventoryV1};
+use crate::inventory::{AuthenticatedInventory, validate_inventory};
 
 /// Marker file written last inside a staged generation.  Its presence is the
 /// only evidence that a generation directory is complete.
@@ -129,7 +129,11 @@ impl InstallRoot {
                 path: dir.clone(),
                 source,
             })?;
-            let Some(id) = entry.file_name().to_str().and_then(|n| n.parse::<u64>().ok()) else {
+            let Some(id) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.parse::<u64>().ok())
+            else {
                 continue;
             };
             if dir.join(id.to_string()).join(READY_MARKER).is_file() {
@@ -152,23 +156,23 @@ impl InstallRoot {
 
     /// Materialize `files` as a new generation described by `inventory`.
     ///
-    /// Relative paths are validated before anything is written, so a rejected
-    /// request leaves the install root byte-identical.
+    /// The inventory is validated and the relative paths are checked before
+    /// anything is written, so a rejected request leaves the install root
+    /// byte-identical.
     pub fn atomic_install(
         &self,
         inventory: &AuthenticatedInventory,
         files: &[InstallFile],
     ) -> Result<Generation, InstallError> {
+        validate_inventory(inventory)?;
         for file in files {
             validate_relative_path(&file.relative_path)?;
         }
 
         let id = self.next_generation_id()?;
-        let staged = self.staging_dir().join(format!(
-            "{id}.{}.{}",
-            std::process::id(),
-            monotonic_stamp()
-        ));
+        let staged =
+            self.staging_dir()
+                .join(format!("{id}.{}.{}", std::process::id(), monotonic_stamp()));
         // A previous crash may have left this exact name behind; start clean.
         remove_dir_all_if_present(&staged)?;
         create_dir_all(&staged)?;
@@ -207,9 +211,7 @@ impl InstallRoot {
     /// The generation being left is recorded as the new previous, so a rollback
     /// is itself reversible.
     pub fn rollback(&self) -> Result<Generation, InstallError> {
-        let restore = self
-            .previous()?
-            .ok_or(InstallError::NoPreviousGeneration)?;
+        let restore = self.previous()?.ok_or(InstallError::NoPreviousGeneration)?;
         if let Some(outgoing) = self.current()? {
             self.write_pointer(PREVIOUS_POINTER, outgoing.id)?;
         }
@@ -247,19 +249,28 @@ impl InstallRoot {
     }
 
     /// Verify that generation `id` was installed from `inventory`.
+    ///
+    /// The generation's ready marker carries the canonical digest of the
+    /// inventory it was built from, so identity is decided without re-parsing
+    /// the recorded document.
     pub fn verify_generation(
         &self,
         id: u64,
         inventory: &AuthenticatedInventory,
     ) -> Result<(), InstallError> {
         let dir = self.generation_dir_if_complete(id)?;
-        let recorded = PluginInventoryV1::load_and_verify(&dir.join(GENERATION_INVENTORY))?;
-        // Both digests are already verified against their own payloads, so a
-        // plain comparison here decides identity, not authenticity.
-        if recorded.inventory_digest != inventory.digest() {
+        let marker = dir.join(READY_MARKER);
+        let recorded = std::fs::read_to_string(&marker)
+            .map_err(|source| InstallError::Io { path: marker, source })?;
+        let recorded = recorded.trim().to_string();
+        if recorded.is_empty() {
+            return Err(InstallError::IncompleteGeneration(id));
+        }
+        let expected = inventory.canonical_digest();
+        if recorded != expected {
             return Err(InstallError::InventoryDigestMismatch {
-                expected: inventory.digest().to_string(),
-                actual: recorded.inventory_digest,
+                expected,
+                actual: recorded,
             });
         }
         Ok(())
@@ -315,7 +326,11 @@ impl InstallRoot {
                 path: dir.clone(),
                 source,
             })?;
-            if let Some(id) = entry.file_name().to_str().and_then(|n| n.parse::<u64>().ok()) {
+            if let Some(id) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.parse::<u64>().ok())
+            {
                 highest = highest.max(id);
             }
         }
@@ -323,6 +338,10 @@ impl InstallRoot {
     }
 
     /// Write every file, the inventory, and finally the ready marker.
+    ///
+    /// The marker is written last and carries the inventory's canonical digest,
+    /// so its presence proves both that the generation is complete and which
+    /// inventory produced it.
     fn materialize(
         &self,
         staged: &Path,
@@ -336,11 +355,13 @@ impl InstallRoot {
             }
             write_file(&target, &file.bytes)?;
         }
-        inventory
-            .inventory()
-            .publish(&staged.join(GENERATION_INVENTORY))
-            .map_err(|e| InstallError::Inventory(InventoryError::Io(e)))?;
-        write_file(&staged.join(READY_MARKER), inventory.digest().as_bytes())
+        let encoded = serde_json::to_vec_pretty(inventory)
+            .map_err(|e| InstallError::Inventory(InventoryError::Parse(e.to_string())))?;
+        write_file(&staged.join(GENERATION_INVENTORY), &encoded)?;
+        write_file(
+            &staged.join(READY_MARKER),
+            inventory.canonical_digest().as_bytes(),
+        )
     }
 
     /// Atomically replace a pointer file with `id`.
