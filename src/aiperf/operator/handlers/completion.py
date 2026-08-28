@@ -2097,8 +2097,17 @@ def _metric_file_candidates(
     *,
     json_name: str = DEFAULT_KEY_EXPORT_NAMES.json_name,
 ) -> list[Path]:
-    """Return a de-duplicated, existence-checked, .zst-first candidate list."""
-    candidates: list[Path] = [dest_dir / name for name in downloaded]
+    """Return a de-duplicated, existence-checked, .zst-first candidate list.
+
+    Only plain .json and .json.zst files from ``downloaded`` are included;
+    large binary or JSONL archives (.jsonl.zst, .parquet.zst, etc.) are
+    excluded before any I/O to prevent operator OOMKill when decompressing.
+    """
+    candidates: list[Path] = [
+        dest_dir / name
+        for name in downloaded
+        if name.endswith(".json") or name.endswith(".json.zst")
+    ]
     candidates.extend([dest_dir / f"{json_name}.zst", dest_dir / json_name])
     candidates.sort(key=lambda p: 0 if p.suffix == ".zst" else 1)
 
