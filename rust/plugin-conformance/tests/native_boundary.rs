@@ -146,7 +146,7 @@ fn minimal_plugin_dynamic_table_is_minimal() {
     ensure_minimal_plugin_built();
     let lib = minimal_plugin_lib_path();
     if !lib.exists() {
-        return;
+        panic!("minimal-plugin cdylib not found at {:?}", lib);
     }
     let exports = nm_dynamic_exports(&lib);
     // The only acceptable aiperf_* export is the entry point.
@@ -196,31 +196,39 @@ fn static_inspection_validates_minimal_plugin() {
     );
 }
 
-/// TARGET 3 — Runtime boundary: dlopen can load the minimal-plugin cdylib
-/// and dlsym resolves `aiperf_plugin_entry_v1`.
+/// TARGET 3 — Runtime boundary: dlopen loads the minimal-plugin cdylib and
+/// invoking `aiperf_plugin_entry_v1` returns a non-empty package descriptor.
 ///
-/// We do NOT call the entry point here — calling it requires a live
-/// `AIPerfExtension` and `PluginRegistrar`; that is tested in Task 24's
-/// integration suite.  This test proves the symbol resolves at runtime.
+/// This proves the ABI contract is crossable at runtime: the cdylib loads,
+/// the symbol resolves through the dynamic linker, the entry point executes
+/// across the boundary, and the returned `PluginDeclarationV1` is coherent.
 #[test]
 #[cfg(unix)]
 fn dlopen_resolves_entry_symbol() {
+    use aiperf_plugin_api::extension::{PluginDeclarationV1, PLUGIN_ENTRY_SYMBOL_V1};
+
     ensure_minimal_plugin_built();
-    let lib = minimal_plugin_lib_path();
-    if !lib.exists() {
-        panic!("minimal-plugin cdylib not found");
+    let lib_path = minimal_plugin_lib_path();
+    if !lib_path.exists() {
+        panic!("minimal-plugin cdylib not found at {:?}", lib_path);
     }
 
-    // Use nm output as a proxy for dlopen success: if the symbol is in the
-    // dynamic table and the library exists, dlopen with RTLD_NOW | RTLD_LOCAL
-    // will resolve it at load time.  A separate subprocess test that
-    // actually calls dlopen lives in the allocator fixture host pattern.
-    let exports = nm_dynamic_exports(&lib);
-    let entry = "aiperf_plugin_entry_v1";
-    assert!(
-        exports.iter().any(|s| s == entry),
-        "symbol `{entry}` must be resolvable via the dynamic table"
-    );
+    // SAFETY: We dlopen a cdylib built by this workspace from the same
+    // compiler invocation. The returned `PluginDeclarationV1` holds `'static`
+    // references into the loaded image; `_lib` keeps the image mapped for the
+    // duration of the assertion.
+    unsafe {
+        let _lib = libloading::Library::new(&lib_path)
+            .expect("dlopen minimal-plugin cdylib failed");
+        let entry: libloading::Symbol<unsafe extern "C" fn() -> PluginDeclarationV1> = _lib
+            .get(format!("{PLUGIN_ENTRY_SYMBOL_V1}\0").as_bytes())
+            .expect("failed to resolve aiperf_plugin_entry_v1 via dlsym");
+        let decl = entry();
+        assert!(
+            !decl.package.version.is_empty(),
+            "plugin declaration version must be non-empty after boundary crossing"
+        );
+    }
 }
 
 /// TARGET 4 — Four SDK boundaries: compile-time proof that all four plugin
