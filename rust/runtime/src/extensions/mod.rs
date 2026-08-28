@@ -324,7 +324,8 @@ impl AIPerfExtension for BuiltinStreamingExtension {
 
 /// Built-in NativeGraph-only factories selected by the evaluation composition
 /// layer. Existing endpoint, transport, graph, clock, and observer factories
-/// remain owned by their established product registries.#[cfg(feature = "engine")]
+/// remain owned by their established product registries.
+#[cfg(feature = "engine")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuiltinNativeGraphExtension;
 

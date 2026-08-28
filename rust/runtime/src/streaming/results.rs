@@ -3,8 +3,13 @@
 
 //! Content-neutral checkpoint result descriptors and budgeted read values.
 
+pub mod compactor;
 pub mod epoch;
 pub mod index;
+pub mod sink_status;
+
+pub use compactor::{PreparedStreamingReport, StreamingResultCompactor};
+pub use sink_status::SinkFinalizationFailureCode;
 
 use std::{
     fmt,
@@ -794,6 +799,11 @@ pub enum ResultPlaneError {
         /// Stable, user-readable compaction context.
         message: String,
     },
+    /// One derived result sink refused a durable finalization transition.
+    SinkFinalization {
+        /// Stable machine-readable finalization refusal.
+        code: SinkFinalizationFailureCode,
+    },
 }
 
 impl ResultPlaneError {
@@ -809,6 +819,7 @@ impl ResultPlaneError {
             Self::InvalidCoverage => "invalid_coverage",
             Self::SegmentVerification => "segment_verification",
             Self::Compaction { .. } => "compaction",
+            Self::SinkFinalization { .. } => "sink_finalization",
         }
     }
 }
@@ -836,6 +847,9 @@ impl fmt::Display for ResultPlaneError {
                 write!(formatter, "{}", self.code())
             }
             Self::Compaction { message } => write!(formatter, "{}: {message}", self.code()),
+            Self::SinkFinalization { code } => {
+                write!(formatter, "{}: {}", self.code(), code.as_str())
+            }
         }
     }
 }

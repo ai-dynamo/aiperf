@@ -7,6 +7,7 @@ use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     action::{
         ActionCancelReceipt, ActionFailureCode, ActionPlacement, ActionResultRetention,
+        EndpointRetrySafety,
         BudgetedActionUpdate, PreparedStreamingActionBinding, StreamingActionDriver,
         StreamingActionDriverControl, StreamingActionDriverControlOps,
         StreamingActionSinkDescriptor, StreamingActionSinkFactory, StreamingActionSubmitter,
@@ -417,11 +418,12 @@ fn descriptors_serialize_complete_agreement_facts() {
         id: "action",
         description: "action",
         accepted_schemas: &["action/v1"],
-        transport_ids: &["http"],
+        transport_ids: &["dry_run", "http"],
         endpoint_kinds: &["chat"],
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
     let checkpoint = StreamingCheckpointBackendDescriptor {
         id: "checkpoint",

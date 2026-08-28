@@ -805,6 +805,16 @@ pub async fn fetch_cell_envelope_with_registry_factory(
         cell_id,
     )
     .map_err(|error| anyhow::anyhow!("cell {cell_id} controller reply: {error}"))?;
+    // The controller streaming session is pinned from the binding this cell has
+    // just proven, so no streaming frame can be opened before registration has
+    // succeeded and a restarted controller cannot reuse an old session.
+    #[cfg(feature = "streaming")]
+    security.install_controller_streaming_session(
+        crate::cellular::transport::velo_transport::controller_streaming_session(
+            &connected_controller,
+            security.run_nonce(),
+        )?,
+    )?;
     ensure!(!deadline.is_elapsed(), "cell registration deadline elapsed");
     let has_artifact_channel = reply.artifact_channel.is_some();
     ensure!(

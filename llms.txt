@@ -445,6 +445,15 @@ profiler.
   back before any mutation its payload cannot represent. Coverage is in
   `rust/runtime/tests/streaming_session_continuity.rs` with the reusable seam in
   `rust/runtime/tests/support/streaming_session_conformance.rs`.
+- **What makes one streaming conversation turn durable?**
+  `rust/runtime/src/streaming/closure.rs` (`ConversationClosureSeam`): a turn
+  binds a terminal slot before dispatch, closes only on
+  `ActionExecutionEvent::Terminal`, folds its endpoint reply before that
+  terminal, and is checkpointed as the separate
+  `aiperf.stream.session.closure` participant under a contiguous terminal
+  horizon. The terminal lane pushes through the sync
+  `StreamingTurnClosureProcessor`; the pipeline task drains it.
+  Coverage is in `rust/runtime/tests/streaming_conversation_closure.rs`.
 - **How do user-centric and fixed-schedule runs work?**
   `rust/runtime/src/{scheduled,scheduler,user_centric,fixed_schedule,multiturn}.rs`;
   exact virtual-time coverage is in `rust/runtime/tests/scheduled_sim.rs`, and real HTTP
@@ -806,14 +815,23 @@ Inputs, endpoints, and graph:
   decoding, trace-local span topology, and replay-span folding into static
   Graph-IR state and timing.
 - [`docs/specs/e2e-rag-benchmark.md`](docs/specs/e2e-rag-benchmark.md) —
-  planned native end-to-end RAG benchmark: the `rag_corpus` ingestion dataset
-  format over the existing batch path, the registered `VectorIndex` seam
-  (`flat`, `hnsw`, `http`), the `ExecutableGraphNode::Retrieval` variant, the
-  staged multi-hop `rag_qna` graph format with a declarative verdict decoder,
-  the role dimension on labeled metric series, and the four prerequisites this
-  design gates on (graph-path embed/rerank request and reply construction, a
-  staged `GraphTraceProgram` family in the benchmark phase runtime, an
-  `endpointProfiles:` authoring surface, and per-profile input token counters).
+  planned native end-to-end RAG benchmark: the `rag_corpus` ingestion graph
+  input format, the registered `VectorIndex` seam (`flat`, `hnsw`, `http`),
+  retrieval as an `Llm` node bound to a retrieval endpoint profile rather than a
+  new node variant, the staged multi-hop `rag_qna` graph format with a
+  declarative verdict decoder, the role dimension on labeled metric series, and
+  the four prerequisites this design gates on (graph-path embed/rerank request
+  and reply construction, a staged `GraphTraceProgram` family in the benchmark
+  phase runtime, an `endpointProfiles:` authoring surface, and per-profile input
+  token counters). Twenty-five invariants cover corpus identity, request
+  construction, reply handling, control flow, measurement, replay, and pipeline
+  comparability. The scored ingestion metric follows the reference code's
+  `throughput_passages_per_second` rather than the announcement post's documents
+  per second (the same run, 43x apart), and both scored throughputs decompose
+  into served and host parts. Prefix-cache effectiveness is read directly from
+  the shipped `usage_prompt_cache_read_tokens` plumbing rather than inferred from
+  TTFT, and the reference's own measurements put the lever on `check_sufficiency`
+  (56% average hit rate) rather than on the answer role (7%).
 - [`docs/specs/agentx-rust-port.md`](docs/specs/agentx-rust-port.md) — the standalone,
   always-compiled byte-exact Rust port of the Python AgentX (WEKA replay +
   agentic-replay timing + scenario locks); parallel to and switchable against
