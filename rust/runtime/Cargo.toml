@@ -323,3 +323,8 @@ required-features = ["engine"]
 name = "streaming_dynamo_format"
 path = "tests/streaming_dynamo_format.rs"
 required-features = ["streaming"]
+
+[[test]]
+name = "factory_validation_receipt"
+path = "tests/factory_validation_receipt.rs"
+required-features = ["engine"]
