@@ -332,6 +332,29 @@ fn dup_owned(fd: RawFd) -> Result<OwnedFd, i32> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
+/// Open a fresh directory description for one bounded scan.
+///
+/// A `dup` would share the caller's file offset, so a second `readdir` over a
+/// duplicated descriptor starts at the previous scan's EOF and observes an
+/// empty directory. Every scan therefore opens its own description.
+fn open_dir_snapshot(dir: RawFd) -> Result<OwnedFd, i32> {
+    let dot = c".";
+    // SAFETY: `dir` is a live directory descriptor owned by the caller for this
+    // call, and a nonnegative result is a fresh descriptor moved once.
+    let raw = unsafe {
+        libc::openat(
+            dir,
+            dot.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if raw < 0 {
+        return Err(last_errno());
+    }
+    // SAFETY: a nonnegative `openat` result is a fresh descriptor moved once.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
 fn generation_from_stat(stat: &libc::stat) -> FileGeneration {
     FileGeneration {
         dev: stat.st_dev as u64,
@@ -730,7 +753,7 @@ async fn run_scan(
     root: &OwnedFd,
     executor: &StreamingBlockingExecutor,
 ) -> Result<ScanResult, StreamSourceError> {
-    let dir = dup_owned(root.as_raw_fd()).map_err(|_| discovery_error())?;
+    let dir = open_dir_snapshot(root.as_raw_fd()).map_err(|_| discovery_error())?;
     let suffix = config.suffix.as_bytes().to_vec();
     let marker = config.seal_marker().map(|value| value.as_bytes().to_vec());
     let max_entries = u32_to_usize(config.max_scan_entries);
