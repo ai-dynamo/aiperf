@@ -499,3 +499,38 @@ def test_name_from_config_file_respects_operator_child_name_budget() -> None:
     )
 
     assert len(out) <= MAX_SWEEP_NAME_LENGTH
+
+
+_INVALID_BENCHMARK_YAML = """\
+models: [m]
+endpoint: {urls: [http://x], type: chat, streaming: true}
+datasets: [{name: main, type: synthetic, prompts: {isl: 64, osl: 32}}]
+phases:
+  - {name: profiling, type: poisson, duration: 10, concurrency: 8}
+sweep:
+  type: grid
+  parameters:
+    phases.profiling.concurrency: [4, 8]
+"""
+
+
+@pytest.mark.asyncio
+async def test_sweep_dry_run_invalid_config_exits_nonzero(tmp_path: Path) -> None:
+    """`--dry-run` must fail loudly: a CI gate reads the exit code, not the panel.
+
+    The rate-controlled phase omits `rate`, so config construction raises inside
+    `exit_on_error`, which renders the panel and exits 1.
+    """
+    from aiperf.config.flags.cli_config import KubeCLIConfig
+
+    config_file = tmp_path / "bad.yaml"
+    config_file.write_text(_INVALID_BENCHMARK_YAML)
+
+    with pytest.raises(SystemExit) as excinfo:
+        await sweep_cmd.sweep(
+            cli_config=KubeCLIConfig(config_file=config_file),
+            kube_options=_kube_options(),
+            dry_run=True,
+        )
+
+    assert excinfo.value.code == 1
