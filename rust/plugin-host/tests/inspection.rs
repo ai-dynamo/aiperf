@@ -28,7 +28,7 @@ fn make_artifact(raw_bytes: Vec<u8>, target: &str) -> AcquiredArtifact {
 // There are no section or program headers, so there are no symbols, no dynamic
 // section, and therefore no entry symbol and no DF_BIND_NOW.
 fn elf64_x86_64_header() -> Vec<u8> {
-    let mut h = vec![
+    let h = vec![
         0x7f, 0x45, 0x4c, 0x46, // EI_MAG0..3
         0x02, // EI_CLASS: ELFCLASS64
         0x01, // EI_DATA: ELFDATA2LSB (little-endian)
