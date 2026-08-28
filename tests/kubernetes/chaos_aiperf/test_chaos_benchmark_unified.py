@@ -109,11 +109,10 @@ def _metric_p99(metrics: dict[str, Any], key: str) -> float | None:
 
 
 async def _force_delete_cr(kubectl: KubectlClient, namespace: str, name: str) -> None:
-    """Drop the AIPerfJob CR without blocking on finalizer settlement.
+    """Delete AIPerfJob CR in teardown and wait for finalizer completion.
 
-    Mirrors the teardown pattern in :py:mod:`tests.kubernetes.chaos.test_chaos_cancellation`
-    so a failed assertion never leaves an AIPerfJob around to poison the
-    next test.
+    Waits for full deletion so finalizers complete before the next test starts,
+    preventing cascade failures from in-progress finalizers polluting cluster state.
     """
     await kubectl.run(
         "delete",
@@ -122,7 +121,6 @@ async def _force_delete_cr(kubectl: KubectlClient, namespace: str, name: str) ->
         "-n",
         namespace,
         "--ignore-not-found",
-        "--wait=false",
         check=False,
     )
 

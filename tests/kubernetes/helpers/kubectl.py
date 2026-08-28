@@ -539,6 +539,7 @@ class KubectlClient:
             f"--timeout={timeout}s",
             namespace=namespace,
             check=False,
+            timeout=timeout + 10,
         )
         return result.returncode == 0
 
@@ -569,6 +570,7 @@ class KubectlClient:
             f"{resource}/{name}",
             namespace=namespace,
             check=False,
+            timeout=timeout + 10,
         )
         return result.returncode == 0
 
