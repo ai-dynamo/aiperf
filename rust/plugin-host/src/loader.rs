@@ -140,6 +140,14 @@ pub struct PoisonedLibrarySet {
 #[cfg(unix)]
 fn dlopen_now(path: &std::path::Path) -> Result<*mut libc::c_void, String> {
     use std::ffi::CString;
+    // A relative path would make dlopen consult the loader search path, so the
+    // resolved library could differ from the staged, digest-verified artifact.
+    if !path.is_absolute() {
+        return Err(format!(
+            "dlopen path must be absolute, got: {}",
+            path.display()
+        ));
+    }
     let c_path = CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|e| format!("path contains null byte: {e}"))?;
     let flags = libc::RTLD_NOW | libc::RTLD_LOCAL;

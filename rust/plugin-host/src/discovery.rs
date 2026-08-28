@@ -94,12 +94,23 @@ pub fn discover_plugins(
 
         match source {
             DiscoverySource::ExplicitManifest(path) => {
-                if path.is_file() {
-                    results.push(DiscoveredPackage {
-                        manifest_path: path.canonicalize().unwrap_or_else(|_| path.clone()),
-                        source_id,
-                        priority: priority_for_source(source),
-                    });
+                // `symlink_metadata` does not follow the final component, so a
+                // symlinked manifest is rejected rather than silently resolved.
+                match path.symlink_metadata() {
+                    Ok(m) if m.file_type().is_file() => {
+                        results.push(DiscoveredPackage {
+                            manifest_path: path.canonicalize().unwrap_or_else(|_| path.clone()),
+                            source_id,
+                            priority: priority_for_source(source),
+                        });
+                    }
+                    Ok(m) if m.file_type().is_symlink() => {
+                        tracing::debug!(
+                            path = %path.display(),
+                            "skipping symlinked explicit plugin manifest"
+                        );
+                    }
+                    _ => {}
                 }
             }
             DiscoverySource::ExplicitDirectory(dir) | DiscoverySource::HermeticBundle(dir) => {
@@ -156,19 +167,49 @@ fn scan_dir(
             source: e,
         })?;
         let path = entry.path();
-        if path.is_dir() {
-            let candidate = path.join(MANIFEST_FILENAME);
-            if candidate.is_file() {
-                out.push(DiscoveredPackage {
-                    manifest_path: candidate.canonicalize().unwrap_or(candidate),
-                    source_id: source_id.clone(),
-                    priority,
-                });
+        // `DirEntry::file_type` reports the entry's own type without following
+        // it, so a symlink never redirects discovery outside the scanned tree.
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                tracing::debug!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping plugin directory entry with unreadable file type"
+                );
+                continue;
             }
-        } else if path
-            .file_name()
-            .map(|n| n == MANIFEST_FILENAME)
-            .unwrap_or(false)
+        };
+        if file_type.is_symlink() {
+            tracing::debug!(
+                path = %path.display(),
+                "skipping symlinked plugin directory entry"
+            );
+            continue;
+        }
+        if file_type.is_dir() {
+            let candidate = path.join(MANIFEST_FILENAME);
+            match candidate.symlink_metadata() {
+                Ok(m) if m.file_type().is_file() => {
+                    out.push(DiscoveredPackage {
+                        manifest_path: candidate.canonicalize().unwrap_or(candidate),
+                        source_id: source_id.clone(),
+                        priority,
+                    });
+                }
+                Ok(m) if m.file_type().is_symlink() => {
+                    tracing::debug!(
+                        path = %candidate.display(),
+                        "skipping symlinked plugin manifest"
+                    );
+                }
+                _ => {}
+            }
+        } else if file_type.is_file()
+            && path
+                .file_name()
+                .map(|n| n == MANIFEST_FILENAME)
+                .unwrap_or(false)
         {
             out.push(DiscoveredPackage {
                 manifest_path: path.canonicalize().unwrap_or(path),
