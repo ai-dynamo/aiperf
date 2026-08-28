@@ -97,24 +97,26 @@ fn main() {
 }
 
 fn export_linux(out_dir: &PathBuf) {
-    // Write a version script that exports exactly the required symbols and
-    // hides everything else.  The `global:` entries also act as linker GC
-    // roots when `--gc-sections` is active, keeping the mimalloc code that
-    // implements them while stripping unreachable internal helpers.
-    let script_path = out_dir.join("aiperf_alloc_v1.map");
-    let mut script = std::fs::File::create(&script_path).unwrap();
+    // Use --dynamic-list instead of --version-script to control which symbols
+    // are exported from the cdylib.  A named version-script block conflicts
+    // with the anonymous version tag Rust 1.76+ injects into cdylibs for its
+    // own ABI stability machinery; --dynamic-list avoids the anonymous/named
+    // tag collision while still restricting the dynamic export table to exactly
+    // the boundary surface.  Listed symbols are retained as GC roots even
+    // under --gc-sections, so the whole-archive mimalloc code that implements
+    // them survives while unreachable internal helpers are stripped.
+    let list_path = out_dir.join("aiperf_alloc_v1.dynlist");
+    let mut list = std::fs::File::create(&list_path).unwrap();
 
-    writeln!(script, "AIPERF_ALLOC_V1 {{").unwrap();
-    writeln!(script, "    global:").unwrap();
+    writeln!(list, "{{").unwrap();
     for sym in EXPORTED_SYMBOLS {
-        writeln!(script, "        {sym};").unwrap();
+        writeln!(list, "  {sym};").unwrap();
     }
-    writeln!(script, "    local: *;").unwrap();
-    writeln!(script, "}};").unwrap();
+    writeln!(list, "}};").unwrap();
 
     println!(
-        "cargo:rustc-link-arg=-Wl,--version-script={}",
-        script_path.display()
+        "cargo:rustc-link-arg=-Wl,--dynamic-list={}",
+        list_path.display()
     );
 }
 
