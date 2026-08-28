@@ -505,6 +505,7 @@ impl Export {
             wandb: None,
             server_metrics: None,
             parquet: None,
+            plugin_exporters: Vec::new(),
         }
     }
 }
