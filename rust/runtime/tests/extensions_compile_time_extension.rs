@@ -337,6 +337,7 @@ mod streaming_categories {
     use aiperf_runtime::streaming::{
         action::{
             ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
+            EndpointRetrySafety,
             DatasetActionSchema, PreparedStreamingActionBinding, StreamingActionSinkDescriptor,
             StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
             ValidatedStreamingActionSinkConfig,
@@ -421,6 +422,7 @@ mod streaming_categories {
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
     static EXTERNAL_BACKEND: StreamingCheckpointBackendDescriptor =

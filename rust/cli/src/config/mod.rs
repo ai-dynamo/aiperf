@@ -136,19 +136,45 @@ pub(crate) fn list_templates(category: Option<&str>) {
 }
 
 fn validate(args: ValidateArgs) -> anyhow::Result<i32> {
-    match crate::yaml::resolve(
-        &args.config_file,
-        Some(PathBuf::from("/tmp/aiperf-validate")),
-    ) {
-        Ok(_) => {
-            println!("{} is valid", args.config_file.display());
-            Ok(0)
+    // Stage 1: parse, expand, and normalize. Reports authoring-time errors
+    // against Config-v2 field paths.
+    let text = std::fs::read_to_string(&args.config_file).map_err(|e| {
+        anyhow::anyhow!("failed to read config {}: {e}", args.config_file.display())
+    })?;
+    let inputs = match crate::yaml::normalize_str(&text, Some(PathBuf::from("/tmp/aiperf-validate")))
+    {
+        Ok(inputs) => inputs,
+        Err(error) => {
+            eprintln!("aiperf: config invalid: {error:#}");
+            return Ok(1);
         }
-        Err(e) => {
-            eprintln!("aiperf: config invalid: {e:#}");
-            Ok(1)
+    };
+
+    // Stage 2: static registry validation. Only this stage can see an
+    // unregistered component, an incompatible streaming selection, or a
+    // resource the selected workload forbids.
+    let validation = match crate::streaming_preflight::validate_statically(&inputs) {
+        Ok(validation) => validation,
+        Err(error) => {
+            eprintln!("aiperf: config invalid: {error:#}");
+            return Ok(1);
         }
+    };
+    if !validation.is_valid {
+        eprintln!("aiperf: config invalid");
+        for diagnostic in &validation.errors {
+            match &diagnostic.path {
+                Some(path) => eprintln!("  {path}: {}", diagnostic.message),
+                None => eprintln!("  {}", diagnostic.message),
+            }
+        }
+        return Ok(1);
     }
+    println!("{} is valid", args.config_file.display());
+    for deferred in &validation.deferred {
+        println!("  deferred until execution: {deferred}");
+    }
+    Ok(0)
 }
 
 fn expand(args: ExpandArgs) -> anyhow::Result<i32> {
