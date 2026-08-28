@@ -241,20 +241,22 @@ def _parse_resource_settings_calls(tree: ast.AST) -> list[Settings]:
         settings.append(
             Settings(
                 name=f"_{prefix.rstrip('_')}Settings",
-                docstring=f"{name} container CPU and memory (Guaranteed QoS).",
+                docstring=f"{name} container CPU and memory. Emitted as requests only "
+                "under the default `resourceMode: burstable`; as requests==limits "
+                "under `resourceMode: guaranteed`.",
                 env_prefix=f"AIPERF_K8S_{prefix}",
                 fields=[
                     Field(
                         "CPU",
                         cpu,
-                        "CPU request and limit (Guaranteed QoS)",
+                        "CPU request (also the limit under resourceMode: guaranteed)",
                         [],
                         [],
                     ),
                     Field(
                         "MEMORY",
                         memory,
-                        "Memory request and limit (Guaranteed QoS)",
+                        "Memory request (also the limit under resourceMode: guaranteed)",
                         [],
                         [],
                     ),

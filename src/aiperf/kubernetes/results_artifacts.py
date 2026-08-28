@@ -274,7 +274,9 @@ async def retrieve_all_artifacts(
     if not pod:
         print_error(f"No controller pod found for job {job_id}")
         print_info("The --all flag requires the controller pod to be running.")
-        print_action("Use --from-pod if pod terminated, or ConfigMap if job completed.")
+        print_action(
+            "Use --from-pods if pod terminated, or ConfigMap if job completed."
+        )
         return False
 
     pod_name, pod_phase = pod

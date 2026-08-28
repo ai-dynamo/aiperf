@@ -230,12 +230,12 @@ Root Kubernetes environment configuration. Loads configuration from environment 
 
 ## K8SAPI
 
-Api container CPU and memory (Guaranteed QoS).
+Api container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_API_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_API_MEMORY` | `256Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_API_CPU` | `75m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_API_MEMORY` | `256Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SCONTROLLERHEARTBEAT
 
@@ -268,12 +268,12 @@ Retry policy for recoverable Kubernetes credential failures.
 
 ## K8SDATASETMANAGER
 
-Dataset Manager container CPU and memory (Guaranteed QoS).
+Dataset Manager container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_DATASET_MANAGER_CPU` | `50m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | `256Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_DATASET_MANAGER_CPU` | `50m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_DATASET_MANAGER_MEMORY` | `256Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SDIAGNOSIS
 
@@ -289,21 +289,21 @@ Thresholds for ``aiperf.kubernetes.benchmark_diagnosis`` heuristics.
 
 ## K8SEVENTBUSPROXY
 
-Event Bus Proxy container CPU and memory (Guaranteed QoS).
+Event Bus Proxy container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_EVENT_BUS_PROXY_CPU` | `50m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_EVENT_BUS_PROXY_MEMORY` | `64Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_EVENT_BUS_PROXY_CPU` | `50m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_EVENT_BUS_PROXY_MEMORY` | `64Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SGPUTELEMETRYMANAGER
 
-Gpu Telemetry Manager container CPU and memory (Guaranteed QoS).
+Gpu Telemetry Manager container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` | `25m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU` | `25m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY` | `192Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SHEALTH
 
@@ -398,12 +398,12 @@ Tunables for ``aiperf.kubernetes.progress_stream`` WebSocket reconnects.
 
 ## K8SRECORDSMANAGER
 
-Records Manager container CPU and memory (Guaranteed QoS).
+Records Manager container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_RECORDS_MANAGER_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_RECORDS_MANAGER_MEMORY` | `256Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_RECORDS_MANAGER_CPU` | `75m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_RECORDS_MANAGER_MEMORY` | `256Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SRESULTS
 
@@ -419,48 +419,48 @@ Kubernetes result retrieval timeouts and retry policy.
 
 ## K8SRESULTSSIDECAR
 
-Results Sidecar container CPU and memory (Guaranteed QoS).
+Results Sidecar container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_RESULTS_SIDECAR_CPU` | `25m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_RESULTS_SIDECAR_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_RESULTS_SIDECAR_CPU` | `25m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_RESULTS_SIDECAR_MEMORY` | `192Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SSERVERMETRICSMANAGER
 
-Server Metrics Manager container CPU and memory (Guaranteed QoS).
+Server Metrics Manager container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` | `25m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` | `25m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY` | `192Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SSWEEPCONTROLLER
 
-Sweep Controller container CPU and memory (Guaranteed QoS).
+Sweep Controller container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_SWEEP_CONTROLLER_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_SWEEP_CONTROLLER_MEMORY` | `512Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_SWEEP_CONTROLLER_CPU` | `75m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_SWEEP_CONTROLLER_MEMORY` | `512Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SSYSTEMCONTROLLER
 
-System Controller container CPU and memory (Guaranteed QoS).
+System Controller container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | `75m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_CPU` | `75m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` | `192Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8STIMINGMANAGER
 
-Timing Manager container CPU and memory (Guaranteed QoS).
+Timing Manager container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_TIMING_MANAGER_CPU` | `50m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_TIMING_MANAGER_MEMORY` | `192Mi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_TIMING_MANAGER_CPU` | `50m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_TIMING_MANAGER_MEMORY` | `192Mi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SWATCHDOG
 
@@ -490,12 +490,12 @@ CLI AIPerfJob CR polling and logging configuration.
 
 ## K8SWORKERPOD
 
-Worker Pod container CPU and memory (Guaranteed QoS).
+Worker Pod container CPU and memory. Emitted as requests only under the default `resourceMode: burstable`; as requests==limits under `resourceMode: guaranteed`.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_WORKER_POD_CPU` | `150m` | — | CPU request and limit (Guaranteed QoS) |
-| `AIPERF_K8S_WORKER_POD_MEMORY` | `4Gi` | — | Memory request and limit (Guaranteed QoS) |
+| `AIPERF_K8S_WORKER_POD_CPU` | `150m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_WORKER_POD_MEMORY` | `4Gi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SZMQ
 
