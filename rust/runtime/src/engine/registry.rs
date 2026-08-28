@@ -556,6 +556,10 @@ pub struct PreparedRunOutcome {
     /// Optional acknowledgement invoked only after the authoritative native
     /// report write and atomic rename succeed.
     pub report_commit: Option<Box<dyn PreparedReportCommit>>,
+    /// Optional streaming authority that records an ordinary report-persistence
+    /// failure as a durable pending retry instead of failing the execution.
+    #[cfg(feature = "streaming")]
+    pub report_retry: Option<Box<dyn crate::streaming::results::ReportRetryAuthority>>,
 }
 
 /// One completely prepared operation.
@@ -2967,6 +2971,8 @@ mod tests {
                     format!("{}-{}", self.node, self.message),
                 )]),
                 report_commit: None,
+                #[cfg(feature = "streaming")]
+                report_retry: None,
             })
         }
     }

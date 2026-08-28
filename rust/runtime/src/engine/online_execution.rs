@@ -1937,6 +1937,8 @@ impl PreparedRunnerOperation for PreparedNativeOperation {
             report_facts: self.report_facts,
             run_metadata: self.run_metadata,
             report_commit: None,
+            #[cfg(feature = "streaming")]
+            report_retry: None,
         })
     }
 }
