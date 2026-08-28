@@ -2888,6 +2888,7 @@ mod tests {
             cell_peer: Vec::new(),
             artifact_capability_digest: Some(bearer.digest_bytes()),
             registration_proof: None,
+            plugin_lock_digest: None,
         };
         let encoded = rmp_serde::to_vec(&register).unwrap();
         assert!(!encoded.windows(32).any(|window| window == [0xA5; 32]));

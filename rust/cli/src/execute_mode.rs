@@ -170,6 +170,29 @@ fn run_cell() -> ! {
         tracing::error!(error = %error, cell_id, "cell security acquisition failed");
         std::process::exit(2);
     }
+    // Verify plugin lock bundle before any socket, dataset, or resource open.
+    if let Some((lock_path, expected_digest)) = crate::plugins::propagate::read_lock_env() {
+        match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path) {
+            Ok(bundle) => {
+                let actual_digest = bundle.lock().digest.hex.as_str();
+                if let Err(error) =
+                    crate::plugins::propagate::verify_propagated_digest(&expected_digest, actual_digest)
+                {
+                    tracing::error!(error = %error, cell_id, "cell plugin lock attestation failed");
+                    std::process::exit(2);
+                }
+            }
+            Err(error) => {
+                tracing::error!(
+                    error = format!("{error:#}"),
+                    cell_id,
+                    path = %lock_path.display(),
+                    "cell failed to load plugin lock bundle"
+                );
+                std::process::exit(2);
+            }
+        }
+    }
     // Drop the fetch runtime before execution creates its thread-per-core runtime.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)

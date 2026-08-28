@@ -2305,6 +2305,7 @@ mod tests {
             cell_peer: peer.to_vec(),
             artifact_capability_digest: Some(digest),
             registration_proof: Some(proof),
+            plugin_lock_digest: None,
         };
 
         assert!(authority.verify(&register, &controller_peer).is_ok());
