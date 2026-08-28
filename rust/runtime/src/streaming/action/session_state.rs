@@ -66,8 +66,9 @@ pub static SESSION_STATE_ACTION_SINK: StreamingActionSinkDescriptor =
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
-        // Nothing is issued, so a retry cannot duplicate work at any target.
-        endpoint_retry_safety: EndpointRetrySafety::LogicalIdempotency,
+        // The sink never reaches an endpoint, so it can prove nothing about
+        // duplicate rejection and refuses any nonzero endpoint retry limit.
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
 /// Authored configuration accepted by the state-only action sink.
