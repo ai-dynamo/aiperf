@@ -9,7 +9,8 @@ a helper swap with no other caller asserting on it:
 - ``jobs.event_sort_key`` parses timestamps instead of comparing ISO strings
 - sweeps counter/index coercion degrades on a malformed aggregate/manifest
 - ``results_analytics`` falls back to the ``job_spec.json.zst`` companion
-- ``dashboard_proxy`` drops the upstream ``content-length``/``content-encoding``
+- ``dashboard_proxy`` drops stale upstream framing headers but keeps
+  ``content-encoding``, which still describes the bytes it relays
 - ``results_files_io`` allows nested files inside allowlisted subtrees
 - the bundle generator does not await during teardown on client disconnect
 - ``/jobs/{ns}/{name}/events`` and ``/logs`` validate their path params
@@ -34,7 +35,10 @@ from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
 from aiperf.operator.results_layout import run_dir
-from aiperf.operator.routers.dashboard_proxy import _FORWARD_RESPONSE_HEADER_DROP
+from aiperf.operator.routers.dashboard_proxy import (
+    _FORWARD_REQUEST_HEADER_DROP,
+    _FORWARD_RESPONSE_HEADER_DROP,
+)
 from aiperf.operator.routers.jobs import create_jobs_router, event_sort_key
 from aiperf.operator.routers.jobs_models import EventEntry
 from aiperf.operator.routers.results_analytics import _config_from_job_spec_file
@@ -255,17 +259,24 @@ class TestJobSpecFileFallback:
 
 
 class TestDashboardProxyResponseHeaderDrop:
-    """aiohttp decodes the upstream body, so its framing headers must not survive."""
+    """Starlette re-frames the relayed chunks, so stale framing must not survive."""
 
     @pytest.mark.parametrize(
         "header",
-        ["content-length", "content-encoding", "transfer-encoding", "connection"],
+        ["content-length", "transfer-encoding", "connection"],
     )
     def test_stale_framing_headers_are_dropped(self, header: str) -> None:
         assert header in _FORWARD_RESPONSE_HEADER_DROP
 
     def test_content_type_is_still_forwarded(self) -> None:
         assert "content-type" not in _FORWARD_RESPONSE_HEADER_DROP
+
+    def test_content_encoding_is_still_forwarded(self) -> None:
+        """The proxy runs auto_decompress=False, so the body is still encoded."""
+        assert "content-encoding" not in _FORWARD_RESPONSE_HEADER_DROP
+
+    def test_accept_encoding_is_forwarded_upstream(self) -> None:
+        assert "accept-encoding" not in _FORWARD_REQUEST_HEADER_DROP
 
 
 # ============================================================

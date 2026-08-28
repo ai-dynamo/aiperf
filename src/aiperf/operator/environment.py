@@ -503,6 +503,20 @@ class _DashboardSettings(BaseSettings):
         "entry. When false, /dashboard/* returns 503 and the link is hidden. "
         "Set independently from PORT so a misconfigured chart fails closed.",
     )
+    PROXY_MAX_BODY_BYTES: int = Field(
+        default=33_554_432,
+        ge=1024,
+        le=4_294_967_296,
+        description="Maximum request-body size in bytes the results-server will "
+        "buffer before forwarding it to the dashboard sidecar. Requests larger "
+        "than this are rejected with HTTP 413 without contacting the sidecar. "
+        "The proxy has to buffer the body to re-frame it for the upstream "
+        "request, so an unbounded POST would be resident in the results-server "
+        "sidecar's memory all at once. Dashboard traffic is SPA fetches and "
+        "small refresh POSTs, so 32 MiB is far above any legitimate request; "
+        "raise it via AIPERF_DASHBOARD_PROXY_MAX_BODY_BYTES if a future "
+        "dashboard route accepts genuinely large uploads.",
+    )
 
 
 class _OperatorEnvironment(BaseSettings):

@@ -431,15 +431,34 @@ async def _stream_zstd_decompress(file_path: Path) -> AsyncIterator[bytes]:
         yield chunk
 
 
+def _accepts_encoding(accept_encoding: str | None, encoding: str) -> bool:
+    """Return True if the client accepts ``encoding`` per RFC 9110 quality values.
+
+    Substring matching is wrong here: ``Accept-Encoding: gzip, zstd;q=0``
+    explicitly REFUSES zstd, and a wildcard can grant or refuse everything not
+    named. A missing/empty header keeps the historical behavior of serving
+    identity, which is always safe.
+    """
+    from aiperf.common.compression import parse_accept_encoding
+
+    if not accept_encoding:
+        return False
+
+    accepted = parse_accept_encoding(accept_encoding)
+    if encoding in accepted:
+        return accepted[encoding] > 0
+    return accepted.get("*", 0.0) > 0
+
+
 def _serve_zst_file(
     request: Request, zst_path: Path, display_name: str
 ) -> StreamingResponse:
     """Serve a .zst file with content negotiation."""
-    accept = (request.headers.get("accept-encoding") or "").lower()
+    accept = request.headers.get("accept-encoding")
 
     headers = _download_headers(display_name)
 
-    if "zstd" in accept:
+    if _accepts_encoding(accept, "zstd"):
         headers["Content-Encoding"] = "zstd"
         return StreamingResponse(
             _stream_zstd_raw(zst_path),
@@ -447,7 +466,7 @@ def _serve_zst_file(
             headers=headers,
         )
 
-    if "gzip" in accept:
+    if _accepts_encoding(accept, "gzip"):
         headers["Content-Encoding"] = "gzip"
         return StreamingResponse(
             _stream_zstd_to_gzip(zst_path),

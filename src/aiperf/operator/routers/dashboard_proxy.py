@@ -5,7 +5,8 @@
 The proxy is mounted on the results-server FastAPI app. It forwards
 method, path, query, body, and most headers (drops ``host`` and lets
 aiohttp re-set ``content-length``) to ``http://localhost:<PORT>/dashboard/...``
-and streams the upstream response back.
+and streams the upstream response back. Request bodies are bounded by
+``AIPERF_DASHBOARD_PROXY_MAX_BODY_BYTES`` and rejected with 413 above it.
 
 When the toggle is off (``AIPERF_DASHBOARD_PROXY_ENABLED`` falsy), the
 route returns 503 with a friendly body so the SPA's "Plots ↗" link
@@ -23,16 +24,19 @@ from fastapi.responses import Response, StreamingResponse
 logger = logging.getLogger(__name__)
 
 # Hop-by-hop and otherwise-unsafe headers we don't forward upstream.
+# ``accept-encoding`` is deliberately NOT dropped: the client's negotiation is
+# passed through so the sidecar can compress large dashboard JSON, and the
+# resulting ``content-encoding`` rides back to the client untouched.
 _FORWARD_REQUEST_HEADER_DROP = frozenset(
     {"host", "content-length", "connection", "transfer-encoding"}
 )
-# ``content-length`` must be dropped alongside the hop-by-hop headers: aiohttp
-# transparently decodes a compressed upstream body, so the upstream length no
-# longer describes the bytes we forward. Leaving it in truncates or hangs the
-# response for every gzip-encoded dashboard asset; Starlette re-derives the
-# correct framing for the body it actually writes.
+# ``content-encoding`` is NOT dropped: with ``auto_decompress=False`` below the
+# body we relay is still in the upstream's encoding, so stripping the header
+# would hand the client compressed bytes labelled as identity. ``content-length``
+# is dropped because Starlette re-derives framing for the chunks it actually
+# writes, and a stale upstream length truncates or hangs the response.
 _FORWARD_RESPONSE_HEADER_DROP = frozenset(
-    {"transfer-encoding", "connection", "content-length", "content-encoding"}
+    {"transfer-encoding", "connection", "content-length"}
 )
 
 
@@ -46,6 +50,32 @@ def _has_dot_segment(path: str) -> bool:
     Reject rather than normalize: the dashboard has no legitimate dot segments.
     """
     return any(segment in (".", "..") for segment in path.replace("\\", "/").split("/"))
+
+
+async def _read_bounded_body(request: Request, limit: int) -> bytes | None:
+    """Buffer the request body, returning ``None`` once ``limit`` bytes are exceeded.
+
+    A ``Content-Length`` precheck alone cannot bound the read: a chunked request
+    carries no length header at all, and a declared length is client-supplied
+    anyway. So the declared value only short-circuits the obvious case, and the
+    bytes actually pulled off the wire are counted as they arrive.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > limit:
+                return None
+        except ValueError:
+            return None
+
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def create_dashboard_proxy_router() -> APIRouter:
@@ -97,12 +127,23 @@ def create_dashboard_proxy_router() -> APIRouter:
             for k, v in request.headers.items()
             if k.lower() not in _FORWARD_REQUEST_HEADER_DROP
         }
-        body = await request.body()
+        max_body_bytes = OperatorEnvironment.DASHBOARD.PROXY_MAX_BODY_BYTES
+        body = await _read_bounded_body(request, max_body_bytes)
+        if body is None:
+            return Response(
+                content=(
+                    f"Dashboard request body exceeds {max_body_bytes} bytes."
+                ).encode(),
+                status_code=413,
+                media_type="text/plain; charset=utf-8",
+            )
 
-        # auto_decompress=False keeps this a byte-for-byte pass-through:
-        # ``content-encoding`` is forwarded to the client below, so the body
-        # must stay in its original encoding. aiohttp would otherwise inflate
-        # it while the header still advertised gzip.
+        # auto_decompress=False keeps this a byte-for-byte pass-through, which
+        # is only correct because ``content-encoding`` is forwarded to the
+        # client below. aiohttp would otherwise inflate the body while the
+        # header still advertised gzip. Starlette's GZipMiddleware on the
+        # results-server app skips any response that already carries a
+        # ``content-encoding``, so nothing re-compresses these bytes.
         session = aiohttp.ClientSession(
             connector=create_tcp_connector(),
             timeout=aiohttp.ClientTimeout(total=30.0),
