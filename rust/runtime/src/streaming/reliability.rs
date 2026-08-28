@@ -4140,6 +4140,24 @@ impl PreparedIssueReceiptPartitionView {
         self.view_lease.charged_bytes()
     }
 
+    /// Return the exact receipt count carried by this view.
+    ///
+    /// The coordinator uses this to build the result-partition descriptor that
+    /// `into_result_partition` validates against.
+    #[must_use]
+    pub const fn receipt_count(&self) -> u64 {
+        self.receipt_count
+    }
+
+    /// Return the schema version required by `into_result_partition`.
+    ///
+    /// The coordinator must use this exact value when constructing the descriptor
+    /// passed to `into_result_partition`.
+    #[must_use]
+    pub const fn required_schema_version() -> u32 {
+        ISSUE_RECEIPT_WIRE_VERSION
+    }
+
     /// Consume the view into the reserved immutable result-partition handoff.
     pub fn into_result_partition(
         self,
