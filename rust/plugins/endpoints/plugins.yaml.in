@@ -32,3 +32,12 @@ packages:
         aliases: ["openai.embeddings"]
       - canonical_id: "sagemaker_chat"
         aliases: ["sagemaker.chat"]
+    grpc_bindings:
+      - canonical_id: "kserve"
+        aliases: ["kserve_oip", "kserve.grpc"]
+      - canonical_id: "riva_asr"
+        aliases: ["riva.asr"]
+      - canonical_id: "riva_tts"
+        aliases: ["riva.tts"]
+      - canonical_id: "riva_nlp"
+        aliases: ["riva.nlp"]
