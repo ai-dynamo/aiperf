@@ -1260,16 +1260,41 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                 // Verify plugin lock digest before any envelope is handed to the cell.
                 match (&expected_plugin_lock_digest, &register.plugin_lock_digest) {
                     (Some(expected), Some(actual)) => {
-                        anyhow::ensure!(
-                            expected == actual,
-                            "cell {} plugin lock digest mismatch: expected {expected}, got {actual}",
-                            register.cell_id
-                        );
+                        // Compare parsed hashes: `blake3::Hash`'s `PartialEq` is
+                        // constant-time, while comparing the hex strings would
+                        // short-circuit and leak the matching prefix length as a
+                        // forgery oracle. Malformed hex is a mismatch.
+                        let matches = match (
+                            blake3::Hash::from_hex(expected),
+                            blake3::Hash::from_hex(actual),
+                        ) {
+                            (Ok(expected), Ok(actual)) => expected == actual,
+                            _ => false,
+                        };
+                        if !matches {
+                            // The expected digest stays local; echoing it back
+                            // would hand an unauthenticated peer the value it
+                            // failed to produce.
+                            tracing::warn!(
+                                cell_id = register.cell_id,
+                                expected = %expected,
+                                "rejecting cell registration on plugin lock digest mismatch"
+                            );
+                            anyhow::bail!(
+                                "cell {} plugin lock digest mismatch",
+                                register.cell_id
+                            );
+                        }
                     }
                     (None, None) => {}
                     (Some(expected), None) => {
+                        tracing::warn!(
+                            cell_id = register.cell_id,
+                            expected = %expected,
+                            "rejecting cell registration that omitted its plugin lock digest"
+                        );
                         anyhow::bail!(
-                            "cell {} omitted plugin lock digest; controller expected {expected}",
+                            "cell {} omitted plugin lock digest; controller expected one",
                             register.cell_id
                         );
                     }
