@@ -4412,7 +4412,6 @@ struct PersistedExportIssueReceiptWire {
 const EXPORT_RECEIPT_WIRE_VERSION: u32 = 1;
 
 /// Move-only durable export receipt retaining separate exact leases.
-#[derive(Debug)]
 pub struct BudgetOwnedExportIssueReceipt {
     receipt: PersistedExportIssueReceipt,
     encoded: BudgetedCheckpointBytes,
