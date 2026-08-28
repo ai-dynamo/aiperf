@@ -24,7 +24,7 @@ use crate::engine::registry::{
     StreamingSelectedDescriptors,
 };
 use crate::extensions::AIPerfRegistry;
-use crate::streaming::action::{ActionPlacement, ActionResultRetention, EndpointRetrySafety};
+use crate::streaming::action::{ActionPlacement, ActionResultRetention};
 use crate::streaming::format::{FormatProjection, FormatStateRetention};
 use crate::streaming::session::{SessionPlacement, SessionStateRetention};
 use crate::streaming::source::StreamingSourceRetention;
@@ -646,7 +646,7 @@ mod tests {
     use super::*;
 
     use crate::engine::registry::{ClockKind, TransportDescriptor};
-    use crate::streaming::action::StreamingActionSinkDescriptor;
+    use crate::streaming::action::{EndpointRetrySafety, StreamingActionSinkDescriptor};
     use crate::streaming::format::StreamingFormatDescriptor;
     use crate::streaming::identity::ContentDigest;
     use crate::streaming::session::{SessionClosureCapability, StreamingSessionProgramDescriptor};
