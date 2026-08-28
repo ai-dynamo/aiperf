@@ -288,10 +288,10 @@ pub fn rollback_to_generation(root: &Path, generation: u64) -> Result<(), Instal
         return Err(InstallError::GenerationNotFound(generation));
     }
     let outgoing = read_pointer(root, CURRENT_POINTER)?;
-    if let Some(outgoing) = outgoing {
-        if outgoing.id != generation {
-            write_pointer(root, PREVIOUS_POINTER, &outgoing.dir)?;
-        }
+    if let Some(outgoing) = outgoing
+        && outgoing.id != generation
+    {
+        write_pointer(root, PREVIOUS_POINTER, &outgoing.dir)?;
     }
     write_pointer(root, CURRENT_POINTER, &dir)
 }
