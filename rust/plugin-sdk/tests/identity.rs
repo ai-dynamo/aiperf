@@ -7,8 +7,8 @@
 //! must produce a different digest.  Deserialization must reject unknown fields.
 
 use aiperf_plugin_sdk::identity::{
-    CrateIdentity, HostAbiUniverseId, HostAbiUniverseRecordV1, NativeDep,
-    PluginArtifactBuildId, PluginArtifactBuildRecordV1,
+    CrateIdentity, HostAbiUniverseId, HostAbiUniverseRecordV1, NativeDep, PluginArtifactBuildId,
+    PluginArtifactBuildRecordV1,
 };
 
 // ---------------------------------------------------------------------------
@@ -122,13 +122,19 @@ fn make_build(universe: &HostAbiUniverseRecordV1) -> PluginArtifactBuildRecordV1
 #[test]
 fn universe_digest_is_self_consistent() {
     let u = make_universe();
-    assert!(u.verify_digest(), "verify_digest must pass for a freshly built record");
+    assert!(
+        u.verify_digest(),
+        "verify_digest must pass for a freshly built record"
+    );
 }
 
 #[test]
 fn universe_id_equals_canonical_digest() {
     let u = make_universe();
-    assert_eq!(u.universe_id(), HostAbiUniverseId(u.canonical_digest.clone()));
+    assert_eq!(
+        u.universe_id(),
+        HostAbiUniverseId(u.canonical_digest.clone())
+    );
 }
 
 #[test]
@@ -152,7 +158,10 @@ fn universe_digest_changes_on_rustc_exe_mutation() {
         u.target_policy_version,
         u.linker_exe_digest.as_deref(),
     );
-    assert_ne!(original, mutated, "rustc_exe_digest mutation must change universe digest");
+    assert_ne!(
+        original, mutated,
+        "rustc_exe_digest mutation must change universe digest"
+    );
 }
 
 #[test]
@@ -176,7 +185,10 @@ fn universe_digest_changes_on_target_triple_mutation() {
         u.target_policy_version,
         u.linker_exe_digest.as_deref(),
     );
-    assert_ne!(original, mutated, "target_triple mutation must change universe digest");
+    assert_ne!(
+        original, mutated,
+        "target_triple mutation must change universe digest"
+    );
 }
 
 #[test]
@@ -200,7 +212,10 @@ fn universe_digest_changes_on_pointer_width_mutation() {
         u.target_policy_version,
         u.linker_exe_digest.as_deref(),
     );
-    assert_ne!(original, mutated, "pointer_width mutation must change universe digest");
+    assert_ne!(
+        original, mutated,
+        "pointer_width mutation must change universe digest"
+    );
 }
 
 #[test]
@@ -226,7 +241,10 @@ fn universe_digest_changes_on_abi_crates_mutation() {
         u.target_policy_version,
         u.linker_exe_digest.as_deref(),
     );
-    assert_ne!(original, mutated, "abi_crates mutation must change universe digest");
+    assert_ne!(
+        original, mutated,
+        "abi_crates mutation must change universe digest"
+    );
 }
 
 #[test]
@@ -250,7 +268,10 @@ fn universe_digest_changes_on_allocator_mutation() {
         u.target_policy_version,
         u.linker_exe_digest.as_deref(),
     );
-    assert_ne!(original, mutated, "allocator mutation must change universe digest");
+    assert_ne!(
+        original, mutated,
+        "allocator mutation must change universe digest"
+    );
 }
 
 #[test]
@@ -274,7 +295,10 @@ fn universe_digest_changes_on_linker_present_vs_absent() {
         u.target_policy_version,
         Some("3".repeat(64).as_str()),
     );
-    assert_ne!(original, with_linker, "absent vs present linker_exe_digest must differ");
+    assert_ne!(
+        original, with_linker,
+        "absent vs present linker_exe_digest must differ"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -285,14 +309,20 @@ fn universe_digest_changes_on_linker_present_vs_absent() {
 fn build_digest_is_self_consistent() {
     let u = make_universe();
     let b = make_build(&u);
-    assert!(b.verify_digest(), "verify_digest must pass for a freshly built record");
+    assert!(
+        b.verify_digest(),
+        "verify_digest must pass for a freshly built record"
+    );
 }
 
 #[test]
 fn build_id_equals_canonical_digest() {
     let u = make_universe();
     let b = make_build(&u);
-    assert_eq!(b.build_id(), PluginArtifactBuildId(b.canonical_digest.clone()));
+    assert_eq!(
+        b.build_id(),
+        PluginArtifactBuildId(b.canonical_digest.clone())
+    );
 }
 
 #[test]
@@ -311,7 +341,10 @@ fn build_digest_changes_on_universe_digest_mutation() {
         &b.pre_embed_payload_digest,
         &b.artifact_digest,
     );
-    assert_ne!(original, mutated, "universe_digest mutation must change build digest");
+    assert_ne!(
+        original, mutated,
+        "universe_digest mutation must change build digest"
+    );
 }
 
 #[test]
@@ -330,7 +363,10 @@ fn build_digest_changes_on_common_sources_mutation() {
         &b.pre_embed_payload_digest,
         &b.artifact_digest,
     );
-    assert_ne!(original, mutated, "common_sources_digest mutation must change build digest");
+    assert_ne!(
+        original, mutated,
+        "common_sources_digest mutation must change build digest"
+    );
 }
 
 #[test]
@@ -403,7 +439,10 @@ fn build_rejects_unknown_fields() {
     map.insert("extra".to_string(), serde_json::Value::Null);
     let json = serde_json::to_string(&map).unwrap();
     let result: Result<PluginArtifactBuildRecordV1, _> = serde_json::from_str(&json);
-    assert!(result.is_err(), "unknown fields must be rejected in build record");
+    assert!(
+        result.is_err(),
+        "unknown fields must be rejected in build record"
+    );
 }
 
 // The canonical digest must not hash bytes containing itself (no circular dependency).

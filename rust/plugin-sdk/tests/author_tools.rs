@@ -4,7 +4,7 @@
 //! Tests for author tools: manifest validation, conformance runner.
 
 use aiperf_plugin_sdk::conformance::{ConformanceReport, run_conformance};
-use aiperf_plugin_sdk::manifest::{PluginManifest, PluginEntry, Requirements, validate_manifest};
+use aiperf_plugin_sdk::manifest::{PluginEntry, PluginManifest, Requirements, validate_manifest};
 
 fn minimal_manifest() -> PluginManifest {
     PluginManifest {
@@ -31,7 +31,10 @@ fn manifest_valid_passes_validation() {
 fn manifest_rejects_schema_version_zero() {
     let mut m = minimal_manifest();
     m.schema_version = 0;
-    assert!(validate_manifest(&m).is_err(), "schema_version=0 must be rejected");
+    assert!(
+        validate_manifest(&m).is_err(),
+        "schema_version=0 must be rejected"
+    );
 }
 
 #[test]
@@ -62,10 +65,9 @@ fn manifest_with_description() {
 #[test]
 fn manifest_parse_roundtrip() {
     let m = minimal_manifest();
-    let serialized = aiperf_plugin_sdk::manifest::serialize_manifest(&m)
-        .expect("serialize manifest");
-    let m2 = aiperf_plugin_sdk::manifest::parse_manifest(&serialized)
-        .expect("parse manifest");
+    let serialized =
+        aiperf_plugin_sdk::manifest::serialize_manifest(&m).expect("serialize manifest");
+    let m2 = aiperf_plugin_sdk::manifest::parse_manifest(&serialized).expect("parse manifest");
     assert_eq!(m2.schema_version, m.schema_version);
     assert_eq!(m2.plugin.name, m.plugin.name);
     assert_eq!(m2.plugin.version, m.plugin.version);

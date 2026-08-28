@@ -31,16 +31,39 @@ fn make_universe() -> HostAbiUniverseRecordV1 {
     let target_policy_version: u32 = 1;
     let linker_exe_digest: Option<String> = None;
     let canonical_digest = HostAbiUniverseRecordV1::compute_digest(
-        &rustc_exe_digest, &rustc_commit, &rustc_full_version, &sysroot_digest,
-        &target_triple, pointer_width, &endian, &codegen_backend,
-        &cfg_flags, &codegen_flags, &abi_crates, &allocator, &panic_strategy,
-        target_policy_version, linker_exe_digest.as_deref(),
+        &rustc_exe_digest,
+        &rustc_commit,
+        &rustc_full_version,
+        &sysroot_digest,
+        &target_triple,
+        pointer_width,
+        &endian,
+        &codegen_backend,
+        &cfg_flags,
+        &codegen_flags,
+        &abi_crates,
+        &allocator,
+        &panic_strategy,
+        target_policy_version,
+        linker_exe_digest.as_deref(),
     );
     HostAbiUniverseRecordV1 {
-        rustc_exe_digest, rustc_commit, rustc_full_version, sysroot_digest,
-        target_triple, pointer_width, endian, codegen_backend,
-        cfg_flags, codegen_flags, abi_crates, allocator, panic_strategy,
-        target_policy_version, linker_exe_digest, canonical_digest,
+        rustc_exe_digest,
+        rustc_commit,
+        rustc_full_version,
+        sysroot_digest,
+        target_triple,
+        pointer_width,
+        endian,
+        codegen_backend,
+        cfg_flags,
+        codegen_flags,
+        abi_crates,
+        allocator,
+        panic_strategy,
+        target_policy_version,
+        linker_exe_digest,
+        canonical_digest,
     }
 }
 
@@ -55,14 +78,27 @@ fn make_build(universe: &HostAbiUniverseRecordV1) -> PluginArtifactBuildRecordV1
     let pre_embed_payload_digest = "1".repeat(64);
     let artifact_digest = "2".repeat(64);
     let canonical_digest = PluginArtifactBuildRecordV1::compute_digest(
-        &universe_digest, &package_name, &package_version,
-        build_script_digest.as_deref(), &common_sources_digest,
-        &private_sources_digest, &native_deps, &pre_embed_payload_digest, &artifact_digest,
+        &universe_digest,
+        &package_name,
+        &package_version,
+        build_script_digest.as_deref(),
+        &common_sources_digest,
+        &private_sources_digest,
+        &native_deps,
+        &pre_embed_payload_digest,
+        &artifact_digest,
     );
     PluginArtifactBuildRecordV1 {
-        universe_digest, package_name, package_version, build_script_digest,
-        common_sources_digest, private_sources_digest, native_deps,
-        pre_embed_payload_digest, artifact_digest, canonical_digest,
+        universe_digest,
+        package_name,
+        package_version,
+        build_script_digest,
+        common_sources_digest,
+        private_sources_digest,
+        native_deps,
+        pre_embed_payload_digest,
+        artifact_digest,
+        canonical_digest,
     }
 }
 
@@ -74,14 +110,23 @@ fn make_build(universe: &HostAbiUniverseRecordV1) -> PluginArtifactBuildRecordV1
 fn valid_closure_validates() {
     let u = make_universe();
     let b = make_build(&u);
-    let closure = AbiClosureRecordV1 { universe: u, builds: vec![b] };
-    assert!(closure.validate().is_ok(), "a correctly constructed closure must validate");
+    let closure = AbiClosureRecordV1 {
+        universe: u,
+        builds: vec![b],
+    };
+    assert!(
+        closure.validate().is_ok(),
+        "a correctly constructed closure must validate"
+    );
 }
 
 #[test]
 fn empty_builds_list_validates() {
     let u = make_universe();
-    let closure = AbiClosureRecordV1 { universe: u, builds: vec![] };
+    let closure = AbiClosureRecordV1 {
+        universe: u,
+        builds: vec![],
+    };
     assert!(closure.validate().is_ok(), "empty builds list is valid");
 }
 
@@ -93,7 +138,10 @@ fn empty_builds_list_validates() {
 fn corrupted_universe_digest_is_rejected() {
     let mut u = make_universe();
     u.canonical_digest = "0".repeat(64); // corrupt
-    let closure = AbiClosureRecordV1 { universe: u, builds: vec![] };
+    let closure = AbiClosureRecordV1 {
+        universe: u,
+        builds: vec![],
+    };
     let err = closure.validate().unwrap_err();
     assert!(
         matches!(err, AbiClosureError::UniverseDigestMismatch { .. }),
@@ -110,10 +158,16 @@ fn build_referencing_wrong_universe_is_rejected() {
     let u = make_universe();
     let mut b = make_build(&u);
     b.universe_digest = "9".repeat(64); // wrong
-    let closure = AbiClosureRecordV1 { universe: u, builds: vec![b] };
+    let closure = AbiClosureRecordV1 {
+        universe: u,
+        builds: vec![b],
+    };
     let err = closure.validate().unwrap_err();
     assert!(
-        matches!(err, AbiClosureError::BuildUniverseMismatch { build_index: 0, .. }),
+        matches!(
+            err,
+            AbiClosureError::BuildUniverseMismatch { build_index: 0, .. }
+        ),
         "build with wrong universe_digest must produce BuildUniverseMismatch"
     );
 }
@@ -127,10 +181,16 @@ fn corrupted_build_digest_is_rejected() {
     let u = make_universe();
     let mut b = make_build(&u);
     b.canonical_digest = "0".repeat(64); // corrupt
-    let closure = AbiClosureRecordV1 { universe: u, builds: vec![b] };
+    let closure = AbiClosureRecordV1 {
+        universe: u,
+        builds: vec![b],
+    };
     let err = closure.validate().unwrap_err();
     assert!(
-        matches!(err, AbiClosureError::BuildDigestMismatch { build_index: 0, .. }),
+        matches!(
+            err,
+            AbiClosureError::BuildDigestMismatch { build_index: 0, .. }
+        ),
         "corrupted build canonical_digest must produce BuildDigestMismatch"
     );
 }
@@ -163,7 +223,10 @@ fn revocation_record_rejects_unknown_fields() {
     map.insert("extra_field".to_string(), serde_json::Value::Bool(false));
     let json = serde_json::to_string(&map).unwrap();
     let result: Result<AbiClosureRevocationRecordV1, _> = serde_json::from_str(&json);
-    assert!(result.is_err(), "unknown fields must be rejected in revocation record");
+    assert!(
+        result.is_err(),
+        "unknown fields must be rejected in revocation record"
+    );
 }
 
 // ---------------------------------------------------------------------------

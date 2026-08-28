@@ -61,9 +61,15 @@ pub fn decode_section(
 #[derive(Debug)]
 pub enum ArtifactSectionError {
     Io(io::Error),
-    Truncated { declared_len: usize, available: usize },
+    Truncated {
+        declared_len: usize,
+        available: usize,
+    },
     JsonParse(String),
-    ToolFailed { tool: String, stderr: String },
+    ToolFailed {
+        tool: String,
+        stderr: String,
+    },
     UnsupportedPlatform,
 }
 
@@ -71,7 +77,10 @@ impl std::fmt::Display for ArtifactSectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ArtifactSectionError::Io(e) => write!(f, "I/O error: {e}"),
-            ArtifactSectionError::Truncated { declared_len, available } => write!(
+            ArtifactSectionError::Truncated {
+                declared_len,
+                available,
+            } => write!(
                 f,
                 "section payload truncated: declared {declared_len} bytes, only {available} available"
             ),
@@ -80,7 +89,10 @@ impl std::fmt::Display for ArtifactSectionError {
                 write!(f, "{tool} failed: {stderr}")
             }
             ArtifactSectionError::UnsupportedPlatform => {
-                write!(f, "artifact section embedding not supported on this platform")
+                write!(
+                    f,
+                    "artifact section embedding not supported on this platform"
+                )
             }
         }
     }
@@ -123,7 +135,10 @@ pub fn embed_record(
     {
         let section_name = ".aiperf_build_record";
         let out = Command::new("objcopy")
-            .arg(format!("--add-section={section_name}={}", tmp_path.display()))
+            .arg(format!(
+                "--add-section={section_name}={}",
+                tmp_path.display()
+            ))
             .arg(artifact_path)
             .output()?;
         if !out.status.success() {
@@ -157,10 +172,7 @@ pub fn embed_record(
     #[cfg(target_os = "windows")]
     {
         let out = Command::new("llvm-objcopy")
-            .args([
-                "--add-section",
-                &format!(".apfbrec={}", tmp_path.display()),
-            ])
+            .args(["--add-section", &format!(".apfbrec={}", tmp_path.display())])
             .arg(artifact_path)
             .output()?;
         if !out.status.success() {

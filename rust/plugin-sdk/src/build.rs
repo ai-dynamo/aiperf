@@ -36,7 +36,10 @@ impl std::fmt::Display for BuildError {
                 write!(f, "Cargo.toml must declare crate-type = [\"cdylib\"]")
             }
             Self::MissingPanicAbort => {
-                write!(f, "Cargo.toml must set panic = \"abort\" in [profile.release]")
+                write!(
+                    f,
+                    "Cargo.toml must set panic = \"abort\" in [profile.release]"
+                )
             }
             Self::MissingManifest => write!(f, "plugin.toml manifest not found"),
             Self::InvalidManifest(e) => write!(f, "invalid manifest: {e}"),
@@ -74,10 +77,9 @@ pub fn preflight_plugin(config: &BuildConfig) -> Result<(), BuildError> {
     if !cargo_toml_path.exists() {
         return Err(BuildError::MissingCargoToml);
     }
-    let cargo_toml_bytes =
-        std::fs::read(&cargo_toml_path).map_err(BuildError::Io)?;
-    let cargo_toml_str =
-        String::from_utf8(cargo_toml_bytes).map_err(|e| BuildError::CargoTomlParse(e.to_string()))?;
+    let cargo_toml_bytes = std::fs::read(&cargo_toml_path).map_err(BuildError::Io)?;
+    let cargo_toml_str = String::from_utf8(cargo_toml_bytes)
+        .map_err(|e| BuildError::CargoTomlParse(e.to_string()))?;
     let cargo_val: toml::Value =
         toml::from_str(&cargo_toml_str).map_err(|e| BuildError::CargoTomlParse(e.to_string()))?;
 
@@ -111,8 +113,8 @@ pub fn preflight_plugin(config: &BuildConfig) -> Result<(), BuildError> {
         return Err(BuildError::MissingManifest);
     }
     let manifest_bytes = std::fs::read(&manifest_path).map_err(BuildError::Io)?;
-    let manifest = crate::manifest::parse_manifest(&manifest_bytes)
-        .map_err(BuildError::InvalidManifest)?;
+    let manifest =
+        crate::manifest::parse_manifest(&manifest_bytes).map_err(BuildError::InvalidManifest)?;
     crate::manifest::validate_manifest(&manifest).map_err(BuildError::InvalidManifest)?;
 
     Ok(())
@@ -140,7 +142,17 @@ fn run_cargo_build(config: &BuildConfig) -> Result<PathBuf, BuildError> {
     cmd.current_dir(&config.plugin_dir);
 
     // Restrict environment to the allowed set.
-    let allowed = ["PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME", "CARGO_TARGET_DIR", "TMPDIR", "TMP", "TEMP", "OUT_DIR"];
+    let allowed = [
+        "PATH",
+        "HOME",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "CARGO_TARGET_DIR",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "OUT_DIR",
+    ];
     let filtered: Vec<(String, String)> = std::env::vars()
         .filter(|(k, _)| allowed.contains(&k.as_str()))
         .collect();
@@ -160,14 +172,20 @@ fn run_cargo_build(config: &BuildConfig) -> Result<PathBuf, BuildError> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| config.plugin_dir.join("target"));
     let lib_name = cargo_package_name(&config.plugin_dir)?;
-    let artifact = find_cdylib(&target_dir, profile_dir, &lib_name, config.target.as_deref())?;
+    let artifact = find_cdylib(
+        &target_dir,
+        profile_dir,
+        &lib_name,
+        config.target.as_deref(),
+    )?;
     Ok(artifact)
 }
 
 fn cargo_package_name(plugin_dir: &Path) -> Result<String, BuildError> {
     let bytes = std::fs::read(plugin_dir.join("Cargo.toml")).map_err(BuildError::Io)?;
     let s = String::from_utf8(bytes).map_err(|e| BuildError::CargoTomlParse(e.to_string()))?;
-    let val: toml::Value = toml::from_str(&s).map_err(|e| BuildError::CargoTomlParse(e.to_string()))?;
+    let val: toml::Value =
+        toml::from_str(&s).map_err(|e| BuildError::CargoTomlParse(e.to_string()))?;
     val.get("package")
         .and_then(|p| p.get("name"))
         .and_then(|n| n.as_str())

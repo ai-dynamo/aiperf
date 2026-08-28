@@ -62,7 +62,11 @@ version = "0.1.0"
 edition = "2024"
 "#,
     );
-    write_file(dir, "plugin.toml", "schema_version = 1\n[plugin]\nname = \"bad\"\nversion = \"0.1.0\"\n[requires]\naiperf_sdk = \">=0.13.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\n");
+    write_file(
+        dir,
+        "plugin.toml",
+        "schema_version = 1\n[plugin]\nname = \"bad\"\nversion = \"0.1.0\"\n[requires]\naiperf_sdk = \">=0.13.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\n",
+    );
     let cfg = BuildConfig {
         plugin_dir: dir.to_path_buf(),
         sdk_dir: None,
@@ -92,7 +96,11 @@ edition = "2024"
 crate-type = ["cdylib"]
 "#,
     );
-    write_file(dir, "plugin.toml", "schema_version = 1\n[plugin]\nname = \"bad\"\nversion = \"0.1.0\"\n[requires]\naiperf_sdk = \">=0.13.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\n");
+    write_file(
+        dir,
+        "plugin.toml",
+        "schema_version = 1\n[plugin]\nname = \"bad\"\nversion = \"0.1.0\"\n[requires]\naiperf_sdk = \">=0.13.0\"\ntarget = \"x86_64-unknown-linux-gnu\"\n",
+    );
     let cfg = BuildConfig {
         plugin_dir: dir.to_path_buf(),
         sdk_dir: None,

@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::canonical::{feed_json, feed_opt_str, feed_str, feed_u32, feed_u8, finalize_hex};
+use crate::canonical::{feed_json, feed_opt_str, feed_str, feed_u8, feed_u32, finalize_hex};
 
 /// Identity of one ABI-contributing crate (sorted by `name` then `version`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

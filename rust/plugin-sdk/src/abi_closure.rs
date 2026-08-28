@@ -27,10 +27,7 @@ pub struct AbiClosureRecordV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AbiClosureError {
     /// The universe record's `canonical_digest` does not match a freshly computed digest.
-    UniverseDigestMismatch {
-        stored: String,
-        computed: String,
-    },
+    UniverseDigestMismatch { stored: String, computed: String },
     /// A build record's `universe_digest` does not match the universe's `canonical_digest`.
     BuildUniverseMismatch {
         build_index: usize,

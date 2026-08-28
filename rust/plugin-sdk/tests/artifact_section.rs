@@ -48,7 +48,9 @@ fn make_build_record() -> PluginArtifactBuildRecordV1 {
 fn encode_decode_round_trip() {
     let record = make_build_record();
     let encoded = encode_section(&record);
-    let decoded = decode_section(&encoded).unwrap().expect("should decode a record");
+    let decoded = decode_section(&encoded)
+        .unwrap()
+        .expect("should decode a record");
     assert_eq!(record, decoded);
 }
 
@@ -63,7 +65,8 @@ fn encode_starts_with_magic() {
 fn length_field_matches_json_payload() {
     let record = make_build_record();
     let encoded = encode_section(&record);
-    let declared_len = u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]) as usize;
+    let declared_len =
+        u32::from_le_bytes([encoded[4], encoded[5], encoded[6], encoded[7]]) as usize;
     assert_eq!(
         declared_len,
         encoded.len() - 8,
