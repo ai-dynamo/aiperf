@@ -3508,7 +3508,10 @@ impl StreamingCheckpointBackendFactory for LocalCheckpointBackendFactory {
             CheckpointParticipantId::new(LOCAL_BACKEND_PARTICIPANT),
             bounded_usize(u64::from(config.max_blocking_jobs), "max_blocking_jobs")?,
             bounded_usize(config.max_blocking_input_bytes, "max_blocking_input_bytes")?,
-            bounded_usize(config.max_blocking_output_bytes, "max_blocking_output_bytes")?,
+            bounded_usize(
+                config.max_blocking_output_bytes,
+                "max_blocking_output_bytes",
+            )?,
         )
         .map_err(|error| config_rejected(&error.to_string()))?;
         let filesystem: Rc<dyn LocalCheckpointFilesystem> =

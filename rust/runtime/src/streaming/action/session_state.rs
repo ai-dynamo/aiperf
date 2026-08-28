@@ -29,11 +29,10 @@ use super::{
     ActionExecutionError, ActionExecutionEvent, ActionFailureCode, ActionHandleId, ActionPlacement,
     ActionResultRetention, ActionTerminalDisposition, ActionTerminalReceipt, DatasetActionSchema,
     EndpointRetrySafety, OrderedDatasetAction, PreparedStreamingActionBinding,
-    StreamingActionDriver,
-    StreamingActionDriverControl, StreamingActionDriverControlOps, StreamingActionSinkDescriptor,
-    StreamingActionSinkFactory, StreamingActionSinkPrepareContext, StreamingActionSubmitter,
-    SubmittedAction, ValidatedStreamingActionSinkConfig, action_execution_control,
-    canonical_action_schema,
+    StreamingActionDriver, StreamingActionDriverControl, StreamingActionDriverControlOps,
+    StreamingActionSinkDescriptor, StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
+    StreamingActionSubmitter, SubmittedAction, ValidatedStreamingActionSinkConfig,
+    action_execution_control, canonical_action_schema,
 };
 use crate::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
@@ -243,7 +242,10 @@ impl StreamingActionDriver for SessionStateDriver {
             // Pop before awaiting so a dropped future never consumes an event.
             if let Some(event) = self.shared.events.borrow_mut().pop_front() {
                 if let ActionExecutionEvent::Terminal(receipt) = &event {
-                    self.shared.admitted.borrow_mut().remove(&receipt.event.action_id);
+                    self.shared
+                        .admitted
+                        .borrow_mut()
+                        .remove(&receipt.event.action_id);
                     self.shared.terminal.set(
                         self.shared.terminal.get().checked_add(1).ok_or_else(|| {
                             ActionExecutionError::action(ActionFailureCode::Dispatch)
@@ -262,7 +264,10 @@ impl StreamingActionDriver for SessionStateDriver {
             next
         } {
             if let ActionExecutionEvent::Terminal(receipt) = &event {
-                self.shared.admitted.borrow_mut().remove(&receipt.event.action_id);
+                self.shared
+                    .admitted
+                    .borrow_mut()
+                    .remove(&receipt.event.action_id);
                 self.shared.terminal.set(
                     self.shared
                         .terminal
@@ -275,7 +280,9 @@ impl StreamingActionDriver for SessionStateDriver {
         Ok(ActionDrainReceipt {
             submitted: self.shared.submitted.get(),
             terminal: self.shared.terminal.get(),
-            digest: self.shared.digest(b"aiperf.stream.action.session_state.drain.v1"),
+            digest: self
+                .shared
+                .digest(b"aiperf.stream.action.session_state.drain.v1"),
         })
     }
 }
@@ -297,15 +304,14 @@ impl StreamingCheckpointParticipant for SessionStateDriver {
         };
         let encoded =
             serde_json::to_vec(&state).map_err(|_| CheckpointError::ObjectVerification)?;
-        let item_count = u64::try_from(state.admitted.len())
-            .map_err(|_| CheckpointError::ObjectVerification)?;
-        let lease = self
-            .budget
-            .try_acquire(1, encoded.len())
-            .map_err(|error| CheckpointError::StateBudget {
+        let item_count =
+            u64::try_from(state.admitted.len()).map_err(|_| CheckpointError::ObjectVerification)?;
+        let lease = self.budget.try_acquire(1, encoded.len()).map_err(|error| {
+            CheckpointError::StateBudget {
                 participant: CheckpointParticipantId::new(PARTICIPANT_ID),
                 code: budget_state_code(error),
-            })?;
+            }
+        })?;
         let payload = BudgetedCheckpointBytes::new(Bytes::from(encoded), lease)?;
         PreparedParticipantState::new(
             barrier.run,

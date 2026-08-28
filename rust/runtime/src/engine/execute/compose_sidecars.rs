@@ -357,9 +357,7 @@ pub(crate) async fn execute_native_inner(
                     .artifacts
                     .records_parquet_path
                     .as_ref()
-                    .map(|path| {
-                        artifact_path(&request.artifact_dir, path, "records_parquet_path")
-                    })
+                    .map(|path| artifact_path(&request.artifact_dir, path, "records_parquet_path"))
                     .transpose()?,
                 // outputs.json streams through the lane at completion.
                 outputs: request

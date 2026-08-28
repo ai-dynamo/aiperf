@@ -1217,14 +1217,10 @@ pub async fn committed_final_generation(
     run: StreamRunIdentity,
     epoch: u64,
 ) -> CommittedCheckpointGeneration {
-    let mut transaction = StreamingCheckpointBackend::begin_generation(
-        backend,
-        run,
-        None,
-        expectations(run),
-    )
-    .await
-    .expect("begin final generation");
+    let mut transaction =
+        StreamingCheckpointBackend::begin_generation(backend, run, None, expectations(run))
+            .await
+            .expect("begin final generation");
     transaction
         .stage_participant(prepared_participant(run, epoch).await)
         .await
@@ -1243,7 +1239,11 @@ pub async fn committed_final_generation(
         .await
         .expect("stage final results");
     transaction
-        .commit(final_metadata(None, epoch, CheckpointTerminalReason::Completed))
+        .commit(final_metadata(
+            None,
+            epoch,
+            CheckpointTerminalReason::Completed,
+        ))
         .await
         .expect("commit final generation")
 }
@@ -1354,18 +1354,16 @@ pub fn component(value: &str) -> StreamingIssueComponentId {
 
 /// Frozen export policy retrying a retryable export failure three times.
 pub fn export_policy() -> PreparedStreamingIssuePolicy {
-    PreparedStreamingIssuePolicy::new([
-        StreamingIssueThresholdRule::new(
-            component("export_retryable"),
-            StreamingIssueScopeKind::Export,
-            StreamingIssueClass::Retryable,
-            None,
-            3,
-            StreamingIssueDisposition::ExportIncomplete,
-            None,
-        )
-        .expect("valid retryable export rule"),
-    ])
+    PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+        component("export_retryable"),
+        StreamingIssueScopeKind::Export,
+        StreamingIssueClass::Retryable,
+        None,
+        3,
+        StreamingIssueDisposition::ExportIncomplete,
+        None,
+    )
+    .expect("valid retryable export rule")])
     .expect("valid export policy")
 }
 

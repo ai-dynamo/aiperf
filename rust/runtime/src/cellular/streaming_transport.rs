@@ -154,7 +154,9 @@ pub(crate) enum CellularStreamingError {
 impl fmt::Display for CellularStreamingError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Admission(rejection) => write!(formatter, "streaming transfer refused: {rejection}"),
+            Self::Admission(rejection) => {
+                write!(formatter, "streaming transfer refused: {rejection}")
+            }
             Self::RouteFailed { route_id, sequence } => write!(
                 formatter,
                 "streaming route {route_id} failed at global sequence {}",
@@ -168,7 +170,11 @@ impl fmt::Display for CellularStreamingError {
                 write!(formatter, "streaming route {route_id} is not bound")
             }
             Self::UnknownHandle { handle } => {
-                write!(formatter, "streaming placement handle {} is not staged", handle.get())
+                write!(
+                    formatter,
+                    "streaming placement handle {} is not staged",
+                    handle.get()
+                )
             }
             Self::Budget(error) => write!(formatter, "streaming transfer budget: {error}"),
             Self::Cancelled => formatter.write_str("streaming transfer was cancelled"),
@@ -466,7 +472,8 @@ impl BindingDiagnostics {
     }
 
     fn drop_driver(&self) {
-        self.driver_count.set(self.driver_count.get().saturating_sub(1));
+        self.driver_count
+            .set(self.driver_count.get().saturating_sub(1));
     }
 
     fn add_owner(&self) {

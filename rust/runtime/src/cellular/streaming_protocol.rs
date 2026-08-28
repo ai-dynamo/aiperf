@@ -710,7 +710,10 @@ impl<'de> Visitor<'de> for BoundedBytesSeed {
     fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
         // Refuse the declared length before reserving; fall back to a bounded
         // push loop when the decoder declines to hint.
-        if sequence.size_hint().is_some_and(|hint| hint > self.max_bytes) {
+        if sequence
+            .size_hint()
+            .is_some_and(|hint| hint > self.max_bytes)
+        {
             return Err(de::Error::custom(CONTENT_LIMIT_MESSAGE));
         }
         let mut out = Vec::with_capacity(sequence.size_hint().unwrap_or(0).min(self.max_bytes));
@@ -793,7 +796,10 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for BoundedVecSeed<T> {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
-        if sequence.size_hint().is_some_and(|hint| hint > self.max_items) {
+        if sequence
+            .size_hint()
+            .is_some_and(|hint| hint > self.max_items)
+        {
             return Err(de::Error::custom(CONTENT_LIMIT_MESSAGE));
         }
         let mut out = Vec::with_capacity(sequence.size_hint().unwrap_or(0).min(self.max_items));
@@ -880,9 +886,10 @@ impl<'de> Visitor<'de> for PreparedActionContentSeed {
                     assign(&mut canonical_request, "canonical_request", value)?;
                 }
                 "content_leases" => {
-                    let value = map.next_value_seed(BoundedVecSeed::<ContentLeaseDescriptor>::new(
-                        self.limits.max_content_items,
-                    ))?;
+                    let value =
+                        map.next_value_seed(BoundedVecSeed::<ContentLeaseDescriptor>::new(
+                            self.limits.max_content_items,
+                        ))?;
                     assign(&mut content_leases, "content_leases", value)?;
                 }
                 "item_count" => assign(&mut item_count, "item_count", map.next_value()?)?,

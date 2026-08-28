@@ -26,10 +26,9 @@ use aiperf_runtime::extensions::AIPerfRegistry;
 use aiperf_runtime::streaming::{
     action::{
         ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
-        EndpointRetrySafety,
-        DatasetActionSchema, PreparedStreamingActionBinding, StreamingActionSinkDescriptor,
-        StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
-        ValidatedStreamingActionSinkConfig,
+        DatasetActionSchema, EndpointRetrySafety, PreparedStreamingActionBinding,
+        StreamingActionSinkDescriptor, StreamingActionSinkFactory,
+        StreamingActionSinkPrepareContext, ValidatedStreamingActionSinkConfig,
     },
     checkpoint::CheckpointError,
     checkpoint_backend::{

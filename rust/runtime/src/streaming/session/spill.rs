@@ -378,7 +378,8 @@ mod tests {
             create_private_dir(&run_path).expect("run directory is creatable");
             let mut file =
                 create_private_file(&run_path.join(OWNER_LEASE_FILE), true).expect("lease file");
-            file.write_all(&deadline.to_le_bytes()).expect("lease write");
+            file.write_all(&deadline.to_le_bytes())
+                .expect("lease write");
         }
         let outcome =
             PrivateSessionSpill::reclaim_orphans(&root, &clock, 2).expect("bounded reclaim runs");

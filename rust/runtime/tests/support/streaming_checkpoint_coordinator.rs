@@ -191,7 +191,9 @@ impl StreamingCheckpointParticipant for NotifyingParticipant {
         if barrier.run != self.run {
             return Err(CheckpointError::ObjectVerification);
         }
-        self.control.view_calls.set(self.control.view_calls.get() + 1);
+        self.control
+            .view_calls
+            .set(self.control.view_calls.get() + 1);
         PreparedParticipantState::new(
             self.run,
             self.participant_id.clone(),
@@ -467,7 +469,7 @@ impl StreamingGenerationTransaction for FaultingTransaction {
             .set(self.control.stage_results_calls.get() + 1);
         if self.control.is_stage_results_refused.replace(false) {
             // Refuse without touching either move-only input, exactly as the
-            // trait contract requires of every implementor.
+            // trait contract requires of every implementer.
             return Err(CheckpointError::Storage {
                 message: "injected stage_results refusal".to_owned(),
             });
