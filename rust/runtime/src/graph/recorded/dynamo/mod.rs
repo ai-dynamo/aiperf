@@ -3,7 +3,7 @@
 
 //! Native Dynamo request-trace compiler.
 
-mod schema;
+pub(crate) mod schema;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -212,7 +212,7 @@ fn build_chains(
     Ok(chains)
 }
 
-fn validate_request_counts(
+pub(crate) fn validate_request_counts(
     request: &RequestMetrics,
     session_id: &str,
 ) -> Result<(), RecordedTraceError> {
@@ -239,7 +239,7 @@ fn validate_request_counts(
     Ok(())
 }
 
-fn validate_session_id(session_id: &str) -> Result<(), RecordedTraceError> {
+pub(crate) fn validate_session_id(session_id: &str) -> Result<(), RecordedTraceError> {
     if session_id.is_empty() || session_id.contains(':') {
         return Err(RecordedTraceError(format!(
             "Dynamo session id {session_id:?} must be non-empty and cannot contain ':'"
@@ -491,13 +491,10 @@ fn build_tree_requests(
             .as_ref()
             .and_then(|request| request.replay.as_ref())
         {
-            let mut hashes = replay.hashes.clone();
             let input_length = usize::try_from(replay.input_length)
                 .expect("validated non-negative replay input length");
-            validate_replay_alignment(input_length, block_size, hashes.len())?;
-            if !hashes.is_empty() && input_length < hashes.len().saturating_mul(block_size) {
-                hashes.pop();
-            }
+            let geometry = normalize_replay_geometry(input_length, block_size, &replay.hashes)?;
+            let hashes = geometry.complete_block_hashes;
             virtual_previous.insert(turn.session_id.clone(), hashes.clone());
             turn.hashes = hashes;
         } else {
@@ -624,6 +621,51 @@ fn tree_block_size(
             .filter_map(|request| request.replay.as_ref()),
         fallback,
     )
+}
+
+/// Complete-block hash geometry proven consistent with a recorded input length.
+///
+/// Recorded traces publish one hash per *touched* KV block, including a trailing
+/// partially filled block. Only complete blocks have stable content, so the
+/// trailing partial hash is dropped here and its residual tokens are reported as
+/// `tail_tokens` rather than as a block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedReplayGeometry {
+    /// Complete-block hashes in recorded order, partial trailing block removed.
+    pub complete_block_hashes: Vec<BlockHash>,
+    /// Recorded input length in tokens, exactly as published.
+    // Only the bounded streaming decoder carries the recorded length and residual
+    // forward; the finite compiler drops the residual during prompt emission.
+    #[cfg_attr(not(feature = "streaming"), allow(dead_code))]
+    pub input_length: usize,
+    /// Tokens beyond the retained complete blocks.
+    #[cfg_attr(not(feature = "streaming"), allow(dead_code))]
+    pub tail_tokens: usize,
+}
+
+/// Validate recorded replay geometry and drop a trailing partial-block hash.
+///
+/// Returns `Err` when `(input_length, block_size, hash_count)` cannot describe
+/// any real prefix: a nonzero length with no hashes, or a length outside
+/// `((n-1) * block_size, n * block_size]`.
+pub(crate) fn normalize_replay_geometry(
+    input_length: usize,
+    block_size: usize,
+    hashes: &[BlockHash],
+) -> Result<NormalizedReplayGeometry, RecordedTraceError> {
+    validate_replay_alignment(input_length, block_size, hashes.len())?;
+    let mut complete_block_hashes = hashes.to_vec();
+    if !complete_block_hashes.is_empty()
+        && input_length < complete_block_hashes.len().saturating_mul(block_size)
+    {
+        complete_block_hashes.pop();
+    }
+    let retained_tokens = complete_block_hashes.len().saturating_mul(block_size);
+    Ok(NormalizedReplayGeometry {
+        tail_tokens: input_length.saturating_sub(retained_tokens),
+        complete_block_hashes,
+        input_length,
+    })
 }
 
 fn validate_replay_alignment(

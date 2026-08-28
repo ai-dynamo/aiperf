@@ -14,7 +14,7 @@ use crate::clock::Clock;
 
 use super::{
     budget::{BudgetLease, StreamingResourceBudget},
-    checkpoint::StreamingCheckpointParticipant,
+    checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
     failure::StreamingIssueReporterHandle,
     identity::{ContentDigest, ImmutableObjectIdentity},
     unit::SourcePosition,
@@ -141,29 +141,38 @@ where
 
 /// Host-owned source preparation context.
 ///
-/// The run [`Clock`] is carried here because preparation is where a source both
-/// decides whether it can honor the run's time discipline at all and captures
-/// the handle its later worker-local backoff needs; `prepare` is sync, so a
-/// source that must construct a clocked client defers that to `open`.
+/// The clock is host-owned on purpose: a source that needs to wait — a follow
+/// poll interval, a read-retry backoff, a credential-refresh backoff — must take
+/// that wait from the run's clock discipline rather than constructing a real
+/// clock or reaching for a Tokio timer, which would silently break virtual-clock
+/// execution. Preparation is also where a source decides whether it can honor
+/// the run's time discipline at all; `prepare` is sync, so a source that must
+/// construct a clocked client defers that to `open`.
 #[derive(Clone)]
 pub struct StreamingSourcePrepareContext {
+    /// Logical run bound into every issue this source reports.
+    pub run: StreamRunIdentity,
+    /// Semantic namespace of the selected stream.
+    pub stream_semantic_digest: ContentDigest,
+    /// Host clock for every source-owned wait.
+    pub clock: Rc<dyn Clock>,
     /// Budget used for immutable acquired partition bytes.
     pub acquisition_budget: AcquisitionBudget,
     /// Host-owned reliability issue reporting boundary.
     pub issue_reporter: StreamingIssueReporterHandle,
-    /// Run clock every source-owned wait and measurement must route through.
-    pub clock: Rc<dyn Clock>,
 }
 
+// `Clock` has no `Debug` supertrait, so the derived `Debug` is replaced with one
+// that reports the clock's discipline rather than its identity.
 impl std::fmt::Debug for StreamingSourcePrepareContext {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // `Clock` is not `Debug`; its only preparation-relevant fact is whether
-        // the run is virtual.
         formatter
             .debug_struct("StreamingSourcePrepareContext")
+            .field("run", &self.run)
+            .field("stream_semantic_digest", &self.stream_semantic_digest)
+            .field("is_virtual_clock", &self.clock.is_virtual())
             .field("acquisition_budget", &self.acquisition_budget)
             .field("issue_reporter", &self.issue_reporter)
-            .field("is_virtual_clock", &self.clock.is_virtual())
             .finish()
     }
 }

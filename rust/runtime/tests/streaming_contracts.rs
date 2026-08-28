@@ -1137,6 +1137,9 @@ async fn source_factory_strictly_validates_downcasts_and_prepares_real_behavior(
         .prepare(
             config,
             &StreamingSourcePrepareContext {
+                run: StreamRunIdentity::new(LogicalReplayRunId::from_bytes([1; 32])),
+                stream_semantic_digest: ContentDigest::from_bytes([2; 32]),
+                clock: RealClock::new(),
                 acquisition_budget,
                 issue_reporter: reporter,
                 clock: RealClock::new(),

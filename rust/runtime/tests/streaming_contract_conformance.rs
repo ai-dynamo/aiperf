@@ -748,7 +748,11 @@ async fn host_stop_wakes_pending_source_without_issue_or_seal() {
     let gate = Arc::new(ScriptGate::default());
     let factory = ScriptedSourceFactory { gate };
     let reporter = CountingReporter::new(run_identity());
+    let run = run_identity();
     let context = StreamingSourcePrepareContext {
+        run,
+        stream_semantic_digest: ContentDigest::from_bytes(*run.logical_replay_run().as_bytes()),
+        clock: RealClock::new(),
         acquisition_budget: harness_acquisition_budget(),
         issue_reporter: reporter.handle(),
         clock: RealClock::new(),

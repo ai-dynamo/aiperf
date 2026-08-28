@@ -29,7 +29,10 @@ use aiperf_runtime::streaming::{
     },
     checkpoint_backend::{CheckpointCommitMetadata, CheckpointGenerationExpectations},
     checkpoints::memory::{MemoryCheckpointBackend, MemoryCheckpointLimits},
-    failure::{StableStreamingFailure, StreamingFailureStage, StreamingIssueReporter},
+    failure::{
+        StableStreamingFailure, StreamingFailureStage, StreamingIssueReporter,
+        StreamingIssueReporterHandle,
+    },
     identity::{ContentDigest, GlobalSequence, ImmutableObjectIdentity, SessionCausalFrontier},
     reliability::HandledIssueCut,
     source::{
@@ -261,11 +264,7 @@ async fn assert_idempotent_commit_notification(
     let validated = factory
         .validate(&cases.authored)
         .expect("authored source configuration validates");
-    let context = StreamingSourcePrepareContext {
-        acquisition_budget: acquisition_budget(cases),
-        issue_reporter: handle,
-        clock: RealClock::new(),
-    };
+    let context = prepare_context(cases, handle);
     let prepared = factory
         .prepare(validated, &context)
         .expect("source preparation succeeds");
@@ -346,16 +345,31 @@ async fn open_source(
     let validated = factory
         .validate(&cases.authored)
         .expect("authored source configuration validates");
-    let context = StreamingSourcePrepareContext {
-        acquisition_budget: acquisition_budget(cases),
-        issue_reporter: handle,
-        clock: RealClock::new(),
-    };
+    let context = prepare_context(cases, handle);
     let prepared = factory
         .prepare(validated, &context)
         .expect("source preparation succeeds");
     let (_control, stop) = streaming_stop_channel();
     prepared.open(stop).await.expect("source opens")
+}
+
+/// Build the one prepare context every harness phase installs.
+///
+/// Kept in one place so a field added to `StreamingSourcePrepareContext` is a
+/// single edit here rather than one per phase.
+fn prepare_context(
+    cases: &SourceConformanceCases,
+    handle: StreamingIssueReporterHandle,
+) -> StreamingSourcePrepareContext {
+    StreamingSourcePrepareContext {
+        run: cases.run,
+        stream_semantic_digest: ContentDigest::from_bytes(
+            *cases.run.logical_replay_run().as_bytes(),
+        ),
+        clock: RealClock::new(),
+        acquisition_budget: acquisition_budget(cases),
+        issue_reporter: handle,
+    }
 }
 
 fn acquisition_budget(cases: &SourceConformanceCases) -> AcquisitionBudget {

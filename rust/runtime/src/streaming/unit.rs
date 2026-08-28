@@ -183,8 +183,143 @@ pub enum SessionMutationV1 {
     GraphNode(GraphNodeFragment),
     /// Declare one stable graph dependency edge.
     GraphEdge(GraphEdgeFragment),
+    /// Declare a recorded request whose content is reconstructed after closure.
+    DeferredRecordedRequest(DeferredRecordedRequestFragment),
     /// Explicitly close a session.
     SessionClose(SessionCloseFragment),
+}
+
+/// Recorded request declared by validated replay geometry rather than by content.
+///
+/// The decoder that emits this has proven the record's geometry and identity but
+/// cannot reconstruct its text: doing so needs the whole producer tree, which
+/// only the session coordinator can prove complete. Nothing here is executable
+/// and nothing here is authored content — the hashes name cache blocks, not
+/// tokens.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeferredRecordedRequestFragment {
+    /// Producer-authored session identity that owns this request.
+    pub producer_session_id: String,
+    /// Producer-authored parent session identity, when the record declares one.
+    pub parent_producer_session_id: Option<String>,
+    /// Producer-authored request identity, unique within the producer session.
+    pub producer_request_id: String,
+    /// Validated complete-block geometry.
+    pub replay: DeferredReplayGeometry,
+    /// Recorded metric facts, absent fields left absent.
+    pub recorded: RecordedRequestFacts,
+}
+
+/// Complete-block replay geometry with the trailing partial block removed.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeferredReplayGeometry {
+    /// Bound cache-block size in tokens; always positive.
+    pub block_size: u32,
+    /// Recorded input length in tokens, exactly as published.
+    pub input_length: u64,
+    /// Complete-block hashes in recorded order.
+    pub complete_block_hashes: Vec<RecordedBlockHash>,
+    /// Tokens beyond the retained complete blocks.
+    pub tail_tokens: u64,
+}
+
+/// Recorded metric facts carried verbatim; an absent field stays absent.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedRequestFacts {
+    /// Recorded model identity.
+    pub model: Option<String>,
+    /// Recorded event time in Unix milliseconds.
+    pub event_time_unix_ms: i64,
+    /// Recorded arrival time in Unix milliseconds.
+    pub request_received_ms: Option<i64>,
+    /// Recorded end-to-end duration in milliseconds.
+    pub total_time_ms: Option<f64>,
+    /// Recorded time to first token in milliseconds; presence implies streaming.
+    pub ttft_ms: Option<f64>,
+    /// Recorded prompt-token count reported by the producer.
+    pub input_tokens: Option<i64>,
+    /// Recorded completion-token count reported by the producer.
+    pub output_tokens: Option<i64>,
+    /// Recorded prefix-cache hit count reported by the producer.
+    pub cached_tokens: Option<i64>,
+}
+
+/// One recorded KV cache-block hash.
+///
+/// Recorded captures publish hashes above `u64::MAX`, so the value domain is
+/// `i128` and the JSON form is a decimal **string**: `serde_json::Value` coerces
+/// oversized numbers through `f64`, and enabling `serde_json/arbitrary_precision`
+/// to avoid that would break every `flatten`/`untagged` float decoder in this
+/// crate. The decimal rendering is also the exact text downstream content
+/// synthesis seeds from, so it must not become hex or a fixed-width byte form.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RecordedBlockHash(i128);
+
+impl RecordedBlockHash {
+    /// Construct a hash, refusing the negative half of the domain.
+    ///
+    /// Recorded hashes are non-negative; the negative range is reserved for the
+    /// finite recorded-trace compiler's virtual allocator, which streaming
+    /// decoders never invoke.
+    pub const fn new(value: i128) -> Result<Self, RecordedBlockHashError> {
+        if value < 0 {
+            return Err(RecordedBlockHashError::Negative);
+        }
+        Ok(Self(value))
+    }
+
+    /// Return the underlying hash value.
+    #[must_use]
+    pub const fn get(self) -> i128 {
+        self.0
+    }
+}
+
+/// Invalid recorded cache-block hash.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecordedBlockHashError {
+    /// The value names the reserved virtual-hash range.
+    Negative,
+    /// The decimal text is not a representable non-negative `i128`.
+    Unrepresentable,
+}
+
+impl fmt::Display for RecordedBlockHashError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Negative => formatter.write_str("recorded block hash cannot be negative"),
+            Self::Unrepresentable => {
+                formatter.write_str("recorded block hash is not a non-negative i128")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RecordedBlockHashError {}
+
+impl Serialize for RecordedBlockHash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for RecordedBlockHash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let text = std::borrow::Cow::<'de, str>::deserialize(deserializer)?;
+        let value: i128 = text
+            .parse()
+            .map_err(|_| serde::de::Error::custom(RecordedBlockHashError::Unrepresentable))?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
 }
 
 /// Endpoint-neutral authored conversation turn.

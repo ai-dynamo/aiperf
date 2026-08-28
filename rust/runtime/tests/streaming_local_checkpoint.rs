@@ -260,7 +260,7 @@ async fn two_writers_cannot_both_commit() {
         .await;
 
     let second = open_store(directory.path(), run, local_limits());
-    let objects_before = object_names(&directory.path().to_path_buf(), run);
+    let objects_before = object_names(directory.path(), run);
     let error = second
         .backend
         .begin_generation_local(run, None, support::expectations(run))
@@ -273,12 +273,12 @@ async fn two_writers_cannot_both_commit() {
     );
     assert_eq!(
         objects_before,
-        object_names(&directory.path().to_path_buf(), run)
+        object_names(directory.path(), run)
     );
     assert_eq!(head_of(&first, run).await, Some(baseline.generation()));
 }
 
-fn object_names(root: &std::path::PathBuf, run: StreamRunIdentity) -> Vec<String> {
+fn object_names(root: &Path, run: StreamRunIdentity) -> Vec<String> {
     let paths = RunPaths::for_run(root, &run);
     let Ok(entries) = std::fs::read_dir(paths.objects_dir()) else {
         return Vec::new();
@@ -300,7 +300,7 @@ async fn checkpoint_tree_is_private_and_transaction_scratch_is_reclaimed() {
         .await
         .expect("baseline generation");
 
-    let paths = RunPaths::for_run(&directory.path().to_path_buf(), &run);
+    let paths = RunPaths::for_run(directory.path(), &run);
     let mode = std::fs::metadata(paths.root())
         .expect("run root exists")
         .permissions()
@@ -342,7 +342,7 @@ async fn orphan_transaction_is_reclaimed_by_a_bounded_lease_aware_scan() {
     let directory = tempfile::tempdir().expect("temporary store root");
     let run = support::run_id(6);
     let store = open_store(directory.path(), run, local_limits());
-    let paths = RunPaths::for_run(&directory.path().to_path_buf(), &run);
+    let paths = RunPaths::for_run(directory.path(), &run);
     store
         .backend
         .begin_generation_local(run, None, support::expectations(run))
