@@ -1,2 +1,30 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# OTel exporter candidate plugin manifest template.
+#
+# This file is a `.yaml.in` template; `{{VERSION}}` and `{{ARTIFACT_DIGEST}}`
+# are substituted by the assembler (Task 37a) before the manifest is locked.
+#
+# The candidate registers canonical ID `otel` only.  The static production
+# `otel` exporter authority remains unchanged until Task 39; this candidate
+# is loaded only under explicit candidate authority.
+#
+# `requires: FoldedProjectionV1(GenAiClientHistogramsV1)` declares that the
+# plugin consumes the host-folded GenAI histogram projection, not a per-record
+# callback.  Two simultaneous OTel configurations share one host fold and each
+# decorate independently post-report.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/export-otel"
+    version: "{{VERSION}}"
+    canonical_id: "otel"
+    category: exporter
+    requires: "FoldedProjectionV1(GenAiClientHistogramsV1)"
+    artifact: "libaiperf_plugin_export_otel.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      OpenTelemetry exporter candidate: decorates host-folded GenAI client
+      histograms with operation/provider/model config and uploads post-report.
+      Leaves the static production otel authority unchanged until Task 39.

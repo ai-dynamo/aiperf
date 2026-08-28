@@ -264,6 +264,14 @@ impl StreamingCheckpointBackendFactory for NoneCheckpointBackendFactory {
                 "checkpoint backend \"none\" retains no durable partial results",
             ));
         }
+        // `none` stores nothing, so it cannot protect anything. A closed-loop
+        // run selects it only by disclaiming checkpoints entirely, which
+        // `validate_target_policy` checks before the backend is consulted.
+        if requirements.needs_sensitive_state_protection {
+            return Err(configuration_error(
+                "checkpoint backend \"none\" does not protect sensitive participant state at rest",
+            ));
+        }
         Ok(Box::new(config))
     }
 

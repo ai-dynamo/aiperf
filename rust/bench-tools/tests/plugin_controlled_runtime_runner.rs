@@ -19,9 +19,8 @@ use aiperf_bench_tools::plugin_stats::{
 use aiperf_bench_tools::runtime_runner::{
     ControlledExporterWorkloadFactory, ControlledRuntimeReportV1, ExporterWorkloadAcquisitionError,
     ExporterWorkloadRequest, HostLivenessSourceV1, controlled_attempt_ledger_path,
-    run_controlled_runtime_v1, run_controlled_runtime_with_exporters_v1,
-    run_controlled_runtime_with_exporters_and_liveness_v1,
-    run_controlled_runtime_with_ledger_v1,
+    run_controlled_runtime_v1, run_controlled_runtime_with_exporters_and_liveness_v1,
+    run_controlled_runtime_with_exporters_v1, run_controlled_runtime_with_ledger_v1,
     run_controlled_runtime_with_liveness_v1,
 };
 

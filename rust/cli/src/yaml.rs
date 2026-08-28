@@ -1890,6 +1890,11 @@ impl Benchmark {
         let transport = parse_transport(self.transport.as_ref())?;
         let is_dynosim = transport.is_dynosim();
         let is_dry_run = matches!(transport, Transport::DryRun(_));
+        // Dataset analysis reads the complete authored dataset resident, which a
+        // stream resource never has; `config::validate` refuses the combination
+        // outright. Without this the dry-run default would make every
+        // socket-free `dataset_streams` config unauthorable.
+        let is_dry_run_analyzable = is_dry_run && self.dataset_streams.is_none();
 
         // DynoSim defaults to its own dialect; other transports default to chat.
         let endpoint_type = self
@@ -2754,7 +2759,7 @@ impl Benchmark {
                                         // A `dry_run` config transport emits the dataset-analysis family with
                                         // default knobs; `apply_cli_overrides` layers `--kv-*` /
                                         // `--no-dataset-analysis` on top.
-                                        dataset_analysis: is_dry_run.then(|| {
+                                        dataset_analysis: is_dry_run_analyzable.then(|| {
                                             load::DatasetAnalysisInputs {
                                                 block_size: 16,
                                                 cache_blocks: None,

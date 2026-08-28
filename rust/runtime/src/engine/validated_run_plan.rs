@@ -56,16 +56,29 @@ impl ValidatedRunPlan {
     }
 }
 
+/// Domain separator prefixed to every canonical run-plan digest preimage so a
+/// digest from this construction can never collide with one from another.
+const DIGEST_DOMAIN: &[u8] = b"aiperf.run.plan.v1\x00";
+
 /// Compute the BLAKE3 hex digest of `run_bytes` followed by sorted
 /// `receipt_bytes`.  Sorting the receipts makes the digest independent of the
 /// order in which factory registrations were encountered.
+///
+/// Every variable-length field is length-framed with its little-endian `u64`
+/// byte length before its bytes, and the receipt count is framed before the
+/// receipts.  Without framing the streaming append is ambiguous: `(b"ab", [])`
+/// and `(b"a", [b"b"])` would produce the same preimage.
 fn compute_digest(run_bytes: &[u8], receipt_bytes: &[&[u8]]) -> String {
     let mut sorted: Vec<&[u8]> = receipt_bytes.to_vec();
     sorted.sort();
 
     let mut hasher = blake3::Hasher::new();
+    hasher.update(DIGEST_DOMAIN);
+    hasher.update(&(run_bytes.len() as u64).to_le_bytes());
     hasher.update(run_bytes);
+    hasher.update(&(sorted.len() as u64).to_le_bytes());
     for receipt in &sorted {
+        hasher.update(&(receipt.len() as u64).to_le_bytes());
         hasher.update(receipt);
     }
     hasher.finalize().to_hex().to_string()

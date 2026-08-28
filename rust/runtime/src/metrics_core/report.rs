@@ -26,6 +26,21 @@ use std::sync::Arc;
 /// Native report schema identifier.
 pub const NATIVE_REPORT_SCHEMA_VERSION: &str = "2.0";
 
+/// One loaded plugin package entry in a benchmark report's catalog summary.
+///
+/// Contains only identity and provenance — no absolute paths, hostnames, or
+/// configuration secrets.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PluginCatalogEntry {
+    /// Normalized plugin package ID.
+    pub package_id: String,
+    pub version: String,
+    /// Resolution status: `"winner"`, `"shadow"`, `"quarantined"`, or `"absent"`.
+    pub status: String,
+    /// BLAKE3 hex digest of the package manifest.
+    pub manifest_digest: String,
+}
+
 /// A present report value: finite numbers serialize normally; non-finite tails
 /// serialize as JSON null without colliding with structurally absent fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1166,6 +1181,8 @@ impl Reporter for NativeReporter {
                 .as_ref()
                 .map(ReportSteadyState::from_outcome),
             streaming: outcome.streaming.clone(),
+            plugin_lock_digest: None,
+            plugin_catalog: Vec::new(),
         }
     }
 }
@@ -1218,6 +1235,13 @@ pub struct NativeReport {
     /// serialized shape is identical whether or not the feature is compiled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub streaming: Option<ReportStreamingPlane>,
+    /// BLAKE3 hex digest of the frozen plugin lock, if plugins were loaded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_lock_digest: Option<String>,
+    /// Brief catalog summary of loaded plugin packages. Absent when no plugins
+    /// were loaded or the catalog is empty.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub plugin_catalog: Vec<PluginCatalogEntry>,
 }
 
 impl NativeReport {
@@ -1255,6 +1279,22 @@ impl NativeReport {
     ) -> Result<Self, ReportMetadataError> {
         self.run.finalize(run_metadata, facts)?;
         Ok(self)
+    }
+
+    /// Attach plugin lock provenance. Call after construction, before
+    /// [`Self::finalize_run`]. Does not affect `distribution_id`.
+    ///
+    /// `lock_digest` is the BLAKE3 hex digest of the frozen plugin lock
+    /// (from `LockedCatalogBundle::lock_digest`). An empty `catalog` is stored
+    /// but serialized as absent (absent when empty).
+    pub fn with_plugin_provenance(
+        mut self,
+        lock_digest: String,
+        catalog: Vec<PluginCatalogEntry>,
+    ) -> Self {
+        self.plugin_lock_digest = Some(lock_digest);
+        self.plugin_catalog = catalog;
+        self
     }
 }
 

@@ -13,3 +13,9 @@ description = "Fast end-to-end tests for aiperf's socket-free dry-run transport.
 flate2 = "1"
 serde_json = { workspace = true }
 tempfile = "3"
+# POSIX-signal delivery to the supervised `aiperf` child in the streaming
+# product suite: a restart row must interrupt a specific long-running process at
+# a specific committed generation, which a blocking `Command::output()` cannot
+# express. `libc` rather than `nix` keeps this suite's dependency surface at the
+# two symbols it actually uses (`kill`, `SIGINT`).
+libc = { workspace = true }

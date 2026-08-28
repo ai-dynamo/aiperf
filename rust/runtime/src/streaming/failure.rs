@@ -155,6 +155,26 @@ failure_codes! {
         GraphCycle => "graph_cycle",
         /// A declared edge names a node that already released or terminated.
         EdgeAfterExecution => "edge_after_execution",
+        /// A closed-loop target policy has no way to protect retained state.
+        SensitiveStateUnprotected => "sensitive_state_unprotected",
+    }
+}
+
+failure_codes! {
+    /// Stable sensitive-state envelope and key-resolution failure classification.
+    pub enum SensitiveStateFailureCode {
+        /// No material is available for the named selector.
+        KeyUnavailable => "key_unavailable",
+        /// The key source is not exclusively private.
+        KeyNotPrivate => "key_not_private",
+        /// The key source is malformed or oversized.
+        KeyMalformed => "key_malformed",
+        /// Authentication failed: wrong key, tampering, or context mismatch.
+        Authentication => "authentication",
+        /// The envelope version is not supported.
+        UnsupportedVersion => "unsupported_version",
+        /// A CSPRNG nonce could not be minted.
+        NonceUnavailable => "nonce_unavailable",
     }
 }
 
@@ -381,6 +401,36 @@ impl SessionCoordinatorError {
     }
 }
 
+/// Sensitive-state key-resolution or envelope error.
+///
+/// The variant carries only a stable classification: it never carries key
+/// bytes, plaintext, a path, or an offset, so a sensitive-state failure is
+/// safe to log, serialize, and return to a caller verbatim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SensitiveStateError(SensitiveStateFailureCode);
+
+impl SensitiveStateError {
+    /// Construct a sensitive-state failure.
+    #[must_use]
+    pub const fn new(code: SensitiveStateFailureCode) -> Self {
+        Self(code)
+    }
+
+    /// Return the stable sensitive-state failure classification.
+    #[must_use]
+    pub const fn failure(&self) -> SensitiveStateFailureCode {
+        self.0
+    }
+
+    const fn failure_stage(&self) -> StreamingFailureStage {
+        StreamingFailureStage::Session
+    }
+
+    const fn failure_code(&self) -> &'static str {
+        self.0.code()
+    }
+}
+
 /// Action binding, placement, dispatch, or retained-state error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActionExecutionError {
@@ -513,6 +563,7 @@ macro_rules! impl_failure {
 impl_failure!(StreamSourceError);
 impl_failure!(StreamFormatError);
 impl_failure!(SessionCoordinatorError);
+impl_failure!(SensitiveStateError);
 impl_failure!(ActionExecutionError);
 impl_failure!(CheckpointAttemptError);
 impl_failure!(ResultExportError);

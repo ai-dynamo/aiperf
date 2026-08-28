@@ -2305,6 +2305,7 @@ mod tests {
             cell_peer: peer.to_vec(),
             artifact_capability_digest: Some(digest),
             registration_proof: Some(proof),
+            plugin_lock_digest: None,
         };
 
         assert!(authority.verify(&register, &controller_peer).is_ok());
@@ -2336,6 +2337,7 @@ mod tests {
             cell_peer: b"cell-peer".to_vec(),
             artifact_capability_digest: None,
             registration_proof: Some(proof),
+            plugin_lock_digest: None,
         };
         let changed_controller_peer = velo::PeerInfo::new(
             controller_peer.instance_id(),
@@ -2372,6 +2374,7 @@ mod tests {
             cell_peer: b"cell-peer".to_vec(),
             artifact_capability_digest: None,
             registration_proof: Some(proof),
+            plugin_lock_digest: None,
         };
         register
             .registration_proof

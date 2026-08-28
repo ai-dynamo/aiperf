@@ -129,3 +129,62 @@ fn frozen_plugin_universe_is_empty_for_no_op_extension() {
     assert!(frozen.is_empty());
     assert_eq!(frozen.len(), 0);
 }
+
+#[test]
+fn frozen_registry_lookup_by_id_resolves_across_packages() {
+    let ctx_export = PluginRegistrationContext::new(&PACKAGE_EXPORTER);
+    let ctx_transport = PluginRegistrationContext::new(&PACKAGE_TRANSPORT);
+
+    let u1 = register_plugin(
+        &ctx_export,
+        &SingleCapabilityExtension {
+            capability_id: "otlp",
+        },
+    )
+    .expect("exporter registration succeeds");
+    let u2 = register_plugin(&ctx_transport, &MultiCapabilityExtension)
+        .expect("transport registration succeeds");
+
+    let registry = freeze_universe(vec![u1, u2]);
+
+    let otlp = registry.lookup_by_id("otlp").expect("otlp is registered");
+    assert_eq!(otlp.id().as_str(), "otlp");
+    assert!(std::ptr::eq(otlp.package(), &*PACKAGE_EXPORTER));
+
+    let h2c_tls = registry
+        .lookup_by_id("h2c_tls")
+        .expect("h2c_tls is registered");
+    assert_eq!(h2c_tls.id().as_str(), "h2c_tls");
+    assert!(std::ptr::eq(h2c_tls.package(), &*PACKAGE_TRANSPORT));
+
+    assert!(registry.lookup_by_id("not_registered").is_none());
+}
+
+#[test]
+fn frozen_registry_lookup_by_id_returns_first_registration_in_load_order() {
+    // The same capability identifier registered by two packages is resolved by
+    // priority elsewhere; the frozen index reports the load-order winner.
+    let ctx_export = PluginRegistrationContext::new(&PACKAGE_EXPORTER);
+    let ctx_transport = PluginRegistrationContext::new(&PACKAGE_TRANSPORT);
+
+    let u1 = register_plugin(
+        &ctx_export,
+        &SingleCapabilityExtension {
+            capability_id: "shared",
+        },
+    )
+    .expect("exporter registration succeeds");
+    let u2 = register_plugin(
+        &ctx_transport,
+        &SingleCapabilityExtension {
+            capability_id: "shared",
+        },
+    )
+    .expect("transport registration succeeds");
+
+    let registry = freeze_universe(vec![u1, u2]);
+    let found = registry
+        .lookup_by_id("shared")
+        .expect("shared is registered");
+    assert!(std::ptr::eq(found.package(), &*PACKAGE_EXPORTER));
+}

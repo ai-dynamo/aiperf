@@ -25,11 +25,7 @@ fn write_native_config(dir: &Path, url: &str) -> PathBuf {
 }
 
 fn write_native_docker_config(dir: &Path, url: &str) -> PathBuf {
-    write_native_config_with_pinch_image(
-        dir,
-        url,
-        Some("aiperf-recorded-agent-pinchbench:v1"),
-    )
+    write_native_config_with_pinch_image(dir, url, Some("aiperf-recorded-agent-pinchbench:v1"))
 }
 
 fn write_native_config_with_pinch_image(
@@ -610,19 +606,21 @@ async fn recorded_agent_mini_swe_replays_through_docker_tools_and_mock_server() 
         .into_iter()
         .map(|value| normalize_native_payload(&value))
         .collect::<Vec<_>>();
-    assert_eq!(actual, expected, "Docker replay wire body diverged from the recording");
+    assert_eq!(
+        actual, expected,
+        "Docker replay wire body diverged from the recording"
+    );
 
     let backend = result.artifacts.read_json_file("**/backend-metadata.json");
-    assert_eq!(backend["backend"], "docker:aiperf-recorded-agent-pinchbench:v1");
+    assert_eq!(
+        backend["backend"],
+        "docker:aiperf-recorded-agent-pinchbench:v1"
+    );
     assert_eq!(
         backend["backends"],
         json!(["docker:aiperf-recorded-agent-pinchbench:v1"])
     );
-    assert_successful_replay_artifacts(
-        &result,
-        5,
-        "docker:aiperf-recorded-agent-pinchbench:v1",
-    );
+    assert_successful_replay_artifacts(&result, 5, "docker:aiperf-recorded-agent-pinchbench:v1");
 }
 
 #[tokio::test]
