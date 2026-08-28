@@ -27,11 +27,10 @@ use aiperf_runtime::streaming::{
         CheckpointParticipantId, CheckpointParticipantPlan, CommittedParticipantState,
         DecodeHorizon, DiscoveryHorizon, EventTimeWatermark, OrderedActionHorizon,
         ParticipantStateDescriptor, PreparedParticipantState, StreamRunIdentity,
-        StreamingCheckpointParticipant, TerminalActionHorizon,
+        TerminalActionHorizon,
     },
     checkpoint_backend::{
         CheckpointCommitMetadata, CheckpointGenerationExpectations, LeasedCheckpointGenerationView,
-        StreamingGenerationTransaction,
     },
     checkpoints::memory::{MemoryCheckpointBackend, MemoryCheckpointLimits},
     failure::{SessionCoordinatorError, StreamingIssueReporter},

@@ -41,7 +41,7 @@ use aiperf_runtime::streaming::{
         StreamingIssueThresholdRule, submission_queue_charge_bytes,
     },
     session::{
-        StreamingSessionPrepareContext, StreamingSessionProgramFactory,
+        StreamingSessionCoordinator, StreamingSessionPrepareContext, StreamingSessionProgramFactory,
         conversation::{
             ConversationProgramConfig, ConversationSessionScope, StreamingConversationCoordinator,
             StreamingConversationProgramFactory, TranscriptOrigin,
