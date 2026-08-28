@@ -160,7 +160,12 @@ def _is_json_patch_test_failure(exc: Any) -> bool:
 # would linger in the CR with stale values indistinguishable from live ones.
 # A JSON-patch "add" on an existing member replaces it outright, which is the
 # snapshot semantic. Keep this list minimal; merging is correct by default.
-_SNAPSHOT_STATUS_KEYS: frozenset[str] = frozenset({"serverMetrics"})
+#
+# status.workers joins it for the same reason: the controller authors the whole
+# nine-key aggregate every tick, so the block must mirror one tick rather than
+# accumulate. Replace also guarantees it can never end up holding this tick's
+# ``ready`` beside the operator bootstrap write's ``total``.
+_SNAPSHOT_STATUS_KEYS: frozenset[str] = frozenset({"serverMetrics", "workers"})
 
 
 def _merge_patch_value(existing: Any, patch: Any) -> Any:
@@ -360,6 +365,9 @@ class ProgressRouter(
                 controller_failure=self._controller_failure,
                 metrics=list(self._metrics),
                 server_metrics=self._server_metrics,
+                workers=build_aggregate_worker_status(
+                    self._pod_state_tracker.pod_states
+                ),
             )
         except Exception:  # noqa: BLE001
             self.debug("Failed to push AIPerfJob status update")
@@ -522,6 +530,7 @@ async def _push_aiperfjob_status(
     controller_failure: str | None = None,
     metrics: list[MetricResult] | None = None,
     server_metrics: dict[str, Any] | None = None,
+    workers: AggregateWorkerStatus | None = None,
 ) -> None:
     """Refresh the controller heartbeat and merge-patch current progress.
 
@@ -574,29 +583,8 @@ async def _push_aiperfjob_status(
 
         phases_data, current_phase = _build_phases_payload(phases)
 
-        # Find the primary (profiling-kind) phase for top-level request counters,
-        # mirroring JobProgress.primary_phase_stats: take the profiling-kind phase
-        # with the latest start_ns.
-        profiling = {
-            n: s
-            for n, s in phases.items()
-            if (s.phase_kind or "profiling") == "profiling"
-        }
-        primary_stats = (
-            max(profiling.values(), key=lambda s: s.start_ns or 0)
-            if profiling
-            else None
-        )
-
-        # Build a metrics dict in the shape MetricsSummary.from_metrics() accepts.
-        live_metrics_dict: dict[str, Any] | None = None
-        if metrics:
-            live_metrics_dict = {
-                "metrics": {
-                    m.tag: m.model_dump(mode="json", exclude_none=True, exclude={"tag"})
-                    for m in metrics
-                }
-            }
+        primary_stats = _primary_phase_stats(phases)
+        live_metrics_dict = _build_live_metrics_payload(metrics)
 
         # If results are already flowing but the controller hasn't published a
         # state-change past INITIALIZING/CONFIGURING/READY yet, advance subPhase
@@ -639,6 +627,9 @@ async def _push_aiperfjob_status(
         if curated_server_metrics := project_server_metrics_for_cr(server_metrics):
             status_patch["serverMetrics"] = curated_server_metrics
 
+        if workers_payload := _build_workers_payload(workers):
+            status_patch["workers"] = workers_payload
+
         if results_exported:
             status_patch["resultsExported"] = True
         status_patch.update(_controller_failure_status_patch(controller_failure))
@@ -653,6 +644,65 @@ async def _push_aiperfjob_status(
             else {},
             status_patch=status_patch,
         )
+
+
+def _primary_phase_stats(
+    phases: dict[str, CombinedPhaseStats],
+) -> CombinedPhaseStats | None:
+    """Pick the phase whose counters become the CR's top-level request totals.
+
+    Mirrors ``JobProgress.primary_phase_stats``: the profiling-kind phase with
+    the latest ``start_ns``. A phase with no explicit kind is treated as
+    profiling.
+    """
+    profiling = [
+        s for s in phases.values() if (s.phase_kind or "profiling") == "profiling"
+    ]
+    return max(profiling, key=lambda s: s.start_ns or 0) if profiling else None
+
+
+def _build_live_metrics_payload(
+    metrics: list[MetricResult] | None,
+) -> dict[str, Any] | None:
+    """Shape live metric results the way ``MetricsSummary.from_metrics`` wants."""
+    if not metrics:
+        return None
+    return {
+        "metrics": {
+            m.tag: m.model_dump(mode="json", exclude_none=True, exclude={"tag"})
+            for m in metrics
+        }
+    }
+
+
+def _build_workers_payload(
+    workers: AggregateWorkerStatus | None,
+) -> dict[str, int] | None:
+    """Render the controller aggregate into the CR's camelCase worker keys.
+
+    ``status.workers`` is a structural CRD object with no
+    ``x-kubernetes-preserve-unknown-fields``, so the apiserver prunes any key
+    that is not one of the nine declared camelCase properties. The snake_case
+    field names therefore have to be translated, and the operator's alias map
+    is reused so both writers agree on one spelling.
+
+    Returns ``None`` until at least one worker pod has reported. An all-zero
+    aggregate is indistinguishable from "no pods have checked in yet", and
+    writing it would overwrite the creation-time ``total`` the operator took
+    from the spec with 0 -- making a healthy starting job read as a job with
+    no workers. Withholding the key is also what keeps the operator's
+    JobSet-derived bootstrap estimate live through that window: the operator
+    yields on the presence of ``totalPods``, which only a real
+    controller-authored aggregate carries.
+    """
+    from aiperf.operator.status import WORKER_AGGREGATE_STATUS_CRD_KEYS
+
+    if workers is None or workers.total_pods <= 0:
+        return None
+    return {
+        WORKER_AGGREGATE_STATUS_CRD_KEYS.get(field, field): getattr(workers, field)
+        for field in type(workers).model_fields
+    }
 
 
 def _build_phases_payload(

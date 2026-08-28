@@ -49,6 +49,7 @@ class BenchmarkStatus(CaseInsensitiveStrEnum):
     RUNNING = "running"
     COMPLETE = "complete"
     CANCELLED = "cancelled"
+    INCOMPLETE = "incomplete"
 
 
 class BenchmarkResultsResponse(AIPerfBaseModel):

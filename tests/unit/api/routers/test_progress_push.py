@@ -38,6 +38,9 @@ def _make_router():
     r._metrics = []
     r._progress_tracker = MagicMock()
     r._progress_tracker._phases = {}
+    # The status push folds the bus-fed pod-state cache into the controller
+    # aggregate; it has no HTTPConnection to ask the controller over.
+    r._pod_state_tracker = SimpleNamespace(pod_states={})
     r._k8s_patching_enabled = True
     r._k8s_job_id = "test-job"
     r._k8s_job_uid = "uid-123"
@@ -912,3 +915,191 @@ async def test_realtime_server_metrics_is_not_dumped_outside_kubernetes() -> Non
     )
 
     assert r._server_metrics is None
+
+
+def _aggregate(**overrides: int):
+    """A controller aggregate with every one of the nine keys populated."""
+    from aiperf.controller.system_controller_models import AggregateWorkerStatus
+
+    values: dict[str, int] = {
+        "ready": 6,
+        "total": 8,
+        "dispatchable": 6,
+        "router_connected": 6,
+        "ready_record_processors": 4,
+        "declared_record_processors": 4,
+        "ready_pods": 3,
+        "total_pods": 4,
+        "degraded_pods": 1,
+    }
+    values.update(overrides)
+    return AggregateWorkerStatus(**values)
+
+
+def test_build_workers_payload_renders_all_nine_crd_keys() -> None:
+    """Every snake_case field must be translated to its declared CRD spelling.
+
+    ``status.workers`` is structural with no preserve-unknown-fields, so an
+    untranslated key is pruned by the apiserver and silently lost.
+    """
+    from aiperf.api.routers.progress import _build_workers_payload
+
+    payload = _build_workers_payload(_aggregate())
+
+    assert payload == {
+        "ready": 6,
+        "total": 8,
+        "dispatchable": 6,
+        "routerConnected": 6,
+        "readyRecordProcessors": 4,
+        "declaredRecordProcessors": 4,
+        "readyPods": 3,
+        "totalPods": 4,
+        "degradedPods": 1,
+    }
+
+
+def test_build_workers_payload_matches_crd_schema_properties() -> None:
+    """The rendered keys must be exactly the properties the CRD declares.
+
+    ``status.workers`` is hand-authored in ``tools/generate_crd.py`` rather than
+    derived from a Pydantic model, so nothing but this test keeps the writer and
+    the schema in step. The CRD file is a Helm template and cannot be parsed as
+    YAML, so the block is sliced out by indentation.
+    """
+    import re
+    from pathlib import Path
+
+    from aiperf.api.routers.progress import _build_workers_payload
+
+    crd_text = Path(
+        "deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml"
+    ).read_text(encoding="utf-8")
+    block = re.search(
+        r"\n(?P<indent> +)workers:\n"
+        r"(?P=indent)  type: object\n"
+        r"(?P=indent)  description: Controller-authored aggregate worker status\.\n"
+        r"(?P=indent)  properties:\n"
+        r"(?P<body>(?:(?P=indent)    .*\n|\n)+)",
+        crd_text,
+    )
+    assert block is not None, "status.workers block not found in the CRD template"
+    prop_indent = len(block.group("indent")) + 4
+    declared = {
+        line.strip().rstrip(":")
+        for line in block.group("body").splitlines()
+        if line.strip() and len(line) - len(line.lstrip()) == prop_indent
+    }
+
+    assert set(_build_workers_payload(_aggregate())) == declared
+
+
+@pytest.mark.parametrize(
+    "workers",
+    [
+        param(None, id="no-aggregate"),
+        param("empty", id="zero-pods-reported"),
+    ],
+)  # fmt: skip
+def test_build_workers_payload_withheld_until_a_pod_reports(workers: object) -> None:
+    """An all-zero aggregate must not overwrite the operator's bootstrap total.
+
+    It is indistinguishable from "no pod has checked in yet"; writing it would
+    make a healthy starting job read as a job with no workers, and would also
+    plant ``totalPods`` and hand ownership over prematurely.
+    """
+    from aiperf.api.routers.progress import _build_workers_payload
+    from aiperf.controller.system_controller_models import AggregateWorkerStatus
+
+    value = AggregateWorkerStatus() if workers == "empty" else None
+    assert _build_workers_payload(value) is None
+
+
+def test_workers_is_a_snapshot_key() -> None:
+    """Merge would let this tick's ready sit beside an earlier writer's total."""
+    from aiperf.api.routers.progress import _SNAPSHOT_STATUS_KEYS
+
+    assert "workers" in _SNAPSHOT_STATUS_KEYS
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_writes_controller_aggregate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rich aggregate reaches status.workers, not just ready/total."""
+    custom = _install_fake_k8s(monkeypatch, _cr())
+
+    await _push(workers=_aggregate())
+
+    assert _status_body(custom)["workers"]["totalPods"] == 4
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_omits_workers_when_no_pods_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup must leave the operator's spec-derived total alone."""
+    from aiperf.controller.system_controller_models import AggregateWorkerStatus
+
+    custom = _install_fake_k8s(monkeypatch, _cr({"workers": {"ready": 0, "total": 8}}))
+
+    await _push(workers=AggregateWorkerStatus())
+
+    assert "workers" not in _status_body(custom)
+
+
+@pytest.mark.asyncio
+async def test_push_aiperfjob_status_replaces_bootstrap_workers_wholesale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Snapshot semantics: the operator's two-key write must not survive merged."""
+    custom = _install_fake_k8s(
+        monkeypatch,
+        _cr({"phase": "Running", "workers": {"ready": 8, "total": 99}}),
+    )
+
+    await _push(workers=_aggregate())
+
+    written = _status_body(custom)["workers"]
+    assert written["total"] == 8
+    assert written["ready"] == 6
+
+
+@pytest.mark.asyncio
+async def test_patch_aiperfjob_status_folds_the_bus_fed_pod_state_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The push has no HTTPConnection, so it uses the router's own cache."""
+    import aiperf.api.routers.progress as progress_module
+
+    seen: dict[str, object] = {}
+
+    async def fake_push(**kwargs: object) -> None:
+        seen.update(kwargs)
+
+    monkeypatch.setattr(progress_module, "_push_aiperfjob_status", fake_push)
+
+    router = _make_router()
+    router._pod_state_tracker = SimpleNamespace(pod_states={"0": _pod_state()})
+
+    await router._patch_aiperfjob_status()
+
+    assert seen["workers"].total_pods == 1
+
+
+def _pod_state():
+    """One healthy worker pod as reported over the bus."""
+    from aiperf.common.messages import WorkerPodStateMessage
+
+    return WorkerPodStateMessage(
+        service_id="wgm-0",
+        pod_index="0",
+        pod_state="running",
+        admission_state="admitted",
+        ready_workers=4,
+        declared_workers=4,
+        dispatchable_workers=4,
+        router_connected_workers=4,
+        ready_record_processors=2,
+        declared_record_processors=2,
+    )

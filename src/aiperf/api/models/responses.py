@@ -82,5 +82,3 @@ class WorkersResponse(AIPerfBaseModel):
     worker_groups: dict[str, WorkerGroupStats] = Field(
         description="Per-worker-group aggregated stats keyed by group_id."
     )
-
-
