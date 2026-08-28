@@ -782,7 +782,15 @@ async def local_cluster(
 
     # Cleanup
     if not s.skip_cleanup and not s.reuse_cluster:
-        await cluster.delete()
+        try:
+            await cluster.delete()
+        except RuntimeError as exc:
+            # Docker occasionally refuses to kill kind containers on Linux
+            # (containerd cgroup race). The cluster is effectively dead; warn
+            # and move on so the teardown error doesn't mask real test failures.
+            logger.warning(
+                f"[cleanup] cluster delete failed (stale Docker state): {exc}"
+            )
     else:
         logger.info(f"Keeping cluster: {cluster.name}")
 

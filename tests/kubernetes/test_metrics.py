@@ -12,6 +12,8 @@ from tests.kubernetes.helpers.benchmark import (
     BenchmarkResult,
 )
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 class TestMetricsCollection:
     """Tests for metrics collection from benchmarks."""

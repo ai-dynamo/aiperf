@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 CHART = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "aiperf-operator"
+pytestmark = [pytest.mark.timeout(1200)]
 
 
 def _render(*set_args: str) -> list[dict]:

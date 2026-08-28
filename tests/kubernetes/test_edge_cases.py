@@ -15,6 +15,8 @@ from tests.kubernetes.helpers.benchmark import (
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 class TestMinimalConfigurations:
     """Tests for minimal/edge case configurations."""

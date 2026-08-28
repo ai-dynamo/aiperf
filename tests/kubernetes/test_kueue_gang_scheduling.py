@@ -39,6 +39,7 @@ from tests.kubernetes.helpers.operator import (
 )
 
 logger = AIPerfLogger(__name__)
+pytestmark = [pytest.mark.timeout(1200)]
 
 # Minimal config for fast Kueue tests (small dataset, few requests)
 _KUEUE_BENCHMARK_KWARGS: dict[str, Any] = {

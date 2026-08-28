@@ -25,6 +25,8 @@ from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.kubernetes.spec_converter import AIPerfJobSpecConverter
 from aiperf.operator.status import Phase
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 @asynccontextmanager
 async def _fake_k8s_client(api):

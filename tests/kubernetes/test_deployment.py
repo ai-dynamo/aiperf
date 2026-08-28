@@ -16,6 +16,8 @@ from tests.kubernetes.helpers.benchmark import (
 from tests.kubernetes.helpers.cluster import LocalCluster
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 class TestClusterSetup:
     """Tests for cluster setup and prerequisites."""

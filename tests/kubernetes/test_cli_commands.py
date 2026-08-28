@@ -18,6 +18,8 @@ from tests.kubernetes.helpers.benchmark import (
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 async def run_aiperf_command(
     project_root: Path,

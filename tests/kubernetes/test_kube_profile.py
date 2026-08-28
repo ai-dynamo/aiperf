@@ -8,6 +8,8 @@ import asyncio
 
 import pytest
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 async def _run_command(project_root, *args, timeout=10):
     """Run a CLI command asynchronously."""

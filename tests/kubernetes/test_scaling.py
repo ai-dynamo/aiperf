@@ -17,6 +17,8 @@ from tests.kubernetes.helpers.benchmark import (
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
 
+pytestmark = [pytest.mark.timeout(1200)]
+
 
 def _is_probe_exempt_container(name: str) -> bool:
     """Return whether latency-sensitive runtime code intentionally omits probes."""
