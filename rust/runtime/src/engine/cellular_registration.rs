@@ -13,9 +13,6 @@ use rand::TryRngCore;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::cellular::transport::connect::ControllerPeerBinding;
-use crate::cellular::transport::{CellRegister, CellRegistrationProof, HANDLER_STORE_PARTITION};
-use crate::engine::cellular_bootstrap::CellularRole;
 #[cfg(feature = "streaming")]
 use crate::cellular::streaming_protocol::{
     AuthenticatedStreamingPayload, BindContentSynthesisProfileV1, BudgetOwnedFrame,
@@ -25,6 +22,9 @@ use crate::cellular::streaming_protocol::{
     ControllerStreamingSessionId, FrameBudgetReservation, PrepareActionSeed,
     STREAMING_CELLULAR_PROTOCOL_VERSION, StreamingCellularLimits,
 };
+use crate::cellular::transport::connect::ControllerPeerBinding;
+use crate::cellular::transport::{CellRegister, CellRegistrationProof, HANDLER_STORE_PARTITION};
+use crate::engine::cellular_bootstrap::CellularRole;
 
 const REGISTRATION_PROTOCOL_VERSION: u8 = 1;
 const TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-registration-v1\0";
@@ -327,11 +327,7 @@ impl ControllerStreamingSessionTable {
     ///
     /// An identical rebind is idempotent so an exact registration retry stays a
     /// no-op; a conflicting rebind fails closed.
-    pub(crate) fn commit(
-        &self,
-        cell_id: u32,
-        session: ControllerStreamingSessionId,
-    ) -> Result<()> {
+    pub(crate) fn commit(&self, cell_id: u32, session: ControllerStreamingSessionId) -> Result<()> {
         let mut sessions = self.sessions.lock();
         let slot = sessions
             .get_mut(cell_id as usize)
@@ -371,8 +367,9 @@ fn controller_frame_transcript(
     peer_info: &[u8],
     payload: &[u8],
 ) -> Vec<u8> {
-    let mut transcript =
-        Vec::with_capacity(CONTROLLER_FRAME_TRANSCRIPT_DOMAIN.len() + 2 + 32 + 13 + 1 + 32 + 8 + 64);
+    let mut transcript = Vec::with_capacity(
+        CONTROLLER_FRAME_TRANSCRIPT_DOMAIN.len() + 2 + 32 + 13 + 1 + 32 + 8 + 64,
+    );
     transcript.extend_from_slice(CONTROLLER_FRAME_TRANSCRIPT_DOMAIN);
     transcript.extend_from_slice(&STREAMING_CELLULAR_PROTOCOL_VERSION.to_le_bytes());
     transcript.extend_from_slice(&run_nonce);
@@ -1962,8 +1959,8 @@ mod tests {
 
         use super::super::{
             ADMISSION_PURPOSE_COUNT, AdmissionPurpose, AdmissionRejection, CellSecurityContext,
-            ControllerStreamingSessionTable, RoleVerifyingKey,
-            derive_controller_streaming_session, random_nonce,
+            ControllerStreamingSessionTable, RoleVerifyingKey, derive_controller_streaming_session,
+            random_nonce,
         };
         use super::{application_peer, controller_binding};
         use crate::cellular::streaming_protocol::{
