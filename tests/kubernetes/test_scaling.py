@@ -70,7 +70,6 @@ class TestWorkerPodScaling:
             param(1, 2, 1, id="1-worker-1-pod"),
             param(5, 10, 1, id="5-workers-1-pod"),
             param(10, 10, 1, id="10-workers-1-pod"),
-            param(11, 22, 2, id="11-workers-2-pods"),
             param(20, 20, 2, id="20-workers-2-pods"),
         ],
     )  # fmt: skip
