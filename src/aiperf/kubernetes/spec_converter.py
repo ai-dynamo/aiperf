@@ -537,8 +537,9 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
 
     Calculates the exact uniform worker-pod topology, then sets workers per
     pod, total workers, and record processors on the config. A JobSet
-    replicated job cannot express a partial final pod, so a non-divisible
-    total uses one worker pod to preserve the requested total exactly.
+    replicated job cannot express a partial final pod, so a total that exceeds
+    one pod's capacity must divide evenly; a total that fits in a single pod is
+    placed on one pod regardless of divisibility.
 
     Args:
         config: AIPerfConfig to modify in-place.
@@ -548,8 +549,9 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
         Number of worker pods needed.
 
     Raises:
-        ValueError: An authored total record-processor count cannot be evenly
-            represented by identical Kubernetes worker pods.
+        ValueError: The requested worker total cannot be evenly represented by
+            identical Kubernetes worker pods, or an authored total
+            record-processor count cannot be.
     """
     runtime = config.benchmark.runtime
     configured_record_processors = runtime.record_processors
@@ -558,14 +560,22 @@ def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:
         runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
     )
 
-    if total_workers % default_workers_per_pod:
+    if total_workers <= default_workers_per_pod:
+        # Fits in one pod; divisibility is irrelevant.
         workers_per_pod = total_workers
         num_pods = 1
-        logger.warning(
+    elif total_workers % default_workers_per_pod:
+        # Silently folding this onto a single pod would invert the requested
+        # topology: the benchmark would run on one node instead of several and
+        # nothing in the CR or JobSet status would reveal it.
+        lower = (total_workers // default_workers_per_pod) * default_workers_per_pod
+        raise ValueError(
             f"total_workers={total_workers} is not a multiple of "
-            f"workers_per_pod={default_workers_per_pod}; a JobSet cannot express a "
-            f"partial final pod, so all {total_workers} workers run on a single pod. "
-            f"Use a multiple of {default_workers_per_pod} to spread them across pods."
+            f"workers_per_pod={default_workers_per_pod}, and a JobSet replicated "
+            f"job cannot express a partial final pod. Use a multiple of "
+            f"{default_workers_per_pod} (e.g. {lower} or "
+            f"{lower + default_workers_per_pod}), or set runtime.workers_per_pod "
+            f"to a value that divides {total_workers}."
         )
     else:
         workers_per_pod = default_workers_per_pod
