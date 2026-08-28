@@ -187,25 +187,21 @@ fn inspect_elf(
     // Check for eager binding.
     let bind_now = if let Some(dynamic) = &elf.dynamic {
         dynamic.dyns.iter().any(|d| {
-            (d.d_tag == DT_FLAGS && d.d_val & DF_BIND_NOW as u64 != 0)
-                || (d.d_tag == DT_FLAGS_1 && d.d_val & DF_1_NOW as u64 != 0)
+            (d.d_tag == DT_FLAGS && d.d_val & DF_BIND_NOW != 0)
+                || (d.d_tag == DT_FLAGS_1 && d.d_val & DF_1_NOW != 0)
         })
     } else {
-        // No dynamic section: if it has no dynamic section at all, it cannot
-        // be dlopen-ed meaningfully, but we treat absence as lazy (not eager).
+        // No dynamic section: treat absence as lazy (not eager).
         false
     };
 
     // Check for entry symbol in dynsyms and syms.
     let entry_symbol_present = elf.dynsyms.iter().any(|sym| {
-        elf.dynstrtab
-            .get_at(sym.st_name)
-            .map_or(false, |n| n == ENTRY_SYMBOL)
-    }) || elf.syms.iter().any(|sym| {
-        elf.strtab
-            .get_at(sym.st_name)
-            .map_or(false, |n| n == ENTRY_SYMBOL)
-    });
+        elf.dynstrtab.get_at(sym.st_name) == Some(ENTRY_SYMBOL)
+    }) || elf
+        .syms
+        .iter()
+        .any(|sym| elf.strtab.get_at(sym.st_name) == Some(ENTRY_SYMBOL));
 
     if !entry_symbol_present {
         return Err(StaticInspectionError::MissingEntrySymbol);
@@ -228,9 +224,9 @@ fn inspect_macho_binary(
 ) -> Result<InspectedArtifact, StaticInspectionError> {
     // Verify architecture.
     let expected_cputype = macho_cputype_for_target(target).unwrap_or(u32::MAX);
-    let arch_matches = macho.header.cputype as u32 == expected_cputype;
+    let arch_matches = macho.header.cputype == expected_cputype;
     if !arch_matches {
-        let detected = arch_name_from_macho_cputype(macho.header.cputype as u32).to_string();
+        let detected = arch_name_from_macho_cputype(macho.header.cputype).to_string();
         return Err(StaticInspectionError::ArchMismatch {
             declared: target.to_string(),
             detected,
@@ -270,11 +266,11 @@ fn inspect_mach(
             let expected_cputype = macho_cputype_for_target(target).unwrap_or(u32::MAX);
             let mut found_idx = None;
             for (i, arch_result) in fat.iter_arches().enumerate() {
-                if let Ok(arch) = arch_result {
-                    if arch.cputype() as u32 == expected_cputype {
-                        found_idx = Some(i);
-                        break;
-                    }
+                if let Ok(arch) = arch_result
+                    && arch.cputype() == expected_cputype
+                {
+                    found_idx = Some(i);
+                    break;
                 }
             }
             match found_idx {
@@ -312,7 +308,7 @@ fn inspect_pe(
     let entry_symbol_present = pe
         .exports
         .iter()
-        .any(|e| e.name.map_or(false, |n| n == ENTRY_SYMBOL));
+        .any(|e| e.name == Some(ENTRY_SYMBOL));
 
     if !entry_symbol_present {
         return Err(StaticInspectionError::MissingEntrySymbol);
