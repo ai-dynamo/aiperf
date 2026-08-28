@@ -153,11 +153,8 @@ impl AuthenticatedInventory {
 
     /// Return the first field carrying an absolute path, if any.
     fn absolute_path_field(&self) -> Option<String> {
-        let mut fields: Vec<&str> = vec![
-            &self.universe_id,
-            &self.build_id,
-            &self.authentication_root,
-        ];
+        let mut fields: Vec<&str> =
+            vec![&self.universe_id, &self.build_id, &self.authentication_root];
         fields.extend(self.required_packages.iter().map(String::as_str));
         fields.extend(self.required_keys.iter().map(String::as_str));
         for entry in &self.entries {
@@ -322,7 +319,9 @@ impl PluginInventoryV1 {
     /// Verify that `inventory_digest` authenticates the current payload.
     pub fn verify_digest(&self) -> Result<(), InventoryError> {
         if self.schema_version != INVENTORY_SCHEMA_VERSION {
-            return Err(InventoryError::UnsupportedSchemaVersion(self.schema_version));
+            return Err(InventoryError::UnsupportedSchemaVersion(
+                self.schema_version,
+            ));
         }
         if !is_canonical_digest(&self.inventory_digest) {
             return Err(InventoryError::MalformedDigest {
@@ -352,8 +351,8 @@ impl PluginInventoryV1 {
     /// onto `path`.  Rename is atomic, so a concurrent reader observes either
     /// the previous complete document or this one, never a partial write.
     pub fn publish(&self, path: &Path) -> Result<(), InventoryError> {
-        let bytes = serde_json::to_vec_pretty(self)
-            .map_err(|e| InventoryError::Parse(e.to_string()))?;
+        let bytes =
+            serde_json::to_vec_pretty(self).map_err(|e| InventoryError::Parse(e.to_string()))?;
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         let temp = parent.join(format!(
             ".{}.{}.tmp",
