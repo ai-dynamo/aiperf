@@ -124,6 +124,17 @@ def _phase_needs_first_token_callback(phase) -> bool:
 _logger = AIPerfLogger(__name__)
 
 
+def _credit_task_key(credit: Credit) -> tuple[str, int | None, int]:
+    """Composite in-flight tracking key for a credit.
+
+    ``Credit.id`` is only unique within one phase's dispatch sequence, so a
+    bare-int key lets a later phase's credit clobber a still-in-flight task
+    from the draining prior phase under seamless overlap. Same key shape as
+    ``StickyCreditRouter.WorkerLoad.active_credit_ids``.
+    """
+    return (credit.phase, credit.phase_index, credit.id)
+
+
 def _error_message(error: str | ErrorDetails | None) -> str | None:
     """Extract the human error text for overflow substring matching.
 
@@ -627,7 +638,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
-        self.credit_tasks: dict[int, asyncio.Task] = {}
+        # Keyed by (phase, phase_index, credit.id): Credit.id is only unique
+        # within a phase's dispatch sequence, so under seamless phase overlap
+        # the same bare id recurs while the prior phase is still draining.
+        # Mirrors StickyCreditRouter.WorkerLoad.active_credit_ids.
+        self.credit_tasks: dict[tuple[str, int | None, int], asyncio.Task] = {}
 
         # Worker clocks are not the controller's clock once workers live in
         # their own pods; every credit receipt is an offset sample.
@@ -1279,7 +1294,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
 
         task = self.execute_async(self._on_credit_drop_message_task(credit_context))
-        self.credit_tasks[credit.id] = task
+        self.credit_tasks[_credit_task_key(credit)] = task
         task.add_done_callback(
             lambda t, ctx=credit_context: self._on_credit_drop_message_task_done(t, ctx)
         )
@@ -1296,7 +1311,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit_id = credit_context.credit.id
 
         # Always remove from tracking dict when task completes
-        self.credit_tasks.pop(credit_id, None)
+        self.credit_tasks.pop(_credit_task_key(credit_context.credit), None)
 
         # The finally block handles normal/error returns. This callback only needs
         # to return credits for tasks that were cancelled before they started executing.
@@ -1341,15 +1356,22 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug(
             lambda: f"Received cancel credits message: credit_ids={message.credit_ids}"
         )
-        for credit_id in message.credit_ids:
-            if task := self.credit_tasks.get(credit_id):
+        # CancelCredits carries bare ids while credit_tasks is keyed by
+        # (phase, phase_index, id), so match on the id component. Router-side
+        # cancellation is global (``cancel_all_credits`` snapshots every
+        # in-flight credit regardless of phase), so cancelling every phase
+        # holding that id preserves the existing contract.
+        cancelled_ids: set[int] = set()
+        for key, task in list(self.credit_tasks.items()):
+            if key[2] in message.credit_ids:
+                cancelled_ids.add(key[2])
                 task.cancel()
-            else:
-                self.debug(
-                    lambda id=credit_id: (
-                        f"Task for credit {id} not found (already completed?)"
-                    )
+        for credit_id in message.credit_ids - cancelled_ids:
+            self.debug(
+                lambda id=credit_id: (
+                    f"Task for credit {id} not found (already completed?)"
                 )
+            )
 
     async def _on_credit_drop_message_task(self, credit_context: CreditContext) -> None:
         """Handle incoming credit from TimingManager via StickyCreditRouter.

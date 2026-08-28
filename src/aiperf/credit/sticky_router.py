@@ -653,31 +653,38 @@ class StickyCreditRouter(CommunicationMixin):
 
         # Build up the map of worker_id to credit_ids snapshot to cancel in an atomic way
         # This works because there are no await calls in this loop, they are all done afterwards.
-        to_cancel: dict[str, set[int]] = {}
+        # Snapshot the COMPOSITE (phase, phase_index, credit_id) keys, not bare
+        # ids: credit ids restart at 0 in every phase (CreditCounter._dispatch_seq
+        # is per-PhaseRunner), so under seamless overlap the same int is live in
+        # two phases at once and projecting the prefix off here would silently
+        # merge them -- shrinking the cancel set and under-reporting the count.
+        to_cancel: dict[str, set[tuple[str, int | None, int]]] = {}
         for worker_load in self._workers_cache:
             if worker_load.in_flight_credits > 0:
                 if self.is_debug_enabled:
                     self.debug(
                         f"Worker {worker_load.worker_id} has {worker_load.in_flight_credits} in-flight credits to cancel: {worker_load.active_credit_ids}"
                     )
-                # Extract credit IDs from composite keys (phase, phase_index, credit_id)
                 # Make sure to use copy of the set to avoid race conditions.
-                to_cancel[worker_load.worker_id] = {
-                    cid for _, _, cid in worker_load.active_credit_ids.copy()
-                }
+                to_cancel[worker_load.worker_id] = worker_load.active_credit_ids.copy()
 
         total_cancelled_credits = 0
-        for worker_id, credit_ids in to_cancel.items():
+        for worker_id, credit_keys in to_cancel.items():
             if self.is_debug_enabled:
                 self.debug(
-                    f"Sending CancelCredits to worker {worker_id} for {len(credit_ids)} credits"
+                    f"Sending CancelCredits to worker {worker_id} for {len(credit_keys)} credits"
                 )
 
+            # CancelCredits.credit_ids is set[int] on the wire, so the phase
+            # prefix is projected off HERE and only here. The worker cancels
+            # every phase holding a matching id, which is correct because
+            # cancellation is global. Do not hoist this projection back up into
+            # the snapshot above -- the set and the count must stay composite.
             await self._router_client.send_to(
                 worker_id,
-                CancelCredits(credit_ids=credit_ids),
+                CancelCredits(credit_ids={cid for _, _, cid in credit_keys}),
             )
-            total_cancelled_credits += len(credit_ids)
+            total_cancelled_credits += len(credit_keys)
 
         if total_cancelled_credits > 0:
             self.info(
@@ -695,7 +702,10 @@ class StickyCreditRouter(CommunicationMixin):
 
         Seamless phases overlap: the next phase starts issuing while the prior
         phase may still dispatch DAG descendants, so this must touch nothing
-        the still-draining phase is using.
+        the still-draining phase is using. Closing the cancellation window is
+        the one exception, and a safe one: suppression is time-bounded rather
+        than per-phase state, so clearing it only re-enables warnings that the
+        draining phase would have earned anyway.
         """
         self._cancellation_pending_until_ns = 0
 

@@ -7,6 +7,7 @@ import kopf
 import pytest
 from pytest import param
 
+from aiperf.kubernetes.jobset_specs import POD_SECURITY_CONTEXT
 from aiperf.operator.handlers.sweep import create as sweep_create
 from aiperf.operator.results_layout import epoch_key_from_body
 
@@ -1104,13 +1105,25 @@ async def test_create_sweep_controller_jobset_lifts_container_security_context(
 
 @pytest.mark.asyncio
 async def test_create_sweep_controller_jobset_lifts_pod_security_context(monkeypatch):
-    """Schema-valid podSecurityContext must land on pod_spec.securityContext."""
+    """Schema-valid podSecurityContext must merge OVER the JobSet-path baseline."""
     workload_spec = _valid_workload_spec(
         podSecurityContext={"fsGroup": 2000, "runAsNonRoot": True}
     )
     body = await _capture_jobset_body(monkeypatch, workload_spec)
     pod_spec = _pod_spec_from_jobset(body)
-    assert pod_spec["securityContext"] == {"fsGroup": 2000, "runAsNonRoot": True}
+    assert pod_spec["securityContext"] == {
+        **POD_SECURITY_CONTEXT,
+        "fsGroup": 2000,
+        "runAsNonRoot": True,
+    }
+    # User keys win, and baseline keys the user never mentioned are not dropped.
+    assert pod_spec["securityContext"]["fsGroup"] == 2000
+    assert pod_spec["securityContext"]["runAsNonRoot"] is True
+    assert pod_spec["securityContext"]["runAsUser"] == POD_SECURITY_CONTEXT["runAsUser"]
+    assert (
+        pod_spec["securityContext"]["runAsGroup"] == POD_SECURITY_CONTEXT["runAsGroup"]
+    )
+    assert pod_spec["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
 
 
 @pytest.mark.asyncio

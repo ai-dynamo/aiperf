@@ -22,6 +22,7 @@ from aiperf.config.deployment import PodTemplateConfig
 from aiperf.config.loader import ConfigurationError
 from aiperf.config.sweep import expand_sweep
 from aiperf.kubernetes.jobset_helpers import build_security_context
+from aiperf.kubernetes.jobset_specs import merge_pod_security_context
 from aiperf.kubernetes.phase import format_timestamp
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.k8s_helpers import (
@@ -760,6 +761,10 @@ async def _create_sweep_controller_jobset(
             {"name": "results", "emptyDir": {}},
             {"name": "tmp", "emptyDir": {}},
         ],
+        # Same baseline the JobSet path applies in
+        # AIPerfReplicatedJobSpec._build_pod_spec; without it a sweep-controller
+        # pod on a restricted-PSA namespace is rejected outright.
+        "securityContext": merge_pod_security_context(None),
     }
     # Lift scheduling primitives + pod-level securityContext from the user's
     # spec.podTemplate so the sweep-controller pod can land on the
@@ -772,12 +777,13 @@ async def _create_sweep_controller_jobset(
         "imagePullSecrets",
         "priorityClassName",
         "runtimeClassName",
-        "podSecurityContext",
     ):
         if key in pod_template and pod_template[key] is not None:
-            pod_spec["securityContext" if key == "podSecurityContext" else key] = (
-                pod_template[key]
-            )
+            pod_spec[key] = pod_template[key]
+    if pod_template.get("podSecurityContext"):
+        pod_spec["securityContext"] = merge_pod_security_context(
+            pod_template["podSecurityContext"]
+        )
 
     jobset_body = {
         "apiVersion": "jobset.x-k8s.io/v1alpha2",
