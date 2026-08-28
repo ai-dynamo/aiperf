@@ -1247,10 +1247,13 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         let plan_registration: PlanRegistration = {
             let envelopes = envelopes.clone();
             let registrar = artifact_server.as_ref().map(|server| server.registrar());
-            // Read the digest that was propagated into this process by the parent
-            // profile invocation (Task 20 / Task 21). `None` means no plugins.
+            // The expected digest is the one this controller composed and
+            // verified at bootstrap, not a value re-read from the environment:
+            // comparing env to env would only prove the cell inherited the same
+            // string. `None` means the run was composed without plugins, and any
+            // cell reporting a digest is then rejected.
             let expected_plugin_lock_digest: Option<String> =
-                std::env::var(crate::engine::cell_launcher::CELL_PLUGIN_LOCK_ENV).ok();
+                crate::engine::cell_launcher::composed_plugin_lock_digest();
             std::sync::Arc::new(move |verified| {
                 let register: crate::cellular::transport::CellRegister =
                     verified.decode_payload()?;
@@ -1368,12 +1371,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                 None
             },
             local_roles: prepared_security.local_roles.take(),
-            // Forward the plugin lock digest this process received from the parent
-            // (set by Task 20 propagation) into each cell subprocess.
-            plugin_lock_digest: std::env::var(
-                crate::engine::cell_launcher::CELL_PLUGIN_LOCK_ENV,
-            )
-            .ok(),
+            // Forward the digest this controller composed and verified, so a cell
+            // inherits the identity the controller will attest it against.
+            plugin_lock_digest: crate::engine::cell_launcher::composed_plugin_lock_digest(),
         };
         startup_probe.before_launcher_execution();
         let handles = select_launcher()
