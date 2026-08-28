@@ -646,7 +646,7 @@ mod tests {
     use super::*;
 
     use crate::engine::registry::{ClockKind, TransportDescriptor};
-    use crate::streaming::action::StreamingActionSinkDescriptor;
+    use crate::streaming::action::{EndpointRetrySafety, StreamingActionSinkDescriptor};
     use crate::streaming::format::StreamingFormatDescriptor;
     use crate::streaming::identity::ContentDigest;
     use crate::streaming::session::{SessionClosureCapability, StreamingSessionProgramDescriptor};
@@ -719,6 +719,7 @@ mod tests {
         endpoint_kinds: &["chat"],
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
         supports_virtual_clock: true,
     };
 
