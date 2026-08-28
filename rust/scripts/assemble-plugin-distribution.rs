@@ -24,11 +24,17 @@
 //! 1. Loads the candidate generation fixture, refusing an unknown schema, a
 //!    duplicate package id, or a file name that is not a plain relative name.
 //! 2. Optionally materializes each package's declared synthetic bytes, so the
-//!    pipeline can be rehearsed without a build.
+//!    pipeline can be rehearsed without a build. Synthetic bytes never replace
+//!    a staged build product: a path that already holds bytes is refused.
 //! 3. Hashes every declared artifact and manifest under `--artifacts-dir` into
-//!    canonical `blake3:<hex>` digests.
+//!    canonical `blake3:<hex>` digests, reading each through a no-follow
+//!    descriptor so a planted symlink cannot redirect the hash.
 //! 4. Publishes `plugin-inventory.json` into `--output-dir`, atomically and
 //!    authenticated by its own inventory digest.
+//!
+//! `--auto-generation` advances past a prior inventory that verifies, and
+//! refuses outright when one is present but unverifiable, so a tampered
+//! document can never be answered with a lower generation.
 //!
 //! It exits 0 on success and 1 on any refusal, printing the reason to stderr.
 
@@ -94,7 +100,8 @@ fn parse_args(argv: Vec<String>) -> Result<Args, String> {
 fn run(args: &Args) -> Result<String, String> {
     let mut fixture = CandidateFixture::load(&args.fixture).map_err(|e| e.to_string())?;
     if args.is_auto_generation {
-        let generation = next_generation(&args.output_dir, fixture.generation);
+        let generation =
+            next_generation(&args.output_dir, fixture.generation).map_err(|e| e.to_string())?;
         fixture = fixture.with_generation(generation);
     }
     if args.needs_synthetic_artifacts {

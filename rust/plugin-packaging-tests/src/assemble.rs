@@ -18,8 +18,11 @@
 //! `rust/scripts/assemble-plugin-distribution.rs`) is a thin argument parser
 //! over this module, so the release path and the test path are the same code.
 
+use std::io::Read as _;
+use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 
+use aiperf_plugin_host::platform::fs::{create_no_follow, open_no_follow};
 use serde::Deserialize;
 
 use crate::inventory::{InventoryPackageV1, PluginInventoryV1};
@@ -106,6 +109,25 @@ pub enum AssembleError {
         #[source]
         source: std::io::Error,
     },
+    /// A synthetic write would have destroyed a staged build product.
+    #[error(
+        "--materialize-synthetic refuses to overwrite existing non-empty artifact `{path}` \
+         for package `{package_id}`"
+    )]
+    SyntheticWouldOverwrite {
+        /// Package whose synthetic bytes were refused.
+        package_id: String,
+        /// Path that already holds non-empty bytes.
+        path: PathBuf,
+    },
+    /// An inventory document is present in the output directory but unusable.
+    #[error("prior inventory `{path}` is present but cannot be verified: {reason}")]
+    UnverifiablePriorInventory {
+        /// Path of the prior document.
+        path: PathBuf,
+        /// Why it could not be read, parsed, or authenticated.
+        reason: String,
+    },
     /// The output directory could not be prepared or written.
     #[error("distribution output failed: {0}")]
     Io(#[from] std::io::Error),
@@ -177,20 +199,52 @@ impl CandidateFixture {
     /// This exists so the assembly pipeline can be exercised without a build:
     /// a package that declares no synthetic bytes is skipped, leaving its real
     /// build product to be staged by whoever produced it.
+    ///
+    /// Synthetic bytes are fixture material, never a release artifact, so a
+    /// path that already holds bytes is refused rather than truncated: minting
+    /// a valid inventory over a silently replaced `.so` would authenticate a
+    /// candidate nobody built. Every existence check and every write is
+    /// no-follow, so a planted symlink cannot steer either outside `dir`.
     pub fn materialize_synthetic_artifacts(&self, dir: &Path) -> Result<(), AssembleError> {
         std::fs::create_dir_all(dir)?;
         for package in &self.packages {
             let Some(bytes) = package.synthetic_bytes.as_ref() else {
                 continue;
             };
-            std::fs::write(dir.join(&package.artifact), bytes.as_bytes())?;
-            std::fs::write(
-                dir.join(&package.manifest),
+            write_synthetic_file(&package.id, &dir.join(&package.artifact), bytes.as_bytes())?;
+            write_synthetic_file(
+                &package.id,
+                &dir.join(&package.manifest),
                 format!("{bytes}{SYNTHETIC_MANIFEST_SUFFIX}").as_bytes(),
             )?;
         }
         Ok(())
     }
+}
+
+/// Write one synthetic file, refusing to destroy anything already staged.
+fn write_synthetic_file(
+    package_id: &str,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), AssembleError> {
+    // `symlink_metadata` does not traverse the final component, so a symlink is
+    // measured as the link itself and refused here; `create_no_follow` refuses
+    // it again at the open, which is the check that actually races safely.
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.len() > 0 => {
+            return Err(AssembleError::SyntheticWouldOverwrite {
+                package_id: package_id.to_string(),
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(AssembleError::Io(e)),
+    }
+    let mut file = create_no_follow(path)?;
+    file.write_all(bytes)?;
+    Ok(())
 }
 
 /// Return `true` when `value` is a single non-empty path component.
@@ -208,26 +262,47 @@ fn is_plain_relative_name(value: &str) -> bool {
 }
 
 /// Hash one file's bytes into a canonical `blake3:<hex>` digest.
+///
+/// The bytes are read from a no-follow descriptor, so a legal plain file name
+/// that happens to be a symlink is refused instead of hashing whatever it
+/// points at: the name check constrains the path, and this constrains the open.
 fn digest_file(package_id: &str, path: &Path) -> Result<String, AssembleError> {
-    let bytes = std::fs::read(path).map_err(|source| AssembleError::MissingArtifact {
+    let describe = |source: std::io::Error| AssembleError::MissingArtifact {
         package_id: package_id.to_string(),
         path: path.to_path_buf(),
         source,
-    })?;
+    };
+    let mut file = open_no_follow(path).map_err(describe)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(describe)?;
     Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
 }
 
 /// Report the generation a fresh assembly into `output_dir` should publish.
 ///
-/// A directory with no verifiable prior document has no history to advance, so
-/// the caller's declared generation stands. Otherwise the published generation
-/// is one past the prior one, which keeps the sequence monotonic even when a
-/// fixture is reused verbatim.
-pub fn next_generation(output_dir: &Path, declared: u64) -> u64 {
+/// The three states a prior document can be in are kept distinct. An absent
+/// document has no history to advance, so the caller's declared generation
+/// stands. A document that parses and authenticates advances the sequence by
+/// one, which keeps it monotonic even when a fixture is reused verbatim. A
+/// document that is present but unverifiable is an error: collapsing it into
+/// the absent case would republish the fixture's own low generation, and a
+/// generation that moved backwards installs as an accepted downgrade rather
+/// than surfacing as the integrity failure it is.
+pub fn next_generation(output_dir: &Path, declared: u64) -> Result<u64, AssembleError> {
     let path = output_dir.join(INVENTORY_FILE_NAME);
-    match PluginInventoryV1::load_and_verify(&path) {
-        Ok(prior) => prior.generation.saturating_add(1),
-        Err(_) => declared,
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(declared),
+        Err(e) => Err(AssembleError::UnverifiablePriorInventory {
+            path,
+            reason: e.to_string(),
+        }),
+        Ok(_) => match PluginInventoryV1::load_and_verify(&path) {
+            Ok(prior) => Ok(prior.generation.saturating_add(1)),
+            Err(e) => Err(AssembleError::UnverifiablePriorInventory {
+                path,
+                reason: e.to_string(),
+            }),
+        },
     }
 }
 
