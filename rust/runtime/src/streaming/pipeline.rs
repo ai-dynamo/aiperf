@@ -38,7 +38,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use futures::{FutureExt as _, select_biased};
+use futures::{FutureExt as _, future::LocalBoxFuture, select_biased};
 use tracing::debug;
 
 use crate::clock::Clock;
@@ -641,20 +641,33 @@ impl StreamingPipeline {
             mut stop,
         } = phase;
 
+        let this = &self;
         let mut state = PipelinePhase::Pulling;
         let mut last_committed: Option<CommittedCheckpointGeneration> = None;
         let mut epoch: u64 = 0;
         let mut next_barrier_ns = clock
             .now_ns()
-            .saturating_add(self.limits.checkpoint_interval_ns);
+            .saturating_add(this.limits.checkpoint_interval_ns);
+        // Exactly one owned in-flight admission cycle. Retaining it here rather
+        // than rebuilding it every iteration is what makes "no source pull while
+        // a downstream reservation is pending" a property of the loop instead of
+        // a convention: a settle event resolving first must not cancel the
+        // submission that settle is meant to unblock.
+        let mut inflight: Option<
+            LocalBoxFuture<'_, Result<Option<DrainReason>, StreamingPipelineError>>,
+        > = None;
 
         loop {
             if let PipelinePhase::Draining(reason) = state
-                && self.is_quiescent()
+                && this.is_quiescent()
             {
-                self.shutdown(reason).await?;
+                // Drop any parked admission cycle before joining owners: the
+                // unit it was building was never accepted, so nothing settles
+                // for it.
+                inflight = None;
+                this.shutdown(reason).await?;
                 epoch = epoch.saturating_add(1);
-                let generation = self
+                let generation = this
                     .commit_barrier(
                         &mut checkpoint,
                         epoch,
@@ -668,20 +681,23 @@ impl StreamingPipeline {
             }
 
             let is_admitting = matches!(state, PipelinePhase::Pulling)
-                && !self.control.is_admission_fenced()
-                && !self.is_source_sealed.get();
+                && !this.control.is_admission_fenced()
+                && !this.is_source_sealed.get();
+            if inflight.is_none() && is_admitting {
+                inflight = Some(this.admit_next_unit().boxed_local());
+            }
 
             let step = select_biased! {
                 // 1. Settlement first: it is the only arm that returns capacity.
                 //    Preferring it over admission is what keeps a saturated
                 //    pipeline from livelocking on a submit only a settle can
                 //    unblock.
-                event = next_placement_event(&self.placement_driver).fuse() => {
+                event = next_placement_event(&this.placement_driver).fuse() => {
                     LoopStep::Placement(event)
                 }
                 // 2. Action events, republished as the single `PlacementEvent::Action`
                 //    route back into session state.
-                event = next_action_event(&self.action).fuse() => {
+                event = next_action_event(&this.action).fuse() => {
                     LoopStep::Action(event)
                 }
                 // 3. Shutdown, which fences admission but never drops accepted work.
@@ -691,7 +707,7 @@ impl StreamingPipeline {
                 // 5. Admission LAST, and only while nothing downstream is pending.
                 //    While an admission cycle is in flight this arm owns the task,
                 //    so there is deliberately no concurrent source pull.
-                admitted = self.admit_next_unit(is_admitting).fuse() => {
+                admitted = poll_inflight(&mut inflight).fuse() => {
                     LoopStep::Admitted(admitted)
                 }
             };
@@ -699,14 +715,14 @@ impl StreamingPipeline {
             match step {
                 LoopStep::Placement(event) => {
                     let event = event.map_err(StreamingPipelineError::Placement)?;
-                    self.settle_placement_event(event).await?;
+                    this.settle_placement_event(event).await?;
                 }
                 LoopStep::Action(event) => {
                     let event = event.map_err(StreamingPipelineError::Action)?;
                     // The action host's events reach session state only by being
                     // republished here as `PlacementEvent::Action`; the pipeline
                     // holds no second path into `observe_execution`.
-                    self.settle_placement_event(PlacementEvent::Action(event))
+                    this.settle_placement_event(PlacementEvent::Action(event))
                         .await?;
                 }
                 LoopStep::Stopped => {
@@ -714,7 +730,7 @@ impl StreamingPipeline {
                 }
                 LoopStep::Barrier => {
                     epoch = epoch.saturating_add(1);
-                    let generation = self
+                    let generation = this
                         .commit_barrier(
                             &mut checkpoint,
                             epoch,
@@ -724,9 +740,10 @@ impl StreamingPipeline {
                     last_committed = Some(generation);
                     next_barrier_ns = clock
                         .now_ns()
-                        .saturating_add(self.limits.checkpoint_interval_ns);
+                        .saturating_add(this.limits.checkpoint_interval_ns);
                 }
                 LoopStep::Admitted(result) => {
+                    inflight = None;
                     if let Some(reason) = result? {
                         state = PipelinePhase::Draining(reason);
                     }
@@ -743,16 +760,7 @@ impl StreamingPipeline {
     /// pending on any downstream reservation, the fused loop has no other arm
     /// that can pull from the source, which is why
     /// `source_pull_count` cannot advance past a saturated downstream.
-    async fn admit_next_unit(
-        &self,
-        is_admitting: bool,
-    ) -> Result<Option<DrainReason>, StreamingPipelineError> {
-        if !is_admitting {
-            // Park forever: the loop is fenced or sealed and only settle,
-            // shutdown, and checkpoint arms remain live.
-            std::future::pending::<()>().await;
-        }
-
+    async fn admit_next_unit(&self) -> Result<Option<DrainReason>, StreamingPipelineError> {
         if self.decoder.borrow().is_some() {
             return self.decode_and_admit().await;
         }
@@ -1220,6 +1228,17 @@ where
     CheckpointProxy {
         participant_id,
         stage: Rc::clone(stage) as Rc<dyn ParticipantCell>,
+    }
+}
+
+/// Poll the retained admission cycle, or park when there is none.
+///
+/// The boxed future stays in `slot`, so the wrapper this returns can be dropped
+/// by `select_biased!` without cancelling the admission cycle it polls.
+async fn poll_inflight<T>(slot: &mut Option<LocalBoxFuture<'_, T>>) -> T {
+    match slot.as_mut() {
+        Some(inflight) => inflight.await,
+        None => std::future::pending().await,
     }
 }
 
