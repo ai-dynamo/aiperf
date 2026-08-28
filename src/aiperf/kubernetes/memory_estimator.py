@@ -57,6 +57,7 @@ from aiperf.kubernetes._memory_estimator.utils import (
 from aiperf.kubernetes._memory_estimator.utils import (
     _mib as _mib,
 )
+from aiperf.kubernetes.spec_converter import DEFAULT_CONNECTIONS_PER_WORKER
 
 if TYPE_CHECKING:
     from aiperf.config.config import AIPerfConfig
@@ -76,7 +77,7 @@ def estimate_memory(
     config: AIPerfConfig,
     total_workers: int = 10,
     workers_per_pod: int | None = None,
-    connections_per_worker: int = 200,
+    connections_per_worker: int = DEFAULT_CONNECTIONS_PER_WORKER,
 ) -> ClusterMemoryEstimate:
     """Estimate memory usage for an AIPerf Kubernetes deployment.
 

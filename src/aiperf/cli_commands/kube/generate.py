@@ -242,22 +242,26 @@ def _print_memory_estimate(config, kube_options: KubeOptions, spec) -> None:
     from aiperf.cli_commands.kube._kube_common import resolve_total_workers
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.memory_estimator import estimate_memory, format_estimate
+    from aiperf.kubernetes.spec_converter import DEFAULT_CONNECTIONS_PER_WORKER
 
     concurrency = max(
         (getattr(phase, "concurrency", 1) or 1 for phase in config.benchmark.phases),
         default=1,
     )
+    connections_per_worker = spec.get(
+        "connectionsPerWorker", DEFAULT_CONNECTIONS_PER_WORKER
+    )
     total_workers = resolve_total_workers(
         kube_options,
         concurrency=concurrency,
-        connections_per_worker=spec.get("connectionsPerWorker", 100),
+        connections_per_worker=connections_per_worker,
         configured_workers=config.benchmark.runtime.workers,
     )
     mem_est = estimate_memory(
         config,
         total_workers=total_workers,
         workers_per_pod=config.benchmark.runtime.workers_per_pod,
-        connections_per_worker=spec.get("connectionsPerWorker", 100),
+        connections_per_worker=connections_per_worker,
     )
     # Banner is informational; route through stderr_console so the YAML on
     # stdout stays a clean kubectl-pipeable stream.

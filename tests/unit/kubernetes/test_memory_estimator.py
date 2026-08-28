@@ -986,8 +986,9 @@ class TestFromConfig:
         assert params.total_requests == 6000
 
     def test_default_connections_per_worker(self) -> None:
-        """Default connections_per_worker should be 200."""
+        """Default connections_per_worker tracks DeploymentConfig's default."""
         from aiperf.config.config import AIPerfConfig
+        from aiperf.kubernetes.spec_converter import DEFAULT_CONNECTIONS_PER_WORKER
 
         config = AIPerfConfig(
             benchmark={
@@ -1007,7 +1008,7 @@ class TestFromConfig:
             }
         )
         params = MemoryEstimationParams.from_config(config)
-        assert params.connections_per_worker == 200
+        assert params.connections_per_worker == DEFAULT_CONNECTIONS_PER_WORKER
 
 
 # =============================================================================
@@ -1622,3 +1623,278 @@ class TestTopologyRecordProcessorDerivation:
         assert params.record_processors_per_pod == _deployed_record_processors_per_pod(
             config, num_pods
         )
+
+
+# Mechanical parity matrix: any divergence between the estimator's topology
+# derivation and the deployment path's normalizer must fail a test, not ship.
+_PARITY_TOTAL_WORKERS = (1, 3, 5, 8, 10, 16, 17, 32)
+_PARITY_RUNTIMES: tuple[tuple[str, dict[str, object]], ...] = (
+    ("no_overrides", {}),
+    ("wpp_1", {"workers_per_pod": 1}),
+    ("wpp_4", {"workers_per_pod": 4}),
+    ("wpp_8", {"workers_per_pod": 8}),
+    ("wpp_4_rp_per_pod_1", {"workers_per_pod": 4, "record_processors_per_pod": 1}),
+    ("wpp_8_rp_per_pod_16", {"workers_per_pod": 8, "record_processors_per_pod": 16}),
+)
+_PARITY_CASES = [
+    param(total, dict(runtime), id=f"{label}_total_{total}")
+    for total in _PARITY_TOTAL_WORKERS
+    for label, runtime in _PARITY_RUNTIMES
+]
+
+
+class TestTopologyMirrorsDeployment:
+    """``_derive_topology`` must equal ``spec_converter.apply_worker_config``.
+
+    The estimator banner runs on a *raw* config on both CLI paths: ``kube
+    profile`` estimates before any normalization, and ``kube generate``
+    normalizes only on the ``--no-operator`` branch. A second, hand-rolled copy
+    of the topology rules therefore reported pod counts the JobSet never
+    created (notably the single-pod collapse for non-divisible totals). These
+    tests are mechanical: they compare against the real normalizer rather than
+    against hardcoded numbers, so any future change to one side fails here.
+    """
+
+    @pytest.mark.parametrize(
+        "total_workers,runtime",
+        _PARITY_CASES,
+    )  # fmt: skip
+    def test_derive_topology_raw_config_matches_apply_worker_config(
+        self, total_workers: int, runtime: dict[str, object]
+    ) -> None:
+        from aiperf.kubernetes.spec_converter import apply_worker_config
+
+        deployed = _topology_config(**runtime)
+        num_pods = apply_worker_config(deployed, total_workers)
+        deployed_runtime = deployed.benchmark.runtime
+
+        estimated = MemoryEstimationParams.from_config(
+            _topology_config(**runtime), total_workers=total_workers
+        )
+
+        assert (
+            estimated.num_worker_pods,
+            estimated.workers_per_pod,
+            estimated.record_processors_per_pod,
+        ) == (
+            num_pods,
+            deployed_runtime.workers_per_pod,
+            deployed_runtime.record_processors_per_pod,
+        )
+
+    @pytest.mark.parametrize(
+        "total_workers,workers_per_pod",
+        [
+            param(10, 8, id="ten_workers_eight_per_pod"),
+            param(17, 4, id="seventeen_workers_four_per_pod"),
+            param(3, 2, id="three_workers_two_per_pod"),
+        ],
+    )  # fmt: skip
+    def test_derive_topology_non_divisible_total_collapses_to_one_pod(
+        self, total_workers: int, workers_per_pod: int
+    ) -> None:
+        """A JobSet cannot express a partial final pod; the estimate must agree."""
+        params = MemoryEstimationParams.from_config(
+            _topology_config(workers_per_pod=workers_per_pod),
+            total_workers=total_workers,
+        )
+        assert params.num_worker_pods == 1
+        assert params.workers_per_pod == total_workers
+
+    @pytest.mark.parametrize(
+        "total_workers,workers_per_pod,record_processors,expected_pods,expected_rp",
+        [
+            param(8, 4, 4, 2, 2, id="total_splits_evenly_across_two_pods"),
+            param(16, 4, 12, 4, 3, id="total_splits_evenly_across_four_pods"),
+            param(8, 4, 2, 2, 1, id="total_below_pod_count_multiple"),
+            param(10, 8, 5, 1, 5, id="collapsed_single_pod_takes_whole_total"),
+        ],
+    )  # fmt: skip
+    def test_derive_topology_record_processors_total_splits_across_pods(
+        self,
+        total_workers: int,
+        workers_per_pod: int,
+        record_processors: int,
+        expected_pods: int,
+        expected_rp: int,
+    ) -> None:
+        """An authored ``runtime.record_processors`` is a cluster-wide total."""
+        params = MemoryEstimationParams.from_config(
+            _topology_config(
+                workers_per_pod=workers_per_pod, record_processors=record_processors
+            ),
+            total_workers=total_workers,
+        )
+        assert params.num_worker_pods == expected_pods
+        assert params.record_processors_per_pod == expected_rp
+
+    def test_derive_topology_indivisible_record_processors_total_raises(self) -> None:
+        """The deployment path rejects it, so the estimate must not paper over it."""
+        with pytest.raises(ValueError, match="must be divisible"):
+            MemoryEstimationParams.from_config(
+                _topology_config(workers_per_pod=4, record_processors=3),
+                total_workers=8,
+            )
+
+    def test_derive_topology_leaves_caller_config_unmodified(self) -> None:
+        """The banner must not mutate the spec the CLI is about to submit."""
+        config = _topology_config(workers_per_pod=8)
+        before = config.benchmark.runtime.model_dump()
+
+        MemoryEstimationParams.from_config(config, total_workers=10)
+
+        assert config.benchmark.runtime.model_dump() == before
+
+    def test_derive_topology_explicit_workers_per_pod_overrides_config(self) -> None:
+        params = MemoryEstimationParams.from_config(
+            _topology_config(workers_per_pod=8), total_workers=8, workers_per_pod=4
+        )
+        assert params.workers_per_pod == 4
+        assert params.num_worker_pods == 2
+
+    @pytest.mark.parametrize(
+        "total_workers",
+        [
+            param(0, id="zero"),
+            param(-4, id="negative"),
+        ],
+    )  # fmt: skip
+    def test_derive_topology_non_positive_total_clamps_to_one_pod(
+        self, total_workers: int
+    ) -> None:
+        """Unvalidated CR specs reach the estimator; they must not divide by zero."""
+        params = MemoryEstimationParams.from_config(
+            _topology_config(workers_per_pod=4), total_workers=total_workers
+        )
+        assert params.num_worker_pods == 1
+        assert params.workers_per_pod == 1
+
+
+class TestConnectionsPerWorkerDefault:
+    """The estimator's connection-pool default must track the deployment default."""
+
+    @pytest.mark.parametrize(
+        "func",
+        [
+            param(estimate_memory, id="estimate_memory"),
+            param(MemoryEstimationParams.from_config, id="from_config"),
+        ],
+    )  # fmt: skip
+    def test_connections_per_worker_default_matches_deployment_config(
+        self, func: Callable[..., object]
+    ) -> None:
+        import inspect
+
+        from aiperf.config.deployment import DeploymentConfig
+        from aiperf.kubernetes.spec_converter import DEFAULT_CONNECTIONS_PER_WORKER
+
+        default = inspect.signature(func).parameters["connections_per_worker"].default
+        assert default == DEFAULT_CONNECTIONS_PER_WORKER
+        assert (
+            default == DeploymentConfig.model_fields["connections_per_worker"].default
+        )
+
+    def test_from_config_default_connections_reach_params(self) -> None:
+        from aiperf.kubernetes.spec_converter import DEFAULT_CONNECTIONS_PER_WORKER
+
+        params = MemoryEstimationParams.from_config(_topology_config())
+        assert params.connections_per_worker == DEFAULT_CONNECTIONS_PER_WORKER
+
+
+class TestPhaseRequestRateTracksAvgSecPerRequest:
+    """The concurrency-driven request estimate is the inverse of the duration one.
+
+    ``_estimate_phase_duration`` spends ``_PHASE_AVG_SEC_PER_REQUEST`` seconds
+    per request per concurrent slot, so ``_estimate_phase_requests`` must
+    complete one request per slot every ``_PHASE_AVG_SEC_PER_REQUEST`` seconds.
+    That reciprocal was hardcoded as ``0.5`` (and mislabeled "~10 req/sec per
+    concurrent slot"), free to drift the moment the constant is recalibrated.
+    """
+
+    @staticmethod
+    def _concurrency_phase(duration: float, concurrency: int) -> object:
+        from aiperf.config.phases import ConcurrencyPhase
+        from aiperf.plugin.enums import PhaseType
+
+        return ConcurrencyPhase(
+            name="profiling",
+            type=PhaseType.CONCURRENCY,
+            duration=duration,
+            concurrency=concurrency,
+        )
+
+    @pytest.mark.parametrize(
+        "duration,concurrency",
+        [
+            param(60.0, 1, id="one_slot"),
+            param(60.0, 32, id="thirty_two_slots"),
+            param(3600.0, 256, id="long_phase_many_slots"),
+            param(1.0, 1, id="sub_average_duration"),
+        ],
+    )  # fmt: skip
+    def test_estimate_phase_requests_concurrency_driven_matches_constant(
+        self, duration: float, concurrency: int
+    ) -> None:
+        from aiperf.kubernetes._memory_estimator.constants import (
+            _PHASE_AVG_SEC_PER_REQUEST,
+        )
+        from aiperf.kubernetes._memory_estimator.params import _estimate_phase_requests
+
+        phase = self._concurrency_phase(duration, concurrency)
+        assert _estimate_phase_requests(phase, concurrency) == int(
+            duration * concurrency / _PHASE_AVG_SEC_PER_REQUEST
+        )
+
+    @pytest.mark.parametrize(
+        "avg_sec_per_request,expected_requests",
+        [
+            param(2.0, 960, id="calibrated_default"),
+            param(1.0, 1920, id="faster_requests_raise_the_estimate"),
+            param(4.0, 480, id="slower_requests_lower_the_estimate"),
+            param(0.5, 3840, id="sub_second_requests"),
+        ],
+    )  # fmt: skip
+    def test_estimate_phase_requests_recalibrated_constant_moves_the_estimate(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        avg_sec_per_request: float,
+        expected_requests: int,
+    ) -> None:
+        """A hardcoded reciprocal would ignore the monkeypatch and fail here."""
+        from aiperf.kubernetes._memory_estimator import params as params_module
+
+        monkeypatch.setattr(
+            params_module, "_PHASE_AVG_SEC_PER_REQUEST", avg_sec_per_request
+        )
+        phase = self._concurrency_phase(60.0, 32)
+        assert params_module._estimate_phase_requests(phase, 32) == expected_requests
+
+    @pytest.mark.parametrize(
+        "requests,concurrency",
+        [
+            param(1000, 1, id="serial"),
+            param(1024, 32, id="evenly_divisible"),
+            param(4096, 256, id="large_fan_out"),
+        ],
+    )  # fmt: skip
+    def test_estimate_phase_requests_round_trips_estimate_phase_duration(
+        self, requests: int, concurrency: int
+    ) -> None:
+        """Duration -> requests -> duration must be a fixed point."""
+        from aiperf.config.phases import ConcurrencyPhase
+        from aiperf.kubernetes._memory_estimator.params import (
+            _estimate_phase_duration,
+            _estimate_phase_requests,
+        )
+        from aiperf.plugin.enums import PhaseType
+
+        counted = ConcurrencyPhase(
+            name="profiling",
+            type=PhaseType.CONCURRENCY,
+            requests=requests,
+            concurrency=concurrency,
+        )
+        duration = _estimate_phase_duration(counted, concurrency)
+
+        timed = self._concurrency_phase(duration, concurrency)
+        assert _estimate_phase_requests(timed, concurrency) == requests

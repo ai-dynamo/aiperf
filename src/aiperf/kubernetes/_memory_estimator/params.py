@@ -4,9 +4,9 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Literal, cast
 
 from aiperf.common.enums import ServerMetricsDiscoveryMode
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
@@ -18,6 +18,10 @@ from aiperf.kubernetes._memory_estimator.constants import (
     _DEFAULT_PHASE_REQUEST_COUNT,
     _DEFAULT_UNIQUE_METRIC_SERIES,
     _PHASE_AVG_SEC_PER_REQUEST,
+)
+from aiperf.kubernetes.spec_converter import (
+    DEFAULT_CONNECTIONS_PER_WORKER,
+    apply_worker_config,
 )
 
 if TYPE_CHECKING:
@@ -122,7 +126,7 @@ class MemoryEstimationParams:
         config: AIPerfConfig,
         total_workers: int = 10,
         workers_per_pod: int | None = None,
-        connections_per_worker: int = 200,
+        connections_per_worker: int = DEFAULT_CONNECTIONS_PER_WORKER,
     ) -> MemoryEstimationParams:
         """Derive estimation parameters from an AIPerfConfig.
 
@@ -191,29 +195,36 @@ class _Topology:
 def _derive_topology(
     config: BenchmarkConfig, total_workers: int, workers_per_pod: int | None
 ) -> _Topology:
-    """Mirror the pod layout ``spec_converter.apply_worker_config`` deploys.
+    """Derive the pod layout by running the deployment path's own normalizer.
 
-    Both derivations read the same config fields in the same order so the
-    estimate describes the topology the JobSet actually creates. The operator
-    calls ``apply_worker_config`` before preflight, so by the time the estimate
-    runs both ``workers_per_pod`` and ``record_processors_per_pod`` are already
-    normalized on the config, including the ``record_processors`` total and the
-    single-pod collapse for non-divisible worker counts.
+    ``spec_converter.apply_worker_config`` is the single source of truth for the
+    JobSet topology: the single-pod collapse for worker totals that are not a
+    multiple of ``workers_per_pod``, the split of an authored
+    ``runtime.record_processors`` total across pods, and the scale-factor
+    fallback all live there. A re-derivation here drifted from it once already,
+    so the estimator calls it instead of restating the rules.
+
+    It runs against a throwaway copy of ``benchmark.runtime`` rather than the
+    caller's config: ``kube profile`` and ``kube generate --operator`` estimate
+    *before* the config is normalized and serialized, and the estimate must not
+    be the thing that mutates the spec they are about to submit.
     """
-    from aiperf.common.environment import Environment
-    from aiperf.kubernetes.environment import K8sEnvironment
+    runtime = config.runtime.model_copy(deep=True)
+    if workers_per_pod is not None:
+        runtime.workers_per_pod = workers_per_pod
 
-    wpp = (
-        workers_per_pod
-        or config.runtime.workers_per_pod
-        or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+    # apply_worker_config reads and writes only ``benchmark.runtime``.
+    probe = SimpleNamespace(benchmark=SimpleNamespace(runtime=runtime))
+    # Unlike the deployment path, the estimator is reachable from unvalidated
+    # CR specs, where a non-positive total would divide by zero downstream.
+    num_pods = apply_worker_config(
+        cast("AIPerfConfig", probe), max(1, int(total_workers))
     )
-    num_pods = max(1, math.ceil(total_workers / wpp))
-    actual_wpp = min(total_workers, wpp)
-    rp_per_pod = config.runtime.record_processors_per_pod or max(
-        1, actual_wpp // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR
+    return _Topology(
+        actual_wpp=runtime.workers_per_pod,
+        num_pods=num_pods,
+        rp_per_pod=runtime.record_processors_per_pod,
     )
-    return _Topology(actual_wpp=actual_wpp, num_pods=num_pods, rp_per_pod=rp_per_pod)
 
 
 def _derive_load_profile(config: BenchmarkConfig) -> tuple[int, int, float]:
@@ -281,8 +292,9 @@ def _estimate_phase_requests(phase: BasePhaseConfig, concurrency: int) -> int:
         rate = getattr(phase, "rate", None)
         if rate is not None:
             return int(phase.duration * rate)
-        # For concurrency-driven phases, estimate ~10 req/sec per concurrent slot
-        return int(phase.duration * concurrency * 0.5)
+        # Inverse of the concurrency-driven branch of _estimate_phase_duration:
+        # each slot completes one request every _PHASE_AVG_SEC_PER_REQUEST.
+        return int(phase.duration * concurrency / _PHASE_AVG_SEC_PER_REQUEST)
     if phase.sessions is not None:
         return phase.sessions * 3  # assume ~3 turns average
     return _DEFAULT_PHASE_REQUEST_COUNT
