@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use aiperf_plugin_packaging_tests::assemble::{
-    CandidateFixture, INVENTORY_FILE_NAME, assemble_distribution,
+    CandidateFixture, INVENTORY_FILE_NAME, assemble_distribution, next_generation,
 };
 use aiperf_plugin_packaging_tests::inventory::PluginInventoryV1;
 
@@ -84,4 +84,78 @@ fn distribution_census_has_expected_packages() {
         let expected = format!("blake3:{}", blake3::hash(&artifact_bytes).to_hex());
         assert_eq!(published.artifact_digest, expected);
     }
+}
+
+#[test]
+fn synthetic_materialization_refuses_to_replace_a_staged_artifact() {
+    let artifacts = tempfile::tempdir().expect("tempdir");
+    let text = std::fs::read_to_string(fixture_path()).expect("fixture is readable");
+    let fixture = CandidateFixture::parse(&text).expect("fixture parses");
+
+    // A real build product is already staged where the synthetic bytes would go.
+    let staged = artifacts.path().join(&fixture.packages[0].artifact);
+    std::fs::write(&staged, b"real-build-product").expect("stage a build product");
+
+    let refusal = fixture
+        .materialize_synthetic_artifacts(artifacts.path())
+        .expect_err("synthetic bytes never replace a staged artifact");
+    assert!(
+        refusal.to_string().contains("refuses to overwrite"),
+        "unexpected refusal: {refusal}"
+    );
+    assert_eq!(
+        std::fs::read(&staged).expect("staged bytes survive"),
+        b"real-build-product"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_artifact_is_refused_rather_than_hashed_through() {
+    let artifacts = tempfile::tempdir().expect("tempdir");
+    let outside = tempfile::tempdir().expect("tempdir");
+    let output = tempfile::tempdir().expect("tempdir");
+    let fixture = staged_fixture(artifacts.path());
+
+    // A plain, legal file name that is actually a link out of the artifacts
+    // directory: the name check passes, so only the no-follow open can refuse.
+    let secret = outside.path().join("secret.bin");
+    std::fs::write(&secret, b"outside-the-artifacts-dir").expect("write outside file");
+    let planted = artifacts.path().join(&fixture.packages[0].artifact);
+    std::fs::remove_file(&planted).expect("clear the staged artifact");
+    std::os::unix::fs::symlink(&secret, &planted).expect("plant the symlink");
+
+    assemble_distribution(&fixture, artifacts.path(), output.path())
+        .expect_err("a symlinked artifact is never hashed");
+}
+
+#[test]
+fn auto_generation_advances_but_refuses_an_unverifiable_prior_inventory() {
+    let artifacts = tempfile::tempdir().expect("tempdir");
+    let output = tempfile::tempdir().expect("tempdir");
+    let fixture = staged_fixture(artifacts.path());
+
+    // Nothing published yet: the declared generation stands.
+    assert_eq!(
+        next_generation(output.path(), fixture.generation).expect("an absent prior is not an error"),
+        fixture.generation
+    );
+
+    let written = assemble_distribution(&fixture, artifacts.path(), output.path())
+        .expect("the candidate generation assembles");
+    assert_eq!(
+        next_generation(output.path(), fixture.generation).expect("a verifiable prior advances"),
+        fixture.generation + 1
+    );
+
+    // A tampered document must surface as a refusal. Falling back to the
+    // fixture's own generation here would republish a lower generation, which
+    // the install side accepts as a downgrade instead of an integrity failure.
+    std::fs::write(&written, b"{not-an-inventory").expect("tamper with the prior document");
+    let refusal = next_generation(output.path(), fixture.generation)
+        .expect_err("an unverifiable prior is never answered with a lower generation");
+    assert!(
+        refusal.to_string().contains("cannot be verified"),
+        "unexpected refusal: {refusal}"
+    );
 }
