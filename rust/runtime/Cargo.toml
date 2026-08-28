@@ -284,6 +284,11 @@ name = "streaming_local_checkpoint"
 path = "tests/streaming_local_checkpoint.rs"
 required-features = ["streaming"]
 
+[[test]]
+name = "streaming_s3_source"
+path = "tests/streaming_s3_source.rs"
+required-features = ["streaming-s3"]
+
 [[example]]
 name = "velo_cell_spike"
 path = "examples/velo_cell_spike.rs"

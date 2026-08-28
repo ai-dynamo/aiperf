@@ -10,6 +10,8 @@ use bytes::Bytes;
 use serde::Serialize;
 use serde_json::value::RawValue;
 
+use crate::clock::Clock;
+
 use super::{
     budget::{BudgetLease, StreamingResourceBudget},
     checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
@@ -17,7 +19,6 @@ use super::{
     identity::{ContentDigest, ImmutableObjectIdentity},
     unit::SourcePosition,
 };
-use crate::clock::Clock;
 
 pub use super::failure::{AcquisitionFailureCode, SourceFailureCode, StreamSourceError};
 
@@ -144,7 +145,9 @@ where
 /// poll interval, a read-retry backoff, a credential-refresh backoff — must take
 /// that wait from the run's clock discipline rather than constructing a real
 /// clock or reaching for a Tokio timer, which would silently break virtual-clock
-/// execution.
+/// execution. Preparation is also where a source decides whether it can honor
+/// the run's time discipline at all; `prepare` is sync, so a source that must
+/// construct a clocked client defers that to `open`.
 #[derive(Clone)]
 pub struct StreamingSourcePrepareContext {
     /// Logical run bound into every issue this source reports.
@@ -175,7 +178,8 @@ impl std::fmt::Debug for StreamingSourcePrepareContext {
             .field("stream_semantic_digest", &self.stream_semantic_digest)
             .field("is_virtual_clock", &self.clock.is_virtual())
             .field("acquisition_budget", &self.acquisition_budget)
-            .finish_non_exhaustive()
+            .field("issue_reporter", &self.issue_reporter)
+            .finish()
     }
 }
 
