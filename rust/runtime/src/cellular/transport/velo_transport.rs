@@ -745,6 +745,7 @@ impl VeloCellClient {
             )
             .ok(),
         };
+        self.register_request(&registration).await
     }
 
     async fn send_registration_frame(
