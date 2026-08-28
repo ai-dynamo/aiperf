@@ -39,8 +39,7 @@ use crate::dataset::{
     SyntheticImageConfig, SyntheticImageFormat, SyntheticImageSource,
     SyntheticMediaGeneratorFactory, SyntheticPrefixConfig, SyntheticPromptConfig,
     SyntheticRankingsConfig, SyntheticVideoAudioConfig, SyntheticVideoConfig, SyntheticVideoFormat,
-    SyntheticVideoPattern, TextTokenizer, TracePromptStoragePolicy,
-    TraceSynthesisConfig,
+    SyntheticVideoPattern, TextTokenizer, TracePromptStoragePolicy, TraceSynthesisConfig,
 };
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::RequestObserver;
