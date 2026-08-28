@@ -1267,6 +1267,22 @@ impl CellPartitionPayload {
     }
 }
 
+/// Environment variable carrying the run plan's exact-record capture decision to a
+/// cell. Set by the controller when the resolved
+/// [`ExportCapturePlan`](crate::export::capture::ExportCapturePlan) reports
+/// `requires_exact_records`; absent means "bundle only".
+pub const CELL_CAPTURE_EXACT_RECORDS_ENV: &str = "AIPERF_CELL_CAPTURE_EXACT_RECORDS";
+
+/// Whether this cell's environment asks it to ship its exact-record chunk stream.
+///
+/// Only the chunk stream is gated: the closing bundle is unconditional, because
+/// its absence is the controller's only signal that a cell never reported.
+#[cfg(feature = "cellular")]
+fn capture_exact_records_requested() -> bool {
+    std::env::var(CELL_CAPTURE_EXACT_RECORDS_ENV)
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE"))
+}
+
 /// Ships a cell's final records-shard partition + heartbeat to the controller over
 /// velo, when this process is a cell (the controller coordinate is set).
 #[cfg(feature = "cellular")]
@@ -1274,6 +1290,9 @@ pub struct CellRecordsShipper {
     cell_id: u32,
     coordinate: String,
     security: std::sync::Arc<crate::engine::cellular_registration::CellSecurityContext>,
+    /// Whether the run plan's capture decision asked this cell for exact records.
+    /// The closing bundle ships regardless; only the chunk stream is gated.
+    capture_exact_records: bool,
 }
 
 #[cfg(feature = "cellular")]
@@ -1296,7 +1315,18 @@ impl CellRecordsShipper {
             cell_id,
             coordinate,
             security,
+            capture_exact_records: capture_exact_records_requested(),
         }))
+    }
+
+    /// Override the run plan's exact-record capture decision.
+    ///
+    /// The closing [`crate::cellular::CellMessage::CaptureBundle`] is unaffected —
+    /// it is unconditional — this only selects whether the cell also ships its
+    /// exact-record chunk stream.
+    pub fn with_exact_records_capture(mut self, requested: bool) -> Self {
+        self.capture_exact_records = requested;
+        self
     }
 
     /// Returns the controller's terminal partition coordinate.
@@ -1382,11 +1412,28 @@ impl CellRecordsShipper {
             errored,
         };
         let heartbeat = heartbeat.snapshot(epoch_ns, counters, HeartbeatSaturation::default());
+        // Build the capture frames before the records move into the partition. The
+        // chunk stream is gated on the run plan's capture decision; the closing
+        // bundle is unconditional, so the controller can always tell "this cell had
+        // nothing" from "this cell never reported".
+        let capture_bytes = if self.capture_exact_records {
+            serde_json::to_vec(&records).context("serializing cell exact records for capture")?
+        } else {
+            Vec::new()
+        };
+        let capture = self
+            .capture_messages(
+                self.capture_exact_records,
+                &capture_bytes,
+                crate::cellular::FoldedProjection::Absent,
+                crate::cellular::FoldedProjection::Absent,
+            )
+            .map_err(|error| anyhow::anyhow!("building cell capture frames: {error}"))?;
         let mut partition = RecordsShardPartition::new(self.cell_id, records);
         if let Some(supplement) = graph_supplement {
             partition = partition.with_graph_supplement(supplement);
         }
-        self.ship(heartbeat, CellMessage::Partition(partition))
+        self.ship(heartbeat, CellMessage::Partition(partition), capture)
     }
 
     /// Ships this cell's folded exact column store with a counters-only heartbeat.
@@ -1416,11 +1463,32 @@ impl CellRecordsShipper {
             counters,
             HeartbeatSaturation::default(),
         );
+        // The fold path retains no per-record data, so it ships no exact-record
+        // chunks. Its folded counters are the projection the controller can use.
+        let folded_metrics = match serde_json::to_value(counters) {
+            Ok(value) => crate::cellular::FoldedProjection::Present(value),
+            Err(error) => {
+                tracing::debug!(%error, "cell folded counters not serializable for capture");
+                crate::cellular::FoldedProjection::Absent
+            }
+        };
+        let capture = self
+            .capture_messages(
+                false,
+                &[],
+                folded_metrics,
+                crate::cellular::FoldedProjection::Absent,
+            )
+            .map_err(|error| anyhow::anyhow!("building cell capture frames: {error}"))?;
         let mut partition = ColumnStorePartition::from_store(self.cell_id, store);
         if let Some(supplement) = graph_supplement {
             partition = partition.with_graph_supplement(supplement);
         }
-        self.ship(heartbeat, CellMessage::StorePartition(Box::new(partition)))
+        self.ship(
+            heartbeat,
+            CellMessage::StorePartition(Box::new(partition)),
+            capture,
+        )
     }
 
     /// Build this cell's ordered capture frames for a completed run.
@@ -1477,6 +1545,7 @@ impl CellRecordsShipper {
         &self,
         heartbeat: crate::cellular::MetricsHeartbeat,
         terminal: crate::cellular::CellMessage,
+        capture: Vec<crate::cellular::CellMessage>,
     ) -> Result<()> {
         use crate::cellular::transport::connect::build_velo;
         use crate::cellular::{CellClient, CellMessage, VeloCellClient};
@@ -1519,6 +1588,15 @@ impl CellRecordsShipper {
                     .send(&terminal)
                     .await
                     .map_err(|error| anyhow::anyhow!("cell {cell_id} ship partition: {error}"))?;
+                // Capture frames follow the terminal partition on the same session, in
+                // wire order (chunks then the closing bundle). The controller's drain
+                // will not call `finish` until every cell's bundle has landed, so a
+                // failure here must fail the ship rather than be swallowed.
+                for message in &capture {
+                    client.send(message).await.map_err(|error| {
+                        anyhow::anyhow!("cell {cell_id} ship capture frame: {error}")
+                    })?;
+                }
                 Ok(())
             })
         })

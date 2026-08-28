@@ -9,10 +9,15 @@
 # The candidate registers endpoint capabilities with canonical IDs and
 # aliases. Static production endpoint registrations remain unchanged
 # until Task 39a makes an endpoint ID exclusively dynamic.
+#
+# `package_id` is spelled with `-` rather than `/`: a slash is rejected by
+# both the plugin-api registry-id grammar and the host manifest identifier
+# normalizer, so a `nvidia/endpoints` spelling could not resolve on either
+# side of the boundary.
 format_version: "1.0"
 
 packages:
-  - package_id: "nvidia/endpoints"
+  - package_id: "nvidia-endpoints"
     version: "{{VERSION}}"
     category: endpoint
     artifact: "libaiperf_plugin_endpoints.so"

@@ -27,7 +27,11 @@ pub const PLUGIN_SOURCE_API_VERSION: &str = "1.0.0";
 
 /// Capability identifiers this package registers, matching `plugins.yaml.in`.
 ///
-/// The manifest declares exactly one canonical identifier and no aliases.
+/// `"otel"` is the canonical capability id for the OTel exporter — the same
+/// short-form id the static production exporter registers. The manifest
+/// `package_id` (`"nvidia/export-otel"`) is a distinct vendor-namespace
+/// identifier; it does not replace the capability id because `/` is outside
+/// the version-1 registry-id grammar.
 pub const CAPABILITIES: &[&str] = &["otel"];
 
 // The manifest `package_id` is `nvidia/export-otel`; `/` is outside the

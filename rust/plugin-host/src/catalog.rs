@@ -182,15 +182,57 @@ pub fn resolve_catalog(
 }
 
 /// Convenience: resolve catalog by reading manifest files from disk.
+///
+/// Manifests are opened with `open_no_follow`, so a manifest path that is a
+/// symlink at its final component is refused at the read itself rather than
+/// relying on the earlier `symlink_metadata` check in discovery (which a TOCTOU
+/// swap could invalidate). A manifest that cannot be read is quarantined; it
+/// never aborts resolution of the remaining catalog.
 pub fn resolve_catalog_from_disk(
     discovered: Vec<DiscoveredPackage>,
 ) -> Result<IntendedCatalog, std::io::Error> {
     let mut bytes_map: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+    let mut unreadable: HashMap<PathBuf, String> = HashMap::new();
+
     for pkg in &discovered {
-        if !bytes_map.contains_key(&pkg.manifest_path) {
-            let b = std::fs::read(&pkg.manifest_path)?;
-            bytes_map.insert(pkg.manifest_path.clone(), b);
+        if bytes_map.contains_key(&pkg.manifest_path) || unreadable.contains_key(&pkg.manifest_path)
+        {
+            continue;
+        }
+        match read_manifest_no_follow(&pkg.manifest_path) {
+            Ok(bytes) => {
+                bytes_map.insert(pkg.manifest_path.clone(), bytes);
+            }
+            Err(e) => {
+                unreadable.insert(pkg.manifest_path.clone(), format!("read error: {e}"));
+            }
         }
     }
-    Ok(resolve_catalog(discovered, bytes_map))
+
+    let (readable, refused): (Vec<_>, Vec<_>) = discovered
+        .into_iter()
+        .partition(|pkg| !unreadable.contains_key(&pkg.manifest_path));
+
+    let mut catalog = resolve_catalog(readable, bytes_map);
+    for pkg in refused {
+        let reason = unreadable
+            .get(&pkg.manifest_path)
+            .cloned()
+            .unwrap_or_else(|| "manifest unreadable".to_owned());
+        catalog.quarantined.push(QuarantinedPackage {
+            manifest_path: pkg.manifest_path,
+            reason,
+        });
+    }
+    Ok(catalog)
+}
+
+/// Read a manifest's bytes without following a symlink at the final component.
+fn read_manifest_no_follow(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+
+    let mut file = crate::platform::fs::open_no_follow(path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }

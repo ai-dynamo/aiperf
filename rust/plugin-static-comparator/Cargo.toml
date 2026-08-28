@@ -7,3 +7,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
+
+[dependencies]
+thiserror = { workspace = true }
+
+[lib]
+path = "src/lib.rs"
+
+# The comparison baseline: asserts its statically linked census before it is
+# used as a parity baseline.
+[[bin]]
+name = "aiperf-plugin-static-comparator"
+path = "src/main.rs"
+
+[[test]]
+name = "comparator_census"
+path = "tests/comparator_census.rs"
