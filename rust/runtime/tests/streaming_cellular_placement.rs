@@ -142,42 +142,47 @@ fn prepare_never_issues_and_release_uses_only_controller_clock() {
         submissions: submissions.clone(),
     };
 
-    let clock: Rc<dyn Clock> = controller.clone();
-    let release = release_at_controller_target(clock, RELEASE_TARGET_NS, &mut submitter, staged);
-    let mut release = pin!(release);
-    let (flag, waker) = flag_waker();
-    let mut context = Context::from_waker(&waker);
+    // Scoped so the pinned future releases its mutable borrow of the submitter
+    // before the post-conditions read the active set back.
+    {
+        let clock: Rc<dyn Clock> = controller.clone();
+        let release =
+            release_at_controller_target(clock, RELEASE_TARGET_NS, &mut submitter, staged);
+        let mut release = pin!(release);
+        let (flag, waker) = flag_waker();
+        let mut context = Context::from_waker(&waker);
 
-    loop {
-        flag.store(false, Ordering::SeqCst);
-        match release.as_mut().poll(&mut context) {
-            Poll::Ready(result) => {
-                result.expect("release succeeds at the controller target");
-                break;
-            }
-            Poll::Pending => {
-                assert_eq!(
-                    issued.get(),
-                    0,
-                    "nothing may issue before the controller reaches its target"
-                );
-                assert!(
-                    controller.now_ns() < RELEASE_TARGET_NS,
-                    "the release resolved before the controller target"
-                );
-                if flag.load(Ordering::SeqCst) {
-                    continue;
+        loop {
+            flag.store(false, Ordering::SeqCst);
+            match release.as_mut().poll(&mut context) {
+                Poll::Ready(result) => {
+                    result.expect("release succeeds at the controller target");
+                    break;
                 }
-                let next = controller
-                    .next_event_time()
-                    .expect("the release must be sleeping on the controller clock");
-                // One nanosecond short of the target: still pending, and the
-                // cell clock is far past it. Issue must not have happened.
-                if next > 1 {
-                    controller.advance_to(next - 1);
-                    assert_eq!(issued.get(), 0);
+                Poll::Pending => {
+                    assert_eq!(
+                        issued.get(),
+                        0,
+                        "nothing may issue before the controller reaches its target"
+                    );
+                    assert!(
+                        controller.now_ns() < RELEASE_TARGET_NS,
+                        "the release resolved before the controller target"
+                    );
+                    if flag.load(Ordering::SeqCst) {
+                        continue;
+                    }
+                    let next = controller
+                        .next_event_time()
+                        .expect("the release must be sleeping on the controller clock");
+                    // One nanosecond short of the target: still pending, and the
+                    // cell clock is far past it. Issue must not have happened.
+                    if next > 1 {
+                        controller.advance_to(next - 1);
+                        assert_eq!(issued.get(), 0);
+                    }
+                    controller.advance_to(next);
                 }
-                controller.advance_to(next);
             }
         }
     }
