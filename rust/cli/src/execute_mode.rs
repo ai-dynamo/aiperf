@@ -62,12 +62,20 @@ pub const AGGREGATOR_FLAG: &str = "--aggregator";
 /// Load and verify the propagated plugin lock, then record its digest as this
 /// process's composed plugin identity.
 ///
-/// Records `None` when the environment carries no valid lock, which is the
-/// no-plugins case. A lock that is present but fails to load or whose digest
-/// disagrees with the parent's is fatal: the bundle changed between spawn and
-/// bootstrap, so no run may proceed against it.
+/// Records `None` only when the environment carries no lock at all, which is
+/// the no-plugins case. Every other failure is fatal: a half-set or malformed
+/// environment, a bundle that fails to load, or a digest that disagrees with
+/// the parent's. Any of those would otherwise silently downgrade a locked run
+/// to an unlocked one.
 fn record_verified_plugin_lock() {
-    let Some((lock_path, expected_digest)) = crate::plugins::propagate::read_lock_env() else {
+    let propagated = match crate::plugins::propagate::read_lock_env() {
+        Ok(propagated) => propagated,
+        Err(error) => {
+            tracing::error!(error = %error, "refusing to run with a corrupt plugin lock environment");
+            std::process::exit(2);
+        }
+    };
+    let Some((lock_path, expected_digest)) = propagated else {
         aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(None);
         return;
     };

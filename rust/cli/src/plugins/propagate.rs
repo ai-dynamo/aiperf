@@ -11,6 +11,10 @@
 //! resource open, and verifies the digest matches the loaded bundle before
 //! proceeding. A mismatch means the lock file was modified between parent spawn
 //! and child read and the child refuses with [`PropagateError::DigestMismatch`].
+//!
+//! The read fails closed: only a completely absent pair means "no plugins".
+//! A half-set or structurally invalid environment is an error, never silently
+//! downgraded to an unlocked run.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -30,6 +34,15 @@ pub enum PropagateError {
     /// The lock was modified between parent spawn and child bootstrap, or the
     /// environment was corrupted in transit.
     DigestMismatch { expected: String, actual: String },
+    /// Exactly one of the two propagation variables is present.
+    ///
+    /// The parent always sets both or neither, so a half-set environment means
+    /// the child's view of the plugin universe was tampered with or truncated.
+    PartialEnvironment { present: &'static str, missing: &'static str },
+    /// [`ENV_LOCK_DIGEST`] is not exactly 64 hexadecimal characters.
+    MalformedDigest { value: String },
+    /// [`ENV_LOCK_PATH`] is not an absolute path.
+    NonAbsolutePath { value: String },
 }
 
 impl fmt::Display for PropagateError {
@@ -39,6 +52,19 @@ impl fmt::Display for PropagateError {
                 f,
                 "plugin lock digest mismatch: expected {expected}, got {actual}; \
                  the lock file was modified between parent spawn and child bootstrap"
+            ),
+            Self::PartialEnvironment { present, missing } => write!(
+                f,
+                "incomplete plugin lock propagation: {present} is set but {missing} is not; \
+                 the parent always sets both or neither"
+            ),
+            Self::MalformedDigest { value } => write!(
+                f,
+                "malformed {ENV_LOCK_DIGEST}: expected 64 hexadecimal characters, got {value:?}"
+            ),
+            Self::NonAbsolutePath { value } => write!(
+                f,
+                "malformed {ENV_LOCK_PATH}: expected an absolute path, got {value:?}"
             ),
         }
     }
@@ -57,39 +83,50 @@ pub fn set_lock_env(cmd: &mut Command, lock_path: &Path, lock_digest: &str) {
 
 /// Read the plugin lock environment variables in a child process.
 ///
-/// Returns `None` when neither variable is set, meaning the parent was launched
-/// without plugins and the child should proceed with an empty universe.
+/// Returns `Ok(None)` only when **neither** variable is set, meaning the parent
+/// was launched without plugins and the child should proceed with an empty
+/// universe.
 ///
-/// Returns `Some((path, digest))` when both variables are set and both are
-/// structurally valid. The caller must load the bundle at `path` and verify
-/// its digest matches before using it.
+/// Returns `Ok(Some((path, digest)))` when both variables are set and both are
+/// structurally valid. The caller must load the bundle at `path` and verify its
+/// digest matches before using it.
 ///
-/// A non-absolute path or a digest that is not exactly 64 lower-case hex
-/// characters causes a warning log and returns `None` so that a corrupted or
-/// injected environment is treated the same as an absent lock rather than
-/// silently accepted with bad data.
-pub fn read_lock_env() -> Option<(PathBuf, String)> {
-    let path_str = std::env::var(ENV_LOCK_PATH).ok()?;
-    let digest = std::env::var(ENV_LOCK_DIGEST).ok()?;
+/// Every other shape is an error, not an absent lock: a half-set environment,
+/// a non-absolute path, or a digest that is not exactly 64 hexadecimal
+/// characters. Treating those as "no plugins" would let a truncated or injected
+/// environment silently downgrade a locked run to an unlocked one, so the
+/// caller must refuse instead.
+pub fn read_lock_env() -> Result<Option<(PathBuf, String)>, PropagateError> {
+    let path_var = std::env::var(ENV_LOCK_PATH).ok();
+    let digest_var = std::env::var(ENV_LOCK_DIGEST).ok();
+
+    let (path_str, digest) = match (path_var, digest_var) {
+        (None, None) => return Ok(None),
+        (Some(path), Some(digest)) => (path, digest),
+        (Some(_), None) => {
+            return Err(PropagateError::PartialEnvironment {
+                present: ENV_LOCK_PATH,
+                missing: ENV_LOCK_DIGEST,
+            });
+        }
+        (None, Some(_)) => {
+            return Err(PropagateError::PartialEnvironment {
+                present: ENV_LOCK_DIGEST,
+                missing: ENV_LOCK_PATH,
+            });
+        }
+    };
 
     let path = PathBuf::from(&path_str);
     if !path.is_absolute() {
-        tracing::warn!(
-            path = %path.display(),
-            "ignoring non-absolute {ENV_LOCK_PATH}; must be an absolute path"
-        );
-        return None;
+        return Err(PropagateError::NonAbsolutePath { value: path_str });
     }
 
     if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
-        tracing::warn!(
-            "ignoring malformed {ENV_LOCK_DIGEST}: expected 64 hex characters, got {:?}",
-            digest
-        );
-        return None;
+        return Err(PropagateError::MalformedDigest { value: digest });
     }
 
-    Some((path, digest))
+    Ok(Some((path, digest)))
 }
 
 /// Verify that a loaded bundle's digest matches the propagated digest.
