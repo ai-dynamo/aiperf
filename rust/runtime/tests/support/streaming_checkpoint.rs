@@ -44,7 +44,8 @@ use serde::Serialize;
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use aiperf_runtime::streaming::failure::{
-    DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError,
+    DecodeFailureCode, OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode,
+    StreamFormatError,
 };
 
 pub fn cut_at(value: u64) -> CheckpointCut {
@@ -1167,8 +1168,7 @@ pub async fn issue_receipt_partition(
 use aiperf_runtime::streaming::{
     checkpoint_backend::StreamingCheckpointBackend,
     reliability::{
-        PreparedExportAttemptFailure, PreparedExportReceiptPersistence,
-        PreparedStreamingIssuePolicy, ResultSinkAttemptOutcome, StreamingIssueComponentId,
+        PreparedExportAttemptFailure, PreparedExportReceiptPersistence, ResultSinkAttemptOutcome,
         StreamingReliabilityError,
     },
     results::ResultIndexReadBudget,
