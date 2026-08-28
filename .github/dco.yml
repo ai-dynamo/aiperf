@@ -2,3 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 require:
   members: false
+
+allowRemediationCommits:
+  individual: true
