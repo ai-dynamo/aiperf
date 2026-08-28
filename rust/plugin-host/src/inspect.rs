@@ -9,7 +9,8 @@
 
 use thiserror::Error;
 
-use crate::acquire::{AcquiredArtifact, AcquiredClosure};
+use crate::acquire::AcquiredArtifact;
+use crate::closure::AcquiredClosure;
 
 const ENTRY_SYMBOL: &str = "aiperf_plugin_entry_v1";
 /// Mach-O exports prepend an underscore.
@@ -230,26 +231,33 @@ fn inspect_mach(
     let macho = match mach {
         Mach::Binary(m) => m,
         Mach::Fat(fat) => {
-            // Pick the slice matching the target arch.
+            // For fat binaries, find the slice matching the target arch by
+            // inspecting arch headers, then parse the matching binary.
             let expected_cputype = macho_cputype_for_target(target).unwrap_or(u32::MAX);
-            let mut found = None;
-            for arch in fat.iter_arches().flatten() {
-                if arch.cputype() as u32 == expected_cputype {
-                    found = fat.get(0).ok();
-                    break;
+            let mut found_idx = None;
+            for (i, arch_result) in fat.iter_arches().enumerate() {
+                if let Ok(arch) = arch_result {
+                    if arch.cputype() as u32 == expected_cputype {
+                        found_idx = Some(i);
+                        break;
+                    }
                 }
             }
-            match found {
-                Some(m) => {
-                    // Recurse on the selected slice.
-                    let mach_single = Mach::Binary(m);
-                    return inspect_mach(&mach_single, target);
+            match found_idx {
+                Some(idx) => {
+                    match fat.get(idx) {
+                        Ok(goblin::mach::SingleArch::MachO(m)) => m,
+                        _ => {
+                            return Err(StaticInspectionError::UnsupportedFormat(
+                                "fat Mach-O slice is not a MachO binary".to_string(),
+                            ));
+                        }
+                    }
                 }
                 None => {
-                    let detected = "unknown (fat without matching arch)".to_string();
                     return Err(StaticInspectionError::ArchMismatch {
                         declared: target.to_string(),
-                        detected,
+                        detected: "unknown (fat without matching arch)".to_string(),
                     });
                 }
             }
