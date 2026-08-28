@@ -36,7 +36,7 @@ runtime verification.
 | Paper-rig Cargo target | 1 TiB persistent NVMe-class Hyperdisk mounted at `/nvme`; task-isolated targets under `/nvme/cargo-target/`; `CARGO_INCREMENTAL=1` | ACTIVE |
 | Ordinary gate placement | paper-rig by default; switch the whole gate local only when measured paper-rig wall/queue/I/O time is slower | ACTIVE |
 | Authoritative A/B placement | otherwise-idle paper-rig with pinned affinity/topology and recorded noise controls; Task-5 erased-executor A/B completed there and rejected the design; final product A/B remains pending | ACTIVE |
-| Allocator authority prerequisite | Task 7 four-target conformance plus paper-rig A/B; exact provider/shim object must be integrated before Task 17/native entry | PENDING |
+| Allocator authority prerequisite | Task 7 four-target conformance plus paper-rig A/B; exact provider/shim object must be integrated before Task 17/native entry | ACTIVE (conformance PASS `cd394ecc24`; A/B pending) |
 
 The local integration branch contains non-plugin remediation commits after
 `d4159dc91a`. Plugin feature branches must use the integration HEAD recorded
@@ -144,10 +144,12 @@ feature.
 
 | Feature/task/unit | Base | Implementer model/effort | Graham pass-1 model/effort | Graham pass-2 model/effort | Branch | Local worktree | Paper-rig worktree | RED command/output digest | Minimal GREEN commit/focused-output digest | Refactor object/diff decision/focused-output digest | Complete-suite command/output digest | fmt command/output digest | Clippy command/output digest | Paper-rig env/tini/Python/cache evidence | Graham pass-1 range/report/verdict | Review-fix commits | Graham pass-2 range/report/verdict | Post-review gate/output digest | Commit→bundle→local-object map | Integration or private-candidate state | Status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 7 | `eadd5c665f` (merge: integrate plugin ABI boundary gap-closure Task 6) | claude-sonnet-4-6 / high | claude-sonnet-4-6 / high | GO C0/I0/M2 (M-only; no pass-2 required) | `ajc/native-rust-runtime-plugins` (integrated inline) | main checkout | `/work-pvc/paper-rig/worktrees/task7` | `cargo test -p aiperf-plugin-conformance` RED (4/8) before provider build fixed | `cd394ecc24` (`fix(allocator-provider): force LLD`) — 8/8 PASS | no behavior change; fmt/clippy clean | paper-rig `cargo test -p aiperf-plugin-conformance`: 8 passed, 0 failed | EXIT 0 | EXIT 0 (provider + shim + conformance) | pod `e10ca3ad`; 144 CPUs; Rust 1.98.0; LLD 14; GNU ld 2.40 | `eadd5c665f..cd394ecc24`; report `.superpowers/sdd/2026-08-26-native-rust-runtime-plugins-implementation/task7-graham-pass-1.md`; **GO C0/I0/M2** | none (M-only findings; no fixes required) | N/A — GO C0/I0/M2 on pass-1 | `cd394ecc24` gate re-confirmed EXIT 0 all six gates | `cd394ecc24` → `bundles/task7-FINAL-cd394ecc24.bundle` → verified local | `INTEGRATED` | PASS |
 | 1 | `caa3ff6fcf20ffe36a7704abe16274bedadbb9fb` | `gpt-5.6-terra` / `medium` | PENDING | PENDING | `ajc/native-plugin-task-1` | `/home/anthony/nvidia/projects/aiperf/ajc/native-plugin-worktrees/task-1` | `/work-pvc/paper-rig/aiperf-native-plugin-worktrees/task-1` | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `ISOLATED_NOT_INTEGRATED` | ACTIVE |
 | 3 | `653db4d56e46b0d988bcb32e16a1e68f78d3ea96` | parallel `gpt-5.6-sol`/`gpt-5.6-terra` | `gpt-5.6-sol` / `xhigh` | PENDING | `ajc/native-plugin-task3-exporter-authority` plus review-fix branches | `.worktrees/native-plugin-task3-exporter-authority` plus isolated `*-fix-r1` worktrees | `/work-pvc/paper-rig/worktrees/task3-exporter-authority-final` | focused RED commits retained in branch/report | implementation head `f247b0102d` | per-request exporter authority intentionally remains fail-closed pending Tasks 37/38 | paper-rig `cargo test -p aiperf-bench-tools --all-targets`: PASS | direct exact-range `rustfmt --check --edition 2024`: PASS | paper-rig Rust 1.98 `cargo clippy -p aiperf-bench-tools --all-targets -- -D warnings`: PASS | pod UID `e10ca3ad-743c-474d-9754-57c7c883d3ec`; 144 CPUs; persistent `/nvme`; explicit GKE context | `653db4d..f247b010`; report SHA-256 `ffec7d744f6ca4d4fd99f7d122ed98e5bb80f33932e39a3461c5137ec9780c8a`; **NO-GO C4/I6/M2** | fix round 1 ACTIVE in build/runtime/topology partitions | PENDING | PENDING | three verified local bundles through `f247b0102d` | `INTEGRATED_BUT_NOT_MERGEABLE_REVIEW_FIXES_ACTIVE` | ACTIVE |
 
-Required independently tracked unit names are Tasks `1`–`40`, plus
+| 8 | `cd394ecc24` | claude-sonnet-4-6 / high | PENDING | PENDING | `ajc/native-plugin-task-8` | `/home/anthony/nvidia/projects/aiperf/ajc/native-plugin-worktrees/task-8` | `/work-pvc/paper-rig/worktrees/task8` | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `ACTIVE` | ACTIVE |
+| 19 | `cd394ecc24` | claude-sonnet-4-6 / high | PENDING | PENDING | `ajc/native-plugin-task-19` | `/home/anthony/nvidia/projects/aiperf/ajc/native-plugin-worktrees/task-19` | `/work-pvc/paper-rig/worktrees/task19` | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `ACTIVE` | ACTIVE |, plus
 `12-core`, `12-elf`, `12-macho`, `12-pe`, `33-websocket`, `33-dry-run`,
 `34-dynosim-offline`, `34-dynosim-online`, `37a-tooling`, `37b-package`,
 `38a-harness`, `38b-benchmark`, `39a-basic`,
@@ -168,7 +170,7 @@ into the private 39a chain.
 
 | Component | Task-7 integrated object/state | Source tree + Cargo.lock digest | Linux x86_64 artifact/inventory digest | macOS ARM64 digest | Windows x86_64 digest | Windows ARM64 digest | Task-7 paper-rig A/B evidence digest | Task-36 re-verification digest | Task-37 default/full artifact-binding digest |
 |---|---|---|---|---|---|---|---|---|---|
-| allocator/product composition | PENDING | | | | | | | | |
+| allocator/product composition | `cd394ecc24` integrated on `ajc/native-rust-runtime-plugins`; provider `libaiperf_alloc_v1.so` + shim `MiMallocShim` + conformance 8/8; A/B pending | pending | Linux x86_64 `cd394ecc24` 8/8 conformance PASS | pending | pending | pending | pending | pending | pending |
 
 ## Dynamic release-candidate ledger
 
@@ -259,6 +261,7 @@ PASS from another component or from the composite candidate. The columns are:
 
 | Feature/task/unit | Pass-1 range | Pass-1 reviewer model/effort | Pass-1 report digest/findings | Fix commits | Pass-2 exact final range | Pass-2 fresh reviewer model/effort | Pass-2 report digest/verdict | Unresolved findings | Status |
 |---|---|---|---|---|---|---|---|---|---|
+| Task 7 | `eadd5c665f..cd394ecc24` | claude-sonnet-4-6 / high | `.superpowers/sdd/2026-08-26-native-rust-runtime-plugins-implementation/task7-graham-pass-1.md`; **GO C0/I0/M2** | none (M-only) | N/A — M-only pass-1 GO | N/A | GO C0/I0/M2 | M2 accepted | PASS |
 | Task 3 | `653db4d56e46b0d988bcb32e16a1e68f78d3ea96..f247b0102d8b0b38e49669d833947181ced227fe` | `gpt-5.6-sol` / `xhigh` | SHA-256 `ffec7d744f6ca4d4fd99f7d122ed98e5bb80f33932e39a3461c5137ec9780c8a`; NO-GO C4/I6/M2 | fix round 1 ACTIVE | PENDING | PENDING | PENDING | C4/I6/M2 | FAIL |
 
 ## Commit bundle and local-import ledger
@@ -272,6 +275,8 @@ comparison.
 | Task 3 exporter authority | `1c8179474b` | `bundles/task3-exporter-authority-1c8179474b-paper.bundle` (SHA-256 `8ed9df3e450f16b8f0d0c31a43772f7d9cb47e7f2babeb7788da86602c6e2c56`) | PASS | exact | merged by `501284b65c` with later incremental commits | PASS |
 | Task 3 Clippy cleanup | `65867e16f6` | `bundles/task3-clippy-clean-65867e16f6.bundle` (SHA-256 `a577afbd3587a5c4aeb537d2ba1797573f78b4c7d2250da94a5ed927d8d852e0`) | PASS | exact | merged by `501284b65c` | PASS |
 | Task 3 Rust-1.98 lint | `f247b0102d` | `bundles/task3-rust-1.98-lint-f247b0102d.bundle` (SHA-256 `24364e8190ae3793530757a66486436ab3471e2b11d35926ed0ab284385e6aa1`) | PASS | exact | merged by `d8808fc494` | PASS |
+| Task 7 allocator provider (LLD fix) | `cd394ecc24` | `bundles/task7-FINAL-cd394ecc24.bundle` | PASS | exact | integrated inline on `ajc/native-rust-runtime-plugins` | PASS |
+| Task 7 anonymous version-script (intermediate) | `cefef9369c` | `bundles/task7-full-cefef9369c20.bundle` | PASS | exact | superseded by `cd394ecc24` (LLD fix) | PASS (superseded) |
 | Zero-loss execution capsule spec/plan | `449284d0bc` | `bundles/zero-loss-execution-capsule-449284d0bc.bundle` (SHA-256 `c4859fabb5d31b0232edbee7be62bff59ea7635560e372c2245c6d7a4c0c75af`) | PASS | exact | authored on local integration branch | PASS |
 
 ## Platform and release matrix
@@ -301,6 +306,8 @@ comparison.
 
 | Time (America/Los_Angeles) | Event | Evidence/result |
 |---|---|---|
+| 2026-08-27 | Task 7 allocator provider gated and integrated | `cd394ecc24`; 8/8 conformance on rustc 1.98.0 rig; Graham GO C0/I0/M2; LLD forced to avoid GNU ld dual-anonymous-version-script conflict; A/B pending |
+| 2026-08-27 | Tasks 8 and 19 launched in parallel | Task 8 (plugin-sdk identity) and Task 19 (runtime validated-run-plan + capture) are file-disjoint and fan out from `cd394ecc24` |
 | 2026-08-26 | Hardened specification audited | Three independent audits reported no remaining spec correctness/alignment findings; runtime proof remains governed by this tracker’s gates |
 | 2026-08-26 | Public feasibility lab expanded | Agent reported green Linux x86_64, macOS ARM64, Windows x86_64, and Windows ARM64 run `32955454915`; production gates remain P00/P24/P25/P26 |
 | 2026-08-26 | Full-history paper-rig clone established | branch `ajc/native-rust-runtime-plugins`, tag `plugin-spec-baseline`, Git identity `Anthony Casagrande <acasagrande@nvidia.com>` |
