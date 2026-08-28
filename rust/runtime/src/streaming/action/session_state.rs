@@ -28,11 +28,11 @@ use super::{
     ActionAdmissionReceipt, ActionCancelReceipt, ActionDrainReceipt, ActionEventIdentity,
     ActionExecutionError, ActionExecutionEvent, ActionFailureCode, ActionHandleId, ActionPlacement,
     ActionResultRetention, ActionTerminalDisposition, ActionTerminalReceipt, DatasetActionSchema,
-    OrderedDatasetAction, PreparedStreamingActionBinding, StreamingActionDriver,
-    StreamingActionDriverControl, StreamingActionDriverControlOps, StreamingActionSinkDescriptor,
-    StreamingActionSinkFactory, StreamingActionSinkPrepareContext, StreamingActionSubmitter,
-    SubmittedAction, ValidatedStreamingActionSinkConfig, action_execution_control,
-    canonical_action_schema,
+    EndpointRetrySafety, OrderedDatasetAction, PreparedStreamingActionBinding,
+    StreamingActionDriver, StreamingActionDriverControl, StreamingActionDriverControlOps,
+    StreamingActionSinkDescriptor, StreamingActionSinkFactory, StreamingActionSinkPrepareContext,
+    StreamingActionSubmitter, SubmittedAction, ValidatedStreamingActionSinkConfig,
+    action_execution_control, canonical_action_schema,
 };
 use crate::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
@@ -66,6 +66,8 @@ pub static SESSION_STATE_ACTION_SINK: StreamingActionSinkDescriptor =
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        // Nothing is issued, so a retry cannot duplicate work at any target.
+        endpoint_retry_safety: EndpointRetrySafety::LogicalIdempotency,
     };
 
 /// Authored configuration accepted by the state-only action sink.
