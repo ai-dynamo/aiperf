@@ -83,8 +83,13 @@ class DatasetConfigCatchUp:
                 # request may simply time out. The caller falls back to
                 # waiting on the normal PUB/SUB notification.
                 return
+            # The normal PUB/SUB notification may have arrived (and applied
+            # configuration) while this request was in flight -- recheck
+            # before applying the cached copy, or a concurrent delivery would
+            # apply configuration to producers/observers twice.
             if (
-                isinstance(response, DatasetConfigStatusResponse)
+                not event.is_set()
+                and isinstance(response, DatasetConfigStatusResponse)
                 and response.notification is not None
             ):
                 await self._on_configured(response.notification)

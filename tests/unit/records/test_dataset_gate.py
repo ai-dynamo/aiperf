@@ -117,11 +117,19 @@ class TestDatasetConfigCatchUp:
     @pytest.mark.asyncio
     async def test_try_once_only_queries_once_across_concurrent_callers(self):
         """Multiple records arriving concurrently before the gate opens must
-        share a single in-flight request, not one each."""
+        share a single in-flight request, not one each.
+
+        Uses an explicit release gate (rather than a bare ``asyncio.sleep``,
+        which this suite's autouse fixture makes resolve instantly) so the
+        request is provably still in flight while the other four callers run
+        ``try_once`` -- deterministic proof of single-flight, not an
+        artifact of task-scheduling order.
+        """
+        release = asyncio.Event()
         request_client = AsyncMock()
 
         async def slow_request(*args, **kwargs):
-            await asyncio.sleep(0.05)
+            await release.wait()
             return DatasetConfigStatusResponse(service_id="dataset_manager")
 
         request_client.request.side_effect = slow_request
@@ -133,9 +141,15 @@ class TestDatasetConfigCatchUp:
         )
         event = asyncio.Event()
 
-        await asyncio.gather(*[catch_up.try_once(event) for _ in range(5)])
+        tasks = [asyncio.create_task(catch_up.try_once(event)) for _ in range(5)]
+        await asyncio.sleep(0)  # let every task reach the in-flight request
 
-        request_client.request.assert_awaited_once()
+        request_client.request.assert_awaited_once()  # still in flight, already single-flight
+
+        release.set()
+        await asyncio.gather(*tasks)
+
+        request_client.request.assert_awaited_once()  # still just the one call
 
     @pytest.mark.asyncio
     async def test_try_once_does_not_requery_after_a_negative_attempt(self):
@@ -157,6 +171,43 @@ class TestDatasetConfigCatchUp:
         await catch_up.try_once(event)
 
         request_client.request.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_try_once_does_not_reapply_if_notification_wins_the_race(self):
+        """Regression: if the normal PUB/SUB notification is delivered (and
+        applied, setting the event) while the catch-up request is still in
+        flight, the cached response that arrives afterward must NOT be
+        re-applied -- otherwise producers/observers get configured twice."""
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_request(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return DatasetConfigStatusResponse(
+                service_id="dataset_manager", notification=_make_notification()
+            )
+
+        request_client = AsyncMock()
+        request_client.request.side_effect = slow_request
+        on_configured = AsyncMock()
+        catch_up = DatasetConfigCatchUp(
+            request_client=request_client,
+            on_configured=on_configured,
+            service_id="rp-1",
+        )
+        event = asyncio.Event()
+
+        task = asyncio.create_task(catch_up.try_once(event))
+        await entered.wait()
+
+        # The normal PUB/SUB path wins the race: it applies configuration
+        # and sets the event while the catch-up request is still pending.
+        event.set()
+        release.set()
+        await task
+
+        on_configured.assert_not_called()
 
 
 class TestAwaitDatasetConfiguredWithCatchUp:
