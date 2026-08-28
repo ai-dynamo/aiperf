@@ -1,2 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# W&B exporter candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/export-wandb"
+    version: "{{VERSION}}"
+    category: export
+    artifact: "libaiperf_plugin_export_wandb.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      W&B exporter candidate: Weights & Biases datastore exporter as a
+      plugin package. Static production exporter authority remains until
+      Task 39b.
+    capabilities:
+      - canonical_id: "export.wandb"
+        aliases: ["wandb", "wandb_datastore"]
