@@ -48,6 +48,6 @@ pub enum ManifestError {
     InvalidPriority(i64),
 
     /// A package declares no category entries.
-    #[error("no categories defined for package: {0}")]
+    #[error("no categories defined")]
     NoCategories,
 }
