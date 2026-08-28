@@ -246,6 +246,10 @@ RUN uv pip uninstall setuptools
 RUN mkdir -p /opt/tiktoken_cache \
     && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
 
+# Pre-cache gpt2 tokenizer to eliminate runtime HuggingFace downloads in k8s pods
+RUN mkdir -p /opt/hf_cache \
+    && HF_HOME=/opt/hf_cache python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('gpt2')"
+
 ############################################
 ######### Python License Collector #########
 ############################################
@@ -349,9 +353,13 @@ COPY --from=env-builder --chown=1000:1000 /opt/aiperf/venv /opt/aiperf/venv
 # Copy pre-cached tiktoken encoding for zero-network --tokenizer builtin
 COPY --from=env-builder --chown=1000:1000 /opt/tiktoken_cache /opt/tiktoken_cache
 
+# Copy pre-cached HuggingFace tokenizers (gpt2, etc.) for zero-network tokenizer loading in k8s pods
+COPY --from=env-builder --chown=1000:1000 /opt/hf_cache /opt/hf_cache
+
 ENV VIRTUAL_ENV=/opt/aiperf/venv \
     PATH="/opt/aiperf/venv/bin:${PATH}" \
-    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache \
+    HF_HOME=/opt/hf_cache
 
 # Set bash as entrypoint
 ENTRYPOINT ["/bin/bash", "-c"]
