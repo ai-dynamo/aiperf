@@ -11,7 +11,9 @@ use serde_json::value::RawValue;
 
 use super::{
     action::ActionExecutionEvent,
-    checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
+    budget::StreamingResourceBudget,
+    checkpoint::{CheckpointParticipantId, StreamRunIdentity, StreamingCheckpointParticipant},
+    failure::StreamingIssueReporterHandle,
     format::{SessionWatermark, StreamingFormatDescriptor},
     identity::{ContentDigest, SessionCausalFrontier},
     source::SourceSeal,
@@ -25,6 +27,9 @@ mod reliability_view_seal {
 }
 
 mod host;
+
+/// Cross-partition conversation session program.
+pub mod conversation;
 
 #[cfg(test)]
 pub(crate) use host::CheckedSessionQuarantineTombstoneView;
@@ -159,6 +164,21 @@ where
 pub struct StreamingSessionPrepareContext {
     /// Semantic digest of the complete validated session program.
     pub program_semantic_digest: ContentDigest,
+    /// Logical run owning every prepared coordinator.
+    ///
+    /// A session fault can precede the first checkpoint barrier, so the run
+    /// identity cannot be discovered from a barrier.
+    pub run: StreamRunIdentity,
+    /// Stable checkpoint-participant identity frozen in the run plan.
+    pub participant_id: CheckpointParticipantId,
+    /// Semantic namespace of the selected stream.
+    pub stream_semantic_digest: ContentDigest,
+    /// Budget charged for live session state.
+    pub session_state_budget: StreamingResourceBudget,
+    /// Budget charged for prepared checkpoint payloads.
+    pub checkpoint_budget: StreamingResourceBudget,
+    /// Host-owned reliability issue reporting boundary.
+    pub issue_reporter: StreamingIssueReporterHandle,
 }
 
 /// Startup session-program validation and preparation contract.

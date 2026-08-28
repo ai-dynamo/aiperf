@@ -1694,7 +1694,7 @@ pub struct StreamingIssueSummary {
 }
 
 impl StreamingIssueSummary {
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             total: 0,
             by_scope: BTreeMap::new(),
@@ -4140,6 +4140,24 @@ impl PreparedIssueReceiptPartitionView {
         self.view_lease.charged_bytes()
     }
 
+    /// Return the exact receipt count carried by this view.
+    ///
+    /// The coordinator uses this to build the result-partition descriptor that
+    /// `into_result_partition` validates against.
+    #[must_use]
+    pub const fn receipt_count(&self) -> u64 {
+        self.receipt_count
+    }
+
+    /// Return the schema version required by `into_result_partition`.
+    ///
+    /// The coordinator must use this exact value when constructing the descriptor
+    /// passed to `into_result_partition`.
+    #[must_use]
+    pub const fn required_schema_version() -> u32 {
+        ISSUE_RECEIPT_WIRE_VERSION
+    }
+
     /// Consume the view into the reserved immutable result-partition handoff.
     pub fn into_result_partition(
         self,
@@ -4430,11 +4448,10 @@ impl DerivedExportReceiptReference {
     ///
     /// This is the sole reconstruction seam for a post-restart status owner. It is
     /// private to `reliability`: outside this module the only way to obtain a
-    /// reference remains an in-process prepared failure. The durable status
-    /// owner that calls it is a later task, so the mint is currently exercised
-    /// only by this module's tests.
-    #[allow(dead_code)]
-    const fn from_status_fields(
+    /// reference remains an in-process prepared failure. Inside the crate the
+    /// sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) const fn from_status_fields(
         receipt_digest: ContentDigest,
         receipt_length: u64,
         embedded_receipt_digest: ContentDigest,
@@ -4606,11 +4623,10 @@ impl VerifiedDerivedSinkAttemptStatus {
     /// from the caller, so a status owner cannot name a generation it does not
     /// hold. Density is enforced here, once, rather than at every reader: the
     /// forward path defines `counter_before` as `u64::from(attempt_ordinal)`, so
-    /// any other pairing is not a reachable predecessor status. The durable
-    /// status owner that calls it is a later task, so the mint is currently
-    /// exercised only by this module's tests.
-    #[allow(dead_code)]
-    fn from_status_owner(
+    /// any other pairing is not a reachable predecessor status. Inside the
+    /// crate the sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) fn from_status_owner(
         final_generation: &CommittedCheckpointGeneration,
         sink_id: StreamingIssueComponentId,
         last_attempt_ordinal: u32,
@@ -4695,11 +4711,10 @@ impl<'policy> DurableExportReceiptValidationContext<'policy> {
     /// Both authorities are required and cross-checked. The status already
     /// carries the run and generation it was minted against; passing the
     /// committed generation again proves the caller is restoring under the
-    /// generation it currently holds, not under a stale status object. The
-    /// durable status owner that calls it is a later task, so the mint is
-    /// currently exercised only by this module's tests.
-    #[allow(dead_code)]
-    fn from_final_generation_status(
+    /// generation it currently holds, not under a stale status object. Inside
+    /// the crate the sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) fn from_final_generation_status(
         final_generation: &CommittedCheckpointGeneration,
         policy: &'policy PreparedStreamingIssuePolicy,
         status: &VerifiedDerivedSinkAttemptStatus,
@@ -5932,6 +5947,48 @@ fn fail_run_decision(verified: &VerifiedHostIssue) -> StreamingIssueDecision {
             admission_fence_count: None,
         },
         needs_admission_fence: true,
+    }
+}
+
+/// Route one pre-CAS checkpoint publication failure through the host classifier.
+///
+/// A `Some` decision is a reporter-checked terminal invariant: the run cannot
+/// truthfully continue and the caller must fail it. `None` means the attempt
+/// failed without violating an invariant, so the caller retries against the same
+/// expected head or fences admission until capacity returns.
+///
+/// [`CheckpointError::PostCommitNotification`] is deliberately absent: it is
+/// post-CAS by construction, the head is already authoritative, and the pending
+/// notification is retried rather than classified.
+pub(crate) fn classify_checkpoint_attempt_failure(
+    error: &CheckpointError,
+) -> Option<StreamingIssueDecision> {
+    let failure = match error {
+        CheckpointError::GenerationConflict { .. } => HostFailure::CasExpectationMismatch,
+        CheckpointError::ParticipantSetMismatch
+        | CheckpointError::AlreadyInitialized
+        | CheckpointError::LegacyReadOnlyHead => HostFailure::FrozenSemanticDrift,
+        CheckpointError::ObjectVerification => HostFailure::ConflictingStableContent,
+        CheckpointError::GenerationEpochOverflow { .. } => HostFailure::AccountingCorruption,
+        CheckpointError::ParticipantUnavailable { .. }
+        | CheckpointError::DecodeHorizonRegression { .. } => HostFailure::ImpossibleTruthfulCut,
+        CheckpointError::SourceUnavailableOnResume => HostFailure::SourceIdentityAuthorityMismatch,
+        CheckpointError::CutBlockedByInflight { .. }
+        | CheckpointError::StateBudget { .. }
+        | CheckpointError::BackendBudget { .. }
+        | CheckpointError::ResultIndexReadBudgetTooSmall { .. }
+        | CheckpointError::LeaseLost { .. }
+        | CheckpointError::Storage { .. }
+        | CheckpointError::PostCommitNotification { .. } => return None,
+    };
+    Some(fail_run_decision(&classify_host_failure(failure)))
+}
+
+impl StreamingIssueDecision {
+    /// Borrow the host disposition selected for this decision.
+    #[must_use]
+    pub const fn disposition(&self) -> StreamingIssueDisposition {
+        self.disposition
     }
 }
 

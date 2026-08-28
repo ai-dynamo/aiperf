@@ -77,6 +77,14 @@ pub struct RegisterReply {
     pub start_event: EventHandle,
     /// The public artifact TLS certificate, when cross-host transfer is enabled.
     pub artifact_channel: Option<ArtifactChannelServerConfig>,
+    /// Canonical bytes of the controller's accepted streaming capability
+    /// agreement, when the run is a streaming run.
+    ///
+    /// Retained as bytes, not as a decoded value: [`verify_reply`] authenticates
+    /// by re-encoding this payload and byte-comparing it against the attested
+    /// bytes, so a decoded field would make reply authentication depend on
+    /// `rmp_serde` re-encode determinism for a nested type.
+    pub streaming_capability: Option<Vec<u8>>,
     /// Controller signature binding this reply to the connected controller and request.
     attestation: ControllerRegisterAttestation,
     registration_frame: Bytes,
@@ -88,6 +96,7 @@ struct RegisterReplyPayload {
     envelope: Vec<u8>,
     start_event: EventHandle,
     artifact_channel: Option<ArtifactChannelServerConfig>,
+    streaming_capability: Option<Vec<u8>>,
 }
 
 #[derive(Serialize)]
@@ -95,6 +104,7 @@ struct RegisterReplyPayloadRef<'a> {
     envelope: &'a [u8],
     start_event: EventHandle,
     artifact_channel: &'a Option<ArtifactChannelServerConfig>,
+    streaming_capability: Option<&'a [u8]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -122,6 +132,7 @@ fn execute_registration_transaction<A, E, R, N>(
     plan_registration: &PlanRegistration,
     controller_peer: &PeerInfo,
     start_event: EventHandle,
+    streaming_capability: Option<&[u8]>,
     registration_frame: Bytes,
     attest: A,
     encode_reply: E,
@@ -171,13 +182,29 @@ where
         .ok_or_else(|| anyhow::anyhow!("no launch plan for cell {}", register.cell_id))?;
     prepared.install_plan(plan);
     let artifact_channel = prepared.artifact_channel();
-    let reply_payload = encode_reply_payload(prepared.envelope(), start_event, &artifact_channel)
-        .map_err(anyhow::Error::new)?;
+    let reply_payload = encode_reply_payload(
+        prepared.envelope(),
+        start_event,
+        &artifact_channel,
+        streaming_capability,
+    )
+    .map_err(anyhow::Error::new)?;
     let binding = &register
         .registration_proof
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("verified registration proof is missing"))?
         .controller_binding;
+    // Committed inside the one registration transaction: the controller can only
+    // seal a streaming frame for a cell whose session it has bound here, and an
+    // exact retry rebinds the identical value.
+    #[cfg(feature = "streaming")]
+    registration_authority.streaming_sessions().commit(
+        register.cell_id,
+        crate::engine::cellular_registration::derive_controller_streaming_session(
+            binding,
+            registration_authority.run_nonce(),
+        ),
+    )?;
     let attestation = attest(
         binding,
         verified.encoded().as_ref(),
@@ -199,11 +226,13 @@ fn encode_reply_payload(
     envelope: &[u8],
     start_event: EventHandle,
     artifact_channel: &Option<ArtifactChannelServerConfig>,
+    streaming_capability: Option<&[u8]>,
 ) -> Result<Vec<u8>, CellTransportError> {
     rmp_serde::to_vec(&RegisterReplyPayloadRef {
         envelope,
         start_event,
         artifact_channel,
+        streaming_capability,
     })
     .map_err(encode)
 }
@@ -218,10 +247,31 @@ pub(crate) fn decode_reply(
         envelope: payload.envelope,
         start_event: payload.start_event,
         artifact_channel: payload.artifact_channel,
+        streaming_capability: payload.streaming_capability,
         attestation: wire.attestation,
         registration_frame,
         reply_payload: Bytes::from(wire.payload),
     })
+}
+
+/// Derive the controller streaming session for a verified controller connection.
+///
+/// The session is computed from the binding this cell has already proven, so it
+/// never travels on the wire and cannot be pinned by a hostile controller.
+#[cfg(feature = "streaming")]
+pub(crate) fn controller_streaming_session(
+    controller: &ConnectedController,
+    run_nonce: [u8; 32],
+) -> Result<
+    crate::cellular::streaming_protocol::ControllerStreamingSessionId,
+    CellTransportError,
+> {
+    Ok(
+        crate::engine::cellular_registration::derive_controller_streaming_session(
+            &controller.binding()?,
+            run_nonce,
+        ),
+    )
 }
 
 pub(crate) fn verify_reply(
@@ -248,8 +298,12 @@ pub(crate) fn verify_reply(
             "controller binding does not match the connection",
         ));
     }
-    let encoded_payload =
-        encode_reply_payload(&reply.envelope, reply.start_event, &reply.artifact_channel)?;
+    let encoded_payload = encode_reply_payload(
+        &reply.envelope,
+        reply.start_event,
+        &reply.artifact_channel,
+        reply.streaming_capability.as_deref(),
+    )?;
     if encoded_payload.as_slice() != reply.reply_payload.as_ref() {
         return Err(CellTransportError::Authentication(
             "controller reply payload is inconsistent",
@@ -314,6 +368,29 @@ impl VeloControllerTransport {
         cell_count: u32,
         start_event: EventHandle,
     ) -> Result<Self, CellTransportError> {
+        Self::bind_controller_with_streaming(
+            velo,
+            registration_authority,
+            plan_registration,
+            cell_count,
+            start_event,
+            None,
+        )
+    }
+
+    /// Bind the controller and propagate one run-scoped streaming capability
+    /// agreement to every registering cell.
+    ///
+    /// The agreement is a run constant, not per-cell state, so it is bound once
+    /// here rather than threaded through each cell's registration plan.
+    pub(crate) fn bind_controller_with_streaming(
+        velo: Arc<Velo>,
+        registration_authority: Arc<CellRegistrationAuthority>,
+        plan_registration: PlanRegistration,
+        cell_count: u32,
+        start_event: EventHandle,
+        streaming_capability: Option<Arc<[u8]>>,
+    ) -> Result<Self, CellTransportError> {
         let reply_attestor = registration_authority.reply_attestor();
         Self::bind_controller_inner(
             velo,
@@ -322,6 +399,7 @@ impl VeloControllerTransport {
             plan_registration,
             cell_count,
             start_event,
+            streaming_capability,
         )
     }
 
@@ -332,6 +410,7 @@ impl VeloControllerTransport {
         plan_registration: PlanRegistration,
         cell_count: u32,
         start_event: EventHandle,
+        streaming_capability: Option<Arc<[u8]>>,
     ) -> Result<Self, CellTransportError> {
         let (sender, receiver) = mpsc::channel(1024);
         let all_registered = Arc::new(Notify::new());
@@ -359,6 +438,8 @@ impl VeloControllerTransport {
                 let reg_notify = reg_notify.clone();
                 let reply_attestor = reply_attestor.clone();
                 let controller_peer = controller_peer.clone();
+                // Refcount bump, not a copy of the sealed bytes.
+                let streaming_capability = streaming_capability.clone();
                 async move {
                     execute_registration_transaction(
                         &registration_authority,
@@ -366,6 +447,7 @@ impl VeloControllerTransport {
                         &plan_registration,
                         &controller_peer,
                         start_event,
+                        streaming_capability.as_deref(),
                         ctx.payload.clone(),
                         |binding, registration, payload| {
                             reply_attestor.attest(binding, registration, payload)
@@ -1764,8 +1846,18 @@ mod tests {
 
     impl AuthenticatedRegisterFixture {
         fn signed_reply(&self, cell_id: u32, envelope: &[u8]) -> RegisterReply {
-            let reply_payload = encode_reply_payload(envelope, self.start_event, &None)
-                .expect("encode reply payload");
+            self.signed_reply_with_streaming(cell_id, envelope, None)
+        }
+
+        fn signed_reply_with_streaming(
+            &self,
+            cell_id: u32,
+            envelope: &[u8],
+            streaming_capability: Option<&[u8]>,
+        ) -> RegisterReply {
+            let reply_payload =
+                encode_reply_payload(envelope, self.start_event, &None, streaming_capability)
+                    .expect("encode reply payload");
             let registration_frame = Bytes::from(
                 self.credential
                     .seal_payload(
@@ -1788,6 +1880,7 @@ mod tests {
                 envelope: envelope.to_vec(),
                 start_event: self.start_event,
                 artifact_channel: None,
+                streaming_capability: streaming_capability.map(<[u8]>::to_vec),
                 attestation,
                 registration_frame,
                 reply_payload: Bytes::from(reply_payload),
@@ -2088,6 +2181,7 @@ mod tests {
                 planner,
                 &self.controller_peer,
                 self.start_event,
+                None,
                 frame,
                 |binding, registration, payload| {
                     if failure.load(Ordering::Relaxed) == FailurePoint::Attest as u8 {
@@ -2327,6 +2421,52 @@ mod tests {
                 0,
             )
             .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn register_reply_attestation_covers_the_propagated_capability() {
+        let fixture = authenticated_register_fixture().await;
+        let reply = fixture.signed_reply_with_streaming(0, b"a", Some(b"sealed-agreement"));
+        assert!(
+            verify_reply(
+                &fixture.connected,
+                &fixture.verifier,
+                &fixture.registration,
+                &reply,
+                0,
+            )
+            .is_ok()
+        );
+
+        let mut tampered = reply;
+        tampered.streaming_capability = Some(b"other-agreement".to_vec());
+        assert!(matches!(
+            verify_reply(
+                &fixture.connected,
+                &fixture.verifier,
+                &fixture.registration,
+                &tampered,
+                0,
+            ),
+            Err(CellTransportError::Authentication(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn non_streaming_reply_carries_no_capability_propagation() {
+        let fixture = authenticated_register_fixture().await;
+        let reply = fixture.signed_reply(0, b"a");
+        assert!(reply.streaming_capability.is_none());
+        assert!(
+            verify_reply(
+                &fixture.connected,
+                &fixture.verifier,
+                &fixture.registration,
+                &reply,
+                0,
+            )
+            .is_ok()
         );
     }
 

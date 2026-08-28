@@ -18,6 +18,12 @@ pub mod partition;
 pub mod phaser;
 pub mod shard;
 pub mod sketch;
+/// Controller-to-cell streaming capability agreement propagation.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub mod streaming_capability;
+/// Strict, authenticated controller-to-cell streaming commands and events.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub mod streaming_protocol;
 pub mod transport;
 
 pub use heartbeat::{
@@ -31,6 +37,12 @@ pub use shard::{
     merge_store_partitions,
 };
 pub use sketch::TDigest;
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub use streaming_capability::{
+    STREAMING_CAPABILITY_PROPAGATION_VERSION, StreamingCapabilityCategory,
+    StreamingCapabilityNegotiationError, StreamingCapabilityPropagation,
+    StreamingCapabilityPropagationEncodeError, StreamingCapabilitySealError,
+};
 #[cfg(all(feature = "cellular", feature = "engine"))]
 pub use transport::velo_transport::{VeloCellClient, VeloControllerTransport};
 pub use transport::{

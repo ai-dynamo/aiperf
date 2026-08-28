@@ -46,8 +46,11 @@ use crate::eval::{
 use crate::export::ExporterRegistry;
 #[cfg(feature = "streaming")]
 use crate::streaming::{
-    action::StreamingActionSinkFactory, checkpoint_backend::StreamingCheckpointBackendFactory,
-    format::StreamingDatasetFormatFactory, session::StreamingSessionProgramFactory,
+    action::StreamingActionSinkFactory,
+    checkpoint_backend::StreamingCheckpointBackendFactory,
+    checkpoint_factories::{LocalCheckpointBackendFactory, NoneCheckpointBackendFactory},
+    format::StreamingDatasetFormatFactory,
+    session::StreamingSessionProgramFactory,
     source::StreamingDatasetSourceFactory,
 };
 
@@ -166,16 +169,39 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &crate::engine::registry::WebSocketExtension,
             #[cfg(all(feature = "engine", feature = "dynosim"))]
             &crate::engine::registry::DynosimExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingExtension,
             #[cfg(feature = "engine")]
             &BuiltinNativeGraphExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingSessionExtension,
         ])
+    }
+}
+
+/// Built-in streaming session programs (`conversation`).
+#[cfg(feature = "streaming")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinStreamingSessionExtension;
+
+#[cfg(feature = "streaming")]
+impl AIPerfExtension for BuiltinStreamingSessionExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.streaming-sessions"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_stream_session_program(std::sync::Arc::new(
+                crate::streaming::session::conversation::StreamingConversationProgramFactory,
+            ))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
     }
 }
 
 /// Built-in dataset-format loaders (`synthetic`, `sharegpt`, recorded traces, …).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuiltinLoadersExtension;
-
 impl AIPerfExtension for BuiltinLoadersExtension {
     fn name(&self) -> &str {
         "aiperf.builtin.loaders"
@@ -251,6 +277,48 @@ impl AIPerfExtension for BuiltinActuatorsExtension {
             .actuators
             .register_builtins()
             .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+}
+
+/// Streaming dataset sources, formats, and checkpoint backends whose decode
+/// authority is entirely compiled in.
+///
+/// Adapters that must bind host-resolved authority before they can exist —
+/// `hf_rows` (credentialed page transport), `synthesis` (resolved tokenizer and
+/// its receipt), and `streaming_dynamo` (prepared synthesis-profile digest) —
+/// are deliberately absent. A startup-only registry cannot fabricate that
+/// authority, so the run's composition root constructs and registers them.
+#[cfg(feature = "streaming")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinStreamingExtension;
+
+#[cfg(feature = "streaming")]
+impl AIPerfExtension for BuiltinStreamingExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.streaming"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        for factory in crate::streaming::sources::builtin_source_factories() {
+            registry
+                .register_stream_source(factory)
+                .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        }
+        for factory in crate::streaming::formats::builtin_format_factories() {
+            registry
+                .register_stream_format(factory)
+                .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        }
+        // Checkpoint backends: `local` prepares the crash-durable on-disk store
+        // and `none` is the explicit checkpoint-free selection. Every other
+        // backend identifier is absent and fails closed at selection.
+        registry
+            .register_stream_checkpoint_backend(Arc::new(LocalCheckpointBackendFactory))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .register_stream_checkpoint_backend(Arc::new(NoneCheckpointBackendFactory))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        Ok(())
     }
 }
 
@@ -492,6 +560,8 @@ impl AIPerfRegistry {
             &BuiltinEndpointsExtension,
             &BuiltinExportersExtension,
             &BuiltinActuatorsExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingExtension,
         ])
     }
 

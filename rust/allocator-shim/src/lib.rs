@@ -37,9 +37,13 @@
 //!
 //! ```rust,ignore
 //! // build.rs
+//! let provider_dir = std::env::var("AIPERF_ALLOC_V1_DIR").unwrap();
 //! println!("cargo:rustc-link-lib=dylib=aiperf_alloc_v1");
-//! println!("cargo:rustc-link-search=native=<path-to-provider-dir>");
-//! println!("cargo:rustc-link-arg=-Wl,-rpath,<path-to-provider-dir>");
+//! println!("cargo:rustc-link-search=native={provider_dir}");
+//! // Unix only: rpath so the loader finds the provider at runtime.
+//! // On Windows, place the DLL next to the executable instead.
+//! #[cfg(unix)]
+//! println!("cargo:rustc-link-arg=-Wl,-rpath,{provider_dir}");
 //! ```
 
 use std::alloc::{GlobalAlloc, Layout};
