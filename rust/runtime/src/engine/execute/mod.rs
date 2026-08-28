@@ -136,6 +136,7 @@ use crate::engine::turn_execution::{
 use crate::server_metrics::ServerMetricsSummary;
 
 mod capture;
+mod capture_service;
 mod compose_sidecars;
 mod dataset_build;
 mod entrypoints;
@@ -146,6 +147,7 @@ mod sharding;
 mod sidecars;
 
 pub(crate) use capture::*;
+pub(crate) use capture_service::*;
 pub(crate) use compose_sidecars::*;
 pub(crate) use dataset_build::*;
 pub(crate) use entrypoints::*;
