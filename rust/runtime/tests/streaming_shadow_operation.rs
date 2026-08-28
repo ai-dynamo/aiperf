@@ -202,7 +202,7 @@ fn resume_with_mismatched_synthesis_authority_is_refused() {
 #[test]
 fn shadow_replay_workload_is_registered_under_its_stable_id() {
     assert_eq!(SHADOW_REPLAY_WORKLOAD_DESCRIPTOR.id, "shadow_replay");
-    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::default();
+    let mut registry = aiperf_runtime::extensions::AIPerfRegistry::empty_or_base();
     aiperf_runtime::engine::streaming_execution::register_streaming_workloads(&mut registry)
         .expect("register the streaming workload");
     let ids: BTreeMap<&str, &str> = registry
