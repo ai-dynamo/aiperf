@@ -1699,6 +1699,16 @@ pub struct StreamingIssueSummary {
     pub is_admission_fenced: bool,
 }
 
+impl Default for StreamingIssueSummary {
+    /// The empty summary: no retained observation and no admission fence.
+    ///
+    /// Delegates to [`StreamingIssueSummary::empty`] so the one definition of
+    /// "nothing observed yet" cannot drift from a structural derive.
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
 impl StreamingIssueSummary {
     /// Build a summary with no retained observation and no fence.
     #[must_use]
