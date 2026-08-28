@@ -853,9 +853,9 @@ async def _purge_reused_cluster_resources(
 ) -> None:
     """Remove stale workloads from namespaces owned by this pytest session.
 
-    Uses operator_job_namespace (which includes the session PID) to avoid
+    Uses operator_job_namespace (which includes the session UUID) to avoid
     touching namespaces owned by other concurrently-running pytest sessions.
-    Also purges dead-PID operator namespaces that were left by killed sessions.
+    Also purges stale operator namespaces (>2h old) left by killed sessions.
     """
 
     async def _purge_ns(ns: str) -> None:
@@ -954,47 +954,65 @@ async def _purge_dead_session_operator_namespaces(
 ) -> None:
     """Delete operator job namespaces left by killed pytest sessions.
 
-    Namespaces matching ``aiperf-jobs-{suffix}-{5-digit-pid}`` that belong to
-    a PID that is no longer alive are safe to purge — their session is gone.
+    Namespaces matching ``aiperf-jobs-{suffix}-{8-hex}`` that are older than
+    2 hours are safe to purge — their session is definitely gone.  This avoids
+    PID-based dead-session detection which is unreliable due to PID reuse and
+    the fact that xdist worker PIDs do not survive into the namespace name
+    unambiguously (os.getpid() % 100000 can collide with unrelated processes).
     """
     result = await kubectl.run(
         "get",
         "namespaces",
         "-o",
-        "jsonpath={.items[*].metadata.name}",
+        "jsonpath={range .items[*]}{.metadata.name}{'\\t'}{.metadata.creationTimestamp}{'\\n'}{end}",
         check=False,
     )
     if result.returncode != 0 or not result.stdout.strip():
         return
     prefix = f"aiperf-jobs-{worker_namespace_suffix}-"
-    for ns in result.stdout.strip().split():
+    now = time.time()
+    stale_ttl_seconds = 7200  # 2 hours
+    for line in result.stdout.strip().splitlines():
+        parts = line.strip().split("\t", 1)
+        if len(parts) != 2:
+            continue
+        ns, created_ts = parts[0], parts[1]
         if ns == current_operator_ns or not ns.startswith(prefix):
             continue
-        pid_part = ns[len(prefix) :]
-        if not pid_part.isdigit():
+        suffix_part = ns[len(prefix) :]
+        # Only touch UUID-style namespaces (8 lowercase hex chars); leave old
+        # PID-suffixed ones alone since those are 5-digit numeric.
+        if len(suffix_part) != 8 or not all(
+            c in "0123456789abcdef" for c in suffix_part
+        ):
             continue
-        pid = int(pid_part)
         try:
-            os.kill(pid, 0)  # process still alive — skip
-        except OSError:
-            # PID is dead: purge the namespace and then delete it.
-            await kubectl.run(
-                "delete",
-                "aiperfjobs,aiperfsweeps,jobsets",
-                "--all",
-                "-n",
-                ns,
-                "--ignore-not-found",
-                check=False,
-            )
-            await kubectl.run(
-                "delete",
-                "namespace",
-                ns,
-                "--ignore-not-found",
-                "--wait=false",
-                check=False,
-            )
+            import datetime
+
+            dt = datetime.datetime.fromisoformat(created_ts.replace("Z", "+00:00"))
+            age_seconds = now - dt.timestamp()
+        except (ValueError, AttributeError):
+            continue
+        if age_seconds < stale_ttl_seconds:
+            continue
+        # Namespace is stale (>2h old) — purge it.
+        await kubectl.run(
+            "delete",
+            "aiperfjobs,aiperfsweeps,jobsets",
+            "--all",
+            "-n",
+            ns,
+            "--ignore-not-found",
+            check=False,
+        )
+        await kubectl.run(
+            "delete",
+            "namespace",
+            ns,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
 
 
 def _image_config(
@@ -1506,9 +1524,14 @@ def worker_namespace_suffix(worker_id: str) -> str:
 
 
 @pytest.fixture(scope="session")
-def _session_pid() -> str:
-    """Unique 5-char zero-padded PID for per-session namespace isolation."""
-    return f"{os.getpid() % 100000:05d}"
+def _session_uuid() -> str:
+    """Unique 8-char hex token for per-session namespace isolation.
+
+    Using a UUID instead of a PID avoids false-positive dead-session detection:
+    PIDs mod 100000 can collide with unrelated processes, causing a concurrent
+    session's operator namespace to be incorrectly purged mid-run.
+    """
+    return uuid.uuid4().hex[:8]
 
 
 @pytest.fixture(scope="session")
@@ -1518,13 +1541,13 @@ def benchmark_namespace(worker_namespace_suffix: str) -> str:
 
 
 @pytest.fixture(scope="session")
-def operator_job_namespace(worker_namespace_suffix: str, _session_pid: str) -> str:
+def operator_job_namespace(worker_namespace_suffix: str, _session_uuid: str) -> str:
     """Per-session namespace used for AIPerfJob CRs.
 
-    Includes the current process PID so concurrent pytest sessions cannot
+    Includes a session UUID so concurrent pytest sessions cannot
     purge each other's live jobs via _purge_stale_aiperf_resources.
     """
-    return f"aiperf-jobs-{worker_namespace_suffix}-{_session_pid}"
+    return f"aiperf-jobs-{worker_namespace_suffix}-{_session_uuid}"
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
