@@ -74,13 +74,21 @@ Defaults: benchmark namespace `aiperf-benchmarks`, operator namespace
   cancel second.
 - **Ambiguous names are refused, not guessed.** When an `AIPerfJob` and an
   `AIPerfSweep` share a name, destructive commands need `--kind job|sweep`.
+  The refusal prints an error and **still exits 0**, so a script that only
+  checks `$?` will believe it cancelled or deleted something.
+- **`cancel` and `delete` only know about CRs, and say nothing useful when
+  there isn't one.** Both resolve the target through `find_aiperf_cr`; a
+  direct-mode (`--no-operator`) run has no `AIPerfJob`, so they print "No
+  AIPerfJob or AIPerfSweep named ..." and exit 0 while the JobSet keeps
+  running. Tear down direct-mode runs with `kubectl delete jobset <name>` (plus
+  its ConfigMap/Role/RoleBinding), not with `aiperf kube delete`.
 
 ## Exit-code convention
 
 | Group | Commands | Exits non-zero when |
 |---|---|---|
 | Gating | `validate`, `preflight`, `results`, `results list-runs` | any failure, including partial download |
-| Addressing | `attach`, `logs`, `cancel`, `delete`, `shutdown`, `debug`, `list` | only `attach`/`logs`, only when the target does not exist (`list` also exits 1 on conflicting status filters) |
+| Addressing | `attach`, `logs`, `cancel`, `delete`, `shutdown`, `debug`, `list` | only `attach`/`logs`, only when the target does not exist (`list` also exits 1 on conflicting status filters). `cancel`/`delete` exit 0 even on not-found and on ambiguous-name refusal |
 
 Use `--ignore-not-found` on `attach`/`logs` in teardown scripts. A target that
 exists but has nothing to show exits 0 by design.
@@ -110,3 +118,4 @@ discovery.
 | Trusting `--dry-run` as validation | Unknown envelope keys print fine and reject on submit |
 | Omitting `-n` after switching clusters | Reads the other cluster's last-benchmark record |
 | Reusing a direct-mode name without deleting ConfigMap/Role/RoleBinding | Direct mode refuses to adopt existing resources |
+| `aiperf kube delete` on a direct-mode run | Prints not-found, exits 0, JobSet keeps burning cluster capacity |

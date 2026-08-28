@@ -56,8 +56,15 @@ no `apiVersion`/`kind` is detected, checked against the `AIPerfSweep` contract
 (inferred from the presence of `sweep:`), and passes with a warning naming the
 contract it used. Only the wrapped-CR form additionally validates deployment
 fields (`image`, `podTemplate`, worker counts, credential transport), so
-validate the CR you would `kubectl apply` when those matter. `--dry-run` on
-`aiperf kube sweep` remains the way to preview the expanded variation list.
+validate the CR you would `kubectl apply` when those matter.
+
+**`--dry-run` does not expand anything.** It renders the `AIPerfSweep` CR,
+prints it as JSON, and returns before touching the cluster
+(`src/aiperf/cli_commands/kube/sweep.py`). It will not show you the variation
+list, the child count, or whether the sweep is over the cardinality caps. To
+see the variation count before you submit, expand it locally (the in-process
+`aiperf profile` sweep path prints the plan) or read the caps below and do the
+multiplication yourself.
 
 ## Parameter path rules
 
@@ -102,6 +109,13 @@ On `debug`, `--variation` must be spelled long — `-v` is `--verbose` there.
   Size `--total-workers` for one child; a 32-way grid at 64 workers needs
   capacity for 64 workers, not 2048, and needs no Kueue serialization. What
   scales with the grid is wall-clock, not capacity.
+- **The cardinality caps are enforced by the operator at admission, not by
+  the CLI.** 200 variations (`MAX_SWEEP_VARIATIONS`) and 10 trials
+  (`MAX_SWEEP_TRIALS`, i.e. `multiRun.numRuns` 1..10) — both raise
+  `kopf.PermanentError`, so the CR is accepted by the apiserver and then goes
+  `Failed` with the cap message in `status.error`, with no retry. `--dry-run`
+  and `aiperf kube validate` both pass on an over-cap sweep. Count your grid
+  before submitting: the product of every axis length must be <= 200.
 - **The aggregate is inlined into CR status only up to ~600 KB**
   (`AIPERF_K8S_JOBSET_SWEEP_AGGREGATE_INLINE_MAX_BYTES`; the apiserver rejects
   patches over ~1 MiB with HTTP 413). Past that the sweep-controller drops

@@ -134,6 +134,13 @@ Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
   Benchmark pods take theirs from the CR (`spec.podTemplate.imagePullSecrets`)
   or `--image-pull-secrets`. Setting only the chart value yields a healthy
   operator and `ImagePullBackOff` on every job.
+- **`storage.storageClassName` defaults to `""`, and the PVC then omits the
+  field entirely** — which resolves to the cluster's *default* StorageClass. On
+  a cluster with no default class the PVC pends forever and `helm --wait` times
+  out with nothing obviously wrong. Name the class explicitly, or set
+  `storage.enabled=false` to fall back to an emptyDir bounded by
+  `storage.emptyDirSizeLimit` (results then die with the pod — test clusters
+  only).
 - **A `WaitForFirstConsumer` storage class makes the PVC pend until the
   operator pod schedules.** That is normal; a PVC pending *after* the pod is
   Running means the class or zone is wrong.
@@ -151,8 +158,15 @@ Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
   it out of the chart and apply
   `deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml`'s Role/RoleBinding out of band.
 - **`operator.watchNamespaces` does not narrow RBAC.** The ClusterRole still
-  grants cluster-wide reads; a genuinely scoped install also needs
-  `rbac.create=false` and namespace-scoped RBAC applied out of band.
+  grants cluster-wide reads. Narrowing it is not a one-flag change:
+  `rbac.create=false` gates the *whole* `deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml` file, so it also
+  deletes the benchmark Role/RoleBinding that gives job pods `pods
+  get/list/watch`, `jobsets patch`, and `aiperfjobs/status patch` — the install
+  succeeds and then every benchmark fails. It also does not remove cluster
+  scope on its own: the `helm test` ClusterRole/ClusterRoleBinding still
+  render, so a zero-ClusterRole install needs `rbac.create=false` **and**
+  `tests.enabled=false`, with both the operator and the benchmark RBAC
+  reapplied namespace-scoped out of band.
 - **Mutable tags silently deploy old code.** A rebuilt `:latest` with
   `pullPolicy: IfNotPresent` reuses whatever is on the node. Use immutable
   tags, and confirm what actually rolled out.
@@ -168,9 +182,14 @@ Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
   (monitor/timeout/results tunables) that silently drops anything else:
 
   ```bash
-  kubectl set env -n "$NS_OP" deploy/aiperf-operator \
+  kubectl set env -n "$NS_OP" deploy/aiperf-operator -c operator \
     AIPERF_K8S_RECORDS_MANAGER_CPU=4000m
   ```
+
+  Pass `-c operator` or the var also lands on the results-server container.
+  The chart templates the operator env list in full and has no `extraEnv`, so
+  **the next `helm upgrade` silently reverts this** — re-apply it after every
+  upgrade, or the campaign that worked last month stalls this month.
 - **Upgrading the chart does not restart running benchmarks.** In-flight
   AIPerfJobs keep their old controller image.
 
@@ -178,10 +197,15 @@ Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
 
 ```bash
 kubectl --context "$CTX" get crd | grep aiperf.nvidia.com   # aiperfjobs + aiperfsweeps
-kubectl --context "$CTX" -n "$NS_OP" get pods,pvc           # 2/2 ready, PVC Bound
+kubectl --context "$CTX" -n "$NS_OP" get pods,pvc           # 2/2 ready (3/3 with dashboard), PVC Bound
 kubectl --context "$CTX" -n "$NS_OP" logs deploy/aiperf-operator -c operator --tail=20
 helm --kube-context "$CTX" test aiperf-operator -n "$NS_OP"
 ```
+
+`helm test` pulls `alpine/k8s` from Docker Hub, not from your registry, and the
+chart's `imagePullSecrets` holds credentials for the wrong host. On an
+air-gapped or Docker-Hub-blocked cluster this step fails for reasons unrelated
+to the operator — install with `tests.enabled=false` and verify by hand.
 
 Then the online check, with the arguments a real job will use:
 
@@ -192,11 +216,23 @@ aiperf kube preflight --kube-context "$CTX" -n "$NS_BENCH" \
   --workers 16 -o json | jq '.checks[] | select(.status == "fail" or .status == "warn")'
 ```
 
-`preflight` covers connectivity, API versions, RBAC, node capacity against the
-worker projection, image *reference* sanity, and endpoint reachability. It
-does **not** prove the image is pullable: supplying `--image-pull-secret`
-short-circuits the check to `PASS` without contacting the registry, so a
-typo'd tag or an unpushed local build sails through. `CheckStatus` also emits
+`preflight` covers apiserver connectivity, API versions, and RBAC honestly.
+Read the other three checks as existence tests, not reachability tests:
+
+- **Image**: parses the reference. Supplying `--image-pull-secret`
+  short-circuits it to `PASS` without contacting the registry, so a typo'd tag
+  or an unpushed local build sails through.
+- **Endpoint**: for a `.svc` host it only confirms the Service *object*
+  exists; anything else returns `INFO` unverified. A Service with zero ready
+  endpoints or a wrong port passes.
+- **Node capacity**: sums `allocatable` across Ready nodes and compares it to
+  the worker projection. It ignores current pod usage, taints, `nodeSelector`,
+  and ResourceQuota, so a full or fully-tainted cluster passes and every pod
+  then goes Pending. It also reads `AIPERF_K8S_*` from the *CLI's* environment,
+  not the operator's, so a raised records-manager CPU is invisible to it.
+
+A clean preflight means "nothing is obviously missing", not "this run will
+schedule". `CheckStatus` also emits
 `skip` and `info` for benign cases, which is why the filter above matches
 `fail`/`warn` rather than everything that is not `pass`. Re-run it
 whenever the worker count or endpoint changes — capacity is the check that

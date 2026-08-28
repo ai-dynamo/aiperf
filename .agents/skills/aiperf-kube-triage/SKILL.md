@@ -38,7 +38,7 @@ here) and `-t <trial>`.
 | `Queued` | Kueue has not admitted the workload | `kubectl get workloads -n <NS>`; see `docs/kubernetes/kueue.md` |
 | `Initializing` > ~120 s | Image pull, ConfigMap, or ZMQ connection probe | `aiperf kube logs <ID> --container control-plane --tail 50` |
 | `Running`, restarts > 3 | Crash loop | `aiperf kube logs <ID> --container <c> --tail 100` |
-| `Running`, OOM-killed pod | Memory limit too low | raise the budget on the **operator** deployment: worker pods use `AIPERF_K8S_WORKER_POD_MEMORY`, the `control-plane` container uses `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` |
+| `Running`, OOM-killed pod | Node memory pressure, *not* a container limit (see below) | `kubectl describe node` for pressure; raise `AIPERF_K8S_WORKER_POD_MEMORY` / `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` on the **operator** deployment |
 | `Running`, `requestsCompleted` flat | Stalled benchmark | check endpoint reachability from inside the cluster |
 | `Running`, `request_error_rate.avg > 5` | Endpoint rejecting requests | inspect worker logs and server-side errors |
 | `Failed` | See failure table below | `kubectl ... .status.error` + controller logs |
@@ -74,6 +74,18 @@ exhausted.
   `AIPERF_K8S_SYSTEM_CONTROLLER_CPU`). At very high request rates a pegged core
   starves the event loop, heartbeats expire, and the CR freezes mid-phase. Raise
   the CPU before hunting for a logic bug.
+- **The default `resourceMode` is `burstable`, so pods have requests and no
+  limits.** `spec.resourceMode` defaults to `burstable`
+  (`src/aiperf/kubernetes/jobset.py`), which emits `requests` only. That means
+  a container cannot be cgroup-OOM-killed for exceeding its memory budget and
+  cannot be CFS-throttled for exceeding its CPU budget — the `75m`/`150m`
+  numbers are scheduling hints, not ceilings. Two consequences: an `OOMKilled`
+  container is evidence of *node* memory pressure or kubelet eviction, not of a
+  too-small `AIPERF_K8S_*_MEMORY`; and a starving service is losing a fair-share
+  race against co-tenants, which raising the request fixes only indirectly (by
+  moving the pod or reserving more share). Set `resourceMode: guaranteed` if you
+  actually want the env budgets enforced as limits, and expect real OOM kills
+  once you do.
 - **Heartbeat expiry is a symptom, not a cause.** `AIPERF_K8S_CONTROLLER_HEARTBEAT_EXPIRY_SECONDS`
   defaults to 30 s and must be at least twice the interval; widening it hides
   the starvation instead of fixing it.
@@ -92,9 +104,17 @@ exhausted.
 - **Operator-mode results are harvested only on terminal phase.** "results
   missing" mid-run is correct behavior; use `--from-pods` to read the live
   controller instead.
-- **Operator-mode JobSet TTL is 300 s.** Pods vanish shortly after completion —
-  capture logs before then, or read results from the operator PVC, which
-  survives.
+- **On a successful run the pods do not last 300 s — they are deleted at
+  once.** `AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED` (300 s) is only the
+  fallback: once the operator has harvested results it calls
+  `_maybe_delete_jobset_after_success`
+  (`src/aiperf/operator/handlers/completion.py`) and deletes the JobSet
+  immediately. The TTL window is real only for failed runs and for partial
+  harvests that are being retried. Never plan to "grab the logs after it
+  finishes" — stream them with `--follow` during the run, or accept that a
+  clean success leaves you only the PVC artifacts. Direct (operator-less) mode
+  is the opposite: `AIPERF_K8S_JOBSET_DIRECT_MODE_TTL_SECONDS` defaults to
+  28800 s (8 h) so pods stay around for manual retrieval.
 - **`debug`, `cancel`, `delete`, `list` exit 0 on a missing target** by design.
   Never gate a script on their exit status; use `attach` or `logs`.
 - **First deploy attempts flake more than steady state** (ConfigMap propagation,
