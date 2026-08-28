@@ -15,10 +15,22 @@ vector database, and one **QnA** pipeline that answers multi-hop queries by
 looping retrieve-and-reason steps across several models of different roles and
 sizes until the accumulated evidence is sufficient.
 
-The scored quantity is not a token rate. Ingestion reports **documents per
+The scored quantity is not a token rate. Ingestion reports **passages per
 second**; QnA reports **tasks per second**, where one task is one query answered
 end to end across a variable number of hops and a dozen or more model calls
 spread over at least four distinct served endpoints.
+
+The ingestion unit needs care, because the announcement and the implementation
+disagree. The post says documents per second and argues the document is "the
+fixed unit of work every submitter starts from." The scored code reports
+passages: `measure_indexing_with_chunking.py:414` emits
+`throughput_passages_per_second`, `:450` prints `passages/sec`, and `:391`
+computes it as `vector_count / data_setup_time` where `vector_count` is
+`index.ntotal`. Against 2,515 documents and 108,711 passages those are the same
+run described by numbers 43x apart. This record follows the code: the scored
+ingestion metric is `rag_passages_per_second`. A document rate is still emitted
+as `rag_ingest_harness_documents_per_second`, under a name that cannot be
+mistaken for the MLPerf submission metric, for the reason in I12b.
 
 This record fixes AIPerf's position in that system. AIPerf is a load generator
 and measurement front end: it owns orchestration, HTML parsing, chunking, the
@@ -26,18 +38,29 @@ vector index, the hop control loop, measurement, and scoring. It never performs
 model inference in-process. Every embedding, rerank, grade, sufficiency,
 rewrite, answer, and judge call leaves the process as a request to a served
 endpoint over the existing HTTP/gRPC transports, so the system under test is the
-serving stack — exactly the surface a submitter optimizes through model
-placement, co-residency, cross-stage scheduling, precision selection, and prefix
-caching.
+serving stack.
 
-That position holds without qualification for `rag_qna`, where every stage of the
-scored pipeline is a request. It holds only partially for `rag_ingest`, whose
-measured window contains AIPerf's own parser, chunker, and index build, with the
-embedding leg as the only part that leaves the process. `rag_ingest` is therefore
-a real, fully measured workload, but its throughput is a property of the harness
-and its host as much as of the system under test, and this record labels it that
-way everywhere it is reported. The reasoning, and the reference's contrasting
-position, are in `### Where the announcement post binds what the code does not`.
+The announcement names five levers that surface makes available — model
+placement, co-residency, cross-stage scheduling, precision selection, and prefix
+caching. This design does not claim to expose all five. What it can and cannot
+show about each is stated once, in `### Submitter levers and what this design can
+observe`, and that section is a limit, not an advertisement. Naming the levers as
+the target surface while producing no artifact from which four of the five can be
+read would be exactly the kind of plausible overclaim this record exists to
+avoid.
+
+Neither workload's measured window is purely the serving stack, and the design
+says so in both places rather than only the obvious one. `rag_ingest`'s window
+contains AIPerf's own parser, chunker, and index build, with the embedding leg as
+the only part that leaves the process. `rag_qna` is subtler: the reference's
+retrieval is an in-process FAISS search (`retrieve/vectordb.py:263-266`) and ours
+is an in-process `VectorIndex::search`, so on the default in-process path some
+host CPU time sits on the scored task timeline too. Both are real, fully measured
+workloads. Neither throughput is a property of the served system alone, and I12b
+and I12c require each to be reported in a form that decomposes rather than a
+single number that hides the split. The reasoning, and the reference's
+contrasting position on ingestion comparability, are in `### Where the
+announcement post binds what the code does not`.
 
 ### What this design optimizes for
 
@@ -91,10 +114,18 @@ in the pinned plan and in the query set, checked before dispatch.
 *Without it:* a stale index silently answers a newer query set and the accuracy
 number describes a corpus nobody built.
 
-**I2. `corpus_digest` is a pure function of exactly three inputs:** the sorted
-document identities each binding its bytes, the frozen chunker parameters, and the
-embedding profile's model identity. Nothing else enters it — not wall-clock, not
-run id, not file order, not host.
+**I2. `corpus_digest` is a pure function of exactly four inputs:** the sorted
+document identities each binding its bytes, the **parser identity**, the frozen
+chunker parameters, and the embedding profile's model identity. Nothing else enters
+it — not wall-clock, not run id, not file order, not host.
+
+The parser is the input an earlier draft omitted, and the omission contradicted two
+other passages of this record which state that a parser change produces a different
+corpus and therefore a different digest. It has to be in: parse sits between the
+document bytes and the chunker, so two runs over identical bytes with different
+HTML extraction produce different passages under identical chunker parameters. The
+parser identity is its name and version, folded in the same way the embedding
+model identity is.
 *Enforces:* the digest constructor. *Status:* NEW.
 *Without it:* two byte-identical corpora produce different digests, I1 fires
 spuriously, and the check gets disabled.
@@ -219,19 +250,41 @@ reached from `prepare_with_context` (`engine/online_execution.rs:362`, `:1276`
 -`:1288`) before the run spec, before any phase plan, and before
 `set_run_origin` (`engine/execute/sharding.rs:476`). Nothing in a loader or
 composer can be timed by this benchmark.
-*Without it:* `rag_documents_per_second` names the reference's four-stage
+*Without it:* `rag_passages_per_second` names the reference's four-stage
 pipeline and measures two of them, which is a wrong number wearing the right
 label.
 
-**I12b. `rag_documents_per_second` is reported as harness-and-host throughput and
-never as a comparable submission result.** Every artifact carrying the metric —
-console, JSON, CSV, Parquet — carries alongside it the fact that only the
-embedding stage is served remotely. The reference's claim that documents per
-second is comparable across systems rests on submitters implementing their own
-ingestion pipeline; ours is fixed in the binary, so the claim does not transfer
-and must not be implied by omission.
-*Enforces:* the exporter plane. *Status:* NEW.
-*Without it:* a correctly measured number invites a comparison it cannot support.
+**I12b. The scored ingestion metric is `rag_passages_per_second`, and any
+document-level rate is emitted under a name that cannot be read as the submission
+metric.** The reference's own harness settles the unit: it emits
+`throughput_passages_per_second` (`measure_indexing_with_chunking.py:414`), prints
+`passages/sec` (`:450`), and computes it as `vector_count / data_setup_time` where
+`vector_count` is `index.ntotal` (`:391`). The announcement post describes the same
+run in documents per second. Against 2,515 documents and 108,711 passages those two
+readings differ by 43x, so the unit is not a presentation detail. This record
+follows the code. A document rate is still useful and is still emitted, as
+`rag_ingest_harness_documents_per_second`, whose name states what it is.
+*Enforces:* the metric catalog and every exporter that names the metric.
+*Status:* NEW.
+*Without it:* two correctly measured runs are compared through numbers 43x apart.
+
+**I12c. Neither scored throughput is reported as a bare number; each decomposes
+into the part the system under test serves and the part the harness spends on the
+host.** For `rag_ingest` the served part is embedding and the host part is parse,
+chunk, index build, and index serialization — the reference's own denominator
+`data_setup_time = chunking_time + indexing_duration + save_time`
+(`measure_indexing_with_chunking.py:388`) puts index construction *and* its
+serialization inside the scored window, so the host share is not a rounding error.
+For `rag_qna` the served part is the model calls and the host part is retrieval:
+the reference searches an in-process FAISS index (`retrieve/vectordb.py:263-266`)
+and so do we, so host CPU sits on the scored task timeline in both workloads. The
+decomposition is emitted beside the rate, in the same artifacts, at the point the
+rate is emitted.
+*Enforces:* the exporter plane, backed by `rag_parse_latency`,
+`rag_chunk_latency`, `rag_index_latency`, and `rag_retrieval_latency`.
+*Status:* NEW.
+*Without it:* a single number hides which half of the system a change moved, which
+is the one question the benchmark exists to answer.
 
 **I13. In-flight tasks and in-flight requests are separate curves, and any window
 derived from concurrency names which one it used.** `--steady-state` reads the
@@ -269,7 +322,7 @@ to two documents.
 exists.** A role-labelled number is backed by records that carry the role.
 *Enforces:* `RecordIngest` and the per-record row.
 *Status:* **VIOLATED as a precondition** — `RecordMetadata`
-(`engine/records.rs:113`-`:143`) carries no model, endpoint, profile, or node
+(`engine/records.rs:124`-`:156`) carries no model, endpoint, profile, or node
 identity, so there is currently nothing to attribute to.
 *Without it:* the answer-role OSL compliance check is computed from records that
 cannot be attributed to the answer role.
@@ -330,40 +383,78 @@ output is equally unbounded and equally moves service time, and none of them is
 covered. Per-role bands are named as future work, not claimed here.
 
 
-**I21. A stage that contained a failed request is never reported to the driver
-as completed, and a loop that exits on an unrecognized verdict leaves a
+**I21. A stage that did not produce a usable value is never reported to the
+driver as completed, and a loop that exits on an unrecognized verdict leaves a
 receipt.** The signal a hop-controlling driver reads must distinguish "the model
-said nothing" from "the request failed."
+said nothing" from "the request failed" from "the request succeeded and its body
+did not decode."
 *Enforces:* the stage-result terminal status; the staged driver's failure policy;
-the loop's non-match path.
-*Status:* **VIOLATED, and this is the most dangerous defect in the substrate this
-design builds on.** Three lines conspire. `graph_execution.rs:1905` hardcodes
-`terminal_status: GraphReplyStatus::Completed` on every `TraceStageResult`, so a
-driver can never observe a failed stage — the existing driver's
-`ensure_completed_stage` (`live_driver.rs:885`-`:894`) is dead code. The default
-`OnFailure::Continue` (`failure.rs:29`-`:32`) resolves through
-`ResilientNodeFailurePolicy` to `NodeFailureDisposition::ContinueWithEmpty`
-(`graph_execution.rs:1600`-`:1604`, `policy.rs:271`-`:275`,
-`executor.rs:450`-`:456`), so a 500 writes an empty channel value and execution
-proceeds. And the loop's unrecognized-verdict path is
+the loop's non-match path; the non-selector decode path.
+*Status:* **VIOLATED in three places, and this is the pipeline-correctness failure
+mode the whole record is ordered around.**
+
+First, `graph_execution.rs:1905` hardcodes `terminal_status:
+GraphReplyStatus::Completed` on every `TraceStageResult`, so a driver can never
+observe a failed stage — the existing driver's `ensure_completed_stage`
+(`live_driver.rs:885`-`:894`) is dead code. This is the load-bearing one.
+
+Second, the loop's unrecognized-verdict path is
 `else { progress.awaits_backedge = false; continue; }`
 (`live_driver.rs:1179`-`:1182`) — a silent exit, where the *branch* construct
 hard-errors on the same condition (`:1036`-`:1046`).
-*Without it:* a `rag_qna` task whose retrieval hop 500s reads an empty passage
-set, generates a plausible answer from nothing, terminates early, and is scored
-and counted as a successful task. Every reported number is well-formed and the
-run is wrong. This is the pipeline-correctness failure mode the whole record is
-ordered around, and it is not hypothetical: it is the current default
-configuration of the substrate.
 
-All three parts are fixable in our own code, and the fix is a prerequisite rather
-than a hardening pass. Thread the real terminal classification into
-`TraceStageResult` in place of the constant at `:1905` — the field and the
-driver-side check already exist, so this is plumbing through `TraceResult`.
-Select `AbortTraceNodeFailurePolicy` for staged-driver execution, or carry a
-per-stage "a node failed" flag. And make the loop's non-match case explicit: a
-closed declared verdict set, as branches already require, or a receipt when a
-loop exits on a value it did not recognize.
+Third — the clause an earlier draft missed entirely — a request can **succeed**
+and still yield no usable value, when its 200 body fails to decode at a node whose
+output is read by something other than a branch selector. The grader is exactly
+that node. A failed decode there is not a failure by any policy's definition, so no
+failure policy can catch it; only a total decoder (I11) can.
+
+**The failure-policy clause of an earlier draft was wrong and is withdrawn.** It
+asserted that the default `OnFailure::Continue` writes an empty channel value and
+proceeds, and called that the substrate's current default. `Continue` is the
+*scheduled* default (`failure.rs:30`-`:32`); the graph path — the only path
+`rag_qna` takes — defaults to `OnFailure::Abort` (`failure.rs:34`-`:37`, resolved
+through `graph_or_default` at `entrypoints.rs:511`, and stated in the module doc at
+`failure.rs:6`-`:7`). The prescribed remedy was already the default.
+
+The relief that default provides is real but partial, and the partiality is what
+this invariant now turns on. Graph `Abort` reaches `FailFastRunFailurePolicy`,
+which latches a flag read only by `may_admit()` (`policy.rs:336`-`:338`): no new
+root trace is admitted, in-flight traces run out, and `first_failure()` is read by
+nobody, so **the run still exits 0** with a truncated task set and a rate computed
+over it. Scheduled `Abort` is genuinely fatal (`request_rate.rs:754`-`:756`); graph
+`Abort` is a brake, not a verdict.
+
+Two further corrections ride with it. `failure.rs:9`-`:10` states that cancellation
+is never a failure on either path; that holds at run level, where
+`FailFastRunFailurePolicy::on_trace_result` skips `TraceError::Cancelled`, but not
+at node level, where `AbortTraceNodeFailurePolicy::on_failure` ignores
+`failure.kind` entirely (`policy.rs:279`-`:284`) and aborts the trace on a
+cancelled node. That fires on the drain tail of every duration-bounded run, and on
+a Config-v2 duration phase authored without `grace_period`
+(`config/model/phase.rs:85`-`:88` defaults to `GracePeriod::Disabled`, and
+`runner.rs:797` treats a zero budget as timeout) it fires on the *entire* in-flight
+set. And the reference does not abort on a transient failure at all: it retries
+429/502/503/504 and timeouts with backoff up to `max_retries=5` before giving up.
+A `rag_qna` run that aborts where the reference would have retried is not measuring
+the reference workload.
+
+*Without it:* a `rag_qna` task whose retrieval hop 500s, or whose grader returns a
+200 the decoder cannot read, reads an empty passage set, generates a plausible
+answer from nothing, terminates early, and is scored and counted as a successful
+task. Every reported number is well-formed and the run is wrong.
+
+All of it is fixable in our own code, and the fix is a prerequisite rather than a
+hardening pass. Thread the real terminal classification into `TraceStageResult` in
+place of the constant at `:1905` — the field and the driver-side check already
+exist, so this is plumbing through `TraceResult`. Make the loop's non-match case
+explicit: a closed declared verdict set, as branches already require, or a receipt
+when a loop exits on a value it did not recognize. Make the verdict decoder total
+per I11, so a non-selector decode failure is a typed node error rather than a
+silent empty. Give the run a terminal verdict rather than a brake, so an aborted
+`rag_qna` run does not exit 0 with a partial rate. And author transient-failure
+retry at the node level to match the reference, so `Abort` is reserved for what the
+reference would also have treated as terminal.
 
 **I22. A driver-authored stage plan is validated against the authored source
 graph, not only against itself.**
@@ -419,7 +510,17 @@ each parameter that diverges and its authored value. There is no third state and
 no silent divergence. The reference profile is a shipped artifact, not a
 constant, so a run can declare itself comparable to the MLPerf reference
 configuration, to a prior AIPerf run, or to nothing.
-*Enforces:* the report writer, from I23's inputs.
+**The comparability class is explicitly bounded by what I25 shows is
+unobservable.** A run that matches the reference profile in every parameter I23
+covers still may not be comparable, because served precision is invisible to the
+client and is the submitter's primary optimization lever. A "matches reference"
+declaration therefore carries the qualifier in the artifact itself: it means every
+*authored* parameter matches, and it does not mean the two runs served the same
+weights at the same precision. Where a run authors a `precision` value per profile,
+that value is folded into `pipeline_digest` and is marked in the report as
+authored-and-unverified, never as observed. An fp4 run must not be able to claim
+bare comparability with a bf16 one.
+*Enforces:* the report writer, from I23's inputs, with I25's limits stated inline.
 *Status:* NEW.
 *Without it:* every number leaves the tool with the same authority, whether it
 was produced under the reference configuration or under a locally-tuned one, and
@@ -838,7 +939,7 @@ with different tokenizers.
 
 | Workload | Shape | Unit of work | Scored metric |
 |---|---|---|---|
-| `rag_ingest` | graph run over a new graph format `rag_corpus` + staged driver | one source document | `rag_documents_per_second` |
+| `rag_ingest` | graph run over a new graph format `rag_corpus` + staged driver | one source document | `rag_passages_per_second` |
 | `rag_qna` | new graph format `rag_qna` + staged driver | one query task | `rag_tasks_per_second` |
 
 `rag_ingest` is deliberately **not** a new workload kind. There are two seams
@@ -939,7 +1040,7 @@ statements cannot both hold: the loader/composer pipeline is fully awaited and
 frozen during preparation (`dataset/loader/mod.rs:543`, `:560`, `:568`, `:578`,
 reached from `engine/online_execution.rs:362`, `:1276`-`:1288`), before the run
 origin exists (`engine/execute/sharding.rs:476`). A loader-based ingestion would
-have reported `rag_documents_per_second` for embed and index while calling it the
+have reported `rag_passages_per_second` for embed and index while calling it the
 four-stage pipeline.
 
 **A second dataset plane now exists, and the honest statement names both.** Saying
@@ -1030,7 +1131,7 @@ The stages:
   Parsing is deterministic and content-addressed. A parsed-corpus cache is
   therefore possible and is **refused for a scored ingestion run**: parse is inside
   the measured window by I12, so a cache hit would silently delete a reference
-  stage from `rag_documents_per_second`. Caching is available only for
+  stage from `rag_passages_per_second`. Caching is available only for
   non-scored exploratory runs, which say so in their report.
 - **Chunk.** Slice to `chunk_chars` (default 768) with `chunk_overlap_chars`
   (default 32) on UTF-8-respecting character boundaries, tagging each passage with
@@ -1154,11 +1255,15 @@ The stages:
   entry in both or every upload is rejected by the allowlist, and a multi-block
   artifact family has no representation there at all.
 
-**`rag_documents_per_second` is not derivable from the record plane as it
-stands.** One batched request is one record and a document spans several batches,
-so the rate needs a document identity and a final-batch marker on the record — a
-new catalog tag plus record-plane plumbing, not a derived aggregate over existing
-columns. The spec's earlier framing of this as "a derived aggregate" was wrong.
+**Neither ingestion rate is derivable from the record plane as it stands.**
+`rag_passages_per_second` needs a passage count per embed record, which is the
+batch size and is recoverable, but its denominator spans parse, chunk, index build,
+and save — none of which is a request and none of which the record plane sees at
+all. `rag_ingest_harness_documents_per_second` needs additionally a document
+identity and a final-batch marker, because one batched request is one record and a
+document spans several batches. Both need new catalog tags plus record-plane
+plumbing; neither is a derived aggregate over existing columns. The spec's earlier
+framing of this as "a derived aggregate" was wrong.
 
 What batch-within-document containment (I15) buys is that this is the *whole*
 requirement: a document completes when its final batch reaches terminal, and no
@@ -1200,8 +1305,14 @@ property of the design, not a claim about its present status.
 `aiperf-plugin-api`.** `cargo xtask abi-gate` fails on any new `(name, file)` pair
 reachable from a seed (`rust/xtask/src/abi_closure.rs:100`-`:114`) and
 `abi-impl-budget` caps `MAX_ABI_TYPES = 177` / `MAX_ABI_FILES = 56`
-(`rust/xtask/src/abi_impl_budget.rs:12`-`:17`) against a baseline already at
-177/56 — zero headroom. The same ceiling governs the record plane: RAG record
+(`rust/xtask/src/abi_impl_budget.rs:14`, `:16`) against a baseline already at
+177/56 — zero headroom. There is a **third** counter with zero headroom that an
+earlier draft missed: `MAX_GLOBAL_IMPL_LINES = 33_417` (`:12`), and
+`abi-baseline.json` records `file_lines 36332` minus `type_lines 2915` — exactly
+33,417. Unlike a struct field, which raises `type_lines` and therefore *improves*
+the ratio, every line of implementation code that threads a value through the ABI
+closure raises `impl_lines` and moves this counter, which is already at its cap. A
+field addition is free; the code that populates it is not. The same ceiling governs the record plane: RAG record
 fields are **scalar fields added to existing types**, never new nominal types hung
 off `RecordIngest`, `Request`, or `PreparedTurn`, because a field addition is
 invisible to the gate and a new type is not re-baselineable without breaking the
@@ -1390,10 +1501,14 @@ One trace is one query task; one stage is one hop. The per-hop node set:
 |---|---|---|---|
 | `rewrite` | `Llm` | `rewriter` | large reasoning model |
 | `embed_subquery[i]` | `Llm` | `embed` | embedding model |
-| `retrieve[i]` | `Retrieval` | index-bound | — |
+| `retrieve[i]` | `Llm`, index-bound profile | `retrieval` | — |
 | `rerank` | `Llm` | `rerank` | late-interaction reranker |
 | `grade[j]` | `Llm` | `grader` | small model, high volume |
 | `sufficient` | `Llm` | `sufficiency` | large reasoning model |
+
+Retrieval rides the `Llm` node kind against an index-bound profile rather than a
+new `Retrieval` variant, per the decision immediately above; an earlier draft's
+table named a `Retrieval` kind and contradicted it.
 
 with `answer` (profile `answer`) emitted in a final stage when the driver observes
 a sufficient verdict or reaches its hop bound. The `rewriter`, `sufficiency`, and
@@ -1426,6 +1541,27 @@ exact string equality on `.content`. Because channel values are chat envelopes,
 the decoder must unwrap array → last element → `.content` → parse → pointer →
 predicate as declared steps, each with a typed error attributed to the sufficiency
 node.
+
+**The cumulative kept set is the one part of this shape the graph vocabulary
+cannot express, and the driver must own it.** The reference keeps one growing
+`kept_docs` list and hands three roles three different views of it — the grader
+sees at most five entries truncated to 300 characters
+(`multi_shot_retrieval.py:491`-`:495`), the rewriter sees at most the last twelve
+(`:1399`-`:1401`), and the answer generator sees all of them at full content
+(`:729`-`:734`). A channel cannot do that. `ReducerName` is closed at
+`Overwrite | AddMessages` and `ChannelType` at `Text | Messages`
+(`graph/model.rs:21`-`:36`), and the only way to read a channel into a request is
+`PromptItem::Splice { splice: String }` (`:203`-`:205`), which names a channel and
+takes no index, slice, limit, or truncation. **One accumulating channel yields
+exactly one view.**
+
+Three views therefore mean three channels, each written by the driver at stage
+boundaries with the projection already applied, or one channel plus a driver-side
+projection into each consumer's request at stage build. Either way the projection
+is driver code, not graph vocabulary, and the projection parameters — 5, 300, 12,
+uncapped — are authored and folded into `pipeline_digest` under I23, because a run
+that changes them is not the same benchmark. The bounded data-dependent loop
+itself needs nothing new: `live_driver.rs:1145`-`:1223` already implements it.
 
 Two execution modes:
 
@@ -1531,7 +1667,7 @@ The mechanism for that already exists and should not be hand-rolled:
 off the reactor, built for exactly this hazard on the streaming decode path. Route
 parse and chunk through it. The corresponding assertion is behavioral rather than
 structural: a corpus of deliberately slow-to-parse documents must move
-`rag_documents_per_second` (I12's positive half) while leaving the *request*
+`rag_passages_per_second` (I12's positive half) while leaving the *request*
 latency of co-resident embed nodes unchanged (this obligation).
 
 For a benchmark whose whole subject is overlapping many concurrent tasks across
@@ -1576,9 +1712,29 @@ graph, the decoder, the profiles, or the metrics.
 New catalog tags, reported per-run and per-phase-window: `rag_task_latency`
 (record: query admitted → final answer terminal), `rag_tasks_per_second`,
 `rag_hops_per_task` (distribution, not just mean), `rag_task_llm_calls`;
-`rag_documents_per_second`, `rag_passages_per_second`, `rag_parse_latency`,
-`rag_chunk_latency`, `rag_index_latency`; `rag_retrieval_latency`,
-`rag_retrieval_candidates`.
+`rag_passages_per_second` (the scored ingestion rate, per I12b),
+`rag_ingest_harness_documents_per_second`, `rag_parse_latency`,
+`rag_chunk_latency`, `rag_index_latency`, `rag_index_save_latency`;
+`rag_retrieval_latency`, `rag_retrieval_candidates`.
+
+The two ingestion rates share a denominator and differ only in numerator, and the
+denominator is the reference's: `data_setup_time = chunking_time +
+indexing_duration + save_time` (`measure_indexing_with_chunking.py:388`). Index
+build *and* index serialization are inside the scored window, which is why
+`rag_index_latency` and `rag_index_save_latency` are separate tags rather than one
+— a submitter who moves index construction to an accelerator and a submitter who
+merely writes the file faster have not done the same thing, and a single fused
+number cannot tell them apart. Parse is inside the window too, by I12; the
+reference's own denominator omits it only because its parse step runs earlier in a
+separate script, not because it is unmeasured work.
+
+`rag_task_latency`'s terminal needs stating, because the obvious definition is
+undefined on a real path. A task that exits its hop loop with an empty kept-document
+set makes no answer call, so "final answer terminal" does not exist for it. Its
+terminal is the terminal of the last request the task issued, and the record carries
+a flag distinguishing the two shapes. The reference produces 11 to 30 such samples
+per run out of 824 (`reference_SUT.py:318`-`:319`), so this is a normal path, not an
+error path.
 
 The catalog is closed and positional. `MetricTagId`
 (`rust/runtime/src/metrics_core/tag_id.rs:12`) is generated by
@@ -1607,7 +1763,7 @@ work.
 Delivery is staged, because the exporter half is where the cost actually lives:
 
 1. Thread `endpoint_profile_id` into `RecordIngest` and out to the per-record row.
-   It is absent today — `RecordMetadata` (`rust/runtime/src/engine/records.rs:113`)
+   It is absent today — `RecordMetadata` (`rust/runtime/src/engine/records.rs:124`)
    carries no model, endpoint, profile, or node identity — even though the value
    exists at dispatch (`rust/runtime/src/graph/driver.rs:115`) and at run level
    (`report.rs:264`). Nullable, omitted for single-profile runs. This alone
@@ -1663,8 +1819,17 @@ take, in ascending cost.
 `AccuracyRecord.task` (`metrics_core/accuracy.rs:122`), and per-task rollups
 already exist (`AccuracySummary.per_task`, `accuracy.rs:181`) and are already
 exported (`export/accuracy_csv.rs:65`-`:69`). Authoring `task` = the reasoning
-type yields accuracy-by-reasoning-type with **zero schema change**. That is the
-right first move, and for the accuracy question it may be the only move needed.
+type yields accuracy-by-reasoning-type with **zero schema change**.
+
+**It is free on a path `rag_qna` cannot take.** That chain runs through
+`multiturn.rs` — the scheduled multi-turn dataset path — and `rag_qna` is a graph
+run. The graph and accuracy planes are mutually exclusive in this tree: nothing on
+the graph execution path constructs a `ProblemAssociation`, so an authored
+`Conversation.accuracy` never reaches a `CapturedResponse`. So this is the right
+first move for a *scheduled* accuracy run over the same query set, and it is not
+available to the scored `rag_qna` run at all. Reaching it from the graph path is
+the same plumbing problem as the reasoning-type label below, not a shortcut past
+it.
 Three constraints ride with it: `task` is single-valued; the evaluator must echo
 it byte-identically or grading fails hard (`accuracy.rs:687`-`:691`); and
 `AccuracyEvaluation.records` -- the per-request grades -- is serialized by no
@@ -1672,7 +1837,7 @@ exporter in the tree, so there is no per-record accuracy artifact today.
 
 *The zero-file hack, named so it is not mistaken for the design.* `conversation_id`
 is the only authored string that survives into all four per-record formats
-(`RecordMetadata.conversation_id`, `rust/runtime/src/engine/records.rs:117`;
+(`RecordMetadata.conversation_id`, `rust/runtime/src/engine/records.rs:129`;
 `RawRecordMetadata`, `:311`; `CSV_METADATA_COLUMNS`, `:517`;
 `PerRecordRow`, `export/per_record_parquet.rs:91`). Folding the label into the
 authored `session_id` therefore works with no code change at all. It also
@@ -1695,7 +1860,7 @@ test fixtures, because `RecordIngest` derives no `Default` and every struct
 literal must be updated to compile.
 
 **It must be a scalar field, not a new type.** `MAX_ABI_TYPES = 177` /
-`MAX_ABI_FILES = 56` (`rust/xtask/src/abi_impl_budget.rs:14`-`:16`) with the
+`MAX_ABI_FILES = 56` (`rust/xtask/src/abi_impl_budget.rs:14`, `:16`) with the
 baseline at exactly 177/56, and `ensure_no_growth`
 (`rust/xtask/src/abi_closure.rs:100`-`:120`) rejects any new `(name, file)` pair
 even at constant count. A `ReasoningType` enum or a `QueryLabels` struct
@@ -1703,6 +1868,10 @@ reachable from `RecordIngest` or `Request` fails the gate and cannot be
 re-baselined. `Option<String>` introduces no nominal type and the carrier structs
 are already in the closure, so the field addition is invisible to it; adding
 fields raises `type_lines` and therefore *improves* `MAX_BOUNDARY_IMPL_RATIO`.
+The third counter is the one to watch instead: `MAX_GLOBAL_IMPL_LINES = 33_417`
+(`abi_impl_budget.rs:12`) also sits at exactly its baseline, and the eleven-file
+threading described above adds implementation lines inside the closure. The field
+is free; the plumbing must be re-baselined or kept outside the closure's files.
 For the same reason a `HashMap<String, String>` bag is refused independently of
 the gate: it puts an allocating map on the per-request clone path, and the CSV
 and Parquet writers have fixed column lists a map cannot populate without a
@@ -1733,70 +1902,81 @@ generic is projected into `RequestMetricMetadata`. What the graph path does stam
 is `conversation_id = trace_id` and `correlation_id = "{trace_id}:{node_id}"`
 (`graph_execution.rs:2270`-`:2278`).
 
-**The Offline mapping, stated with what it is not.** Server scenario is out of
-scope for this record, exactly as for the first MLPerf instantiation. Offline is
-approximated by the existing concurrency workload with
-`type: concurrency`, `concurrency == requests == N`, one turn, and no ramp.
+**The Offline mapping, corrected twice.** Server scenario is out of scope for
+this record, exactly as for the first MLPerf instantiation. Offline must still be
+approximated, and two earlier drafts of this section got it wrong in opposite
+directions.
 
-That mapping is exact for both workloads. LoadGen hands the SUT the entire query
-set in a single `issue_queries` call under Offline, and the reference's
-concurrency of 10 is its own `ThreadPoolExecutor` width applied *after* delivery
-(`reference_SUT.py:204`, `:334`-`:349`), not a bound on admission. The AIPerf
-analogue of that 10 is a worker count, not a `concurrency` setting, so a
-comparable run still declares `concurrency == requests == N` and expresses the
-reference's pool width as workers. `pipeline_digest` records both, because two
-runs over the same corpus that differ in how much of the delivered set they hold
-in flight are not the same measurement. The four imperfections below apply to
-both, and the full comparison is in
-`## Compared to the MLPerf reference implementation`. The
-approximation is good in the one place that matters most and imperfect in four
-places that must be named, because each is a way for a run to look Offline and
-not be.
+The first draft read the reference's 10 as a concurrency limiter. The second
+corrected the mechanism — LoadGen hands the SUT the entire query set in a single
+`issue_queries` call under Offline, and the `ThreadPoolExecutor` width is applied
+*after* delivery (`reference_SUT.py:204`, `:334`-`:349`) — and then drew the wrong
+consequence from it: that the AIPerf analogue is therefore a worker count and no
+admission bound is needed. That is wrong. **A ten-slot pool blocking on 824
+submitted futures is a closed loop with ten tasks in flight.** Where the bound is
+enforced does not change what it bounds.
 
-It is good on admission: `PhaseKind::Concurrency` lowers to
-`ArrivalPattern::ConcurrencyBurst` (`rust/runtime/src/engine/protocol.rs:880`-`:883`)
-whose `next_interval_ns()` returns literal zero
-(`rust/runtime/src/timing/intervals.rs:170`-`:172`), so the issuer never sleeps and
-the only gate is a non-blocking `SlotPool::try_acquire` sized to `concurrency`
-(`rust/runtime/src/phase_runtime.rs:299`-`:308`), which cannot bind at N-of-N. All
-N are admissible from t=0 in policy. The workload named "concurrency" does no
-rate metering at all, which is the opposite of the intuitive reading.
+The reference tree has two separately-settable knobs, both defaulting to 10:
+`MAX_ASYNC_QUERIES`, annotated "(loadgen query dispatch)", and `MAX_WORKERS`,
+annotated "(SUT thread pool)" (`reference_mlperf_perf.sh:31`-`:32`, `:72`-`:73`).
+`user.conf:13` says `max_async_queries` controls concurrent query processing, and
+`reference_SUT.py:202` comments that `max_workers` is chosen "based on loadgen
+max_async_queries setting". The LoadGen source is not in the clone, so nothing
+there can settle which of the two actually gates dispatch. It does not need to be
+settled: under either reading the reference runs roughly **ten tasks in flight**,
+and that is the quantity an AIPerf run has to match.
 
-It is not equivalent in these ways. **Issuance is serial**, one request per
-issuer-loop iteration (`rust/runtime/src/request_rate.rs:654`-`:663`), not a single
-handoff of the whole set. **The draw is lazy**: one sample is cached before start
-and the next is drawn only after a successful issue (`:519`-`:525`), so the system
-under test never sees the query set as a set and cannot reorder across it — which
-is precisely the freedom LoadGen's Offline scenario is designed to grant.
-**Multi-turn corrupts it**: continuations take FIFO priority over new sessions
-(`:640`-`:648`) and can block on prefill capacity (`:437`-`:441`), so the property
-holds only for the single-turn shape. **`concurrency_ramp`**
-(`config/model/phase.rs:117`-`:118`) converts admission into genuinely metered and
-destroys the property outright, and seamless warmup carries session guards across
-the phase boundary (`engine/execute/plan.rs:29`-`:34`), so profiling does not start
-cold-empty.
+**`concurrency == requests == N` is therefore refused, and its refusal in the
+earlier draft was itself a unit error.** On the graph path the two settings do not
+even count the same objects. `concurrency` gates whole traces — `SlotPoolTraceAdmission`
+acquires one slot per root trace (`graph/workload.rs:526`-`:558`) — while
+`requests` is a budget over **LLM node dispatches**, incremented by
+`plan.graph.llm_node_count()` per admitted trace (`engine/graph_phase_runtime.rs:2852`-`:2861`).
+Setting both to 824 admits 824 concurrent *tasks* against a request budget that
+roughly 68 tasks exhaust: about 82x the reference's offered load, and a task count
+the reference never approaches. Every citation the earlier draft assembled in
+support — `request_rate.rs`, `phase_runtime.rs`, `timing/intervals.rs`,
+`protocol.rs` — describes the *scheduled* path, which `rag_qna` does not execute.
 
-Two derived readings must not be taken from such a run. `concurrency < N`
-silently produces a Server-shaped closed loop with **no diagnostic**, so the
-equality is load-bearing and is checked rather than assumed. And **schedule
-adherence and queue delay are meaningless here**: `bounded_reanchor_target`
+The correct mapping is therefore: `concurrency` is the in-flight **task** bound and
+takes the reference's value, ten by default and authored explicitly; `requests` is
+left unset and the phase is bounded by task count, or is set to the LLM-node total
+the plan implies rather than to the task count. `pipeline_digest` records both,
+because two runs over the same corpus that differ in how much of the delivered set
+they hold in flight are not the same measurement.
+
+Two properties of the approximation survive intact and are worth keeping. The
+issuer does no rate metering: `PhaseKind::Concurrency` lowers to
+`ArrivalPattern::ConcurrencyBurst` (`engine/protocol.rs:880`-`:883`) whose
+`next_interval_ns()` returns literal zero (`timing/intervals.rs:170`-`:172`), so
+admission is gated only by the slot pool and nothing sleeps. And **schedule
+adherence and queue delay are meaningless in such a run**: `bounded_reanchor_target`
 re-anchors the target to `now` once lag exceeds the catch-up window, default 10 ms
-(`request_rate.rs:41`-`:43`, `timing/arrival.rs:88`-`:95`), so after roughly the
-first 10 ms the schedule tracks the wall clock and derived lateness collapses to
-approximately zero by construction. The honest Offline reading of such a run is
-its completion rate, not its arrival statistics.
+(`request_rate.rs:41`-`:43`, `timing/arrival.rs:88`-`:95`), so derived lateness
+collapses to approximately zero by construction. The honest Offline reading of such
+a run is its completion rate, not its arrival statistics.
 
-The one workload that genuinely pre-schedules the entire set with no admission
-gate is `fixed_schedule`, which schedules every entry up front in one pass
-(`rust/runtime/src/fixed_schedule.rs:204`-`:241`) and reports `concurrency() == None`
-(`engine/execute/dataset_build.rs:271`-`:274`). It is also the only workload whose
+What does not survive is the claim that this is Offline *semantically*. LoadGen
+hands the SUT the whole query set at once and grants it freedom to reorder across
+it; AIPerf issues serially and draws lazily, one sample cached before start and the
+next drawn only after a successful issue (`request_rate.rs:519`-`:525`, `:654`-`:663`),
+so the system under test never sees the set as a set. `concurrency_ramp`
+(`config/model/phase.rs:117`-`:118`) converts admission into genuinely metered and
+destroys even the burst property, and seamless warmup carries session guards across
+the phase boundary (`engine/execute/plan.rs:29`-`:34`), so profiling does not start
+cold-empty. The one workload that genuinely pre-schedules the entire set with no
+admission gate is `fixed_schedule`, which schedules every entry up front in one
+pass (`fixed_schedule.rs:204`-`:241`), reports `concurrency() == None`
+(`engine/execute/dataset_build.rs:271`-`:274`), and is the only workload whose
 arrival time is an authored fact rather than a dispatch observation — everywhere
 else `arrival_ms` is stamped at coordinator dispatch as `clock.now_ns() - origin_ns`
 (`engine/execute/capture.rs:366`), which is why `fixed_schedule` correspondingly
 reports `has_credit_timestamps() == false` (`fixed_schedule.rs:183`-`:185`). An
-all-equal-timestamp fixed schedule is therefore the more literal Offline analogue,
-and is recorded here as the alternative to reach for if the burst approximation
-proves insufficient.
+all-equal-timestamp fixed schedule is the more literal Offline analogue and is
+recorded here as the alternative to reach for — but it removes the in-flight bound
+entirely, so it approximates LoadGen's delivery and abandons the reference's pool,
+which is the opposite trade from the one above. Neither is exact. The run declares
+which it made.
 
 ### Measurement correctness
 
@@ -1923,9 +2103,12 @@ Both are post-run passes over recorded artifacts, native, and off the timed path
   distinction. `ParsedResponse.sources` is explicitly **not** used: it is
   write-only and absent on the local path (see `## Built`).
 - **Output-length compliance** (`aiperf rag compliance`) re-reads a pinned run's
-  records and asserts the answer-role mean OSL falls inside an authored band around
-  an authored reference (the MLPerf analogue is 273.81 tokens ±10%). The check is a
-  single aggregate over one role. The report states that scope explicitly and names
+  records and reports the answer-role mean and p90 OSL beside the reference's
+  five-run spread. It does **not** assert a ±10% band around 273.81: three of the
+  reference's own five logged runs fall outside that band, so it is not a valid
+  test of anything (see `### The scored metric and the validity gate`). A band is
+  applied only when authored, with its own bounds and its own provenance. The check
+  is a single aggregate over one role. The report states that scope explicitly and names
   what it does not cover: the rewriter, grader, and sufficiency roles generate
   unbounded output that moves `rag_tasks_per_second` and is bounded by nothing here.
   Those roles are covered only by I20's per-role reporting. It depends on step 1 of the role work,
@@ -1994,12 +2177,25 @@ should add one score-by-index knob to `compute_mock_score` rather than fork it.
 ### Refusals
 
 Every refusal below exists to prevent a **wrong measurement**, not to resist
-misuse. Each names a configuration that would otherwise run to completion and
-report a plausible number that does not mean what the report says it means, so
-each fails before dispatch rather than degrading, and each names the invariant it
-protects.
+misuse. Each names a situation that would otherwise run to completion and report a
+plausible number that does not mean what the report says it means.
 
-| Refused before dispatch | Protects |
+Six of them key on the phrase "a scored run", which an earlier draft used without
+defining. **A scored run is one whose report carries `rag_passages_per_second` or
+`rag_tasks_per_second` as a comparability-declaring result under I24.** A run that
+declares comparability to nothing is exploratory: it is subject to none of the
+scored-run refusals, and its report says so at the top rather than in a footnote.
+The declaration is authored before dispatch, so every scored-run refusal below is
+decidable from the resolved configuration.
+
+An earlier draft put all of these under one heading, "Refused before dispatch",
+which was false for about a third of them. They are separated here, because the
+distinction is the difference between a run that will not start and a run that will
+not produce a scored artifact.
+
+**Refused before dispatch, from the resolved configuration.**
+
+| Refusal | Protects |
 |---|---|
 | A QnA run whose index `corpus_digest` disagrees with its pinned plan or query set | I1 |
 | An index artifact whose header dimension disagrees with the embed profile's returned vector width | I3 |
@@ -2008,27 +2204,49 @@ protects.
 | An authored hop, fan-out, or `k` bound that is zero or unbounded | I9 |
 | A pinned plan whose hop count exceeds `stage_bound()` | I9, I19 |
 | A pinned `rag_qna` run with a `cache_bust_target` other than `None` | I19 |
-| An ingestion document whose chunk count exceeds the driver's `stage_bound()` | corpus completeness |
 | A sufficiency verdict decoder that is absent or ambiguous | I11 |
 | `--steady-state` on a `rag_qna` run, unless the task-level curve is available | I13 |
 | `aiperf rag compliance` before per-record role attribution exists | I16 |
 | `aiperf rag compliance` against a sketch-mode run | I17 |
 | A scored `rag_qna` run under sketch mode (`--sketch-metrics`, `AIPERF_METRICS_SKETCH=1`) | I17, I20 |
-| Retrieval integrity reported from a run that did not retain the retrieval-evidence artifact | I18 |
 | A scored `rag_ingest` run with the parsed-corpus cache enabled | I12 |
 | An ingestion format whose parse or chunk stage is implemented in a `DatasetLoader` or `Composer` | I12 |
-| A staged `rag_*` run under a node failure policy that reports a failed hop as completed | I21 |
-| A `rag_qna` loop whose verdict channel yields a value outside its declared verdict set | I11, I21 |
 | A driver-authored stage plan that is not a projection of the authored source graph | I10, I22 |
-| An index seal missing any worker or cell part, or whose passage ordinals are not a permutation of `0..N` | I1 |
-| A sealed index exceeding the Kubernetes publication cap of 512 MiB, refused at seal rather than at publish | I1 |
 | A run asserting reference-profile comparability whose resolved parameters diverge from that profile | I24 |
-| Any `rag_*` run declaring the Offline scenario whose phase is not single-turn with `concurrency == requests` and no ramp | Offline mapping |
-| A scored run whose in-flight width is not recorded alongside its throughput | Offline mapping, I23 |
-| `aiperf rag score --gate` without an authored reference accuracy | validity gate |
-| A scored run that reports served-model provenance it did not observe | I25 |
 | A scored run whose resolved plan omits any parameter `pipeline_digest` covers | I23 |
+| A `rag_*` run declaring the Offline scenario whose phase is not single-turn, with an authored in-flight task bound, and no ramp | Offline mapping |
+| A `rag_*` run declaring the Offline scenario that sets `requests` equal to its task count | Offline mapping |
+| `aiperf rag score --gate` without an authored reference accuracy | validity gate |
 | A multi-endpoint `rag_qna` run over gRPC | transport limit (`grpc_execution.rs:130`) |
+
+The two Offline rows replace a single earlier row requiring
+`concurrency == requests`. That row was a unit error: on the graph path
+`concurrency` bounds traces and `requests` bounds LLM node dispatches, so the
+equality it demanded admits roughly 82x the reference's offered load, and it
+rejected the only faithful configuration. The second row exists because that
+mistake is easy to make again.
+
+**Refused at seal, at report, or at the moment the condition is observed.** These
+cannot be decided from configuration; they abort the run or withhold the scored
+artifact.
+
+| Refusal | When | Protects |
+|---|---|---|
+| An ingestion document whose chunk count exceeds the driver's `stage_bound()` | at chunk | corpus completeness |
+| A `rag_qna` loop whose verdict channel yields a value outside its declared verdict set | at decode | I11, I21 |
+| A stage reported to the driver as completed that contained a failed or undecodable request | at stage end | I21 |
+| An index seal missing any worker or cell part, or whose passage ordinals are not a permutation of `0..N` | at seal | I1 |
+| A sealed index exceeding the Kubernetes publication cap of 512 MiB, refused at seal rather than at publish | at seal | I1 |
+| Retrieval integrity reported from a run that did not retain the retrieval-evidence artifact | at report | I18 |
+| A scored run whose in-flight task width is not recorded alongside its throughput | at report | Offline mapping, I23 |
+| A scored run that reports served-model provenance it did not observe | at report | I25 |
+| A scored ingestion result that does not decompose into its served and host parts | at report | I12c |
+
+One entry that appeared in an earlier draft is withdrawn: "a staged `rag_*` run
+under a node failure policy that reports a failed hop as completed" described a
+substrate defect as though it were an authored configuration. No policy value
+produces that behavior and none avoids it; `graph_execution.rs:1905` hardcodes it
+for every policy. It is I21's prerequisite fix, not a refusal.
 
 ## Compared to the MLPerf reference implementation
 
@@ -2143,6 +2361,16 @@ parameters — `top_k_retriever` defaults to 10 and is tunable 5→100. A harnes
 own parameter file invites search over the pipeline cannot rely on convention to
 keep two submissions comparable. `pipeline_digest` is the artifact that makes the
 resulting divergence visible instead of silent.
+
+**The reference's own two configuration files disagree on that parameter.**
+`reference_mlperf_perf.sh:43` defaults `TOP_K_RETRIEVER` to 10, matching
+`params.py:492`; `config.template.sh:30` sets `INFERENCE_TOP_K_RETRIEVER=15`. Since
+`k` changes which passages reach the grader and therefore the token bill and the
+scored rate, this is not a harmless difference. `config.template.sh` is a template,
+not the submission configuration — the perf script is what a scored run executes —
+so this record follows the perf script wherever the two differ, and cites
+`config.template.sh` only for values the perf script does not set. Every value this
+record takes from it is flagged as such.
 
 **Ingestion is a scored phase with parse and chunk inside the timed window.**
 `measure_indexing_with_chunking.py:387`-`:391` sums chunking + indexing + save and
@@ -2318,13 +2546,32 @@ into `mlperf_log_accuracy.json` during a *performance* run, and because the SUT
 encodes `n_tokens` int32 slots, the verifier can recover generated lengths and
 prove the SUT generated what it claimed while running at speed. The tolerance is
 not in this directory but is published with the benchmark: mean output length
-273.81 with a plus-or-minus 10 percent band, 246.43 to 301.19. That band is
-answer-generator-only, which settles the ambiguity below in favour of the
-per-role figure. The reference OSL
-figure of 273.81 is the `answer_generator`-only mean of one specific logged run
-(`ISL_OSL_statistics.txt:107`) — not a pipeline aggregate, which is 551.58 for the
-same run, and not a mean across the five logged runs, which is about 235. Any
-comparison we publish must name which of the three it is.
+273.81 with a plus-or-minus 10 percent band, 246.43 to 301.19.
+
+**That band, taken at face value, fails the reference's own runs.** The five
+logged `answer_generator` OSL means are 221, 258, 273, 211, and 214
+(`ISL_OSL_statistics.txt:16`, `:63`, `:107`, `:154`, `:197`). Three of the five sit
+below 246.43. The band is narrower than the quantity's run-to-run variance, so no
+choice of reference mean makes it a valid two-sided test of *our* run — recentring
+it on the five-run mean of about 235 would put 273 outside instead. An earlier
+draft of this record treated the band as a bar to clear and asked only which mean
+to centre it on. That was the wrong question.
+
+The denominator compounds it. TEST09 recovers `n_tokens` from **every** LoadGen
+sample, all 824 of them, but only 794 to 813 samples per run made an answer call at
+all; for the rest the SUT synthesizes a count from `max(1, len(answer.split()))`
+(`reference_SUT.py:318`-`:319`). So the LoadGen-visible mean is a blend of real
+completion-token counts and whitespace word counts over a slightly different
+population than the per-role table reports. For the run whose `answer_generator`
+mean is 273, the LoadGen mean is approximately 268.4, not 273.81. The published
+figure and the table are not the same statistic.
+
+The consequence for this design is to keep the mechanism and drop the bar. We
+report per-role OSL mean and p90 (I20) against the correct denominator, state the
+denominator, and publish the reference's five-run spread beside our figure rather
+than a pass/fail against a band the reference does not itself satisfy. Where a
+TEST09-shaped check is wanted it is authored with its own bounds and its own
+provenance, exactly as the accuracy gate is.
 
 ### Per-query reasoning-type labels
 
@@ -2362,11 +2609,40 @@ sees at most five kept documents, each truncated to 300 characters
 (`:491`-`:495`); the query rewriter sees at most the last twelve
 (`MAX_DOCS_FOR_QUERY_GEN = 12`, `:1399`-`:1401`); and the answer generator sees
 **all** of them at **full** content with no cap and no truncation
-(`:729`-`:734`). That asymmetry is the ISL driver: answer-call input length grows
-without bound in the number of hops while the two upstream roles stay flat. Our
-per-role ISL attribution (I16) is what makes this visible, and a per-role ISL
-series that does not rise with hop index is evidence of a wiring error rather
-than of a fast system.
+(`:729`-`:734`).
+
+**An earlier draft drew the wrong conclusion from that reading, and the reference
+measured the right one.** The draft said the asymmetry makes the answer call the
+ISL driver, growing without bound in hop count while the upstream roles stay flat.
+Table 1 of `ISL_OSL_statistics.txt` says the opposite — the answer generator has
+the *smallest* mean input of the four roles (`:104`-`:107`):
+
+| role | N | mean ISL | mean OSL |
+|---|---|---|---|
+| `evaluate_document_relevance` | 1861 | **1237** | 817 |
+| `generate_search_queries` | 2491 | 925 | 548 |
+| `check_sufficiency` | 2390 | 869 | 441 |
+| `answer_generator` | 810 | **765** | 273 |
+
+The code reading was correct and the inference from it was not. Two things the
+draft missed. The sufficiency checker also walks **all** kept documents with no cap
+(`:604`-`:609`), so it is not flat either. And the grader's input is dominated not
+by its truncated kept-set view but by the **new candidates**, which it formats at
+full content (`:483`-`:486`) — the 5-document, 300-character truncation applies
+only to the already-kept context. A hop retrieves and grades many more new
+candidates than it keeps, so the role with the tightest kept-set cap has the
+largest input.
+
+The answer generator is small for the complementary reason: it runs **once per
+task, after the loop**, over a kept set that survived grading, and it runs at all
+only 810 times against 2,390 sufficiency calls. Its uncapped view of the kept set
+is real; the kept set is just not large.
+
+Our per-role ISL attribution (I16) is what makes any of this visible. The
+diagnostic value is the ordering, not a growth trend: a run whose
+`evaluate_document_relevance` ISL is not the largest of the four has a wiring error
+somewhere in candidate formatting, and that is a check the reference's own table
+gives us a baseline for.
 
 **The grader is binary, not scored.** It is a "simple binary relevance
 classification" (`:475`) returning a list of 1 and 0 per new document; the
@@ -2384,6 +2660,14 @@ second instance of the class I21 names — a silent fallback that moves a scored
 number. Our design refuses instead, and I21's coverage requirement now has two
 reference instances to point at, not one.
 
+One qualification, because it bears on whether the reference's own scored runs are
+affected: the fail-open is suppressed for the specific fatal error a perf-test
+cache raises. `:563`-`:570` re-raises a `RuntimeError` whose message contains
+"Perf test mode requires" rather than falling back. That covers a cache miss and
+nothing else — an empty completion, an unparsable body, a length mismatch, or any
+other exception still marks every new document relevant, in a perf run as much as
+an accuracy run.
+
 **Two distinct paths produce a one-token completed query.** If `kept_docs` is
 empty the entire sufficiency-and-answer block is skipped (`:1342`), the loop exits
 on the iteration cap, and no answer is generated at all. Separately,
@@ -2396,6 +2680,21 @@ a path that never consults a model, and reaches an empty answer through another.
 Distinguishing "the model said Unknown" from "no model was asked" is not possible
 from the reference artifact, and I20's per-node terminal classification is what
 makes it possible in ours.
+
+**Iteration 1 is decomposition, not retrieval-and-answer.** The first pass through
+the loop only decomposes the query into sub-queries (`multi_shot_retrieval.py:1271`-`:1308`);
+the kept set is necessarily empty at that point, which is why Table 2's prefix-cache
+columns start at hop 2 and why a five-hop bound buys four evidence-gathering hops.
+Our `stage_bound()` of `max_hops + 1` matches this only if the same asymmetry is
+authored deliberately rather than arrived at by coincidence.
+
+**Sub-query fan-out is unclamped in the code.** The canonical configuration says up
+to three sub-queries per hop, and the rewriter is prompted for that many, but the
+code does not truncate the model's returned list (`:1416`). A model that returns
+seven produces seven embed-and-retrieve legs. I9 requires ours to be bounded and
+validated, which is a deliberate divergence rather than parity — an unclamped
+fan-out makes per-task work unbounded and the scored rate a function of the
+rewriter's verbosity.
 
 Two smaller mechanics worth recording. Retrieval deduplicates across the
 sub-queries of a hop and against everything already seen, which is why three
@@ -2418,10 +2717,15 @@ The post states several things the source leaves implicit, and one of them
 settles an open question in this record.
 
 **Ingestion is a first-class workload whose throughput is claimed comparable
-across systems.** The post presents two workloads, gives each its own throughput
-metric — documents per second for ingestion, tasks per second for QnA — and
-argues the unit directly: the document is the fixed unit of work every submitter
-starts from, which is what makes documents per second comparable. It also says,
+across systems — and the post and the code disagree about its unit.** The post
+presents two workloads, gives each its own throughput metric — documents per second
+for ingestion, tasks per second for QnA — and argues the unit directly: the
+document is the fixed unit of work every submitter starts from, which is what makes
+documents per second comparable. The scored code emits passages per second instead
+(`measure_indexing_with_chunking.py:414`, `:450`, `:391`), and against 2,515
+documents and 108,711 passages the two describe the same run with numbers 43x
+apart. I12b resolves this in favour of the code and renames our document rate so it
+cannot be mistaken for the submission metric. The post also says,
 in describing the retrieval integrity check, that the check confirms *a
 submitter's independently built vector database* behaves like the reference. That
 is the load-bearing sentence. Submitters implement their own ingestion pipeline;
@@ -2433,11 +2737,14 @@ harness-owned and fixed in a shipped binary, and making them submitter-variable
 would break the guarantee `corpus_digest` exists to provide — that two runs
 chunked the corpus identically. The resolution this record adopts is to keep
 `rag_ingest` in full — its graph form, staged driver, measured window, manifest,
-and integrity gate are all unchanged — while reporting
-`rag_documents_per_second` as harness-and-host throughput rather than as a
-comparable submission result. The embedding leg is the only part of that window
-that varies with the system under test, and the artifact must say so at the point
-the number is emitted, not only here. What does transfer cleanly is the corpus
+and integrity gate are all unchanged — while requiring the reported rate to
+decompose into its served and host parts (I12c) rather than to stand as a single
+comparable number. The embedding leg is the only part of that window that varies
+with the system under test, and the artifact must say so at the point the number is
+emitted, not only here. Reporting passages per second (I12b) helps here for a
+structural reason worth stating: passages are the unit the embedding leg actually
+consumes, so a passage rate is a property of the served system in a way a document
+rate is not. What does transfer cleanly is the corpus
 integrity check, which the post confirms is the actual purpose of the retrieval
 overlap metric.
 
@@ -2506,12 +2813,60 @@ change here rather than new measurement.
 **Growing multi-hop context is stated design intent, and prefix caching is the
 named lever.** The post calls out that the multi-hop context grows each hop, so
 reusing the shared prefix trades compute-bound prefills for memory-bound work.
-That confirms the ISL asymmetry measured above as intentional rather than
-incidental, and it makes the per-role ISL series the direct diagnostic for whether
-a submitter's prefix caching is working: the answer role's input length should
-climb with hop index while the grader and rewriter stay flat, and the answer
-role's TTFT should not climb with it. AIPerf's existing prefix-reuse controls and
-prefix-dependent segment identity are the levers on our side of that measurement.
+
+**An earlier draft proposed the wrong diagnostic for it, on the wrong role, when
+the right one is already shipped.** The draft inferred cache effectiveness from
+whether the answer role's TTFT climbed with its ISL across hops. Three things are
+wrong with that. It watches `answer_generator`, which runs **once per task after
+the loop**, so there is no within-task hop series to plot. It is a confounded
+inference — TTFT moves with queueing, batching, and prefill contention, not only
+with cache state. And the reference is non-streaming throughout, so there is no
+TTFT to read.
+
+The reference measures the quantity directly. `ISL_OSL_statistics.txt` ships
+**Table 2: Prefix Cache Hit Rate (weighted by ISL)**, per component per hop
+(`:21`-`:31`, stable across runs at `:68`-`:78`):
+
+| role | Hop 2 | Hop 3 | Hop 4 | Hop 5 | Avg |
+|---|---|---|---|---|---|
+| `check_sufficiency` | 8.20% | 68.49% | 79.40% | 81.45% | **56.11%** |
+| `generate_search_queries` | 10.17% | 47.40% | 54.31% | 29.93% | 34.28% |
+| `evaluate_document_relevance` | 5.88% | 10.74% | 11.47% | 11.53% | 8.57% |
+| `answer_generator` | 7.25% | 6.59% | 6.68% | 7.26% | **7.20%** |
+
+Table 3 splits the same figures by endpoint: 39.94% for gpt-oss-120b, 8.57% for
+gpt-oss-20b, 29.96% overall. The answer role — the one the draft chose to watch —
+has the *lowest* hit rate of the four and shows no hop trend at all, which is
+exactly what a once-per-task call over a freshly assembled context should show.
+The lever lives on `check_sufficiency`, which climbs from 8% to 81% across hops
+because it re-reads a growing prefix that is genuinely shared hop to hop.
+
+**AIPerf already ships the primitive and this design was not using it.**
+`ObservedUsage.prompt_cache_read_tokens` (`rust/core/src/dispatch.rs:54`) is parsed
+from six provider spellings — `cached_tokens` nested under `prompt_tokens_details`,
+`cache_read_input_tokens`, `prompt_cache_hit_tokens`, `cachedContentTokenCount`,
+`cacheReadInputTokens`, and a flat `cached_tokens`
+(`endpoints/usage.rs:91`-`:117`) — and surfaces per-record as
+`usage_prompt_cache_read_tokens` (`metrics_core/tag_id.rs:95`), as
+`total_usage_prompt_cache_read_tokens` (`:104`), and as
+`overall_usage_prompt_cache_read_pct`. Combined with the per-role dimension I16
+adds, that reproduces Table 2 and Table 3 with no new measurement — only the role
+label the rest of `### Metrics` already specifies. Hop index is the remaining gap
+and is the same plumbing problem as the reasoning-type label.
+
+**A second free source is also unused.** `server_metrics/` retains every Prometheus
+series losslessly with no allowlist, and `config/resolve.rs:1570`-`:1580`
+auto-scrapes every endpoint URL of the run — so per-model KV-cache utilization and
+the server's own prefix-cache hit rate arrive split along the role boundary with
+zero new code, whenever the served stack exposes them. One latent bug blocks the
+derived form: `server_metrics/atlas.rs:67`-`:70` maps only pre-V1 vLLM metric
+names, so `prefix_cache_hit_rate` silently fails to derive on current vLLM. The raw
+series is still retained; the fix belongs in `atlas.rs` and is worth filing
+independently of RAG.
+
+AIPerf's prefix-reuse controls and prefix-dependent segment identity remain the
+levers on the *input* side of that measurement — they shape what is cacheable — but
+they are not how the hit rate is observed.
 
 **A per-reasoning-type breakdown is published.** The post reports five reasoning
 types with per-type accuracy, labelled insights only and noted as multi-label.
@@ -2524,6 +2879,72 @@ configuration admits ten queries concurrently against a minimum query count of
 824. The asymmetry with ingestion, which admits its full 2515, is visible only in
 `user.conf`. Where the post and the code differ in emphasis this way, the code is
 what a run reproduces.
+
+### Submitter levers and what this design can observe
+
+The announcement post names five things a submitter optimizes through: model
+placement across accelerators, co-residency of components, cross-stage scheduling,
+precision selection, and prefix caching. This section states, once, what a run of
+this design can and cannot show about each. It is a limit, not an advertisement,
+and the Purpose section points here rather than listing the five as capabilities.
+
+**Prefix caching: directly observed, per role.**
+`usage_prompt_cache_read_tokens` already exists end to end
+(`rust/core/src/dispatch.rs:54`, `endpoints/usage.rs:91`-`:117`,
+`metrics_core/tag_id.rs:95`), and with I16's role dimension it reproduces the
+reference's Table 2 and Table 3. Two caveats. The endpoint must report cached
+tokens at all; a stack that does not leaves the metric absent, and absent must not
+render as zero. And hop index is not on the record, so the per-hop columns of Table
+2 are not reproducible without the same plumbing the reasoning-type label needs.
+Where the served stack exposes Prometheus, `server_metrics/` gives the server-side
+hit rate for free as a cross-check.
+
+**Precision selection: authored, never observed.** This is I25's hole and it is the
+worst of the five, because the post names precision as an explicit and expected
+submitter variation. Nothing on the wire carries it: `/v1/models` is reduced to a
+boolean (`engine/readiness.rs:238`-`:261`), and every identity field in every
+artifact is client-authored. A run authors `precision` per profile, that value is
+folded into `pipeline_digest`, and the report marks it authored-and-unverified per
+I24. Prometheus `*_build_info` and `cache_config_info` are the one real observation
+path and are opt-in. **This design cannot distinguish an fp4 run from a bf16 one
+without the submitter's cooperation, and says so in the artifact.**
+
+**Model placement and co-residency: observed only as their effect, and only if the
+run is configured to make the effect legible.** AIPerf sees endpoints, not
+accelerators. Two roles pointed at one URL and two roles pointed at two URLs are
+distinguishable; two models co-resident on one GPU behind one URL and two models on
+two GPUs behind one URL are not. The role→profile map in `pipeline_digest` records
+what was authored, and per-role latency records what it cost. That is the whole of
+it. A run that wants placement to be legible must give each placement its own
+endpoint profile, and this design cannot enforce that.
+
+**One consequence worth naming: the default profile map merges two roles.** The
+reference points `check_sufficiency` and `answer_generator` at the same URL and the
+same model (`multi_shot_retrieval.py:600`-`:601`, `:724`-`:725`), so an
+`endpoint_profile_id` keyed on URL-and-model cannot separate them. Those are
+precisely the two roles whose prefix-cache behaviour differs most in Table 2 —
+56.11% against 7.20%. The role label must therefore be the authored role name, not
+a derived endpoint identity, or the most interesting split in the reference's own
+data collapses.
+
+**Cross-stage scheduling: partially observed, and the harness perturbs it.** The
+per-role and per-node latency series show where time goes across stages, which is
+the point. But the staged driver imposes a barrier between stages, so a task cannot
+overlap hop *n*'s tail with hop *n+1*'s head the way a fully live pipeline would;
+the cost is a deflation of tasks per second that grows with trace depth. This is
+the strongest single argument for the live-branching migration in
+`### Live branching: the driver seam is a stepping stone`, and until that lands, a
+`rag_qna` number is a lower bound on what the same serving stack would do under a
+non-barriered driver. The report says so rather than implying otherwise by
+omission.
+
+**A structural limit shared by placement and scheduling: there is one transport,
+not one per profile.** Execution clones a single `Arc<dyn NativeTransportExecution>`
+into every profile (`graph_execution.rs:353`-`:379`). Per-profile transport
+settings — a different connection pool, a different timeout, a different protocol
+per role — have no seam to attach to. Roles differ in endpoint and model, and in
+nothing below that.
+
 
 ## Future requirements
 
@@ -2641,7 +3062,26 @@ it.
 - Multi-series metric-drop bug: `rust/runtime/src/metrics_core/report.rs:1284`-`:1288`;
   `rust/runtime/src/export/mod.rs:80`-`:96`.
 - Per-record row lacking profile identity:
-  `rust/runtime/src/engine/records.rs:113`-`:143`.
+  `rust/runtime/src/engine/records.rs:124`-`:156`.
+- Prefix-cache observation already shipped: `rust/core/src/dispatch.rs:54`;
+  provider spellings `rust/runtime/src/endpoints/usage.rs:91`-`:117`;
+  catalog tags `rust/runtime/src/metrics_core/tag_id.rs:95`, `:104`.
+- Server-metrics scrape and its latent mapping bug:
+  `rust/runtime/src/config/resolve.rs:1570`-`:1580`;
+  `rust/runtime/src/server_metrics/atlas.rs:67`-`:70`.
+- Failure defaults per path: `rust/runtime/src/failure.rs:6`-`:10`, `:30`-`:37`;
+  graph resolution `rust/runtime/src/engine/entrypoints.rs:511`;
+  graph abort is a brake, not a verdict `rust/runtime/src/graph/policy.rs:279`-`:284`,
+  `:336`-`:338`; scheduled abort is fatal `rust/runtime/src/request_rate.rs:754`-`:756`.
+- Graph admission units — traces versus LLM node dispatches:
+  `rust/runtime/src/graph/workload.rs:526`-`:558`;
+  `rust/runtime/src/engine/graph_phase_runtime.rs:2852`-`:2861`.
+- Closed graph vocabulary the cumulative kept set runs into:
+  `rust/runtime/src/graph/model.rs:21`-`:36`, `:203`-`:205`.
+- The third ABI counter with zero headroom:
+  `rust/xtask/src/abi_impl_budget.rs:12` against `abi-baseline.json`.
+- One transport shared by every profile:
+  `rust/runtime/src/engine/graph_execution.rs:353`-`:379`.
 - Accuracy evaluator seam and why the judge does not ride it:
   `rust/runtime/src/accuracy_core/protocol.rs:196`-`:222`; `docs/specs/accuracy.md`.
 - Mock-server determinism and fixtures:
@@ -2693,4 +3133,20 @@ relative to that directory.
 - One-token completion paths: `multi_shot_retrieval.py:1342`, `:735`.
 - Retrieval metric computed on a truncated kept-URL list: `multi_shot_retrieval.py:1607`.
 - Pinned-run call-failure fatality: `multi_shot_retrieval.py:412`-`:416`,
-  `:435`-`:437`, `:449`-`:453`.
+  `:435`-`:437`, `:449`-`:453`; the grader's one perf-mode re-raise `:563`-`:570`.
+- Measured per-role statistics, read rather than inferred: `ISL_OSL_statistics.txt`
+  Table 1 ISL/OSL `:104`-`:107`; Table 2 prefix-cache hit rate by component and hop
+  `:21`-`:31`, replicated `:68`-`:78`; Table 3 by endpoint; five-run
+  `answer_generator` OSL means `:16`, `:63`, `:107`, `:154`, `:197`.
+- The scored ingestion metric and its denominator:
+  `measure_indexing_with_chunking.py:388`, `:391`, `:414`, `:450`.
+- The two in-flight knobs and what each is annotated as:
+  `reference_mlperf_perf.sh:31`-`:32`, `:72`-`:73`; `user.conf:13`;
+  `reference_SUT.py:202`, `:204`, `:334`-`:349`. LoadGen itself is not vendored in
+  this directory, so neither annotation can be confirmed against its source.
+- Input-length drivers the earlier draft misread: uncapped sufficiency view
+  `multi_shot_retrieval.py:604`-`:609`; grader's full-content new-candidate
+  formatting `:483`-`:486`.
+- `top_k_retriever` divergence between the two configuration files:
+  `reference_mlperf_perf.sh:43` and `params.py:492` say 10;
+  `config.template.sh:30` says 15.

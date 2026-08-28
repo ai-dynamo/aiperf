@@ -97,14 +97,32 @@ fn main() {
 }
 
 fn export_linux(out_dir: &PathBuf) {
-    // Write a version script that exports exactly the required symbols and
-    // hides everything else.  The `global:` entries also act as linker GC
-    // roots when `--gc-sections` is active, keeping the mimalloc code that
-    // implements them while stripping unreachable internal helpers.
+    // Use an anonymous version-script block (no version name) to control the
+    // dynamic symbol table.  The key design constraints:
+    //
+    // 1. Rust 1.76+ passes --exclude-libs=ALL when linking cdylibs, which
+    //    hides all symbols from static archives (including our whole-archive
+    //    mimalloc) from the dynamic symbol table.  A version-script's global:
+    //    clause overrides --exclude-libs=ALL; --dynamic-list does not.
+    //
+    // 2. Rust 1.76+ also injects an anonymous version tag into cdylib outputs
+    //    for its own ABI stability machinery.  A NAMED version-script block
+    //    combined with that anonymous tag triggers:
+    //      ld: anonymous version tag cannot be combined with other version tags
+    //
+    // An anonymous version block { global: ...; local: *; } avoids both
+    // problems: it overrides --exclude-libs=ALL through the global: clause,
+    // and it does not introduce a named tag that conflicts with Rust's own
+    // anonymous tag.  The trade-off is that exported symbols carry no version
+    // suffix (@@AIPERF_ALLOC_V1) in nm output; this is acceptable because the
+    // provider is a process-local singleton and not an installed multi-version
+    // shared library.  The global: entries also act as GC roots under
+    // --gc-sections, retaining the mimalloc code that implements them while
+    // stripping unreachable internal helpers.
     let script_path = out_dir.join("aiperf_alloc_v1.map");
     let mut script = std::fs::File::create(&script_path).unwrap();
 
-    writeln!(script, "AIPERF_ALLOC_V1 {{").unwrap();
+    writeln!(script, "{{").unwrap();
     writeln!(script, "    global:").unwrap();
     for sym in EXPORTED_SYMBOLS {
         writeln!(script, "        {sym};").unwrap();
@@ -116,6 +134,13 @@ fn export_linux(out_dir: &PathBuf) {
         "cargo:rustc-link-arg=-Wl,--version-script={}",
         script_path.display()
     );
+    // GNU ld (≥2.35) rejects two anonymous version-script blocks with
+    // "anonymous version tag cannot be combined with other version tags".
+    // Rust 1.76+ injects its own anonymous block; ours is a second.
+    // LLD (available on Linux ≥ Debian 11) merges anonymous blocks without
+    // error.  Force LLD so the version-script global: clause can override
+    // --exclude-libs=ALL on both old and new GNU toolchains.
+    println!("cargo:rustc-link-arg=-fuse-ld=lld");
 }
 
 fn export_macos(out_dir: &PathBuf) {

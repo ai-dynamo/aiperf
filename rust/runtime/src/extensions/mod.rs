@@ -46,8 +46,11 @@ use crate::eval::{
 use crate::export::ExporterRegistry;
 #[cfg(feature = "streaming")]
 use crate::streaming::{
-    action::StreamingActionSinkFactory, checkpoint_backend::StreamingCheckpointBackendFactory,
-    format::StreamingDatasetFormatFactory, session::StreamingSessionProgramFactory,
+    action::StreamingActionSinkFactory,
+    checkpoint_backend::StreamingCheckpointBackendFactory,
+    checkpoint_factories::{LocalCheckpointBackendFactory, NoneCheckpointBackendFactory},
+    format::StreamingDatasetFormatFactory,
+    session::StreamingSessionProgramFactory,
     source::StreamingDatasetSourceFactory,
 };
 
@@ -199,7 +202,6 @@ impl AIPerfExtension for BuiltinStreamingSessionExtension {
 /// Built-in dataset-format loaders (`synthetic`, `sharegpt`, recorded traces, …).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuiltinLoadersExtension;
-
 impl AIPerfExtension for BuiltinLoadersExtension {
     fn name(&self) -> &str {
         "aiperf.builtin.loaders"
@@ -307,13 +309,23 @@ impl AIPerfExtension for BuiltinStreamingExtension {
                 .register_stream_format(factory)
                 .map_err(|error| ExtensionError::rejected(error.to_string()))?;
         }
+        // Checkpoint backends: `local` prepares the crash-durable on-disk store
+        // and `none` is the explicit checkpoint-free selection. Every other
+        // backend identifier is absent and fails closed at selection.
+        registry
+            .register_stream_checkpoint_backend(Arc::new(LocalCheckpointBackendFactory))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .register_stream_checkpoint_backend(Arc::new(NoneCheckpointBackendFactory))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
         Ok(())
     }
 }
 
 /// Built-in NativeGraph-only factories selected by the evaluation composition
 /// layer. Existing endpoint, transport, graph, clock, and observer factories
-/// remain owned by their established product registries.#[cfg(feature = "engine")]
+/// remain owned by their established product registries.
+#[cfg(feature = "engine")]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuiltinNativeGraphExtension;
 
