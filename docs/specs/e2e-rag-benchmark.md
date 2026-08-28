@@ -168,9 +168,13 @@ must survive the move to live branching as a loop-iteration cap on the edge.
 **I10. Every executed stage plan is a projection of the authored source graph.**
 Never synthesized, never a superset, and re-validated against the same rules the
 source passed.
-*Enforces:* the driver's projection step; then placement's independent
-re-validation (`graph_execution.rs:1868`).
-*Status:* **HOLDS** for the existing driver (`live_driver.rs:895`-`:1010`).
+*Enforces:* the driver's projection step — **and nothing else**. An earlier draft
+of this record credited `graph_execution.rs:1868` with "placement's independent
+re-validation"; that call is structural self-consistency only and never sees the
+source graph. See I22.
+*Status:* **HOLDS** for the existing driver (`live_driver.rs:895`-`:1010`),
+because that driver constrains itself. It is not enforced on any driver that
+declines to.
 *Without it:* the benchmark measures a graph the author never wrote.
 
 **I11. Verdict decoding is total and declared.** The authored decoder yields a
@@ -192,8 +196,11 @@ which. Parse and chunk are ingestion *stages*, not setup: they occur after the
 run origin, on the worker, inside the document task.
 *Enforces:* `on_admit` as the request origin
 (`transport/http/sink/endpoint_dispatch.rs:289`), which already fires after
-materialization; a separate task-level origin and terminal; and a worker-side
-materializer for parse and chunk.
+materialization; a separate task-level origin and terminal; and the ingestion
+driver's own `next_stage` for parse and chunk. That seam runs on the shared
+`LocalSet`, so it carries the additional obligation that measuring these stages
+must not perturb co-resident traces — see the staging-cost discussion under
+live branching.
 *Status:* request half **HOLDS** for free. Task half is NEW. The parse/chunk
 clause is NEW **and was contradicted by an earlier draft of this record**, which
 scoped both stages to a `DatasetLoader`/`Composer` pair. That pair runs entirely
@@ -303,6 +310,60 @@ aggregate over the **answer** role only. Every rewriter, grader, and sufficiency
 output is equally unbounded and equally moves service time, and none of them is
 covered. Per-role bands are named as future work, not claimed here.
 
+
+**I21. A stage that contained a failed request is never reported to the driver
+as completed, and a loop that exits on an unrecognized verdict leaves a
+receipt.** The signal a hop-controlling driver reads must distinguish "the model
+said nothing" from "the request failed."
+*Enforces:* the stage-result terminal status; the staged driver's failure policy;
+the loop's non-match path.
+*Status:* **VIOLATED, and this is the most dangerous defect in the substrate this
+design builds on.** Three lines conspire. `graph_execution.rs:1905` hardcodes
+`terminal_status: GraphReplyStatus::Completed` on every `TraceStageResult`, so a
+driver can never observe a failed stage — the existing driver's
+`ensure_completed_stage` (`live_driver.rs:885`-`:894`) is dead code. The default
+`OnFailure::Continue` (`failure.rs:29`-`:32`) resolves through
+`ResilientNodeFailurePolicy` to `NodeFailureDisposition::ContinueWithEmpty`
+(`graph_execution.rs:1600`-`:1604`, `policy.rs:271`-`:275`,
+`executor.rs:450`-`:456`), so a 500 writes an empty channel value and execution
+proceeds. And the loop's unrecognized-verdict path is
+`else { progress.awaits_backedge = false; continue; }`
+(`live_driver.rs:1179`-`:1182`) — a silent exit, where the *branch* construct
+hard-errors on the same condition (`:1036`-`:1046`).
+*Without it:* a `rag_qna` task whose retrieval hop 500s reads an empty passage
+set, generates a plausible answer from nothing, terminates early, and is scored
+and counted as a successful task. Every reported number is well-formed and the
+run is wrong. This is the pipeline-correctness failure mode the whole record is
+ordered around, and it is not hypothetical: it is the current default
+configuration of the substrate.
+
+All three parts are fixable in our own code, and the fix is a prerequisite rather
+than a hardening pass. Thread the real terminal classification into
+`TraceStageResult` in place of the constant at `:1905` — the field and the
+driver-side check already exist, so this is plumbing through `TraceResult`.
+Select `AbortTraceNodeFailurePolicy` for staged-driver execution, or carry a
+per-stage "a node failed" flag. And make the loop's non-match case explicit: a
+closed declared verdict set, as branches already require, or a receipt when a
+loop exits on a value it did not recognize.
+
+**I22. A driver-authored stage plan is validated against the authored source
+graph, not only against itself.**
+*Enforces:* the driver's projection step.
+*Status:* **NEW, and weaker in the substrate than an earlier draft of this record
+claimed under I10.** Placement runs exactly one check —
+`validate_native_graph_trace_plan` (`graph_execution.rs:1868`,
+`lowering.rs:584`-`:662`) — and it is purely structural self-consistency: node
+ids, channels declared within the plan itself, edge endpoints, reachability from
+`START` to `END`, acyclicity. It never sees the source graph. The source-binding
+validation exists but lives *inside* the driver
+(`validate_native_graph_stage`, `lowering.rs:664`-`:688`;
+`validate_dynamic_stage_projection`, `live_driver.rs:988`-`:1013`) and is called
+only from `live_driver.rs:347` and `:384`. So any structurally valid DAG — new
+node ids, new prompts, new models — is accepted by placement and dispatched.
+I10 holds today only because the one existing driver constrains itself.
+*Without it:* the benchmark measures a graph the author never wrote, and nothing
+outside the driver would notice.
+
 ### What is deliberately not an invariant
 
 This design introduces **no new trust boundary**, so there is no
@@ -370,6 +431,19 @@ Each of these is a prerequisite, sized in `## Design`.
    `rust/runtime/src/engine/grpc_execution.rs:130` asserts every profile shares the
    default's URL list. Multi-endpoint RAG is HTTP-only.
 
+**And the seam is unproven by test, which is a different claim from unbuilt.**
+The routing above is read out of the code, not out of a passing assertion. The
+closest existing test authors a second profile beside the default and asserts both
+are *prepared* (`rust/cli/tests/online_v2_stdio.rs:589`-`:597`, `:659`-`:663`) —
+but its graph is a single `dag_jsonl` turn with no `endpoint` field, both profiles
+are `chat`, and both point at the same URL. It proves preparation and never
+selection. No fixture anywhere populates a node-level `endpoint` selector; the
+only writers of that metadata key are `graph/dag_source.rs:264` and
+`graph/lowering.rs:615`. **There is no test in the tree in which a two-profile
+graph run splits traffic between two endpoints.** Since this seam is the one this
+whole design stands on, closing that gap is the cheapest risk reduction available
+and belongs before any RAG-specific work, not after it.
+
 No test in the tree stands up two servers and asserts that node A hit server 1
 while node B hit server 2. `rust/cli/tests/online_v2_stdio.rs:544`-`:663`
 configures a profile literally named `judge`, but both profiles point at the same
@@ -424,6 +498,38 @@ against a non-chat endpoint.
 **Consequence: a graph node bound to an embedding or rerank profile starts,
 dispatches, and benchmarks an empty request against a discarded reply.** Making
 embed and rerank first-class graph steps is prerequisite work, not composition.
+
+**Two precisions on the size of that work, because "prerequisite" has been read
+here as "large".**
+
+*The channel plane needs no change at all.* `ChannelType` is two-valued, but that
+enum selects only the write shape; the stored value is `ChanVal::Val(Value)`
+(`rust/runtime/src/graph/reducers.rs:16`-`:29`), which holds arbitrary JSON, so a
+768-float array round-trips through the store, the snapshots, and the reducers
+untouched. The gap is *consumption*, and it is one line:
+`materialize.rs:121`'s `Some(ChanVal::Val(_)) => Ok(Vec::new())`, where a
+non-message value silently vanishes. One additive `PromptItem::Field { from, name }`
+variant, materialized into `Turn.texts` as a named `Media`, covers both the
+unnamed `input` of embeddings and the named `query`/`passages` groups of
+rankings. `PromptItem` is `#[serde(untagged)]`, so the variant is invisible to
+existing documents — add it last and confirm no existing shape newly matches.
+
+*The reply-side defect is the small half and the shared half.* The irreducible
+fix is a carrier for the parsed payload — one `Option<Value>` field on
+`ModelResponseMetadata` (`rust/runtime/src/scheduled/observe.rs:37`-`:56`),
+populated in the currently-empty match arm at `reduce.rs:203`-`:207`, threaded
+through `TurnDispatchOutcome` (`observe.rs:60`-`:77`), and read at
+`graph_execution.rs:2407` to build the reply from the value instead of the empty
+text. It must **not** be fixed by making `get_text()` return the payload: that
+string is what output-length metrics count, and doing so would corrupt OSL and
+ITL for every retrieval and rerank record. `has_token_output()` already returns
+false for these kinds, so such a record is legitimately latency-only.
+
+This one defect is the shared prerequisite for embedding, rerank, **and**
+retrieval, since all three are `Llm` nodes bound to non-chat profiles. That is
+why it is sequenced first rather than alongside the RAG-specific work: three
+features are blocked on approximately ten lines in two files, and no amount of
+downstream design removes that block.
 
 ### Bounded live-output staging — the mechanism works, its host does not
 
@@ -544,17 +650,24 @@ Directly reusable for this design, and not to be rebuilt:
   other construction site writes `None`. Calling it "plumbed" was wrong — it is
   write-only.
 
-  The disqualifier that matters most is not the missing plumbing: a local `flat` or
-  `hnsw` retrieval node never constructs a `ParsedResponse` at all. `ParsedResponse`
-  does not appear anywhere under `rust/runtime/src/graph/` or `.../eval/`; a
-  non-dispatching node returns `GraphReply` (`rust/runtime/src/graph/sink.rs:84`-`:93`,
-  `:138`-`:145`) and produces no inference record by rule
-  (`requires_native_request_record`, `sink.rs:46`-`:51`). A design anchored on
-  `sources` would have covered zero hops of the default path.
+  The disqualifier that matters most is not the missing plumbing: `ParsedResponse`
+  does not appear anywhere under `rust/runtime/src/graph/` or `.../eval/`, so it is
+  not a carrier the graph plane can read even where it is written. Once retrieval
+  is an `Llm` node bound to a retrieval profile, its evidence must ride the same
+  route every other reply payload takes — the `Option<Value>` carrier added for
+  embeddings and rankings — rather than a second, endpoint-private channel that
+  only one dialect populates. (An earlier draft rested this bullet on retrieval
+  being a *non-dispatching* node kind that produces no inference record. That
+  premise is retired with the node-kind decision; the conclusion is unchanged and
+  now rests on the carrier being unreadable from the graph plane rather than on
+  the record being absent.)
 - **Large binary artifacts.** A registered `Exporter` writing into the run's
   `artifact_dir` (`rust/runtime/src/export/mod.rs:310`, `:397`), with
   `ParquetExporter` as the existing multi-hundred-megabyte precedent and no size
-  or quota limit. `ResourceRequirementsV2 { artifacts }`
+  or quota limit *in the runtime*. The ceiling is downstream and hard: the
+  Kubernetes publication path caps one artifact at 512 MiB and fails the entire
+  results manifest on breach (`rust/cli/src/k8s.rs:208`-`:216`,
+  `rust/cli/src/results_sidecar.rs:51`). `ResourceRequirementsV2 { artifacts }`
   (`rust/runtime/src/engine/registry.rs:107`-`:122`) already lets a workload declare
   an artifact `Required`.
 
@@ -772,17 +885,70 @@ The stages:
   (`graph_execution.rs:1874`-`:1886`) that is not serialized, so graph output
   handles cannot carry vectors out of a trace, let alone across a cell boundary.
 
-  The ownership chain is therefore explicit and mirrors the metrics plane, which
-  solves the same problem: each worker owns one shard builder, appends the vectors
-  its own traces returned with no cross-worker synchronization on the per-request
-  path, and seals its shard to a content-addressed part file at end of phase. The
-  cell merges its workers' parts; under `--cells N` each cell uploads its merged
-  part over the existing artifact channel and the **controller** performs the final
-  merge and writes the sealed index. Merge is concatenation plus a rebuilt passage
-  table, and is order-independent because passage identity is content-addressed —
-  so the `corpus_digest` is invariant under worker count and cell count, which is
-  what makes I1 hold across topologies. A missing or short part fails the seal
-  rather than producing a smaller index.
+  The ownership chain is therefore explicit, and its shape already exists in the
+  tree: `RecordArtifactLane` is a worker-local `Rc<RefCell<_>>` writer held open
+  for the whole run (`rust/runtime/src/engine/record_lane.rs:1`-`:38`), each shard
+  writes to `<artifact_dir>/.shard-<id>/<name>`
+  (`rust/runtime/src/engine/execute/sharding.rs:391`-`:418`),
+  `concatenate_shard_artifacts` merges at finalize
+  (`rust/runtime/src/engine/execute/compose_sidecars.rs:794`-`:804`), and the
+  controller runs the same merge over `cell-{id}` directories with cross-host
+  uploads landing at the same paths
+  (`rust/runtime/src/engine/cellular_controller.rs:1662`-`:1682`). Each worker
+  owns one shard builder, appends the vectors its own traces returned with no
+  cross-worker synchronization on the per-request path, and seals its shard to a
+  content-addressed part file at end of phase; the cell merges its workers' parts;
+  under `--cells N` each cell uploads its merged part and the **controller**
+  performs the final merge and writes the sealed index.
+
+  **Three pieces of that chain are new, and this record does not let the existing
+  shape imply otherwise.**
+
+  - *The merge must fail on a missing part.* Every file-level merge in the tree
+    silently skips one — `shard_artifacts.rs:291`, `:308`, `:349`, and
+    `per_record_parquet.rs:512` all `continue` or filter on `exists()`. That is
+    defensible for a row union compared as a sorted set, which is what the module
+    documents itself as (`shard_artifacts.rs:5`-`:13`, "never byte-for-byte"), and
+    it is exactly the semantics an index seal must not inherit. Fail-closed merge
+    is not a new *idea* — `cellular/shard.rs:150`-`:170` has typed
+    `MissingOrdinal`/`DuplicateOrdinal`/`OrdinalOutOfRange` errors, and
+    `eval/native_graph/artifacts.rs:311`-`:325` has declared-length staging — but
+    it is new *at this layer*.
+  - *Content addressing gives identity, not order.* An earlier draft said the
+    merge is "order-independent because passage identity is content-addressed",
+    which conflates the two: a set of content-addressed passages is topology-
+    invariant, but the bytes of a merged file are not until a canonical order is
+    chosen. The seal stamps each passage a global corpus ordinal at issue,
+    validates the union across parts is exactly `0..N` as a permutation, and
+    writes rows in ordinal order — the discipline `merge_records_in_global_order`
+    (`cellular/shard.rs:139`-`:180`) uses to reach byte-identity against a
+    single-cell run, which is the only topology-invariant merge in the tree.
+  - *The digest must exclude topology fields.* The one canonical digest
+    precedent, `streaming/results.rs:521`-`:546` with the field-wise form at
+    `streaming/checkpoint.rs:1326`-`:1367`, is worth copying in shape —
+    domain-separated, length-prefixed BLAKE3 — but its descriptor deliberately
+    includes `cell_id` and `worker_id` (`results.rs:124`-`:126`), making that root
+    topology-*dependent*. Nothing in the tree combines an invariant merge with a
+    canonical digest; that combination is what I1 asks for and it is new code.
+
+  Two ceilings bound the design at target scale and neither is negotiable from
+  inside AIPerf. The Kubernetes publication path hard-caps a single artifact at
+  512 MiB and fails the **entire** results manifest on breach
+  (`rust/cli/src/k8s.rs:208`-`:216`, `rust/cli/src/results_sidecar.rs:51`,
+  `:554`-`:558`), so a ~330 MB index fits with about 55% headroom and a 2×
+  scale-up does not. And `AIPERF_CELL_ARTIFACT_UPLOAD_TIMEOUT` defaults to 300
+  seconds for *all* cells combined
+  (`rust/runtime/src/engine/cellular_controller.rs:1963`-`:1968`); every artifact
+  shipped over that hop today is line-oriented JSONL that zstd crushes, and
+  incompressible f32 at N × 330 MB has no precedent under that deadline. The
+  cell→controller hop also carries **no digest and no declared length** —
+  `received_bytes` is log-only (`artifact_shipping.rs:1682`, `:1721`-`:1735`) —
+  so the per-part `{length, blake3}` contract is ours to add. Finally,
+  `ArtifactSpec` is a flat list of named `Option<PathBuf>` fields
+  (`rust/runtime/src/engine/protocol.rs:257`-`:302`) and `shippable_relatives`
+  hardcodes them (`artifact_shipping.rs:2198`-`:2221`): a new artifact needs an
+  entry in both or every upload is rejected by the allowlist, and a multi-block
+  artifact family has no representation there at all.
 
 **`rag_documents_per_second` is not derivable from the record plane as it
 stands.** One batched request is one record and a document spans several batches,
@@ -877,70 +1043,97 @@ Retrieval is not a model call, but it is a scheduled step with real latency that
 can run in parallel across sub-queries within a hop, and under the `http` index it
 is a genuine wire request. Expressing it as driver-side work between stages would
 hide it from the scheduler, from per-node records, and from concurrency
-accounting. `ExecutableGraphNode` therefore gains a third variant, `Retrieval`,
-reading a query-vector channel and writing a passage-set channel.
+accounting. It must be a node.
 
-Modelling retrieval as a `Tool` node instead is not viable: tool nodes force the
-driver to supply a `ToolDispatcher` — pulling in trace-local dispatcher lifecycle
-this workload otherwise does not need — and are explicitly rejected by the
-non-driver static path (`rust/runtime/src/graph/execution.rs:245`-`:255`) and by
-`static_graph_plans` (`graph_phase_runtime.rs:2189`-`:2197`).
+**It is an `Llm` node bound to a retrieval endpoint profile, not a third
+`ExecutableGraphNode` variant.** An earlier draft of this record specified the
+third variant and priced its landing surface honestly at roughly twice the
+`ToolNode` precedent. The price was right and the choice was still wrong, because
+the capability it was buying already exists.
 
-**The variant is additive at the wire boundary but expensive in the tree, and
-this record does not soften that.** `Serialize` is `#[serde(tag = "kind")]` with a
-hand-written `Deserialize` carrying an explicit unknown-kind rejection
-(`rust/runtime/src/graph/model.rs:249`-`:286`), so every existing document decodes
-byte-identically and new-writer/old-reader fails closed. `GraphRecord` is not on
-the cellular wire — only `GraphCellSupplement` crosses — so there is no cellular
-DTO change. And `is_flat_graph` fails closed by construction: it matches a single
-`ExecutableGraphNode::Llm` positionally and returns `false` for anything else
-(`rust/runtime/src/graph/flat.rs:48`-`:66`).
+The per-node endpoint selector is live on the benchmark path. `dispatch` reads
+`metadata["endpoint"]` from the node
+(`rust/runtime/src/engine/graph_execution.rs:2224`) and `materialize` resolves it
+to a distinct `ValidatedEndpointProfileV2` — its own dialect, URL set, streaming
+flag, and `input_token_counter` — falling back to the default profile only when
+the node names none (`:1030`-`:1045`). Node selectors are validated up front
+against the authored profile table
+(`rust/runtime/src/engine/online_execution.rs:1868`-`:1888`), and the selector is
+authorable end to end: `dag_jsonl` turns carry a per-turn `endpoint` field that
+lowers into node metadata (`rust/runtime/src/graph/dag_source.rs:59`-`:60`,
+`:264`; `rust/runtime/src/graph/lowering.rs:613`-`:619`). Retrieval-shaped
+dialects are already registered — `nim_rankings`, `cohere_rankings`,
+`hf_tei_rankings`, `image_retrieval`, `solido_rag`, `embeddings`
+(`rust/runtime/src/endpoints/registry.rs:749`-`:760`).
 
-But the `ToolNode` precedent — a **non-executing** node kind, rejected at every
-execution boundary — cost 37 files and roughly +1400/−480 lines (`33780ead7f`)
-plus eight follow-ups, two of them cancellation-semantics bugs found after the
-fact. A node that actually dispatches costs strictly more. Around ten exhaustive
-matches break the build, which is the good case. Thirteen sites would silently
-mishandle a new variant, of which these must be decided deliberately:
+A node authored that way is a first-class scheduled step **today**: input gating,
+`min_start_delay_us`, splice successors, a `CapturedRecord`, a
+`ReplayCallMeasurement`, correct `llm_node_count` budget accounting, cellular
+fold, and dry-run support — all for zero graph-plane edits. `has_token_output()`
+is correctly `false` for these response kinds, so a retrieval record is a
+legitimate latency-only record and does not pollute OSL or ITL. Records separate
+in the output plane by `InferenceDimensions.endpoint_url`
+(`rust/runtime/src/metrics_core/ingest.rs:22`-`:27`) and by
+`correlation_id = "{trace_id}:{node_id}"`.
 
-- `rust/runtime/src/graph/snapshot.rs:36`-`:40` — `has_tool_node` is the *only*
-  guard on `chop_trie_at_tstar`/`rewrite_for_warmup`, and `:390`-`:421` silently
-  **deletes** non-`Llm` nodes during warmup rewrite. Highest severity, and it
-  forces an unmade semantic choice: what does a t\* snapshot of a retrieval node
-  mean?
-- `rust/runtime/src/graph/model.rs:380`-`:386` — `llm_node_count` drives credits
-  and budgets across twelve consumers, and `rust/runtime/src/graph/inspect.rs:440`
-  computes `tool_node_count` as *total minus llm*, so a retrieval node would be
-  **reported as a tool**.
-- `rust/runtime/src/engine/graph_execution.rs:1556` (worker node index) and
-  `:2579` (`terminal_graph_nodes`) would **disagree** with each other.
-- `rust/runtime/src/graph/validate.rs:478`-`:490` gates the splice check behind
-  `as_llm`, turning a missing declaration into a deadlock instead of a finding.
-- `rust/runtime/src/graph/execution.rs:245` is written as a denylist
-  (`matches!(Tool(_))`) rather than an allowlist.
+What the third variant would have cost, and what it would have broken:
 
-Three pieces of de-risking pre-work make the variant tractable and are worth
-landing independently: flip the `execution.rs` reject gate to allowlist form,
-replace `has_tool_node` with `!matches!(Llm(_))`, and make the llm/tool counts
-explicit rather than derived by subtraction. `inspect.rs`'s
-`GraphNodeInspection` also carries only LLM-shaped optional fields, so retrieval
-attributes (index binding, top-k) require widening that CLI DTO.
+- **It buys nothing the `Llm` path does not already have.** Dispatch, records,
+  scheduling anchors, and budget accounting all come free on the existing path.
+- **`rust/runtime/src/graph/snapshot.rs:34`-`:40` would silently delete it.**
+  `has_tool_node` is `matches!(node, Tool(_))`, so a third variant does not trip
+  it; the three guards at `:61`, `:233`, and `:448` then take the LLM-only path,
+  and `rewrite_for_warmup` (`:457`-`:462`) rebuilds the node set as `Llm` only.
+  Retrieval nodes vanish from the warmup graph and the t\* chop drops them from
+  the profiling graph. No error, no receipt.
+- **Roughly fourteen further sites read through `as_llm()` or `matches!`** and
+  would return zero, mislabel, or refuse with the wrong kind: `llm_node_count`
+  under-counts the request budget (`rust/runtime/src/graph/workload.rs:181`),
+  `inspect.rs:440` reports it as a *tool* node in `aiperf graph explain` JSON,
+  `validate.rs:157`-`:165` never range-validates its timing gate,
+  `executor.rs:658`-`:665` ignores its firing anchor, `scheduler.rs:275`-`:282`
+  skips it in leading-offset collapse, and `execution.rs:245`-`:255` — written as
+  a `Tool`-only denylist — fails *open*.
+- **The `ToolNode` precedent was 37 files, +1387/−481 (`33780ead7f`)**, for a node
+  that does not dispatch, has no inputs, no anchor, no record, and no metrics
+  identity. A dispatching variant is 30–40 files, plus a `GraphNodeKindReport`
+  change to a serialized public artifact contract, a second variant on
+  `conditional_graph`'s separate `AuthoredNode` enum, and a new bucket in
+  `TraceTerminalSupplement`'s two-vector fold vocabulary.
 
-**Everything above is the data plane, and none of it makes a retrieval node
-fire.** An earlier draft of this record enumerated the decode/validate/inspect
-surface and stopped there, which reads as a complete cost when it is roughly half
-of one. The execution surface is separate and additive: `GraphExecutor::fire` has
-exactly two arms today, `Llm` → `run_node` and `Tool` → `run_tool_node`
-(`rust/runtime/src/graph/executor.rs:238`-`:259`), and needs a third; `GraphSink`
-exposes only `dispatch_tool_node`, `dispatch`, and request dispatch
-(`rust/runtime/src/graph/sink.rs:134`-`:156`) and needs a retrieval dispatch whose
-`GraphReply` (`:84`-`:93`) carries a passage set; `requires_native_request_record`
-is the bool identity `fn requires_native_request_record(is_llm_node: bool) -> bool
-{ is_llm_node }` (`sink.rs:45`-`:51`) and must become node-kind-aware, or a
-retrieval node produces no record and `rag_retrieval_latency` has nothing to read;
-and admission, materialization, the worker-local `VectorIndex::search` binding,
-the `http` index dispatch path, and record creation are all new. The `ToolNode`
-precedent bounds the data plane only, because `ToolNode` does not dispatch.
+Modelling retrieval as a `Tool` node is not merely expensive but structurally
+impossible: `ToolNode` (`rust/runtime/src/graph/model.rs:239`-`:248`) has only
+`output`, `commands`, and `timeout_ns`; its `read_channels()` returns
+`Vec::new()` and `input_requirements()` returns `&[]` (`:298`-`:317`), so **it
+cannot consume the upstream query**, which is the entire step. It also gets no
+native request record (`sink.rs:45`-`:51`), so retrieval latency would land only
+as a `ToolCallMeasurement` in the replay artifact and never in the metrics plane.
+
+Where the `Llm`-node approach genuinely breaks is the reply payload, and that is
+one defect shared with embed and rerank rather than a retrieval-specific one — see
+I7. The identity of that defect across all three steps is the reason it is a
+Phase 1 prerequisite in the plan rather than a Phase 3 detail.
+
+Two secondary consequences follow from the choice and are not free:
+
+- **Distinguishing a retrieval step in inspection and reporting** wants a `kind`
+  discriminator field on `LlmNode` rather than a new enum variant. Adding it
+  there keeps every match arm, node count, budget, snapshot transform, flat-graph
+  gate, and scheduler anchor correct by construction, while giving `aiperf graph
+  explain` a real place to name the step.
+- **The in-process worker-local index is a transport, not a node kind.** The
+  non-eval constructor maps every profile to the same
+  `Arc<dyn NativeTransportExecution>` (`graph_execution.rs:366`-`:374`); the
+  heterogeneous per-profile `transports` map exists at `:387` but is supplied only
+  by the eval caller. Serving a worker-local HNSW index means writing a new
+  transport under either design, so it does not argue for the variant. Threading
+  the existing per-profile map through the profile path is the smaller half of
+  that work.
+
+Revisit the third variant only if retrieval comes to need a channel payload the
+`Llm` path cannot express. Note the shape of that constraint: `GraphReply<M>` is
+generic over `WireMessage` and the engine sink is `GraphSink<OpenAiChatMessage>`,
+so passages ride the channel encoded as assistant content.
 
 ### QnA: `rag_qna`
 
@@ -1019,18 +1212,71 @@ Two execution modes:
 The staged driver lets the multi-hop loop ship without reactive machinery in the
 flat core. It is not the end state.
 
-The cost of staging is real and measured. A stage is a full barrier: within one
-hop every grade must complete before the driver observes the verdict, even though
-a production RAG system can begin the sufficiency check as soon as enough passages
-are graded and can abandon in-flight grading once the answer is decided. Staging
-reports a hop latency that is the maximum over its fan-out rather than the real
-critical path, and cannot express early termination at all. Cross-*task*
-concurrency is preserved — each trace is its own `spawn_local`
-(`rust/runtime/src/graph/placement.rs:396`-`:401`) — so the barrier stalls only its
-own task. Per-stage there is also a fresh executor, context, and channel store,
-and `EngineGraphSink::configure_stage` clears the prepared-metadata cache every
-stage (`graph_execution.rs:2448`-`:2459`), so per-node metadata is re-parsed on
-every hop: six times the setup a static trace pays once.
+The cost of staging is real, measured, and understated by an earlier draft of
+this record in both directions. A stage is a full barrier: within one hop every
+grade must complete before the driver observes the verdict, even though a
+production RAG system can begin the sufficiency check as soon as enough passages
+are graded and can abandon in-flight grading once the answer is decided.
+
+The barrier is confirmed at the level that matters — `execute_static_trace_result`
+ends at `handle.wait_idle().await` (`graph/execution.rs:226`), which waits on a
+per-trace inflight counter (`graph/runtime.rs:112`-`:117`, decremented in
+`InflightTask::drop`, `:67`-`:75`) including stragglers nobody consumed — so a
+hop costs max-over-stage, not critical path. At five hops and fan-out three that
+is roughly 1300 ms staged against 1067 ms pipelined and 900 ms with speculative
+overlap; at fixed concurrency it deflates `rag_tasks_per_second` by something like
+18–31%.
+
+Four corrections to that statement, two mitigating and two aggravating:
+
+- **The barrier is per-trace, not per-worker.** `placement.rs:369`-`:409`'s
+  `worker_loop` spawns each `Execute` into a `JoinSet` at `:398` and returns
+  immediately to `commands.recv()` at `:394`; the single-reactor path spawns at
+  `graph_phase_runtime.rs:791`. **Stage barriers cost per-task latency, not
+  aggregate worker throughput** — offered load is preserved as long as resident
+  traces cover the gaps, and the deflation above bites at fixed concurrency, not
+  open loop. An earlier draft implied the cost was unqualified.
+- **"Max over fan-out" is a property of the stage boundary, not of the executor.**
+  Nodes within a stage already overlap (`executor.rs:215`-`:236` `schedule()`
+  spawning at `:233`), and `Count::N(k)` joins (`graph/model.rs:54`-`:57`,
+  `channel_store.rs:207`-`:233`) already let a node fire on the first *k*
+  arrivals — so intra-stage fan-in can be *min*-over-fan-out today. Modelling a
+  hop as a stage forfeits an optimization the executor already supports. If the
+  hop body can be expressed as one graph with a k-of-N join rather than N stages,
+  most of the deflation disappears with no new runtime mechanism.
+- **Per-stage marshalling is O(hops²), and was not costed at all.**
+  `freeze_terminal_outputs` (`graph_execution.rs:1753`-`:1797`) calls
+  `SegmentPool::thaw` at `:1774`, a full deep copy of every segment in the store
+  (`dataset/segment.rs:317`-`:331`), and each stage's frozen store becomes the
+  next stage's base (`:1874`-`:1883`). Retrieved passages are precisely what
+  inflates that store, so the quadratic lands on the one workload that grows it.
+  Each barrier also serializes every channel to JSON (`:1888`-`:1899`).
+  Both are synchronous on the reactor. One escape hatch exists:
+  `freeze_terminal_outputs` early-returns before `thaw` when no declared terminal
+  channel holds a concrete value (`:1766`-`:1771`), so a driver that declares no
+  terminal outputs mid-run avoids the copy entirely.
+- **"No early termination" is structural, not a backlog item.** `Abortable` at
+  `graph_execution.rs:1837` and `:1899` wraps only the driver's own futures, the
+  `TraceProgramDriver` trait (`driver.rs:512`-`:576`) has no in-stage callback,
+  and `set_abort` (`context.rs:105`-`:115`) is whole-trace. Grader-driven
+  cancellation of sibling nodes needs a new trait method *and* per-node abort
+  granularity — it cannot be added later as a driver-side optimization.
+
+Per-stage there is also a fresh executor, context, and channel store, and
+`EngineGraphSink::configure_stage` clears the prepared-metadata cache every stage
+(`graph_execution.rs:2448`-`:2459`), so per-node metadata is re-parsed on every
+hop: six times the setup a static trace pays once.
+
+**`next_stage` and `observe_stage` run on the shared `LocalSet`.** The worker loop
+spawns each trace and never awaits one, so synchronous CPU work inside a driver
+body stalls every co-resident trace on that core. For `rag_qna` the driver bodies
+are cheap. For `rag_ingest` they are not — HTML parsing and chunking are exactly
+the kind of work that would inflate the measured latency of unrelated traces
+sharing the worker, which is a measurement-correctness defect and not a
+throughput note. The ingestion driver must therefore yield the reactor across its
+parse and chunk stages rather than running them straight through, and I12's claim
+that parse and chunk are *measured* stages carries the additional obligation that
+measuring them does not perturb what else is being measured.
 
 For a benchmark whose whole subject is overlapping many concurrent tasks across
 heterogeneous accelerators, understating the intra-task critical path understates
@@ -1243,7 +1489,11 @@ protects.
 | Retrieval integrity reported from a run that did not retain the retrieval-evidence artifact | I18 |
 | A scored `rag_ingest` run with the parsed-corpus cache enabled | I12 |
 | An ingestion format whose parse or chunk stage is implemented in a `DatasetLoader` or `Composer` | I12 |
-| A `retrieval` node in a non-RAG workload | node-kind soundness |
+| A staged `rag_*` run under a node failure policy that reports a failed hop as completed | I21 |
+| A `rag_qna` loop whose verdict channel yields a value outside its declared verdict set | I11, I21 |
+| A driver-authored stage plan that is not a projection of the authored source graph | I10, I22 |
+| An index seal missing any worker or cell part, or whose passage ordinals are not a permutation of `0..N` | I1 |
+| A sealed index exceeding the Kubernetes publication cap of 512 MiB, refused at seal rather than at publish | I1 |
 | A multi-endpoint `rag_qna` run over gRPC | transport limit (`grpc_execution.rs:130`) |
 
 ## Future requirements
