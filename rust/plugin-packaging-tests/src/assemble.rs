@@ -97,6 +97,15 @@ pub enum AssembleError {
         #[source]
         source: std::io::Error,
     },
+    /// The fixture file itself could not be read.
+    #[error("cannot read candidate fixture `{path}`: {source}")]
+    UnreadableFixture {
+        /// Path the assembler tried to read.
+        path: PathBuf,
+        /// Underlying I/O failure.
+        #[source]
+        source: std::io::Error,
+    },
     /// The output directory could not be prepared or written.
     #[error("distribution output failed: {0}")]
     Io(#[from] std::io::Error),
@@ -148,7 +157,11 @@ impl CandidateFixture {
 
     /// Read and parse the candidate generation stored at `path`.
     pub fn load(path: &Path) -> Result<Self, AssembleError> {
-        let text = std::fs::read_to_string(path)?;
+        let text =
+            std::fs::read_to_string(path).map_err(|source| AssembleError::UnreadableFixture {
+                path: path.to_path_buf(),
+                source,
+            })?;
         Self::parse(&text)
     }
 
