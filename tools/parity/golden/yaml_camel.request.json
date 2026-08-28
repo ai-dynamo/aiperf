@@ -42,6 +42,7 @@
         "headers": {},
         "http2": false,
         "keepalive_timeout": 300.0,
+        "per_chunk_usage": false,
         "proxy_from_env": false,
         "session_header": "x-s",
         "ssl_verify": true,
@@ -695,11 +696,11 @@
               "header": "Video Peak Memory"
             }
           },
-          "title": "NVIDIA AIPerf | LLM Metrics",
-          "width": 140,
           "model_names": [
             "Qwen/Qwen3-0.6B"
-          ]
+          ],
+          "title": "NVIDIA AIPerf | LLM Metrics",
+          "width": 140
         },
         "genai_perf": {
           "enabled": true,
@@ -734,6 +735,7 @@
               "endpoint": {
                 "api_key": "<redacted>",
                 "connection_reuse": "never",
+                "per_chunk_usage": false,
                 "session_header": "x-s",
                 "streaming": true,
                 "type": "chat",
@@ -1008,6 +1010,7 @@
             "endpoint": {
               "api_key": "<redacted>",
               "connection_reuse": "never",
+              "per_chunk_usage": false,
               "session_header": "x-s",
               "streaming": true,
               "type": "chat",
@@ -1210,6 +1213,7 @@
             "endpoint": {
               "api_key": "<redacted>",
               "connection_reuse": "never",
+              "per_chunk_usage": false,
               "session_header": "x-s",
               "streaming": true,
               "type": "chat",

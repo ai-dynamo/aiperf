@@ -43,6 +43,7 @@
         },
         "http2": false,
         "keepalive_timeout": 300.0,
+        "per_chunk_usage": false,
         "proxy_from_env": false,
         "request_content_type": "multipart_form_data",
         "session_header": "x-session",
@@ -697,11 +698,11 @@
               "header": "Video Peak Memory"
             }
           },
-          "title": "NVIDIA AIPerf | LLM Metrics",
-          "width": 140,
           "model_names": [
             "Qwen/Qwen3-0.6B"
-          ]
+          ],
+          "title": "NVIDIA AIPerf | LLM Metrics",
+          "width": 140
         },
         "genai_perf": {
           "enabled": true,
@@ -738,6 +739,7 @@
                   "authorization": "<redacted>",
                   "x-custom": "abc"
                 },
+                "per_chunk_usage": false,
                 "request_content_type": "multipart/form-data",
                 "session_header": "x-session",
                 "streaming": true,
@@ -1001,6 +1003,7 @@
                 "authorization": "<redacted>",
                 "x-custom": "abc"
               },
+              "per_chunk_usage": false,
               "request_content_type": "multipart/form-data",
               "session_header": "x-session",
               "streaming": true,
