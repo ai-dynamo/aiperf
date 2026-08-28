@@ -722,6 +722,20 @@ fn cell_bind(coordinate: &str, role: &str) -> crate::cellular::transport::connec
 /// runtime; the velo instance is dropped on return.
 #[cfg(feature = "cellular")]
 pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
+    fetch_cell_envelope_with_registry_factory(&crate::extensions::BuiltinAIPerfRegistryFactory)
+        .await
+}
+
+/// Fetch this cell's envelope, reconstructing any propagated streaming
+/// capability agreement against `registry_factory`.
+///
+/// The factory must be the one this process will execute with; the stock
+/// distribution composes `BuiltinAIPerfRegistryFactory` immediately after this
+/// call returns.
+#[cfg(feature = "cellular")]
+pub async fn fetch_cell_envelope_with_registry_factory(
+    registry_factory: &dyn crate::extensions::AIPerfRegistryFactory,
+) -> Result<DownloadedCellEnvelope> {
     use crate::cellular::transport::connect::{
         RegistrationDeadline, build_velo, connect_controller_until,
     };
@@ -806,13 +820,27 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
     }
     let envelope = download_cell_dataset_if_needed(reply.envelope)
         .context("landing a replay dataset before cellular preflight")?;
+    // Capability negotiation is reported through the same pre-START channel as
+    // every other cell-local preflight refusal, so a cell that cannot reproduce
+    // the controller's agreement fences the run at the barrier and never issues.
+    let preflight = match negotiate_streaming_capability(
+        cell_id,
+        registry_factory,
+        reply.streaming_capability.as_deref(),
+    ) {
+        Ok(()) => preflight_cell_envelope(envelope.bytes()).await,
+        Err(error) => Err(error),
+    };
     client
         .send(&CellMessage::Preflight {
             cell_id,
-            result: preflight_cell_envelope(envelope.bytes()).await,
+            result: preflight.clone(),
         })
         .await
         .map_err(|error| anyhow::anyhow!("cell {cell_id} preflight report: {error}"))?;
+    if let Err(error) = preflight {
+        anyhow::bail!("cell {cell_id} preflight refused: {error}");
+    }
     // Block until START. Either the phaser reaches generation 1 or the
     // single-shot event triggers — every cell resumes together once the controller has
     // seen every cell's preflight report. A poisoned event / finalized
@@ -847,6 +875,64 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
 /// This does not open a workspace or dispatch a request. Driver-specific image and
 /// sandbox checks are reported through the same result channel once their resolved
 /// recipe is available, so any failure fences warmup behind the controller barrier.
+/// Reproduce the controller's streaming capability agreement locally.
+///
+/// `Ok(())` when the run is not a streaming run, or when this cell's own
+/// registered factories admit exactly the controller's selection. The refusal
+/// string is the typed error's `Display`; no payload or digest bytes are logged.
+#[cfg(feature = "cellular")]
+fn negotiate_streaming_capability(
+    cell_id: u32,
+    registry_factory: &dyn crate::extensions::AIPerfRegistryFactory,
+    propagated: Option<&[u8]>,
+) -> Result<(), String> {
+    #[cfg(feature = "streaming")]
+    {
+        use crate::cellular::streaming_capability::StreamingCapabilityPropagation;
+
+        let Some(bytes) = propagated else {
+            return Ok(());
+        };
+        let registry = registry_factory
+            .build()
+            .map_err(|error| format!("compose cell product registry: {error}"))?;
+        let propagation =
+            StreamingCapabilityPropagation::decode(bytes).map_err(|error| error.to_string())?;
+        match propagation.reconstruct(&registry) {
+            Ok(plan) => {
+                tracing::debug!(
+                    cell_id,
+                    selected = %plan.selected_ids(),
+                    component = "cellular_cell",
+                    "reconstructed the controller streaming capability agreement locally"
+                );
+                Ok(())
+            }
+            Err(error) => {
+                tracing::warn!(
+                    cell_id,
+                    error = %error,
+                    component = "cellular_cell",
+                    "cell cannot reproduce the controller streaming capability agreement"
+                );
+                Err(error.to_string())
+            }
+        }
+    }
+    // Fail-closed cross-build case: a streaming controller must never silently
+    // drive a cell that linked no streaming capability at all.
+    #[cfg(not(feature = "streaming"))]
+    {
+        let _ = (cell_id, registry_factory);
+        if propagated.is_some() {
+            return Err("controller propagated a streaming capability agreement to a cell built \
+                 without the streaming feature"
+                .to_owned());
+        }
+        Ok(())
+    }
+}
+
 async fn preflight_cell_envelope(envelope: &[u8]) -> Result<(), String> {
     let value: serde_json::Value = serde_json::from_slice(envelope)
         .map_err(|error| format!("decode cellular execute envelope: {error}"))?;
@@ -1844,5 +1930,57 @@ mod tests {
             ),
             Some("artifact-upload.benchmark.svc.cluster.local:9600".to_owned())
         );
+    }
+
+    #[cfg(feature = "cellular")]
+    #[test]
+    fn absent_propagation_is_not_a_negotiation_failure() {
+        assert_eq!(
+            super::negotiate_streaming_capability(
+                0,
+                &crate::extensions::BuiltinAIPerfRegistryFactory,
+                None,
+            ),
+            Ok(()),
+            "a non-streaming cellular run must not be gated by capability negotiation"
+        );
+    }
+
+    #[cfg(all(feature = "cellular", feature = "streaming"))]
+    #[test]
+    fn negotiation_failure_becomes_a_preflight_refusal_string() {
+        use crate::cellular::streaming_capability::StreamingCapabilityPropagation;
+
+        let propagation = StreamingCapabilityPropagation {
+            version: crate::cellular::streaming_capability::STREAMING_CAPABILITY_PROPAGATION_VERSION,
+            source: "not-a-registered-source".to_owned(),
+            format: "not-a-registered-format".to_owned(),
+            session: "not-a-registered-session".to_owned(),
+            action_sink: "not-a-registered-sink".to_owned(),
+            transport: "not-a-registered-transport".to_owned(),
+            endpoint: None,
+            checkpoint_backend: None,
+            source_digest: [0u8; 32],
+            format_digest: [0u8; 32],
+            session_digest: [0u8; 32],
+            action_sink_digest: [0u8; 32],
+            transport_digest: [0u8; 32],
+            endpoint_digest: None,
+            checkpoint_backend_digest: None,
+            agreed_action_schema: "test.action.v1".to_owned(),
+            agreed_fragment_schema: "test.fragment.v1".to_owned(),
+            plan_digest: [0u8; 32],
+        };
+        let bytes = propagation.encode().expect("an owned DTO encodes");
+
+        let refusal = super::negotiate_streaming_capability(
+            0,
+            &crate::extensions::BuiltinAIPerfRegistryFactory,
+            Some(&bytes),
+        )
+        .expect_err("the stock registry has none of these factories");
+        // This is the exact string that rides `CellMessage::Preflight`.
+        assert!(refusal.contains("stream_source"), "{refusal}");
+        assert!(refusal.contains("not-a-registered-source"), "{refusal}");
     }
 }
