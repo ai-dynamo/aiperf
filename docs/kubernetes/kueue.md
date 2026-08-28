@@ -192,8 +192,11 @@ spec:
 The `aiperf-operator` Helm chart exposes a `kueue.defaultQueueName` value
 (see `deploy/helm/aiperf-operator/values.yaml`). When set, the chart
 annotates the benchmark namespace with
-`kueue.x-k8s.io/default-queue-name` so Kueue itself can default the queue
-for workloads in that namespace.
+`kueue.x-k8s.io/default-queue-name` so Kueue itself can default the queue for
+workloads in that namespace, **and** sets
+`AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container so
+AIPerf's own manifest builder applies the queue label and starts the JobSet
+suspended.
 
 ```yaml
 # values.yaml
@@ -203,10 +206,13 @@ kueue:
 
 The annotation is applied by
 `deploy/helm/aiperf-operator/templates/benchmark-namespace.yaml`, and only to
-`benchmarkNamespace.name` — the extra namespaces in
-`benchmarkRbacNamespaces` are created without it.
+the namespace whose name equals `benchmarkNamespace.name` — the extra
+namespaces in `benchmarkRbacNamespaces` are created without it. Note that the
+template renders the primary name only under `benchmarkNamespace.create`, but
+renders every `benchmarkRbacNamespaces` entry unconditionally, so the
+annotation still lands if the primary name also appears in that list.
 
-Note that AIPerf's own manifest builder does **not** read this annotation:
+Note that AIPerf's own manifest builder does **not** read the annotation:
 `AIPerfJobSetSpec._resolved_queue_name` in
 `src/aiperf/kubernetes/jobset.py` consults only
 `spec.scheduling.queueName` and the `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME`

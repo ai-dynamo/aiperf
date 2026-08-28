@@ -15,7 +15,7 @@ This guide is written for AI coding agents (Claude, Copilot, Cursor, etc.) that 
 1. Start at [Triage](#triage) to classify the problem
 2. Follow the decision tree for your problem class
 3. Each section gives you the exact command, the JSON schema of the output, and the decision logic
-4. All commands use `--output json` or equivalent for structured output
+4. Prefer structured output where it exists — `aiperf kube preflight` and `aiperf kube validate` take `--output json`. Others do not: `aiperf kube debug` emits human-readable text only, and `--output` on `aiperf kube results` is a destination directory, not a format.
 
 ---
 

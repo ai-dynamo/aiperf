@@ -619,7 +619,9 @@ The mode applies to both controller-pod and worker-pod containers; there is no p
 
 ## Tunable Environment Variables (`AIPERF_K8S_*`)
 
-These variables tune the operator and individual benchmark pods. Set them on the operator deployment (`operator.env.*` in `values.yaml`) to affect every subsequent job, or on `spec.podTemplate.env` to affect one CR only.
+These variables tune the operator and individual benchmark pods. `operator.env` is a fixed key map, not an arbitrary passthrough: only the keys it declares reach the container. For any other variable, set it on the live Deployment (`kubectl -n aiperf-system set env deployment/aiperf-operator -c operator KEY=VALUE` — `-c operator` matters, the Deployment also runs the `results-server` and `dashboard` containers) to affect every subsequent job, or use `spec.podTemplate.env` to affect one CR only.
+
+Resource-sizing and JobSet variables are read by the process that *renders* the JobSet, so `spec.podTemplate.env` has no effect on them; they must be set on the operator.
 
 ### Resource sizing (per-container CPU / memory)
 

@@ -80,28 +80,28 @@ speculatively.
 
 | API group | Resources | Verbs | Purpose | Source |
 |---|---|---|---|---|
-| `apiextensions.k8s.io` | `customresourcedefinitions` | `get, list, watch` | kopf CRD discovery at startup | `clusterrole.yaml:12-14` |
-| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status`, `aiperfjobs/finalizers` | `get, list, watch, create, update, patch, delete` | Reconcile AIPerfJob CRs, patch status/phase, manage finalizers | `clusterrole.yaml:17-19` |
-| `aiperf.nvidia.com` | `aiperfsweeps`, `aiperfsweeps/status`, `aiperfsweeps/finalizers` | `get, list, watch, create, update, patch, delete` | Reconcile AIPerfSweep CRs, patch status, manage finalizers | `clusterrole.yaml:22-24` |
-| `jobset.x-k8s.io` | `jobsets` | `create, delete, get, list, patch, update, watch` | Create/own the controller + worker JobSet for each AIPerfJob | `clusterrole.yaml:27-29` |
-| `jobset.x-k8s.io` | `jobsets/status` | `get, list, watch` | Observe JobSet readiness and roll it up to AIPerfJob status | `clusterrole.yaml:30-32` |
-| `kueue.x-k8s.io` | `localqueues` | `get, list` | Preflight verifies `scheduling.queueName` resolves to an existing LocalQueue and probes whether Kueue is installed at all | `clusterrole.yaml:38-40` |
-| `batch` | `jobs` | `get, list, watch` | Monitor the Jobs that JobSet creates under the hood | `clusterrole.yaml:43-45` |
-| `apps` | `deployments` | `get, list, watch` | Preflight checks for the JobSet controller and other operators | `clusterrole.yaml:48-50` |
-| `""` (core) | `serviceaccounts` | `get, list, watch, create` | Preflight verifies custom SA; sweep handler creates a per-sweep SA | `clusterrole.yaml:64-66` |
-| `""` (core) | `resourcequotas` | `get, list` | Preflight enumerates ResourceQuota headroom (`list_namespaced_resource_quota`) | `clusterrole.yaml:67-69` |
-| `""` (core) | `secrets` | `get` | Preflight reads named imagePullSecrets / env secrets by name (`read_namespaced_secret`); never enumerates | `clusterrole.yaml:70-72` |
-| `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml:75-77` |
-| `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Store benchmark configuration ConfigMap consumed by every benchmark pod | `clusterrole.yaml:80-82` |
-| `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml:85-87` |
-| `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml:90-92` |
-| `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml:95-97` |
-| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs`. Deliberately no `patch` — see the comment above the rule, and the `test_clusterrole_pods_restart_event_path_is_read_only` guard it names | `clusterrole.yaml:109-111` |
-| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml:114-116` |
-| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events for AIPerfJob diagnostics | `clusterrole.yaml:119-121` |
+| `apiextensions.k8s.io` | `customresourcedefinitions` | `get, list, watch` | kopf CRD discovery at startup | `clusterrole.yaml` |
+| `aiperf.nvidia.com` | `aiperfjobs`, `aiperfjobs/status`, `aiperfjobs/finalizers` | `get, list, watch, create, update, patch, delete` | Reconcile AIPerfJob CRs, patch status/phase, manage finalizers | `clusterrole.yaml` |
+| `aiperf.nvidia.com` | `aiperfsweeps`, `aiperfsweeps/status`, `aiperfsweeps/finalizers` | `get, list, watch, create, update, patch, delete` | Reconcile AIPerfSweep CRs, patch status, manage finalizers | `clusterrole.yaml` |
+| `jobset.x-k8s.io` | `jobsets` | `create, delete, get, list, patch, update, watch` | Create/own the controller + worker JobSet for each AIPerfJob | `clusterrole.yaml` |
+| `jobset.x-k8s.io` | `jobsets/status` | `get, list, watch` | Observe JobSet readiness and roll it up to AIPerfJob status | `clusterrole.yaml` |
+| `kueue.x-k8s.io` | `localqueues` | `get, list` | Preflight verifies `scheduling.queueName` resolves to an existing LocalQueue and probes whether Kueue is installed at all | `clusterrole.yaml` |
+| `batch` | `jobs` | `get, list, watch` | Monitor the Jobs that JobSet creates under the hood | `clusterrole.yaml` |
+| `apps` | `deployments` | `get, list, watch` | Preflight checks for the JobSet controller and other operators | `clusterrole.yaml` |
+| `""` (core) | `serviceaccounts` | `get, list, watch, create` | Preflight verifies custom SA; sweep handler creates a per-sweep SA | `clusterrole.yaml` |
+| `""` (core) | `resourcequotas` | `get, list` | Preflight enumerates ResourceQuota headroom (`list_namespaced_resource_quota`) | `clusterrole.yaml` |
+| `""` (core) | `secrets` | `get` | Preflight reads named imagePullSecrets / env secrets by name (`read_namespaced_secret`); never enumerates | `clusterrole.yaml` |
+| `networking.k8s.io` | `networkpolicies` | `get, list, watch` | Preflight checks whether the benchmark namespace has a restrictive NetworkPolicy | `clusterrole.yaml` |
+| `""` (core) | `configmaps` | `create, delete, get, list, patch, update, watch` | Store benchmark configuration ConfigMap consumed by every benchmark pod | `clusterrole.yaml` |
+| `""` (core) | `services`, `endpoints` | `create, delete, get, list, watch` | Headless Service for pod DNS; endpoint monitoring | `clusterrole.yaml` |
+| `rbac.authorization.k8s.io` | `roles`, `rolebindings` | `create, delete, get, list, watch` | Create the per-namespace benchmark `Role`/`RoleBinding` on first deploy | `clusterrole.yaml` |
+| `""` (core) | `namespaces` | `get, list, watch` | Resolve the benchmark namespace referenced by AIPerfJob | `clusterrole.yaml` |
+| `""` (core) | `pods`, `pods/log` | `get, list, watch` | Surface pod status, restart counts, and logs in `aiperf kube logs`. Deliberately no `patch` — see the comment above the rule, and the `test_clusterrole_pods_restart_event_path_is_read_only` guard it names | `clusterrole.yaml` |
+| `""` (core) | `nodes` | `get, list` | Count GPUs for the cluster endpoint served by the API sidecar | `clusterrole.yaml` |
+| `""` (core) | `events` | `get, list, watch, create, patch` | Emit Kubernetes events for AIPerfJob diagnostics | `clusterrole.yaml` |
 
 The binding
-(`deploy/helm/aiperf-operator/templates/clusterrolebinding.yaml:10-17`) connects
+(`deploy/helm/aiperf-operator/templates/clusterrolebinding.yaml`) connects
 this `ClusterRole` to the operator `ServiceAccount` in the release namespace.
 
 ## Benchmark-namespace Role catalog
@@ -733,7 +733,7 @@ A hardened rollout checklist:
 8. **NetworkPolicy default-deny + allow-list** — apply the sample above
    and lock the LLM endpoint egress to a CIDR or selector.
 9. **ResourceQuota on the benchmark namespace** — AIPerf preflight reads
-   quotas (`clusterrole.yaml:61-63`) and projects the run's CPU and memory
+   quotas (`clusterrole.yaml`) and projects the run's CPU and memory
    against them. Insufficient headroom is reported as a warning, not a
    failure, so gate on it yourself with `aiperf kube preflight -o json` if
    CI must stop there.
