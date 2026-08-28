@@ -44,7 +44,8 @@ use serde::Serialize;
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use aiperf_runtime::streaming::failure::{
-    DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError,
+    DecodeFailureCode, OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode,
+    StreamFormatError,
 };
 
 pub fn cut_at(value: u64) -> CheckpointCut {
@@ -1167,8 +1168,7 @@ pub async fn issue_receipt_partition(
 use aiperf_runtime::streaming::{
     checkpoint_backend::StreamingCheckpointBackend,
     reliability::{
-        PreparedExportAttemptFailure, PreparedExportReceiptPersistence,
-        PreparedStreamingIssuePolicy, ResultSinkAttemptOutcome, StreamingIssueComponentId,
+        PreparedExportAttemptFailure, PreparedExportReceiptPersistence, ResultSinkAttemptOutcome,
         StreamingReliabilityError,
     },
     results::ResultIndexReadBudget,
@@ -1217,14 +1217,10 @@ pub async fn committed_final_generation(
     run: StreamRunIdentity,
     epoch: u64,
 ) -> CommittedCheckpointGeneration {
-    let mut transaction = StreamingCheckpointBackend::begin_generation(
-        backend,
-        run,
-        None,
-        expectations(run),
-    )
-    .await
-    .expect("begin final generation");
+    let mut transaction =
+        StreamingCheckpointBackend::begin_generation(backend, run, None, expectations(run))
+            .await
+            .expect("begin final generation");
     transaction
         .stage_participant(prepared_participant(run, epoch).await)
         .await
@@ -1243,7 +1239,11 @@ pub async fn committed_final_generation(
         .await
         .expect("stage final results");
     transaction
-        .commit(final_metadata(None, epoch, CheckpointTerminalReason::Completed))
+        .commit(final_metadata(
+            None,
+            epoch,
+            CheckpointTerminalReason::Completed,
+        ))
         .await
         .expect("commit final generation")
 }
@@ -1354,18 +1354,16 @@ pub fn component(value: &str) -> StreamingIssueComponentId {
 
 /// Frozen export policy retrying a retryable export failure three times.
 pub fn export_policy() -> PreparedStreamingIssuePolicy {
-    PreparedStreamingIssuePolicy::new([
-        StreamingIssueThresholdRule::new(
-            component("export_retryable"),
-            StreamingIssueScopeKind::Export,
-            StreamingIssueClass::Retryable,
-            None,
-            3,
-            StreamingIssueDisposition::ExportIncomplete,
-            None,
-        )
-        .expect("valid retryable export rule"),
-    ])
+    PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+        component("export_retryable"),
+        StreamingIssueScopeKind::Export,
+        StreamingIssueClass::Retryable,
+        None,
+        3,
+        StreamingIssueDisposition::ExportIncomplete,
+        None,
+    )
+    .expect("valid retryable export rule")])
     .expect("valid export policy")
 }
 
