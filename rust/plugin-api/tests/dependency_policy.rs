@@ -250,7 +250,11 @@ struct StandaloneLockPackage {
 
 fn venv_python(repository_root: &Path) -> PathBuf {
     let candidate = repository_root.join(".venv/bin/python3");
-    if candidate.exists() { candidate } else { PathBuf::from("python3") }
+    if candidate.exists() {
+        candidate
+    } else {
+        PathBuf::from("python3")
+    }
 }
 
 fn workspace_root() -> PathBuf {
