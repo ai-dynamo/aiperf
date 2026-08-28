@@ -17,7 +17,10 @@ fn inventory(build_id: &str) -> AuthenticatedInventory {
 
 fn files(body: &[u8]) -> Vec<InstallFile> {
     vec![
-        InstallFile::new("plugin.manifest.yaml", b"schema_version: \"2.0\"\n".to_vec()),
+        InstallFile::new(
+            "plugin.manifest.yaml",
+            b"schema_version: \"2.0\"\n".to_vec(),
+        ),
         InstallFile::new("lib/libplugin.so", body.to_vec()),
     ]
 }
@@ -33,7 +36,10 @@ fn a_fresh_install_publishes_one_complete_generation() {
         .expect("install");
 
     assert_eq!(generation.id, 1);
-    let current = root.current().expect("current").expect("a current generation");
+    let current = root
+        .current()
+        .expect("current")
+        .expect("a current generation");
     assert_eq!(current.id, generation.id);
     assert_eq!(
         fs::read(current.dir.join("lib/libplugin.so")).expect("read installed artifact"),
