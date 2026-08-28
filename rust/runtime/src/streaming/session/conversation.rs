@@ -644,10 +644,7 @@ impl StreamingConversationCoordinator {
         scope: ConversationSessionScope,
         output: &mut dyn DatasetActionSink,
     ) -> Result<(), SessionCoordinatorError> {
-        loop {
-            let Some(next_ordinal) = self.next_ready_ordinal(&scope) else {
-                break;
-            };
+        while let Some(next_ordinal) = self.next_ready_ordinal(&scope) {
             self.fold_authored_turn(scope, next_ordinal)?;
             let action = self.build_request_action(scope, next_ordinal)?;
             let action_id = action.action_id();

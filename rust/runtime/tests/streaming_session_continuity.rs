@@ -205,6 +205,7 @@ fn fragment(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn turn(
     state_budget: &StreamingResourceBudget,
     producer_session: &str,
