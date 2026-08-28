@@ -665,6 +665,12 @@ impl StreamingPipeline {
             if let PipelinePhase::Draining(reason) = state
                 && this.is_quiescent()
             {
+                // Load-bearing drop, not a dead store: a retained admission
+                // cycle may be parked inside the action host's `submit` and so
+                // still holds that borrow, which `shutdown` needs to join the
+                // drivers. The unit it was building was never accepted, so
+                // nothing settles for it.
+                drop(inflight.take());
                 this.shutdown(reason).await?;
                 epoch = epoch.saturating_add(1);
                 let generation = this
