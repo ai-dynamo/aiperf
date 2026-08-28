@@ -51,6 +51,8 @@ pub enum WorkloadKind {
     Scheduled,
     /// Direct Graph-IR whole-trace execution (the `graph` workload id).
     Graph,
+    /// Native streaming shadow replay (the `shadow_replay` workload id).
+    ShadowReplay,
 }
 
 impl WorkloadKind {
@@ -59,6 +61,7 @@ impl WorkloadKind {
         match self {
             WorkloadKind::Scheduled => "scheduled",
             WorkloadKind::Graph => "graph",
+            WorkloadKind::ShadowReplay => "shadow_replay",
         }
     }
 }
@@ -96,10 +99,19 @@ fn dataset_format_token(dataset: &Dataset) -> Option<&str> {
 
 /// Classify a benchmark config's workload from its datasets.
 ///
-/// A run whose (single) dataset is a graph format yields [`WorkloadKind::Graph`];
-/// every other configuration — including an absent dataset list — yields
-/// [`WorkloadKind::Scheduled`].
+/// A run authoring a native stream resource yields
+/// [`WorkloadKind::ShadowReplay`]; a run whose (single) dataset is a graph
+/// format yields [`WorkloadKind::Graph`]; every other configuration — including
+/// an absent dataset list — yields [`WorkloadKind::Scheduled`].
+///
+/// This is classification only. It must not reject the mixed
+/// `datasets`+`dataset_streams` shape: `config::validate` and
+/// `BenchmarkRunWireV2::validate_outer` own that rejection and produce better
+/// messages.
 pub fn workload_kind(cfg: &BenchmarkConfig) -> WorkloadKind {
+    if cfg.dataset_streams.is_some() {
+        return WorkloadKind::ShadowReplay;
+    }
     let is_graph = cfg
         .datasets
         .as_deref()

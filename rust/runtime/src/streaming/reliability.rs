@@ -5935,6 +5935,48 @@ fn fail_run_decision(verified: &VerifiedHostIssue) -> StreamingIssueDecision {
     }
 }
 
+/// Route one pre-CAS checkpoint publication failure through the host classifier.
+///
+/// A `Some` decision is a reporter-checked terminal invariant: the run cannot
+/// truthfully continue and the caller must fail it. `None` means the attempt
+/// failed without violating an invariant, so the caller retries against the same
+/// expected head or fences admission until capacity returns.
+///
+/// [`CheckpointError::PostCommitNotification`] is deliberately absent: it is
+/// post-CAS by construction, the head is already authoritative, and the pending
+/// notification is retried rather than classified.
+pub(crate) fn classify_checkpoint_attempt_failure(
+    error: &CheckpointError,
+) -> Option<StreamingIssueDecision> {
+    let failure = match error {
+        CheckpointError::GenerationConflict { .. } => HostFailure::CasExpectationMismatch,
+        CheckpointError::ParticipantSetMismatch
+        | CheckpointError::AlreadyInitialized
+        | CheckpointError::LegacyReadOnlyHead => HostFailure::FrozenSemanticDrift,
+        CheckpointError::ObjectVerification => HostFailure::ConflictingStableContent,
+        CheckpointError::GenerationEpochOverflow { .. } => HostFailure::AccountingCorruption,
+        CheckpointError::ParticipantUnavailable { .. }
+        | CheckpointError::DecodeHorizonRegression { .. } => HostFailure::ImpossibleTruthfulCut,
+        CheckpointError::SourceUnavailableOnResume => HostFailure::SourceIdentityAuthorityMismatch,
+        CheckpointError::CutBlockedByInflight { .. }
+        | CheckpointError::StateBudget { .. }
+        | CheckpointError::BackendBudget { .. }
+        | CheckpointError::ResultIndexReadBudgetTooSmall { .. }
+        | CheckpointError::LeaseLost { .. }
+        | CheckpointError::Storage { .. }
+        | CheckpointError::PostCommitNotification { .. } => return None,
+    };
+    Some(fail_run_decision(&classify_host_failure(failure)))
+}
+
+impl StreamingIssueDecision {
+    /// Borrow the host disposition selected for this decision.
+    #[must_use]
+    pub const fn disposition(&self) -> StreamingIssueDisposition {
+        self.disposition
+    }
+}
+
 #[allow(dead_code)]
 struct VerifiedNoMembershipLoss;
 
