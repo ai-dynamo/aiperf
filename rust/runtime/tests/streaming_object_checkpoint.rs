@@ -79,10 +79,8 @@ async fn oversized_metadata_is_rejected_before_allocation() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn object_backend_conforms_to_shared_pre_io_lineage_validation() {
-    support::assert_publication_backend_lineage_conformance(
-        object_publication_backend_fixture(),
-    )
-    .await;
+    support::assert_publication_backend_lineage_conformance(object_publication_backend_fixture())
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -411,7 +411,9 @@ pub async fn commit_with_segment_on(
         .stage_participant(prepared_participant(run, epoch).await)
         .await?;
     let mut partitions = vec![result_partition(run, epoch).await];
-    transaction.stage_results(&mut partitions, &mut None).await?;
+    transaction
+        .stage_results(&mut partitions, &mut None)
+        .await?;
     transaction
         .commit(metadata_with_lineage(previous, epoch))
         .await
@@ -1271,14 +1273,10 @@ pub async fn committed_final_generation(
     run: StreamRunIdentity,
 ) -> CommittedCheckpointGeneration {
     let epoch = 1;
-    let mut transaction = StreamingCheckpointBackend::begin_generation(
-        backend,
-        run,
-        None,
-        expectations(run),
-    )
-    .await
-    .expect("begin final generation");
+    let mut transaction =
+        StreamingCheckpointBackend::begin_generation(backend, run, None, expectations(run))
+            .await
+            .expect("begin final generation");
     transaction
         .stage_participant(prepared_participant(run, epoch).await)
         .await
@@ -1297,7 +1295,11 @@ pub async fn committed_final_generation(
         .await
         .expect("stage final results");
     transaction
-        .commit(final_metadata(None, epoch, CheckpointTerminalReason::Completed))
+        .commit(final_metadata(
+            None,
+            epoch,
+            CheckpointTerminalReason::Completed,
+        ))
         .await
         .expect("commit final generation")
 }
@@ -1409,18 +1411,16 @@ pub fn component(value: &str) -> StreamingIssueComponentId {
 
 /// Frozen export policy retrying a retryable export failure three times.
 pub fn export_policy() -> PreparedStreamingIssuePolicy {
-    PreparedStreamingIssuePolicy::new([
-        StreamingIssueThresholdRule::new(
-            component("export_retryable"),
-            StreamingIssueScopeKind::Export,
-            StreamingIssueClass::Retryable,
-            None,
-            3,
-            StreamingIssueDisposition::ExportIncomplete,
-            None,
-        )
-        .expect("valid retryable export rule"),
-    ])
+    PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+        component("export_retryable"),
+        StreamingIssueScopeKind::Export,
+        StreamingIssueClass::Retryable,
+        None,
+        3,
+        StreamingIssueDisposition::ExportIncomplete,
+        None,
+    )
+    .expect("valid retryable export rule")])
     .expect("valid export policy")
 }
 
@@ -1616,10 +1616,7 @@ impl DeliveryFixture {
         DeliveryRestartRequest {
             mode: self.mode,
             capability: self.capability,
-            cut: self
-                .mode
-                .has_authoritative_results()
-                .then_some(&self.cut),
+            cut: self.mode.has_authoritative_results().then_some(&self.cut),
             result_index_root: self
                 .mode
                 .has_authoritative_results()
@@ -1672,9 +1669,9 @@ pub use object_store_support::*;
 #[cfg(feature = "streaming-s3")]
 mod object_store_support {
     use super::{
-        commit_with_segment_on, current_v4_predecessor, expectations, legacy_fixture_budget,
-        legacy_v3_fixture, prepared_participant, run_id, PublicationAuthoritySnapshot,
-        PublicationBackendFixture,
+        PublicationAuthoritySnapshot, PublicationBackendFixture, commit_with_segment_on,
+        current_v4_predecessor, expectations, legacy_fixture_budget, legacy_v3_fixture,
+        prepared_participant, run_id,
     };
     use aiperf_runtime::streaming::{
         budget::{BudgetLimits, StreamingResourceBudget},
@@ -1687,11 +1684,10 @@ mod object_store_support {
             StreamingGenerationTransaction,
         },
         checkpoints::object_store::{
-            immutable_object_key, stale_writer_error, BudgetOwnedObjectChunk,
-            BudgetOwnedObjectPage, BudgetOwnedObjectReader, ConditionalObjectStore,
-            ObjectCheckpointBackend, ObjectCheckpointLimits, ObjectKey, ObjectListBudget,
-            ObjectListCursor, ObjectMetadata, ObjectReadBudget, ObjectReadRange, ObjectVersion,
-            PointerObject,
+            BudgetOwnedObjectChunk, BudgetOwnedObjectPage, BudgetOwnedObjectReader,
+            ConditionalObjectStore, ObjectCheckpointBackend, ObjectCheckpointLimits, ObjectKey,
+            ObjectListBudget, ObjectListCursor, ObjectMetadata, ObjectReadBudget, ObjectReadRange,
+            ObjectVersion, PointerObject, immutable_object_key, stale_writer_error,
         },
         identity::ContentDigest,
     };
@@ -1743,8 +1739,12 @@ mod object_store_support {
 
     /// Build one backend over the supplied fake store.
     pub fn object_backend(store: FakeConditionalObjectStore) -> ObjectCheckpointBackend {
-        ObjectCheckpointBackend::new(Rc::new(store), object_test_prefix(), object_backend_limits())
-            .expect("valid object checkpoint backend")
+        ObjectCheckpointBackend::new(
+            Rc::new(store),
+            object_test_prefix(),
+            object_backend_limits(),
+        )
+        .expect("valid object checkpoint backend")
     }
 
     #[derive(Default)]
@@ -1804,7 +1804,10 @@ mod object_store_support {
         /// Seed one pointer whose listed length is a hostile declaration.
         pub fn declaring_length(length: usize) -> Self {
             let store = Self::new(64 * 1024);
-            let key = ObjectKey::new(format!("{}/pointers/hostile", object_test_prefix().as_str()));
+            let key = ObjectKey::new(format!(
+                "{}/pointers/hostile",
+                object_test_prefix().as_str()
+            ));
             store.state.borrow_mut().objects.insert(
                 key,
                 (ObjectVersion::new("v-hostile"), Bytes::from_static(b"{}")),
@@ -1908,9 +1911,10 @@ mod object_store_support {
             while let Some(chunk) = object.next_chunk(64 * 1024).await? {
                 assembled.extend_from_slice(&chunk.bytes);
             }
-            if u64::try_from(assembled.len()).unwrap_or(u64::MAX) != declared
-                || ContentDigest::from_bytes(*blake3::hash(&assembled).as_bytes()) != digest
-            {
+            // The reader's digest is the address the object lands at, not
+            // necessarily the hash of its bytes: generation and result-index
+            // objects are addressed by a structural identity.
+            if u64::try_from(assembled.len()).unwrap_or(u64::MAX) != declared {
                 return Err(CheckpointError::ObjectVerification);
             }
             let key = immutable_object_key(&object_test_prefix(), &digest);
@@ -1926,10 +1930,7 @@ mod object_store_support {
             let version = self.mint_version(&mut state);
             state.objects.insert(
                 key,
-                (
-                    version.clone(),
-                    Bytes::from(assembled.into_boxed_slice()),
-                ),
+                (version.clone(), Bytes::from(assembled.into_boxed_slice())),
             );
             Ok(version)
         }
@@ -1963,8 +1964,8 @@ mod object_store_support {
             budget: ObjectReadBudget,
         ) -> Result<BudgetOwnedObjectChunk, CheckpointError> {
             self.note_effect();
-            let length = usize::try_from(range.length)
-                .map_err(|_| CheckpointError::ObjectVerification)?;
+            let length =
+                usize::try_from(range.length).map_err(|_| CheckpointError::ObjectVerification)?;
             if length == 0 || length > budget.max_chunk_bytes {
                 return Err(CheckpointError::ObjectVerification);
             }
@@ -2025,15 +2026,16 @@ mod object_store_support {
                     .map(|(key, (version, bytes))| ObjectMetadata {
                         key: key.clone(),
                         version: version.clone(),
-                        byte_length: self
-                            .declared_length
-                            .unwrap_or_else(|| bytes.len() as u64),
+                        byte_length: self.declared_length.unwrap_or_else(|| bytes.len() as u64),
                     })
                     .collect()
             };
             let lease = self
                 .retention
-                .acquire(entries.len(), entries.len() * std::mem::size_of::<ObjectMetadata>())
+                .acquire(
+                    entries.len(),
+                    entries.len() * std::mem::size_of::<ObjectMetadata>(),
+                )
                 .await
                 .map_err(|_| CheckpointError::ObjectVerification)?;
             Ok(BudgetOwnedObjectPage {
