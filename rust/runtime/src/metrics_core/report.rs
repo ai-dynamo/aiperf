@@ -34,7 +34,6 @@ pub const NATIVE_REPORT_SCHEMA_VERSION: &str = "2.0";
 pub struct PluginCatalogEntry {
     /// Normalized plugin package ID.
     pub package_id: String,
-    /// Package version string.
     pub version: String,
     /// Resolution status: `"winner"`, `"shadow"`, `"quarantined"`, or `"absent"`.
     pub status: String,
@@ -1241,8 +1240,7 @@ pub struct NativeReport {
     pub plugin_lock_digest: Option<String>,
     /// Brief catalog summary of loaded plugin packages. Absent when no plugins
     /// were loaded or the catalog is empty.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub plugin_catalog: Vec<PluginCatalogEntry>,
 }
 
@@ -1284,11 +1282,11 @@ impl NativeReport {
     }
 
     /// Attach plugin lock provenance. Call after construction, before
-    /// [`finalize_run`]. Does not affect `distribution_id`.
+    /// [`Self::finalize_run`]. Does not affect `distribution_id`.
     ///
     /// `lock_digest` is the BLAKE3 hex digest of the frozen plugin lock
     /// (from `LockedCatalogBundle::lock_digest`). An empty `catalog` is stored
-    /// but serialized as absent (`skip_serializing_if = "Vec::is_empty"`).
+    /// but serialized as absent (absent when empty).
     pub fn with_plugin_provenance(
         mut self,
         lock_digest: String,

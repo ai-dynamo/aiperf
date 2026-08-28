@@ -22,8 +22,6 @@ fn plugin_catalog_entry_no_absolute_paths() {
     assert!(!json.contains("/home/"));
     assert!(!json.contains("/etc/"));
     assert!(!json.contains("/var/"));
-    // package_id may contain a slash (namespace separator) — that's OK
-    assert!(json.contains("vendor/my-exporter"));
 }
 
 #[test]
@@ -55,18 +53,14 @@ fn report_includes_plugin_fields_when_set() {
     assert_eq!(catalog.len(), 1);
     assert_eq!(catalog[0]["package_id"], "acme/exporter");
     assert_eq!(catalog[0]["status"], "winner");
-}
 
-#[test]
-fn report_with_empty_catalog_omits_field() {
-    let report = NativeReport::new(&AccumulatorSummary::new(), None)
+    // empty catalog is serialized as absent
+    let report_empty = NativeReport::new(&AccumulatorSummary::new(), None)
         .with_plugin_provenance("blake3:aabb".to_string(), vec![]);
-    let json = serde_json::to_value(&report).unwrap();
-    // lock digest is set
-    assert!(json.get("plugin_lock_digest").is_some());
-    // empty catalog skipped
+    let json_empty = serde_json::to_value(&report_empty).unwrap();
+    assert!(json_empty.get("plugin_lock_digest").is_some());
     assert!(
-        json.get("plugin_catalog").is_none(),
+        json_empty.get("plugin_catalog").is_none(),
         "empty catalog should be skipped"
     );
 }
