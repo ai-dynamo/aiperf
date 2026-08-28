@@ -33,16 +33,16 @@ impl AcquiredClosure {
             for record in &pkg.artifacts {
                 if targets.is_empty() || targets.contains(&record.target.as_str()) {
                     let artifact_path = manifest_dir.join(&record.path);
-                    let artifact = AcquiredArtifact::acquire(
-                        &artifact_path,
-                        &record.digest,
-                        &record.target,
-                    )?;
+                    let artifact =
+                        AcquiredArtifact::acquire(&artifact_path, &record.digest, &record.target)?;
                     artifacts.push(artifact);
                 }
             }
         }
 
-        Ok(Self { manifest, artifacts })
+        Ok(Self {
+            manifest,
+            artifacts,
+        })
     }
 }

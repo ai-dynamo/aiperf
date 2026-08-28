@@ -118,7 +118,11 @@ fn tampered_staged_bytes_detected_on_rehash() {
     };
 
     // Stage it successfully.
-    let staged_path = map.stage(&artifact, "loader-test").unwrap().staged_path.clone();
+    let staged_path = map
+        .stage(&artifact, "loader-test")
+        .unwrap()
+        .staged_path
+        .clone();
     assert!(staged_path.exists());
 
     // Attacker overwrites the staged file.
@@ -163,9 +167,8 @@ fn hardlink_content_substitution_caught_by_digest_check() {
 
     // Acquire the hardlink with the ORIGINAL digest: must fail because the
     // inode content was changed.
-    let err =
-        AcquiredArtifact::acquire(&link_path, &original_digest, "x86_64-unknown-linux-gnu")
-            .unwrap_err();
+    let err = AcquiredArtifact::acquire(&link_path, &original_digest, "x86_64-unknown-linux-gnu")
+        .unwrap_err();
     assert!(
         matches!(err, AcquireError::DigestMismatch { .. }),
         "expected DigestMismatch, got {err:?}"

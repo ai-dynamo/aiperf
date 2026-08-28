@@ -117,11 +117,9 @@ fn closure_acquires_from_manifest() {
     fs::write(&artifact_path, artifact_bytes).unwrap();
     let manifest_path = write_manifest(tmp.path(), "plugin.so", &digest);
 
-    let closure = AcquiredClosure::acquire_from_manifest(
-        &manifest_path,
-        &["x86_64-unknown-linux-gnu"],
-    )
-    .unwrap();
+    let closure =
+        AcquiredClosure::acquire_from_manifest(&manifest_path, &["x86_64-unknown-linux-gnu"])
+            .unwrap();
     assert_eq!(closure.artifacts.len(), 1);
     assert_eq!(closure.artifacts[0].target, "x86_64-unknown-linux-gnu");
     assert_eq!(closure.artifacts[0].digest, digest);
