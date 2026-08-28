@@ -127,18 +127,18 @@ Full values matrix, hardening posture, and CI patterns:
 
 ## Rules that bite
 
-- **`kueue.defaultQueueName` does not by itself route benchmarks through
-  Kueue.** It only stamps a `kueue.x-k8s.io/default-queue-name` annotation onto
-  the Namespace the chart renders — so it is a no-op when
-  `benchmarkNamespace.create: false` **and** `benchmarkNamespace.name` is absent
-  from `benchmarkRbacNamespaces` — the template renders the primary name only
-  under `create`, but renders every `benchmarkRbacNamespaces` entry
-  unconditionally, and annotates whichever rendered namespace matches
-  `benchmarkNamespace.name`.
-  What actually puts the `kueue.x-k8s.io/queue-name` label on the JobSet is
-  `spec.scheduling.queueName` on the AIPerfJob, or the operator-level default
-  `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME`. Set one of those two if you want every
-  job admitted through a queue. AIPerf pins Kueue `v0.10.1`; the chart-created
+- **`kueue.defaultQueueName` routes jobs through two independent mechanisms,
+  and only one of them always fires.** It sets
+  `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container — that
+  is what makes the operator stamp `kueue.x-k8s.io/queue-name` on the JobSet and
+  create it `spec.suspend: true`, and it applies unconditionally. It *also*
+  annotates the rendered benchmark Namespace with
+  `kueue.x-k8s.io/default-queue-name` for Kueue's own webhook, but only if that
+  Namespace is actually rendered: the primary `benchmarkNamespace.name` renders
+  only under `create: true`, while every `benchmarkRbacNamespaces` entry renders
+  unconditionally, and the annotation lands on whichever rendered namespace
+  matches `benchmarkNamespace.name`. Per-job `spec.scheduling.queueName`
+  overrides the operator default. AIPerf pins Kueue `v0.10.1`; the chart-created
   ClusterQueue omits `nvidia.com/gpu` from `coveredResources` unless you set
   `kueue.resources.gpu`, so GPU benchmarks are not quota-gated by default.
 

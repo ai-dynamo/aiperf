@@ -1615,7 +1615,14 @@ class TestTopologyRecordProcessorDerivation:
         from aiperf.kubernetes.spec_converter import apply_worker_config
 
         config = _topology_config(**runtime)
-        num_pods = apply_worker_config(config, total_workers)
+        try:
+            num_pods = apply_worker_config(config, total_workers)
+        except ValueError:
+            with pytest.raises(ValueError):
+                MemoryEstimationParams.from_config(
+                    config, total_workers=total_workers
+                )
+            return
         params = MemoryEstimationParams.from_config(config, total_workers=total_workers)
 
         assert params.num_worker_pods == num_pods
@@ -1665,7 +1672,17 @@ class TestTopologyMirrorsDeployment:
         from aiperf.kubernetes.spec_converter import apply_worker_config
 
         deployed = _topology_config(**runtime)
-        num_pods = apply_worker_config(deployed, total_workers)
+        try:
+            num_pods = apply_worker_config(deployed, total_workers)
+        except ValueError:
+            # A total that is neither <= workers_per_pod nor a multiple of it is
+            # rejected by the deployment path; the estimator must reject it too
+            # rather than reporting a topology the JobSet will never create.
+            with pytest.raises(ValueError):
+                MemoryEstimationParams.from_config(
+                    _topology_config(**runtime), total_workers=total_workers
+                )
+            return
         deployed_runtime = deployed.benchmark.runtime
 
         estimated = MemoryEstimationParams.from_config(
@@ -1690,16 +1707,19 @@ class TestTopologyMirrorsDeployment:
             param(3, 2, id="three_workers_two_per_pod"),
         ],
     )  # fmt: skip
-    def test_derive_topology_non_divisible_total_collapses_to_one_pod(
+    def test_derive_topology_non_divisible_total_is_rejected(
         self, total_workers: int, workers_per_pod: int
     ) -> None:
-        """A JobSet cannot express a partial final pod; the estimate must agree."""
-        params = MemoryEstimationParams.from_config(
-            _topology_config(workers_per_pod=workers_per_pod),
-            total_workers=total_workers,
-        )
-        assert params.num_worker_pods == 1
-        assert params.workers_per_pod == total_workers
+        """A JobSet cannot express a partial final pod; the estimate must agree.
+
+        Silently folding onto one pod would have the banner describe a
+        single-node run that the deployment path refuses to create.
+        """
+        with pytest.raises(ValueError, match="not a multiple of"):
+            MemoryEstimationParams.from_config(
+                _topology_config(workers_per_pod=workers_per_pod),
+                total_workers=total_workers,
+            )
 
     @pytest.mark.parametrize(
         "total_workers,workers_per_pod,record_processors,expected_pods,expected_rp",
@@ -1707,7 +1727,7 @@ class TestTopologyMirrorsDeployment:
             param(8, 4, 4, 2, 2, id="total_splits_evenly_across_two_pods"),
             param(16, 4, 12, 4, 3, id="total_splits_evenly_across_four_pods"),
             param(8, 4, 2, 2, 1, id="total_below_pod_count_multiple"),
-            param(10, 8, 5, 1, 5, id="collapsed_single_pod_takes_whole_total"),
+            param(8, 8, 5, 1, 5, id="total_equals_workers_per_pod_single_pod"),
         ],
     )  # fmt: skip
     def test_derive_topology_record_processors_total_splits_across_pods(
@@ -1741,7 +1761,7 @@ class TestTopologyMirrorsDeployment:
         config = _topology_config(workers_per_pod=8)
         before = config.benchmark.runtime.model_dump()
 
-        MemoryEstimationParams.from_config(config, total_workers=10)
+        MemoryEstimationParams.from_config(config, total_workers=16)
 
         assert config.benchmark.runtime.model_dump() == before
 

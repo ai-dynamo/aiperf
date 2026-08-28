@@ -426,7 +426,13 @@ async def dynamo_config(
         "namespace": s.dynamo_namespace,
         "backend": backend,
         "tolerations": s.tolerations,
-        "node_selector": s.node_selector,
+        # disagg-1gpu requests no nvidia.com/gpu resource, so nothing pins these
+        # pods to a GPU node even though runtimeClassName: nvidia requires one.
+        "node_selector": (
+            s.dynamo_node_selector
+            if s.dynamo_node_selector is not None
+            else s.node_selector
+        ),
         "hf_token_secret": s.hf_token_secret,
         "image_pull_secrets": s.image_pull_secrets,
         "connectors": connectors,

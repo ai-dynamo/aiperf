@@ -369,7 +369,7 @@ silent no-op, so install Kueue first.
 | `kueue.resources.cpu` | `"1000"` | ClusterQueue nominalQuota. |
 | `kueue.resources.memory` | `"4Ti"` | ClusterQueue nominalQuota. |
 | `kueue.resources.gpu` | `""` | **Empty omits `nvidia.com/gpu` from `coveredResources` entirely.** Set e.g. `"64"` to add GPU quota. |
-| `kueue.defaultQueueName` | `""` | Annotates the benchmark namespace with `kueue.x-k8s.io/default-queue-name`. Auto-fills from `localQueueName` when `createQueues=true`. |
+| `kueue.defaultQueueName` | `""` | Sets `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container **and** annotates the rendered benchmark namespace with `kueue.x-k8s.io/default-queue-name`. Auto-fills from `localQueueName` when `createQueues=true`. |
 
 Equivalent by hand — note the GPU resource the chart omits unless
 `kueue.resources.gpu` is set:
@@ -404,10 +404,13 @@ spec: {clusterQueue: aiperf-cluster-queue}
 |---|---|---|---|
 | 1 | CR `spec.scheduling.queueName` (CLI `--queue-name`) | operator, per job | **yes** |
 | 2 | `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container | operator, cluster-wide fallback | **yes** |
-| 3 | Namespace annotation `kueue.x-k8s.io/default-queue-name` (chart `kueue.defaultQueueName`) | Kueue's own webhook | **no** |
+| 3 | Namespace annotation `kueue.x-k8s.io/default-queue-name` applied by hand | Kueue's own webhook | **no** |
 
-Mechanism 2 has no chart value — `operator.env` is a fixed nine-key map — so
-apply it to the live Deployment:
+Chart `kueue.defaultQueueName` drives mechanisms 2 and 3 at once, so setting it
+is sufficient: **yes**.
+
+Mechanism 2 *is* what chart `kueue.defaultQueueName` sets (`operator.env` is a
+fixed nine-key map and does not carry it). To set it without re-running Helm:
 
 ```bash
 kubectl -n aiperf-system set env deployment/aiperf-operator -c operator \
@@ -422,9 +425,10 @@ keys on the label) will not surface `Queued`. It is also gated on which
 namespaces the chart actually renders: the primary `benchmarkNamespace.name`
 renders only under `create: true`, every `benchmarkRbacNamespaces` entry renders
 unconditionally, and the annotation is applied to whichever rendered namespace
-equals `benchmarkNamespace.name`. So `kueue.defaultQueueName` is a no-op when
-`create: false` **and** that name is absent from `benchmarkRbacNamespaces`. Prefer
-mechanism 1 or 2; for 3, annotate the namespace yourself:
+equals `benchmarkNamespace.name`. So the *annotation half* of
+`kueue.defaultQueueName` is a no-op when `create: false` **and** that name is
+absent from `benchmarkRbacNamespaces` — its operator-env half still applies.
+To annotate a namespace the chart does not render:
 
 ```bash
 kubectl annotate namespace aiperf-benchmarks \

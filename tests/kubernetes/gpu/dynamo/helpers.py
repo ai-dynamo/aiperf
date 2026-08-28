@@ -783,6 +783,28 @@ class DynamoDeployer:
         assert last_error is not None
         raise last_error
 
+    async def _detect_fatal_placement_failure(self) -> str | None:
+        """Return an explanatory message if pods can never start where they landed.
+
+        Returns:
+            A diagnostic string, or None if no unrecoverable condition was seen.
+        """
+        events = await self.kubectl.get_events(self.config.namespace, limit=40)
+        if 'no runtime for "nvidia" is configured' not in events:
+            return None
+
+        pods = await self.kubectl.get_pods(self.config.namespace)
+        names = sorted(p.name for p in pods)
+        return (
+            f"Dynamo pods {names} were scheduled onto node(s) that do "
+            f"not provide the 'nvidia' RuntimeClass, so pod sandbox creation fails "
+            f"permanently. The disagg-1gpu preset requests no nvidia.com/gpu "
+            f"resource (prefill and decode share one GPU), so nothing pins these "
+            f"pods to a GPU node. On a multi-pool cluster, pin them explicitly with "
+            f"--gpu-dynamo-node-selector, e.g. "
+            f'\'{{"nvidia.com/gpu.present": "true"}}\'.'
+        )
+
     async def wait_for_ready(
         self,
         timeout: int = 600,
@@ -798,11 +820,16 @@ class DynamoDeployer:
 
         Raises:
             TimeoutError: If Dynamo doesn't become ready within timeout.
+            RuntimeError: If a pod hits an unrecoverable placement failure, such
+                as landing on a node without the ``nvidia`` runtime. Waiting out
+                the full timeout in that case only reports a misleading
+                ``TimeoutError`` for a pod that was never going to start.
         """
         logger.info(f"Waiting for Dynamo readiness (timeout={timeout}s)")
         start = time.perf_counter()
         deadline = start + timeout
         deploy_name = self._deployment_name()
+        fatal_checks = 0
 
         async with (
             PodLogStreamer(
@@ -835,6 +862,16 @@ class DynamoDeployer:
 
                 pods = await self.kubectl.get_pods(self.config.namespace)
                 dynamo_pods = [p for p in pods if deploy_name in p.name]
+
+                # Give the sandbox a couple of polls to settle before judging it
+                # fatal; transient FailedCreatePodSandBox is normal at startup.
+                if dynamo_pods and not any(p.is_ready for p in dynamo_pods):
+                    fatal_checks += 1
+                    if fatal_checks >= 3:
+                        fatal = await self._detect_fatal_placement_failure()
+                        if fatal:
+                            raise RuntimeError(fatal)
+                        fatal_checks = 0
 
                 if dynamo_pods and all(p.is_ready for p in dynamo_pods):
                     logger.info(f"[DYNAMO] All pods ready (took {elapsed:.1f}s)")

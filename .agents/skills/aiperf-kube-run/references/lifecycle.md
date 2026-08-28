@@ -250,7 +250,7 @@ Accepts the full benchmark CLI surface (`-m`/`--model`/`--model-names`,
 | `--name` | auto slug | Benchmark name (DNS label, max 40 chars) |
 | `--image` | none | AIPerf container image |
 | `--image-pull-policy` | none | `Always` / `IfNotPresent` / `Never` |
-| `--total-workers` | `10` | Total workers spread over pods by `runtime.workersPerPod`; a non-multiple total runs on a single pod |
+| `--total-workers` | `10` | Total workers spread over pods by `runtime.workersPerPod`; a total that is neither <= `workersPerPod` nor a multiple of it is rejected with an error |
 | `--ttl-seconds` | `300` (operator), `28800` when unset in direct mode | Seconds to keep pods after completion |
 | `--node-selector` | `{}` | JSON object or repeated `key=value` |
 | `--tolerations` | `[]` | JSON object or array of objects |

@@ -201,6 +201,21 @@ class GPUTestSettings:
     dynamo_namespace: str = "dynamo-server"
     """Namespace for a test-deployed Dynamo server."""
 
+    dynamo_node_selector: dict[str, str] | None = None
+    """Node selector for Dynamo pods, overriding the global ``node_selector``.
+
+    The ``disagg-1gpu`` preset deliberately requests no ``nvidia.com/gpu``
+    resource so prefill and decode can share one physical GPU. That removes the
+    only thing pinning those pods to a GPU node, while ``runtimeClassName:
+    nvidia`` still requires one. On a single-node cluster this is harmless; on a
+    multi-pool cluster the scheduler picks a CPU node and every pod deadlocks in
+    ``FailedCreatePodSandBox: no runtime for "nvidia" is configured``.
+
+    Set this (e.g. ``{"nvidia.com/gpu.present": "true"}``) to pin Dynamo to GPU
+    nodes without forcing the CPU-only benchmark pods there too. ``None`` falls
+    back to the global ``node_selector``.
+    """
+
     external_existing_operator: bool = False
     """Require pre-existing controllers instead of mutating an external cluster."""
 
@@ -285,8 +300,9 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--gpu-dynamo-kvbm-cpu-cache-gb", "GPU_TEST_DYNAMO_KVBM_CPU_CACHE_GB", None, "int", "KVBM CPU cache GB for prefill workers"),
     ("--gpu-dynamo-endpoint", "GPU_TEST_DYNAMO_ENDPOINT", None, "str", "Skip Dynamo deploy, use existing endpoint"),
     ("--gpu-dynamo-namespace", "GPU_TEST_DYNAMO_NAMESPACE", "dynamo-server", "str", "Namespace for a test-deployed Dynamo server"),
+    ("--gpu-dynamo-node-selector", "GPU_TEST_DYNAMO_NODE_SELECTOR", None, "json_dict", "JSON object of node selectors for Dynamo pods (overrides --gpu-node-selector); needed on multi-pool clusters because disagg-1gpu requests no GPU resource"),
     ("--gpu-external-existing-operator", "GPU_TEST_EXTERNAL_EXISTING_OPERATOR", None, "bool", "Forbid controller installation or repair on an external cluster"),
-    ("--gpu-dynamo-deploy-timeout", "GPU_TEST_DYNAMO_DEPLOY_TIMEOUT", "600", "int", "Dynamo deploy timeout (seconds)"),
+    ("--gpu-dynamo-deploy-timeout", "GPU_TEST_DYNAMO_DEPLOY_TIMEOUT", "1200", "int", "Dynamo deploy timeout (seconds); a DGD is 3 pods, so it needs longer than a single-pod engine"),
     ("--gpu-dynamo-version", "GPU_TEST_DYNAMO_VERSION", DYNAMO_VERSION, "str", "Dynamo operator Helm chart version"),
     ("--gpu-local-keygen", "GPU_TEST_LOCAL_KEYGEN", None, "bool", "Create MPI SSH secret locally instead of via Helm hook (use behind proxies)"),
 ]  # fmt: skip
