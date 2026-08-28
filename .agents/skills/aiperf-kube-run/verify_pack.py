@@ -39,6 +39,39 @@ HELM_ROOTS = {
 # env-var doc (set by the operator on pods, not by users).
 ENV_ALLOWLIST = {"AIPERF_OPERATOR_MANAGED"}
 
+# Defaults the pack quotes as literals. If one of these changes, the pack text is
+# wrong and must be updated in the same change that moves the default.
+ENV_DEFAULTS = {
+    "AIPERF_K8S_WATCH_DEFAULT_TIMEOUT_SECONDS": "600",
+    "AIPERF_K8S_JOBSET_TTL_SECONDS_AFTER_FINISHED": "300",
+    "AIPERF_K8S_JOBSET_DIRECT_MODE_TTL_SECONDS": "28800",
+    "AIPERF_K8S_RECORDS_MANAGER_CPU": "75m",
+    "AIPERF_K8S_SYSTEM_CONTROLLER_CPU": "75m",
+    "AIPERF_K8S_CONTROLLER_HEARTBEAT_EXPIRY_SECONDS": "30.0",
+    "AIPERF_K8S_JOBSET_WORKER_BACKOFF_LIMIT": "20",
+    "AIPERF_K8S_JOBSET_SWEEP_AGGREGATE_INLINE_MAX_BYTES": "600000",
+    "AIPERF_K8S_DIAGNOSIS_STALLED_PENDING_THRESHOLD_SECONDS": "60.0",
+    "AIPERF_K8S_DIAGNOSIS_STALLED_RUNNING_THRESHOLD_SECONDS": "30.0",
+    "AIPERF_K8S_DIAGNOSIS_HIGH_ERROR_RATE_THRESHOLD": "0.05",
+    "AIPERF_K8S_DIAGNOSIS_FAIL_ABOVE_ERROR_RATE": "1.0",
+    "AIPERF_K8S_DIAGNOSIS_HIGH_LATENCY_P99_MULTIPLIER": "10.0",
+}
+
+# Constant name -> value quoted by the pack.
+CONSTANT_DEFAULTS = {
+    "DEFAULT_BENCHMARK_NAMESPACE": "aiperf-benchmarks",
+    "DEFAULT_OPERATOR_NAMESPACE": "aiperf-system",
+}
+
+# Helm values.yaml lines the setup skill reproduces verbatim.
+HELM_DEFAULTS = [
+    "repository: nvcr.io/nvidia/aiperf",
+    "pullPolicy: IfNotPresent",
+    "size: 1Ti",
+    'accessMode: "ReadWriteOnce"',
+    'name: "aiperf-benchmarks"',
+]
+
 failures: list[str] = []
 
 
@@ -125,6 +158,27 @@ def main() -> int:
             if value.split(".")[0] in HELM_ROOTS and value.split(".")[-1] not in values:
                 fail(f"{name}: Helm value not in values.yaml: {value}")
 
+    documented = dict(
+        re.findall(r"^\| `(AIPERF_[A-Z0-9_]+)` \| `?([^|`]*?)`? \|", env_doc, re.M)
+    )
+    for var, expected in ENV_DEFAULTS.items():
+        actual = documented.get(var)
+        if actual != expected:
+            fail(f"default drift: {var} is {actual!r}, pack says {expected!r}")
+
+    constants = (REPO / "src/aiperf/kubernetes/constants.py").read_text()
+    for const, expected in CONSTANT_DEFAULTS.items():
+        if f'{const} = "{expected}"' not in constants:
+            fail(f"constant drift: {const} is no longer {expected!r}")
+
+    for line in HELM_DEFAULTS:
+        if line not in values:
+            fail(f"Helm default drift: values.yaml no longer contains {line!r}")
+
+    print(
+        f"checked {len(ENV_DEFAULTS)} env defaults, "
+        f"{len(CONSTANT_DEFAULTS)} constants, {len(HELM_DEFAULTS)} Helm defaults"
+    )
     print("\n" + ("ALL CHECKS PASSED" if not failures else f"{len(failures)} FAILURES"))
     return 1 if failures else 0
 

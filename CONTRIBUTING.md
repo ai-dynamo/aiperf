@@ -129,16 +129,29 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 
 Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
 
-### Code Review Skills
+### Bundled Skills
 
-Bundled with the repository you'll find the `aiperf-code-review` skill. When starting Claude Code within the repository and running `/skills`, you should see the following:
+The repository ships agent skills under `.agents/skills/` (surfaced to Claude Code
+through the `.claude/skills` symlink). Running `/skills` inside the repository
+lists them:
 
 ```
   Project skills (.claude/skills)
-  aiperf-code-review · ~30 description tokens
+  aiperf-code-review              review a branch against origin/main
+  aiperf-llm-ergonomics-review    review CLI/API surfaces for LLM ergonomics
+  aiperf-kube-run                 run a benchmark on Kubernetes end to end
+  aiperf-kube-setup               prepare a cluster and install the operator
+  aiperf-kube-triage              diagnose a stuck or failed Kubernetes run
+  aiperf-kube-sweep               run parameter sweeps on Kubernetes
+  bump-version                    version bump helper
+  cherry-pick                     cherry-pick helper
+  docs-to-fern                    docs site conversion helper
+  linear-issue                    Linear issue helper
 ```
 
-When creating a PR, you can run this skill yourself within your branch (or inside of a worktree) once your pull request is created by prompting Claude similar to the example below:
+#### Code review
+
+When creating a PR, you can run the `aiperf-code-review` skill yourself within your branch (or inside of a worktree) once your pull request is created by prompting Claude similar to the example below:
 
 ```
 ❯ Can you run a code review with the aiperf-code-review skill?
@@ -150,6 +163,21 @@ When creating a PR, you can run this skill yourself within your branch (or insid
 You are encouraged to use this to self-review as a first pass review before a maintainer reviews your PR.
 
 Please note, the skill does run `aiperf` and utilizes a mock server. If you are working on a laptop or personal work station, be aware that this may slow down your computer during review.
+
+#### Kubernetes
+
+The `aiperf-kube-*` skills cover the Kubernetes path and are grounded in
+[`docs/kubernetes/`](docs/kubernetes/). Start with `aiperf-kube-run`, which links
+out to the other three. They quote CLI flags, container defaults, and Helm values
+as literals, so they can go stale when those change; the pack ships a verifier
+that checks every one of them against the live CLI and the working tree:
+
+```bash
+uv run python .agents/skills/aiperf-kube-run/verify_pack.py
+```
+
+Run it after changing an `aiperf kube` flag, a `AIPERF_K8S_*` default, or
+`deploy/helm/aiperf-operator/values.yaml`, and update the skill text when it fails.
 
 
 ### Package Management
