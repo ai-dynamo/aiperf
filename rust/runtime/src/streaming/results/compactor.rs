@@ -25,8 +25,7 @@ use async_trait::async_trait;
 
 use super::{
     ResultPlaneError, ResultSegmentDescriptor, canonical_result_index_object,
-    epoch::CommittedPartialResult,
-    sink_status::ReportRetryAuthority,
+    epoch::CommittedPartialResult, sink_status::ReportRetryAuthority,
 };
 use crate::{
     engine::registry::{PreparedReportCommit, PreparedRunOutcome},

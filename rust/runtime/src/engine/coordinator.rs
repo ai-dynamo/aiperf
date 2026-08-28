@@ -584,10 +584,8 @@ const fn record_milestone(_name: &'static str) {}
 #[cfg(feature = "streaming")]
 fn durable_output_identity(
     report_path: &Path,
-) -> std::result::Result<
-    (crate::streaming::identity::ContentDigest, u64),
-    ReportPersistenceFailure,
-> {
+) -> std::result::Result<(crate::streaming::identity::ContentDigest, u64), ReportPersistenceFailure>
+{
     let bytes = std::fs::read(report_path).map_err(|error| ReportPersistenceFailure {
         code: "reporting_failed",
         message: format!(
@@ -1240,6 +1238,7 @@ mod tests {
         assert!(report_path.is_file());
     }
 
+    #[cfg(feature = "streaming")]
     #[tokio::test(flavor = "current_thread")]
     async fn streaming_report_persists_before_commit_lease_release() {
         let fixture = report_persistence_fixture();
@@ -1268,6 +1267,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "streaming")]
     #[tokio::test(flavor = "current_thread")]
     async fn streaming_report_failure_records_retry_and_skips_commit_hook() {
         let fixture = failing_report_persistence_fixture();
