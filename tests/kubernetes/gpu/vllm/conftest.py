@@ -17,6 +17,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.gpu.conftest import (
     GPUTestSettings,
     _dump_diagnostics,
+    _ensure_hf_token_secret,
     _ensure_user_pull_secrets,
     _log_container_logs,
     _log_pod_statuses,
@@ -78,6 +79,7 @@ async def vllm_server(
         return
 
     await _ensure_user_pull_secrets(kubectl, s, vllm_config.namespace)
+    await _ensure_hf_token_secret(kubectl, s, vllm_config.namespace)
     await _release_gpu(kubectl, vllm_config.namespace)
     deployer = VLLMDeployer(kubectl=kubectl, config=vllm_config)
 

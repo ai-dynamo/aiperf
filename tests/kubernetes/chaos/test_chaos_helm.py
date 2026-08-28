@@ -358,6 +358,16 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr(
             "--wait=false",
             check=False,
         )
+        await kubectl.run(
+            "delete",
+            "jobset",
+            f"aiperf-{cr_name}",
+            "-n",
+            job_ns,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
         await _force_cleanup_release(deployer, kubectl)
 
 

@@ -137,6 +137,13 @@ class GPUTestSettings:
     hf_token_secret: str | None = None
     """Kubernetes secret name containing HuggingFace token."""
 
+    hf_token_secret_source_namespace: str | None = None
+    """Stable namespace to seed the HF token secret from.
+
+    Preferred over the per-engine namespaces, which are deleted at suite
+    teardown and therefore cannot be relied on as a seed across a serial run.
+    """
+
     image_pull_secret: str | None = None
     """Image pull secret name for private registries."""
 
@@ -255,6 +262,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--gpu-tolerations", "GPU_TEST_TOLERATIONS", None, "json_list", "JSON array of K8s tolerations"),
     ("--gpu-node-selector", "GPU_TEST_NODE_SELECTOR", None, "json_dict", "JSON object of node selectors"),
     ("--gpu-hf-token-secret", "GPU_TEST_HF_TOKEN_SECRET", None, "str", "K8s secret with HuggingFace token"),
+    ("--gpu-hf-token-secret-source-namespace", "GPU_TEST_HF_TOKEN_SECRET_SOURCE_NAMESPACE", None, "str", "Stable source namespace to seed the HF token secret from"),
     ("--gpu-image-pull-secret", "GPU_TEST_IMAGE_PULL_SECRET", None, "str", "Image pull secret name"),
     ("--gpu-image-pull-secret-source-namespace", "GPU_TEST_IMAGE_PULL_SECRET_SOURCE_NAMESPACE", None, "str", "User-owned source namespace for image pull secrets"),
     ("--gpu-runtime-class", "GPU_TEST_RUNTIME_CLASS", "nvidia", "str", "RuntimeClass for GPU pods"),
@@ -574,9 +582,20 @@ async def _ensure_hf_token_secret(
     """Copy the HuggingFace token secret to *namespace* if it is not already there.
 
     Searches a priority-ordered list of candidate source namespaces.  This is
-    needed because the secret is typically pre-seeded in one namespace (e.g.
-    the vLLM namespace) and must be propagated to each backend namespace before
-    the server pod starts.
+    needed because the secret is typically pre-seeded in one namespace and must
+    be propagated to each backend namespace before the server pod starts.
+
+    Every engine namespace is a candidate because each suite deletes its own
+    namespace at teardown: seeding only from the vLLM namespace breaks any
+    serial run where the vLLM suite goes first and tears its namespace down
+    before a later engine asks for the secret.
+
+    Raises:
+        RuntimeError: If the secret was requested but exists in no candidate
+            namespace. Failing here is deliberate -- continuing would create a
+            pod referencing a nonexistent secret, which stalls in
+            ``CreateContainerConfigError`` until the whole readiness budget
+            expires and then reports a misleading ``TimeoutError``.
     """
     if not settings.hf_token_secret:
         return
@@ -586,10 +605,19 @@ async def _ensure_hf_token_secret(
     if existing.returncode == 0:
         return
     candidates = [
+        settings.hf_token_secret_source_namespace,
+        settings.image_pull_secret_source_namespace,
         settings.vllm_namespace,
+        settings.sglang_namespace,
+        settings.trtllm_namespace,
+        settings.dynamo_namespace,
         settings.benchmark_namespace,
     ]
+    seen: set[str] = {namespace}
     for src in candidates:
+        if not src or src in seen:
+            continue
+        seen.add(src)
         if not src:
             continue
         result = await kubectl.run(
@@ -608,9 +636,13 @@ async def _ensure_hf_token_secret(
                 f"from {src} → {namespace}"
             )
             return
-    logger.warning(
-        f"HF token secret '{settings.hf_token_secret}' not found in any candidate "
-        f"namespace {candidates}; server pod may fail to start."
+    raise RuntimeError(
+        f"HF token secret '{settings.hf_token_secret}' not found in namespace "
+        f"'{namespace}' nor in any candidate source namespace "
+        f"{[c for c in candidates if c]}. Seed it into one of them (or set "
+        f"--gpu-hf-token-secret-source-namespace) before running GPU tests; "
+        f"deploying without it stalls the server pod in "
+        f"CreateContainerConfigError until the readiness timeout expires."
     )
 
 
