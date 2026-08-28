@@ -48,7 +48,10 @@ use crate::{
             StreamingCheckpointParticipant, TerminalActionHorizon,
         },
         failure::{OrdinaryStreamingFailure, SessionFailureCode},
-        identity::{ContentDigest, GlobalSequence, SessionCausalFrontier, StableActionId},
+        identity::{
+            ContentDigest, GlobalSequence, ImmutableObjectIdentity, SessionCausalFrontier,
+            StableActionId,
+        },
         reliability::{
             OrdinaryStreamingIssue, StreamingInputDomainIdentity, StreamingIssueClass,
             StreamingIssueReportStatus, StreamingIssueReporterHandle,
@@ -57,10 +60,7 @@ use crate::{
             DatasetActionSink, SessionCoordinatorError, StreamingSessionCoordinator,
             conversation::ConversationSessionScope,
         },
-        unit::{
-            ExecutableDatasetAction, ImmutableObjectIdentity, SourcePosition,
-            StateBudgetFailureCode,
-        },
+        unit::{ExecutableDatasetAction, SourcePosition, StateBudgetFailureCode},
     },
 };
 
