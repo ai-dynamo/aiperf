@@ -7,7 +7,7 @@
 pub mod agent_recording;
 mod aiperf_trace;
 mod content;
-mod dynamo;
+pub(crate) mod dynamo;
 mod scalar;
 mod source;
 mod tracelab;

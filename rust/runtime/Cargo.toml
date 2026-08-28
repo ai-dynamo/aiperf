@@ -298,3 +298,8 @@ name = "executor_dispatch_bench"
 path = "benches/executor_dispatch_bench.rs"
 harness = false
 required-features = ["engine"]
+
+[[test]]
+name = "streaming_dynamo_format"
+path = "tests/streaming_dynamo_format.rs"
+required-features = ["streaming"]
