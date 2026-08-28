@@ -23,6 +23,7 @@ import zstandard
 from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
+from aiperf.common.environment import Environment
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.kubernetes.crd_models import (
     ControllerFetchResult,
@@ -2369,7 +2370,13 @@ class TestMonitorProgressAdvanced:
     async def test_preserves_bootstrap_fallback_when_controller_progress_unavailable(
         self,
     ) -> None:
-        """Verify JobSet readiness still bootstraps Initializing when progress is unavailable."""
+        """Verify JobSet readiness still bootstraps Initializing when progress is unavailable.
+
+        The bootstrap worker counts are in *process* units: the JobSet reports
+        1 ready pod of 2, and an omitted ``workersPerPod`` means the deployment
+        packed ``Environment.WORKER.DEFAULT_WORKERS_PER_POD`` workers into each
+        of them. Reporting 1/2 here would under-state the run by that factor.
+        """
         from aiperf.operator.main import monitor_progress
 
         kopf_patch = MagicMock()
@@ -2411,6 +2418,14 @@ class TestMonitorProgressAdvanced:
                 new_callable=AsyncMock,
                 return_value=False,
             ),
+            # Unstubbed, this builds a real ProgressClient and resolves the
+            # controller's cluster DNS name for real; unit tests must never
+            # touch the network.
+            mock_patch(
+                "aiperf.operator.handlers.monitor._maybe_recover_exported_results_from_sidecar",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
         ):
             await monitor_progress(
                 body=_FIXTURE_BODY,
@@ -2426,7 +2441,11 @@ class TestMonitorProgressAdvanced:
             )
 
         assert kopf_patch.status["phase"] == Phase.INITIALIZING
-        assert kopf_patch.status["workers"] == {"ready": 1, "total": 2}
+        workers_per_pod = Environment.WORKER.DEFAULT_WORKERS_PER_POD
+        assert kopf_patch.status["workers"] == {
+            "ready": workers_per_pod,
+            "total": 2 * workers_per_pod,
+        }
         assert "currentPhase" not in kopf_patch.status
 
     @pytest.mark.asyncio

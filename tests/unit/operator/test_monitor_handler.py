@@ -745,7 +745,10 @@ class TestUpdateWorkerCounts:
         }
 
         ready, succeeded, total = _update_worker_counts(
-            status=status, jobset_status=jobset_status, spec={}, sb=sb
+            status=status,
+            jobset_status=jobset_status,
+            spec={"benchmark": {"runtime": {"workersPerPod": 1}}},
+            sb=sb,
         )
 
         assert (ready, succeeded, total) == (10, 0, 16)
@@ -768,7 +771,10 @@ class TestUpdateWorkerCounts:
         }
 
         ready, succeeded, total = _update_worker_counts(
-            status=status, jobset_status=jobset_status, spec={}, sb=sb
+            status=status,
+            jobset_status=jobset_status,
+            spec={"benchmark": {"runtime": {"workersPerPod": 1}}},
+            sb=sb,
         )
 
         assert (ready, succeeded, total) == (3, 1, 7)
@@ -828,7 +834,10 @@ class TestUpdateWorkerCounts:
         }
 
         _update_worker_counts(
-            status=status, jobset_status=jobset_status, spec={}, sb=sb
+            status=status,
+            jobset_status=jobset_status,
+            spec={"benchmark": {"runtime": {"workersPerPod": 1}}},
+            sb=sb,
         )
 
         assert patch.status["workers"] == {"ready": 4, "total": 4}
@@ -1011,10 +1020,16 @@ class TestUpdateWorkerCounts:
         # 1 ready pod * 2 = 2 ready processes; (1+1) pods * 2 = 4 total processes
         assert (ready, succeeded, total) == (2, 0, 4)
 
-    def test_workers_per_pod_missing_from_spec_defaults_to_one(self) -> None:
-        """Absent workersPerPod in spec is treated as 1 (no scaling)."""
+    def test_workers_per_pod_missing_from_spec_uses_deployed_default(self) -> None:
+        """Absent workersPerPod resolves to the value the deployment used.
+
+        The CRD declares no default and spec_converter normalizes in memory
+        only, so an omitted field must scale by
+        ``Environment.WORKER.DEFAULT_WORKERS_PER_POD`` -- treating it as 1
+        under-reports ready workers by 10x during the bootstrap window.
+        """
         sb, _patch = _make_status_builder()
-        status = {"workers": {"total": 2}}
+        status = {"workers": {"total": 20}}
         jobset_status = {
             "replicatedJobsStatus": [
                 {
@@ -1032,7 +1047,7 @@ class TestUpdateWorkerCounts:
             status=status, jobset_status=jobset_status, spec={}, sb=sb
         )
 
-        assert (ready, succeeded, total) == (2, 0, 2)
+        assert (ready, succeeded, total) == (20, 0, 20)
 
 
 class TestCleanupDeleteFailures:

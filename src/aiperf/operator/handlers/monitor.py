@@ -24,6 +24,7 @@ from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.enums import SystemState
+from aiperf.common.environment import Environment
 from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import (
@@ -968,6 +969,35 @@ def _set_workers_ready_condition(
         )
 
 
+def _resolve_workers_per_pod(spec: dict[str, Any], total_workers: int) -> int:
+    """Reconstruct the workers-per-pod value the deployment actually used.
+
+    ``spec.benchmark.runtime.workersPerPod`` is optional and the CRD declares no
+    default, so an omitted field must resolve the same way
+    ``aiperf.kubernetes.spec_converter`` resolved it at create time. That
+    normalization runs in memory only and is never patched back onto the CR, so
+    both of its branches are mirrored here: the
+    ``Environment.WORKER.DEFAULT_WORKERS_PER_POD`` fallback, and the collapse
+    onto a single pod when the total is not a multiple of the per-pod count (a
+    JobSet cannot express a partial final pod). Resolving to 1 instead would
+    under-report ready workers by 10x during the bootstrap window.
+
+    Args:
+        spec: The AIPerfJob CR spec.
+        total_workers: Total workers in *process* units, or 0 when unknown.
+
+    Returns:
+        Worker processes per worker pod, always >= 1.
+    """
+    configured = spec.get("benchmark", {}).get("runtime", {}).get("workersPerPod")
+    per_pod = (
+        int(configured) if configured else Environment.WORKER.DEFAULT_WORKERS_PER_POD
+    )
+    if total_workers > 0 and total_workers % per_pod:
+        return total_workers
+    return per_pod
+
+
 def _update_worker_counts(
     *,
     status: dict[str, Any],
@@ -1002,9 +1032,7 @@ def _update_worker_counts(
     """
     controller_workers = _controller_authored_workers(status)
     total_workers = status.get("workers", {}).get("total", 0)
-    workers_per_pod: int = (
-        spec.get("benchmark", {}).get("runtime", {}).get("workersPerPod", 1) or 1
-    )
+    workers_per_pod = _resolve_workers_per_pod(spec, total_workers)
     workers_ready = 0
     workers_succeeded = 0
 
@@ -2985,7 +3013,8 @@ async def _recover_from_partial_checkpoints(
         return
     epoch = epoch_key_from_body(body)
     dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
-    checkpoint_metrics = _parse_metrics_from_files(
+    checkpoint_metrics = await asyncio.to_thread(
+        _parse_metrics_from_files,
         result.checkpoints,
         namespace,
         job_id,
@@ -3251,7 +3280,8 @@ async def _maybe_recover_terminated_controller(
         body=body,
     )
     if (body.get("metadata") or {}).get("creationTimestamp"):
-        result = _recover_result_from_disk(
+        result = await asyncio.to_thread(
+            _recover_result_from_disk,
             body=body,
             namespace=namespace,
             job_id=job_id,
