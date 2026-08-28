@@ -318,7 +318,7 @@ impl TurnClosureIntake {
     /// call that produced the entries.
     #[must_use]
     pub fn queued(&self) -> Option<usize> {
-        self.queue.try_borrow().ok().map(VecDeque::len)
+        self.queue.try_borrow().ok().map(|queue| queue.len())
     }
 }
 
