@@ -396,37 +396,36 @@ pub(crate) async fn execute_scheduled_pipeline(
     // coordinator concatenates the per-shard files into the single final artifact at
     // finalize (`shard_artifacts::concatenate_shard_artifacts`). `None` on the retain
     // path or when no lane artifact is requested.
-    let record_lane = if shared.exact_fold {
-        let per_shard = |relative: &Option<PathBuf>| -> Option<PathBuf> {
-            relative.as_ref().map(|path| {
-                crate::engine::shard_artifacts::shard_artifact_path(
-                    &shared.artifact_dir,
-                    shard_id,
-                    path,
-                )
-            })
-        };
-        RecordArtifactLane::new(
-            per_shard(&shared.records_path),
-            per_shard(&shared.raw_path),
-            per_shard(&shared.records_csv_path),
-            per_shard(&shared.records_parquet_path),
-            per_shard(&shared.outputs_path),
-            shared.include_trace,
-        )?
-    } else {
-        None
+    let per_shard = |relative: &Option<PathBuf>| -> Option<PathBuf> {
+        relative.as_ref().map(|path| {
+            crate::engine::shard_artifacts::shard_artifact_path(
+                &shared.artifact_dir,
+                shard_id,
+                path,
+            )
+        })
     };
-    let capture = Rc::new(
-        RunCapture::new_with_issuance_and_bases(
-            clock.clone(),
-            start_ns,
-            shared.metrics_config.clone(),
-            shared.raw_enabled,
+    let lane_paths = RecordLanePaths {
+        records: per_shard(&shared.records_path),
+        raw: per_shard(&shared.raw_path),
+        records_csv: per_shard(&shared.records_csv_path),
+        records_parquet: per_shard(&shared.records_parquet_path),
+        outputs: per_shard(&shared.outputs_path),
+        include_trace: shared.include_trace,
+    };
+    let PreparedCaptureService {
+        capture,
+        dispatcher,
+    } = CaptureService::build(CaptureServiceRequest {
+        clock: clock.clone(),
+        origin_ns: start_ns,
+        metrics_config: shared.metrics_config.clone(),
+        policy: RunCapturePolicy {
+            is_raw_enabled: shared.raw_enabled,
             // Worker threads never feed the live sink or heartbeat lane (D5); those are
             // driven once-per-cell on the main thread.
-            false,
-            shared.wants_adaptive_record,
+            needs_live_record: false,
+            needs_adaptive_record: shared.wants_adaptive_record,
             // when the run selected exact-fold, each worker capture folds every
             // completed record into its OWN exact accumulator and drops the heavy
             // per-record data mid-run. The fold ordinal comes from this capture's private
@@ -437,16 +436,18 @@ pub(crate) async fn execute_scheduled_pipeline(
             // concatenate through `append_store` at merge, yielding a summary within
             // numerical tolerance of the retain path (counts/percentiles exact,
             // sums/means a few ULPs).
-            shared.exact_fold,
-            crate::engine::cellular_cell::issuance_authority_for(partition),
-            shared.phase_ordinal_bases.clone(),
-        )
-        .with_record_lane(record_lane)
-        .with_worker_label(worker_label)
-        // Stage each turn's model output text so this shard's streaming outputs.json
-        // entry carries it, then drop it in the fold (exact-fold + outputs.json only).
-        .with_outputs_capture(shared.exact_fold && shared.outputs_path.is_some()),
-    );
+            is_exact_fold: shared.exact_fold,
+        },
+        issuance: crate::engine::cellular_cell::issuance_authority_for(partition),
+        phase_ordinal_bases: shared.phase_ordinal_bases.clone(),
+        lane_paths,
+        // Per-record OTLP folding is the coordinator pipeline's; a shard capture
+        // never enabled it.
+        is_native_otel_enabled: false,
+        execution_backend: execution_backend.clone(),
+        model: shared.primary_model.clone(),
+        worker_label,
+    })?;
     let resolver = shared.table_factory.coordinator_resolver()?;
     let source_factory = PreparedNativeConversationSourceFactory {
         endpoint_resolver: resolver,
@@ -475,11 +476,6 @@ pub(crate) async fn execute_scheduled_pipeline(
     let execution_result = async {
         execution_backend.set_run_origin(start_ns)?;
         execution_backend.configure_measurement(shared.metrics_config.clone(), start_ns)?;
-        let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(ConfiguredDispatcher {
-            execution_backend: execution_backend.clone(),
-            model: shared.primary_model.clone(),
-            capture: capture.clone(),
-        });
         let shared_resources = native_scheduled_resources(&sliced_phases);
 
         // `GlobalPush` routes every turn as a credit the worker returns out of
