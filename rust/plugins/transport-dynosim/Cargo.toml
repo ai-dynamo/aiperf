@@ -10,6 +10,14 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# The manifest and the packaging tests build this candidate with
+# `--features dynosim`, so the feature must exist for that build to resolve. It
+# selects no code in the staging shell: the candidate carries no Dynamo
+# dependency and declares both capabilities unconditionally. The gate becomes
+# load-bearing when Task 39a moves the implementation into this crate.
+[features]
+dynosim = []
+
 [dependencies]
 aiperf-core.workspace = true
 aiperf-endpoint-sdk.workspace = true

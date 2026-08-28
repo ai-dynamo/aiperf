@@ -9,10 +9,15 @@
 # NOTE: The dynosim and dynosim_online transports are feature-gated behind
 # the `dynosim` Cargo feature. The candidate manifest is always present but
 # the artifact is only built with --features dynosim.
+#
+# `package_id` is spelled with `-` rather than `/`: a slash is rejected by
+# both the plugin-api registry-id grammar and the host manifest identifier
+# normalizer, so a `nvidia/transport-...` spelling could not resolve on
+# either side of the boundary.
 format_version: "1.0"
 
 packages:
-  - package_id: "nvidia/transport-dynosim"
+  - package_id: "nvidia-transport-dynosim"
     version: "{{VERSION}}"
     category: transport
     artifact: "libaiperf_plugin_transport_dynosim.so"

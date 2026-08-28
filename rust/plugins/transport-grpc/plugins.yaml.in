@@ -9,10 +9,15 @@
 # The candidate registers gRPC transport capability with canonical ID and
 # aliases. Static production gRPC transport registration remains unchanged
 # until Task 39a makes the transport ID exclusively dynamic.
+#
+# `package_id` is spelled with `-` rather than `/`: a slash is rejected by
+# both the plugin-api registry-id grammar and the host manifest identifier
+# normalizer, so a `nvidia/transport-...` spelling could not resolve on
+# either side of the boundary.
 format_version: "1.0"
 
 packages:
-  - package_id: "nvidia/transport-grpc"
+  - package_id: "nvidia-transport-grpc"
     version: "{{VERSION}}"
     category: transport
     artifact: "libaiperf_plugin_transport_grpc.so"

@@ -26,24 +26,24 @@ pub const DISTRIBUTION_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Components in the default distribution, in canonical id order.
 ///
-/// `nvidia/transport-dynosim` is behind the `dynosim` Cargo feature, so it is
+/// `nvidia-transport-dynosim` is behind the `dynosim` Cargo feature, so it is
 /// absent from a default build and never appears here.
 pub const DEFAULT_DISTRIBUTION_CENSUS: &[(&str, &str)] = &[
-    ("nvidia/endpoints", DISTRIBUTION_VERSION),
+    ("nvidia-endpoints", DISTRIBUTION_VERSION),
     ("nvidia/export-basic", DISTRIBUTION_VERSION),
     ("nvidia/export-mlflow", DISTRIBUTION_VERSION),
     ("nvidia/export-otel", DISTRIBUTION_VERSION),
     ("nvidia/export-parquet", DISTRIBUTION_VERSION),
     ("nvidia/export-wandb", DISTRIBUTION_VERSION),
-    ("nvidia/transport-dry-run", DISTRIBUTION_VERSION),
-    ("nvidia/transport-grpc", DISTRIBUTION_VERSION),
-    ("nvidia/transport-http", DISTRIBUTION_VERSION),
-    ("nvidia/transport-websocket", DISTRIBUTION_VERSION),
+    ("nvidia-transport-dry-run", DISTRIBUTION_VERSION),
+    ("nvidia-transport-grpc", DISTRIBUTION_VERSION),
+    ("nvidia-transport-http", DISTRIBUTION_VERSION),
+    ("nvidia-transport-websocket", DISTRIBUTION_VERSION),
 ];
 
 /// Components the full distribution adds on top of the default one.
 pub const FULL_DISTRIBUTION_EXTRA_CENSUS: &[(&str, &str)] =
-    &[("nvidia/transport-dynosim", DISTRIBUTION_VERSION)];
+    &[("nvidia-transport-dynosim", DISTRIBUTION_VERSION)];
 
 /// Why a census could not be built or did not match.
 #[derive(Debug, thiserror::Error)]

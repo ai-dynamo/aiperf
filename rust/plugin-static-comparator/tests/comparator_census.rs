@@ -25,13 +25,13 @@ fn static_census_matches_dynamic_default() {
         .iter()
         .map(|(id, _)| *id)
         .collect();
-    assert!(ids.contains(&"nvidia/transport-http"));
-    assert!(ids.contains(&"nvidia/transport-grpc"));
-    assert!(ids.contains(&"nvidia/transport-dry-run"));
-    assert!(ids.contains(&"nvidia/endpoints"));
+    assert!(ids.contains(&"nvidia-transport-http"));
+    assert!(ids.contains(&"nvidia-transport-grpc"));
+    assert!(ids.contains(&"nvidia-transport-dry-run"));
+    assert!(ids.contains(&"nvidia-endpoints"));
     assert!(ids.contains(&"nvidia/export-basic"));
     assert!(
-        !ids.contains(&"nvidia/transport-dynosim"),
+        !ids.contains(&"nvidia-transport-dynosim"),
         "dynosim is feature-gated and is not in the default distribution"
     );
 }
@@ -50,7 +50,7 @@ fn a_census_that_drifts_is_refused() {
     let missing = registry
         .assert_census(&[
             ("nvidia/export-basic", "0.13.0"),
-            ("nvidia/transport-http", "0.13.0"),
+            ("nvidia-transport-http", "0.13.0"),
         ])
         .expect_err("a short census is refused");
     assert!(matches!(missing, CensusError::Mismatch { .. }));
