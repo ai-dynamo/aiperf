@@ -1921,10 +1921,26 @@ The reference tree has two separately-settable knobs, both defaulting to 10:
 annotated "(SUT thread pool)" (`reference_mlperf_perf.sh:31`-`:32`, `:72`-`:73`).
 `user.conf:13` says `max_async_queries` controls concurrent query processing, and
 `reference_SUT.py:202` comments that `max_workers` is chosen "based on loadgen
-max_async_queries setting". The LoadGen source is not in the clone, so nothing
-there can settle which of the two actually gates dispatch. It does not need to be
-settled: under either reading the reference runs roughly **ten tasks in flight**,
-and that is the quantity an AIPerf run has to match.
+max_async_queries setting".
+
+**Reading LoadGen settles it, and the answer is that one of the two knobs is dead
+config.** `max_async_queries` is parsed from `user.conf` under the **`Server`**
+scenario key only — `lookupkv(model, "Server", "max_async_queries", ...)`
+(`loadgen/test_settings_internal.cc:787`) — so `e2e-rag-qna.Offline.max_async_queries`
+is never read. Even were it read, `TestScenario::Offline` unconditionally assigns
+`max_async_queries = 1` (`test_settings_internal.cc:118`), and the enforcement loop
+that would act on it is gated on `scenario == TestScenario::Server`
+(`loadgen/issue_query_controller.cc:437`-`:438`, `:540`-`:542`). Both
+`user.conf` lines — the QnA `10` and the DB `2515` — are therefore inert, and the
+file's own comment describing what they control describes behaviour that does not
+occur. This is a **fifth** instance of the inert-mechanism pattern catalogued in
+`### Where the reference binds less than we do`, and the only one that would have
+changed a load number.
+
+The consequence is a cleaner version of the same conclusion: the sole live
+in-flight bound is `MAX_WORKERS`, the SUT's own `ThreadPoolExecutor`
+(`reference_SUT.py:202`), so the reference runs **ten tasks in flight** and that is
+the quantity an AIPerf run has to match.
 
 **`concurrency == requests == N` is therefore refused, and its refusal in the
 earlier draft was itself a unit error.** On the graph path the two settings do not
@@ -2104,9 +2120,12 @@ Both are post-run passes over recorded artifacts, native, and off the timed path
   write-only and absent on the local path (see `## Built`).
 - **Output-length compliance** (`aiperf rag compliance`) re-reads a pinned run's
   records and reports the answer-role mean and p90 OSL beside the reference's
-  five-run spread. It does **not** assert a ±10% band around 273.81: three of the
-  reference's own five logged runs fall outside that band, so it is not a valid
-  test of anything (see `### The scored metric and the validity gate`). A band is
+  five-run spread. It does **not** assert a ±10% band: the reference ships two
+  inconsistent ones — 246.43–301.19 in `compliance/TEST09/e2e-rag-qna/audit.config`,
+  which is the band `run_verification.py` enforces, and 211.92–259.02 in the README
+  beside it — and neither contains more than three of the reference's own five
+  logged runs, with the enforced band rejecting the README's own published mean of
+  235.47 (see `### The scored metric and the validity gate`). A band is
   applied only when authored, with its own bounds and its own provenance. The check
   is a single aggregate over one role. The report states that scope explicitly and names
   what it does not cover: the rewriter, grader, and sufficiency roles generate
@@ -2116,8 +2135,10 @@ Both are post-run passes over recorded artifacts, native, and off the timed path
 
 - **The validity gate.** A scored run is valid only if its accuracy reaches an
   authored fraction of an authored reference accuracy (the MLPerf analogue is
-  99% of the reference, relaxed to 97% for the reasoning models in the first
-  instantiation). `aiperf rag score` evaluates the gate, states the verdict in
+  99% of the reference for most benchmarks; the two e2e-rag entries are the only
+  ones written as pre-multiplied absolute literals — 33.95 and 98 — rather than as
+  a `reference × fraction` expression,
+  `tools/submission/submission_checker/constants.py:156`-`:157`). `aiperf rag score` evaluates the gate, states the verdict in
   its output, and returns non-zero when the gate fails.
 
   **Nothing in AIPerf today turns a measured metric into a run verdict**, so this
@@ -2300,8 +2321,11 @@ e2e-rag-db.Offline.min_query_count  = 2515    max_async_queries = 2515
 e2e-rag-qna.Offline.min_query_count = 824     max_async_queries = 10
 ```
 
-Reading the QnA line as a concurrency-10 closed loop, and therefore as something
-this record's Offline refusal would reject, was **wrong**. Under Offline, LoadGen
+Neither line is live — both are parsed only under the `Server` scenario key and
+Offline pins the value to 1 (see `### Metrics`, the Offline mapping) — so the two
+numbers are not opposite admission policies but the same absence of one.
+Reading the QnA line as a concurrency-10 closed loop enforced *by LoadGen* was
+**wrong**; the ten-wide closed loop is real, but it lives in the SUT's thread pool. Under Offline, LoadGen
 delivers the entire sample set to the SUT in one `issue_queries` call; the
 reference sorts it and submits every sample to a `ThreadPoolExecutor` whose width
 is 10 (`reference_SUT.py:202`-`:205`, `:334`-`:349`). The announcement post states
@@ -2507,11 +2531,22 @@ Reference results are P@N 72%, R@N 67%, F1@N 66%, judge accuracy 36%, against an
 oracle-context ceiling of 68% (`CLAUDE.md:207`-`:214`). The announcement post
 publishes a different set for the same reference pipeline — answer accuracy 35%,
 P/R/F1 75%/70%/69% — and does not say which run either set describes. Both are
-recorded here because the validity gate is a ratio against "the reference
-accuracy" and the choice of denominator moves the bar: 97% of 35 and 97% of 36
-are different numbers. Our `aiperf rag score --gate` takes the reference accuracy
-as an authored input for exactly this reason, and the authored value must carry
-its provenance rather than being hardcoded to either figure. Two different judges with
+recorded here.
+
+**The submission checker resolves which figure is the reference.** It carries
+`"e2e-rag-qna": ("E2E_ACCURACY", 33.95)`
+(`tools/submission/submission_checker/constants.py:156`), and `35 × 0.97 = 33.95`
+exactly, so the announcement post's 35% is the reference accuracy the gate was
+derived from and the repo docs' 36% is a different run. Both are still recorded,
+because the gate is a **bare absolute literal**, not a ratio: every other benchmark
+in that table writes its target as an expression — `76.46 * 0.99`, `90.874 * 0.999`,
+`53.4 * 0.95` — while the two e2e-rag entries alone are pre-multiplied constants
+(`:156`-`:157`). So the bar does not move with the choice of denominator; it is
+33.95, full stop. Our `aiperf rag score --gate` still takes the reference accuracy
+as an authored input with provenance, because the fraction and the reference are
+separately meaningful to us even though the reference has fused them.
+Ingestion is gated separately and absolutely at `("E2E_ACCURACY", 98)` (`:157`),
+which confirms that gating is per-workload rather than run-wide. Two different judges with
 different prompts, schemas, and defaults exist in the tree (`accuracy_eval.py` for
 the LoadGen path, `evaluate.py:127`-`:163` for the non-LoadGen path) and are not
 consistent with each other; the judge model is not pinned, and three defaults
@@ -2521,9 +2556,18 @@ depresses accuracy rather than erroring. Our design pins the judge inside
 `pipeline_digest` and refuses rather than silently scoring zero, and this is the
 clearest place where matching the reference exactly would be the wrong call.
 
-**The 97% validity gate is not in `e2e-rag/`.** It is delegated by comment to
-`tools/submission/submission_checker.py` (`accuracy_eval.py:348`-`:352`), which
-parses the `Accuracy:` line out of `accuracy.txt`. Within `e2e-rag/`,
+**The validity gate is not in `e2e-rag/`, and it is not spelled as 97% anywhere in
+the code.** It is delegated by comment to the submission checker
+(`accuracy_eval.py:348`-`:352`), which parses the `Accuracy:` line out of
+`accuracy.txt`. The constant lives in
+`tools/submission/submission_checker/constants.py:156`-`:157` — not in a file named
+`submission_checker.py`, which an earlier draft of this record named and which
+holds only a legacy copy — as the pre-multiplied literals `33.95` (QnA) and `98`
+(DB). Both workloads are registered Offline-only (`constants.py:38`-`:39`), and the
+performance sample counts are 824 and **2515** (`:195`-`:196`), the latter being a
+*document* count: LoadGen's unit for the ingestion workload is documents while the
+scored throughput is passages, which is the same split I12b records rather than a
+contradiction of it. Within `e2e-rag/`,
 `accuracy_eval.py:284`-`:356` has no threshold, no comparison, and no `sys.exit` —
 a 0% run exits 0, and `reference_mlperf.py:271` propagates only a crash. The one
 real pass/fail gate in the tree is on ingestion:
@@ -2539,23 +2583,38 @@ This confirms the scoping in `### Accuracy and compliance`: the gate belongs in
 same shape. The 97% constant itself must come from the full `mlcommons/inference`
 checkout; it is not quotable from `e2e-rag/` and this record does not assert it.
 
-Output-length compliance is TEST09's, and `run_compliance_test09.sh` runs a
-verification script that is not vendored in this directory. The mechanism is
-clear from the SUT side: TEST09's `audit.config` makes LoadGen sample responses
-into `mlperf_log_accuracy.json` during a *performance* run, and because the SUT
-encodes `n_tokens` int32 slots, the verifier can recover generated lengths and
-prove the SUT generated what it claimed while running at speed. The tolerance is
-not in this directory but is published with the benchmark: mean output length
-273.81 with a plus-or-minus 10 percent band, 246.43 to 301.19.
+Output-length compliance is TEST09's. The verification script is not vendored in
+`e2e-rag/` but is in the same repository at `compliance/TEST09/run_verification.py`,
+with a workload-specific `compliance/TEST09/e2e-rag-qna/audit.config` and README.
+The mechanism is as inferred from the SUT side: `audit.config` sets
+`accuracy_log_sampling_target = 10000` against 824 samples so LoadGen logs every
+response into `mlperf_log_accuracy.json` during a *performance* run, and because the
+SUT encodes `n_tokens` int32 slots, the verifier recovers generated lengths and
+proves the SUT generated what it claimed while running at speed. The verifier's
+denominator is confirmed to be every logged entry, `len(token_ids)` each, with a
+missing payload contributing 0 (`run_verification.py:143`-`:161`).
 
-**That band, taken at face value, fails the reference's own runs.** The five
+**The reference ships two mutually inconsistent bands for this one test, and the
+machine-enforced one rejects the reference's own published statistic.**
+`audit.config` sets `test09_min_output_tokens = 246.43` and
+`test09_max_output_tokens = 301.19` around a mean of 273.81 taken from a single run
+(n=810); `run_verification.py` reads exactly those keys (`:200`-`:207`, `:281`-`:297`)
+and passes when the observed mean falls inside them. The README sitting beside that
+file publishes a **weighted mean OSL of 235.47** over five production runs and 4021
+answer-generator invocations, and derives a different band, 211.92 to 259.02, from
+it — and even prints an "Expected Output" block in which the observed mean is
+235.47 and the verdict is PASS. Against the shipped `audit.config`, 235.47 fails:
+it is below 246.43. The two files in the same directory cannot both be right.
+
+**Neither band contains the reference's own runs.** The five
 logged `answer_generator` OSL means are 221, 258, 273, 211, and 214
 (`ISL_OSL_statistics.txt:16`, `:63`, `:107`, `:154`, `:197`). Three of the five sit
-below 246.43. The band is narrower than the quantity's run-to-run variance, so no
-choice of reference mean makes it a valid two-sided test of *our* run — recentring
-it on the five-run mean of about 235 would put 273 outside instead. An earlier
-draft of this record treated the band as a bar to clear and asked only which mean
-to centre it on. That was the wrong question.
+below the enforced 246.43, leaving 2 of 5 inside. The README's own band fares no
+better: 211.92 to 259.02 admits 221, 258, and 214 but excludes 273 *and* 211,
+leaving 3 of 5. Both bands are narrower than the quantity's demonstrated
+run-to-run variance, so no choice of centre makes a ±10% window a valid two-sided
+test of *our* run. An earlier draft of this record treated the band as a bar to
+clear and asked only which mean to centre it on. That was the wrong question.
 
 The denominator compounds it. TEST09 recovers `n_tokens` from **every** LoadGen
 sample, all 824 of them, but only 794 to 813 samples per run made an answer call at
@@ -2783,9 +2842,11 @@ across submissions.
 
 **Bounds and the gate.** The canonical configuration is up to three sub-queries
 per hop and up to five hops, which matches the scripts rather than the code's
-dead default of ten. The 97% validity gate is confirmed and located in
-`inference_rules.adoc`, under the datacenter minimum-requirements section —
-outside `e2e-rag/`, consistent with the delegation the code comments describe.
+dead default of ten. The validity gate is confirmed outside `e2e-rag/`, consistent
+with the delegation the code comments describe, and lands in the submission checker
+as the absolute literals 33.95 (QnA) and 98 (DB)
+(`tools/submission/submission_checker/constants.py:156`-`:157`); `35 × 0.97 = 33.95`
+identifies the announcement post's 35% as the reference the bar was derived from.
 Offline is the only scenario in scope; Server is future work.
 
 **Parsing must flatten tables and lists into text row by row rather than dropping
