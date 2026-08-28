@@ -2838,6 +2838,20 @@ mod tests {
     use super::*;
     use crate::extensions::AIPerfRegistryFactory;
 
+    /// Built-in workload ids in registration order.
+    ///
+    /// `shadow_replay` is present exactly when the `streaming` feature compiles
+    /// its workload in, so the inventory assertions track the compiled set
+    /// rather than a hard-coded list that silently drifts per feature build.
+    fn expected_builtin_workloads() -> Vec<&'static str> {
+        let mut ids = vec!["graph", "scheduled"];
+        if cfg!(feature = "streaming") {
+            ids.push("shadow_replay");
+        }
+        ids.sort_unstable();
+        ids
+    }
+
     static TRANSPORT: TransportDescriptor = TransportDescriptor {
         id: "acme_remote",
         description: "fixture remote placement",
@@ -3360,7 +3374,7 @@ mod tests {
         // pair/cross-product inventory. Any registered workload runs over any
         // registered transport (grpc + graph included), with transport-specific
         // execution resolved inside the workload's prepare.
-        let expected_workloads = vec!["graph", "scheduled"];
+        let expected_workloads = expected_builtin_workloads();
         assert_eq!(
             registry
                 .workload_descriptors()
@@ -3456,7 +3470,7 @@ mod tests {
                 .into_iter()
                 .map(|descriptor| descriptor.id)
                 .collect::<Vec<_>>(),
-            vec!["graph", "scheduled"]
+            expected_builtin_workloads()
         );
 
         // The stock build registers only built-in extensions, whose names are
