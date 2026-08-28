@@ -42,8 +42,8 @@ use aiperf_runtime::endpoints::{
 };
 use aiperf_runtime::engine::protocol::HopRouting;
 use aiperf_runtime::engine::turn_execution::{
-    ExecutionBackendConfig, HttpExecutionFactory, PreparedEndpointTableFactory,
-    RequestExecutorFactory,
+    ExecutionBackendConfig, ExecutionTransportPolicy, HttpExecutionFactory,
+    PreparedEndpointTableFactory, RequestExecutorFactory,
 };
 use aiperf_runtime::metrics::RequestMetricMetadata;
 use aiperf_runtime::metrics_core::{MetricsConfig, RecordIngest};
@@ -52,7 +52,6 @@ use aiperf_runtime::transport::core::{
     ConnectionReuseStrategy, MeasuredContext, PreparedEndpointBinding, PreparedTurn, Request,
     RequestExecutor,
 };
-use aiperf_runtime::transport::http::TransportSinkConfig;
 
 use axum::response::sse::{Event, Sse};
 use axum::{Router, routing::post};
@@ -193,9 +192,9 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
         registry: EndpointRegistry::builtin().unwrap(),
         url: base_url.to_string(),
     });
-    let transport = TransportSinkConfig {
+    let transport = ExecutionTransportPolicy {
         connection_reuse: ConnectionReuseStrategy::StickyUserSessions,
-        ..TransportSinkConfig::default()
+        ..ExecutionTransportPolicy::default()
     };
     let backend = HttpExecutionFactory
         .build(ExecutionBackendConfig {
@@ -205,7 +204,6 @@ fn build_backend(base_url: &str, routing: HopRouting) -> Rc<dyn RequestExecutor>
             base_urls: vec![base_url.to_string()],
             model: "fixture-model".to_string(),
             transport,
-            raw_enabled: false,
             prepared_endpoints: Some(table_factory),
             credit_materializer: None,
             hop_routing: routing,
