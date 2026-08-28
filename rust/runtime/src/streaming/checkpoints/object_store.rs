@@ -38,10 +38,10 @@ use crate::streaming::{
     checkpoint::{
         BudgetedCheckpointBytes, CheckpointBackendBudgetFailureCode, CheckpointBackendBudgetKind,
         CheckpointEpoch, CheckpointError, CheckpointGeneration, CheckpointGenerationCandidate,
-        CommittedCheckpointGeneration,
-        CommittedParticipantState, CurrentV4ParticipantStateContext, DecodedCheckpointGeneration,
-        LegacyParticipantState, LegacyV3CheckpointGeneration, ParticipantStateDescriptor,
-        PreparedParticipantState, PrevalidatedCheckpointGenerationCandidate, StreamRunIdentity,
+        CommittedCheckpointGeneration, CommittedParticipantState, CurrentV4ParticipantStateContext,
+        DecodedCheckpointGeneration, LegacyParticipantState, LegacyV3CheckpointGeneration,
+        ParticipantStateDescriptor, PreparedParticipantState,
+        PrevalidatedCheckpointGenerationCandidate, StreamRunIdentity,
         decode_versioned_checkpoint_generation,
     },
     checkpoint_backend::{
@@ -246,7 +246,9 @@ impl CheckpointErrorCode for CheckpointError {
                 }
                 _ => CheckpointFailureCode::Provider,
             },
-            Self::ResultIndexReadBudgetTooSmall { .. } => CheckpointFailureCode::ObjectLimitExceeded,
+            Self::ResultIndexReadBudgetTooSmall { .. } => {
+                CheckpointFailureCode::ObjectLimitExceeded
+            }
             Self::GenerationConflict { .. } | Self::LeaseLost { .. } => {
                 CheckpointFailureCode::StaleWriter
             }
@@ -494,8 +496,8 @@ impl ObjectCheckpointBackend {
         }
         let mut objects: Vec<(ContentDigest, Bytes)> = Vec::new();
         let (generation_digest, generation_bytes) = generation_object.into_storage_parts();
-        let generation_length = u64::try_from(generation_bytes.len())
-            .map_err(|_| provider_error("object length"))?;
+        let generation_length =
+            u64::try_from(generation_bytes.len()).map_err(|_| provider_error("object length"))?;
         objects.push((generation_digest, generation_bytes));
         for object in participant_objects.into_objects() {
             let (digest, bytes) = object.into_storage_parts();
@@ -643,8 +645,10 @@ impl ObjectCheckpointBackend {
                 *observed.document.generation.digest(),
             )
             .await?;
-        let decoded =
-            decode_versioned_checkpoint_generation(&bytes, self.budgets.storage.limits().max_bytes)?;
+        let decoded = decode_versioned_checkpoint_generation(
+            &bytes,
+            self.budgets.storage.limits().max_bytes,
+        )?;
         let opened = match (observed.document.storage_version, decoded) {
             (
                 PointerStorageVersion::CurrentV4,

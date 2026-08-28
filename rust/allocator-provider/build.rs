@@ -91,7 +91,9 @@ fn main() {
         "macos" | "ios" => export_macos(&out_dir),
         "windows" => export_windows(&out_dir),
         other => {
-            println!("cargo:warning=aiperf-allocator-provider: unknown target_os={other}; skipping symbol export");
+            println!(
+                "cargo:warning=aiperf-allocator-provider: unknown target_os={other}; skipping symbol export"
+            );
         }
     }
 }

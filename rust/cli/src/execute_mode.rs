@@ -175,9 +175,10 @@ fn run_cell() -> ! {
         match aiperf_plugin_host::bundle::LockedCatalogBundle::load_and_verify(&lock_path) {
             Ok(bundle) => {
                 let actual_digest = bundle.lock().digest.hex.as_str();
-                if let Err(error) =
-                    crate::plugins::propagate::verify_propagated_digest(&expected_digest, actual_digest)
-                {
+                if let Err(error) = crate::plugins::propagate::verify_propagated_digest(
+                    &expected_digest,
+                    actual_digest,
+                ) {
                     tracing::error!(error = %error, cell_id, "cell plugin lock attestation failed");
                     std::process::exit(2);
                 }
