@@ -6,9 +6,7 @@
 //! Tests strict schema-2.0 decoding, normalization, and stable error codes.
 
 use aiperf_plugin_host::{
-    error::ManifestError,
-    manifest::PluginManifestV2,
-    normalize::normalize_manifest,
+    error::ManifestError, manifest::PluginManifestV2, normalize::normalize_manifest,
 };
 
 fn load_fixture(name: &str) -> String {

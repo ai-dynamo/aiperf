@@ -81,8 +81,7 @@ fn normalize_package(
     NormalizedIdV1::parse(&pkg.id)?;
 
     // Validate version as canonical SemVer (X.Y.Z)
-    Version::parse(&pkg.version)
-        .map_err(|_| ManifestError::InvalidSemVer(pkg.version.clone()))?;
+    Version::parse(&pkg.version).map_err(|_| ManifestError::InvalidSemVer(pkg.version.clone()))?;
 
     // Validate artifact paths and check for duplicate targets
     let mut seen_targets: HashSet<String> = HashSet::new();
