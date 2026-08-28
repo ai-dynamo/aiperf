@@ -165,6 +165,12 @@ pub struct CellRegister {
     /// Controller-verifiable proof that this registration came from the launched cell.
     #[serde(default)]
     pub registration_proof: Option<CellRegistrationProof>,
+    /// BLAKE3 hex digest of the plugin lock bundle the cell loaded, or `None`
+    /// when the cell was started without plugins. The controller verifies this
+    /// matches what it injected via [`CELL_PLUGIN_LOCK_ENV`](crate::engine::cell_launcher::CELL_PLUGIN_LOCK_ENV)
+    /// before admitting the registration.
+    #[serde(default)]
+    pub plugin_lock_digest: Option<String>,
 }
 
 /// Wire-visible Ed25519 proof for a single cellular registration transcript.

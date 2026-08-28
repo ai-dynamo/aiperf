@@ -36,6 +36,7 @@ fn no_durability_requirements() -> CheckpointBackendRequirements {
     CheckpointBackendRequirements {
         needs_restartable_execution: false,
         needs_durable_partial_results: false,
+        needs_sensitive_state_protection: false,
     }
 }
 
@@ -106,6 +107,7 @@ async fn none_backend_advertises_no_resume_capability() {
                 &CheckpointBackendRequirements {
                     needs_restartable_execution: true,
                     needs_durable_partial_results: false,
+                    needs_sensitive_state_protection: false,
                 },
             )
             .is_err()
@@ -137,6 +139,7 @@ fn none_backend_advertises_no_encrypted_state_capability() {
                 &CheckpointBackendRequirements {
                     needs_restartable_execution: false,
                     needs_durable_partial_results: true,
+                    needs_sensitive_state_protection: false,
                 },
             )
             .is_err()

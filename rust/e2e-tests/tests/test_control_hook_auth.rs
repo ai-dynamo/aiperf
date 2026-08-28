@@ -55,7 +55,11 @@ async fn control_posts_carry_endpoint_bearer_auth_and_authored_headers() {
          --reset-kv-cache --server-profiler --ui simple",
         h.mock.url
     ));
-    assert!(r.success(), "authenticated control-hook run failed: {}", r.stderr);
+    assert!(
+        r.success(),
+        "authenticated control-hook run failed: {}",
+        r.stderr
+    );
 
     for route in CONTROL_ROUTES {
         let captures = control_captures(&h, route);
@@ -90,7 +94,11 @@ async fn control_posts_send_no_authorization_without_a_credential() {
          --reset-kv-cache --server-profiler --ui simple",
         h.mock.url
     ));
-    assert!(r.success(), "credential-free control-hook run failed: {}", r.stderr);
+    assert!(
+        r.success(),
+        "credential-free control-hook run failed: {}",
+        r.stderr
+    );
 
     for route in CONTROL_ROUTES {
         let captures = control_captures(&h, route);

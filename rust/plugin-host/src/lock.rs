@@ -24,6 +24,7 @@ pub enum PackageStatus {
 
 /// Digest authenticating the package list in a [`PluginLockV1`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginLockDigest {
     /// Hash algorithm.  Always `"blake3"`.
     pub algorithm: String,
@@ -48,6 +49,7 @@ impl PluginLockDigest {
 
 /// One package entry in the canonical plugin lock.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LockedPackageV1 {
     /// Normalized package identifier.
     pub id: String,
@@ -66,6 +68,7 @@ pub struct LockedPackageV1 {
 /// Constructed via [`PluginLockV1::new`], which computes the digest
 /// immediately so the stored digest always matches the stored package list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginLockV1 {
     /// Always `"1.0"`.
     pub schema_version: String,
@@ -87,8 +90,25 @@ impl PluginLockV1 {
     }
 
     /// Verify that the stored digest matches the package list.
+    ///
+    /// The two digests are compared as parsed [`blake3::Hash`] values, whose
+    /// `PartialEq` is constant-time.  Comparing the hex strings directly would
+    /// short-circuit on the first differing character and leak the length of a
+    /// matching prefix, which is a forgery oracle for an attacker who can
+    /// rewrite the lock file and observe the rejection latency.
     pub fn verify(&self) -> bool {
         let expected = PluginLockDigest::compute(&self.packages);
-        expected.hex == self.digest.hex && expected.algorithm == self.digest.algorithm
+        if expected.algorithm != self.digest.algorithm {
+            return false;
+        }
+        match (
+            blake3::Hash::from_hex(&self.digest.hex),
+            blake3::Hash::from_hex(&expected.hex),
+        ) {
+            (Ok(stored), Ok(computed)) => stored == computed,
+            // A stored digest that is not a canonical BLAKE3 hex string cannot
+            // match a computed one, which always is.
+            _ => false,
+        }
     }
 }

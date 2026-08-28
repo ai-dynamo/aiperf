@@ -1,2 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# HTTP transport candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+#
+# The candidate registers HTTP transport capability with canonical ID and
+# aliases. Static production HTTP transport registration remains unchanged
+# until Task 39a makes the transport ID exclusively dynamic.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/transport-http"
+    version: "{{VERSION}}"
+    category: transport
+    artifact: "libaiperf_plugin_transport_http.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      HTTP transport candidate: registers HTTP/1, h2c, UDS, TLS, and SSE
+      transport capabilities with canonical ID and effective aliases.
+      Static production HTTP transport authority remains until Task 39a.
+    capabilities:
+      - canonical_id: "http"
+        aliases: ["http.hyper", "http.v1", "http.h2c"]

@@ -8,14 +8,17 @@
 //! place so a concurrent reader never sees a partial write.
 //!
 //! [`LockedCatalogBundle::load_and_verify`] reads the file and recomputes the
-//! digest, rejecting any mutation made after publish.
+//! digest, rejecting any mutation made after publish.  The read refuses a
+//! symlink at the final path component, and the publish leaves the file
+//! owner-readable regardless of the ambient umask.
 
 use std::{
     fmt,
+    io::Read,
     path::{Path, PathBuf},
 };
 
-use crate::lock::PluginLockV1;
+use crate::{lock::PluginLockV1, platform::fs::open_no_follow};
 
 /// Why a bundle publish or load failed.
 #[derive(Debug)]
@@ -82,16 +85,27 @@ impl LockedCatalogBundle {
     pub fn publish(lock: PluginLockV1, path: &Path) -> Result<Self, BundleError> {
         let json = serde_json::to_vec_pretty(&lock).expect("PluginLockV1 serializes infallibly");
 
-        // Write to a temp file in the same directory so rename is atomic.
+        // Write to a temp file in the same directory so rename is atomic. The
+        // name carries the process id as well as a sub-second timestamp: two
+        // publishers racing in the same directory would otherwise collide on a
+        // nanosecond that the clock resolution makes far from unique.
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
         let tmp = parent.join(format!(
-            ".tmp-plugin-lock-{}",
+            ".tmp-plugin-lock-{}-{}",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.subsec_nanos())
                 .unwrap_or(0)
         ));
         std::fs::write(&tmp, &json)?;
+        // The lock names every loadable artifact in the run, so it is published
+        // owner-readable rather than at whatever the ambient umask allows.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        }
         std::fs::rename(&tmp, path)?;
 
         Ok(Self {
@@ -101,8 +115,12 @@ impl LockedCatalogBundle {
     }
 
     /// Read a previously published lock from `path` and verify its digest.
+    ///
+    /// The final path component is opened without following a symlink, so a
+    /// lock path planted in an attacker-writable directory cannot redirect the
+    /// read at a file the caller never named.
     pub fn load_and_verify(path: &Path) -> Result<Self, BundleError> {
-        let raw = std::fs::read(path)?;
+        let raw = read_no_follow(path)?;
         let lock: PluginLockV1 =
             serde_json::from_slice(&raw).map_err(|e| BundleError::Parse(e.to_string()))?;
 
@@ -133,4 +151,15 @@ impl LockedCatalogBundle {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+/// Read a file whose final path component must not be a symlink.
+///
+/// The symlink refusal happens in the `open` call itself, so there is no window
+/// between a check and the read in which the path could be swapped.
+fn read_no_follow(path: &Path) -> Result<Vec<u8>, BundleError> {
+    let mut file = open_no_follow(path)?;
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)?;
+    Ok(raw)
 }

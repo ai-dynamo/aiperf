@@ -29,7 +29,7 @@ static EXT_NOOP: NoOpExtension = NoOpExtension;
 
 fn make_decl() -> PluginDeclarationV1 {
     PluginDeclarationV1 {
-        package: &*PKG_A,
+        package: &PKG_A,
         extension: &EXT_NOOP,
     }
 }

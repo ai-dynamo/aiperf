@@ -1,2 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# WebSocket transport candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/transport-websocket"
+    version: "{{VERSION}}"
+    category: transport
+    artifact: "libaiperf_plugin_transport_websocket.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      WebSocket transport candidate: registers store-free WebSocket operation
+      values and WebSocket transport capability with canonical ID and aliases.
+      Static production WebSocket transport authority remains until Task 39a.
+    capabilities:
+      - canonical_id: "websocket"
+        aliases: ["ws", "websocket.hyper"]

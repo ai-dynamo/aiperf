@@ -48,6 +48,75 @@ use crate::engine::cellular_cell::{
 
 /// Env var selecting the launcher: `local` (default), `k8s`, or `slurm`.
 pub const CELL_LAUNCHER_ENV: &str = "AIPERF_CELL_LAUNCHER";
+/// Environment variable carrying the plugin lock BLAKE3 hex digest for a cell.
+///
+/// Set by the controller's [`LocalLauncher::cell_command`] when the run was
+/// started with a plugin lock, and read by the cell's bootstrap in
+/// [`run_cell`](aiperf_cli::execute_mode) to verify the lock bundle before any
+/// effects.
+pub const CELL_PLUGIN_LOCK_ENV: &str = "AIPERF_PLUGIN_LOCK_DIGEST";
+
+/// Environment variable carrying the absolute path to the plugin lock bundle.
+///
+/// A digest without its lock path attests nothing: any process can copy the
+/// digest value out of an inherited environment. Attestation therefore requires
+/// both variables, and the digest is only trusted after the owning process has
+/// loaded and verified the bundle at this path.
+pub const CELL_PLUGIN_LOCK_PATH_ENV: &str = "AIPERF_PLUGIN_LOCK_PATH";
+
+/// The plugin lock digest this process composed and verified, recorded once at
+/// bootstrap. `None` inside the `OnceLock` means "composed with no plugins".
+static COMPOSED_PLUGIN_LOCK_DIGEST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Record the digest of the plugin lock bundle this process loaded and verified.
+///
+/// Prefer [`crate::metrics_core::report::set_plugin_provenance`], which records
+/// the same digest together with the catalog a report needs. This exists for
+/// callers that have a verified digest and no catalog. Later calls are ignored
+/// so the composed identity cannot be redefined after cells observe it.
+pub fn set_composed_plugin_lock_digest(digest: Option<String>) {
+    let _ = COMPOSED_PLUGIN_LOCK_DIGEST.set(digest);
+}
+
+/// The plugin lock digest this process may attest, or `None` when it has none.
+///
+/// Returns the composed-and-verified digest when bootstrap recorded one, either
+/// through [`set_composed_plugin_lock_digest`] or as part of the run's report
+/// provenance. When bootstrap never ran (unit tests, embedded use) it falls back
+/// to a *validated* environment read: both [`CELL_PLUGIN_LOCK_PATH_ENV`]
+/// (absolute) and [`CELL_PLUGIN_LOCK_ENV`] (exactly 64 hex characters) must be
+/// present and well-formed. A digest inherited without its lock path is never
+/// attested.
+pub fn composed_plugin_lock_digest() -> Option<String> {
+    if let Some((digest, _)) = crate::metrics_core::report::plugin_provenance() {
+        return Some(digest.clone());
+    }
+    if let Some(recorded) = COMPOSED_PLUGIN_LOCK_DIGEST.get() {
+        return recorded.clone();
+    }
+    validated_plugin_lock_digest_from_env()
+}
+
+/// Read [`CELL_PLUGIN_LOCK_ENV`] only when it is accompanied by a structurally
+/// valid [`CELL_PLUGIN_LOCK_PATH_ENV`] and is itself 64 hex characters.
+fn validated_plugin_lock_digest_from_env() -> Option<String> {
+    let path = std::path::PathBuf::from(std::env::var(CELL_PLUGIN_LOCK_PATH_ENV).ok()?);
+    let digest = std::env::var(CELL_PLUGIN_LOCK_ENV).ok()?;
+    if !path.is_absolute() {
+        tracing::warn!(
+            path = %path.display(),
+            "ignoring non-absolute {CELL_PLUGIN_LOCK_PATH_ENV}; not attesting a plugin lock digest"
+        );
+        return None;
+    }
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        tracing::warn!(
+            "ignoring malformed {CELL_PLUGIN_LOCK_ENV}: expected 64 hex characters, got {digest:?}"
+        );
+        return None;
+    }
+    Some(digest)
+}
 
 /// Everything a launcher needs to start (or expect) a run's cells. The controller
 /// builds this after it has bound its velo transport and published its bootstrap
@@ -71,6 +140,33 @@ pub struct CellLaunchContext {
     pub artifact_authority: Option<String>,
     /// One-shot local role material. Cross-host launchers receive `None`.
     pub(crate) local_roles: Option<LocalRoleProvisioner>,
+    /// BLAKE3 hex digest of the plugin lock bundle active for this run, or
+    /// `None` when the run was launched without plugins. Injected as
+    /// [`CELL_PLUGIN_LOCK_ENV`] so each cell can verify the bundle before
+    /// opening any socket or dataset.
+    pub plugin_lock_digest: Option<String>,
+}
+
+#[cfg(feature = "cellular")]
+impl CellLaunchContext {
+    /// Construct a context without any role material, for tests that exercise
+    /// command-building without a real cellular bootstrap.
+    pub fn without_roles(
+        cell_count: u32,
+        controller_coordinate: impl Into<String>,
+        phase_ordinal_bases: BTreeMap<String, u64>,
+        artifact_authority: Option<String>,
+        plugin_lock_digest: Option<String>,
+    ) -> Self {
+        Self {
+            cell_count,
+            controller_coordinate: controller_coordinate.into(),
+            phase_ordinal_bases,
+            artifact_authority,
+            local_roles: None,
+            plugin_lock_digest,
+        }
+    }
 }
 
 /// A started cell the controller watches for hard failure. For a local subprocess
@@ -149,6 +245,9 @@ impl LocalLauncher {
         }
         if let Some(authority) = &ctx.artifact_authority {
             command.env(CELL_ARTIFACT_ADDR_ENV, authority);
+        }
+        if let Some(digest) = &ctx.plugin_lock_digest {
+            command.env(CELL_PLUGIN_LOCK_ENV, digest);
         }
         command
     }
@@ -426,6 +525,7 @@ mod tests {
             phase_ordinal_bases: bases,
             artifact_authority: Some("controller.local:9600".to_owned()),
             local_roles: None,
+            plugin_lock_digest: None,
         }
     }
 

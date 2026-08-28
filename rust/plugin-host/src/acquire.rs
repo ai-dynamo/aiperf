@@ -18,7 +18,7 @@ use crate::normalize::normalize_manifest;
 use crate::platform::fs::{is_symlink, open_no_follow};
 
 /// A manifest that has been read from disk, hashed, parsed, and normalized.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AcquiredManifest {
     /// Raw bytes exactly as stored on disk.
     pub raw_bytes: Vec<u8>,
@@ -62,7 +62,7 @@ impl AcquiredManifest {
 }
 
 /// A plugin artifact (.so / .dylib / .dll) that has been read and content-verified.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AcquiredArtifact {
     /// Raw bytes of the artifact.
     pub raw_bytes: Vec<u8>,
@@ -90,8 +90,18 @@ impl AcquiredArtifact {
         })?;
         let mut raw_bytes = Vec::new();
         file.read_to_end(&mut raw_bytes)?;
-        let digest = blake3::hash(&raw_bytes).to_hex().to_string();
-        if digest != expected_digest {
+        let hash = blake3::hash(&raw_bytes);
+        let digest = hash.to_hex().to_string();
+        // Parse both sides to blake3::Hash so comparison is constant-time
+        // (blake3::Hash implements PartialEq with a fixed-time byte compare).
+        let expected_hash =
+            expected_digest
+                .parse::<blake3::Hash>()
+                .map_err(|_| AcquireError::DigestMismatch {
+                    expected: expected_digest.to_string(),
+                    actual: digest.clone(),
+                })?;
+        if hash != expected_hash {
             return Err(AcquireError::DigestMismatch {
                 expected: expected_digest.to_string(),
                 actual: digest,
