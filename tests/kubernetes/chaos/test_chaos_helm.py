@@ -70,8 +70,13 @@ async def _restore_shared_operator_rbac(operator_ready: OperatorDeployer):  # no
     never created.
     """
     yield
-    if not await operator_ready.is_operator_healthy():
-        await operator_ready.deploy_operator()
+    # Always redeploy unconditionally: _force_cleanup_release runs helm
+    # uninstall with --wait=false, so is_operator_healthy() races the
+    # deletion and may see RBAC still present while it is being removed.
+    # By the time K1/K2/K3 start, the helm uninstall completes and the
+    # ClusterRole/ClusterRoleBinding are gone, leaving the operator unable
+    # to reconcile. Unconditional redeploy avoids the race entirely.
+    await operator_ready.deploy_operator()
 
 
 def _unique_release_name(prefix: str) -> str:
