@@ -145,8 +145,38 @@ def test_scrub_non_finite_numpy_scalars() -> None:
     assert out["f64_inf"] is None
     # finite numpy float coerced through the same path -> python float, finite
     assert out["f64_finite"] == pytest.approx(3.14)
+    assert type(out["f64_finite"]) is float
     # int passes through unchanged
     assert out["i64"] == np.int64(7)
+
+
+def test_scrub_non_finite_coerces_numpy_float64_to_native_float() -> None:
+    """numpy.float64 needs an explicit cast; every other numpy scalar gets one free.
+
+    numpy.float64 is the only numpy scalar type that subclasses Python
+    ``float``, so it matches the ``isinstance(obj, float)`` branch and would
+    otherwise be returned as-is instead of falling through to the duck-typed
+    ``float()`` coercion the other numpy types take.
+    """
+    out = scrub_non_finite({"v": np.float64(3.14)})
+    assert type(out["v"]) is float
+
+
+def test_scrub_non_finite_output_is_orjson_serializable_for_numpy_float64() -> None:
+    """scrub_non_finite is the pre-orjson guard, so its output must always dump.
+
+    orjson rejects numpy.float64 with "Type is not JSON serializable", which
+    aborts the exporter that called it (nvbugs 6683575).
+    """
+    import orjson
+
+    out = scrub_non_finite(
+        {"scalar": np.float64(3.14), "nested": [{"deep": np.float64(1.0)}]}
+    )
+    parsed = orjson.loads(orjson.dumps(out))
+
+    assert parsed["scalar"] == pytest.approx(3.14)
+    assert parsed["nested"][0]["deep"] == pytest.approx(1.0)
 
 
 def test_scrub_non_finite_does_not_recurse_into_str_bytes() -> None:
