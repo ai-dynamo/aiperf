@@ -445,6 +445,15 @@ profiler.
   back before any mutation its payload cannot represent. Coverage is in
   `rust/runtime/tests/streaming_session_continuity.rs` with the reusable seam in
   `rust/runtime/tests/support/streaming_session_conformance.rs`.
+- **How does a streaming agent or graph trace join across chunks?**
+  `rust/runtime/src/streaming/session/agent_graph.rs` (the registered
+  `agent_graph` session program): nodes and edges are append-only and join by
+  `StableRecordId`, an edge naming an undeclared target parks until that node is
+  declared, a node emits `DatasetActionV1::GraphNode` only once every declared
+  predecessor is terminal, recorded agent events are retained as inert nodes
+  that order successors without dispatching, and a cycle-closing or
+  post-release edge is refused at ingest. Coverage is in
+  `rust/runtime/tests/streaming_agent_graph_sessions.rs`.
 - **What makes one streaming conversation turn durable?**
   `rust/runtime/src/streaming/closure.rs` (`ConversationClosureSeam`): a turn
   binds a terminal slot before dispatch, closes only on
