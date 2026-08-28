@@ -454,7 +454,9 @@ impl BenchmarkRunWireV2 {
             // wire rather than the authored selection.
             None => {
                 let streams = dataset_streams.as_ref().ok_or_else(|| {
-                    anyhow!("run.cfg must contain exactly one dataset or one dataset_streams resource")
+                    anyhow!(
+                        "run.cfg must contain exactly one dataset or one dataset_streams resource"
+                    )
                 })?;
                 let replay = &streams.shadow_replay;
                 let stream = streams
