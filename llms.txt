@@ -454,6 +454,29 @@ profiler.
   that order successors without dispatching, and a cycle-closing or
   post-release edge is refused at ingest. Coverage is in
   `rust/runtime/tests/streaming_agent_graph_sessions.rs`.
+- **Does a later streaming request depend on what the target said?**
+  `rust/runtime/src/streaming/policy.rs` (`SessionTargetPolicy`):
+  `recorded_inputs` compares the endpoint reply against the recorded target
+  content for divergence reporting and then drops it, so later authored
+  requests are emitted exactly as recorded; `target_closed_loop` retains the
+  observed reply as the state later requests are built from.
+  `validate_target_policy` therefore admits closed-loop only with a checkpoint
+  backend declaring `protects_sensitive_state` plus a resolvable key id, or
+  with checkpointing disabled and no resume claim.
+- **How is retained live target output protected at rest?**
+  `rust/runtime/src/streaming/sensitive_state.rs` under the opt-in
+  `streaming-crypto` feature: one versioned XChaCha20-Poly1305 envelope whose
+  length-delimited associated data binds run, generation, participant, schema
+  identity and version, policy digest, key id, and plaintext length, with the
+  plaintext BLAKE3 sealed as an encrypted prefix rather than published.
+  Nonces are 24 random `OsRng` bytes. Key material is resolved once per process
+  from an inherited private descriptor or an exact-`0600` no-follow file;
+  configuration carries only the opaque `SensitiveStateKeyId`, and a process
+  with no source installs `RefusingSensitiveStateKeyResolver` so closed-loop
+  fails closed. Coverage is in
+  `rust/runtime/tests/streaming_sensitive_state.rs`, and
+  `rust/runtime/tests/streaming_dependency_policy.rs` proves the base
+  `streaming` feature never reaches the crypto crates.
 - **How does a streaming action actually reach an endpoint?**
   `rust/runtime/src/streaming/action/scheduled_request.rs` (the registered
   `scheduled_request` action binding): one `aiperf.action.request.v1` action
