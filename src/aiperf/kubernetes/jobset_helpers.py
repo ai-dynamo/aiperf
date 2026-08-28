@@ -257,6 +257,17 @@ def build_env_vars(
             "name": "AIPERF_SERVICE_REGISTRATION_TIMEOUT",
             "value": str(registration_timeout),
         },
+        # In k8s multi-container pods all containers start "simultaneously",
+        # but the system_controller (control-plane container) can take up to
+        # ~30 s to start Python + ZMQ on a stressed node.  The default
+        # REGISTRATION_MAX_ATTEMPTS=10 (× 1 s interval) gives only 10 s,
+        # which is less than registration_timeout and therefore the binding
+        # constraint.  Override it to ceil(registration_timeout) so the
+        # max-attempts bound never fires before the timeout does.
+        {
+            "name": "AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS",
+            "value": str(max(10, int(registration_timeout) + 1)),
+        },
     ]
 
     if controller_pod:
