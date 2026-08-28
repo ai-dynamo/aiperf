@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use crate::metrics_core::AccuracyAnalysis;
 use crate::metrics_core::MetricTagId;
-use crate::metrics_core::report::{MetricEntry, ReportError, ReportSteadyState, ReportSummary};
+use crate::metrics_core::report::{
+    MetricEntry, ReportError, ReportSteadyState, ReportStreamingPlane, ReportSummary,
+};
 
 /// Read-only accessors an exporter needs from a finalized report.
 pub trait ReportView {
@@ -44,6 +46,15 @@ pub trait ReportView {
 
     /// Optional closed-loop steady-state summary.
     fn steady_state(&self) -> Option<&ReportSteadyState>;
+
+    /// Optional streaming-plane stage metrics.
+    ///
+    /// Defaulted to `None` so an out-of-tree implementation written against the
+    /// previous trait keeps compiling; a report that carries the section
+    /// overrides it.
+    fn streaming(&self) -> Option<&ReportStreamingPlane> {
+        None
+    }
 
     /// Exact pooled speculative-decode acceptance counts.
     fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u128>>;

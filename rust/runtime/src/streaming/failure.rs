@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::{checkpoint::CheckpointError, unit::StateBudgetFailureCode};
 
 /// Stable stage at which a streaming failure occurred.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamingFailureStage {
     /// Source discovery or snapshot construction.
