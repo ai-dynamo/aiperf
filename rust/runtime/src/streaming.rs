@@ -10,6 +10,7 @@ pub mod blocking;
 pub mod budget;
 pub mod checkpoint;
 pub mod checkpoint_backend;
+pub mod checkpoint_factories;
 pub mod checkpoints;
 pub mod failure;
 pub mod format;

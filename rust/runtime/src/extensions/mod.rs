@@ -46,8 +46,11 @@ use crate::eval::{
 use crate::export::ExporterRegistry;
 #[cfg(feature = "streaming")]
 use crate::streaming::{
-    action::StreamingActionSinkFactory, checkpoint_backend::StreamingCheckpointBackendFactory,
-    format::StreamingDatasetFormatFactory, session::StreamingSessionProgramFactory,
+    action::StreamingActionSinkFactory,
+    checkpoint_backend::StreamingCheckpointBackendFactory,
+    checkpoint_factories::{LocalCheckpointBackendFactory, NoneCheckpointBackendFactory},
+    format::StreamingDatasetFormatFactory,
+    session::StreamingSessionProgramFactory,
     source::StreamingDatasetSourceFactory,
 };
 
@@ -168,14 +171,38 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &crate::engine::registry::DynosimExtension,
             #[cfg(feature = "engine")]
             &BuiltinNativeGraphExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingExtension,
         ])
+    }
+}
+
+/// Built-in streaming checkpoint backends (`local`, `none`). Every other
+/// checkpoint backend identifier is absent from the frozen registry and fails
+/// closed at selection.
+#[cfg(feature = "streaming")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinStreamingExtension;
+
+#[cfg(feature = "streaming")]
+impl AIPerfExtension for BuiltinStreamingExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.streaming"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_stream_checkpoint_backend(Arc::new(LocalCheckpointBackendFactory))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        registry
+            .register_stream_checkpoint_backend(Arc::new(NoneCheckpointBackendFactory))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
     }
 }
 
 /// Built-in dataset-format loaders (`synthetic`, `sharegpt`, recorded traces, …).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BuiltinLoadersExtension;
-
 impl AIPerfExtension for BuiltinLoadersExtension {
     fn name(&self) -> &str {
         "aiperf.builtin.loaders"
