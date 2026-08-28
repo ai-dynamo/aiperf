@@ -54,7 +54,7 @@ aiperf kube validate <files...> [--strict] [--output text|json]
 
 | Flag | Short | Type | Default | Description |
 |---|---|---|---|---|
-| `files` | — | `Path...` (positional, one or more) | — | Paths to `AIPerfJob` or `AIPerfSweep` YAML files. Globs are expanded by the shell. |
+| `files` | — | `Path...` (positional, one or more) | — | Paths to `AIPerfJob` / `AIPerfSweep` YAML files, or to bare AIPerf config files (see [Bare AIPerf configs](#bare-aiperf-configs)). Globs are expanded by the shell. |
 | `--strict` | `-s` | bool | `false` | Treat warnings (unknown spec fields) as errors. |
 | `--output` | `-o` | `text` \| `json` | `text` | Output format. `text` prints a coloured per-file summary; `json` prints a machine-parseable array. |
 
@@ -82,11 +82,44 @@ aiperf kube validate --strict aiperfjob.yaml
 aiperf kube validate -o json aiperfjob.yaml | jq '.[] | select(.passed==false)'
 ```
 
+## Bare AIPerf configs
+
+`validate` accepts two document shapes:
+
+- a wrapped CR (`apiVersion` + `kind` + `metadata` + `spec`), and
+- a **bare AIPerf config** — the Config-v2 shape with `models`, `endpoint`,
+  `datasets`, and `phases` at the top level, which is what
+  `aiperf kube sweep --config` consumes.
+
+A bare config is detected by the absence of `apiVersion`/`kind`, hoisted into
+the equivalent CR spec (envelope keys such as `sweep`, `multiRun`, `variables`
+stay at the spec level; everything else becomes `spec.benchmark`), and held to
+the same contract. The kind is inferred from the presence of a `sweep:` block,
+so a bare config with `sweep:` is checked against the `AIPerfSweep`
+cardinality rule and one without it against `AIPerfJob`.
+
+Every bare config emits a warning naming the contract that was applied:
+
+```text
+WARN: No apiVersion/kind: validating as a bare AIPerf config (the shape
+`aiperf kube sweep --config` accepts), against the AIPerfSweep contract.
+Wrap it in an explicit AIPerfSweep CR to validate deployment fields too.
+```
+
+Because a bare config has no CR wrapper, the wrapper-only checks do not run:
+`metadata.name` is not validated, and deployment fields (`image`,
+`podTemplate`, `scheduling`, ...) are absent so their checks are no-ops. Wrap
+the config in a CR when you want those covered too.
+
+Under `--strict` this warning is **not** promoted to an error — `--strict`
+governs unknown spec fields only.
+
 ## What gets validated
 
 `validate` runs the following checks on each file, in order. Structural errors
 that make later checks impossible short-circuit the file (remaining checks are
-skipped for that file only).
+skipped for that file only). Bare AIPerf configs skip steps 3 and 4 (see
+[Bare AIPerf configs](#bare-aiperf-configs)).
 
 1. **File reachability** — the path exists, is a regular file, and passes the
    shared `safe_read_template_path` safety check.
