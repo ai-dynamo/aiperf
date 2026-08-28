@@ -39,6 +39,24 @@ use crate::metrics::{
 };
 use crate::multiturn::{ConversationSource, CreditCounter, IssuedCredit, TurnResponse, TurnToSend};
 use crate::scheduler::{ClockTaskScheduler, LocalTaskScheduler};
+#[cfg(feature = "streaming")]
+use crate::streaming::reliability::StreamingTerminalInvariant;
+#[cfg(feature = "streaming")]
+use crate::streaming::terminal_lane::{
+    TerminalLaneControl, TerminalLanePermit, TerminalRecordSizeBound,
+};
+
+/// Optional bounded terminal capacity reserved before one turn is issued.
+///
+/// The slot rides every issuance path so the streaming permit does not fork the
+/// dispatch code. Without the `streaming` feature the payload is uninhabited,
+/// so the slot is always `None` and every lane branch is compiled out.
+#[cfg(feature = "streaming")]
+pub type TerminalPermitSlot = Option<TerminalLanePermit>;
+
+/// Always-absent counterpart of [`TerminalPermitSlot`] without `streaming`.
+#[cfg(not(feature = "streaming"))]
+pub type TerminalPermitSlot = Option<std::convert::Infallible>;
 
 /// Boxed `!Send` completion future returned by a workload callback.
 pub type CompletionTask = Pin<Box<dyn Future<Output = ()> + 'static>>;
@@ -67,6 +85,17 @@ pub trait DispatchCancellation {
 
     /// Wait until cancellation is requested.
     fn cancelled(&self) -> Pin<Box<dyn Future<Output = ()> + '_>>;
+}
+
+/// Externally owned stable session ordinal for a streaming issuance.
+///
+/// Finite workloads let the runtime allocate a monotonic ordinal per runtime
+/// session. A stream already owns a stable session key, so it supplies the
+/// ordinal and the runtime retains no per-session lifetime entry for it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScheduledSessionIdentity {
+    /// Stable external ordinal reported as `session_num`.
+    pub stable_ordinal: u64,
 }
 
 /// Optional external admission gate layered above ordinary stop conditions.
@@ -434,7 +463,23 @@ pub struct ScheduledRuntime {
     stop: StopConfig,
     stop_checker: StopChecker,
     counter: RefCell<CreditCounter>,
-    session_numbers: RefCell<FxHashMap<String, u64>>,
+    /// Monotonic allocator for external session ordinals.
+    ///
+    /// Previously derived from the lifetime map's `len()`, which was only
+    /// correct because nothing was ever removed. Splitting the counter from the
+    /// map lets the map hold only ACTIVE sessions without changing any ordinal.
+    next_session_number: Cell<u64>,
+    /// Ordinal of each session with at least one turn still in flight.
+    ///
+    /// Removed on the session's final turn, so this map is bounded by
+    /// concurrency rather than by run length.
+    active_session_numbers: RefCell<FxHashMap<String, u64>>,
+    /// Ordinal reported for the most recent admitted issuance.
+    ///
+    /// Fixed size, and the only way an out-of-crate test can observe the
+    /// externally supplied streaming ordinal, which is deliberately never
+    /// inserted into `active_session_numbers`.
+    last_session_number: Cell<Option<u64>>,
     stop_reached: Notify,
     enforce_stop: bool,
     issuance_gate: Option<Rc<dyn IssuanceGate>>,
@@ -447,6 +492,10 @@ pub struct ScheduledRuntime {
     turn_lifecycle_observer: RefCell<Option<Rc<dyn TurnLifecycleObserver>>>,
     record_processor_tasks: RefCell<Vec<tokio::task::JoinHandle<()>>>,
     record_processor_errors: RefCell<Vec<String>>,
+    /// Installed only by a streaming run; its presence selects the bounded
+    /// terminal lane over the legacy detached-task path.
+    #[cfg(feature = "streaming")]
+    terminal_lane: RefCell<Option<TerminalLaneControl>>,
     parallel_report_reduction: Cell<bool>,
     credit_dispatch: Cell<bool>,
     local_measurement_discarded: Cell<bool>,
@@ -467,10 +516,57 @@ struct OutstandingCredit {
     /// re-enters the runtime.
     on_first_token: Rc<dyn Fn(i64)>,
     on_complete: CompletionHandler,
+    /// Bounded terminal capacity reserved before this credit was routed.
+    terminal_permit: TerminalPermitSlot,
     /// Keeps this credit inside the scheduler's drain accounting for as long as
     /// a worker holds it. Without it the phase's `wait_idle` barrier would see
     /// an idle scheduler with requests still on the wire.
     _enrolment: crate::scheduler::ExternalTask,
+}
+
+/// Result of joining every terminal record processor for one runtime.
+///
+/// A checked invariant is a contradiction in the runtime's own accounting and
+/// aborts before report construction. An ordinary processor or export fault is
+/// not: it degrades the run's derived-sink status and leaves the report intact.
+#[derive(Default)]
+pub(crate) struct TerminalProcessingOutcome {
+    /// First checked accounting/authority invariant, when one was latched.
+    #[cfg(feature = "streaming")]
+    pub(crate) invariant: Option<StreamingTerminalInvariant>,
+    /// Aggregated ordinary processor/export failure, when any occurred.
+    pub(crate) ordinary_error: Option<anyhow::Error>,
+    /// Whether a derived export could not be completed for this run.
+    pub(crate) export_incomplete: bool,
+}
+
+impl TerminalProcessingOutcome {
+    /// Merge one runtime's outcome into a run-level outcome.
+    ///
+    /// The first invariant and the first ordinary error win; `export_incomplete`
+    /// is the union.
+    pub(crate) fn absorb(&mut self, other: Self) {
+        #[cfg(feature = "streaming")]
+        if self.invariant.is_none() {
+            self.invariant = other.invariant;
+        }
+        if self.ordinary_error.is_none() {
+            self.ordinary_error = other.ordinary_error;
+        }
+        self.export_incomplete |= other.export_incomplete;
+    }
+
+    /// Whether a checked invariant was surfaced.
+    pub(crate) fn has_checked_invariant(&self) -> bool {
+        #[cfg(feature = "streaming")]
+        {
+            self.invariant.is_some()
+        }
+        #[cfg(not(feature = "streaming"))]
+        {
+            false
+        }
+    }
 }
 
 impl ScheduledRuntime {
@@ -551,7 +647,9 @@ impl ScheduledRuntime {
             stop_checker: StopChecker::new(&stop),
             stop,
             counter: RefCell::new(CreditCounter::default()),
-            session_numbers: RefCell::new(FxHashMap::default()),
+            next_session_number: Cell::new(0),
+            active_session_numbers: RefCell::new(FxHashMap::default()),
+            last_session_number: Cell::new(None),
             stop_reached: Notify::new(),
             enforce_stop,
             issuance_gate,
@@ -564,6 +662,8 @@ impl ScheduledRuntime {
             turn_lifecycle_observer: RefCell::new(None),
             record_processor_tasks: RefCell::new(Vec::new()),
             record_processor_errors: RefCell::new(Vec::new()),
+            #[cfg(feature = "streaming")]
+            terminal_lane: RefCell::new(None),
             parallel_report_reduction: Cell::new(false),
             credit_dispatch: Cell::new(false),
             local_measurement_discarded: Cell::new(false),
@@ -703,6 +803,7 @@ impl ScheduledRuntime {
                         outstanding.record_index,
                         outcome,
                         outstanding.on_complete,
+                        outstanding.terminal_permit,
                     )
                     .await;
                 }
@@ -719,6 +820,7 @@ impl ScheduledRuntime {
                         outstanding.record_index,
                         outcome,
                         outstanding.on_complete,
+                        outstanding.terminal_permit,
                     )
                     .await;
                 }
@@ -807,6 +909,7 @@ impl ScheduledRuntime {
         record_index: usize,
         outcome: TurnDispatchOutcome,
         on_complete: CompletionHandler,
+        terminal_permit: TerminalPermitSlot,
     ) {
         let turn_uuid = credit.turn.uuid;
         if let Some(observer) = self.turn_lifecycle_observer.borrow().as_ref() {
@@ -827,7 +930,13 @@ impl ScheduledRuntime {
                 },
             );
         }
-        let processor_input = (!self.record_processors.borrow().is_empty()).then(|| {
+        // A streaming run owns its processors on the lane, so the retained
+        // clone is driven by the permit rather than by this runtime's processor
+        // list. Without the feature the slot is uninhabited and this reduces to
+        // the previous expression exactly.
+        let needs_processing =
+            terminal_permit.is_some() || !self.record_processors.borrow().is_empty();
+        let processor_input = needs_processing.then(|| {
             (
                 credit.clone(),
                 outcome.clone(),
@@ -835,15 +944,33 @@ impl ScheduledRuntime {
             )
         });
         if credit.is_final_turn() {
-            self.session_url_indices
-                .borrow_mut()
-                .remove(&credit.turn.x_correlation_id);
+            // Both maps are keyed by the runtime session id and both become
+            // dead the moment the session's last turn settles. A streaming
+            // identity was never inserted, so this is a no-op for it.
+            let session_id = &credit.turn.x_correlation_id;
+            self.session_url_indices.borrow_mut().remove(session_id);
+            self.active_session_numbers.borrow_mut().remove(session_id);
         }
         on_complete(credit, outcome).await;
         // Return the credit/release admission before downstream processing.
         // The detached local task also keeps grading latency out of the
         // scheduler's dispatch-drain boundary and performance wall time.
         if let Some((processor_credit, processor_outcome, correlation_id)) = processor_input {
+            #[cfg(feature = "streaming")]
+            if let Some(permit) = terminal_permit {
+                // Streaming: capacity was proven before dispatch, so this is a
+                // synchronous, infallible-for-capacity handoff to the single
+                // drain owner. No task and no handle per record.
+                if let Err(error) = permit.settle(processor_credit, processor_outcome) {
+                    tracing::error!(
+                        uuid = %turn_uuid,
+                        error = %error,
+                        component = "streaming_terminal_lane",
+                        "terminal settlement violated its validated reservation"
+                    );
+                }
+                return;
+            }
             if self.credit_dispatch.get() {
                 // Credit dispatch already settles from a single loop AFTER credit
                 // return, so detaching buys nothing here and costs a spawned task
@@ -933,23 +1060,65 @@ impl ScheduledRuntime {
         }
     }
 
-    pub(crate) async fn wait_record_processors(&self) -> Result<()> {
-        let tasks = self
-            .record_processor_tasks
-            .borrow_mut()
-            .drain(..)
-            .collect::<Vec<_>>();
-        for task in tasks {
-            if let Err(error) = task.await {
-                self.record_processor_errors
-                    .borrow_mut()
-                    .push(format!("terminal record processor task failed: {error}"));
+    /// Join every terminal record processor for this runtime.
+    ///
+    /// Legacy finite mode reaps its detached tasks CONTINUOUSLY: a task that a
+    /// still-settling request spawns during an await would be missed by a
+    /// single drain. Streaming mode instead closes and drains the bounded lane,
+    /// which owns exactly one drain task for the whole phase.
+    pub(crate) async fn finalize_terminal_processing(&self) -> TerminalProcessingOutcome {
+        #[cfg(feature = "streaming")]
+        {
+            let lane = self.terminal_lane.borrow().clone();
+            if let Some(lane) = lane {
+                lane.close();
+                if let Err(error) = lane.drain().await {
+                    tracing::error!(
+                        error = %error,
+                        component = "streaming_terminal_lane",
+                        "terminal lane drain failed"
+                    );
+                }
+                let snapshot = lane.snapshot();
+                let ordinary_failures = snapshot
+                    .ordinary_processor_failures
+                    .saturating_add(snapshot.unreported_issue_count);
+                return TerminalProcessingOutcome {
+                    invariant: snapshot.checked_invariant,
+                    ordinary_error: (ordinary_failures > 0).then(|| {
+                        anyhow!(
+                            "{ordinary_failures} terminal record processor fault(s) across \
+                             {} processed record(s)",
+                            snapshot.processed_records
+                        )
+                    }),
+                    export_incomplete: ordinary_failures > 0,
+                };
             }
         }
-        if let Some(error) = self.record_processor_error() {
-            return Err(error);
+        loop {
+            let tasks = self
+                .record_processor_tasks
+                .borrow_mut()
+                .drain(..)
+                .collect::<Vec<_>>();
+            if tasks.is_empty() {
+                break;
+            }
+            for task in tasks {
+                if let Err(error) = task.await {
+                    self.record_processor_errors
+                        .borrow_mut()
+                        .push(format!("terminal record processor task failed: {error}"));
+                }
+            }
         }
-        Ok(())
+        TerminalProcessingOutcome {
+            #[cfg(feature = "streaming")]
+            invariant: None,
+            ordinary_error: self.record_processor_error(),
+            export_incomplete: false,
+        }
     }
 
     fn record_processor_error(&self) -> Option<anyhow::Error> {
@@ -1107,7 +1276,98 @@ impl ScheduledRuntime {
             on_complete,
             cancellation,
             None,
+            None,
+            None,
         )
+    }
+
+    /// Install the bounded streaming terminal lane for this phase.
+    ///
+    /// Presence of a lane is what selects bounded terminal processing; a run
+    /// without one keeps the legacy detached-task path unchanged.
+    #[cfg(feature = "streaming")]
+    pub fn install_terminal_lane(&self, control: TerminalLaneControl) {
+        *self.terminal_lane.borrow_mut() = Some(control);
+    }
+
+    /// Reserve one item plus the exact proven conservative maximum.
+    ///
+    /// This is the streaming issuer's backpressure point. It must be awaited to
+    /// completion before the matching
+    /// [`issue_turn_with_streaming_identity`](Self::issue_turn_with_streaming_identity).
+    #[cfg(feature = "streaming")]
+    pub async fn reserve_terminal_processing(
+        &self,
+        bound: TerminalRecordSizeBound,
+    ) -> Result<TerminalLanePermit> {
+        // Cloned out so the `RefCell` borrow ends before the await; the control
+        // is `Rc`-backed, so this is one refcount bump.
+        let lane = self.terminal_lane.borrow().clone();
+        let Some(lane) = lane else {
+            return Err(anyhow!(
+                "streaming terminal processing was requested but no terminal lane is installed"
+            ));
+        };
+        lane.reserve(bound)
+            .await
+            .map_err(|error| anyhow!("terminal reservation failed: {error}"))
+    }
+
+    /// Issue one turn under an externally owned stable session ordinal and a
+    /// pre-reserved terminal permit.
+    ///
+    /// The ordinal is used directly and is never inserted into the runtime's
+    /// active-session map, so a stream's session lifetime stays with the
+    /// stream. If the runtime refuses the turn the permit is dropped here,
+    /// returning its exact charge.
+    #[cfg(feature = "streaming")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn issue_turn_with_streaming_identity(
+        self: &Rc<Self>,
+        turn: TurnToSend,
+        scheduled_ns: i64,
+        user_id: Option<u64>,
+        session: ScheduledSessionIdentity,
+        terminal_permit: TerminalLanePermit,
+        on_first_token: FirstTokenHandler,
+        on_complete: CompletionHandler,
+        cancellation: Option<Rc<dyn DispatchCancellation>>,
+    ) -> bool {
+        self.issue_turn_internal(
+            turn,
+            scheduled_ns,
+            user_id,
+            on_first_token,
+            on_complete,
+            cancellation,
+            None,
+            Some(session),
+            Some(terminal_permit),
+        )
+    }
+
+    /// Sessions with at least one turn still in flight.
+    #[doc(hidden)]
+    pub fn active_session_count(&self) -> usize {
+        self.active_session_numbers.borrow().len()
+    }
+
+    /// Sessions still pinned to a selected endpoint index.
+    #[doc(hidden)]
+    pub fn active_url_index_count(&self) -> usize {
+        self.session_url_indices.borrow().len()
+    }
+
+    /// Next ordinal the finite allocator would assign.
+    #[doc(hidden)]
+    pub fn next_session_number(&self) -> u64 {
+        self.next_session_number.get()
+    }
+
+    /// Ordinal reported for the most recent admitted issuance.
+    #[doc(hidden)]
+    pub fn last_session_number(&self) -> Option<u64> {
+        self.last_session_number.get()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1120,6 +1380,8 @@ impl ScheduledRuntime {
         on_complete: CompletionHandler,
         cancellation: Option<Rc<dyn DispatchCancellation>>,
         responses: Option<Rc<dyn TurnResponseObserver>>,
+        session_identity: Option<ScheduledSessionIdentity>,
+        terminal_permit: TerminalPermitSlot,
     ) -> bool {
         let new_session = turn.turn_index == 0;
         if !self.can_issue(new_session) {
@@ -1163,16 +1425,26 @@ impl ScheduledRuntime {
 
         let (credit_id, final_credit) = self.counter.borrow_mut().increment_sent(&turn, &self.stop);
         let issued_ns = self.clock.now_ns();
-        let session_num = {
-            let mut sessions = self.session_numbers.borrow_mut();
-            if let Some(session_num) = sessions.get(&turn.x_correlation_id) {
-                *session_num
-            } else {
-                let session_num = sessions.len() as u64;
-                sessions.insert(turn.x_correlation_id.clone(), session_num);
-                session_num
+        let session_num = match session_identity {
+            // Streaming supplies a stable ordinal derived from the stream's own
+            // session key. It is deliberately NOT inserted into the active map:
+            // its lifetime belongs to the stream, not to this runtime.
+            Some(identity) => identity.stable_ordinal,
+            None => {
+                let mut sessions = self.active_session_numbers.borrow_mut();
+                if let Some(session_num) = sessions.get(&turn.x_correlation_id) {
+                    *session_num
+                } else {
+                    let session_num = self.next_session_number.get();
+                    // Pins instead of panicking at `u64::MAX` sessions, which no
+                    // real run reaches.
+                    self.next_session_number.set(session_num.saturating_add(1));
+                    sessions.insert(turn.x_correlation_id.clone(), session_num);
+                    session_num
+                }
             }
         };
+        self.last_session_number.set(Some(session_num));
         let record_index = self.recorder.borrow_mut().begin(
             &turn,
             user_id,
@@ -1197,6 +1469,7 @@ impl ScheduledRuntime {
                 record_index,
                 on_first_token: Rc::from(on_first_token),
                 on_complete,
+                terminal_permit,
                 _enrolment: self.scheduler.begin_external_task(),
             };
             self.outstanding_credits
@@ -1220,6 +1493,7 @@ impl ScheduledRuntime {
                             outstanding.record_index,
                             outcome,
                             outstanding.on_complete,
+                            outstanding.terminal_permit,
                         )
                         .await;
                 }));
@@ -1331,7 +1605,7 @@ impl ScheduledRuntime {
                 }
             };
             runtime
-                .settle_turn(credit, record_index, outcome, on_complete)
+                .settle_turn(credit, record_index, outcome, on_complete, terminal_permit)
                 .await;
         }));
 
