@@ -41,7 +41,7 @@ here) and `-t <trial>`.
 | `Running`, restarts > 3 | Crash loop | `aiperf kube logs <ID> --container <c> --tail 100` |
 | `Running`, OOM-killed pod | Node memory pressure, *not* a container limit (see below) | `kubectl describe node` for pressure; raise `AIPERF_K8S_WORKER_POD_MEMORY` / `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` on the **operator** deployment |
 | `Running`, `requestsCompleted` flat | Stalled benchmark | check endpoint reachability from inside the cluster |
-| `Running`, `request_error_rate.avg > 5` | Endpoint rejecting requests | inspect worker logs and server-side errors |
+| `Running`, `request_error_rate.avg > 5` | Endpoint rejecting requests (the metric is a **percent**, so 5 means 5%) | inspect worker logs and server-side errors |
 | `Failed` | See failure table below | `kubectl ... .status.error` + controller logs |
 | `Cancelled` | Someone (or `spec.cancel`) stopped it | no action |
 | `Completed` | Done | `aiperf kube results` |
@@ -61,11 +61,22 @@ filtered out of live metrics. Do not conclude "no errors" from its absence.
 | `image`, `pull` | Image not accessible | check tag and `imagePullSecrets`; on Kind, `kind load` + `pullPolicy: Never` |
 | `RBAC`, `forbidden` | Missing permissions | check service account, Role, RoleBinding |
 
-Scheduling messages map directly to fixes: `Insufficient cpu/memory` -> lower
+Scheduling messages map directly to causes: `Insufficient cpu/memory` -> lower
 `--total-workers`; `nvidia.com/gpu` -> no free GPU nodes; `didn't match Pod's
-node affinity/selector` -> fix `spec.podTemplate.nodeSelector`; `had untolerated
-taint` -> add `spec.podTemplate.tolerations`; `quota` -> namespace ResourceQuota
-exhausted.
+node affinity/selector` -> wrong `spec.podTemplate.nodeSelector`; `had
+untolerated taint` -> missing `spec.podTemplate.tolerations`; `quota` ->
+namespace ResourceQuota exhausted.
+
+**None of those are patchable on the live CR.** Nineteen `spec` fields are
+immutable after creation — `image`, `imagePullPolicy`, `benchmark`,
+`resourceMode`, `connectionsPerWorker`, `ttlSecondsAfterFinished`,
+`resultsTtlDays`, `keepFailedPods`, `podTemplate`, `scheduling`,
+`schemaVersion`, `sweep`, `multiRun`, `plot`, `variables`, `randomSeed`,
+`noSweepTable`, `skipEndpointCheck`, `failurePolicy`. Only `timeoutSeconds` and
+`cancel` accept an update; everything else rejects the patch with
+`spec.<field> is immutable after creation`. So every scheduling, placement,
+resource, priority, or workload fix means **delete and resubmit**, not
+`kubectl edit`.
 
 ## Rules that bite
 

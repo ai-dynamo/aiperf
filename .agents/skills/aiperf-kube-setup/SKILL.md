@@ -111,7 +111,7 @@ Other knobs worth knowing, all top-level keys in the chart's `values.yaml`:
 | `defaults.image` | computed from `image.*` | decouple benchmark image from operator image |
 | `benchmarkRbacNamespaces` | `[]` | benchmarks run in more than one namespace |
 | `serverMetricsDiscoveryNamespaces` | `[]` | scrape server metrics from an existing inference namespace |
-| `kueue.defaultQueueName` / `kueue.createQueues` | `""` / `false` | gang-scheduled admission via Kueue |
+| `kueue.createQueues` / `kueue.defaultQueueName` | `false` / `""` | provision a ResourceFlavor + ClusterQueue + LocalQueue; see the Kueue rule below |
 | `serviceMonitor.enabled` | `false` | Prometheus Operator scraping of operator metrics |
 | `operator.priorityClassName` | `""` | keep the operator off the eviction list |
 | `operator.env` | — | operator lifecycle/results tunables only (9 fixed keys) |
@@ -122,6 +122,17 @@ Full values matrix, hardening posture, and CI patterns:
 `references/configuration.md` (bundled with this skill).
 
 ## Rules that bite
+
+- **`kueue.defaultQueueName` does not by itself route benchmarks through
+  Kueue.** It only stamps a `kueue.x-k8s.io/default-queue-name` annotation onto
+  the Namespace the chart renders — so it is a complete no-op when
+  `benchmarkNamespace.create: false` (no Namespace object is rendered at all).
+  What actually puts the `kueue.x-k8s.io/queue-name` label on the JobSet is
+  `spec.scheduling.queueName` on the AIPerfJob, or the operator-level default
+  `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME`. Set one of those two if you want every
+  job admitted through a queue. AIPerf pins Kueue `v0.10.1`; the chart-created
+  ClusterQueue omits `nvidia.com/gpu` from `coveredResources` unless you set
+  `kueue.resources.gpu`, so GPU benchmarks are not quota-gated by default.
 
 - **The chart's default tolerations are not universal.** `operator.tolerations`
   ships with `dedicated=user-workload` (`NoSchedule` + `NoExecute`) and
