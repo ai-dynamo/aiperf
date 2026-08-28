@@ -203,7 +203,7 @@ mod tests {
     use super::*;
     use crate::clock::SimClock;
     use crate::metrics_core::MetricsStorageMode;
-    use crate::transport::core::TurnToSend;
+    use crate::multiturn::TurnToSend;
 
     /// Minimal executor: the capture service never dispatches through it, it only
     /// hands it to the dispatcher it builds.

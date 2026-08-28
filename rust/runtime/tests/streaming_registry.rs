@@ -11,7 +11,10 @@ use aiperf_runtime::engine::registry::{
     StreamingCapabilityAgreement, StreamingCapabilitySelection, StreamingIncompatibleCapability,
     TransportDescriptor,
 };
-use aiperf_runtime::extensions::{AIPerfExtension, AIPerfRegistry, ExtensionError};
+use aiperf_runtime::extensions::{
+    AIPerfExtension, AIPerfRegistry, AIPerfRegistryFactory, BuiltinAIPerfRegistryFactory,
+    ExtensionError,
+};
 use aiperf_runtime::streaming::{
     action::{
         ActionExecutionError, ActionFailureCode, ActionPlacement, ActionResultRetention,
@@ -512,6 +515,9 @@ fn cross_product_mismatch_names_every_selected_id_and_first_capability() {
 
 #[test]
 fn catalog_omits_streaming_maps_when_no_streaming_factory_is_registered() {
+    // `AIPerfRegistry::builtin()` is the engine-free subset: it applies no
+    // streaming extension, so every streaming map stays empty and omitted. The
+    // stock composition root is exercised separately below.
     let registry = AIPerfRegistry::builtin().expect("builtin registry");
     let document =
         serde_json::to_value(Catalog::from_registry(&registry)).expect("catalog serializes");
@@ -528,6 +534,68 @@ fn catalog_omits_streaming_maps_when_no_streaming_factory_is_registered() {
             "{key} must be omitted when empty"
         );
     }
+}
+
+#[test]
+fn builtin_registry_exposes_only_the_conversation_session_program() {
+    let registry = BuiltinAIPerfRegistryFactory
+        .build()
+        .expect("stock registry universe");
+    let ids = registry
+        .stream_session_program_descriptors()
+        .into_iter()
+        .map(|descriptor| descriptor.id)
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["conversation"]);
+    assert!(
+        registry
+            .stream_session_program_factory("conversation")
+            .is_some()
+    );
+    // The stock catalog registers no action-sink binding, so no streaming
+    // capability combination can be minted from it yet. Source and format
+    // built-ins are owned by their own lanes and are deliberately not asserted
+    // here.
+    assert!(registry.stream_action_sink_descriptors().is_empty());
+    assert!(
+        registry
+            .stream_action_sink_factory("scheduled_request")
+            .is_none()
+    );
+    assert!(registry.declared_supported_cross_product().is_empty());
+    assert!(
+        registry
+            .stream_session_program_factory("shadow_replay")
+            .is_none()
+    );
+}
+
+#[test]
+fn duplicate_conversation_session_program_is_rejected() {
+    let mut registry = BuiltinAIPerfRegistryFactory
+        .build()
+        .expect("stock registry universe");
+    let before = registry
+        .stream_session_program_descriptors()
+        .into_iter()
+        .map(|descriptor| descriptor.id)
+        .collect::<Vec<_>>();
+    let error = registry
+        .register_stream_session_program(Arc::new(
+            aiperf_runtime::streaming::session::conversation::StreamingConversationProgramFactory,
+        ))
+        .expect_err("the built-in program already owns this identifier");
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate streaming session program ID")
+    );
+    let after = registry
+        .stream_session_program_descriptors()
+        .into_iter()
+        .map(|descriptor| descriptor.id)
+        .collect::<Vec<_>>();
+    assert_eq!(before, after);
 }
 
 #[test]

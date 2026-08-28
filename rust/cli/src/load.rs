@@ -469,6 +469,10 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
                     sync_url: flags.wandb_sync_url.clone(),
                 },
                 dataset: DatasetInputs {
+                    // The flag surface authors no stream resource; streaming is
+                    // YAML-only in generation one.
+                    dataset_streams: None,
+                    shadow_replay: None,
                     api_key: flags.api_key.clone(),
                     headers: parse_headers(&flags.headers)?,
                     tokenizer_name: flags.tokenizer.clone(),

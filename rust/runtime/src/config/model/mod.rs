@@ -10,6 +10,7 @@
 pub mod artifacts;
 pub mod config;
 pub mod dataset;
+pub mod dataset_stream;
 pub mod dispatch;
 pub mod endpoint;
 pub mod export;

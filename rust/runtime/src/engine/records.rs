@@ -56,6 +56,18 @@ pub struct CapturedRecord {
     pub ingest: RecordIngest,
 }
 
+impl CapturedRecord {
+    /// Borrow the native metric ingestion record without cloning the capture.
+    ///
+    /// The streaming result plane joins this record to its logical action
+    /// through `streaming::results::CorrelatedRecordIngest`; the join lives on
+    /// the streaming side so `engine` never depends on `streaming`.
+    #[must_use]
+    pub const fn record_ingest(&self) -> &RecordIngest {
+        &self.ingest
+    }
+}
+
 /// Endpoint-normalized text retained for processed-output artifacts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CapturedModelOutput {
