@@ -31,12 +31,6 @@ use crate::endpoints::{
 };
 #[cfg(feature = "engine")]
 use crate::engine::registry::{TransportFactory, WorkloadFactory};
-#[cfg(feature = "streaming")]
-use crate::streaming::{
-    action::StreamingActionSinkFactory, checkpoint_backend::StreamingCheckpointBackendFactory,
-    format::StreamingDatasetFormatFactory, session::StreamingSessionProgramFactory,
-    source::StreamingDatasetSourceFactory,
-};
 #[cfg(feature = "engine")]
 use crate::eval::{
     AdapterProtocolFactory, ConfirmedNativeGraphProviderRecoveryFactory, EpisodeEvaluatorFactory,
@@ -50,6 +44,12 @@ use crate::eval::{
     SuiteSchedulerFactory, SupervisedEnvironmentStepperBinder, TerminalV1ExternalDriverFactory,
 };
 use crate::export::ExporterRegistry;
+#[cfg(feature = "streaming")]
+use crate::streaming::{
+    action::StreamingActionSinkFactory, checkpoint_backend::StreamingCheckpointBackendFactory,
+    format::StreamingDatasetFormatFactory, session::StreamingSessionProgramFactory,
+    source::StreamingDatasetSourceFactory,
+};
 
 /// Error returned while constructing or extending an [`AIPerfRegistry`].
 #[derive(Debug)]

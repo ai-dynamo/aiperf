@@ -425,7 +425,11 @@ fn unknown_streaming_identifier_is_refused_by_every_lookup() {
             .stream_session_program_factory("shadow_replay")
             .is_none()
     );
-    assert!(registry.stream_action_sink_factory("shadow_replay").is_none());
+    assert!(
+        registry
+            .stream_action_sink_factory("shadow_replay")
+            .is_none()
+    );
     assert!(registry.stream_checkpoint_backend_factory("s3").is_none());
     assert!(registry.stream_format_descriptors().is_empty());
     assert!(registry.stream_action_sink_descriptors().is_empty());
@@ -519,7 +523,10 @@ fn catalog_omits_streaming_maps_when_no_streaming_factory_is_registered() {
         "stream_action_sink",
         "stream_checkpoint_backend",
     ] {
-        assert!(!object.contains_key(key), "{key} must be omitted when empty");
+        assert!(
+            !object.contains_key(key),
+            "{key} must be omitted when empty"
+        );
     }
 }
 

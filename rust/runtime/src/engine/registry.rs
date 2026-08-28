@@ -1293,7 +1293,10 @@ impl StreamingCapabilityAgreement {
         }
 
         // Format × session program.
-        if !session.fragment_input_schemas.contains(&format.output_schema) {
+        if !session
+            .fragment_input_schemas
+            .contains(&format.output_schema)
+        {
             return Err(refuse(StreamingIncompatibleCapability::SessionInputSchema));
         }
         if source_grows && session.retention == SessionStateRetention::ResidentInput {
@@ -1363,7 +1366,9 @@ impl StreamingCapabilityAgreement {
                     ));
                 }
                 if needs_durable_resume && !backend.is_durable {
-                    return Err(refuse(StreamingIncompatibleCapability::CheckpointDurability));
+                    return Err(refuse(
+                        StreamingIncompatibleCapability::CheckpointDurability,
+                    ));
                 }
                 if backend.has_result_segments && !backend.has_leased_readers {
                     return Err(refuse(
@@ -1379,7 +1384,9 @@ impl StreamingCapabilityAgreement {
             }
             None => {
                 if needs_durable_resume {
-                    return Err(refuse(StreamingIncompatibleCapability::CheckpointDurability));
+                    return Err(refuse(
+                        StreamingIncompatibleCapability::CheckpointDurability,
+                    ));
                 }
             }
         }
