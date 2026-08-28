@@ -176,8 +176,7 @@ pub fn validate_target_policy(
     if !policy.retains_target_output() {
         return Ok(());
     }
-    let refusal =
-        SessionCoordinatorError::session(SessionFailureCode::SensitiveStateUnprotected);
+    let refusal = SessionCoordinatorError::session(SessionFailureCode::SensitiveStateUnprotected);
     match backend {
         Some(descriptor) => {
             if descriptor.protects_sensitive_state && key_id.is_some() {
