@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Local finite source replayed by the `conversation` session program with no
+# checkpoint backend. The sealed reference row: one uninterrupted pass over the
+# complete partition set.
+#
+# Rendered tokens: $ARTIFACT_DIR, $SOURCE_ROOT.
+schemaVersion: "2.0"
+benchmark:
+  model: openai/gpt-oss-120b
+  tokenizer: {name: cl100k_base}
+  transport:
+    type: dry_run
+    clock: sim
+    ttft_ms: 10
+    itl_ms: 2
+  endpoint:
+    type: chat
+    url: http://127.0.0.1:8000
+    streaming: true
+  dataset_streams:
+    items:
+      - id: replay
+        source:
+          id: local
+          config:
+            root: $SOURCE_ROOT
+            mode:
+              kind: finite
+            suffix: .parquet
+            max_partition_bytes: 16777216
+            max_scan_entries: 256
+        format:
+          id: baseten_trace
+        session_program:
+          id: conversation
+        limits:
+          acquired_partitions: 4
+          decoded_fragments: 64
+          decoded_bytes: 1048576
+          state_memory: 1048576
+          state_disk: 0
+  shadow_replay:
+    stream: replay
+    actions:
+      request:
+        id: scheduled_request
+    time:
+      mode: relative
+    ordering:
+      watermark: source_order
+      late: drop
+    overload:
+      mode: backpressure
+    checkpoint:
+      mode: none
+  phases:
+    type: concurrency
+    requests: 8
+    concurrency: 2
+  artifacts:
+    dir: $ARTIFACT_DIR
