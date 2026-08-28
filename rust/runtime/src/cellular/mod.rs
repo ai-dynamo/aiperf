@@ -72,6 +72,7 @@ pub use streaming_placement::{
     release_at_controller_target,
 };
 #[cfg(all(feature = "streaming", feature = "cellular"))]
+#[allow(unused_imports)]
 pub(crate) use streaming_transport::{
     BindingDiagnostics, CellularBindingContext, CellularExecutionEndpoint,
     CellularPlacementControl, CellularPlacementDriver, CellularPlacementSubmitter,

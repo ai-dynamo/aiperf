@@ -223,6 +223,9 @@ pub fn validate_inventory(inventory: &AuthenticatedInventory) -> Result<(), Inve
         return Err(InventoryError::EmptyField("required_keys".to_string()));
     }
 
+    // Pass 1: collect every package id into `seen` and reject duplicates.
+    // `seen` must be complete before pass 2 so a dep on any entry is valid
+    // regardless of entry ordering.
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     for entry in &inventory.entries {
         if !seen.insert(entry.package_id.as_str()) {
@@ -230,6 +233,7 @@ pub fn validate_inventory(inventory: &AuthenticatedInventory) -> Result<(), Inve
         }
     }
 
+    // Pass 2: validate digests, key attribution, and dep closure.
     for entry in &inventory.entries {
         if !is_canonical_digest(&entry.manifest_digest) {
             return Err(InventoryError::InvalidEntryDigest {

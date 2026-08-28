@@ -128,6 +128,11 @@ pub fn check_tree_authority_with(
     policy: &AuthorityPolicy,
 ) -> Result<(), AuthorityError> {
     check_path_authority_with(path, policy)?;
+    // When path IS the root, checking its authority above is the complete
+    // answer — the parent-walk loop would otherwise step above root.
+    if path == root {
+        return Ok(());
+    }
     let mut cursor = path;
     while let Some(parent) = cursor.parent() {
         if parent.as_os_str().is_empty() {

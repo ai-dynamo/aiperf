@@ -138,10 +138,11 @@ fn unknown_acl_semantics_fail_closed_when_the_probe_is_required() {
     // On a platform whose ACL semantics this host cannot read, the strict policy
     // must refuse rather than trust the mode bits alone.
     match check_path_authority_with(&file, &policy) {
-        Ok(()) => assert!(
-            cfg!(target_os = "linux"),
-            "only a platform with a conclusive ACL probe may accept under a strict policy"
-        ),
+        Ok(()) => {
+            // Only a platform with a conclusive ACL probe may accept here.
+            #[cfg(not(target_os = "linux"))]
+            panic!("a platform with no conclusive ACL probe must not accept under a strict policy");
+        }
         Err(e) => assert!(
             matches!(e, AuthorityError::UnknownAclSemantics { .. }),
             "expected UnknownAclSemantics, got {e:?}"

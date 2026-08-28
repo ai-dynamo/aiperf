@@ -102,7 +102,9 @@ fn a_missing_required_package_is_refused() {
 #[test]
 fn an_incomplete_dependency_closure_is_refused() {
     let mut inv = valid_inventory();
-    inv.entries[0].depends_on.push("aiperf.core.absent".to_string());
+    inv.entries[0]
+        .depends_on
+        .push("aiperf.core.absent".to_string());
     let err = validate_inventory(&inv).expect_err("a dangling dependency must be refused");
     assert!(
         matches!(err, InventoryError::IncompleteClosure { .. }),
@@ -127,7 +129,11 @@ fn the_canonical_digest_changes_with_any_field() {
     let mut changed = valid_inventory();
     changed.build_id = "2026.08.27+2".to_string();
     assert_ne!(base, changed.canonical_digest());
-    assert_eq!(base, valid_inventory().canonical_digest(), "digest is stable");
+    assert_eq!(
+        base,
+        valid_inventory().canonical_digest(),
+        "digest is stable"
+    );
 }
 
 #[test]
