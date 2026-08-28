@@ -1,84 +1,93 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Atomic generation installation.
+//! Atomic installation of immutable plugin generations.
 //!
-//! An install root holds numbered immutable generations plus two pointer files:
+//! An install root holds numbered generations under `generations/`, a
+//! `current` pointer, and a `previous` pointer.  A generation is materialized
+//! in full under `staging/<id>` and only then renamed into `generations/<id>`,
+//! so the directory a reader can reach is always complete.  The last file
+//! written into a generation is its [`READY_MARKER`]; a generation without one
+//! is debris from an interrupted install and is invisible to every resolver
+//! here.
 //!
-//! ```text
-//! <root>/generations/<id>/...        one complete generation per directory
-//! <root>/generations/<id>/.ready     written last inside staging
-//! <root>/staging/<unique>/...        in-flight material, never observed
-//! <root>/current                     id of the generation in service
-//! <root>/previous                    id to roll back to
-//! ```
+//! Publishing is a pointer swap, not a mutation: the pointer file is written to
+//! a sibling temporary and renamed, so a concurrent reader resolves either the
+//! previous complete generation or the new one and never a half-built tree.
+//! Rollback is the same swap in reverse, which is why the previous generation's
+//! bytes are retained until garbage collection removes them.
 //!
-//! Every install materializes its files under `staging/`, writes the ready
-//! marker there, and only then `rename`s the staging directory into
-//! `generations/<id>`.  A generation directory therefore appears fully formed or
-//! not at all, and a crash at any point leaves the previous generation current.
-//! Resolution ignores any generation without a ready marker, so debris from an
-//! interrupted install is invisible rather than dangerous.
-//!
-//! Pointer updates use the same temporary-file-plus-`rename` discipline, so a
-//! reader resolving `current` observes one complete id.
+//! Installed files are made read-only.  Immutability here is a statement about
+//! the host's own behavior — it never rewrites a published generation in place
+//! — and the authority checks in [`crate::platform`] are what prove nobody else
+//! can either.
 
 use std::path::{Component, Path, PathBuf};
 
-use crate::error::{InstallError, InventoryError};
+use crate::error::InstallError;
 use crate::inventory::{AuthenticatedInventory, validate_inventory};
 
-/// Marker file written last inside a staged generation.  Its presence is the
-/// only evidence that a generation directory is complete.
-pub const READY_MARKER: &str = ".ready";
+/// Name of the file whose presence proves a generation is complete.
+pub const READY_MARKER: &str = "generation.marker";
 
-/// File name of the inventory recorded inside each generation.
-pub const GENERATION_INVENTORY: &str = "inventory.json";
+/// Name of the file recording the inventory digest a generation was installed
+/// from.
+pub const INVENTORY_DIGEST_FILE: &str = "inventory.digest";
 
+/// Directory holding published generations.
 const GENERATIONS_DIR: &str = "generations";
+
+/// Directory holding in-flight generation builds.
 const STAGING_DIR: &str = "staging";
+
+/// Pointer file naming the generation readers should resolve.
 const CURRENT_POINTER: &str = "current";
+
+/// Pointer file naming the generation a rollback would restore.
 const PREVIOUS_POINTER: &str = "previous";
 
-/// One file to materialize inside a generation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Read-only mode applied to every installed file.
+#[cfg(unix)]
+const INSTALLED_FILE_MODE: u32 = 0o444;
+
+/// One file to materialize into a generation.
+#[derive(Debug, Clone)]
 pub struct InstallFile {
-    /// Path relative to the generation root, using `/` separators.
-    relative_path: String,
-    /// File contents.
-    bytes: Vec<u8>,
+    /// Path relative to the generation directory.
+    pub relative_path: String,
+    /// Exact bytes to write.
+    pub bytes: Vec<u8>,
 }
 
 impl InstallFile {
-    /// Build an install file from a generation-relative path and its bytes.
+    /// Build an install file from a relative path and its bytes.
     pub fn new(relative_path: impl Into<String>, bytes: Vec<u8>) -> Self {
         Self {
             relative_path: relative_path.into(),
             bytes,
         }
     }
-
-    /// The generation-relative path.
-    pub fn relative_path(&self) -> &str {
-        &self.relative_path
-    }
-
-    /// The file contents.
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
 }
 
-/// A complete installed generation.
+/// A published generation resolved from an install root.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Generation {
-    /// Monotonically increasing generation id, starting at 1.
+pub struct InstallGeneration {
+    /// Monotonic generation id.
     pub id: u64,
-    /// Directory holding the generation's materialized files.
+    /// Directory holding the generation's files.
     pub dir: PathBuf,
 }
 
-/// An install root that publishes generations atomically.
+/// The result of materializing one generation through [`install_generation`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledGeneration {
+    /// Generation id that was materialized.
+    pub generation: u64,
+    /// Directory the generation's files landed in.
+    pub root: PathBuf,
+}
+
+/// A directory holding immutable plugin generations and their pointers.
 #[derive(Debug, Clone)]
 pub struct InstallRoot {
     root: PathBuf,
@@ -86,331 +95,395 @@ pub struct InstallRoot {
 
 impl InstallRoot {
     /// Open (creating if absent) the install root at `root`.
-    pub fn open(root: &Path) -> Result<Self, InstallError> {
-        let this = Self {
-            root: root.to_path_buf(),
-        };
-        create_dir_all(&this.root)?;
-        create_dir_all(&this.generations_dir())?;
-        create_dir_all(&this.staging_dir())?;
-        Ok(this)
+    pub fn open(root: impl AsRef<Path>) -> Result<Self, InstallError> {
+        let root = root.as_ref().to_path_buf();
+        for dir in [
+            root.clone(),
+            root.join(GENERATIONS_DIR),
+            root.join(STAGING_DIR),
+        ] {
+            create_dir_all(&dir)?;
+        }
+        Ok(Self { root })
     }
 
-    /// The install root directory.
-    pub fn root(&self) -> &Path {
+    /// Path of the install root itself.
+    pub fn path(&self) -> &Path {
         &self.root
     }
 
-    /// The directory holding installed generations.
+    /// Directory holding published generations.
     pub fn generations_dir(&self) -> PathBuf {
         self.root.join(GENERATIONS_DIR)
     }
 
-    /// The directory holding in-flight staged material.
+    /// Directory holding in-flight generation builds.
     pub fn staging_dir(&self) -> PathBuf {
         self.root.join(STAGING_DIR)
     }
 
-    /// Ids of every complete generation, ascending.
-    ///
-    /// A generation directory without a [`READY_MARKER`] is skipped: it is
-    /// either an install that crashed before completing or material an attacker
-    /// dropped in place, and neither is something the host will serve.
+    /// Ascending ids of every generation that carries a ready marker.
     pub fn complete_generations(&self) -> Result<Vec<u64>, InstallError> {
-        let dir = self.generations_dir();
-        let mut ids = Vec::new();
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ids),
-            Err(source) => return Err(InstallError::Io { path: dir, source }),
-        };
-        for entry in entries {
-            let entry = entry.map_err(|source| InstallError::Io {
-                path: dir.clone(),
-                source,
-            })?;
-            let Some(id) = entry
-                .file_name()
-                .to_str()
-                .and_then(|n| n.parse::<u64>().ok())
-            else {
-                continue;
-            };
-            if dir.join(id.to_string()).join(READY_MARKER).is_file() {
-                ids.push(id);
-            }
-        }
+        let mut ids = generation_ids(&self.generations_dir(), true)?;
         ids.sort_unstable();
         Ok(ids)
     }
 
-    /// The generation currently in service, if any.
-    pub fn current(&self) -> Result<Option<Generation>, InstallError> {
-        self.resolve_pointer(CURRENT_POINTER)
+    /// Resolve the generation readers should use, if one is published.
+    pub fn current(&self) -> Result<Option<InstallGeneration>, InstallError> {
+        read_pointer(&self.root, CURRENT_POINTER)
     }
 
-    /// The generation a rollback would restore, if any.
-    pub fn previous(&self) -> Result<Option<Generation>, InstallError> {
-        self.resolve_pointer(PREVIOUS_POINTER)
+    /// Resolve the generation a rollback would restore, if one is recorded.
+    pub fn previous(&self) -> Result<Option<InstallGeneration>, InstallError> {
+        read_pointer(&self.root, PREVIOUS_POINTER)
     }
 
-    /// Materialize `files` as a new generation described by `inventory`.
+    /// Materialize `files` as a new immutable generation and publish it.
     ///
-    /// The inventory is validated and the relative paths are checked before
-    /// anything is written, so a rejected request leaves the install root
-    /// byte-identical.
+    /// The inventory is validated before anything is written, so an inventory
+    /// the host would refuse to trust never produces bytes on disk.  Every
+    /// relative path is checked before the staging directory is created, so a
+    /// refused install leaves the root exactly as it found it.
     pub fn atomic_install(
         &self,
         inventory: &AuthenticatedInventory,
         files: &[InstallFile],
-    ) -> Result<Generation, InstallError> {
+    ) -> Result<InstallGeneration, InstallError> {
         validate_inventory(inventory)?;
-        for file in files {
-            validate_relative_path(&file.relative_path)?;
-        }
+        let checked: Vec<(PathBuf, &[u8])> = files
+            .iter()
+            .map(|f| {
+                checked_relative_path(&f.relative_path).map(|p| (p, f.bytes.as_slice()))
+            })
+            .collect::<Result<_, _>>()?;
 
         let id = self.next_generation_id()?;
-        let staged =
-            self.staging_dir()
-                .join(format!("{id}.{}.{}", std::process::id(), monotonic_stamp()));
-        // A previous crash may have left this exact name behind; start clean.
-        remove_dir_all_if_present(&staged)?;
-        create_dir_all(&staged)?;
+        let digest = inventory.canonical_digest();
+        let dir = materialize(&self.root, id, &checked, Some(&digest))?;
 
-        match self.materialize(&staged, inventory, files) {
-            Ok(()) => {}
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&staged);
-                return Err(e);
-            }
-        }
-
-        let target = self.generations_dir().join(id.to_string());
-        remove_dir_all_if_present(&target)?;
-        std::fs::rename(&staged, &target).map_err(|source| {
-            let _ = std::fs::remove_dir_all(&staged);
-            InstallError::Io {
-                path: target.clone(),
-                source,
-            }
-        })?;
-
-        // Record the outgoing generation before advancing the pointer, so a
-        // crash between the two writes leaves `current` unchanged rather than
-        // pointing forward with no way back.
+        // Record the outgoing generation before the swap: a crash between the
+        // two writes leaves `previous` naming the generation that is still
+        // current, which resolves to a redundant rollback rather than a
+        // dangling one.
         if let Some(outgoing) = self.current()? {
-            self.write_pointer(PREVIOUS_POINTER, outgoing.id)?;
+            write_pointer(&self.root, PREVIOUS_POINTER, &outgoing.dir)?;
         }
-        self.write_pointer(CURRENT_POINTER, id)?;
-
-        Ok(Generation { id, dir: target })
+        write_pointer(&self.root, CURRENT_POINTER, &dir)?;
+        Ok(InstallGeneration { id, dir })
     }
 
-    /// Restore the previous generation as current.
-    ///
-    /// The generation being left is recorded as the new previous, so a rollback
-    /// is itself reversible.
-    pub fn rollback(&self) -> Result<Generation, InstallError> {
-        let restore = self.previous()?.ok_or(InstallError::NoPreviousGeneration)?;
-        if let Some(outgoing) = self.current()? {
-            self.write_pointer(PREVIOUS_POINTER, outgoing.id)?;
-        }
-        self.write_pointer(CURRENT_POINTER, restore.id)?;
-        Ok(restore)
-    }
-
-    /// Remove all but the newest `keep` complete generations.
-    ///
-    /// The current and previous generations are never collected regardless of
-    /// `keep`: dropping either would strand a running host or make rollback
-    /// impossible.  Returns the removed ids, ascending.
-    pub fn gc_old_generations(&self, keep: usize) -> Result<Vec<u64>, InstallError> {
-        let all = self.complete_generations()?;
-        let protected: Vec<u64> = [self.current()?, self.previous()?]
-            .into_iter()
-            .flatten()
-            .map(|g| g.id)
-            .collect();
-
-        let collectable = all.len().saturating_sub(keep);
-        let mut removed = Vec::new();
-        for id in all.into_iter().take(collectable) {
-            if protected.contains(&id) {
-                continue;
+    /// Restore the previous generation, making the outgoing one the new
+    /// rollback target.
+    pub fn rollback(&self) -> Result<InstallGeneration, InstallError> {
+        let previous = self.previous()?.ok_or(InstallError::NoPreviousGeneration)?;
+        let outgoing = self.current()?;
+        write_pointer(&self.root, CURRENT_POINTER, &previous.dir)?;
+        match outgoing {
+            Some(outgoing) if outgoing.id != previous.id => {
+                write_pointer(&self.root, PREVIOUS_POINTER, &outgoing.dir)?;
             }
-            let dir = self.generations_dir().join(id.to_string());
-            std::fs::remove_dir_all(&dir).map_err(|source| InstallError::Io {
-                path: dir.clone(),
-                source,
-            })?;
-            removed.push(id);
+            // Rolling back onto the generation already current leaves no
+            // distinct target, so the pointer is cleared rather than made
+            // self-referential.
+            _ => remove_pointer(&self.root, PREVIOUS_POINTER)?,
         }
-        Ok(removed)
+        Ok(previous)
     }
 
-    /// Verify that generation `id` was installed from `inventory`.
-    ///
-    /// The generation's ready marker carries the canonical digest of the
-    /// inventory it was built from, so identity is decided without re-parsing
-    /// the recorded document.
+    /// Prove that generation `id` was installed from `inventory`.
     pub fn verify_generation(
         &self,
         id: u64,
         inventory: &AuthenticatedInventory,
     ) -> Result<(), InstallError> {
-        let dir = self.generation_dir_if_complete(id)?;
-        let marker = dir.join(READY_MARKER);
-        let recorded = std::fs::read_to_string(&marker)
-            .map_err(|source| InstallError::Io { path: marker, source })?;
-        let recorded = recorded.trim().to_string();
-        if recorded.is_empty() {
-            return Err(InstallError::IncompleteGeneration(id));
-        }
-        let expected = inventory.canonical_digest();
-        if recorded != expected {
-            return Err(InstallError::InventoryDigestMismatch {
-                expected,
-                actual: recorded,
-            });
-        }
-        Ok(())
-    }
-
-    /// Remove the install root and everything it contains.
-    pub fn uninstall(&self) -> Result<(), InstallError> {
-        remove_dir_all_if_present(&self.root)
-    }
-
-    /// Resolve a pointer file to a complete generation.
-    fn resolve_pointer(&self, name: &str) -> Result<Option<Generation>, InstallError> {
-        let path = self.root.join(name);
-        let raw = match std::fs::read_to_string(&path) {
-            Ok(raw) => raw,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => return Err(InstallError::Io { path, source }),
-        };
-        let Ok(id) = raw.trim().parse::<u64>() else {
-            return Ok(None);
-        };
-        match self.generation_dir_if_complete(id) {
-            Ok(dir) => Ok(Some(Generation { id, dir })),
-            // A pointer naming a generation that has been collected or never
-            // completed is treated as absent rather than as a live target.
-            Err(InstallError::GenerationNotFound(_)) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Return the directory of `id` when it is a complete generation.
-    fn generation_dir_if_complete(&self, id: u64) -> Result<PathBuf, InstallError> {
         let dir = self.generations_dir().join(id.to_string());
-        if dir.join(READY_MARKER).is_file() {
-            Ok(dir)
-        } else {
-            Err(InstallError::GenerationNotFound(id))
+        if !dir.join(READY_MARKER).is_file() {
+            return Err(InstallError::GenerationNotFound(id));
         }
-    }
-
-    /// The next generation id: one past the highest id present on disk,
-    /// complete or not, so an interrupted install never has its number reused.
-    fn next_generation_id(&self) -> Result<u64, InstallError> {
-        let dir = self.generations_dir();
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(1),
-            Err(source) => return Err(InstallError::Io { path: dir, source }),
+        let digest_path = dir.join(INVENTORY_DIGEST_FILE);
+        let actual = match std::fs::read_to_string(&digest_path) {
+            Ok(text) => text.trim().to_string(),
+            Err(_) => return Err(InstallError::IncompleteGeneration(id)),
         };
-        let mut highest = 0u64;
-        for entry in entries {
-            let entry = entry.map_err(|source| InstallError::Io {
-                path: dir.clone(),
-                source,
-            })?;
-            if let Some(id) = entry
-                .file_name()
-                .to_str()
-                .and_then(|n| n.parse::<u64>().ok())
-            {
-                highest = highest.max(id);
-            }
+        let expected = inventory.canonical_digest();
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(InstallError::InventoryDigestMismatch { expected, actual })
         }
-        Ok(highest + 1)
     }
 
-    /// Write every file, the inventory, and finally the ready marker.
+    /// Remove all but the newest `keep` generations.
     ///
-    /// The marker is written last and carries the inventory's canonical digest,
-    /// so its presence proves both that the generation is complete and which
-    /// inventory produced it.
-    fn materialize(
-        &self,
-        staged: &Path,
-        inventory: &AuthenticatedInventory,
-        files: &[InstallFile],
-    ) -> Result<(), InstallError> {
-        for file in files {
-            let target = staged.join(&file.relative_path);
-            if let Some(parent) = target.parent() {
-                create_dir_all(parent)?;
+    /// The current and previous generations are retained regardless of `keep`:
+    /// collecting either would break a live reader or make rollback impossible.
+    /// Returns the ids removed, ascending.
+    pub fn gc_old_generations(&self, keep: usize) -> Result<Vec<u64>, InstallError> {
+        let ids = self.complete_generations()?;
+        let retained_tail: Vec<u64> = ids.iter().rev().take(keep).copied().collect();
+        let current = self.current()?.map(|g| g.id);
+        let previous = self.previous()?.map(|g| g.id);
+
+        let mut removed = Vec::new();
+        for id in ids {
+            if retained_tail.contains(&id) || current == Some(id) || previous == Some(id) {
+                continue;
             }
-            write_file(&target, &file.bytes)?;
+            remove_generation(&self.generations_dir(), id)?;
+            removed.push(id);
         }
-        let encoded = serde_json::to_vec_pretty(inventory)
-            .map_err(|e| InstallError::Inventory(InventoryError::Parse(e.to_string())))?;
-        write_file(&staged.join(GENERATION_INVENTORY), &encoded)?;
-        write_file(
-            &staged.join(READY_MARKER),
-            inventory.canonical_digest().as_bytes(),
-        )
+        Ok(removed)
     }
 
-    /// Atomically replace a pointer file with `id`.
-    fn write_pointer(&self, name: &str, id: u64) -> Result<(), InstallError> {
-        let path = self.root.join(name);
-        let tmp = self
-            .root
-            .join(format!(".{name}.tmp.{}", std::process::id()));
-        write_file(&tmp, id.to_string().as_bytes())?;
-        std::fs::rename(&tmp, &path).map_err(|source| {
-            let _ = std::fs::remove_file(&tmp);
-            InstallError::Io { path, source }
-        })
+    /// Remove the entire install root, including every generation and pointer.
+    pub fn uninstall(&self) -> Result<(), InstallError> {
+        remove_dir_all(&self.root)
+    }
+
+    /// Next unused generation id.
+    ///
+    /// Incomplete generations count: reusing the id of an interrupted install
+    /// would let its debris masquerade as the new generation's files.
+    fn next_generation_id(&self) -> Result<u64, InstallError> {
+        let published = generation_ids(&self.generations_dir(), false)?;
+        let staged = generation_ids(&self.staging_dir(), false)?;
+        Ok(published
+            .into_iter()
+            .chain(staged)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1))
     }
 }
 
-/// Reject an install path that is absolute, empty, or escapes the generation
-/// directory.
-fn validate_relative_path(relative: &str) -> Result<(), InstallError> {
-    let path = Path::new(relative);
-    if relative.is_empty() {
-        return Err(InstallError::InvalidRelativePath(relative.to_string()));
+/// Materialize `artifacts` as generation `generation` under `root`.
+///
+/// This is the pointer-free half of an install: the generation lands complete
+/// and marked ready, but nothing yet resolves to it.  Use
+/// [`rollback_to_generation`] to publish it.
+pub fn install_generation(
+    root: &Path,
+    generation: u64,
+    artifacts: &[(String, &[u8])],
+) -> Result<InstalledGeneration, InstallError> {
+    create_dir_all(&root.join(GENERATIONS_DIR))?;
+    create_dir_all(&root.join(STAGING_DIR))?;
+    let checked: Vec<(PathBuf, &[u8])> = artifacts
+        .iter()
+        .map(|(path, bytes)| checked_relative_path(path).map(|p| (p, *bytes)))
+        .collect::<Result<_, _>>()?;
+    let dir = materialize(root, generation, &checked, None)?;
+    Ok(InstalledGeneration {
+        generation,
+        root: dir,
+    })
+}
+
+/// Point `root`'s current pointer at `generation`.
+///
+/// Fails closed when the target is absent or was never completed, so a rollback
+/// can never publish a generation whose bytes are not fully on disk.
+pub fn rollback_to_generation(root: &Path, generation: u64) -> Result<(), InstallError> {
+    let dir = root.join(GENERATIONS_DIR).join(generation.to_string());
+    if !dir.join(READY_MARKER).is_file() {
+        return Err(InstallError::GenerationNotFound(generation));
     }
-    for component in path.components() {
-        match component {
-            Component::Normal(_) => {}
-            // `..` is rejected lexically rather than after normalization: a
-            // normalized path can still traverse a symlink planted in the
-            // staging tree by an earlier file in the same request.
-            Component::ParentDir
-            | Component::RootDir
-            | Component::Prefix(_)
-            | Component::CurDir => {
-                return Err(InstallError::InvalidRelativePath(relative.to_string()));
-            }
+    let outgoing = read_pointer(root, CURRENT_POINTER)?;
+    if let Some(outgoing) = outgoing {
+        if outgoing.id != generation {
+            write_pointer(root, PREVIOUS_POINTER, &outgoing.dir)?;
         }
+    }
+    write_pointer(root, CURRENT_POINTER, &dir)
+}
+
+/// Remove every complete generation under `root` that is not in `keep`.
+///
+/// The current generation is retained even when `keep` omits it.
+pub fn gc_generations(root: &Path, keep: &[u64]) -> Result<Vec<u64>, InstallError> {
+    let generations_dir = root.join(GENERATIONS_DIR);
+    let mut ids = generation_ids(&generations_dir, true)?;
+    ids.sort_unstable();
+    let current = read_pointer(root, CURRENT_POINTER)?.map(|g| g.id);
+
+    let mut removed = Vec::new();
+    for id in ids {
+        if keep.contains(&id) || current == Some(id) {
+            continue;
+        }
+        remove_generation(&generations_dir, id)?;
+        removed.push(id);
+    }
+    Ok(removed)
+}
+
+/// Build generation `id` under `root/staging/<id>` and rename it into place.
+fn materialize(
+    root: &Path,
+    id: u64,
+    files: &[(PathBuf, &[u8])],
+    inventory_digest: Option<&str>,
+) -> Result<PathBuf, InstallError> {
+    let staging = root.join(STAGING_DIR).join(id.to_string());
+    let target = root.join(GENERATIONS_DIR).join(id.to_string());
+    if staging.exists() {
+        remove_dir_all(&staging)?;
+    }
+    if target.exists() {
+        remove_dir_all(&target)?;
+    }
+    create_dir_all(&staging)?;
+
+    for (relative, bytes) in files {
+        let path = staging.join(relative);
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent)?;
+        }
+        write_file(&path, bytes)?;
+        set_read_only(&path)?;
+    }
+    if let Some(digest) = inventory_digest {
+        write_file(&staging.join(INVENTORY_DIGEST_FILE), digest.as_bytes())?;
+    }
+    // The marker is written last: its presence is the proof that every other
+    // file in this generation is already on disk.
+    write_file(&staging.join(READY_MARKER), format!("{id}\n").as_bytes())?;
+
+    std::fs::rename(&staging, &target).map_err(|source| InstallError::Io {
+        path: target.clone(),
+        source,
+    })?;
+    Ok(target)
+}
+
+/// Validate that `raw` is a relative path confined to the generation directory.
+fn checked_relative_path(raw: &str) -> Result<PathBuf, InstallError> {
+    let path = Path::new(raw);
+    if raw.is_empty() || path.is_absolute() {
+        return Err(InstallError::InvalidRelativePath(raw.to_string()));
+    }
+    // Only plain components are accepted; `..`, a root, or a Windows prefix
+    // would all let a published generation write outside its own directory.
+    if !path
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)))
+    {
+        return Err(InstallError::InvalidRelativePath(raw.to_string()));
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Ids of the generation directories under `dir`.
+fn generation_ids(dir: &Path, require_marker: bool) -> Result<Vec<u64>, InstallError> {
+    let read = match std::fs::read_dir(dir) {
+        Ok(read) => read,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(InstallError::Io {
+                path: dir.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let mut ids = Vec::new();
+    for entry in read {
+        let entry = entry.map_err(|source| InstallError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?;
+        let Some(id) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if require_marker && !path.join(READY_MARKER).is_file() {
+            tracing::debug!(
+                path = %path.display(),
+                "ignoring plugin generation with no ready marker"
+            );
+            continue;
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+/// Resolve a pointer file to the complete generation it names.
+fn read_pointer(root: &Path, name: &str) -> Result<Option<InstallGeneration>, InstallError> {
+    let pointer = root.join(name);
+    let text = match std::fs::read_to_string(&pointer) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(InstallError::Io { path: pointer, source }),
+    };
+    let dir = PathBuf::from(text.trim());
+    let Some(id) = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.parse::<u64>().ok())
+    else {
+        return Ok(None);
+    };
+    // A pointer naming a collected or incomplete generation resolves to
+    // nothing rather than to a directory a caller would then try to load.
+    if !dir.join(READY_MARKER).is_file() {
+        return Ok(None);
+    }
+    Ok(Some(InstallGeneration { id, dir }))
+}
+
+/// Atomically point `name` at `dir`.
+fn write_pointer(root: &Path, name: &str, dir: &Path) -> Result<(), InstallError> {
+    let pointer = root.join(name);
+    let temp = root.join(format!(".{name}.{}.tmp", std::process::id()));
+    write_file(&temp, format!("{}\n", dir.display()).as_bytes())?;
+    std::fs::rename(&temp, &pointer).map_err(|source| {
+        let _ = std::fs::remove_file(&temp);
+        InstallError::Io {
+            path: pointer,
+            source,
+        }
+    })
+}
+
+/// Remove a pointer file, tolerating its absence.
+fn remove_pointer(root: &Path, name: &str) -> Result<(), InstallError> {
+    let pointer = root.join(name);
+    match std::fs::remove_file(&pointer) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(InstallError::Io {
+            path: pointer,
+            source,
+        }),
+    }
+}
+
+/// Remove one generation directory, tolerating its absence.
+fn remove_generation(generations_dir: &Path, id: u64) -> Result<(), InstallError> {
+    let dir = generations_dir.join(id.to_string());
+    if dir.exists() {
+        remove_dir_all(&dir)?;
     }
     Ok(())
 }
 
-/// A strictly increasing stamp used to make staging directory names unique.
-fn monotonic_stamp() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
 fn create_dir_all(path: &Path) -> Result<(), InstallError> {
     std::fs::create_dir_all(path).map_err(|source| InstallError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn remove_dir_all(path: &Path) -> Result<(), InstallError> {
+    std::fs::remove_dir_all(path).map_err(|source| InstallError::Io {
         path: path.to_path_buf(),
         source,
     })
@@ -423,13 +496,30 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), InstallError> {
     })
 }
 
-fn remove_dir_all_if_present(path: &Path) -> Result<(), InstallError> {
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(InstallError::Io {
+/// Drop every write bit from an installed file.
+#[cfg(unix)]
+fn set_read_only(path: &Path) -> Result<(), InstallError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(INSTALLED_FILE_MODE)).map_err(
+        |source| InstallError::Io {
             path: path.to_path_buf(),
             source,
-        }),
-    }
+        },
+    )
+}
+
+/// Windows marks the file read-only through its attribute rather than a mode.
+#[cfg(not(unix))]
+fn set_read_only(path: &Path) -> Result<(), InstallError> {
+    let mut perms = std::fs::metadata(path)
+        .map_err(|source| InstallError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(path, perms).map_err(|source| InstallError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
 }
