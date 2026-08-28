@@ -4448,11 +4448,10 @@ impl DerivedExportReceiptReference {
     ///
     /// This is the sole reconstruction seam for a post-restart status owner. It is
     /// private to `reliability`: outside this module the only way to obtain a
-    /// reference remains an in-process prepared failure. The durable status
-    /// owner that calls it is a later task, so the mint is currently exercised
-    /// only by this module's tests.
-    #[allow(dead_code)]
-    const fn from_status_fields(
+    /// reference remains an in-process prepared failure. Inside the crate the
+    /// sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) const fn from_status_fields(
         receipt_digest: ContentDigest,
         receipt_length: u64,
         embedded_receipt_digest: ContentDigest,
@@ -4624,11 +4623,10 @@ impl VerifiedDerivedSinkAttemptStatus {
     /// from the caller, so a status owner cannot name a generation it does not
     /// hold. Density is enforced here, once, rather than at every reader: the
     /// forward path defines `counter_before` as `u64::from(attempt_ordinal)`, so
-    /// any other pairing is not a reachable predecessor status. The durable
-    /// status owner that calls it is a later task, so the mint is currently
-    /// exercised only by this module's tests.
-    #[allow(dead_code)]
-    fn from_status_owner(
+    /// any other pairing is not a reachable predecessor status. Inside the
+    /// crate the sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) fn from_status_owner(
         final_generation: &CommittedCheckpointGeneration,
         sink_id: StreamingIssueComponentId,
         last_attempt_ordinal: u32,
@@ -4713,11 +4711,10 @@ impl<'policy> DurableExportReceiptValidationContext<'policy> {
     /// Both authorities are required and cross-checked. The status already
     /// carries the run and generation it was minted against; passing the
     /// committed generation again proves the caller is restoring under the
-    /// generation it currently holds, not under a stale status object. The
-    /// durable status owner that calls it is a later task, so the mint is
-    /// currently exercised only by this module's tests.
-    #[allow(dead_code)]
-    fn from_final_generation_status(
+    /// generation it currently holds, not under a stale status object. Inside
+    /// the crate the sole caller is the durable status owner in
+    /// `streaming::results::sink_status`.
+    pub(crate) fn from_final_generation_status(
         final_generation: &CommittedCheckpointGeneration,
         policy: &'policy PreparedStreamingIssuePolicy,
         status: &VerifiedDerivedSinkAttemptStatus,
