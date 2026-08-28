@@ -20,10 +20,22 @@ To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest 
 | `sum` | running `float64` | bit-exact (within float round-off across summation orders) |
 | `min`, `max` | running scalars | bit-exact |
 | `avg` | `sum / count` | bit-exact |
-| `std` | `sqrt(max(0, sum_sq/count − avg²))` | bit-exact (population std, matches `np.std`) |
+| `std` | Welford's online algorithm (`sqrt(max(0, m2/count))`) | bit-exact (population std, matches `np.std`) |
 | `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
 Memory cost of the side-channel scalars is **40 bytes** regardless of sample count. T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
+
+### Why `std` uses Welford and not the textbook identity
+
+The textbook one-pass form, `sqrt(sum_sq/count − avg²)`, subtracts two large and nearly equal numbers. Latencies are stored as nanoseconds, so the offset is huge and the spread is small, which is exactly where that subtraction loses its significant digits. Measured against `np.std` over 50 K normal samples:
+
+| Samples | Welford (implemented) | `sum_sq/count − avg²` | numpy |
+|---|---|---|---|
+| `5 ± 0.4` ms | 0.400565039429 | 0.400565039429 | 0.400565039429 |
+| `1e9 ± 500` ns | 499.419838165 | 499.599839872 | 499.419838165 |
+| `1e12 ± 500` ns | 502.038855972 | **11585.237503** | 502.038855972 |
+
+At nanosecond magnitudes the textbook form is wrong by a factor of 23. Welford is bit-identical to `np.std` in all three cases. `TDigestListMetricAggregator` keeps a running mean and `m2` for this reason; the accuracy claim in the table above depends on it.
 
 ## Empirical accuracy
 
