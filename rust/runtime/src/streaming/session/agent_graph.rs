@@ -329,24 +329,20 @@ impl GraphSessionScope {
         }
         successors.push(to);
 
-        match self.nodes.get_mut(&to) {
-            Some(node) => {
-                let is_source_terminal = matches!(
-                    self.nodes.get(&from).map(|source| source.state),
-                    Some(GraphNodeState::Terminal)
-                );
-                if !is_source_terminal {
-                    // Re-borrow: the terminal probe above needed a shared borrow.
-                    if let Some(node) = self.nodes.get_mut(&to) {
-                        node.pending_predecessors = node.pending_predecessors.saturating_add(1);
-                    }
-                } else {
-                    let _ = node;
-                }
+        // Probe the source's state first: the target's mutable borrow below
+        // cannot coexist with a shared borrow of the same map.
+        let is_source_terminal = matches!(
+            self.nodes.get(&from).map(|source| source.state),
+            Some(GraphNodeState::Terminal)
+        );
+        if self.nodes.contains_key(&to) {
+            if !is_source_terminal
+                && let Some(node) = self.nodes.get_mut(&to)
+            {
+                node.pending_predecessors = node.pending_predecessors.saturating_add(1);
             }
-            None => {
-                self.orphan_edges.entry(to).or_default().push(from);
-            }
+        } else {
+            self.orphan_edges.entry(to).or_default().push(from);
         }
         self.version = self.version.saturating_add(1);
         Ok(())
@@ -697,11 +693,12 @@ impl StreamingAgentGraphCoordinator {
                 self.declare_node(session_key, node_key, request, role)?;
             }
             AcceptedGraphMutation::Edge { from, to } => {
+                let max_orphan_edges = self.limits.max_orphan_edges_per_session;
                 let scope = self.session_mut(session_key)?;
                 let from_id = scope.node_record_id(&from);
                 let to_id = scope.node_record_id(&to);
                 if scope.nodes.get(&to_id).is_none()
-                    && scope.orphan_edge_count() >= self.limits.max_orphan_edges_per_session
+                    && scope.orphan_edge_count() >= max_orphan_edges
                 {
                     return Err(SessionCoordinatorError::state_budget(
                         StateBudgetFailureCode::ItemCapacity,
