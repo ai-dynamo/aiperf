@@ -11,3 +11,7 @@ license.workspace = true
 aiperf-core.workspace = true
 aiperf-plugin-api.workspace = true
 aiperf-plugin-sdk-macros.workspace = true
+blake3.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tempfile.workspace = true
