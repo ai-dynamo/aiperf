@@ -35,6 +35,14 @@ pub(crate) use host::{
     CheckedActionFailureTerminalEvidence, CheckedActionTerminalMembership, FrozenActionInventory,
 };
 
+/// State-only built-in action sink.
+pub mod session_state;
+
+pub use host::{
+    ActionEventBatch, ActiveExecution, ActiveExecutionSet, BudgetOwnedActionTerminalReceipt,
+    StreamingActionBindingSet, StreamingActionHost, action_kind, canonical_action_schema,
+};
+
 /// Borrowed checked evidence that one failed action attempt reached terminal.
 ///
 /// Implementations are sealed to action-host child modules. An adapter cannot
