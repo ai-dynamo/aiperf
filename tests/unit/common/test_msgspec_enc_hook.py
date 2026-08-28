@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -19,7 +19,16 @@ def test_enc_hook_encodes_extensible_str_enum():
 def test_enc_hook_encodes_path_as_string():
     # Deliberately not /tmp: a hardcoded world-writable temp path trips
     # bandit's S108 and this assertion needs a fixed literal to compare against.
-    assert msgspec_enc_hook(Path("/var/aiperf/artifacts")) == "/var/aiperf/artifacts"
+    # PurePosixPath keeps that literal stable on Windows, where the native
+    # Path renders backslash separators.
+    assert msgspec_enc_hook(PurePosixPath("/var/aiperf/artifacts")) == (
+        "/var/aiperf/artifacts"
+    )
+
+
+def test_enc_hook_encodes_native_path_as_string():
+    path = Path("/var/aiperf/artifacts")
+    assert msgspec_enc_hook(path) == str(path)
 
 
 def test_enc_hook_encodes_pydantic_model_as_dict():
