@@ -61,7 +61,7 @@ pub fn aiperf_plugin(_attr: TokenStream, item: TokenStream) -> TokenStream {
         /// validation confirms the library's universe digest matches the host
         /// ABI universe. The returned `PluginDeclarationV1` is `'static` and
         /// must not be freed by the host.
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe fn aiperf_plugin_entry_v1()
             -> ::aiperf_plugin_api::extension::PluginDeclarationV1
         {

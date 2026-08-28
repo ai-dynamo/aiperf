@@ -12,8 +12,6 @@
 //! This file fails to compile before the fix because `my_plugin::aiperf_plugin_entry_v1`
 //! cannot be coerced to `PluginEntryV1`.
 
-use std::sync::LazyLock;
-
 use aiperf_plugin_api::extension::{PluginDeclarationV1, PluginEntryV1};
 
 mod my_plugin {
