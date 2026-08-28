@@ -15,9 +15,13 @@ use std::fmt::{self, Display};
 use std::sync::Arc;
 
 mod registry_id;
+#[cfg(feature = "streaming")]
+mod streaming;
 mod transactional;
 
 pub use registry_id::{RegistryId, RegistryIdError, normalize_ident};
+#[cfg(feature = "streaming")]
+pub use streaming::BuiltinStreamingExtension;
 pub(crate) use transactional::commit_on_clone;
 pub use transactional::{DuplicateName, TransactionalRegistry};
 
@@ -152,6 +156,8 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
         // Feature gates remove optional components from both the registry and
         // the derived discovery catalog. Built-in names are omitted from
         // `run.extensions`, which records add-ons only.
+        #[cfg(feature = "streaming")]
+        let streaming = BuiltinStreamingExtension::new();
         AIPerfRegistry::empty_or_base().with_builtin_extensions([
             &BuiltinLoadersExtension as &dyn AIPerfExtension,
             &BuiltinSamplersExtension,
@@ -168,6 +174,8 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &crate::engine::registry::DynosimExtension,
             #[cfg(feature = "engine")]
             &BuiltinNativeGraphExtension,
+            #[cfg(feature = "streaming")]
+            &streaming,
         ])
     }
 }
@@ -486,12 +494,16 @@ impl AIPerfRegistry {
     /// components are applied through [`Self::with_builtin_extensions`] without
     /// recording extension names.
     pub fn builtin() -> Result<Self, ExtensionError> {
+        #[cfg(feature = "streaming")]
+        let streaming = BuiltinStreamingExtension::new();
         Self::empty_or_base().with_builtin_extensions([
             &BuiltinLoadersExtension as &dyn AIPerfExtension,
             &BuiltinSamplersExtension,
             &BuiltinEndpointsExtension,
             &BuiltinExportersExtension,
             &BuiltinActuatorsExtension,
+            #[cfg(feature = "streaming")]
+            &streaming,
         ])
     }
 
