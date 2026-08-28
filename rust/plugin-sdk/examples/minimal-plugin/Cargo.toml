@@ -1,0 +1,15 @@
+[package]
+name = "minimal-plugin-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aiperf-plugin-sdk = { path = "../../" }
+aiperf-plugin-sdk-macros = { path = "../../../plugin-sdk-macros" }
+
+[profile.release]
+panic = "abort"

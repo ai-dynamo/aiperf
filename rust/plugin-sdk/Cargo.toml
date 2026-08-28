@@ -7,6 +7,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "cargo-aiperf-plugin"
+path = "src/bin/cargo-aiperf-plugin.rs"
+
+[[bin]]
+name = "aiperf-plugin-inspect"
+path = "src/bin/aiperf-plugin-inspect.rs"
+
+[[bin]]
+name = "aiperf-plugin-conformance"
+path = "src/bin/aiperf-plugin-conformance.rs"
+
 [dependencies]
 aiperf-core.workspace = true
 aiperf-plugin-api.workspace = true
@@ -15,3 +27,4 @@ blake3.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tempfile.workspace = true
+toml.workspace = true
