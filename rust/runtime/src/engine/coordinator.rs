@@ -891,9 +891,9 @@ mod tests {
         checkpoint::{CommittedCheckpointGeneration, StreamRunIdentity},
         identity::{ContentDigest, LogicalReplayRunId},
         reliability::{
-            BudgetOwnedStreamingIssueReporter, PreparedStreamingIssuePolicy,
-            StreamingIssueClass, StreamingIssueComponentId, StreamingIssueDisposition,
-            StreamingIssueScopeKind, StreamingIssueThresholdRule,
+            BudgetOwnedStreamingIssueReporter, PreparedStreamingIssuePolicy, StreamingIssueClass,
+            StreamingIssueComponentId, StreamingIssueDisposition, StreamingIssueScopeKind,
+            StreamingIssueThresholdRule,
         },
         results::{
             PreparedStreamingReport,
@@ -1033,8 +1033,11 @@ mod tests {
         /// The store is reopened over the surviving medium, so this is the
         /// ledger-free reconstruction a restart performs, not a live handle.
         fn final_generation_is_reconstructable(&self) -> bool {
-            let store =
-                DerivedSinkStatusStore::open(self.run, self.substrate.clone(), test_budget(8, 4096));
+            let store = DerivedSinkStatusStore::open(
+                self.run,
+                self.substrate.clone(),
+                test_budget(8, 4096),
+            );
             futures::executor::block_on(
                 store.reopen_verified_status(&self.final_generation, &self.sink_id),
             )
@@ -1053,18 +1056,16 @@ mod tests {
 
     #[cfg(feature = "streaming")]
     fn export_retry_policy() -> PreparedStreamingIssuePolicy {
-        PreparedStreamingIssuePolicy::new([
-            StreamingIssueThresholdRule::new(
-                StreamingIssueComponentId::new("export_retryable").expect("valid rule identity"),
-                StreamingIssueScopeKind::Export,
-                StreamingIssueClass::Retryable,
-                None,
-                3,
-                StreamingIssueDisposition::ExportIncomplete,
-                None,
-            )
-            .expect("valid retryable export rule"),
-        ])
+        PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+            StreamingIssueComponentId::new("export_retryable").expect("valid rule identity"),
+            StreamingIssueScopeKind::Export,
+            StreamingIssueClass::Retryable,
+            None,
+            3,
+            StreamingIssueDisposition::ExportIncomplete,
+            None,
+        )
+        .expect("valid retryable export rule")])
         .expect("valid export policy")
     }
 
@@ -1283,7 +1284,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(status.state(), ResultSinkState::PendingRetry { .. }));
+        assert!(matches!(
+            status.state(),
+            ResultSinkState::PendingRetry { .. }
+        ));
         assert!(fixture.final_generation_is_reconstructable());
         assert_eq!(fixture.report_commit_calls(), 0);
     }

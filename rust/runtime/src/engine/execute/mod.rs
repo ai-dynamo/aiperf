@@ -119,8 +119,8 @@ use crate::engine::readiness::{PreparedOnlineReadiness, ReadinessTransportFactor
 use crate::engine::record_lane::RecordArtifactLane;
 use crate::engine::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
-    write_inputs_json, write_outputs_json, write_raw_records_jsonl,
-    write_records_csv, write_records_jsonl,
+    write_inputs_json, write_outputs_json, write_raw_records_jsonl, write_records_csv,
+    write_records_jsonl,
 };
 use crate::engine::registry::ValidatedEndpointProfileV2;
 use crate::engine::server_metrics::ServerMetricsRun;
