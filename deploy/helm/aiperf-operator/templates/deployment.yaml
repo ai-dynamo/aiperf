@@ -95,6 +95,10 @@ spec:
           value: {{ .Values.podTemplate.shareProcessNamespace | default false | quote }}
         - name: AIPERF_DASHBOARD_PORT
           value: {{ if .Values.dashboard.enabled }}{{ .Values.dashboard.port | quote }}{{ else }}"0"{{ end }}
+        {{- with .Values.kueue.defaultQueueName }}
+        - name: AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME
+          value: {{ . | quote }}
+        {{- end }}
         - name: AIPERF_OPERATOR_BASE_URL
           value: {{ printf "http://%s.%s:%d" (include "aiperf-operator.fullname" .) .Release.Namespace (int .Values.resultsServer.port) | quote }}
         {{- with .Values.chaos.controllerHttpUrlOverride }}

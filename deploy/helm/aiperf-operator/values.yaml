@@ -211,8 +211,16 @@ dashboard:
 # - Creates JobSets, ConfigMaps, Roles, and RoleBindings in benchmark namespaces
 # To restrict scope, deploy with --namespace flag to limit the watch to a single namespace.
 rbac:
-  # rbac.create specifies whether to create ClusterRole and ClusterRoleBinding
+  # rbac.create specifies whether to create the operator's cluster-scoped
+  # ClusterRole and ClusterRoleBinding. Set false to bring your own.
   create: true
+  # rbac.createBenchmarkRoles specifies whether to create the per-namespace
+  # Role/RoleBinding that benchmark controller pods bind to in the benchmark
+  # namespaces. This is a separate switch from rbac.create on purpose: without
+  # these Roles every benchmark fails at runtime, so disabling the operator's
+  # ClusterRole must not silently take them with it. Set false only if you
+  # provision equivalent Roles named aiperf-benchmark yourself.
+  createBenchmarkRoles: true
 
 # storage is the results storage configuration
 storage:
@@ -297,6 +305,10 @@ kueue:
   # kueue.x-k8s.io/default-queue-name so all AIPerf jobs are automatically
   # admitted through Kueue even without an explicit --queue-name flag.
   # Leave empty to auto-fill from kueue.localQueueName when createQueues=true.
+  # It also sets AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME on the operator
+  # container, which is what actually makes the operator label and suspend the
+  # JobSet; the namespace annotation alone is read only by Kueue's own webhook
+  # and leaves the operator unable to report the Queued phase.
   defaultQueueName: ""
 
   # kueue.createQueues toggles chart-managed provisioning of the Kueue

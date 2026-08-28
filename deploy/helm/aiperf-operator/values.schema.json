@@ -105,7 +105,10 @@
         "rbac": {
             "type": "object",
             "additionalProperties": false,
-            "properties": {"create": {"type": "boolean"}}
+            "properties": {
+                "create": {"type": "boolean"},
+                "createBenchmarkRoles": {"type": "boolean"}
+            }
         },
         "storage": {
             "type": "object",
