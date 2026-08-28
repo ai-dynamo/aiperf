@@ -58,12 +58,25 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestError>
     if manifest.plugin.name.is_empty() {
         return Err(ManifestError::EmptyField("plugin.name"));
     }
-    if manifest.plugin.version.is_empty() {
-        return Err(ManifestError::EmptyField("plugin.version"));
-    }
+    // Validate plugin.version as a canonical SemVer version.
+    semver::Version::parse(&manifest.plugin.version).map_err(|e| {
+        ManifestError::InvalidSemver {
+            field: "plugin.version",
+            value: manifest.plugin.version.clone(),
+            reason: e.to_string(),
+        }
+    })?;
     if manifest.requires.aiperf_sdk.is_empty() {
         return Err(ManifestError::EmptyField("requires.aiperf_sdk"));
     }
+    // Validate requires.aiperf_sdk as a SemVer requirement expression.
+    semver::VersionReq::parse(&manifest.requires.aiperf_sdk).map_err(|e| {
+        ManifestError::InvalidSemver {
+            field: "requires.aiperf_sdk",
+            value: manifest.requires.aiperf_sdk.clone(),
+            reason: e.to_string(),
+        }
+    })?;
     if manifest.requires.target.is_empty() {
         return Err(ManifestError::EmptyField("requires.target"));
     }
@@ -75,6 +88,12 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestError>
 pub enum ManifestError {
     InvalidSchemaVersion(u32),
     EmptyField(&'static str),
+    /// A SemVer version or requirement string failed to parse.
+    InvalidSemver {
+        field: &'static str,
+        value: String,
+        reason: String,
+    },
     Parse(String),
     Serialize(String),
     Utf8(String),
@@ -87,6 +106,11 @@ impl std::fmt::Display for ManifestError {
                 write!(f, "invalid schema_version {v}; expected 1")
             }
             Self::EmptyField(field) => write!(f, "manifest field {field} must not be empty"),
+            Self::InvalidSemver {
+                field,
+                value,
+                reason,
+            } => write!(f, "invalid SemVer in {field} ({value:?}): {reason}"),
             Self::Parse(e) => write!(f, "manifest parse error: {e}"),
             Self::Serialize(e) => write!(f, "manifest serialize error: {e}"),
             Self::Utf8(e) => write!(f, "manifest UTF-8 error: {e}"),
