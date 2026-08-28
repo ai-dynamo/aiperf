@@ -75,15 +75,20 @@ async def test_purge_reused_cluster_resources_includes_sweeps_and_worker_namespa
 ):
     kubectl = AsyncMock()
 
+    operator_job_namespace = "aiperf-jobs-gw2-abc123"
+    benchmark_namespace = "aiperf-bench-gw2-abc123"
+
     async def _run(*args: str, **_: object) -> SimpleNamespace:
         namespace = args[args.index("-n") + 1] if "-n" in args else ""
-        if args[:2] == ("get", "aiperfsweeps") and namespace == "aiperf-jobs-gw2":
+        if args[:2] == ("get", "aiperfsweeps") and namespace == operator_job_namespace:
             return SimpleNamespace(returncode=0, stdout="stale-sweep")
         return SimpleNamespace(returncode=0, stdout="")
 
     kubectl.run.side_effect = _run
 
-    await _purge_reused_cluster_resources(kubectl, "gw2")
+    await _purge_reused_cluster_resources(
+        kubectl, "gw2", operator_job_namespace, benchmark_namespace
+    )
 
     assert (
         call(
@@ -91,7 +96,7 @@ async def test_purge_reused_cluster_resources_includes_sweeps_and_worker_namespa
             "aiperfsweep",
             "stale-sweep",
             "-n",
-            "aiperf-jobs-gw2",
+            operator_job_namespace,
             "--type=json",
             '-p=[{"op":"remove","path":"/metadata/finalizers"}]',
             check=False,
@@ -103,8 +108,8 @@ async def test_purge_reused_cluster_resources_includes_sweeps_and_worker_namespa
         for invocation in kubectl.run.await_args_list
         if invocation.args[:2] == ("delete", "aiperfjobs,aiperfsweeps,jobsets")
     }
-    assert "aiperf-bench-gw2" in deleted_namespaces
-    assert "aiperf-jobs-gw2" in deleted_namespaces
+    assert benchmark_namespace in deleted_namespaces
+    assert operator_job_namespace in deleted_namespaces
 
 
 @pytest.mark.asyncio
