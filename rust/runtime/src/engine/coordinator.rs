@@ -846,6 +846,54 @@ mod tests {
         assert!(report_path.is_file());
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn streaming_report_persists_before_commit_lease_release() {
+        let fixture = report_persistence_fixture();
+        let events = fixture.events();
+
+        persist_prepared_report(
+            fixture.outcome(),
+            fixture.report_run_metadata(),
+            fixture.report_path(),
+            fixture.artifact_dir(),
+            fixture.export_config(),
+            fixture.exporters(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                "final_generation",
+                "compact",
+                "report_rename",
+                "report_commit",
+                "lease_release"
+            ],
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn streaming_report_failure_records_retry_and_skips_commit_hook() {
+        let fixture = failing_report_persistence_fixture();
+
+        let status = persist_prepared_report(
+            fixture.outcome(),
+            fixture.report_run_metadata(),
+            fixture.report_path(),
+            fixture.artifact_dir(),
+            fixture.export_config(),
+            fixture.exporters(),
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(status.state(), ResultSinkState::PendingRetry { .. }));
+        assert!(fixture.final_generation_is_reconstructable());
+        assert_eq!(fixture.report_commit_calls(), 0);
+    }
+
     #[test]
     fn diagnostic_failure_never_exposes_an_authoritative_report() {
         let artifact = RunDiagnosticArtifactV2 {
