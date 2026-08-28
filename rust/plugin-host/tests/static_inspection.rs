@@ -7,7 +7,7 @@
 //! on disk.  The ELF construction helpers produce minimal valid ELF64 LE
 //! structures that exercise the inspection logic.
 
-use aiperf_plugin_host::inspect::{inspect_bytes, ArtifactKind, SearchPolicy, PLUGIN_ENTRY_SYMBOL};
+use aiperf_plugin_host::inspect::{ArtifactKind, PLUGIN_ENTRY_SYMBOL, SearchPolicy, inspect_bytes};
 
 /// A minimal blob that is not a valid ELF/MachO/PE produces an Unknown receipt
 /// with a quarantine reason, not an error.
