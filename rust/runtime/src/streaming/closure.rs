@@ -728,7 +728,8 @@ impl ConversationTurnCloser for ConversationClosureSeam {
     ) -> Result<TurnClosureToken, SessionCoordinatorError> {
         // A restart re-emits an in-flight turn under its identical stable
         // identity, so rebinding is idempotent rather than a second turn.
-        if self.closed.contains_key(&binding.action_id) || self.bound.contains_key(&binding.action_id)
+        if self.closed.contains_key(&binding.action_id)
+            || self.bound.contains_key(&binding.action_id)
         {
             return Ok(TurnClosureToken::AlreadyBound);
         }

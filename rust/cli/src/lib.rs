@@ -33,6 +33,7 @@ pub mod load;
 pub mod logging;
 pub mod metrics_list;
 pub mod model;
+pub mod plugins;
 pub mod profile;
 #[cfg(feature = "search-pyo3")]
 pub mod pyfit;

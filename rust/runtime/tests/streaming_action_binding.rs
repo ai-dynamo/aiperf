@@ -262,7 +262,11 @@ fn request_schema_set() -> BTreeSet<DatasetActionSchema> {
 
 fn fake_action_host(
     active: StreamingResourceBudget,
-) -> (StreamingActionHost, FakeEmitter, StreamingActionDriverControl) {
+) -> (
+    StreamingActionHost,
+    FakeEmitter,
+    StreamingActionDriverControl,
+) {
     let schema = canonical_action_schema(DatasetActionKind::Request);
     let (binding, emitter) = fake_binding(schema.clone());
     let mut set = StreamingActionBindingSet::new();
@@ -334,14 +338,12 @@ async fn binding_map_must_cover_every_emitted_schema_exactly_once() {
 
     let mut unexpected = StreamingActionBindingSet::new();
     unexpected
+        .insert(fake_binding(canonical_action_schema(DatasetActionKind::Request)).0)
+        .expect("request binding");
+    unexpected
         .insert(fake_binding(canonical_action_schema(DatasetActionKind::GraphNode)).0)
         .expect("graph binding");
-    let error = StreamingActionHost::new(
-        run(),
-        &request_schema_set(),
-        unexpected,
-        budget(4, 4096),
-    );
+    let error = StreamingActionHost::new(run(), &request_schema_set(), unexpected, budget(4, 4096));
     assert!(matches!(
         error.err(),
         Some(ActionExecutionError::Action(

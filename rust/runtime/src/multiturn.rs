@@ -45,10 +45,14 @@ use uuid::Uuid;
 
 mod materializer;
 mod model;
+#[cfg(feature = "streaming")]
+mod streaming_turn;
 
 pub use materializer::CreditMaterializer;
 use model::RuntimeSessionBackend;
 pub use model::*;
+#[cfg(feature = "streaming")]
+pub use streaming_turn::{StreamingActionTurn, streaming_action_turn};
 
 /// Policy for deriving the input length attached to one materialized request.
 ///

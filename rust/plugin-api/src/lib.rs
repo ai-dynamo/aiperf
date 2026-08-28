@@ -50,6 +50,7 @@ pub mod descriptor;
 pub mod error;
 pub mod extension;
 pub mod factory;
+pub mod frozen;
 pub mod id;
 pub mod ownership;
 pub mod prepared;
@@ -70,6 +71,7 @@ pub use extension::{
     AIPerfExtension, PLUGIN_ENTRY_SYMBOL_V1, PluginDeclarationV1, PluginEntryV1, PluginRegistrar,
 };
 pub use factory::FactoryValidationReceiptV1;
+pub use frozen::{FrozenAIPerfRegistry, FrozenInner, FrozenPluginUniverse};
 pub use id::{REGISTRY_ID_MAX_LEN, REGISTRY_ID_NORMALIZATION_VERSION, RegistryId};
 pub use ownership::{
     CallPhase, GENERATION_1_SURFACE, OwnershipRow, SHARED_ALLOCATOR_PRECONDITION, StorageOwner,

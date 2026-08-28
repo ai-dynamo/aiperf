@@ -175,6 +175,8 @@ impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
             &BuiltinNativeGraphExtension,
             #[cfg(feature = "streaming")]
             &BuiltinStreamingSessionExtension,
+            #[cfg(feature = "streaming")]
+            &BuiltinStreamingAgentGraphExtension,
         ])
     }
 }
@@ -194,6 +196,26 @@ impl AIPerfExtension for BuiltinStreamingSessionExtension {
         registry
             .register_stream_session_program(std::sync::Arc::new(
                 crate::streaming::session::conversation::StreamingConversationProgramFactory,
+            ))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))
+    }
+}
+
+/// Built-in incremental agent and graph session program (`agent_graph`).
+#[cfg(feature = "streaming")]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinStreamingAgentGraphExtension;
+
+#[cfg(feature = "streaming")]
+impl AIPerfExtension for BuiltinStreamingAgentGraphExtension {
+    fn name(&self) -> &str {
+        "aiperf.builtin.streaming-agent-graph"
+    }
+
+    fn register(&self, registry: &mut AIPerfRegistry) -> Result<(), ExtensionError> {
+        registry
+            .register_stream_session_program(std::sync::Arc::new(
+                crate::streaming::session::agent_graph::StreamingAgentGraphProgramFactory,
             ))
             .map_err(|error| ExtensionError::rejected(error.to_string()))
     }
@@ -317,6 +339,14 @@ impl AIPerfExtension for BuiltinStreamingExtension {
             .map_err(|error| ExtensionError::rejected(error.to_string()))?;
         registry
             .register_stream_checkpoint_backend(Arc::new(NoneCheckpointBackendFactory))
+            .map_err(|error| ExtensionError::rejected(error.to_string()))?;
+        // `object_store` exists only where the object-store client is compiled;
+        // without `streaming-s3` the identifier is absent and fails closed.
+        #[cfg(feature = "streaming-s3")]
+        registry
+            .register_stream_checkpoint_backend(Arc::new(
+                crate::streaming::checkpoint_factories::ObjectStoreCheckpointBackendFactory,
+            ))
             .map_err(|error| ExtensionError::rejected(error.to_string()))?;
         Ok(())
     }

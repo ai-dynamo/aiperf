@@ -66,8 +66,8 @@ pub static SESSION_STATE_ACTION_SINK: StreamingActionSinkDescriptor =
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
-        // The sink never reaches an endpoint, so no endpoint-retry proof
-        // exists to claim and the refusing default stands.
+        // The sink never reaches an endpoint, so it can prove nothing about
+        // duplicate rejection and refuses any nonzero endpoint retry limit.
         endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 

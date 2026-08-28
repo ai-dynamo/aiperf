@@ -260,11 +260,7 @@ impl EpochResultCoordinator {
         barrier: &CheckpointBarrier,
     ) -> Result<PreparedParticipantState, CheckpointError> {
         let terminal = barrier.cut.terminal.get();
-        let authoritative_count = self
-            .pending
-            .keys()
-            .filter(|seq| *seq <= terminal)
-            .count() as u64;
+        let authoritative_count = self.pending.keys().filter(|seq| *seq <= terminal).count() as u64;
         let provisional_count = self.provisional_count as u64;
 
         let wire = EpochResultStateWire {
@@ -281,13 +277,12 @@ impl EpochResultCoordinator {
             max_bytes: bytes.len(),
         })
         .map_err(|_| CheckpointError::ObjectVerification)?;
-        let lease = state_budget
-            .acquire(1, bytes.len())
-            .await
-            .map_err(|_| CheckpointError::StateBudget {
+        let lease = state_budget.acquire(1, bytes.len()).await.map_err(|_| {
+            CheckpointError::StateBudget {
                 participant: self.participant_id.clone(),
                 code: StateBudgetFailureCode::ByteCapacity,
-            })?;
+            }
+        })?;
         let budgeted = BudgetedCheckpointBytes::new(bytes, lease)
             .map_err(|_| CheckpointError::ObjectVerification)?;
         PreparedParticipantState::new(
@@ -336,11 +331,7 @@ impl EpochResultCoordinator {
         let new_terminal = receipt.represented_cut().terminal.clone();
         let new_seq = *new_terminal.get();
 
-        let authoritative_count = self
-            .pending
-            .keys()
-            .filter(|seq| **seq <= new_seq)
-            .count() as u64;
+        let authoritative_count = self.pending.keys().filter(|seq| **seq <= new_seq).count() as u64;
 
         // Remove now-committed records from pending.
         let authoritative_keys: Vec<GlobalSequence> = self
@@ -354,11 +345,7 @@ impl EpochResultCoordinator {
         }
 
         // Recount provisional records from what remains.
-        let provisional_count = self
-            .pending
-            .keys()
-            .filter(|seq| **seq > new_seq)
-            .count() as u64;
+        let provisional_count = self.pending.keys().filter(|seq| **seq > new_seq).count() as u64;
         self.committed_terminal_horizon = new_terminal.clone();
         self.provisional_count = provisional_count as usize;
 
@@ -419,8 +406,7 @@ impl EpochResultCoordinator {
             u64::try_from(payload_bytes.len()).map_err(|_| ResultPlaneError::Compaction {
                 message: "payload length overflowed u64".to_owned(),
             })?;
-        let payload_digest =
-            ContentDigest::from_bytes(*blake3::hash(&payload_bytes).as_bytes());
+        let payload_digest = ContentDigest::from_bytes(*blake3::hash(&payload_bytes).as_bytes());
 
         // Membership root: BLAKE3 over the sequence coverage.
         let membership_root = {
@@ -432,10 +418,11 @@ impl EpochResultCoordinator {
             ContentDigest::from_bytes(*hasher.finalize().as_bytes())
         };
 
-        let projection = ResultProjectionId::new(METRICS_PROJECTION_ID)
-            .map_err(|_| ResultPlaneError::Compaction {
+        let projection = ResultProjectionId::new(METRICS_PROJECTION_ID).map_err(|_| {
+            ResultPlaneError::Compaction {
                 message: "metrics projection ID is empty".to_owned(),
-            })?;
+            }
+        })?;
         let descriptor = ResultSegmentDescriptor {
             run: self.run,
             epoch: barrier.epoch,
@@ -450,8 +437,8 @@ impl EpochResultCoordinator {
             membership_root,
             payload_digest,
         };
-        let descriptor_bytes = descriptor_retained_bytes(&descriptor)
-            .map_err(|_| ResultPlaneError::Compaction {
+        let descriptor_bytes =
+            descriptor_retained_bytes(&descriptor).map_err(|_| ResultPlaneError::Compaction {
                 message: "descriptor byte computation overflowed".to_owned(),
             })?;
 
@@ -488,9 +475,11 @@ impl EpochResultCoordinator {
             .map_err(|_| ResultPlaneError::Compaction {
                 message: "payload budget exhausted".to_owned(),
             })?;
-        let budgeted_payload = BudgetedCheckpointBytes::new(payload_bytes, payload_lease)
-            .map_err(|_| ResultPlaneError::Compaction {
-                message: "payload budget charge mismatch".to_owned(),
+        let budgeted_payload =
+            BudgetedCheckpointBytes::new(payload_bytes, payload_lease).map_err(|_| {
+                ResultPlaneError::Compaction {
+                    message: "payload budget charge mismatch".to_owned(),
+                }
             })?;
 
         let partition = ResultPartition::new(budgeted_descriptor, budgeted_payload)
@@ -503,12 +492,11 @@ impl EpochResultCoordinator {
         barrier: &CheckpointBarrier,
         issue_receipts: PreparedIssueReceiptPartitionView,
     ) -> Result<PreparedIssueReceiptResultPartition, ResultPlaneError> {
-        let payload_len =
-            u64::try_from(issue_receipts.payload_bytes().len()).map_err(|_| {
-                ResultPlaneError::Compaction {
-                    message: "issue receipt payload overflowed u64".to_owned(),
-                }
-            })?;
+        let payload_len = u64::try_from(issue_receipts.payload_bytes().len()).map_err(|_| {
+            ResultPlaneError::Compaction {
+                message: "issue receipt payload overflowed u64".to_owned(),
+            }
+        })?;
         let payload_digest =
             ContentDigest::from_bytes(*blake3::hash(issue_receipts.payload_bytes()).as_bytes());
         let receipt_root = *issue_receipts.receipt_root();
@@ -535,8 +523,8 @@ impl EpochResultCoordinator {
             membership_root: receipt_root,
             payload_digest,
         };
-        let descriptor_bytes = descriptor_retained_bytes(&descriptor)
-            .map_err(|_| ResultPlaneError::Compaction {
+        let descriptor_bytes =
+            descriptor_retained_bytes(&descriptor).map_err(|_| ResultPlaneError::Compaction {
                 message: "receipt descriptor byte computation overflowed".to_owned(),
             })?;
         let descriptor_lease = self

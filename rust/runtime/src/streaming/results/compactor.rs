@@ -19,17 +19,17 @@
 //! generation, so no terminal root appears that no barrier produced. A safe
 //! abort commits one complete aborted generation before returning.
 
-use std::{fmt, mem::size_of};
+use std::{collections::BTreeMap, fmt, mem::size_of};
 
 use async_trait::async_trait;
 
 use super::{
     ResultPlaneError, ResultSegmentDescriptor, canonical_result_index_object,
-    epoch::CommittedPartialResult,
+    epoch::CommittedPartialResult, sink_status::ReportRetryAuthority,
 };
 use crate::{
-    engine::registry::PreparedReportCommit,
-    metrics_core::{accumulator::AccumulatorSummary, report::NativeReport},
+    engine::registry::{PreparedReportCommit, PreparedRunOutcome},
+    metrics_core::{ReportPairRunFacts, accumulator::AccumulatorSummary, report::NativeReport},
     streaming::{
         budget::{BudgetLease, StreamingResourceBudget},
         checkpoint::{
@@ -99,6 +99,30 @@ pub struct PreparedStreamingReport {
     pub report_digest: ContentDigest,
     /// One-shot commit that releases the retained report lease.
     pub report_commit: Box<dyn PreparedReportCommit>,
+}
+
+impl PreparedStreamingReport {
+    /// Project the compacted report authority into one prepared run outcome.
+    ///
+    /// The leased report commit travels as the outcome's commit hook, so the
+    /// coordinator releases the report lease only after the authoritative
+    /// report is durably renamed into place. The retry authority is the seam
+    /// that turns an ordinary persistence failure into a durable pending retry
+    /// instead of a failed execution outcome.
+    #[must_use]
+    pub fn into_run_outcome(
+        self,
+        run_metadata: BTreeMap<String, String>,
+        report_retry: Option<Box<dyn ReportRetryAuthority>>,
+    ) -> PreparedRunOutcome {
+        PreparedRunOutcome {
+            native_report: self.native_report,
+            report_facts: ReportPairRunFacts::new(),
+            run_metadata,
+            report_commit: Some(self.report_commit),
+            report_retry,
+        }
+    }
 }
 
 impl fmt::Debug for PreparedStreamingReport {
@@ -222,10 +246,11 @@ impl StreamingResultCompactor for GenerationResultCompactor {
         hasher.update(&encoded);
         let mut item_count = 0u64;
         for descriptor in &descriptors {
-            let segment = reader.read_segment(descriptor).await.map_err(compaction_error)?;
-            hasher.update(
-                blake3::hash(segment.payload_bytes()).as_bytes(),
-            );
+            let segment = reader
+                .read_segment(descriptor)
+                .await
+                .map_err(compaction_error)?;
+            hasher.update(blake3::hash(segment.payload_bytes()).as_bytes());
             item_count = item_count
                 .checked_add(descriptor.item_count)
                 .ok_or_else(|| ResultPlaneError::Compaction {
@@ -273,9 +298,7 @@ pub struct StreamingAbortOutcome {
 /// result plane already committed; no generation, terminal reason, or membership
 /// root is invented to stand in for the interrupted work.
 #[must_use]
-pub fn retain_unsafe_abort(
-    last_partial: Option<CommittedPartialResult>,
-) -> StreamingAbortOutcome {
+pub fn retain_unsafe_abort(last_partial: Option<CommittedPartialResult>) -> StreamingAbortOutcome {
     StreamingAbortOutcome {
         retained_partial: last_partial,
         aborted_generation: None,

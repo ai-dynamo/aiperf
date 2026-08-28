@@ -53,7 +53,7 @@ use aiperf_runtime::streaming::session::{
 };
 use aiperf_runtime::streaming::source::SourceSeal;
 use aiperf_runtime::streaming::unit::{
-    EventTimeUtc, SourcePosition, StreamingSessionFragment, StateBudgetFailureCode,
+    EventTimeUtc, SourcePosition, StateBudgetFailureCode, StreamingSessionFragment,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -430,7 +430,11 @@ async fn failed_and_cancelled_turns_still_close() {
     let mut sink = CollectingActionSink::default();
 
     let cases = [
-        (0u8, ReplayTerminalStatus::Failed, ClosedTurnDisposition::Failed),
+        (
+            0u8,
+            ReplayTerminalStatus::Failed,
+            ClosedTurnDisposition::Failed,
+        ),
         (
             1u8,
             ReplayTerminalStatus::Canceled,
@@ -511,7 +515,10 @@ async fn orphan_terminal_reports_one_session_issue_and_closes_nothing() {
     seam.bind_turn(binding_for(0, scope_for(0), 0, 1))
         .expect("bind");
     seam.observe_terminal(action_of(0), ActionTerminalDisposition::Completed);
-    assert_eq!(deliver(&mut seam, &mut coordinator, &mut sink).await.closed, 1);
+    assert_eq!(
+        deliver(&mut seam, &mut coordinator, &mut sink).await.closed,
+        1
+    );
 
     // A second terminal for a settled action is claimed by no live turn.
     seam.observe_terminal(action_of(0), ActionTerminalDisposition::Completed);
@@ -539,7 +546,10 @@ async fn refused_reply_is_absent_state_not_a_fatal_error() {
 
     seam.bind_turn(binding_for(0, scope_for(0), 0, 1))
         .expect("bind");
-    seam.observe_reply(action_of(0), Bytes::from_static(b"a reply that does not fit"));
+    seam.observe_reply(
+        action_of(0),
+        Bytes::from_static(b"a reply that does not fit"),
+    );
     seam.observe_terminal(action_of(0), ActionTerminalDisposition::Completed);
 
     let receipt = deliver(&mut seam, &mut coordinator, &mut sink).await;
@@ -710,7 +720,9 @@ async fn closure_ledger_survives_checkpoint_and_restore() {
         .await
         .expect("restore the committed ledger");
     assert_eq!(
-        restored.closed_turn(action_of(1)).expect("restored receipt"),
+        restored
+            .closed_turn(action_of(1))
+            .expect("restored receipt"),
         &before
     );
     assert_eq!(restored.terminal_horizon(), horizon);

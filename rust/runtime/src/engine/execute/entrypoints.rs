@@ -744,15 +744,13 @@ pub(crate) async fn execute_graph_native(
     };
 
     // INVARIANT: the graph caller feeds the shared `exact_fold_eligible`
-    // gate `false` for the live-sink / per-record-OTLP / heartbeat disqualifiers —
-    // because the graph execution path wires NONE of them (see
-    // [`graph_exact_fold_drop_is_safe`]): `execute_graph_native` builds no live
-    // sink, never accumulates per-record OTLP histograms (`report.otel_per_record` is set
-    // only on the scheduled path), and constructs no `HeartbeatLane`. The ONLY per-record
-    // consumer a graph run could carry — the live-streaming record extension — is rejected
-    // upstream by `validate_graph_request`, so this tripwire asserts on that structural
-    // fact (no live-streaming consumer wired), NOT on the raw `native_otel_enabled` /
-    // `HeartbeatLane::enabled_by_env()` config/env probes, which do not indicate
+    // gate `false` for the live-sink / heartbeat disqualifiers — because the graph
+    // execution path wires NONE of them (see [`graph_exact_fold_drop_is_safe`]):
+    // `execute_graph_native` builds no live sink and constructs no `HeartbeatLane`.
+    // The ONLY per-record consumer a graph run could carry — the live-streaming record
+    // extension — is rejected upstream by `validate_graph_request`, so this tripwire
+    // asserts on that structural fact (no live-streaming consumer wired), NOT on the
+    // raw `HeartbeatLane::enabled_by_env()` config/env probe, which does not indicate
     // whether graph execution built a corresponding consumer.
     debug_assert!(
         !graph_fold

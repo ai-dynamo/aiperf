@@ -113,8 +113,6 @@ pub(crate) struct CaptureServiceRequest {
     pub(crate) phase_ordinal_bases: HashMap<MetricsPhase, usize>,
     /// Resolved lane destinations; a lane is opened only under exact-fold.
     pub(crate) lane_paths: RecordLanePaths,
-    /// Whether native OTLP histograms fold per record at completion.
-    pub(crate) is_native_otel_enabled: bool,
     /// The already-built request executor this pipeline dispatches through.
     pub(crate) execution_backend: Rc<dyn RequestExecutor>,
     /// Effective primary model stamped on each dispatched turn.
@@ -170,8 +168,8 @@ impl CaptureService {
         } else {
             None
         };
-        // `with_worker_label(None)` and `with_otel(false)` are no-ops, so one
-        // unconditional builder chain reproduces both call sites without a branch.
+        // `with_worker_label(None)` is a no-op, so one unconditional builder
+        // chain reproduces both call sites without a branch.
         let capture = Rc::new(
             RunCapture::from_policy(
                 request.clock,
@@ -183,7 +181,6 @@ impl CaptureService {
             )
             .with_record_lane(record_lane)
             .with_worker_label(request.worker_label)
-            .with_otel(is_exact_fold && request.is_native_otel_enabled)
             .with_outputs_capture(is_exact_fold && request.lane_paths.outputs.is_some()),
         );
         let dispatcher = Rc::new(ConfiguredDispatcher {
@@ -238,7 +235,6 @@ mod tests {
             issuance: crate::engine::cellular_cell::issuance_authority_from_env(),
             phase_ordinal_bases: HashMap::new(),
             lane_paths,
-            is_native_otel_enabled: false,
             execution_backend: Rc::new(InertExecutor),
             model: "test-model".to_owned(),
             worker_label: None,

@@ -244,7 +244,9 @@ impl GraphSessionScope {
     /// Return one declared node's outstanding declared-predecessor count.
     #[must_use]
     pub fn pending_predecessors(&self, record_id: StableRecordId) -> Option<usize> {
-        self.nodes.get(&record_id).map(|node| node.pending_predecessors)
+        self.nodes
+            .get(&record_id)
+            .map(|node| node.pending_predecessors)
     }
 
     /// Drain the released-but-unemitted node keys in release order.
@@ -253,9 +255,7 @@ impl GraphSessionScope {
         let drained: Vec<StableRecordId> = self.ready.drain(..).collect();
         drained
             .into_iter()
-            .filter_map(|record_id| {
-                self.nodes.get(&record_id).map(|node| node.node_key.clone())
-            })
+            .filter_map(|record_id| self.nodes.get(&record_id).map(|node| node.node_key.clone()))
             .collect()
     }
 
@@ -329,19 +329,18 @@ impl GraphSessionScope {
         }
         successors.push(to);
 
-        let is_source_terminal = matches!(
-            self.nodes.get(&from).map(|source| source.state),
-            Some(GraphNodeState::Terminal)
-        );
-        match self.nodes.get_mut(&to) {
-            Some(node) => {
-                if !is_source_terminal {
-                    node.pending_predecessors = node.pending_predecessors.saturating_add(1);
-                }
+        // The terminal probe needs a shared borrow of the node map, so the
+        // target's presence is resolved before any mutable borrow is taken.
+        if self.nodes.contains_key(&to) {
+            let is_source_terminal = matches!(
+                self.nodes.get(&from).map(|source| source.state),
+                Some(GraphNodeState::Terminal)
+            );
+            if !is_source_terminal && let Some(node) = self.nodes.get_mut(&to) {
+                node.pending_predecessors = node.pending_predecessors.saturating_add(1);
             }
-            None => {
-                self.orphan_edges.entry(to).or_default().push(from);
-            }
+        } else {
+            self.orphan_edges.entry(to).or_default().push(from);
         }
         self.version = self.version.saturating_add(1);
         Ok(())
@@ -577,10 +576,7 @@ pub struct StreamingAgentGraphCoordinator {
 impl StreamingAgentGraphCoordinator {
     /// Construct one run-scoped coordinator from a validated configuration.
     #[must_use]
-    pub fn new(
-        config: AgentGraphProgramConfig,
-        context: &StreamingSessionPrepareContext,
-    ) -> Self {
+    pub fn new(config: AgentGraphProgramConfig, context: &StreamingSessionPrepareContext) -> Self {
         Self {
             run: context.run,
             participant_id: context.participant_id.clone(),
@@ -692,11 +688,13 @@ impl StreamingAgentGraphCoordinator {
                 self.declare_node(session_key, node_key, request, role)?;
             }
             AcceptedGraphMutation::Edge { from, to } => {
+                // Read the authored bound before borrowing the session scope:
+                // the limits live on `self`, which `session_mut` borrows.
                 let max_orphan_edges = self.limits.max_orphan_edges_per_session;
                 let scope = self.session_mut(session_key)?;
                 let from_id = scope.node_record_id(&from);
                 let to_id = scope.node_record_id(&to);
-                if scope.nodes.get(&to_id).is_none()
+                if !scope.nodes.contains_key(&to_id)
                     && scope.orphan_edge_count() >= max_orphan_edges
                 {
                     return Err(SessionCoordinatorError::state_budget(
@@ -762,9 +760,9 @@ impl StreamingAgentGraphCoordinator {
         &mut self,
         session_key: StableSessionKey,
     ) -> Result<&mut GraphSessionScope, SessionCoordinatorError> {
-        self.sessions.get_mut(&session_key).ok_or_else(|| {
-            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor)
-        })
+        self.sessions
+            .get_mut(&session_key)
+            .ok_or_else(|| SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor))
     }
 
     async fn drain_ready(
@@ -1057,8 +1055,7 @@ impl StreamingAgentGraphCoordinator {
         let payload = BudgetedCheckpointBytes::new(Bytes::from(bytes), lease)?;
         let mut represented = barrier.cut.clone();
         if let Some(position) = first_unrepresented {
-            represented.decoded =
-                crate::streaming::checkpoint::DecodeHorizon::new(position);
+            represented.decoded = crate::streaming::checkpoint::DecodeHorizon::new(position);
         }
         PreparedParticipantState::new(
             self.run,
@@ -1093,10 +1090,7 @@ impl StreamingAgentGraphCoordinator {
             for node in record.nodes {
                 let lease = self
                     .state_budget
-                    .try_acquire(
-                        1,
-                        node.request.len().saturating_add(node.node_key.len()),
-                    )
+                    .try_acquire(1, node.request.len().saturating_add(node.node_key.len()))
                     .map_err(|_| CheckpointError::StateBudget {
                         participant: self.participant_id.clone(),
                         code: StateBudgetFailureCode::ByteCapacity,

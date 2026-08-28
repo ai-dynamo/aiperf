@@ -83,6 +83,7 @@ full = ["streaming-s3", "dynosim", "parquet", "cellular", "grpc", "websocket"]
 tempfile = "3"
 aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }
 anyhow.workspace = true
+thiserror.workspace = true
 clap = { version = "4", features = ["derive", "string"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
