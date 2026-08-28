@@ -214,13 +214,10 @@ rbac:
   # rbac.create specifies whether to create the operator's cluster-scoped
   # ClusterRole and ClusterRoleBinding. Set false to bring your own.
   create: true
-  # rbac.createBenchmarkRoles specifies whether to create the per-namespace
-  # Role/RoleBinding that benchmark controller pods bind to in the benchmark
-  # namespaces. This is a separate switch from rbac.create on purpose: without
-  # these Roles every benchmark fails at runtime, so disabling the operator's
-  # ClusterRole must not silently take them with it. Set false only if you
-  # provision equivalent Roles named aiperf-benchmark yourself.
-  createBenchmarkRoles: true
+  # It also gates the per-namespace benchmark Role/RoleBinding and the
+  # serverMetricsDiscoveryNamespaces bindings, deliberately: rbac.create=false
+  # means "this chart emits no RBAC", and admins running that way provision the
+  # equivalent objects out-of-band. See docs/kubernetes/rbac-security.md.
 
 # storage is the results storage configuration
 storage:
@@ -373,6 +370,8 @@ networkPolicy:
 # from kopf's liveness server on 8080 (which only serves /healthz). Requires the
 # monitoring.coreos.com/v1 CRDs from the Prometheus Operator / kube-prometheus-stack.
 # Disabled by default because many clusters do not ship the Prometheus Operator CRDs.
+# operator.metrics.port=0 means "metrics disabled" and wins over this block:
+# no ServiceMonitor renders even with enabled=true.
 serviceMonitor:
   # serviceMonitor.enabled toggles ServiceMonitor resource creation
   enabled: false

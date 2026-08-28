@@ -1,9 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-{{- if and .Values.serviceMonitor.enabled (le (int .Values.operator.metrics.port) 0) }}
-{{- fail "serviceMonitor.enabled requires operator.metrics.port > 0; the operator exposes no /metrics endpoint when the port is 0." }}
-{{- end }}
-{{- if and .Values.serviceMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- if and .Values.serviceMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") (gt (int .Values.operator.metrics.port) 0) }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
