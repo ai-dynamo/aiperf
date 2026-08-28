@@ -354,6 +354,7 @@ fn stale_expected_head_is_refused_without_adopting_a_concurrent_advance() {
             .commit_barrier(barrier_at(1), &mut PreparedCheckpointResultInput::empty())
             .await
             .expect("publish first barrier");
+        let first_generation = first.generation();
 
         // A second coordinator over the same store advances the head behind us.
         let mut other = support::coordinator_fixture_for_run(fixture.run);
@@ -363,7 +364,7 @@ fn stale_expected_head_is_refused_without_adopting_a_concurrent_advance() {
             expectations(fixture.run),
             vec![Box::new(NotifyingParticipant::new(fixture.run, support::PARTICIPANT_ID).0)],
             Box::new(FakeIssueReporter::new(fixture.run).0),
-            Some(first.clone()),
+            Some(first_generation.clone()),
         )
         .expect("second writer over the same store");
         other
@@ -384,7 +385,7 @@ fn stale_expected_head_is_refused_without_adopting_a_concurrent_advance() {
         ));
 
         // The advance is refused, never adopted.
-        assert_eq!(fixture.coordinator.expected(), Some(&first));
+        assert_eq!(fixture.coordinator.expected(), Some(&first_generation));
         assert!(inputs.partitions().is_empty());
         assert_eq!(
             fixture.coordinator.last_pre_cas_routing(),
