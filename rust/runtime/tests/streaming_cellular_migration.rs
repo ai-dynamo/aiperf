@@ -422,10 +422,19 @@ async fn new_cell_prepare_is_not_authority_before_commit() {
         "a crash after staging restores the old owner"
     );
 
-    drop(fixture.controller);
     drop(restored);
+    // The placement is shared with the controller's checkpoint participant, so
+    // both owners must go before the route leases are actually returned.
+    let MigrationFixture {
+        controller,
+        placement,
+        route_budget,
+        ..
+    } = fixture;
+    drop(controller);
+    drop(placement);
     assert_eq!(
-        fixture.route_budget.snapshot().used_items,
+        route_budget.snapshot().used_items,
         0,
         "discarding the staged migration returns every route charge"
     );
@@ -613,9 +622,19 @@ async fn aborted_migration_leaks_no_budget_across_restart() {
     assert_eq!(restored.migration_lease_count(), 0);
     drop(restored);
 
-    drop(fixture.controller);
-    fixture.placement.borrow_mut().abort_migration(session).ok();
-    drop(fixture.placement);
+    let MigrationFixture {
+        controller,
+        placement,
+        route_budget,
+        ..
+    } = fixture;
+    drop(controller);
+    drop(placement);
+    assert_eq!(
+        route_budget.snapshot().used_items,
+        0,
+        "a restart after an abort leaks no route charge"
+    );
 }
 
 /// A release naming an epoch the staged action was not prepared under is refused
