@@ -552,8 +552,17 @@ async def test_apply_completion_stops_before_status_write_when_cancelled_during_
     from aiperf.kubernetes.crd_models import ControllerFetchResult
     from aiperf.operator.handlers import completion
 
-    async def cancel_during_manifest_read(*_args: object) -> None:
-        request_cancellation("ns/j")
+    real_to_thread = asyncio.to_thread
+
+    async def cancel_during_manifest_read(
+        func: object, /, *args: object, **kwargs: object
+    ) -> object:
+        # Other blocking helpers are off-loaded through the same to_thread, so
+        # this stub must only fire the cancellation for the manifest read.
+        if func is completion._load_phase_manifest_payload:
+            request_cancellation("ns/j")
+            return None
+        return await real_to_thread(func, *args, **kwargs)  # type: ignore[arg-type]
 
     result = ControllerFetchResult(
         metrics={"metrics": {"request_count": {"avg": 1}}},
@@ -571,7 +580,7 @@ async def test_apply_completion_stops_before_status_write_when_cancelled_during_
     with (
         mock_patch(
             "aiperf.operator.handlers.completion.asyncio.to_thread",
-            new=AsyncMock(side_effect=cancel_during_manifest_read),
+            new=cancel_during_manifest_read,
         ),
         mock_patch(
             "aiperf.operator.handlers.completion._demote_missing_publication_artifacts",

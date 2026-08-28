@@ -283,7 +283,8 @@ async def handle_completion(
     if _completion_cancelled(namespace, job_id, parent_uid):
         return
 
-    result = _recover_result_from_disk(
+    result = await asyncio.to_thread(
+        _recover_result_from_disk,
         body=body,
         namespace=namespace,
         job_id=job_id,
@@ -291,7 +292,8 @@ async def handle_completion(
         key_names=key_names,
     )
     flags = _compute_result_flags(result, job_id, key_names=key_names)
-    flags = _demote_unmaterialized_result_files(
+    flags = await asyncio.to_thread(
+        _demote_unmaterialized_result_files,
         body=body,
         namespace=namespace,
         job_id=job_id,
@@ -342,7 +344,8 @@ async def handle_completion(
     if _completion_cancelled(namespace, job_id, parent_uid):
         return
 
-    if flags.has_files and not _key_files_materialized(
+    if flags.has_files and not await asyncio.to_thread(
+        _key_files_materialized,
         namespace,
         job_id,
         epoch_key_from_body(body),
@@ -464,6 +467,13 @@ async def _publish_completion_after_jobset_delete(
     # PATCH to fail 409 → silent drop → phase never leaves Running.  This is a no-op
     # when called directly from on_benchmark_complete (no fence was written).
     clear_patch_fence(target_sb)
+    files_materialized = flags.has_files and await asyncio.to_thread(
+        _key_files_materialized,
+        namespace,
+        job_id,
+        epoch_key_from_body(body),
+        key_names=key_names.names,
+    )
     _emit_accepted_completion_events(
         body=body,
         namespace=namespace,
@@ -474,6 +484,7 @@ async def _publish_completion_after_jobset_delete(
         flags=flags,
         key_names=key_names,
         duration_sec=duration_sec,
+        files_materialized=files_materialized,
     )
 
 
@@ -524,12 +535,16 @@ def _emit_accepted_completion_events(
     flags: _ResultFlags,
     key_names: KeyExportNames,
     duration_sec: float | None,
+    files_materialized: bool,
 ) -> None:
-    """Emit completion events only after the final UID/resourceVersion fence."""
+    """Emit completion events only after the final UID/resourceVersion fence.
+
+    ``files_materialized`` is resolved by the async caller off the event loop:
+    validating a key export decompresses it, which must never run inline on the
+    kopf loop.
+    """
     epoch = epoch_key_from_body(body)
-    if flags.has_files and _key_files_materialized(
-        namespace, job_id, epoch, key_names=key_names.names
-    ):
+    if files_materialized:
         dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
         events.results_stored(body, str(dest_dir), len(result.downloaded))
     if flags.success:
@@ -849,7 +864,8 @@ async def _apply_completion_results(
     condition without racing the single finalize() pass.
     """
     epoch = epoch_key_from_body(body)
-    flags = _demote_missing_publication_artifacts(
+    flags = await asyncio.to_thread(
+        _demote_missing_publication_artifacts,
         namespace=namespace,
         job_id=job_id,
         epoch=epoch,
@@ -873,14 +889,13 @@ async def _apply_completion_results(
     ):
         return flags, ()
 
-    flags, artifacts_materialized, artifact_fingerprint = (
-        _capture_publication_artifacts(
-            namespace=namespace,
-            job_id=job_id,
-            epoch=epoch,
-            flags=flags,
-            key_names=key_names,
-        )
+    flags, artifacts_materialized, artifact_fingerprint = await asyncio.to_thread(
+        _capture_publication_artifacts,
+        namespace=namespace,
+        job_id=job_id,
+        epoch=epoch,
+        flags=flags,
+        key_names=key_names,
     )
     catalog_marker = (
         runs_index.begin_catalog_update(
@@ -899,7 +914,8 @@ async def _apply_completion_results(
             or "Failed to fetch complete result files from controller"
         )
     )
-    _record_results_on_status(
+    await asyncio.to_thread(
+        _record_results_on_status,
         body=body,
         namespace=namespace,
         job_id=job_id,
@@ -942,8 +958,12 @@ async def _apply_completion_results(
         key_names=key_names,
         sb=sb,
     )
-    summary_blob, mtime_epoch, end_time, total_size_bytes = _gather_index_inputs(
-        namespace, job_id, epoch, json_name=key_names.json_name
+    summary_blob, mtime_epoch, end_time, total_size_bytes = await asyncio.to_thread(
+        _gather_index_inputs,
+        namespace,
+        job_id,
+        epoch,
+        json_name=key_names.json_name,
     )
     # On the file-metrics path (API metrics empty but key exports present), feed
     # the index the same metrics ``_record_results_on_status`` stamped on the CR
@@ -951,7 +971,8 @@ async def _apply_completion_results(
     # Without this, sub-second / CompletedBeforeMonitor jobs write all-NULL
     # narrow columns because result.metrics is None.
     if not flags.has_metrics and flags.has_files:
-        index_metrics = _parse_metrics_from_files(
+        index_metrics = await asyncio.to_thread(
+            _parse_metrics_from_files,
             result.downloaded,
             namespace,
             job_id,
@@ -1095,6 +1116,28 @@ def _key_artifact_fingerprint(
     return tuple(sorted(fingerprints, key=lambda fingerprint: fingerprint.name))
 
 
+def _final_artifacts_intact(
+    namespace: str,
+    job_id: str,
+    epoch: str,
+    *,
+    expected_fingerprint: tuple[_KeyArtifactFingerprint, ...],
+    key_names: frozenset[str],
+) -> bool:
+    """Return True when the captured key exports are still byte-identical on disk.
+
+    Runs entirely on a worker thread: every branch reads (and for ``.zst``
+    decompresses) the key export, which must not block the kopf event loop.
+    """
+    dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
+    return (
+        _key_files_materialized(namespace, job_id, epoch, key_names=key_names)
+        and _key_artifact_fingerprint(namespace, job_id, epoch, key_names=key_names)
+        == expected_fingerprint
+        and ready_marker_path(dest_dir).is_file()
+    )
+
+
 async def _verify_final_artifact_publication(
     *,
     namespace: str,
@@ -1107,15 +1150,15 @@ async def _verify_final_artifact_publication(
 ) -> tuple[_ResultFlags, bool]:
     """Fail closed when final artifacts vanish during index publication."""
     dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
-    final_artifacts_materialized = (
-        flags.has_files
-        and bool(expected_fingerprint)
-        and _key_files_materialized(namespace, job_id, epoch, key_names=key_names.names)
-        and _key_artifact_fingerprint(
-            namespace, job_id, epoch, key_names=key_names.names
-        )
-        == expected_fingerprint
-        and ready_marker_path(dest_dir).is_file()
+    final_artifacts_materialized = bool(
+        flags.has_files and expected_fingerprint
+    ) and await asyncio.to_thread(
+        _final_artifacts_intact,
+        namespace,
+        job_id,
+        epoch,
+        expected_fingerprint=expected_fingerprint,
+        key_names=key_names.names,
     )
     if not flags.has_files or final_artifacts_materialized:
         return flags, final_artifacts_materialized
@@ -1187,8 +1230,10 @@ def _gather_index_inputs(
         )
 
     try:
-        files = [f for f in dest_dir.iterdir() if f.is_file()]
-        total_size = sum(f.stat().st_size for f in files)
+        # Walk recursively: nested dirs (``checkpoints/``) hold real bytes, and
+        # the recovery listing plus ``_snapshot_bytes`` both count them, so a
+        # flat ``iterdir`` here would under-report the run against its siblings.
+        total_size = sum(f.stat().st_size for f in dest_dir.rglob("*") if f.is_file())
         mtime_epoch = int(dest_dir.stat().st_mtime)
     except OSError:
         total_size = 0
@@ -1826,7 +1871,13 @@ async def _update_job_index_safe(
         # become the discoverable latest run (mirrors the latest.txt gate in
         # ``_record_results_on_status``).
         if (
-            _key_files_materialized(namespace, job_id, epoch, key_names=key_names.names)
+            await asyncio.to_thread(
+                _key_files_materialized,
+                namespace,
+                job_id,
+                epoch,
+                key_names=key_names.names,
+            )
             and resolve_latest(OperatorEnvironment.RESULTS.DIR, namespace, job_id)
             == epoch
         ):
