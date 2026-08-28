@@ -1592,9 +1592,7 @@ impl AIPerfRegistry {
         let checkpoint_backend = match replay.checkpoint.backend.as_ref() {
             Some(backend) => Some(
                 self.stream_checkpoint_backend_factory(backend.id.as_str())
-                    .ok_or_else(|| {
-                        self.unknown_stream("checkpoint_backend", backend.id.as_str())
-                    })?
+                    .ok_or_else(|| self.unknown_stream("checkpoint_backend", backend.id.as_str()))?
                     .descriptor(),
             ),
             None => None,
@@ -1629,12 +1627,8 @@ impl AIPerfRegistry {
 
     fn unknown_stream(&self, kind: &'static str, requested: &str) -> StreamingResourceError {
         let available = match kind {
-            "source" => {
-                joined_streaming_ids(self.stream_source_descriptors().iter().map(|d| d.id))
-            }
-            "format" => {
-                joined_streaming_ids(self.stream_format_descriptors().iter().map(|d| d.id))
-            }
+            "source" => joined_streaming_ids(self.stream_source_descriptors().iter().map(|d| d.id)),
+            "format" => joined_streaming_ids(self.stream_format_descriptors().iter().map(|d| d.id)),
             "session_program" => joined_streaming_ids(
                 self.stream_session_program_descriptors()
                     .iter()

@@ -522,9 +522,11 @@ fn wire(cfg: serde_json::Value) -> serde_json::Value {
         .entry("models")
         .or_insert_with(|| json!({"items": [{"name": "model"}]}));
     object.entry("endpoint").or_insert_with(
-        || json!({"type": "chat", "url": "http://127.0.0.1:8000", "streaming": false}),
+        || json!({"type": "chat", "urls": ["http://127.0.0.1:8000"], "streaming": false}),
     );
-    object.entry("transport").or_insert_with(|| json!({"type": "http"}));
+    object
+        .entry("transport")
+        .or_insert_with(|| json!({"type": "http"}));
     object
         .entry("phases")
         .or_insert_with(|| json!([profiling_phase()]));
@@ -604,10 +606,15 @@ fn validate_streams(streams: serde_json::Value, replay: serde_json::Value) -> an
 fn duplicate_stream_ids_are_rejected() {
     let (mut streams, replay) = authored_streams_yaml();
     let duplicate = streams["items"][0].clone();
-    streams["items"].as_array_mut().expect("items").push(duplicate);
+    streams["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(duplicate);
     let error = validate_streams(streams, replay).expect_err("duplicate id must fail");
     assert!(
-        error.to_string().contains("duplicate dataset_streams.items id"),
+        error
+            .to_string()
+            .contains("duplicate dataset_streams.items id"),
         "{error}"
     );
 }
@@ -717,11 +724,10 @@ fn mixed_datasets_and_dataset_streams_is_a_validation_error() {
         "shadow_replay": replay,
     })))
     .expect("mixed wire decodes");
-    let error = run.validate_outer().expect_err("the wire rejects the mix too");
-    assert!(
-        error.to_string().contains("cannot author both"),
-        "{error}"
-    );
+    let error = run
+        .validate_outer()
+        .expect_err("the wire rejects the mix too");
+    assert!(error.to_string().contains("cannot author both"), "{error}");
 }
 
 #[test]
@@ -736,7 +742,9 @@ fn shadow_replay_without_dataset_streams_is_rejected() {
     .expect("replay-only config decodes");
     let error = aiperf_runtime::config::validate::validate(&cfg).expect_err("replay needs streams");
     assert!(
-        error.to_string().contains("shadow_replay requires dataset_streams"),
+        error
+            .to_string()
+            .contains("shadow_replay requires dataset_streams"),
         "{error}"
     );
 
@@ -745,7 +753,9 @@ fn shadow_replay_without_dataset_streams_is_rejected() {
             .expect("streams-only decodes");
     let error = aiperf_runtime::config::validate::validate(&cfg).expect_err("streams need replay");
     assert!(
-        error.to_string().contains("dataset_streams requires shadow_replay"),
+        error
+            .to_string()
+            .contains("dataset_streams requires shadow_replay"),
         "{error}"
     );
 }
@@ -783,12 +793,17 @@ fn resident_exporter_with_dataset_streams_is_refused() {
         "graph_trace_summary_path",
         "graph_replay_provenance_path",
     ] {
-        let cfg = with_artifacts(json!({"trace": false, "inputs_path": "inputs.json", field: "out.json"}));
+        let cfg = with_artifacts(
+            json!({"trace": false, "inputs_path": "inputs.json", field: "out.json"}),
+        );
         let error = aiperf_runtime::config::validate::validate(&cfg)
             .unwrap_err()
             .to_string();
         assert!(error.contains(field), "{field}: {error}");
-        assert!(error.contains("complete dataset resident"), "{field}: {error}");
+        assert!(
+            error.contains("complete dataset resident"),
+            "{field}: {error}"
+        );
     }
 
     // Per-record exporters append per record and stay accepted.
@@ -835,7 +850,7 @@ fn registry_with_workload(id: &'static str, resources: ResourceRequirementsV2) -
 fn baseline_resources() -> serde_json::Value {
     json!({
         "models": {"items": [{"name": "model"}]},
-        "endpoints": {"profiles": {}},
+        "endpoints": {"profiles": [{"id": "default", "type": "chat"}]},
     })
 }
 
@@ -848,7 +863,10 @@ fn shadow_replay_requirements_require_dataset_streams() {
         .validate_selection_for_run(&run)
         .expect_err("a stream workload without the resource must be refused")
         .to_string();
-    assert!(error.contains("requires run.resources.dataset_streams"), "{error}");
+    assert!(
+        error.contains("requires run.resources.dataset_streams"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -865,7 +883,10 @@ fn inference_workload_forbids_dataset_streams() {
         .validate_selection_for_run(&run)
         .expect_err("a finite workload with a stream resource must be refused")
         .to_string();
-    assert!(error.contains("forbids run.resources.dataset_streams"), "{error}");
+    assert!(
+        error.contains("forbids run.resources.dataset_streams"),
+        "{error}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -883,7 +904,10 @@ fn unknown_stream_component_fails_closed_with_available_ids() {
         reliability_policy: &policy,
     };
 
-    let cases: [(&str, Box<dyn Fn(&mut serde_json::Value, &mut serde_json::Value)>); 5] = [
+    let cases: [(
+        &str,
+        Box<dyn Fn(&mut serde_json::Value, &mut serde_json::Value)>,
+    ); 5] = [
         (
             "source",
             Box::new(|s: &mut serde_json::Value, _r: &mut serde_json::Value| {
@@ -1070,7 +1094,13 @@ fn finite_run_projection_keeps_its_dataset_key() {
         .collect::<Vec<_>>();
     assert_eq!(
         keys,
-        ["worker_count", "dataset", "tokenizer", "phases", "failure_policy"],
+        [
+            "worker_count",
+            "dataset",
+            "tokenizer",
+            "phases",
+            "failure_policy"
+        ],
         "the finite projection's key order must not move"
     );
 }
