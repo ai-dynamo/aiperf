@@ -480,4 +480,3 @@ class TestSessionPreviousResponseId:
         # Advance to turn 1 without reset_context preserves previous_response_id
         session.advance_turn(1)
         assert session.previous_response_id == "resp_turn0"
-

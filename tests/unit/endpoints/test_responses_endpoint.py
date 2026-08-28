@@ -19,7 +19,6 @@ from aiperf.common.models.record_models import (
     TextResponse,
     TextResponseData,
 )
-
 from aiperf.common.models.usage_models import Usage
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -1078,7 +1077,6 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) is None
 
-
     def test_format_payload_turn0_without_previous_response_id(self, endpoint):
         turn0 = Turn(
             role="user",
@@ -1119,4 +1117,3 @@ class TestResponsesStatefulChaining:
         # Stateful chain: only newest turn is sent in input
         assert len(payload["input"]) == 1
         assert payload["input"][0]["content"] == "Second message"
-

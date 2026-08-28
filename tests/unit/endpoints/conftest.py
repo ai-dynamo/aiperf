@@ -100,7 +100,6 @@ def create_request_info(
     )
 
 
-
 def create_mock_response(
     perf_ns: int = 123456789,
     json_data: dict | None = None,

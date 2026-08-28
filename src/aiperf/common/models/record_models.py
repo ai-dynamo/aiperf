@@ -1039,7 +1039,6 @@ class RequestInfo(RecordContext):
     )
 
 
-
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
