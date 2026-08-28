@@ -142,6 +142,9 @@ regex = "1"
 rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
+semver = { version = "1", features = ["serde"] }
+thiserror = "2"
 sha2 = "0.10"
 smallvec = { version = "1", features = ["serde"] }
 tiktoken-rs = "0.9"
