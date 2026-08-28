@@ -445,6 +445,15 @@ profiler.
   back before any mutation its payload cannot represent. Coverage is in
   `rust/runtime/tests/streaming_session_continuity.rs` with the reusable seam in
   `rust/runtime/tests/support/streaming_session_conformance.rs`.
+- **What makes one streaming conversation turn durable?**
+  `rust/runtime/src/streaming/closure.rs` (`ConversationClosureSeam`): a turn
+  binds a terminal slot before dispatch, closes only on
+  `ActionExecutionEvent::Terminal`, folds its endpoint reply before that
+  terminal, and is checkpointed as the separate
+  `aiperf.stream.session.closure` participant under a contiguous terminal
+  horizon. The terminal lane pushes through the sync
+  `StreamingTurnClosureProcessor`; the pipeline task drains it.
+  Coverage is in `rust/runtime/tests/streaming_conversation_closure.rs`.
 - **How do user-centric and fixed-schedule runs work?**
   `rust/runtime/src/{scheduled,scheduler,user_centric,fixed_schedule,multiturn}.rs`;
   exact virtual-time coverage is in `rust/runtime/tests/scheduled_sim.rs`, and real HTTP

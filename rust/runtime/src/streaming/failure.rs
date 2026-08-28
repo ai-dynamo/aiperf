@@ -149,6 +149,8 @@ failure_codes! {
         UnboundedCausalityState => "unbounded_causality_state",
         /// The mutation vocabulary is not accepted by the selected program.
         UnsupportedMutation => "unsupported_mutation",
+        /// A request terminated that no conversation turn claims.
+        UnclaimedTerminal => "unclaimed_terminal",
     }
 }
 
