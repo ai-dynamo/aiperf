@@ -3316,6 +3316,212 @@ impl CheckpointGarbageCollector for LocalCheckpointBackend {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Registry descriptor, authored configuration, and factory
+// ---------------------------------------------------------------------------
+
+/// Stable registry identifier of the built-in local checkpoint backend.
+pub const LOCAL_CHECKPOINT_BACKEND_ID: &str = "local";
+
+/// Registry metadata for the crash-durable local generation store.
+pub static LOCAL_CHECKPOINT_BACKEND_DESCRIPTOR: StreamingCheckpointBackendDescriptor =
+    StreamingCheckpointBackendDescriptor {
+        id: LOCAL_CHECKPOINT_BACKEND_ID,
+        description: "crash-durable local-filesystem checkpoint generation store",
+        is_durable: true,
+        has_leased_readers: true,
+        has_atomic_generations: true,
+        has_result_segments: true,
+        // Objects are ordinary files under the store root; confidentiality at
+        // rest is the operator's filesystem decision, not this backend's.
+        protects_sensitive_state: false,
+        retention: CheckpointRetention::GenerationReachability,
+        // The store root is one process-local path, so a remote cell cannot
+        // reach the same authoritative `CURRENT` pointer.
+        placement: CheckpointBackendPlacement::ControllerLocal,
+        supports_virtual_clock: true,
+    };
+
+/// Blocking participant identity used by every prepared local backend.
+const LOCAL_BACKEND_PARTICIPANT: &str = "streaming-checkpoint-local-blocking";
+
+/// Strictly decoded authored configuration for the local checkpoint backend.
+///
+/// Every bound is authored rather than defaulted: a silently defaulted capacity
+/// would make an over-budget run fail at an arbitrary later generation instead
+/// of at validation.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalCheckpointBackendConfig {
+    /// Absolute store root owned exclusively by this backend.
+    pub root: PathBuf,
+    /// Simultaneously live generation transactions.
+    pub max_transactions: u32,
+    /// Bytes retained by live generation transactions.
+    pub max_transaction_bytes: u64,
+    /// Descriptors retained by staged transaction indexes.
+    pub max_prepared_indexes: u32,
+    /// Bytes retained by staged transaction indexes.
+    pub max_prepared_index_bytes: u64,
+    /// Committed immutable objects, including objects recovered on open.
+    pub max_storage_objects: u32,
+    /// Bytes of committed immutable object storage.
+    pub max_storage_bytes: u64,
+    /// Descriptor summaries returned from result staging.
+    pub max_result_summaries: u32,
+    /// Bytes retained by result-staging summaries.
+    pub max_result_summary_bytes: u64,
+    /// Concurrent generation, participant, result, and page readers.
+    pub max_reads: u32,
+    /// Bytes retained by concurrent readers.
+    pub max_read_bytes: u64,
+    /// Scratch entries examined per reclamation page.
+    pub gc_page_items: u32,
+    /// Lifetime granted to one prepare lease, in nanoseconds.
+    pub prepare_lease_ns: u64,
+    /// Simultaneously accepted blocking filesystem jobs.
+    pub max_blocking_jobs: u32,
+    /// Bytes one blocking filesystem job may be handed.
+    pub max_blocking_input_bytes: u64,
+    /// Bytes one blocking filesystem job may return.
+    pub max_blocking_output_bytes: u64,
+}
+
+fn config_rejected(message: &str) -> CheckpointError {
+    CheckpointError::Storage {
+        message: format!("local checkpoint backend configuration rejected: {message}"),
+    }
+}
+
+fn bounded_usize(value: u64, field: &str) -> Result<usize, CheckpointError> {
+    usize::try_from(value).map_err(|_| config_rejected(field))
+}
+
+impl LocalCheckpointBackendConfig {
+    /// Reject an unusable store root before any capacity is derived.
+    ///
+    /// A relative root would resolve against whatever working directory the
+    /// process happened to inherit, so two identically configured runs could
+    /// address different stores.
+    fn validate(&self) -> Result<(), CheckpointError> {
+        if !self.root.is_absolute() {
+            return Err(config_rejected("root must be an absolute path"));
+        }
+        if self.gc_page_items == 0 {
+            return Err(config_rejected("gc_page_items must be non-zero"));
+        }
+        if self.prepare_lease_ns == 0 {
+            return Err(config_rejected("prepare_lease_ns must be non-zero"));
+        }
+        if self.max_blocking_jobs == 0 {
+            return Err(config_rejected("max_blocking_jobs must be non-zero"));
+        }
+        Ok(())
+    }
+
+    /// Project authored bounds onto the backend's own limit type.
+    fn limits(&self) -> Result<LocalCheckpointLimits, CheckpointError> {
+        let limits = |items: u32, bytes: u64, field: &str| {
+            Ok(BudgetLimits {
+                max_items: bounded_usize(u64::from(items), field)?,
+                max_bytes: bounded_usize(bytes, field)?,
+            })
+        };
+        Ok(LocalCheckpointLimits {
+            transactions: limits(
+                self.max_transactions,
+                self.max_transaction_bytes,
+                "max_transaction_bytes",
+            )?,
+            prepared_indexes: limits(
+                self.max_prepared_indexes,
+                self.max_prepared_index_bytes,
+                "max_prepared_index_bytes",
+            )?,
+            storage: limits(
+                self.max_storage_objects,
+                self.max_storage_bytes,
+                "max_storage_bytes",
+            )?,
+            result_summaries: limits(
+                self.max_result_summaries,
+                self.max_result_summary_bytes,
+                "max_result_summary_bytes",
+            )?,
+            reads: limits(self.max_reads, self.max_read_bytes, "max_read_bytes")?,
+            gc_page_items: NonZeroUsize::new(bounded_usize(
+                u64::from(self.gc_page_items),
+                "gc_page_items",
+            )?)
+            .ok_or_else(|| config_rejected("gc_page_items must be non-zero"))?,
+            prepare_lease_ns: self.prepare_lease_ns,
+        })
+    }
+}
+
+/// Startup validator and preparer for the built-in local checkpoint backend.
+///
+/// The factory itself holds no run state: the blocking executor, filesystem,
+/// and clock are all minted inside `prepare`, on the thread that will own the
+/// backend, so the `Send + Sync` registry entry never carries a `!Send` handle.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalCheckpointBackendFactory;
+
+impl StreamingCheckpointBackendFactory for LocalCheckpointBackendFactory {
+    fn descriptor(&self) -> &'static StreamingCheckpointBackendDescriptor {
+        &LOCAL_CHECKPOINT_BACKEND_DESCRIPTOR
+    }
+
+    fn validate(
+        &self,
+        authored: &serde_json::value::RawValue,
+        requirements: &CheckpointBackendRequirements,
+    ) -> Result<Box<dyn ValidatedCheckpointBackendConfig>, CheckpointError> {
+        // Both declared requirements are satisfied by a durable generation
+        // store; the check is kept explicit so a future non-durable variant of
+        // this backend cannot inherit the acceptance silently.
+        let _ = requirements;
+        let config: LocalCheckpointBackendConfig = serde_json::from_str(authored.get())
+            .map_err(|error| config_rejected(&error.to_string()))?;
+        config.validate()?;
+        // Reject unrepresentable capacity at validation rather than at prepare.
+        config.limits()?;
+        Ok(Box::new(config))
+    }
+
+    fn prepare(
+        &self,
+        config: Box<dyn ValidatedCheckpointBackendConfig>,
+        context: &CheckpointBackendPrepareContext,
+    ) -> Result<Box<dyn StreamingCheckpointBackend>, CheckpointError> {
+        let config = *config
+            .into_any()
+            .downcast::<LocalCheckpointBackendConfig>()
+            .map_err(|_| config_rejected("configuration was validated by a different factory"))?;
+        let limits = config.limits()?;
+        let executor = StreamingBlockingExecutor::new(
+            context.run,
+            CheckpointParticipantId::new(LOCAL_BACKEND_PARTICIPANT),
+            bounded_usize(u64::from(config.max_blocking_jobs), "max_blocking_jobs")?,
+            bounded_usize(config.max_blocking_input_bytes, "max_blocking_input_bytes")?,
+            bounded_usize(
+                config.max_blocking_output_bytes,
+                "max_blocking_output_bytes",
+            )?,
+        )
+        .map_err(|error| config_rejected(&error.to_string()))?;
+        let filesystem: Rc<dyn LocalCheckpointFilesystem> =
+            Rc::new(BlockingLocalFilesystem::new(executor));
+        let backend = LocalCheckpointBackend::open(
+            config.root,
+            limits,
+            filesystem,
+            Rc::clone(&context.clock),
+        )?;
+        Ok(Box::new(backend))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

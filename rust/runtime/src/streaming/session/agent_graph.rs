@@ -329,6 +329,7 @@ impl GraphSessionScope {
         }
         successors.push(to);
 
+<<<<<<< HEAD
         let is_source_terminal = matches!(
             self.nodes.get(&from).map(|source| source.state),
             Some(GraphNodeState::Terminal)
@@ -342,6 +343,17 @@ impl GraphSessionScope {
             }
             None => {
                 self.orphan_edges.entry(to).or_default().push(from);
+=======
+        // The terminal probe needs a shared borrow of the node map, so the
+        // target's presence is resolved before any mutable borrow is taken.
+        if self.nodes.contains_key(&to) {
+            let is_source_terminal = matches!(
+                self.nodes.get(&from).map(|source| source.state),
+                Some(GraphNodeState::Terminal)
+            );
+            if !is_source_terminal && let Some(node) = self.nodes.get_mut(&to) {
+                node.pending_predecessors = node.pending_predecessors.saturating_add(1);
+>>>>>>> ajc/streaming-task-c3
             }
         }
         self.version = self.version.saturating_add(1);

@@ -50,10 +50,11 @@ impl std::error::Error for RegistrationError {
 impl From<ExtensionError> for RegistrationError {
     fn from(e: ExtensionError) -> Self {
         // Preserve the duplicate-capability detail when it is a re-registration.
-        if let Some(id) = e.registry_id().cloned() {
-            if e.reason().contains("already registered") {
-                return Self::DuplicateCapability(id);
-            }
+        if let (Some(id), true) = (
+            e.registry_id().cloned(),
+            e.reason().contains("already registered"),
+        ) {
+            return Self::DuplicateCapability(id);
         }
         Self::Extension(e)
     }

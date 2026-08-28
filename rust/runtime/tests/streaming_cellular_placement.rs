@@ -208,8 +208,8 @@ async fn same_session_routes_stickily() {
         if let Some(charge) = policy.required_route_charge(key).expect("charge") {
             let reservation = admission.reserve_route(charge).await.expect("capacity");
             policy
-        .install_pending_reservation(reservation)
-        .expect("no reservation is pending");
+                .install_pending_reservation(reservation)
+                .expect("no reservation is pending");
         }
         let decision = policy
             .place_session(key, GlobalSequence::new(step))
@@ -261,7 +261,9 @@ fn stale_release_cannot_issue() {
         ownership_epoch: SessionOwnershipEpoch::new(2),
         ..staged
     };
-    let error = set.accept_release(&stale).expect_err("stale release refused");
+    let error = set
+        .accept_release(&stale)
+        .expect_err("stale release refused");
     assert_eq!(
         error.failure_code(),
         PlacementFailureCode::StaleOwnershipEpoch
@@ -347,7 +349,10 @@ async fn route_reservation_selects_terminal_retirement_and_then_completes() {
     let decision = policy
         .place_session(second, GlobalSequence::new(2))
         .expect("placement");
-    assert_eq!(decision.destination_cell, assign_cell(&PLAN_DIGEST, second, 4));
+    assert_eq!(
+        decision.destination_cell,
+        assign_cell(&PLAN_DIGEST, second, 4)
+    );
     assert_eq!(policy.installed_route_count(), 1);
 }
 
