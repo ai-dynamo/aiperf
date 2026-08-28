@@ -40,7 +40,7 @@ mod my_plugin {
     #[aiperf_plugin]
     pub fn init() -> PluginDeclarationV1 {
         PluginDeclarationV1 {
-            package: &*PKG,
+            package: &PKG,
             extension: &EXT,
         }
     }
