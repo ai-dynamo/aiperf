@@ -82,6 +82,16 @@ async def test_c1_delete_aiperfjob_mid_ramp(
             "--wait=false",
             check=False,
         )
+        await kubectl.run(
+            "delete",
+            "jobset",
+            f"aiperf-{name}",
+            "-n",
+            operator_job_namespace,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
 
 
 async def test_c3_rapid_double_delete_is_idempotent(
@@ -122,6 +132,16 @@ async def test_c3_rapid_double_delete_is_idempotent(
             "delete",
             "aiperfjob",
             name,
+            "-n",
+            operator_job_namespace,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
+        await kubectl.run(
+            "delete",
+            "jobset",
+            f"aiperf-{name}",
             "-n",
             operator_job_namespace,
             "--ignore-not-found",

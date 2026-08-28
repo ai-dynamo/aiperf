@@ -83,6 +83,16 @@ async def test_c4_kill_operator_mid_benchmark_recovers(
             "--wait=false",
             check=False,
         )
+        await kubectl.run(
+            "delete",
+            "jobset",
+            f"aiperf-{name}",
+            "-n",
+            operator_job_namespace,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
 
 
 async def test_c5_orphaned_claim_recovers(
@@ -134,6 +144,16 @@ async def test_c5_orphaned_claim_recovers(
             "delete",
             "aiperfjob",
             name,
+            "-n",
+            operator_job_namespace,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
+        await kubectl.run(
+            "delete",
+            "jobset",
+            f"aiperf-{name}",
             "-n",
             operator_job_namespace,
             "--ignore-not-found",
