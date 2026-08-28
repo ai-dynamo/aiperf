@@ -1911,9 +1911,10 @@ mod object_store_support {
             while let Some(chunk) = object.next_chunk(64 * 1024).await? {
                 assembled.extend_from_slice(&chunk.bytes);
             }
-            if u64::try_from(assembled.len()).unwrap_or(u64::MAX) != declared
-                || ContentDigest::from_bytes(*blake3::hash(&assembled).as_bytes()) != digest
-            {
+            // The reader's digest is the address the object lands at, not
+            // necessarily the hash of its bytes: generation and result-index
+            // objects are addressed by a structural identity.
+            if u64::try_from(assembled.len()).unwrap_or(u64::MAX) != declared {
                 return Err(CheckpointError::ObjectVerification);
             }
             let key = immutable_object_key(&object_test_prefix(), &digest);

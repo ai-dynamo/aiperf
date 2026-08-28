@@ -26,6 +26,21 @@ use std::sync::Arc;
 /// Native report schema identifier.
 pub const NATIVE_REPORT_SCHEMA_VERSION: &str = "2.0";
 
+/// One loaded plugin package entry in a benchmark report's catalog summary.
+///
+/// Contains only identity and provenance — no absolute paths, hostnames, or
+/// configuration secrets.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PluginCatalogEntry {
+    /// Normalized plugin package ID.
+    pub package_id: String,
+    pub version: String,
+    /// Resolution status: `"winner"`, `"shadow"`, `"quarantined"`, or `"absent"`.
+    pub status: String,
+    /// BLAKE3 hex digest of the package manifest.
+    pub manifest_digest: String,
+}
+
 /// A present report value: finite numbers serialize normally; non-finite tails
 /// serialize as JSON null without colliding with structurally absent fields.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -979,6 +994,97 @@ impl ReportSteadyState {
     }
 }
 
+/// One nanosecond distribution in the streaming-plane report section.
+///
+/// `count`, `sum_ns`, and `max_ns` are exact; the percentiles are t-digest
+/// estimates and are absent when nothing was observed.
+#[derive(Debug, Clone, Default, PartialEq, DeriveSerialize)]
+pub struct ReportStreamingDistribution {
+    /// Exact number of observations.
+    pub count: u64,
+    /// Exact sum in nanoseconds.
+    pub sum_ns: u128,
+    /// Greatest single observation in nanoseconds.
+    pub max_ns: u64,
+    /// Estimated median in nanoseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p50_ns: Option<f64>,
+    /// Estimated 90th percentile in nanoseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p90_ns: Option<f64>,
+    /// Estimated 99th percentile in nanoseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p99_ns: Option<f64>,
+}
+
+/// Permit occupancy and its authored limit for one streaming stage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, DeriveSerialize)]
+pub struct ReportQueueHighWater {
+    /// Peak retained items.
+    pub items: usize,
+    /// Peak retained bytes.
+    pub bytes: usize,
+    /// Authored item limit.
+    pub item_limit: usize,
+    /// Authored byte limit.
+    pub byte_limit: usize,
+}
+
+/// Typed streaming horizons, as stable global-sequence values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, DeriveSerialize)]
+pub struct ReportStreamingHorizons {
+    /// Greatest action assigned a stable global order.
+    pub ordered: u64,
+    /// Greatest globally ordered action admitted for execution.
+    pub admitted: u64,
+    /// Greatest contiguous action with one authoritative terminal fact.
+    pub terminal: u64,
+    /// Greatest sequence for which admission has been scheduled, which may lead
+    /// the committed cut.
+    pub scheduled: u64,
+}
+
+/// Feature-independent report projection of the streaming plane's metrics.
+///
+/// Deliberately duplicates the shape of the streaming plane's own snapshot with
+/// no `streaming::` type in its signature, so [`NativeReport`]'s serialized
+/// schema is identical whether or not the `streaming` feature is compiled. The
+/// conversion lives on the streaming side, under the feature gate.
+///
+/// The `String` keys are the streaming plane's closed enums' `serde` names, so
+/// they remain a stable wire contract without importing the enums.
+#[derive(Debug, Clone, Default, PartialEq, DeriveSerialize)]
+pub struct ReportStreamingPlane {
+    /// Nanosecond distributions keyed by stable metric name.
+    pub distributions: BTreeMap<String, ReportStreamingDistribution>,
+    /// Permit high-water keyed by stable stage name.
+    pub queues: BTreeMap<String, ReportQueueHighWater>,
+    /// Drop counts keyed by stable reason name.
+    pub drops_by_reason: BTreeMap<String, u64>,
+    /// Reliability issue counts keyed by stable scope name.
+    pub issues_by_scope: BTreeMap<String, u64>,
+    /// Reliability issue counts keyed by stable class name.
+    pub issues_by_class: BTreeMap<String, u64>,
+    /// Reliability issue counts keyed by stable disposition name.
+    pub issues_by_disposition: BTreeMap<String, u64>,
+    /// Whether reliability policy fenced admission at any point.
+    pub is_admission_fenced: bool,
+    /// Retry ordinals observed, keyed by ordinal.
+    pub retry_ordinals: BTreeMap<u32, u64>,
+    /// Actions whose one terminal receipt was a failure. Distinct from a failed
+    /// run, which has no truthful terminal membership at all.
+    pub failed_terminal_actions: u64,
+    /// Units classified as identical duplicates.
+    pub duplicate_count: u64,
+    /// Proven partition or sequence holes.
+    pub gap_count: u64,
+    /// Derived sinks that could not complete, keyed by sink identity.
+    pub incomplete_derived_sinks: BTreeMap<String, u64>,
+    /// Committed and scheduled horizons.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizons: Option<ReportStreamingHorizons>,
+}
+
 /// Runtime facts supplied to a [`Reporter`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RunOutcome {
@@ -1007,6 +1113,9 @@ pub struct RunOutcome {
     /// Closed-loop steady-state summary. Present only when steady-state
     /// windowing is enabled and a concurrency target is configured.
     pub steady_state: Option<SteadyStateOutcome>,
+    /// Streaming-plane stage metrics. Absent unless the run used the streaming
+    /// plane.
+    pub streaming: Option<ReportStreamingPlane>,
 }
 
 /// Borrowed inputs for one IO-free native-v2 report build.
@@ -1071,6 +1180,9 @@ impl Reporter for NativeReporter {
                 .steady_state
                 .as_ref()
                 .map(ReportSteadyState::from_outcome),
+            streaming: outcome.streaming.clone(),
+            plugin_lock_digest: None,
+            plugin_catalog: Vec::new(),
         }
     }
 }
@@ -1119,6 +1231,17 @@ pub struct NativeReport {
     /// enabled and a concurrency target is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub steady_state: Option<ReportSteadyState>,
+    /// Streaming-plane stage metrics. Absent for non-streaming runs, so the
+    /// serialized shape is identical whether or not the feature is compiled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<ReportStreamingPlane>,
+    /// BLAKE3 hex digest of the frozen plugin lock, if plugins were loaded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_lock_digest: Option<String>,
+    /// Brief catalog summary of loaded plugin packages. Absent when no plugins
+    /// were loaded or the catalog is empty.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub plugin_catalog: Vec<PluginCatalogEntry>,
 }
 
 impl NativeReport {
@@ -1156,6 +1279,22 @@ impl NativeReport {
     ) -> Result<Self, ReportMetadataError> {
         self.run.finalize(run_metadata, facts)?;
         Ok(self)
+    }
+
+    /// Attach plugin lock provenance. Call after construction, before
+    /// [`Self::finalize_run`]. Does not affect `distribution_id`.
+    ///
+    /// `lock_digest` is the BLAKE3 hex digest of the frozen plugin lock
+    /// (from `LockedCatalogBundle::lock_digest`). An empty `catalog` is stored
+    /// but serialized as absent (absent when empty).
+    pub fn with_plugin_provenance(
+        mut self,
+        lock_digest: String,
+        catalog: Vec<PluginCatalogEntry>,
+    ) -> Self {
+        self.plugin_lock_digest = Some(lock_digest);
+        self.plugin_catalog = catalog;
+        self
     }
 }
 
@@ -1205,6 +1344,10 @@ impl crate::metrics_core::report_view::ReportView for NativeReport {
 
     fn steady_state(&self) -> Option<&ReportSteadyState> {
         self.steady_state.as_ref()
+    }
+
+    fn streaming(&self) -> Option<&ReportStreamingPlane> {
+        self.streaming.as_ref()
     }
 
     fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u128>> {

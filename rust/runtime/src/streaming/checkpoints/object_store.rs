@@ -642,7 +642,6 @@ impl ObjectCheckpointBackend {
                 &observed.document.generation_object,
                 &observed.document.generation_version,
                 observed.document.generation_byte_length,
-                *observed.document.generation.digest(),
             )
             .await?;
         let decoded = decode_versioned_checkpoint_generation(
@@ -820,21 +819,25 @@ impl ObjectCheckpointBackend {
         Ok(())
     }
 
-    /// Stream one exact version under a permit and verify its complete digest.
+    /// Stream one exact version under a permit and check its complete length.
+    ///
+    /// Content identity is checked by the caller that owns it: a generation
+    /// object verifies by decoding and comparing its structural identity, a
+    /// result index by recomputing its canonical root, and a participant or
+    /// result payload by the digest its descriptor carries. An object's address
+    /// digest is not, in general, the hash of its stored bytes, so hashing here
+    /// would reject every structurally addressed object.
     async fn read_exact_version(
         &self,
         key: &ObjectKey,
         version: &ObjectVersion,
         declared: u64,
-        digest: ContentDigest,
     ) -> Result<(Bytes, BudgetLease), CheckpointError> {
         self.check_declared_length(declared, self.read_budget())?;
         let length = usize::try_from(declared).map_err(|_| provider_error("object length"))?;
         let lease = self.budgets.reads.acquire(1, length).await?;
         let bytes = self.stream_version(key, version, declared).await?;
-        if bytes.len() != length
-            || ContentDigest::from_bytes(*blake3::hash(&bytes).as_bytes()) != digest
-        {
+        if bytes.len() != length {
             return Err(CheckpointError::ObjectVerification);
         }
         Ok((bytes, lease))
@@ -886,7 +889,7 @@ impl ObjectCheckpointBackend {
         let key = immutable_object_key(&self.prefix, &digest);
         let metadata = self.resolve_version(&key).await?;
         let (bytes, lease) = self
-            .read_exact_version(&key, &metadata.version, metadata.byte_length, digest)
+            .read_exact_version(&key, &metadata.version, metadata.byte_length)
             .await?;
         BudgetedCheckpointBytes::new(bytes, lease)
     }
@@ -910,12 +913,9 @@ impl ObjectCheckpointBackend {
         bytes: Bytes,
     ) -> Result<ObjectVersion, CheckpointError> {
         let length = u64::try_from(bytes.len()).map_err(|_| provider_error("object length"))?;
-        if ContentDigest::from_bytes(*blake3::hash(&bytes).as_bytes()) != digest {
-            return Err(CheckpointError::ObjectVerification);
-        }
         let lease = self.budgets.storage.acquire(1, bytes.len()).await?;
         let reader = LeasedBytesObjectReader {
-            bytes,
+            bytes: bytes.clone(),
             offset: 0,
             digest,
             lease,
@@ -924,9 +924,12 @@ impl ObjectCheckpointBackend {
         let key = immutable_object_key(&self.prefix, &digest);
         // Verify before the pointer can ever reference this version: a pointer
         // must only name objects that were written whole and read back exact.
-        let (_, verify_lease) = self
-            .read_exact_version(&key, &version, length, digest)
-            .await?;
+        // Comparing the streamed bytes is strictly stronger than comparing a
+        // digest, and it holds for structurally addressed objects too.
+        let (written, verify_lease) = self.read_exact_version(&key, &version, length).await?;
+        if written != bytes {
+            return Err(CheckpointError::ObjectVerification);
+        }
         drop(verify_lease);
         Ok(version)
     }

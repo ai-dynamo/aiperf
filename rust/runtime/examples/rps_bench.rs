@@ -22,13 +22,14 @@
 //!   WINDOW_S   (default 5)
 //!   HTTP1      (set to 1 to use HTTP/1.1 keep-alive lanes instead of h2c)
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use http::HeaderMap;
+use http::header::{ACCEPT, CONTENT_TYPE};
 
 use aiperf_runtime::transport::core::{RequestRecord, TraceData};
 use aiperf_runtime::transport::http::RealClock;
@@ -120,9 +121,9 @@ fn main() {
                 };
                 let client = Rc::new(HttpClient::new(clock.clone(), cfg.clone()));
                 let body = body_bytes();
-                let mut headers = BTreeMap::new();
-                headers.insert("Content-Type".to_string(), "application/json".to_string());
-                headers.insert("Accept".to_string(), "application/json".to_string());
+                let mut headers = HeaderMap::new();
+                headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+                headers.insert(ACCEPT, "application/json".parse().unwrap());
                 let headers = Rc::new(headers);
 
                 let mut lane_tasks = Vec::new();

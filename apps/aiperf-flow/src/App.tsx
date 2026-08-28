@@ -41,6 +41,7 @@ import { WekaTimingTransformsDeck } from "./decks/weka-timing-transforms/WekaTim
 import { WekaTimingTransformsInteractiveDeck } from "./decks/weka-timing-transforms-interactive/WekaTimingTransformsInteractiveDeck.js";
 import { WekaTrieBuildDeck } from "./decks/weka-trie-build/WekaTrieBuildDeck.js";
 import { StreamingDynamoShadowReplayDeck } from "./decks/streaming-dynamo-shadow-replay/StreamingDynamoShadowReplayDeck.js";
+import { StreamingSimPage } from "./decks/streaming-sim/StreamingSimPage.js";
 import { Home } from "./routes/Home.js";
 import { LifecycleSpike } from "./spike/LifecycleSpike.js";
 import { AgentSwimlaneSpike } from "./spike/AgentSwimlaneSpike.js";
@@ -112,6 +113,7 @@ export function App(): React.JSX.Element {
         <Route path="/weka-timing-transforms" element={<WekaTimingTransformsDeck />} />
         <Route path="/weka-timing-transforms-interactive" element={<WekaTimingTransformsInteractiveDeck />} />
         <Route path="/weka-trie-build" element={<WekaTrieBuildDeck />} />
+        <Route path="/streaming-sim" element={<StreamingSimPage />} />
         <Route path="/streaming-dynamo-shadow-replay" element={<StreamingDynamoShadowReplayDeck />} />
         <Route path="/:deckId" element={<DeckRoute />} />
       </Routes>

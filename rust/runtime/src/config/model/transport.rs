@@ -37,6 +37,7 @@ pub enum Transport {
     /// execution preparation when the frozen plugin universe is available.
     Plugin {
         /// Plugin-registered transport ID (e.g. `"vendor/my-transport:1.0"`).
+        #[serde(deserialize_with = "crate::config::plugin_id::deserialize_plugin_id")]
         id: String,
         /// Freeform parameters forwarded to the plugin transport factory.
         #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]

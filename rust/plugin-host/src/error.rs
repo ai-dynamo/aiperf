@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Typed error codes for plugin manifest and acquisition operations.
+//! Typed error codes for plugin host operations.
 
 use std::path::PathBuf;
 
@@ -84,4 +84,56 @@ pub enum AcquireError {
     /// Manifest parse or normalization error.
     #[error("manifest error: {0}")]
     Manifest(#[from] ManifestError),
+}
+
+/// Errors produced during static binary inspection.
+#[derive(Debug, thiserror::Error)]
+pub enum InspectError {
+    /// The file could not be read.
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// The binary format is known but malformed.
+    #[error("malformed object: {0}")]
+    MalformedObject(String),
+}
+
+/// Errors produced during plugin discovery.
+#[derive(Debug, thiserror::Error)]
+pub enum DiscoveryError {
+    /// A discovery source directory could not be read.
+    #[error("io scanning {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A manifest found during discovery failed to parse.
+    #[error("manifest at {path}: {source}")]
+    ManifestAtPath {
+        path: PathBuf,
+        #[source]
+        source: ManifestError,
+    },
+}
+
+/// Errors produced during native library loading.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadError {
+    /// dlopen returned an error string.
+    #[error("dlopen {path}: {detail}")]
+    DlopenFailed { path: PathBuf, detail: String },
+
+    /// The library was already loaded under a different staged path.
+    #[error("residency conflict: digest={digest} existing={existing} new={new}")]
+    ResidencyConflict {
+        digest: String,
+        existing: PathBuf,
+        new: PathBuf,
+    },
+
+    /// Acquire error propagated into the load phase.
+    #[error("acquire: {0}")]
+    Acquire(#[from] AcquireError),
 }

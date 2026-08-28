@@ -19,6 +19,7 @@ pub mod format;
 pub mod formats;
 pub mod hf_credentials;
 pub mod identity;
+pub mod observability;
 pub mod pipeline;
 pub mod placement;
 pub mod policy;

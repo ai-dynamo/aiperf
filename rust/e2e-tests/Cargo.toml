@@ -45,6 +45,8 @@ opentelemetry-proto = { version = "0.31", default-features = false, features = [
 ] }
 prost = { workspace = true }
 tempfile = "3"
+# Test-defined `Exporter` impls return the trait's `anyhow::Result<()>`.
+anyhow = { workspace = true }
 glob = "0.3"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }

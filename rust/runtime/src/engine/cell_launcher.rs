@@ -48,6 +48,13 @@ use crate::engine::cellular_cell::{
 
 /// Env var selecting the launcher: `local` (default), `k8s`, or `slurm`.
 pub const CELL_LAUNCHER_ENV: &str = "AIPERF_CELL_LAUNCHER";
+/// Environment variable carrying the plugin lock BLAKE3 hex digest for a cell.
+///
+/// Set by the controller's [`LocalLauncher::cell_command`] when the run was
+/// started with a plugin lock, and read by the cell's bootstrap in
+/// [`run_cell`](aiperf_cli::execute_mode) to verify the lock bundle before any
+/// effects.
+pub const CELL_PLUGIN_LOCK_ENV: &str = "AIPERF_PLUGIN_LOCK_DIGEST";
 
 /// Everything a launcher needs to start (or expect) a run's cells. The controller
 /// builds this after it has bound its velo transport and published its bootstrap
@@ -71,6 +78,33 @@ pub struct CellLaunchContext {
     pub artifact_authority: Option<String>,
     /// One-shot local role material. Cross-host launchers receive `None`.
     pub(crate) local_roles: Option<LocalRoleProvisioner>,
+    /// BLAKE3 hex digest of the plugin lock bundle active for this run, or
+    /// `None` when the run was launched without plugins. Injected as
+    /// [`CELL_PLUGIN_LOCK_ENV`] so each cell can verify the bundle before
+    /// opening any socket or dataset.
+    pub plugin_lock_digest: Option<String>,
+}
+
+#[cfg(feature = "cellular")]
+impl CellLaunchContext {
+    /// Construct a context without any role material, for tests that exercise
+    /// command-building without a real cellular bootstrap.
+    pub fn without_roles(
+        cell_count: u32,
+        controller_coordinate: impl Into<String>,
+        phase_ordinal_bases: BTreeMap<String, u64>,
+        artifact_authority: Option<String>,
+        plugin_lock_digest: Option<String>,
+    ) -> Self {
+        Self {
+            cell_count,
+            controller_coordinate: controller_coordinate.into(),
+            phase_ordinal_bases,
+            artifact_authority,
+            local_roles: None,
+            plugin_lock_digest,
+        }
+    }
 }
 
 /// A started cell the controller watches for hard failure. For a local subprocess
@@ -149,6 +183,9 @@ impl LocalLauncher {
         }
         if let Some(authority) = &ctx.artifact_authority {
             command.env(CELL_ARTIFACT_ADDR_ENV, authority);
+        }
+        if let Some(digest) = &ctx.plugin_lock_digest {
+            command.env(CELL_PLUGIN_LOCK_ENV, digest);
         }
         command
     }
@@ -426,6 +463,7 @@ mod tests {
             phase_ordinal_bases: bases,
             artifact_authority: Some("controller.local:9600".to_owned()),
             local_roles: None,
+            plugin_lock_digest: None,
         }
     }
 

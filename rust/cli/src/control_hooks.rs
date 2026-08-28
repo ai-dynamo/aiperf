@@ -42,6 +42,9 @@ pub(crate) fn validate_supported_control_hook_transport(run: &BenchmarkRun) -> R
             "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for dynosim transports; \
              they require a live server control plane"
         ),
+        Some(Transport::Plugin { .. }) => bail!(
+            "endpoint.reset_kv_cache / endpoint.server_profiler are unsupported for the plugin transport"
+        ),
     }
 }
 
