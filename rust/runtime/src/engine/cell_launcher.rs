@@ -70,21 +70,27 @@ static COMPOSED_PLUGIN_LOCK_DIGEST: std::sync::OnceLock<Option<String>> = std::s
 
 /// Record the digest of the plugin lock bundle this process loaded and verified.
 ///
-/// Called exactly once by the CLI bootstrap after the lock bundle is verified
-/// (or with `None` when the run has no plugins). Later calls are ignored so the
-/// composed identity cannot be redefined after cells or reports observe it.
+/// Prefer [`crate::metrics_core::report::set_plugin_provenance`], which records
+/// the same digest together with the catalog a report needs. This exists for
+/// callers that have a verified digest and no catalog. Later calls are ignored
+/// so the composed identity cannot be redefined after cells observe it.
 pub fn set_composed_plugin_lock_digest(digest: Option<String>) {
     let _ = COMPOSED_PLUGIN_LOCK_DIGEST.set(digest);
 }
 
 /// The plugin lock digest this process may attest, or `None` when it has none.
 ///
-/// Returns the composed-and-verified digest when bootstrap recorded one. When
-/// bootstrap never ran (unit tests, embedded use) it falls back to a *validated*
-/// environment read: both [`CELL_PLUGIN_LOCK_PATH_ENV`] (absolute) and
-/// [`CELL_PLUGIN_LOCK_ENV`] (exactly 64 hex characters) must be present and
-/// well-formed. A digest inherited without its lock path is never attested.
+/// Returns the composed-and-verified digest when bootstrap recorded one, either
+/// through [`set_composed_plugin_lock_digest`] or as part of the run's report
+/// provenance. When bootstrap never ran (unit tests, embedded use) it falls back
+/// to a *validated* environment read: both [`CELL_PLUGIN_LOCK_PATH_ENV`]
+/// (absolute) and [`CELL_PLUGIN_LOCK_ENV`] (exactly 64 hex characters) must be
+/// present and well-formed. A digest inherited without its lock path is never
+/// attested.
 pub fn composed_plugin_lock_digest() -> Option<String> {
+    if let Some((digest, _)) = crate::metrics_core::report::plugin_provenance() {
+        return Some(digest.clone());
+    }
     if let Some(recorded) = COMPOSED_PLUGIN_LOCK_DIGEST.get() {
         return recorded.clone();
     }
