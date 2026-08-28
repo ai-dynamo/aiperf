@@ -100,7 +100,6 @@ def fast_port_forward_retries() -> Iterator[None]:
     with (
         patch.object(pf, "_API_MAX_RETRIES", 2),
         patch.object(pf, "_API_RETRY_DELAY", 0.0),
-        patch.object(pf, "_API_INITIAL_DELAY", 0.0),
     ):
         yield
 
@@ -320,10 +319,11 @@ class TestApiReadinessVerification:
                 "aiperf.transports.aiohttp_client.create_tcp_connector",
                 return_value=None,
             ),
-            patch.object(pf, "_API_INITIAL_DELAY", 0.0),
         ):
             if should_return:
-                await pf._wait_for_api_ready(32080, proc, check_interval=0.0)
+                await pf._wait_for_api_ready(
+                    32080, proc, check_interval=0.0, initial_delay=0.0
+                )
             else:
                 with pytest.raises(
                     RuntimeError,

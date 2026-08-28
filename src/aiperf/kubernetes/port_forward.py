@@ -32,10 +32,12 @@ from aiperf.kubernetes.progress_stream import (
 )
 
 # Port-forward tunables -- moved to K8sEnvironment.PORT_FORWARD; aliases kept
-# so internal callers don't have to spell the long path. Tests can monkeypatch
-# these attributes if they need to shrink timeouts.
+# so internal callers don't have to spell the long path. These are import-time
+# snapshots: monkeypatching the module attribute works, but patching the
+# underlying setting after import does not. Tunables consumed inside
+# ``_wait_for_api_ready`` are read at call time instead, so the settings object
+# stays authoritative there.
 _PORT_FORWARD_TIMEOUT = K8sEnvironment.PORT_FORWARD.TIMEOUT_SECONDS
-_API_INITIAL_DELAY = K8sEnvironment.PORT_FORWARD.API_INITIAL_DELAY_SECONDS
 _API_RETRY_DELAY = K8sEnvironment.PORT_FORWARD.API_RETRY_DELAY_SECONDS
 _API_MAX_RETRIES = K8sEnvironment.PORT_FORWARD.API_MAX_RETRIES
 _PROCESS_CLEANUP_TIMEOUT = K8sEnvironment.PORT_FORWARD.PROCESS_CLEANUP_TIMEOUT_SECONDS
@@ -379,6 +381,7 @@ async def _wait_for_api_ready(
     local_port: int,
     proc: asyncio.subprocess.Process,
     check_interval: float | None = None,
+    initial_delay: float | None = None,
 ) -> None:
     """Wait for the API service to respond to HTTP requests.
 
@@ -386,6 +389,7 @@ async def _wait_for_api_ready(
         local_port: Local port to check
         proc: The port-forward process to monitor
         check_interval: Seconds between checks
+        initial_delay: Seconds to wait before the first probe
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
@@ -394,10 +398,15 @@ async def _wait_for_api_ready(
         if check_interval is None
         else check_interval
     )
+    initial_delay = (
+        K8sEnvironment.PORT_FORWARD.API_INITIAL_DELAY_SECONDS
+        if initial_delay is None
+        else initial_delay
+    )
     url = f"http://127.0.0.1:{local_port}/health"
 
     # Give kubectl a moment to establish the tunnel
-    await asyncio.sleep(_API_INITIAL_DELAY)
+    await asyncio.sleep(initial_delay)
 
     connector = create_tcp_connector()
     async with aiohttp.ClientSession(

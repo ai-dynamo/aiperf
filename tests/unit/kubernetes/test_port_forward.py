@@ -147,6 +147,69 @@ async def test_wait_for_api_ready_uses_configured_probe_interval(
     assert sleep.await_args_list == [call(0.5), call(1.75)]
 
 
+async def test_wait_for_api_ready_reads_initial_delay_at_call_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The initial delay must follow the setting, not an import-time snapshot."""
+    monkeypatch.setattr(K8sEnvironment.PORT_FORWARD, "API_INITIAL_DELAY_SECONDS", 3.25)
+    proc = _make_mock_process()
+    ready = AsyncMock()
+    ready.status = 200
+    ready.__aenter__ = AsyncMock(return_value=ready)
+    ready.__aexit__ = AsyncMock(return_value=None)
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=[ready])
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    sleep = AsyncMock()
+
+    with (
+        patch("aiperf.kubernetes.port_forward.asyncio.sleep", sleep),
+        patch(
+            "aiperf.kubernetes.port_forward.aiohttp.ClientSession",
+            return_value=session,
+        ),
+        patch(
+            "aiperf.transports.aiohttp_client.create_tcp_connector",
+            return_value=MagicMock(),
+        ),
+    ):
+        await _wait_for_api_ready(9090, proc)
+
+    assert sleep.await_args_list == [call(3.25)]
+
+
+async def test_wait_for_api_ready_explicit_initial_delay_overrides_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(K8sEnvironment.PORT_FORWARD, "API_INITIAL_DELAY_SECONDS", 3.25)
+    proc = _make_mock_process()
+    ready = AsyncMock()
+    ready.status = 200
+    ready.__aenter__ = AsyncMock(return_value=ready)
+    ready.__aexit__ = AsyncMock(return_value=None)
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=[ready])
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    sleep = AsyncMock()
+
+    with (
+        patch("aiperf.kubernetes.port_forward.asyncio.sleep", sleep),
+        patch(
+            "aiperf.kubernetes.port_forward.aiohttp.ClientSession",
+            return_value=session,
+        ),
+        patch(
+            "aiperf.transports.aiohttp_client.create_tcp_connector",
+            return_value=MagicMock(),
+        ),
+    ):
+        await _wait_for_api_ready(9090, proc, initial_delay=0.0)
+
+    assert sleep.await_args_list == [call(0.0)]
+
+
 # ============================================================
 # _wait_for_port_forward_ready
 # ============================================================

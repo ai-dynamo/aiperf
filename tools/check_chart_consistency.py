@@ -18,8 +18,9 @@ What this script asserts:
 3. ``aiperf.kubernetes.results_operator.RESULTS_SERVER_PORT`` default
    matches ``Values.resultsServer.port`` — round-5 CLI port-forward
    target needs to match what the chart binds.
-4. ``DEFAULT_OPERATOR_NAMESPACE`` constant matches the chart README's
-   install-command default.
+4. ``DEFAULT_OPERATOR_NAMESPACE`` constant matches the namespace every
+   ``helm install``/``helm upgrade`` command in the chart README's fenced
+   code blocks targets.
 
 Runs as a unit-scope check: pure import of the settings classes + a YAML
 parse of ``values.yaml``. Designed to be called from pre-commit and CI.
@@ -33,12 +34,61 @@ from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VALUES_YAML = REPO_ROOT / "deploy" / "helm" / "aiperf-operator" / "values.yaml"
+CHART_README = REPO_ROOT / "deploy" / "helm" / "aiperf-operator" / "README.md"
+
+_FENCE_RE = re.compile(r"^\s*```")
+_INSTALL_RE = re.compile(r"\bhelm\s+(install|upgrade)\b")
+_NAMESPACE_RE = re.compile(r"(?:--namespace|-n)[=\s]+(\S+)")
+
+
+def _fenced_shell_commands(markdown: str) -> list[str]:
+    """Return each command inside a fenced code block, backslash-continuations joined.
+
+    Scoping to fences (rather than substring-matching the whole file) is the
+    point: prose or a values table that merely names the namespace must not
+    satisfy a check that claims to validate the install *command*.
+    """
+    commands: list[str] = []
+    in_fence = False
+    buffer = ""
+    for line in markdown.splitlines():
+        if _FENCE_RE.match(line):
+            if in_fence and buffer:
+                commands.append(buffer)
+                buffer = ""
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            continue
+        stripped = line.strip()
+        buffer = f"{buffer} {stripped}" if buffer else stripped
+        if buffer.endswith("\\"):
+            buffer = buffer[:-1].strip()
+        else:
+            if buffer:
+                commands.append(buffer)
+            buffer = ""
+    if buffer:
+        commands.append(buffer)
+    return commands
+
+
+def chart_readme_install_namespaces(markdown: str) -> list[str]:
+    """Namespaces targeted by every ``helm install/upgrade`` of the chart in the README."""
+    namespaces: list[str] = []
+    for command in _fenced_shell_commands(markdown):
+        if not _INSTALL_RE.search(command) or "aiperf-operator" not in command:
+            continue
+        match = _NAMESPACE_RE.search(command)
+        namespaces.append(match.group(1) if match else "")
+    return namespaces
 
 
 def _load_values() -> dict:
@@ -137,16 +187,29 @@ def main() -> int:
     # 4. DEFAULT_OPERATOR_NAMESPACE matches chart README install-command default
     from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 
-    chart_readme = (
-        REPO_ROOT / "deploy" / "helm" / "aiperf-operator" / "README.md"
-    ).read_text(encoding="utf-8")
-    if f"--namespace {DEFAULT_OPERATOR_NAMESPACE}" not in chart_readme:
+    install_namespaces = chart_readme_install_namespaces(
+        CHART_README.read_text(encoding="utf-8")
+    )
+    if not install_namespaces:
         errs.append(
-            f"DRIFT: DEFAULT_OPERATOR_NAMESPACE={DEFAULT_OPERATOR_NAMESPACE!r} "
-            f"is not used in deploy/helm/aiperf-operator/README.md install command. "
-            f"Either the constant is wrong, or the README's `--namespace <ns>` "
-            f"in the install command needs to follow the constant."
+            "DRIFT: deploy/helm/aiperf-operator/README.md has no fenced "
+            "`helm install`/`helm upgrade` command for the chart, so the "
+            "namespace default cannot be validated. Restore the install example."
         )
+    else:
+        wrong = sorted(
+            {ns for ns in install_namespaces if ns != DEFAULT_OPERATOR_NAMESPACE}
+        )
+        if wrong:
+            rendered = ", ".join(
+                repr(ns) if ns else "<no --namespace flag>" for ns in wrong
+            )
+            errs.append(
+                f"DRIFT: DEFAULT_OPERATOR_NAMESPACE={DEFAULT_OPERATOR_NAMESPACE!r} "
+                f"but deploy/helm/aiperf-operator/README.md install command(s) target: "
+                f"{rendered}. Either the constant is wrong, or the README's "
+                f"`--namespace <ns>` in the install command needs to follow the constant."
+            )
 
     if errs:
         print(

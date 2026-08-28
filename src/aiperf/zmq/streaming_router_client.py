@@ -68,7 +68,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
     Example:
     ```python
-        from aiperf.common.structs import (
+        from aiperf.credit.messages import (
             Credit, WorkerDispatchable, WorkerShutdown, CreditReturn
         )
 
@@ -84,8 +84,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     await register_worker(identity)
                 case WorkerShutdown():
                     await unregister_worker(identity)
-                case CreditReturn(credit_id=id, cancelled=c, error=e):
-                    await handle_credit_return(identity, id, c, e)
+                case CreditReturn(credit=credit, cancelled=c, error=e):
+                    await handle_credit_return(identity, credit, c, e)
 
         router.register_receiver(handle_message)
 
