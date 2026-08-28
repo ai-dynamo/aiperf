@@ -30,7 +30,7 @@ use super::{
         HandledIssueCut, PreparedIssueReceiptResultPartition, StreamingIssueDisposition,
         StreamingIssueReporter, classify_checkpoint_attempt_failure,
     },
-    results::{PreparedResultEpoch, ResultPartition},
+    results::ResultPartition,
 };
 
 /// Ordinary and detailed-receipt result inputs prepared for one barrier.
@@ -45,7 +45,6 @@ use super::{
 /// let _partitions = value.partitions;
 /// # }
 /// ```
-#[derive(Debug)]
 pub struct PreparedCheckpointResultInput {
     partitions: Vec<ResultPartition>,
     issue_receipts: Option<PreparedIssueReceiptResultPartition>,
