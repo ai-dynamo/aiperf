@@ -252,19 +252,20 @@ impl ShadowReplaySelection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::protocol::{PhaseCommonSpec, PhaseRoleSpec};
 
-    fn phase(name: &str, kind: Option<PhaseRoleSpec>) -> PhaseSpec {
-        PhaseSpec::Concurrency {
-            common: PhaseCommonSpec {
-                name: name.to_owned(),
-                kind,
-                exclude_from_results: false,
-                requests: Some(1),
-                ..PhaseCommonSpec::default()
-            },
-            concurrency: 1,
+    /// Build one phase through serde so the wire defaults are the ones tested.
+    fn phase(name: &str, kind: Option<&str>) -> PhaseSpec {
+        let mut authored = serde_json::json!({
+            "type": "concurrency",
+            "name": name,
+            "exclude_from_results": false,
+            "requests": 1,
+            "concurrency": 1,
+        });
+        if let Some(kind) = kind {
+            authored["kind"] = serde_json::Value::String(kind.to_owned());
         }
+        serde_json::from_value(authored).expect("valid authored phase")
     }
 
     fn digest(byte: u8) -> ContentDigest {
@@ -276,7 +277,7 @@ mod tests {
         assert!(ensure_single_profiling_phase(&[phase("profiling", None)]).is_ok());
         assert!(
             ensure_single_profiling_phase(&[
-                phase("warmup", Some(PhaseRoleSpec::Warmup)),
+                phase("warmup", Some("warmup")),
                 phase("profiling", None),
             ])
             .is_err()
