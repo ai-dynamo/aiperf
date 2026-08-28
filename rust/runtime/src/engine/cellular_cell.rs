@@ -1439,10 +1439,8 @@ impl CellRecordsShipper {
         exact_records: &[u8],
         folded_metrics: crate::cellular::FoldedProjection<serde_json::Value>,
         folded_summary: crate::cellular::FoldedProjection<serde_json::Value>,
-    ) -> std::result::Result<
-        Vec<crate::cellular::CellMessage>,
-        crate::cellular::CaptureTransferError,
-    > {
+    ) -> std::result::Result<Vec<crate::cellular::CellMessage>, crate::cellular::CaptureTransferError>
+    {
         use crate::cellular::{
             CellCaptureBundleV1, CellMessage, DEFAULT_CAPTURE_CHUNK_BYTES, chunk_exact_records,
         };

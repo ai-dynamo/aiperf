@@ -980,7 +980,9 @@ impl VeloCellClient {
         label: &'static str,
     ) -> Result<(), CellTransportError> {
         let credential = self.credential.as_ref().ok_or_else(|| {
-            CellTransportError::Io(format!("{label} shipping requires an authenticated credential"))
+            CellTransportError::Io(format!(
+                "{label} shipping requires an authenticated credential"
+            ))
         })?;
         if credential.cell_id() != frame_cell_id {
             return Err(CellTransportError::Io(format!(
@@ -999,9 +1001,7 @@ impl VeloCellClient {
             .map_err(io)?;
         let ack: CellAck = rmp_serde::from_slice(&reply).map_err(decode)?;
         if !ack.ok {
-            return Err(CellTransportError::Io(format!(
-                "controller nacked {label}"
-            )));
+            return Err(CellTransportError::Io(format!("controller nacked {label}")));
         }
         Ok(())
     }

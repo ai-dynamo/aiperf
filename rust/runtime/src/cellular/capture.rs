@@ -262,7 +262,10 @@ impl fmt::Display for CaptureTransferError {
                 "cell {cell_id} sent chunk {chunk_index} more than once"
             ),
             Self::DuplicateBundle { cell_id } => {
-                write!(formatter, "cell {cell_id} sent more than one capture bundle")
+                write!(
+                    formatter,
+                    "cell {cell_id} sent more than one capture bundle"
+                )
             }
             Self::DigestMismatch {
                 cell_id,
@@ -425,10 +428,7 @@ impl CaptureAssembler {
     }
 
     /// Validate and retain one exact-records chunk.
-    pub fn accept_chunk(
-        &mut self,
-        chunk: ExactRecordsChunkV1,
-    ) -> Result<(), CaptureTransferError> {
+    pub fn accept_chunk(&mut self, chunk: ExactRecordsChunkV1) -> Result<(), CaptureTransferError> {
         let cell_id = chunk.cell_id;
         let chunk_index = chunk.chunk_index;
         let state = self
@@ -541,12 +541,14 @@ impl CaptureAssembler {
             }
             let mut assembled = Vec::with_capacity(bundle.exact_byte_length as usize);
             for chunk_index in 0..total {
-                let chunk = state.chunks.get(&chunk_index).ok_or(
-                    CaptureTransferError::MissingChunk {
-                        cell_id,
-                        chunk_index,
-                    },
-                )?;
+                let chunk =
+                    state
+                        .chunks
+                        .get(&chunk_index)
+                        .ok_or(CaptureTransferError::MissingChunk {
+                            cell_id,
+                            chunk_index,
+                        })?;
                 let expected_offset = assembled.len() as u64;
                 if chunk.byte_offset != expected_offset {
                     return Err(CaptureTransferError::OffsetMismatch {
