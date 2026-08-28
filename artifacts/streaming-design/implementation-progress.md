@@ -40,6 +40,7 @@ SPDX-License-Identifier: Apache-2.0
 | Task 1D-R reliability ledger | Complete | Branch `ajc/streaming-task-1dr-ledger` at `6afd10587b`; two fix waves addressed all ten findings (B1-B5 code-quality + SC1-SC4 spec-compliance); dual APPROVE verdicts; merge `6afd10587b` into integration; 87 lib + 15 reliability + 22 contracts + 29 checkpoint_backend tests green |
 | Task 1D-R versioned checkpoint authority | Complete | Branch `ajc/streaming-task-1dr-checkpoint` at `9d2006242c`; rebased onto post-ledger integration; dual APPROVE; 91 lib + 39 checkpoint_backend + 22 contracts + 15 participants green; merged |
 | Task 7A — boundary UTC/monotonic clock anchor | Complete | Branch `ajc/streaming-task-7a` at `2d68918e43`; merge `16031101a1`; adds `UtcMonotonicAnchor`, `ClockAnchorError`, and `Clock::capture_utc_anchor` to `aiperf-core` with the `RealClock` bracketed implementation; `cargo test -p aiperf-core` green at 49 + 6 + 8 lib/integration tests plus 1 doctest; agent-file and docs sync tools exit 0 |
+| Task 5C — crash-durable local checkpoint backend | Complete | Branch `ajc/native-rust-runtime-plugins`; `LocalCheckpointFilesystem` seam + `BlockingLocalFilesystem` production impl; `LocalCheckpointBackend`; 9 local checkpoint tests + 39 checkpoint_backend + 15 participants + 12 blocking + 22 contracts green |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
