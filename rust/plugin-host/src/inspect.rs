@@ -244,16 +244,14 @@ fn inspect_mach(
                 }
             }
             match found_idx {
-                Some(idx) => {
-                    match fat.get(idx) {
-                        Ok(goblin::mach::SingleArch::MachO(m)) => m,
-                        _ => {
-                            return Err(StaticInspectionError::UnsupportedFormat(
-                                "fat Mach-O slice is not a MachO binary".to_string(),
-                            ));
-                        }
+                Some(idx) => match fat.get(idx) {
+                    Ok(goblin::mach::SingleArch::MachO(m)) => m,
+                    _ => {
+                        return Err(StaticInspectionError::UnsupportedFormat(
+                            "fat Mach-O slice is not a MachO binary".to_string(),
+                        ));
                     }
-                }
+                },
                 None => {
                     return Err(StaticInspectionError::ArchMismatch {
                         declared: target.to_string(),
