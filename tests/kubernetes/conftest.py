@@ -977,7 +977,9 @@ async def _purge_dead_session_operator_namespaces(
         return
     prefix = f"aiperf-jobs-{worker_namespace_suffix}-"
     now = time.time()
-    stale_ttl_seconds = 7200  # 2 hours
+    stale_ttl_seconds = (
+        1800  # 30 minutes — recent sessions are unlikely to still be running
+    )
     for line in result.stdout.strip().splitlines():
         parts = line.strip().split("\t", 1)
         if len(parts) != 2:
@@ -1042,7 +1044,9 @@ async def _purge_dead_session_benchmark_namespaces(
         return
     prefix = f"aiperf-bench-{worker_namespace_suffix}-"
     now = time.time()
-    stale_ttl_seconds = 7200  # 2 hours
+    stale_ttl_seconds = (
+        1800  # 30 minutes — recent sessions are unlikely to still be running
+    )
     for line in result.stdout.strip().splitlines():
         parts = line.strip().split("\t", 1)
         if len(parts) != 2:
@@ -1635,6 +1639,45 @@ def operator_job_namespace(worker_namespace_suffix: str, _session_uuid: str) -> 
     purge each other's live jobs via _purge_stale_aiperf_resources.
     """
     return f"aiperf-jobs-{worker_namespace_suffix}-{_session_uuid}"
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
+async def _cleanup_session_namespaces(
+    kubectl: KubectlClient,
+    k8s_settings: K8sTestSettings,
+    benchmark_namespace: str,
+    operator_job_namespace: str,
+) -> AsyncGenerator[None, None]:
+    """Delete per-session namespaces at teardown to prevent cluster accumulation.
+
+    Each test session creates UUID-suffixed namespaces (aiperf-bench-gw0-{uuid} and
+    aiperf-jobs-gw0-{uuid}).  Without this fixture, reused-cluster runs accumulate
+    many orphaned namespaces that backlog the GC controller and destabilize the
+    jobset-controller's leader election heartbeat.
+    """
+    yield
+
+    if not k8s_settings.reuse_cluster:
+        return  # Cluster will be deleted anyway
+
+    for ns in (benchmark_namespace, operator_job_namespace):
+        await kubectl.run(
+            "delete",
+            "aiperfjobs,aiperfsweeps,jobsets",
+            "--all",
+            "-n",
+            ns,
+            "--ignore-not-found",
+            check=False,
+        )
+        await kubectl.run(
+            "delete",
+            "namespace",
+            ns,
+            "--ignore-not-found",
+            "--wait=false",
+            check=False,
+        )
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
