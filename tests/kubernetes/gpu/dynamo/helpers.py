@@ -28,6 +28,10 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from dev.versions import DYNAMO_VERSION
 from tests.kubernetes.helpers.kubectl import KubectlClient, background_status
 from tests.kubernetes.helpers.log_streamer import PodLogStreamer
+from tests.kubernetes.helpers.pod_watchdog import (
+    detect_fatal_image_conditions,
+    detect_fatal_pod_conditions,
+)
 
 logger = AIPerfLogger(__name__)
 
@@ -791,21 +795,17 @@ class DynamoDeployer:
         Returns:
             A diagnostic string, or None if no unrecoverable condition was seen.
         """
-        events = await self.kubectl.get_events(self.config.namespace, limit=40)
-        if 'no runtime for "nvidia" is configured' not in events:
-            return None
-
         pods = await self.kubectl.get_pods(self.config.namespace)
-        names = sorted(p.name for p in pods)
-        return (
-            f"Dynamo pods {names} were scheduled onto node(s) that do "
-            f"not provide the 'nvidia' RuntimeClass, so pod sandbox creation fails "
-            f"permanently. The disagg-1gpu preset requests no nvidia.com/gpu "
-            f"resource (prefill and decode share one GPU), so nothing pins these "
-            f"pods to a GPU node. On a multi-pool cluster, pin them explicitly with "
-            f"--gpu-dynamo-node-selector, e.g. "
-            f'\'{{"nvidia.com/gpu.present": "true"}}\'.'
-        )
+        events = await self.kubectl.get_events(self.config.namespace, limit=40)
+        message = detect_fatal_pod_conditions(events, pods, self.config.namespace)
+        if message and 'no runtime for "nvidia" is configured' in events:
+            message += (
+                " For Dynamo specifically, the disagg-1gpu preset requests no "
+                "nvidia.com/gpu resource (prefill and decode share one GPU), so "
+                "nothing pins these pods to a GPU node: pass "
+                "--gpu-dynamo-node-selector."
+            )
+        return message
 
     async def wait_for_ready(
         self,
@@ -822,8 +822,9 @@ class DynamoDeployer:
 
         Raises:
             TimeoutError: If Dynamo doesn't become ready within timeout.
-            RuntimeError: If a pod hits an unrecoverable placement failure, such
-                as landing on a node without the ``nvidia`` runtime. Waiting out
+            RuntimeError: If a pod hits an unrecoverable condition, such as a
+                missing Secret, an unpullable image, or landing on a node
+                without the ``nvidia`` runtime. Waiting out
                 the full timeout in that case only reports a misleading
                 ``TimeoutError`` for a pod that was never going to start.
         """
@@ -867,7 +868,14 @@ class DynamoDeployer:
 
                 # Give the sandbox a couple of polls to settle before judging it
                 # fatal; transient FailedCreatePodSandBox is normal at startup.
+                # Missing Secrets and unpullable images never self-heal, so those
+                # are reported on the first not-ready poll.
                 if dynamo_pods and not any(p.is_ready for p in dynamo_pods):
+                    image_fatal = detect_fatal_image_conditions(
+                        dynamo_pods, self.config.namespace
+                    )
+                    if image_fatal:
+                        raise RuntimeError(image_fatal)
                     fatal_checks += 1
                     if fatal_checks >= 3:
                         fatal = await self._detect_fatal_placement_failure()

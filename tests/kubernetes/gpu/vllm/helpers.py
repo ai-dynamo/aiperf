@@ -14,6 +14,9 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.helpers.benchmark import BenchmarkDeployer
 from tests.kubernetes.helpers.kubectl import KubectlClient, background_status
 from tests.kubernetes.helpers.log_streamer import PodLogStreamer
+from tests.kubernetes.helpers.pod_watchdog import (
+    check_fatal_pod_conditions,
+)
 
 logger = AIPerfLogger(__name__)
 
@@ -243,10 +246,15 @@ class VLLMDeployer:
 
         Raises:
             TimeoutError: If vLLM doesn't become ready within timeout.
+            RuntimeError: If a pod hits an unrecoverable condition (missing
+                Secret, unpullable image, or a placement failure). Waiting out
+                the full timeout there only reports a misleading TimeoutError
+                for a pod that was never going to start.
         """
         logger.info(f"Waiting for vLLM server readiness (timeout={timeout}s)")
         start = time.perf_counter()
         deadline = start + timeout
+        fatal_checks = 0
 
         async with (
             PodLogStreamer(
@@ -279,6 +287,12 @@ class VLLMDeployer:
 
                 pods = await self.kubectl.get_pods(self.config.namespace)
                 vllm_pods = [p for p in pods if "vllm-server" in p.name]
+
+                fatal, fatal_checks = await check_fatal_pod_conditions(
+                    self.kubectl, self.config.namespace, vllm_pods, fatal_checks
+                )
+                if fatal:
+                    raise RuntimeError(fatal)
 
                 if vllm_pods and all(p.is_ready for p in vllm_pods):
                     logger.info(f"[VLLM] Server is ready (took {elapsed:.1f}s)")

@@ -13,6 +13,7 @@ import yaml
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.helpers.kubectl import KubectlClient, background_status
 from tests.kubernetes.helpers.log_streamer import PodLogStreamer
+from tests.kubernetes.helpers.pod_watchdog import check_fatal_pod_conditions
 
 logger = AIPerfLogger(__name__)
 
@@ -216,10 +217,15 @@ class SGLangDeployer:
 
         Raises:
             TimeoutError: If SGLang doesn't become ready within timeout.
+            RuntimeError: If a pod hits an unrecoverable condition (missing
+                Secret, unpullable image, or a placement failure). Waiting out
+                the full timeout there only reports a misleading TimeoutError
+                for a pod that was never going to start.
         """
         logger.info(f"Waiting for SGLang server readiness (timeout={timeout}s)")
         start = time.perf_counter()
         deadline = start + timeout
+        fatal_checks = 0
 
         async with (
             PodLogStreamer(
@@ -252,6 +258,12 @@ class SGLangDeployer:
 
                 pods = await self.kubectl.get_pods(self.config.namespace)
                 sglang_pods = [p for p in pods if "sglang-server" in p.name]
+
+                fatal, fatal_checks = await check_fatal_pod_conditions(
+                    self.kubectl, self.config.namespace, sglang_pods, fatal_checks
+                )
+                if fatal:
+                    raise RuntimeError(fatal)
 
                 if sglang_pods and all(p.is_ready for p in sglang_pods):
                     logger.info(f"[SGLANG] Server is ready (took {elapsed:.1f}s)")
