@@ -14,18 +14,16 @@
 //! deallocation cross the host/plugin boundary safely: memory allocated in the
 //! host can be freed in a plugin and vice versa.
 //!
-//! ## Option initialization
+//! ## Option helpers
 //!
-//! `src/options.c` installs a priority-100 process constructor (GCC/Clang;
-//! before mimalloc's own priority-101 constructor) that sets
-//! `mi_option_arena_eager_commit = 0`, preventing mimalloc from committing
-//! physical pages for the full initial arena on first allocation.  Consumers
-//! do not need to perform any option initialization themselves.
+//! `src/options.c` exports `mi_aiperf_option_purge_delay()`, which returns the
+//! `mi_option_purge_delay` index resolved against the exact mimalloc header
+//! version linked into this provider.  The CLI execute-mode uses this index
+//! together with the exported `mi_option_set` to disable purge syscalls for
+//! short-lived benchmark runs.
 //!
-//! `mi_aiperf_option_purge_delay()` is exported for the CLI execute-mode,
-//! which sets `mi_option_purge_delay = -1` to skip purge syscalls during
-//! short-lived benchmark runs.  `mi_option_set` is exported for the same
-//! purpose.
+//! Set `MIMALLOC_ARENA_EAGER_COMMIT=0` in the environment to disable eager
+//! arena commit without a pre-constructor hook.
 //!
 //! See [`aiperf_allocator_shim`] for the `GlobalAlloc` implementation.
 

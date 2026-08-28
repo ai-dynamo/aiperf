@@ -8,9 +8,9 @@
 use aiperf_cli::{dispatch, execute_mode};
 
 // The shared allocator provider (libaiperf_alloc_v1.so) is loaded as a
-// mandatory non-delay dependency before any Rust code runs.  Its priority-100
-// ELF constructor sets mimalloc options before mimalloc's own priority-101
-// constructor; no per-binary preinit hook is needed.
+// mandatory non-delay dependency before any Rust code runs.  Set
+// MIMALLOC_ARENA_EAGER_COMMIT=0 in the environment to suppress eager arena
+// commit; no per-binary preinit hook is needed.
 #[global_allocator]
 static GLOBAL: aiperf_allocator_shim::MiMallocShim = aiperf_allocator_shim::MiMallocShim;
 
