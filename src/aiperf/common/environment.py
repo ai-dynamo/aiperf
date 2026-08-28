@@ -381,7 +381,12 @@ class _DatasetSettings(BaseSettings):
         description="Directory holding the content-addressed mmap cache. If None, defaults to "
         "~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains "
         "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
-        "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
+        "No automatic eviction is implemented yet -- delete the directory to reclaim disk. "
+        "Setting AIPERF_VERSION no longer busts the cache: the build-identity component of "
+        "the key is now taken from the installed package's commit sha (falling back to its "
+        "version), not from the environment. To force a re-tokenize, set "
+        "AIPERF_DATASET_MMAP_CACHE_ENABLED=false, point this variable at a fresh directory, "
+        "or delete the cache directory.",
     )
     MMAP_PREFAULT: bool = Field(
         default=True,
@@ -408,15 +413,27 @@ class _DatasetSettings(BaseSettings):
     )
     DOWNLOAD_MAX_RETRIES: int = Field(
         ge=0,
-        le=20,
-        default=3,
-        description="Maximum number of retries for dataset download in Kubernetes worker pods",
+        le=1000,
+        default=20,
+        description="Maximum number of retries for dataset download in Kubernetes worker "
+        "pods. Worker pods start downloading before the controller pod's api container "
+        "has finished booting, so the default is generous enough to ride out that "
+        "startup window. Set to 0 to fail on the first attempt.",
     )
     DOWNLOAD_RETRY_DELAY: float = Field(
         ge=0.1,
         le=60.0,
         default=2.0,
-        description="Initial delay in seconds between dataset download retries (doubles each retry)",
+        description="Initial delay in seconds between dataset download retries (doubles "
+        "each retry, capped by DOWNLOAD_MAX_BACKOFF_SECONDS)",
+    )
+    DOWNLOAD_MAX_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=300.0,
+        default=8.0,
+        description="Maximum seconds between dataset download retries. Without this cap "
+        "the exponential backoff would grow unboundedly and a late retry would sleep far "
+        "past the run's own startup deadline.",
     )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
@@ -645,6 +662,16 @@ class _DatasetSettings(BaseSettings):
         "worker-group tagging (parallel workers keep the generic ::fa: tag). Only "
         "applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
     )
+
+    @model_validator(mode="after")
+    def validate_download_backoff_order(self) -> Self:
+        """Keep exponential retry backoff from starting above its configured cap."""
+        if self.DOWNLOAD_RETRY_DELAY > self.DOWNLOAD_MAX_BACKOFF_SECONDS:
+            raise ValueError(
+                "AIPERF_DATASET_DOWNLOAD_RETRY_DELAY must be less than or equal to "
+                "AIPERF_DATASET_DOWNLOAD_MAX_BACKOFF_SECONDS"
+            )
+        return self
 
 
 class _EndpointSettings(BaseSettings):

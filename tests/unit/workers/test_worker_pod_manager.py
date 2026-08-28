@@ -589,13 +589,13 @@ class TestDatasetHandling:
         assert index_path.stat().st_size == 256
 
     @pytest.mark.asyncio
-    async def test_download_dataset_uses_controller_startup_retry_budget(
+    async def test_download_dataset_default_budget_rides_out_controller_startup(
         self, worker_group_manager: WorkerGroupManager, tmp_path: Path, monkeypatch
     ) -> None:
+        """The default retry budget survives a slow controller api container."""
         manager = worker_group_manager
         manager.run.cfg.runtime.dataset_api_base_url = "http://controller/api/dataset"
         monkeypatch.setattr(Environment.DATASET, "MMAP_BASE_PATH", tmp_path)
-        monkeypatch.setattr(Environment.DATASET, "DOWNLOAD_MAX_RETRIES", 3)
         failures = {"count": 0}
 
         async def download_file(_session, url: str, dest_path: Path) -> None:

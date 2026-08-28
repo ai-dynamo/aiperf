@@ -90,7 +90,13 @@ async def download_tokenizer(
                         logger=logger,
                     )
                     if compressed is None:
-                        # Bundle not ready yet (503) — back off and retry.
+                        # Bundle not ready yet (503) — back off and retry. Record
+                        # it as the last error so an exhausted retry budget spent
+                        # entirely on 503s reports that, not "None".
+                        last_exc = RuntimeError(
+                            f"bundle not ready (HTTP 503 from {url}) "
+                            f"on attempt {attempt}/{max_retries}"
+                        )
                         await asyncio.sleep(
                             min(
                                 backoff,

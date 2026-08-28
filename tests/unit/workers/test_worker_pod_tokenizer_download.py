@@ -323,3 +323,26 @@ def test_extract_fallback_extracts_safe_members(
 
     assert (dest / "tokenizer.json").read_bytes() == b'{"v":1}'
     assert (dest / "nested" / "vocab.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_download_tokenizer_persistent_503_reports_status_not_none(
+    tmp_path: Path,
+) -> None:
+    """Exhausting the budget on 503s must name the 503, not report ``None``."""
+    async with _stub_server() as (base_url, state):
+        state["bundle"] = _make_bundle({"tokenizer.json": b"{}"})
+        state["fail_first_n"] = 1000
+        with pytest.raises(RuntimeError) as excinfo:
+            await download_tokenizer(
+                api_base_url=base_url,
+                name="gpt2",
+                dest_root=tmp_path,
+                max_retries=3,
+                logger=logging.getLogger("test"),
+            )
+
+    message = str(excinfo.value)
+    assert "after 3 attempts" in message
+    assert "HTTP 503" in message
+    assert "None" not in message

@@ -81,8 +81,9 @@ async def download_dataset(
     index_path = local_dir / "index.dat"
     logger.info(f"Saving dataset to {local_dir}")
 
-    max_retries = max(20, Environment.DATASET.DOWNLOAD_MAX_RETRIES)
-    retry_delay = Environment.DATASET.DOWNLOAD_RETRY_DELAY
+    max_retries = Environment.DATASET.DOWNLOAD_MAX_RETRIES
+    backoff = Environment.DATASET.DOWNLOAD_RETRY_DELAY
+    max_backoff = Environment.DATASET.DOWNLOAD_MAX_BACKOFF_SECONDS
     last_error: Exception | None = None
 
     # Allow callers (e.g. the WorkerGroupManager) to inject a bound
@@ -111,12 +112,13 @@ async def download_dataset(
         except (aiohttp.ClientError, RuntimeError) as e:
             last_error = e
             if attempt < max_retries:
-                delay = retry_delay * (2**attempt)
+                delay = min(backoff, max_backoff)
                 logger.warning(
                     f"Dataset download attempt {attempt + 1}/{max_retries + 1} failed: {e!r}. "
                     f"Retrying in {delay:.1f}s..."
                 )
                 await asyncio.sleep(delay)
+                backoff = min(backoff * 2, max_backoff)
 
     raise RuntimeError(
         f"Dataset download failed after {max_retries + 1} attempts"
