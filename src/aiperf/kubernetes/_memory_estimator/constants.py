@@ -124,8 +124,10 @@ _REQUEST_RECORD_BASE_BYTES = 3600
 # server emits: 418.7 B/chunk slope with a ~0 B intercept. A minimal
 # ``{"c":"<n>"}`` envelope measures 286 B/chunk, so the per-chunk cost is
 # dominated by the provider's chunk envelope rather than by the token.
+# Re-measured 2026-08-28: 426 B/chunk on Python 3.11 (minor dict/list overhead
+# growth between minor versions). Bumped to 432 to stay conservative.
 _SSE_MESSAGE_BASE_BYTES = 136  # SSEMessage + list overhead; measured intercept ~0
-_SSE_BYTES_PER_CHUNK = 420  # SSEMessage + packets list + SSEField + JSON string
+_SSE_BYTES_PER_CHUNK = 432  # SSEMessage + packets list + SSEField + JSON string
 
 # Non-streaming: a single ``TextResponse`` dataclass holding the full JSON body.
 # Measured 2026-08-24: 86 B empty, 4.00 B/token of body. The base is left at

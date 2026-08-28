@@ -617,8 +617,9 @@ class TestCheckResourceQuotas:
     async def test_memory_quota_overcommit_fails(self) -> None:
         checker = _make_checker()
         quota = MagicMock()
+        quota.spec = MagicMock()
+        quota.spec.hard = {"requests.memory": "256Mi"}
         quota.status = MagicMock()
-        quota.status.hard = {"requests.memory": "256Mi"}
         quota.status.used = {"requests.memory": "0"}
         mock_core = MagicMock(
             list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))

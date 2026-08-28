@@ -6,10 +6,20 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 UI_DIR = Path(__file__).resolve().parents[3] / "src" / "aiperf" / "operator" / "ui"
+
+# Skip the entire module on runners that don't have Node.js installed.
+_NODE_AVAILABLE = shutil.which("node") is not None
+requires_node = pytest.mark.skipif(
+    not _NODE_AVAILABLE,
+    reason="node not found on PATH; install Node.js to run UI tests",
+)
 
 
 def local_module_js(relpath: str) -> str:
