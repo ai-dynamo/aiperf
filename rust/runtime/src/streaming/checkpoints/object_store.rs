@@ -37,7 +37,8 @@ use crate::streaming::{
     budget::{BudgetLease, BudgetLimits},
     checkpoint::{
         BudgetedCheckpointBytes, CheckpointBackendBudgetFailureCode, CheckpointBackendBudgetKind,
-        CheckpointError, CheckpointGeneration, CommittedCheckpointGeneration,
+        CheckpointEpoch, CheckpointError, CheckpointGeneration, CheckpointGenerationCandidate,
+        CommittedCheckpointGeneration,
         CommittedParticipantState, CurrentV4ParticipantStateContext, DecodedCheckpointGeneration,
         LegacyParticipantState, LegacyV3CheckpointGeneration, ParticipantStateDescriptor,
         PreparedParticipantState, PrevalidatedCheckpointGenerationCandidate, StreamRunIdentity,
@@ -525,6 +526,101 @@ impl ObjectCheckpointBackend {
             generation_byte_length,
         };
         self.write_pointer(&run, None, document).await.map(|_| ())
+    }
+
+    /// Seed one verified current head at a chosen epoch for boundary tests.
+    #[doc(hidden)]
+    pub async fn seed_nonempty_committed_generation_at_epoch(
+        &self,
+        run: StreamRunIdentity,
+        epoch: CheckpointEpoch,
+        expected: &CheckpointGenerationExpectations,
+        participants: Vec<PreparedParticipantState>,
+    ) -> Result<CommittedCheckpointGeneration, CheckpointError> {
+        if run != expected.run || participants.is_empty() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        if participants
+            .iter()
+            .any(|participant| participant.run() != &run)
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let mut participant_descriptors = participants
+            .iter()
+            .map(|participant| participant.descriptor().clone())
+            .collect::<Vec<_>>();
+        participant_descriptors
+            .sort_unstable_by(|left, right| left.participant_id.cmp(&right.participant_id));
+        if participant_descriptors
+            .iter()
+            .map(|descriptor| &descriptor.participant_id)
+            .ne(expected.participant_plan.ids().iter())
+        {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        let cut = participant_descriptors[0].represented_cut.clone();
+        if participant_descriptors
+            .iter()
+            .any(|descriptor| descriptor.represented_cut != cut)
+        {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        let (result_index_root, result_index_bytes) =
+            canonical_result_index_object(std::iter::empty::<&ResultSegmentDescriptor>())?;
+        let prevalidated = CheckpointGenerationCandidate::new(
+            run,
+            epoch,
+            None,
+            cut,
+            &expected.participant_plan,
+            expected.execution_plan_digest,
+            expected.result_plan_digest,
+            participant_descriptors,
+            result_index_root,
+            false,
+            None,
+        )?
+        .prevalidate_for_publication(
+            &run,
+            &expected.participant_plan,
+            &expected.execution_plan_digest,
+            &expected.result_plan_digest,
+        )?;
+        let generation_bytes = prevalidated.encode_for_storage()?;
+        let generation_digest = *prevalidated.generation().digest();
+        let generation_length =
+            u64::try_from(generation_bytes.len()).map_err(|_| provider_error("object length"))?;
+        for participant in participants {
+            let (_, descriptor, payload) = participant.into_parts();
+            self.upload_object(
+                descriptor.content_digest,
+                Bytes::copy_from_slice(payload.as_bytes()),
+            )
+            .await?;
+        }
+        self.upload_object(
+            result_index_root,
+            Bytes::from(result_index_bytes.into_boxed_slice()),
+        )
+        .await?;
+        let generation_version = self
+            .upload_object(generation_digest, generation_bytes)
+            .await?;
+        self.write_pointer(
+            &run,
+            None,
+            CheckpointPointerDocument {
+                run,
+                storage_version: PointerStorageVersion::CurrentV4,
+                generation: prevalidated.generation().clone(),
+                generation_object: immutable_object_key(&self.prefix, &generation_digest),
+                generation_version,
+                generation_byte_length: generation_length,
+            },
+        )
+        .await?;
+        Ok(prevalidated.into_committed_after_publication_fence())
     }
 
     async fn open_latest_inner(
