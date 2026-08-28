@@ -15,7 +15,6 @@ use std::path::Path;
 use crate::dispatch::sink::{
     ObservedSpecDecodeAcceptance, TransportFallbackReason, TransportRoute,
 };
-use crate::export::otel::{OtelRecordAccumulator, classify_spec_error_type};
 use crate::metrics_core::{
     CATALOG, MetricFlags, MetricType, MetricsAccumulator, MetricsConfig, Phase, RecordIngest,
     ReportError,
@@ -1170,28 +1169,6 @@ fn native_error_value(record: &RecordIngest) -> Option<Value> {
             },
         })
     })
-}
-
-/// Feed one record's `record_metrics` projection into the per-record OTLP
-/// histogram accumulator. The record's terminal error, if any, is classified into
-/// the spec
-/// `error.type` attribute; successful records contribute no `error.type` and
-/// only successful records carry the semconv-mapped metrics, so errored requests
-/// never reach a mapped histogram.
-pub fn observe_otel_record(
-    accumulator: &mut OtelRecordAccumulator,
-    captured: &CapturedRecord,
-    config: &MetricsConfig,
-) {
-    let projected = record_metrics(captured, config);
-    let lookup: BTreeMap<&str, (f64, &str)> = projected
-        .iter()
-        .map(|(name, metric)| (name.as_str(), (metric.value, metric.unit.as_str())))
-        .collect();
-    let error_type = classify_record_error(captured).map(|classified| {
-        classify_spec_error_type(classified.code, classified.error_type, &classified.message)
-    });
-    accumulator.observe_record(&lookup, error_type.as_deref());
 }
 
 fn record_metrics(

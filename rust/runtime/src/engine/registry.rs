@@ -556,6 +556,10 @@ pub struct PreparedRunOutcome {
     /// Optional acknowledgement invoked only after the authoritative native
     /// report write and atomic rename succeed.
     pub report_commit: Option<Box<dyn PreparedReportCommit>>,
+    /// Optional streaming authority that records an ordinary report-persistence
+    /// failure as a durable pending retry instead of failing the execution.
+    #[cfg(feature = "streaming")]
+    pub report_retry: Option<Box<dyn crate::streaming::results::ReportRetryAuthority>>,
 }
 
 /// One completely prepared operation.
@@ -1692,9 +1696,7 @@ impl AIPerfRegistry {
 
         let reliability_policy =
             crate::engine::streaming_policy::prepare_streaming_policy(&spec.reliability)
-                .map_err(|error| {
-                    anyhow!("run.resources.dataset_streams.reliability: {error:?}")
-                })?;
+                .map_err(|error| anyhow!("run.resources.dataset_streams.reliability: {error:?}"))?;
 
         self.check_endpoint_retry_safety(spec)?;
 
@@ -1867,7 +1869,13 @@ impl AIPerfExtension for HttpExtension {
         // distribution that has the HTTP path.
         crate::engine::dry_run::register_dry_run_transport(registry).map_err(extension_rejected)?;
         crate::engine::online_execution::register_online_workloads(registry)
-            .map_err(extension_rejected)
+            .map_err(extension_rejected)?;
+        // The streaming shadow-replay workload registers here rather than from
+        // a bare module declaration, which reaches no registry.
+        #[cfg(feature = "streaming")]
+        crate::engine::streaming_execution::register_streaming_workloads(registry)
+            .map_err(extension_rejected)?;
+        Ok(())
     }
 }
 
@@ -2834,6 +2842,20 @@ mod tests {
     use super::*;
     use crate::extensions::AIPerfRegistryFactory;
 
+    /// Built-in workload ids in registration order.
+    ///
+    /// `shadow_replay` is present exactly when the `streaming` feature compiles
+    /// its workload in, so the inventory assertions track the compiled set
+    /// rather than a hard-coded list that silently drifts per feature build.
+    fn expected_builtin_workloads() -> Vec<&'static str> {
+        let mut ids = vec!["graph", "scheduled"];
+        if cfg!(feature = "streaming") {
+            ids.push("shadow_replay");
+        }
+        ids.sort_unstable();
+        ids
+    }
+
     static TRANSPORT: TransportDescriptor = TransportDescriptor {
         id: "acme_remote",
         description: "fixture remote placement",
@@ -2967,6 +2989,8 @@ mod tests {
                     format!("{}-{}", self.node, self.message),
                 )]),
                 report_commit: None,
+                #[cfg(feature = "streaming")]
+                report_retry: None,
             })
         }
     }
@@ -3356,7 +3380,7 @@ mod tests {
         // pair/cross-product inventory. Any registered workload runs over any
         // registered transport (grpc + graph included), with transport-specific
         // execution resolved inside the workload's prepare.
-        let expected_workloads = vec!["graph", "scheduled"];
+        let expected_workloads = expected_builtin_workloads();
         assert_eq!(
             registry
                 .workload_descriptors()
@@ -3452,7 +3476,7 @@ mod tests {
                 .into_iter()
                 .map(|descriptor| descriptor.id)
                 .collect::<Vec<_>>(),
-            vec!["graph", "scheduled"]
+            expected_builtin_workloads()
         );
 
         // The stock build registers only built-in extensions, whose names are

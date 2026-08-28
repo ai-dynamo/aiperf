@@ -373,7 +373,9 @@ impl StreamingCheckpointCoordinator {
             transaction.stage_participant(view).await?;
         }
         let (partitions, issue_receipts) = results.stage_inputs();
-        let prepared = transaction.stage_results(partitions, issue_receipts).await?;
+        let prepared = transaction
+            .stage_results(partitions, issue_receipts)
+            .await?;
 
         // The staged index root is only knowable now, so this is the earliest
         // point the ledger can bind it, and it must precede CAS.
@@ -468,13 +470,13 @@ impl StreamingCheckpointCoordinator {
     ) -> Result<CheckpointCommitMetadata, CheckpointError> {
         let epoch = match self.expected.as_ref() {
             None => CheckpointEpoch::new(1),
-            Some(previous) => CheckpointEpoch::new(
-                previous.epoch().get().checked_add(1).ok_or_else(|| {
+            Some(previous) => {
+                CheckpointEpoch::new(previous.epoch().get().checked_add(1).ok_or_else(|| {
                     CheckpointError::GenerationEpochOverflow {
                         previous: previous.clone(),
                     }
-                })?,
-            ),
+                })?)
+            }
         };
         if barrier.epoch != epoch {
             return Err(CheckpointError::GenerationConflict {
@@ -542,7 +544,8 @@ impl StreamingCheckpointCoordinator {
             if receipt.run() != &self.run {
                 return Err(CheckpointError::ObjectVerification);
             }
-            self.notify_one(&descriptor.participant_id, &receipt).await?;
+            self.notify_one(&descriptor.participant_id, &receipt)
+                .await?;
         }
         Ok(())
     }

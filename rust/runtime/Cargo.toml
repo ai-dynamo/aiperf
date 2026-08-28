@@ -270,6 +270,11 @@ path = "tests/streaming_action_binding.rs"
 required-features = ["streaming"]
 
 [[test]]
+name = "streaming_shadow_operation"
+path = "tests/streaming_shadow_operation.rs"
+required-features = ["streaming"]
+
+[[test]]
 name = "streaming_feature_inventory"
 path = "tests/streaming_feature_inventory.rs"
 required-features = ["streaming"]
@@ -293,6 +298,11 @@ required-features = ["streaming"]
 name = "streaming_checkpoint_factories"
 path = "tests/streaming_checkpoint_factories.rs"
 required-features = ["streaming"]
+
+[[test]]
+name = "streaming_object_checkpoint"
+path = "tests/streaming_object_checkpoint.rs"
+required-features = ["streaming-s3"]
 
 [[test]]
 name = "streaming_s3_source"
@@ -328,3 +338,8 @@ required-features = ["streaming"]
 name = "streaming_agent_graph_sessions"
 path = "tests/streaming_agent_graph_sessions.rs"
 required-features = ["streaming"]
+
+[[test]]
+name = "factory_validation_receipt"
+path = "tests/factory_validation_receipt.rs"
+required-features = ["engine"]

@@ -16,7 +16,10 @@ pub use delivery::{
     OutstandingAction, OutstandingActionState, TargetIdempotencyCapability,
     deliver_restart_decision,
 };
-pub use sink_status::SinkFinalizationFailureCode;
+pub use sink_status::{
+    DurableReportRetryAuthority, ReportRetryAuthority, ResultSinkState, SinkFailureReason,
+    SinkFinalizationFailureCode,
+};
 
 use std::{
     fmt,

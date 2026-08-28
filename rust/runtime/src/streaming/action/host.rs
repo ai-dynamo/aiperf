@@ -15,8 +15,10 @@
 
 use std::collections::BTreeMap;
 
+mod inventory;
 mod multiplexed;
 
+pub use inventory::ActionInventoryLedger;
 pub use multiplexed::{
     ActionEventBatch, ActiveExecution, ActiveExecutionSet, BudgetOwnedActionTerminalReceipt,
     StreamingActionBindingSet, StreamingActionHost, action_kind, canonical_action_schema,

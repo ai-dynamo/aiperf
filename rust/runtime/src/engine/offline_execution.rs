@@ -1388,6 +1388,8 @@ impl PreparedRunnerOperation for PreparedDynosimScheduledOperation {
             report_facts,
             run_metadata: report_metadata,
             report_commit: None,
+            #[cfg(feature = "streaming")]
+            report_retry: None,
         })
     }
 }
@@ -1774,6 +1776,8 @@ impl PreparedRunnerOperation for PreparedDynosimGraphOperation {
             report_facts,
             run_metadata: report_metadata,
             report_commit: None,
+            #[cfg(feature = "streaming")]
+            report_retry: None,
         })
     }
 }

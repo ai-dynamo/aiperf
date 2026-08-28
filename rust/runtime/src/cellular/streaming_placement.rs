@@ -152,20 +152,122 @@ pub struct SessionRoute {
     pub ownership_epoch: SessionOwnershipEpoch,
 }
 
+/// Ownership state of one session's route during and outside migration.
+///
+/// The variant carries the *committed* owner in `old` for both migration
+/// variants. That is the whole crash-safety argument in one type: a decoded
+/// route set can only ever name one authoritative owner, and it is the owner
+/// the last committed generation named.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SessionRouteState {
+    /// Steady state: one committed owner.
+    Owned(SessionRoute),
+    /// Sequence frozen at `through`; the old owner accepts no new prepares and
+    /// is draining or cancelling everything at or below the freeze point.
+    Fencing {
+        /// The committed owner being fenced.
+        old: SessionRoute,
+        /// Freeze point. Actions at or below it belong to `old`.
+        through: GlobalSequence,
+    },
+    /// Content is staged on `new` but unreleased; `old` is still the committed
+    /// authority until the route generation commits.
+    Prepared {
+        /// The still-authoritative committed owner.
+        old: SessionRoute,
+        /// The staged, not-yet-authoritative destination.
+        new: SessionRoute,
+        /// Freeze point.
+        through: GlobalSequence,
+    },
+}
+
+impl SessionRouteState {
+    /// The owner that may currently issue. Always `old` until commit.
+    #[must_use]
+    pub const fn authoritative(&self) -> &SessionRoute {
+        match self {
+            Self::Owned(route) => route,
+            Self::Fencing { old, .. } | Self::Prepared { old, .. } => old,
+        }
+    }
+
+    /// Whether a prepare for `sequence` may still be submitted.
+    ///
+    /// Post-freeze actions are staged on `new` (`Prepared`) or held at the
+    /// controller (`Fencing`); neither admits a prepare to `old`.
+    #[must_use]
+    pub const fn admits_prepare(&self, sequence: GlobalSequence) -> bool {
+        match self {
+            Self::Owned(_) => true,
+            Self::Fencing { through, .. } | Self::Prepared { through, .. } => {
+                sequence.get() <= through.get()
+            }
+        }
+    }
+
+    /// The freeze point, when a migration is in flight.
+    #[must_use]
+    pub const fn fence_through(&self) -> Option<GlobalSequence> {
+        match self {
+            Self::Owned(_) => None,
+            Self::Fencing { through, .. } | Self::Prepared { through, .. } => Some(*through),
+        }
+    }
+
+    /// Whether this session is mid-migration and must not be retired.
+    #[must_use]
+    pub const fn is_migrating(&self) -> bool {
+        !matches!(self, Self::Owned(_))
+    }
+}
+
 /// One installed route holding the capacity it was admitted under.
 ///
 /// The lease is the only owner of the route's charge, so removing the entry is
 /// what returns capacity — there is no separate release path to forget.
 #[derive(Debug)]
 pub struct BudgetOwnedSessionRoute {
-    /// The destination this session is pinned to.
-    pub route: SessionRoute,
+    /// Committed and in-flight ownership.
+    pub state: SessionRouteState,
     /// Non-cloneable lease released when the route retires.
     pub lease: BudgetLease,
+    /// Capacity for the staged destination while `Prepared`.
+    ///
+    /// Kept as a *separate* lease so the transient double route charge is
+    /// visible to [`CellularRouteAdmission`]'s waiters rather than hidden. It is
+    /// promoted into `lease` on commit and dropped on abort, and it is never
+    /// restored from a checkpoint.
+    pub migration_lease: Option<BudgetLease>,
     /// Greatest global sequence this policy has placed on the route.
     ///
     /// Retirement waits until the session's causal frontier covers this, so a
     /// route is never reused while an earlier action is still in flight.
+    pub highest_sequence: GlobalSequence,
+}
+
+impl BudgetOwnedSessionRoute {
+    /// The committed owner of this route.
+    #[must_use]
+    pub const fn route(&self) -> &SessionRoute {
+        self.state.authoritative()
+    }
+}
+
+/// One session's checkpointed route entry.
+///
+/// Leases are never serialized: capacity is proven again at restore against the
+/// live budget, so a checkpoint can never resurrect a charge that the restarted
+/// process cannot actually afford.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointedSessionRoute {
+    /// Session the entry routes.
+    pub session: StableSessionKey,
+    /// Committed and in-flight ownership at the barrier cut.
+    pub state: SessionRouteState,
+    /// Greatest global sequence placed on the route at the barrier cut.
     pub highest_sequence: GlobalSequence,
 }
 
@@ -314,16 +416,54 @@ impl StickySessionPlacement {
         CellularRouteAdmission::new(self.route_budget.clone())
     }
 
+    /// A cheap clone of the accounting handle route charges are proven against.
+    ///
+    /// A restore path needs the budget *without* borrowing the policy, so it can
+    /// prove every charge first and install the rebuilt map in one synchronous
+    /// step rather than holding a borrow across an acquisition.
+    #[must_use]
+    pub fn route_budget(&self) -> StreamingResourceBudget {
+        self.route_budget.clone()
+    }
+
     /// Number of currently installed routes.
     #[must_use]
     pub fn installed_route_count(&self) -> usize {
         self.routes.len()
     }
 
-    /// Borrow the route a session is pinned to, when one is installed.
+    /// Borrow the committed route a session is pinned to, when one is installed.
+    ///
+    /// Mid-migration this is still the *old* owner: staged content on the
+    /// destination is not authority until the route generation commits.
     #[must_use]
     pub fn route_for(&self, session: StableSessionKey) -> Option<SessionRoute> {
-        self.routes.get(&session).map(|owned| owned.route)
+        self.routes.get(&session).map(|owned| *owned.route())
+    }
+
+    /// Borrow the full ownership state, including any in-flight migration.
+    #[must_use]
+    pub fn route_state_for(&self, session: StableSessionKey) -> Option<SessionRouteState> {
+        self.routes.get(&session).map(|owned| owned.state)
+    }
+
+    /// Number of sessions with exactly one authoritative owner.
+    ///
+    /// Every installed entry has exactly one, by construction of
+    /// [`SessionRouteState::authoritative`]; the count exists so a restored set
+    /// can assert it rather than assume it.
+    #[must_use]
+    pub fn active_owner_count(&self) -> usize {
+        self.routes.len()
+    }
+
+    /// The number of transient migration charges currently held.
+    #[must_use]
+    pub fn migration_lease_count(&self) -> usize {
+        self.routes
+            .values()
+            .filter(|owned| owned.migration_lease.is_some())
+            .count()
     }
 
     /// The charge a session needs, or `None` when it already owns a route.
@@ -376,10 +516,17 @@ impl StickySessionPlacement {
                     PlacementFailureCode::RouteUnavailable,
                 ));
             }
+            // A post-freeze action belongs to neither owner yet: the controller
+            // holds it under an ordinary content lease until step 7 releases it.
+            if !owned.state.admits_prepare(sequence) {
+                return Err(PlacementError::placement(
+                    PlacementFailureCode::RouteUnavailable,
+                ));
+            }
             if sequence > owned.highest_sequence {
                 owned.highest_sequence = sequence;
             }
-            return Ok(Self::decision(owned.route));
+            return Ok(Self::decision(*owned.route()));
         }
         let Some(reservation) = self.pending_reservation.take() else {
             return Err(PlacementError::placement(
@@ -400,12 +547,220 @@ impl StickySessionPlacement {
         self.routes.insert(
             session,
             BudgetOwnedSessionRoute {
-                route,
+                state: SessionRouteState::Owned(route),
                 lease: reservation.lease,
+                migration_lease: None,
                 highest_sequence: sequence,
             },
         );
         Ok(Self::decision(route))
+    }
+
+    /// Freeze the session at `through` and stop admitting old-epoch prepares.
+    ///
+    /// Step 1 of the migration transaction. Nothing durable changes, so a crash
+    /// here restores the committed owner. A session that is already `Fencing` or
+    /// `Prepared` is refused: two concurrent migrations of one session would
+    /// each believe they own the fence, so the second fails closed.
+    pub fn begin_fence(
+        &mut self,
+        session: StableSessionKey,
+        through: GlobalSequence,
+    ) -> Result<(), PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        let SessionRouteState::Owned(old) = owned.state else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        owned.state = SessionRouteState::Fencing { old, through };
+        Ok(())
+    }
+
+    /// Stage a destination without granting it authority.
+    ///
+    /// Step 5. The returned route carries the *candidate* epoch; it becomes the
+    /// committed epoch only when [`StickySessionPlacement::commit_owner`] runs
+    /// after the route generation's CAS.
+    pub fn stage_destination(
+        &mut self,
+        session: StableSessionKey,
+        destination_cell: u32,
+        migration_lease: BudgetLease,
+    ) -> Result<SessionRoute, PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        let SessionRouteState::Fencing { old, through } = owned.state else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        let next_epoch = old
+            .ownership_epoch
+            .get()
+            .checked_add(1)
+            .ok_or_else(|| PlacementError::placement(PlacementFailureCode::TargetOverflow))?;
+        let new = SessionRoute {
+            route_id: destination_cell,
+            destination_cell,
+            ownership_epoch: SessionOwnershipEpoch::new(next_epoch),
+        };
+        owned.state = SessionRouteState::Prepared { old, new, through };
+        owned.migration_lease = Some(migration_lease);
+        Ok(new)
+    }
+
+    /// Adopt the staged owner in memory, immediately before the route
+    /// generation's CAS.
+    ///
+    /// Step 6a. The checkpoint view taken *by* that CAS must already name the
+    /// new owner, because the generation it publishes is exactly what a restart
+    /// will read back. Both leases are still held: the transient double charge
+    /// is not returned until the generation has committed and step 7 settles it.
+    ///
+    /// Returns `(old, new)` so a refused CAS can revert to precisely the owner
+    /// it replaced rather than to a re-derived one.
+    pub fn adopt_staged_owner(
+        &mut self,
+        session: StableSessionKey,
+    ) -> Result<(SessionRoute, SessionRoute), PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        let SessionRouteState::Prepared { old, new, .. } = owned.state else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        owned.state = SessionRouteState::Owned(new);
+        Ok((old, new))
+    }
+
+    /// Undo an adoption whose route generation did not commit.
+    ///
+    /// Nothing durable named `new`, so the committed owner is still `old`. The
+    /// migration lease is dropped here, which returns the transient charge.
+    pub fn revert_adoption(
+        &mut self,
+        session: StableSessionKey,
+        old: SessionRoute,
+    ) -> Result<(), PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        owned.state = SessionRouteState::Owned(old);
+        drop(owned.migration_lease.take());
+        Ok(())
+    }
+
+    /// Settle the transient double charge after the route generation committed.
+    ///
+    /// Step 7. The old lease is dropped and the migration lease promoted in its
+    /// place, so exactly one route charge is returned in the same operation that
+    /// completes the migration.
+    pub fn commit_owner(
+        &mut self,
+        session: StableSessionKey,
+    ) -> Result<SessionOwnershipEpoch, PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        let SessionRouteState::Owned(new) = owned.state else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        let Some(promoted) = owned.migration_lease.take() else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        // Assignment drops the old lease, returning exactly one route charge.
+        owned.lease = promoted;
+        Ok(new.ownership_epoch)
+    }
+
+    /// Revert an in-flight migration to its committed owner.
+    ///
+    /// Idempotent on an `Owned` session so an abort path can run unconditionally
+    /// without first re-reading the state it is about to discard.
+    pub fn abort_migration(&mut self, session: StableSessionKey) -> Result<(), PlacementError> {
+        let Some(owned) = self.routes.get_mut(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        owned.state = SessionRouteState::Owned(*owned.state.authoritative());
+        // Dropping the migration lease is what returns the transient charge and
+        // wakes a `reserve_route` parked on it.
+        drop(owned.migration_lease.take());
+        Ok(())
+    }
+
+    /// Refuse an event stamped with a fenced ownership epoch.
+    ///
+    /// Strictly-less is stale. Equal is current. Greater is impossible: only the
+    /// controller mints epochs, and only through a committed generation.
+    pub fn admit_event_epoch(
+        &self,
+        session: StableSessionKey,
+        epoch: SessionOwnershipEpoch,
+    ) -> Result<(), PlacementError> {
+        let Some(owned) = self.routes.get(&session) else {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        };
+        if epoch < owned.route().ownership_epoch {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::StaleOwnershipEpoch,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether a terminal receipt for `sequence` from the old cell is still
+    /// admissible after the epoch increased.
+    ///
+    /// Keyed on the fence, never on the epoch. A receipt at or below the freeze
+    /// point was committed at step 4 and is replayed idempotently; fencing it
+    /// out on epoch alone would silently drop committed terminal work and hang
+    /// the run on an unclosed active set.
+    #[must_use]
+    pub fn admits_fenced_terminal_receipt(
+        &self,
+        session: StableSessionKey,
+        sequence: GlobalSequence,
+    ) -> bool {
+        self.routes
+            .get(&session)
+            .is_some_and(|owned| sequence <= owned.highest_sequence)
+    }
+
+    /// The complete route set at one barrier cut, in stable key order.
+    #[must_use]
+    pub fn checkpoint_route_entries(&self) -> Vec<CheckpointedSessionRoute> {
+        self.routes
+            .iter()
+            .map(|(session, owned)| CheckpointedSessionRoute {
+                session: *session,
+                state: owned.state,
+                highest_sequence: owned.highest_sequence,
+            })
+            .collect()
     }
 
     /// Retire a route once its frontier covers everything placed on it.
@@ -423,7 +778,13 @@ impl StickySessionPlacement {
         let Some(owned) = self.routes.get(&session) else {
             return Ok(());
         };
-        if owned.route.ownership_epoch != ownership_epoch {
+        // Retiring mid-migration would drop the committed lease and let a
+        // waiting `reserve_route` install a route for a session that is about to
+        // gain a new owner. The terminal is accepted; the retirement is not.
+        if owned.state.is_migrating() {
+            return Ok(());
+        }
+        if owned.route().ownership_epoch != ownership_epoch {
             return Err(PlacementError::placement(
                 PlacementFailureCode::StaleOwnershipEpoch,
             ));
@@ -443,24 +804,63 @@ impl StickySessionPlacement {
         &mut self,
         restored: impl IntoIterator<Item = (StableSessionKey, SessionRoute, GlobalSequence)>,
     ) -> Result<(), PlacementError> {
-        let mut rebuilt = BTreeMap::new();
-        for (session, route, highest_sequence) in restored {
+        self.restore_route_states(restored.into_iter().map(|(session, route, highest)| {
+            CheckpointedSessionRoute {
+                session,
+                state: SessionRouteState::Owned(route),
+                highest_sequence: highest,
+            }
+        }))
+        .await
+    }
+
+    /// Reinstall a restored route set, collapsing every in-flight migration.
+    ///
+    /// A restored `Fencing` or `Prepared` means the process died before the
+    /// route generation's CAS, so the committed owner is `old` and the state
+    /// collapses to `Owned(old)`. The migration is simply not resumed; it may be
+    /// requested again. No migration lease is ever restored, so a crashed
+    /// migration cannot leak budget across a restart.
+    pub async fn restore_route_states(
+        &mut self,
+        restored: impl IntoIterator<Item = CheckpointedSessionRoute>,
+    ) -> Result<(), PlacementError> {
+        let mut charged = Vec::new();
+        for entry in restored {
             let lease = self
                 .route_budget
                 .acquire(1, ROUTE_ENTRY_BYTES)
                 .await
                 .map_err(map_budget_error)?;
-            rebuilt.insert(
-                session,
-                BudgetOwnedSessionRoute {
-                    route,
-                    lease,
-                    highest_sequence,
-                },
-            );
+            charged.push((entry, lease));
         }
-        self.routes = rebuilt;
+        self.install_restored_routes(charged);
         Ok(())
+    }
+
+    /// Publish an already-charged restored route set in one synchronous step.
+    ///
+    /// Split out from [`StickySessionPlacement::restore_route_states`] so a
+    /// caller holding the policy behind a shared cell can prove every charge
+    /// first and never hold that borrow across an acquisition.
+    pub fn install_restored_routes(
+        &mut self,
+        restored: Vec<(CheckpointedSessionRoute, BudgetLease)>,
+    ) {
+        self.routes = restored
+            .into_iter()
+            .map(|(entry, lease)| {
+                (
+                    entry.session,
+                    BudgetOwnedSessionRoute {
+                        state: SessionRouteState::Owned(*entry.state.authoritative()),
+                        lease,
+                        migration_lease: None,
+                        highest_sequence: entry.highest_sequence,
+                    },
+                )
+            })
+            .collect();
     }
 
     const fn decision(route: SessionRoute) -> SessionPlacementDecision {
@@ -582,10 +982,7 @@ impl ActiveExecutionSet {
     /// A byte-identical re-prepare is idempotent, because prepare frames are
     /// retransmitted on reconnect. A conflicting re-prepare for the same
     /// `(route_id, action_id)` is refused and leaves the existing entry intact.
-    pub fn accept_prepare(
-        &mut self,
-        fence: ReleaseFence,
-    ) -> Result<(), PlacementError> {
+    pub fn accept_prepare(&mut self, fence: ReleaseFence) -> Result<(), PlacementError> {
         let key = (fence.route_id, fence.action_id);
         if let Some(existing) = self.entries.get(&key) {
             if existing.plan_digest == fence.plan_digest
@@ -630,14 +1027,16 @@ impl ActiveExecutionSet {
                 PlacementFailureCode::DigestMismatch,
             ));
         }
-        if fence.ownership_epoch < entry.ownership_epoch {
+        if fence.ownership_epoch != entry.ownership_epoch {
+            // A cell holds no epoch counter of its own and never infers one, so
+            // both directions of inequality are the same refusal: the release
+            // names an owner this staged action was not prepared under. The
+            // entry stays staged so a corrected release can still arrive.
             return Err(PlacementError::placement(
                 PlacementFailureCode::StaleOwnershipEpoch,
             ));
         }
-        if entry.global_sequence != fence.global_sequence
-            || entry.ownership_epoch != fence.ownership_epoch
-        {
+        if entry.global_sequence != fence.global_sequence {
             return Err(PlacementError::placement(
                 PlacementFailureCode::RouteUnavailable,
             ));
@@ -669,8 +1068,31 @@ impl ActiveExecutionSet {
         Ok(())
     }
 
-    /// Lifecycle state of one tracked action.
-    #[must_use]
+    /// Discard one staged, never-issued action during a migration drain.
+    ///
+    /// The explicit cancel path for step 3: an action that has been granted
+    /// issue authority is *not* cancellable here, because the load it names may
+    /// already be on the wire. Such an entry must be drained to terminal
+    /// instead, which is why the refusal is distinguishable from "not staged".
+    pub fn cancel_staged(
+        &mut self,
+        route_id: u32,
+        action_id: StableActionId,
+    ) -> Result<bool, PlacementError> {
+        let key = (route_id, action_id);
+        let Some(entry) = self.entries.get(&key) else {
+            return Ok(false);
+        };
+        if entry.state != StagedState::Staged {
+            return Err(PlacementError::placement(
+                PlacementFailureCode::RouteUnavailable,
+            ));
+        }
+        self.entries.remove(&key);
+        Ok(true)
+    }
+
+    /// Lifecycle state of one tracked action.    #[must_use]
     pub fn state_of(&self, route_id: u32, action_id: StableActionId) -> Option<StagedState> {
         self.entries
             .get(&(route_id, action_id))
