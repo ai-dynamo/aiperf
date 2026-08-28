@@ -343,8 +343,6 @@ impl GraphSessionScope {
             None => {
                 self.orphan_edges.entry(to).or_default().push(from);
             }
-        } else {
-            self.orphan_edges.entry(to).or_default().push(from);
         }
         self.version = self.version.saturating_add(1);
         Ok(())
