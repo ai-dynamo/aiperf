@@ -29,6 +29,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
 from tests.kubernetes.conftest import (
@@ -42,7 +43,7 @@ from tests.kubernetes.helpers.helm import (
     HelmValues,
 )
 from tests.kubernetes.helpers.kubectl import KubectlClient
-from tests.kubernetes.helpers.operator import AIPerfJobConfig
+from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
 
@@ -51,6 +52,26 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
 # CRD-establish plus first-pull image load can eat the slack on cold
 # runs.
 _PER_TEST_TIMEOUT = 300
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="package", autouse=True)
+async def _restore_shared_operator_rbac(operator_ready: OperatorDeployer):  # noqa: ANN202
+    """Repair the shared operator's cluster RBAC after the helm scenarios.
+
+    ``HelmDeployer.install_chart`` unconditionally deletes the cluster-scoped
+    ``aiperf-operator`` ClusterRole and ClusterRoleBinding so the chart can own
+    those names. Those objects belong to the shared ``aiperf-system`` operator
+    that ``operator_ready`` hands to subsequent tests, and nothing in the helm
+    tests themselves puts them back.
+
+    Without this fix every test that runs after the helm module sees a 403
+    Forbidden from kopf on every reconcile attempt, which manifests as AIPerfJob
+    CRs with an empty ``.status.phase`` -- indistinguishable from a CR that was
+    never created.
+    """
+    yield
+    if not await operator_ready.is_operator_healthy():
+        await operator_ready.deploy_operator()
 
 
 def _unique_release_name(prefix: str) -> str:
