@@ -84,6 +84,7 @@ tempfile = "3"
 aiperf-runtime = { path = "../runtime", default-features = false, features = ["engine"] }
 aiperf-plugin-host = { path = "../plugin-host" }
 anyhow.workspace = true
+blake3.workspace = true
 thiserror.workspace = true
 clap = { version = "4", features = ["derive", "string"] }
 serde.workspace = true

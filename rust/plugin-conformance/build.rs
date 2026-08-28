@@ -37,6 +37,10 @@ fn main() {
         );
     }
 
+    // Inject the target triple for use in integration tests.
+    let target = env::var("TARGET").unwrap_or_default();
+    println!("cargo:rustc-env=AIPERF_BUILD_TARGET={target}");
+
     // Rerun if the provider Cargo.toml changes (new exports, version bump).
     println!(
         "cargo:rerun-if-changed={}",

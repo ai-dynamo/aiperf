@@ -10,7 +10,7 @@ fn make_catalog_entry(id: &str) -> PluginCatalogEntry {
         package_id: id.to_string(),
         version: "1.0.0".to_string(),
         status: "winner".to_string(),
-        manifest_digest: "abc123def456".to_string(),
+        manifest_digest: "ab".repeat(32),
     }
 }
 
@@ -41,13 +41,13 @@ fn report_omits_plugin_fields_when_none() {
 #[test]
 fn report_includes_plugin_fields_when_set() {
     let report = NativeReport::new(&AccumulatorSummary::new(), None).with_plugin_provenance(
-        "blake3:aabbccdd".to_string(),
+        "aa".repeat(32),
         vec![make_catalog_entry("acme/exporter")],
     );
     let json = serde_json::to_value(&report).unwrap();
     assert_eq!(
         json["plugin_lock_digest"],
-        serde_json::Value::String("blake3:aabbccdd".to_string())
+        serde_json::Value::String("aa".repeat(32))
     );
     let catalog = json["plugin_catalog"].as_array().unwrap();
     assert_eq!(catalog.len(), 1);
@@ -56,7 +56,7 @@ fn report_includes_plugin_fields_when_set() {
 
     // empty catalog is serialized as absent
     let report_empty = NativeReport::new(&AccumulatorSummary::new(), None)
-        .with_plugin_provenance("blake3:aabb".to_string(), vec![]);
+        .with_plugin_provenance("bb".repeat(32), vec![]);
     let json_empty = serde_json::to_value(&report_empty).unwrap();
     assert!(json_empty.get("plugin_lock_digest").is_some());
     assert!(
@@ -85,7 +85,7 @@ fn distribution_id_unchanged_when_plugin_lock_set() {
         .unwrap();
 
     let report_b = NativeReport::new(&AccumulatorSummary::new(), None)
-        .with_plugin_provenance("blake3:deadbeef".to_string(), vec![])
+        .with_plugin_provenance("cd".repeat(32), vec![])
         .finalize_run(run_metadata, ReportPairRunFacts::default())
         .unwrap();
 

@@ -15,9 +15,7 @@ use aiperf_runtime::cellular::capture::{
     CaptureAssembler, CaptureTransferError, CellCaptureBundleV1, FoldedProjection,
     chunk_exact_records,
 };
-use aiperf_runtime::export::capture::{
-    ExactRecordField, ExportCapturePlan, RetentionReason,
-};
+use aiperf_runtime::export::capture::{ExactRecordField, ExportCapturePlan, RetentionReason};
 
 /// Deterministic artifact payload large enough to need several chunks.
 fn artifact_bytes(len: usize) -> Vec<u8> {
@@ -25,7 +23,10 @@ fn artifact_bytes(len: usize) -> Vec<u8> {
 }
 
 /// The bundle a cell sends when it has shipped `total_chunks` exact chunks.
-fn bundle_for(cell_id: u32, chunks: &[aiperf_runtime::cellular::capture::ExactRecordsChunkV1]) -> CellCaptureBundleV1 {
+fn bundle_for(
+    cell_id: u32,
+    chunks: &[aiperf_runtime::cellular::capture::ExactRecordsChunkV1],
+) -> CellCaptureBundleV1 {
     CellCaptureBundleV1 {
         cell_id,
         exact_chunk_count: chunks.len() as u32,
@@ -74,7 +75,13 @@ fn capture_chunk_digest_mismatch_rejected() {
         .accept_chunk(corrupted)
         .expect_err("a corrupted chunk must be refused");
     assert!(
-        matches!(error, CaptureTransferError::DigestMismatch { cell_id: 0, chunk_index: 0 }),
+        matches!(
+            error,
+            CaptureTransferError::DigestMismatch {
+                cell_id: 0,
+                chunk_index: 0
+            }
+        ),
         "unexpected error: {error}"
     );
 }
@@ -137,7 +144,12 @@ fn capture_empty_when_not_requested() {
         0,
         "no capture requested means no bytes transferred"
     );
-    assert!(assembled.exact_records_for(0).expect("cell present").is_empty());
+    assert!(
+        assembled
+            .exact_records_for(0)
+            .expect("cell present")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -153,7 +165,13 @@ fn capture_duplicate_chunk_rejected() {
         .accept_chunk(chunks[0].clone())
         .expect_err("a replayed chunk index must be refused");
     assert!(
-        matches!(error, CaptureTransferError::DuplicateChunk { cell_id: 3, chunk_index: 0 }),
+        matches!(
+            error,
+            CaptureTransferError::DuplicateChunk {
+                cell_id: 3,
+                chunk_index: 0
+            }
+        ),
         "unexpected error: {error}"
     );
 }

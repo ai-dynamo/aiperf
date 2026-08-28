@@ -29,7 +29,7 @@ use crate::engine::cellular_bootstrap::CellularRole;
 const REGISTRATION_PROTOCOL_VERSION: u8 = 1;
 const TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-registration-v1\0";
 const AUTHENTICATED_FRAME_TRANSCRIPT_DOMAIN: &[u8] = b"aiperf-cellular-frame-v1\0";
-pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 14;
+pub(crate) const ADMISSION_PURPOSE_COUNT: usize = 16;
 const VELO_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
 pub(crate) const MAX_AUTHENTICATED_FRAME_BYTES: usize =
@@ -640,6 +640,10 @@ pub enum AdmissionPurpose {
     /// Reserved with its sequence and replay slot here; the partition body is
     /// authored by the streaming checkpoint-convergence work.
     StreamingResultPartition = 14,
+    /// Delivers one bounded exact-records capture chunk to the controller.
+    CaptureChunk = 15,
+    /// Delivers one cell's mandatory folded capture bundle to the controller.
+    CaptureBundle = 16,
 }
 
 impl AdmissionPurpose {
@@ -2116,7 +2120,7 @@ mod tests {
 
         #[test]
         fn streaming_purposes_extend_without_moving_existing_slots() {
-            assert_eq!(ADMISSION_PURPOSE_COUNT, 14);
+            assert_eq!(ADMISSION_PURPOSE_COUNT, 16);
             assert_eq!(AdmissionPurpose::StorePartition.index(), 5);
             assert_eq!(AdmissionPurpose::StreamingPlacementEvent.index(), 12);
             assert!(AdmissionPurpose::StreamingPlacementEvent.supports(CellularRole::Cell(0)));

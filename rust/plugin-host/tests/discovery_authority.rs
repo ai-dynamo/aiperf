@@ -159,3 +159,56 @@ fn a_missing_path_is_an_authority_failure_not_a_silent_pass() {
         "expected Io, got {err:?}"
     );
 }
+
+// Directory-level trust: the platform-neutral entry point discovery uses.
+
+#[test]
+fn trusted_root_owned_by_root_passes() {
+    // The process is not usually root, so exercise the root-owned branch against
+    // a directory that genuinely is root-owned on every Linux host.
+    let path = Path::new("/usr");
+    if !path.is_dir() {
+        return;
+    }
+    aiperf_plugin_host::platform::check_directory_trust(path)
+        .expect("/usr must be a trusted root-owned directory");
+}
+
+#[test]
+fn trusted_root_owned_by_self_passes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let plugins = dir.path().join("plugins");
+    fs::create_dir(&plugins).expect("create_dir");
+    fs::set_permissions(&plugins, fs::Permissions::from_mode(0o755)).expect("chmod");
+    aiperf_plugin_host::platform::check_directory_trust(&plugins)
+        .expect("a 0755 directory owned by the caller is trusted");
+}
+
+#[test]
+fn group_writable_directory_rejected() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let plugins = dir.path().join("plugins");
+    fs::create_dir(&plugins).expect("create_dir");
+    fs::set_permissions(&plugins, fs::Permissions::from_mode(0o775)).expect("chmod");
+    assert!(aiperf_plugin_host::platform::check_directory_trust(&plugins).is_err());
+}
+
+#[test]
+fn world_writable_directory_rejected() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let plugins = dir.path().join("plugins");
+    fs::create_dir(&plugins).expect("create_dir");
+    fs::set_permissions(&plugins, fs::Permissions::from_mode(0o777)).expect("chmod");
+    assert!(aiperf_plugin_host::platform::check_directory_trust(&plugins).is_err());
+}
+
+#[test]
+fn symlinked_directory_rejected() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let real = dir.path().join("real");
+    fs::create_dir(&real).expect("create_dir");
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    assert!(aiperf_plugin_host::platform::check_directory_trust(&link).is_err());
+}

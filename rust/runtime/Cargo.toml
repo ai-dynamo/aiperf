@@ -366,6 +366,11 @@ path = "tests/streaming_conversation_closure.rs"
 required-features = ["streaming"]
 
 [[test]]
+name = "streaming_delivery_modes"
+path = "tests/streaming_delivery_modes.rs"
+required-features = ["streaming"]
+
+[[test]]
 name = "streaming_delivery_restart"
 path = "tests/streaming_delivery_restart.rs"
 required-features = ["streaming"]

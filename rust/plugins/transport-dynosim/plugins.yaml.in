@@ -1,2 +1,29 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Dynosim transport candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+#
+# NOTE: The dynosim and dynosim_online transports are feature-gated behind
+# the `dynosim` Cargo feature. The candidate manifest is always present but
+# the artifact is only built with --features dynosim.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/transport-dynosim"
+    version: "{{VERSION}}"
+    category: transport
+    artifact: "libaiperf_plugin_transport_dynosim.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      Dynosim transport candidate: registers dynosim_offline and dynosim_online
+      socket-free DES-clock Dynamo replay transports with canonical IDs and
+      aliases. Requires --features dynosim. Static production Dynosim authority
+      remains until Task 39a.
+    capabilities:
+      - canonical_id: "dynosim_offline"
+        aliases: ["dynosim", "dynamo.offline"]
+      - canonical_id: "dynosim_online"
+        aliases: ["dynamo.online"]

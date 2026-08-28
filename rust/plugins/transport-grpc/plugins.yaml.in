@@ -1,2 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# gRPC transport candidate plugin manifest template.
+#
+# `{{VERSION}}` and `{{ARTIFACT_DIGEST}}` are substituted by the Task 37a
+# assembler before the manifest is locked.
+#
+# The candidate registers gRPC transport capability with canonical ID and
+# aliases. Static production gRPC transport registration remains unchanged
+# until Task 39a makes the transport ID exclusively dynamic.
+format_version: "1.0"
+
+packages:
+  - package_id: "nvidia/transport-grpc"
+    version: "{{VERSION}}"
+    category: transport
+    artifact: "libaiperf_plugin_transport_grpc.so"
+    artifact_digest: "{{ARTIFACT_DIGEST}}"
+    description: >
+      gRPC transport candidate: registers KServe OIP and NVIDIA Riva ASR/TTS/NLP
+      gRPC transport capabilities with canonical ID and effective aliases.
+      Static production gRPC transport authority remains until Task 39a.
+    capabilities:
+      - canonical_id: "grpc"
+        aliases: ["grpc.tonic", "grpc.kserve", "grpc.riva"]

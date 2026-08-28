@@ -15,7 +15,7 @@
 //! Exporter failures are logged after the authoritative report is committed and
 //! do not change run status. Network exporters must bound their shutdown latency.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -301,6 +301,24 @@ pub struct ExportConfig {
     pub parquet: ParquetExportConfig,
 }
 
+/// The structured result of running one exporter descriptor.
+///
+/// The runner produces exactly one of these per *enabled* descriptor, in emit
+/// order, so a caller can audit the whole plane without re-deriving which sinks
+/// were selected. A descriptor the policy disabled is not run and therefore has
+/// no outcome.
+#[derive(Debug, Clone)]
+pub struct ExporterOutcome {
+    /// The exporter's registry identifier (the value returned by [`Exporter::name`]).
+    pub descriptor_id: String,
+    /// Whether [`Exporter::export`] returned `Ok`.
+    pub success: bool,
+    /// The chained error detail when `success` is false, otherwise `None`.
+    pub error_message: Option<String>,
+    /// Free-form detail the exporter attached to this run.
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
 /// One output format or destination for the finalized native-v2 report.
 ///
 /// Object-safe (`&dyn Exporter`) so the [`ExporterRegistry`] is a heterogeneous
@@ -324,6 +342,17 @@ pub trait Exporter {
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()>;
+
+    /// Detail this sink wants recorded alongside its [`ExporterOutcome`].
+    ///
+    /// Called only when [`Exporter::export`] returns `Ok`; on failure the
+    /// outcome's metadata is always empty.
+    ///
+    /// Defaulted to empty: a sink opts in only when it has something a caller
+    /// can act on (an upload URL, a written path, a skipped-artifact count).
+    fn outcome_metadata(&self, _cfg: &ExportConfig) -> HashMap<String, serde_json::Value> {
+        HashMap::new()
+    }
 }
 
 /// Emit-order band for local-file writers, which run before uploaders so uploaded
@@ -461,31 +490,62 @@ impl ExporterRegistry {
     /// Best-effort: an exporter error is logged and does not abort the run (the
     /// native-v2 report is the committed authority). Returns the number of
     /// exporters that ran without error, for auditing and telemetry.
+    ///
+    /// Prefer [`Self::run_collect`] when the caller needs the per-descriptor
+    /// detail rather than just the success count.
     pub fn run(&self, report: &dyn ReportView, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
-        let mut succeeded = 0usize;
+        self.run_collect(report, artifact_dir, cfg)
+            .iter()
+            .filter(|outcome| outcome.success)
+            .count()
+    }
+
+    /// Run every enabled exporter in emit order and return one
+    /// [`ExporterOutcome`] per descriptor that ran.
+    ///
+    /// The order of the returned vector is exactly [`Self::iter`] order, so it is
+    /// deterministic across runs and independent of registration order. A
+    /// failing exporter is recorded and the runner continues to the next one; the
+    /// committed native-v2 report is never revisited, whatever the outcomes say.
+    pub fn run_collect(
+        &self,
+        report: &dyn ReportView,
+        artifact_dir: &Path,
+        cfg: &ExportConfig,
+    ) -> Vec<ExporterOutcome> {
+        let mut outcomes = Vec::new();
         for exporter in self.iter() {
             if !exporter.enabled(cfg) {
                 continue;
             }
-            match exporter.export(report, artifact_dir, cfg) {
+            let descriptor_id = exporter.name().to_string();
+            let outcome = match exporter.export(report, artifact_dir, cfg) {
                 Ok(()) => {
-                    succeeded += 1;
                     // Export completion is visible at the normal log level.
-                    tracing::info!(
-                        exporter = exporter.name(),
-                        "Exported {} data",
-                        exporter.name()
-                    );
+                    tracing::info!(exporter = exporter.name(), "exporter complete");
+                    ExporterOutcome {
+                        descriptor_id,
+                        success: true,
+                        error_message: None,
+                        metadata: exporter.outcome_metadata(cfg),
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(
                         exporter = exporter.name(),
                         "exporter failed (native-v2 report is unaffected): {error:#}"
                     );
+                    ExporterOutcome {
+                        descriptor_id,
+                        success: false,
+                        error_message: Some(format!("{error:#}")),
+                        metadata: HashMap::new(),
+                    }
                 }
-            }
+            };
+            outcomes.push(outcome);
         }
-        succeeded
+        outcomes
     }
 }
 
