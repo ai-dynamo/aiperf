@@ -2842,6 +2842,9 @@ mod tests {
                          {phase} {signal:?}"
                     );
                 }
+                CellMessage::CaptureChunk(_) | CellMessage::CaptureBundle(_) => {
+                    panic!("this test ships no capture frames");
+                }
             }
         }
         assert_eq!((heartbeats, partitions), (1, 1));
