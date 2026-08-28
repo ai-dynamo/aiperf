@@ -59,12 +59,10 @@ pub fn validate_manifest(manifest: &PluginManifest) -> Result<(), ManifestError>
         return Err(ManifestError::EmptyField("plugin.name"));
     }
     // Validate plugin.version as a canonical SemVer version.
-    semver::Version::parse(&manifest.plugin.version).map_err(|e| {
-        ManifestError::InvalidSemver {
-            field: "plugin.version",
-            value: manifest.plugin.version.clone(),
-            reason: e.to_string(),
-        }
+    semver::Version::parse(&manifest.plugin.version).map_err(|e| ManifestError::InvalidSemver {
+        field: "plugin.version",
+        value: manifest.plugin.version.clone(),
+        reason: e.to_string(),
     })?;
     if manifest.requires.aiperf_sdk.is_empty() {
         return Err(ManifestError::EmptyField("requires.aiperf_sdk"));

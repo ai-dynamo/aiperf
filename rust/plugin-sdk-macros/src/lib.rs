@@ -5,7 +5,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{ItemFn, parse_macro_input};
 
 /// Marks the plugin's initialization function and generates the required
 /// `aiperf_plugin_entry_v1` native entry symbol.

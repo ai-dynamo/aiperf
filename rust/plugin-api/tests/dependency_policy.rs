@@ -1019,8 +1019,8 @@ fn candidate_inventory_policy() {
                 if task6_new.contains(source_path) {
                     // Task-6 new files have no pinned base-commit object; validate
                     // the digest against the current worktree file instead.
-                    let content = std::fs::read(source_root.join(source_path))
-                        .unwrap_or_else(|error| {
+                    let content =
+                        std::fs::read(source_root.join(source_path)).unwrap_or_else(|error| {
                             panic!("task6_new source missing from worktree: {source_path}: {error}")
                         });
                     assert_eq!(blake3::hash(&content).to_hex().as_str(), digest);
@@ -1043,9 +1043,7 @@ fn candidate_inventory_policy() {
                     let bytes = Command::new("git")
                         .args([
                             "show",
-                            &format!(
-                                "057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}"
-                            ),
+                            &format!("057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}"),
                         ])
                         .current_dir(repository_root)
                         .output()
