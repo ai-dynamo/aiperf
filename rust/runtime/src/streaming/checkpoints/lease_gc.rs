@@ -157,8 +157,16 @@ impl ValidatedRetentionPolicy {
             retain_final_until_exported: true,
             retain_source_cache_through_resume_root: false,
             orphan_grace_ns: 0,
-            prepare_lease_ns: if prepare_lease_ns > 0 { prepare_lease_ns } else { 1 },
-            reader_lease_ns: if reader_lease_ns > 0 { reader_lease_ns } else { 1 },
+            prepare_lease_ns: if prepare_lease_ns > 0 {
+                prepare_lease_ns
+            } else {
+                1
+            },
+            reader_lease_ns: if reader_lease_ns > 0 {
+                reader_lease_ns
+            } else {
+                1
+            },
         }
     }
 
@@ -500,6 +508,9 @@ mod tests {
         assert!(ledger.condemn(digest, 100, 100));
 
         ledger.absolve(&digest);
-        assert!(!ledger.condemn(digest, 200, 100), "absolution restarts grace");
+        assert!(
+            !ledger.condemn(digest, 200, 100),
+            "absolution restarts grace"
+        );
     }
 }

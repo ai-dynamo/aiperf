@@ -312,7 +312,8 @@ fn overwrite_in_place_blocking(path: &Path, bytes: Vec<u8>) -> std::io::Result<(
     file.flush()
 }
 
-fn read_optional_blocking(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {    let mut file = match open_no_follow(path) {
+fn read_optional_blocking(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+    let mut file = match open_no_follow(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -1747,7 +1748,11 @@ impl LocalCheckpointBackend {
 
     /// Read and strictly decode one lease record, tolerating an absent file.
     async fn read_lease_record(&self, path: &Path) -> Result<Option<LeaseRecord>, CheckpointError> {
-        let Some(bytes) = self.fs().read_optional(path, MAX_LEASE_RECORD_BYTES).await? else {
+        let Some(bytes) = self
+            .fs()
+            .read_optional(path, MAX_LEASE_RECORD_BYTES)
+            .await?
+        else {
             return Ok(None);
         };
         serde_json::from_slice(&bytes)
@@ -1776,9 +1781,10 @@ impl LocalCheckpointBackend {
         };
         let paths = self.paths(&run);
         let holder = self.next_holder();
-        let path = paths
-            .leases_dir()
-            .join(generation_lease_file_name(prefix, pinned, &holder.to_hex()));
+        let path =
+            paths
+                .leases_dir()
+                .join(generation_lease_file_name(prefix, pinned, &holder.to_hex()));
         let lease_ns = self.retention_for(&run).reader_lease_ns();
         let expires_ns = self
             .inner
@@ -2079,7 +2085,12 @@ impl LocalCheckpointBackend {
             .len()
             .checked_mul(std::mem::size_of::<ContentDigest>())
             .ok_or(CheckpointError::ObjectVerification)?;
-        let lease = self.inner.budgets.reads.acquire(marked.len(), bytes).await?;
+        let lease = self
+            .inner
+            .budgets
+            .reads
+            .acquire(marked.len(), bytes)
+            .await?;
         Ok(ObjectMarkSet::new(marked, lease))
     }
 
@@ -2323,9 +2334,9 @@ impl LocalCheckpointBackend {
         )?;
         // The reachability lease is taken before the reader becomes observable,
         // so a collection cycle that starts afterwards always sees the pin.
-        let reachability =
-            self.acquire_generation_lease(*run, LeaseKind::Reader, &head)
-                .await?;
+        let reachability = self
+            .acquire_generation_lease(*run, LeaseKind::Reader, &head)
+            .await?;
         let opened = match decoded {
             DecodedCheckpointGeneration::CurrentV4(candidate) => {
                 if candidate.generation() != head {

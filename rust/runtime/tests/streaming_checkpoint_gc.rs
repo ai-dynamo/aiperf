@@ -135,9 +135,7 @@ async fn commit_generation(
                 .await
                 .expect("open head")
                 .expect("existing head");
-            Some(
-                support::current_v4_predecessor(&opened, previous).expect("verified predecessor"),
-            )
+            Some(support::current_v4_predecessor(&opened, previous).expect("verified predecessor"))
         }
     };
     let mut transaction = store
@@ -330,9 +328,9 @@ async fn crashed_lease_holder_releases_its_objects_only_after_the_grace() {
     );
     assert!(report.condemned_objects > 0);
 
-    store.clock.advance_to(
-        i64::try_from(LEASE_NS).expect("representable lease") + 1 + 500_000,
-    );
+    store
+        .clock
+        .advance_to(i64::try_from(LEASE_NS).expect("representable lease") + 1 + 500_000);
     let report = store.backend.collect_garbage().await.expect("collect");
     assert!(report.swept_objects > 0);
     assert!(object_names(directory.path(), run).len() < before.len());
