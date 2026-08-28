@@ -1692,9 +1692,7 @@ impl AIPerfRegistry {
 
         let reliability_policy =
             crate::engine::streaming_policy::prepare_streaming_policy(&spec.reliability)
-                .map_err(|error| {
-                    anyhow!("run.resources.dataset_streams.reliability: {error:?}")
-                })?;
+                .map_err(|error| anyhow!("run.resources.dataset_streams.reliability: {error:?}"))?;
 
         self.check_endpoint_retry_safety(spec)?;
 

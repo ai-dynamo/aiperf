@@ -141,14 +141,14 @@ fn validate(args: ValidateArgs) -> anyhow::Result<i32> {
     let text = std::fs::read_to_string(&args.config_file).map_err(|e| {
         anyhow::anyhow!("failed to read config {}: {e}", args.config_file.display())
     })?;
-    let inputs = match crate::yaml::normalize_str(&text, Some(PathBuf::from("/tmp/aiperf-validate")))
-    {
-        Ok(inputs) => inputs,
-        Err(error) => {
-            eprintln!("aiperf: config invalid: {error:#}");
-            return Ok(1);
-        }
-    };
+    let inputs =
+        match crate::yaml::normalize_str(&text, Some(PathBuf::from("/tmp/aiperf-validate"))) {
+            Ok(inputs) => inputs,
+            Err(error) => {
+                eprintln!("aiperf: config invalid: {error:#}");
+                return Ok(1);
+            }
+        };
 
     // Stage 2: static registry validation. Only this stage can see an
     // unregistered component, an incompatible streaming selection, or a

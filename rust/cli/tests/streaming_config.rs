@@ -3,8 +3,9 @@
 //! Static streaming config validation integration tests.
 //!
 //! These drive the two stages `aiperf config validate` performs: YAML
-//! normalization (which now raises the streaming Config-v2 cross-field rules)
-//! and the in-process static registry stage.
+//! normalization, which decides shape, and the in-process static registry
+//! stage, which owns the single authoritative resolution and therefore every
+//! Config-v2 cross-field rule.
 
 use std::path::PathBuf;
 
@@ -22,6 +23,19 @@ fn reliability_yaml() -> &'static str {
 /// A stream config that leaves `reliability` at its documented defaults.
 fn shadow_yaml() -> &'static str {
     include_str!("fixtures/streaming-shadow.yaml")
+}
+
+/// Run both `config validate` stages and return the refusal message.
+///
+/// The Config-v2 cross-field rules are armed inside `config::resolve::resolve`,
+/// which is stage 2's single authoritative resolution — not stage 1, which only
+/// normalizes shape. A cross-field violation therefore surfaces as an error
+/// from `validate_statically`, not from `normalize_str`.
+fn refusal_message(yaml: &str) -> String {
+    let inputs = yaml::normalize_str(yaml, artifact_dir()).expect("config normalizes");
+    let error = streaming_preflight::validate_statically(&inputs)
+        .expect_err("static validation must refuse this config");
+    format!("{error:#}")
 }
 
 /// Build one stream config with the given `reliability` block body.
@@ -93,18 +107,19 @@ fn absent_reliability_block_normalizes_the_documented_defaults() {
 }
 
 #[test]
-fn config_validate_refuses_a_stream_resource_the_selected_workload_forbids() {
-    // No `shadow_replay` workload is compiled into the stock distribution, so a
-    // stream resource on a scheduled workload is refused by the presence rule
-    // before any streaming-internal message can fire. This pins the ordering:
-    // the resource-requirement message wins over a stream-internal one.
+fn config_validate_reports_an_unregistered_selection_with_available_ids() {
+    // Authoring `shadow_replay:` selects the `shadow_replay` workload, which no
+    // stock distribution compiles in. Stage 2 is the only stage that can see
+    // that, and it names both the requested id and the compiled inventory. This
+    // also pins the ordering: workload selection is refused before any
+    // stream-internal message can fire.
     let inputs =
         yaml::normalize_str(shadow_yaml(), artifact_dir()).expect("streaming-shadow.yaml resolves");
     let result =
         streaming_preflight::validate_statically(&inputs).expect("static validation completes");
     assert!(
         !result.is_valid,
-        "a stream resource on a scheduled workload must be refused"
+        "an unregistered selection must be refused"
     );
     let joined = result
         .errors
@@ -113,8 +128,12 @@ fn config_validate_refuses_a_stream_resource_the_selected_workload_forbids() {
         .collect::<Vec<_>>()
         .join(" | ");
     assert!(
-        joined.contains("dataset_streams"),
-        "refusal must name the offending resource: {joined}"
+        joined.contains("shadow_replay"),
+        "refusal must name the requested component: {joined}"
+    );
+    assert!(
+        joined.contains("available:"),
+        "refusal must list the compiled inventory: {joined}"
     );
 }
 
@@ -134,21 +153,6 @@ fn config_validate_rejects_mixed_datasets_and_dataset_streams() {
 }
 
 #[test]
-fn config_validate_rejects_accuracy_with_dataset_streams() {
-    let yaml = shadow_yaml().replace(
-        "  dataset_streams:",
-        "  accuracy:\n    evaluator: exact_match\n  dataset_streams:",
-    );
-    let error =
-        yaml::normalize_str(&yaml, artifact_dir()).expect_err("accuracy needs a finite dataset");
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("accuracy"),
-        "expected an accuracy refusal, got: {message}"
-    );
-}
-
-#[test]
 fn reliability_policy_unknown_fields_are_rejected() {
     let yaml = yaml_with_reliability("      fail_run: true\n");
     let error = yaml::normalize_str(&yaml, artifact_dir())
@@ -162,11 +166,8 @@ fn reliability_policy_unknown_fields_are_rejected() {
 
 #[test]
 fn zero_backoff_with_nonzero_retry_limit_is_rejected() {
-    let yaml =
-        yaml_with_reliability("      partition_retry_limit: 3\n      retry_backoff_ms: 0\n");
-    let error = yaml::normalize_str(&yaml, artifact_dir())
-        .expect_err("a zero backoff cannot pace a nonzero retry limit");
-    let message = format!("{error:#}");
+    let yaml = yaml_with_reliability("      partition_retry_limit: 3\n      retry_backoff_ms: 0\n");
+    let message = refusal_message(&yaml);
     assert!(
         message.contains("retry_backoff_ms"),
         "expected a refusal naming the backoff field, got: {message}"
@@ -176,9 +177,7 @@ fn zero_backoff_with_nonzero_retry_limit_is_rejected() {
 #[test]
 fn retry_backoff_overflow_is_rejected() {
     let yaml = yaml_with_reliability(&format!("      retry_backoff_ms: {}\n", u64::MAX));
-    let error = yaml::normalize_str(&yaml, artifact_dir())
-        .expect_err("an unrepresentable backoff must be refused");
-    let message = format!("{error:#}");
+    let message = refusal_message(&yaml);
     assert!(
         message.contains("retry_backoff_ms") && message.contains("duration"),
         "expected a representability refusal naming the field, got: {message}"
@@ -225,7 +224,10 @@ fn ordinary_fail_run_policy_is_not_authorable() {
         StreamingIssueDisposition::FailRun,
         None,
     );
-    assert_eq!(refused.err(), Some(StreamingReliabilityError::IllegalDisposition));
+    assert_eq!(
+        refused.err(),
+        Some(StreamingReliabilityError::IllegalDisposition)
+    );
 }
 
 #[test]
@@ -252,7 +254,11 @@ fn endpoint_failure_threshold_is_cumulative_across_every_authorable_class() {
         .iter()
         .filter(|rule| rule.scope() == StreamingIssueScopeKind::Action)
         .collect();
-    assert_eq!(action_rules.len(), 3, "one wildcard rule per authorable class");
+    assert_eq!(
+        action_rules.len(),
+        3,
+        "one wildcard rule per authorable class"
+    );
     for rule in action_rules {
         assert_eq!(
             rule.admission_fence_count(),

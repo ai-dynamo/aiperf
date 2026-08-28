@@ -107,11 +107,8 @@ pub fn prepare_streaming_policy(
                 StreamingIssueClass::Capacity => StreamingIssueDisposition::Backpressure,
                 _ => scope.exhausted,
             };
-            let rule_id = StreamingIssueComponentId::new(format!(
-                "{}_{}",
-                scope.name,
-                class_name(class)
-            ))?;
+            let rule_id =
+                StreamingIssueComponentId::new(format!("{}_{}", scope.name, class_name(class)))?;
             rules.push(StreamingIssueThresholdRule::new(
                 rule_id,
                 scope.scope,
