@@ -143,11 +143,13 @@ impl StreamingServerHarness {
     /// mock's own Prometheus family, which both listeners record into.
     #[must_use]
     pub fn start(case: StreamingServerCase) -> Self {
-        let mut cfg = MockServerConfig::default();
-        cfg.fast = true;
-        cfg.workers = 8;
-        cfg.no_tokenizer = true;
-        cfg.request_capture_capacity = 256;
+        let cfg = MockServerConfig {
+            fast: true,
+            workers: 8,
+            no_tokenizer: true,
+            request_capture_capacity: 256,
+            ..MockServerConfig::default()
+        };
         let mock = match case.transport {
             StreamingTransport::Http => MockServer::start_with(cfg),
             StreamingTransport::Grpc => MockServer::start_with_grpc(cfg),
