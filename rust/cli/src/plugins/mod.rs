@@ -10,3 +10,4 @@
 
 pub mod compose;
 pub mod lock_path;
+pub mod propagate;
