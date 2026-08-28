@@ -540,12 +540,12 @@ fn workspace_and_template_policy() {
             FOUNDATION_PACKAGES
                 .iter()
                 .chain(DISTRIBUTABLE_PACKAGES)
-                .map(|(name, _)| ((*name).to_owned(), "0.12.0".to_owned())),
+                .map(|(name, _)| ((*name).to_owned(), "0.13.0".to_owned())),
         )
         .chain(
             WORKSPACE_TOOLING_PACKAGES
                 .iter()
-                .map(|name| ((*name).to_owned(), "0.12.0".to_owned())),
+                .map(|name| ((*name).to_owned(), "0.13.0".to_owned())),
         )
         .collect::<BTreeSet<_>>();
     assert_eq!(expected_workspace_identities.len(), expected_names.len());
@@ -585,7 +585,7 @@ fn workspace_and_template_policy() {
         .expect("workspace manifest TOML");
     assert_eq!(
         root_manifest["workspace"]["package"]["version"].as_str(),
-        Some("0.12.0")
+        Some("0.13.0")
     );
     assert_eq!(
         root_manifest["workspace"]["package"]["edition"].as_str(),
@@ -604,7 +604,7 @@ fn workspace_and_template_policy() {
             root.join(relative_manifest_dir).join("Cargo.toml"),
             "{name} must retain its assigned package directory"
         );
-        assert_eq!(package.version, "0.12.0", "{name} package version drift");
+        assert_eq!(package.version, "0.13.0", "{name} package version drift");
         assert_eq!(package.edition, "2024", "{name} package edition drift");
         let manifest: PackageManifest = parse_toml(
             &root.join(relative_manifest_dir).join("Cargo.toml"),
@@ -834,7 +834,7 @@ fn distribution_exclusion_policy() {
     let repository_root = root.parent().expect("repository root");
     let verifier = root.join("scripts/verify-plugin-test-support-boundaries.py");
     let current_executable = std::env::current_exe().expect("current policy-test executable");
-    let output = Command::new("python")
+    let output = Command::new("python3")
         .arg(&verifier)
         .arg(repository_root)
         .arg(current_executable)
@@ -1019,8 +1019,8 @@ fn candidate_inventory_policy() {
                 if task6_new.contains(source_path) {
                     // Task-6 new files have no pinned base-commit object; validate
                     // the digest against the current worktree file instead.
-                    let content = std::fs::read(source_root.join(source_path))
-                        .unwrap_or_else(|error| {
+                    let content =
+                        std::fs::read(source_root.join(source_path)).unwrap_or_else(|error| {
                             panic!("task6_new source missing from worktree: {source_path}: {error}")
                         });
                     assert_eq!(blake3::hash(&content).to_hex().as_str(), digest);
@@ -1043,9 +1043,7 @@ fn candidate_inventory_policy() {
                     let bytes = Command::new("git")
                         .args([
                             "show",
-                            &format!(
-                                "057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}"
-                            ),
+                            &format!("057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}"),
                         ])
                         .current_dir(repository_root)
                         .output()
@@ -1119,7 +1117,7 @@ fn candidate_inventory_policy() {
     assert_eq!(implementation_leaves, 115);
     assert_eq!(assets, 9);
     assert_eq!(facade_rows, 2);
-    let output = Command::new("python")
+    let output = Command::new("python3")
         .args([
             generator.to_str().expect("generator path"),
             repository_root.to_str().expect("repository path"),

@@ -222,10 +222,11 @@ impl StreamingResultCompactor for GenerationResultCompactor {
         hasher.update(&encoded);
         let mut item_count = 0u64;
         for descriptor in &descriptors {
-            let segment = reader.read_segment(descriptor).await.map_err(compaction_error)?;
-            hasher.update(
-                blake3::hash(segment.payload_bytes()).as_bytes(),
-            );
+            let segment = reader
+                .read_segment(descriptor)
+                .await
+                .map_err(compaction_error)?;
+            hasher.update(blake3::hash(segment.payload_bytes()).as_bytes());
             item_count = item_count
                 .checked_add(descriptor.item_count)
                 .ok_or_else(|| ResultPlaneError::Compaction {
@@ -273,9 +274,7 @@ pub struct StreamingAbortOutcome {
 /// result plane already committed; no generation, terminal reason, or membership
 /// root is invented to stand in for the interrupted work.
 #[must_use]
-pub fn retain_unsafe_abort(
-    last_partial: Option<CommittedPartialResult>,
-) -> StreamingAbortOutcome {
+pub fn retain_unsafe_abort(last_partial: Option<CommittedPartialResult>) -> StreamingAbortOutcome {
     StreamingAbortOutcome {
         retained_partial: last_partial,
         aborted_generation: None,

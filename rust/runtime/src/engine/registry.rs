@@ -1692,9 +1692,7 @@ impl AIPerfRegistry {
 
         let reliability_policy =
             crate::engine::streaming_policy::prepare_streaming_policy(&spec.reliability)
-                .map_err(|error| {
-                    anyhow!("run.resources.dataset_streams.reliability: {error:?}")
-                })?;
+                .map_err(|error| anyhow!("run.resources.dataset_streams.reliability: {error:?}"))?;
 
         self.check_endpoint_retry_safety(spec)?;
 
@@ -1867,7 +1865,13 @@ impl AIPerfExtension for HttpExtension {
         // distribution that has the HTTP path.
         crate::engine::dry_run::register_dry_run_transport(registry).map_err(extension_rejected)?;
         crate::engine::online_execution::register_online_workloads(registry)
-            .map_err(extension_rejected)
+            .map_err(extension_rejected)?;
+        // The streaming shadow-replay workload registers here rather than from
+        // a bare module declaration, which reaches no registry.
+        #[cfg(feature = "streaming")]
+        crate::engine::streaming_execution::register_streaming_workloads(registry)
+            .map_err(extension_rejected)?;
+        Ok(())
     }
 }
 

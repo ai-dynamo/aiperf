@@ -180,11 +180,6 @@ pub(crate) struct NativeRunSpec {
     /// path select its default at the point of use
     /// ([`OnFailure::scheduled_or_default`] / [`OnFailure::graph_or_default`]).
     pub(crate) failure_policy: Option<OnFailure>,
-    /// Whether the native OTLP metrics sink is enabled for this run. When set,
-    /// the scheduled path accumulates per-record GenAI-semconv histograms so the
-    /// post-report sink emits populated `bucket_counts`; otherwise that
-    /// projection is skipped entirely (no per-record recompute cost).
-    pub(crate) native_otel_enabled: bool,
     /// Resolved transport binding (`cfg.transport.type`) the graph execution path
     /// builds its worker-local dispatchers over (`build_graph_dispatcher`).
     /// `Some` only when `dataset` is [`NativeDatasetPlan::Graph`]; the scheduled
@@ -520,11 +515,6 @@ pub(crate) fn validate_plan(request: &NativeRunSpec) -> Result<()> {
             "sketch metrics mode cannot emit per-record artifacts \
              (records_path/raw_path/outputs_path); disable them or the sketch flag"
         );
-        ensure!(
-            !request.native_otel_enabled,
-            "sketch metrics mode cannot emit per-record OTLP histograms; \
-             disable native OTLP or the sketch flag"
-        );
     }
     ensure!(
         request
@@ -763,14 +753,13 @@ pub(crate) struct ExactFoldInputs {
 /// Exact-fold folds each clean record into the accumulator and discards it, so it is
 /// safe only when nothing downstream reads a per-record clone. The graph path
 /// (`execute_graph_native`) STRUCTURALLY constructs no such consumer: it builds no live
-/// sink, never accumulates per-record OTLP histograms (`report.otel_per_record` is set
-/// ONLY on the scheduled path), and constructs no `HeartbeatLane`. The single per-record
-/// consumer a graph run could carry — the live-streaming record extension — is rejected
-/// upstream by [`validate_graph_request`], so `live_streaming_wired` is always false
-/// here and its absence is a structural invariant we assert rather than a flag we read.
+/// sink and constructs no `HeartbeatLane`. The single per-record consumer a graph run
+/// could carry — the live-streaming record extension — is rejected upstream by
+/// [`validate_graph_request`], so `live_streaming_wired` is always false here and its
+/// absence is a structural invariant we assert rather than a flag we read.
 ///
-/// `native_otel_enabled` and `HeartbeatLane::enabled_by_env` do not identify
-/// per-record consumers and therefore do not affect this decision.
+/// `HeartbeatLane::enabled_by_env` does not identify per-record consumers and
+/// therefore does not affect this decision.
 pub(crate) fn graph_exact_fold_drop_is_safe(live_streaming_wired: bool) -> bool {
     !live_streaming_wired
 }
@@ -1122,33 +1111,24 @@ mod tests {
     /// The graph exact-fold tripwire reflects the
     /// per-record consumers the graph path STRUCTURALLY wires, not the raw OTEL/heartbeat
     /// config flags. A legitimate summary-only graph run with an OTEL metrics URL sets
-    /// `native_otel_enabled = true` (the Python frontend does not reject it on the graph
-    /// path) and selects exact-fold. The graph path builds no OTLP accumulator, no
-    /// heartbeat lane, and — via `validate_graph_request` — no live sink, so the drop is
-    /// safe and the debug tripwire must not fire.
+    /// `HeartbeatLane::enabled_by_env` does not identify a per-record consumer, so it
+    /// does not affect the drop-safety decision.
     #[test]
-    fn graph_exact_fold_drop_safe_ignores_native_otel_and_heartbeat_flags() {
-        // No live-streaming consumer wired (validate_graph_request guarantees this) →
-        // the drop is safe regardless of the OTEL / heartbeat config, which the graph
-        // path never turns into a per-record consumer.
+    fn graph_exact_fold_drop_safe_ignores_heartbeat_flag() {
+        // No live-streaming consumer wired → the drop is safe.
         assert!(
             graph_exact_fold_drop_is_safe(false),
             "graph exact-fold drop is safe when no live-streaming consumer is wired"
         );
 
-        // Reconstruct the exact boolean the debug_assert evaluates for an exact-fold graph
-        // run that has an OTEL metrics URL (native_otel_enabled = true) and, per env,
-        // heartbeat enabled — but no live sink. It must be true so the assert does not
-        // panic.
+        // Heartbeat flag does not represent a graph per-record consumer.
         let graph_exact_fold = true;
-        let native_otel_enabled = true;
         let heartbeat_enabled_by_env = HeartbeatLane::enabled_by_env();
         let live_streaming_wired = false;
-        // These flags do not represent graph per-record consumers.
-        let _ = (native_otel_enabled, heartbeat_enabled_by_env);
+        let _ = heartbeat_enabled_by_env;
         assert!(
             !graph_exact_fold || graph_exact_fold_drop_is_safe(live_streaming_wired),
-            "an exact-fold graph run with native_otel_enabled must not trip the tripwire"
+            "an exact-fold graph run must not trip the tripwire when no live sink is wired"
         );
 
         // The real invariant still bites: a wired live-streaming consumer would trip it.

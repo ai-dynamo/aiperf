@@ -58,7 +58,8 @@ pub fn normalize_str(text: &str, artifact_dir: Option<PathBuf>) -> anyhow::Resul
     resolve_expanded_inputs(expanded, artifact_dir, None)
 }
 
-fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {    if let Some(value) = value {
+fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {
+    if let Some(value) = value {
         anyhow::ensure!(
             value.as_str() == Some("2.0"),
             "unsupported schema version {value:?}; expected \"2.0\""
@@ -1869,6 +1870,15 @@ impl Benchmark {
         artifact_dir: Option<PathBuf>,
         random_seed: Option<u64>,
     ) -> anyhow::Result<Inputs> {
+        // Both keys are visible only here: resolution replaces an authored
+        // stream's dataset slot with `None`, so a `datasets:` block authored
+        // beside `dataset_streams:` would otherwise be silently discarded.
+        anyhow::ensure!(
+            !(self.dataset_streams.is_some()
+                && (self.dataset.is_some()
+                    || self.datasets.as_ref().is_some_and(|d| !d.is_empty()))),
+            "datasets and dataset_streams are mutually exclusive; author exactly one"
+        );
         let model_names = self.resolve_model_names()?;
 
         // Artifact dir precedence: the `--artifact-dir` flag, then the config's

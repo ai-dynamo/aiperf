@@ -1071,9 +1071,6 @@ impl Reporter for NativeReporter {
                 .steady_state
                 .as_ref()
                 .map(ReportSteadyState::from_outcome),
-            // Filled by the runner after report construction (see the online
-            // execution path); the aggregate reporter has no per-record samples.
-            otel_per_record: None,
         }
     }
 }
@@ -1122,13 +1119,6 @@ pub struct NativeReport {
     /// enabled and a concurrency target is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub steady_state: Option<ReportSteadyState>,
-    /// Transient per-record GenAI-semconv histograms, filled by the runner's
-    /// per-record path and consumed by the OTLP sink to emit populated
-    /// `bucket_counts`. Never serialized into the committed native-v2 report
-    /// (`#[serde(skip)]`) — it is an in-memory side channel from execution to the
-    /// post-report export plane, so the authoritative report bytes are unchanged.
-    #[serde(skip)]
-    pub otel_per_record: Option<crate::export::otel::OtelRecordAccumulator>,
 }
 
 impl NativeReport {
@@ -1219,10 +1209,6 @@ impl crate::metrics_core::report_view::ReportView for NativeReport {
 
     fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u128>> {
         self.pooled_spec_decode_acceptance_histogram.as_ref()
-    }
-
-    fn per_record(&self) -> Option<&crate::export::otel::OtelRecordAccumulator> {
-        self.otel_per_record.as_ref()
     }
 }
 

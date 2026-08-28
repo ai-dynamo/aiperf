@@ -44,8 +44,7 @@ use serde::Serialize;
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use aiperf_runtime::streaming::failure::{
-    DecodeFailureCode, OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode,
-    StreamFormatError,
+    DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError,
 };
 
 pub fn cut_at(value: u64) -> CheckpointCut {
@@ -1167,6 +1166,7 @@ pub async fn issue_receipt_partition(
 
 use aiperf_runtime::streaming::{
     checkpoint_backend::StreamingCheckpointBackend,
+    failure::{ResultExportError, ResultExportFailureCode},
     reliability::{
         PreparedExportAttemptFailure, PreparedExportReceiptPersistence, ResultSinkAttemptOutcome,
         StreamingReliabilityError,
@@ -1211,12 +1211,14 @@ pub fn final_metadata(
 /// Commit one final generation carrying three distinguishable result segments.
 ///
 /// The segments differ only in projection identity, so the compaction key must
-/// order them rather than relying on staging order.
+/// order them rather than relying on staging order. A generation with no
+/// predecessor is only publishable at the initial epoch, so the fixture owns the
+/// epoch rather than accepting one.
 pub async fn committed_final_generation(
     backend: &MemoryCheckpointBackend,
     run: StreamRunIdentity,
-    epoch: u64,
 ) -> CommittedCheckpointGeneration {
+    let epoch = 1;
     let mut transaction =
         StreamingCheckpointBackend::begin_generation(backend, run, None, expectations(run))
             .await
@@ -1268,7 +1270,6 @@ pub async fn staged_abort_transaction(
     backend: &MemoryCheckpointBackend,
     run: StreamRunIdentity,
     previous: &CommittedCheckpointGeneration,
-    epoch: u64,
 ) -> (
     Box<dyn StreamingGenerationTransaction>,
     CheckpointCommitMetadata,
@@ -1281,6 +1282,8 @@ pub async fn staged_abort_transaction(
     let expected = current_v4_predecessor(&opened, previous.generation_ref())
         .expect("current-v4 predecessor authority");
     drop(opened);
+    // The backend admits exactly the dense successor epoch.
+    let epoch = previous.generation_ref().epoch().get() + 1;
     let mut transaction = StreamingCheckpointBackend::begin_generation(
         backend,
         run,
@@ -1451,4 +1454,158 @@ pub async fn prepared_export_persistence(
     prepared_export_failure(run, committed, sink, attempt_ordinal, budget)
         .await
         .into_persistence()
+}
+
+use aiperf_runtime::streaming::{
+    identity::StableActionId,
+    results::{
+        CheckpointDeliveryMode, DeliveryClaim, DeliveryCrashPoint, DeliveryRestartDecision,
+        DeliveryRestartError, DeliveryRestartRequest, DeliveryTopologyBinding, DuplicateWindow,
+        OutstandingAction, OutstandingActionState, TargetIdempotencyCapability,
+        deliver_restart_decision,
+    },
+};
+
+/// Committed cut sequence the delivery fixture resumes from.
+const DELIVERY_CUT_SEQUENCE: u64 = 16;
+
+fn delivery_binding() -> DeliveryTopologyBinding {
+    DeliveryTopologyBinding {
+        topology_digest: ContentDigest::from_bytes([0x71; 32]),
+        projection: ResultProjectionId::new("aiperf.records.exact").expect("nonempty projection"),
+        membership_scheme_digest: ContentDigest::from_bytes([0x72; 32]),
+    }
+}
+
+fn delivery_action(tag: u8) -> StableActionId {
+    StableActionId::from_bytes([tag; 32])
+}
+
+/// One restart of the delivery fixture, holding its derived decision.
+pub struct RestoredDelivery {
+    decision: DeliveryRestartDecision,
+}
+
+impl RestoredDelivery {
+    /// Whether every re-emitted logical action appears exactly once.
+    pub fn logical_membership_is_unique(&self) -> bool {
+        self.decision.logical_membership_is_unique()
+    }
+
+    /// Return the claim published by the resumed run.
+    pub fn claim(&self) -> DeliveryClaim {
+        self.decision.claim
+    }
+
+    /// Return what this restart leaves possible at the target.
+    pub fn duplicate_window(&self) -> DuplicateWindow {
+        self.decision.duplicate_window
+    }
+
+    /// Borrow the actions the restart re-emits.
+    pub fn reissue(&self) -> &[StableActionId] {
+        &self.decision.reissue
+    }
+}
+
+/// A run frozen at one delivery mode and target idempotency capability.
+pub struct DeliveryFixture {
+    mode: CheckpointDeliveryMode,
+    capability: TargetIdempotencyCapability,
+    cut: CheckpointCut,
+    binding: DeliveryTopologyBinding,
+}
+
+impl DeliveryFixture {
+    /// Outstanding set a dead incarnation leaves at the given crash point.
+    ///
+    /// Two never-dispatched actions are always outstanding: a restart re-derives
+    /// its undispatched suffix at every crash point, and they give the logical
+    /// membership assertion something to be unique about.
+    fn outstanding(crash: DeliveryCrashPoint) -> Vec<OutstandingAction> {
+        let mut outstanding = vec![
+            OutstandingAction {
+                action: delivery_action(0xa1),
+                sequence: GlobalSequence::new(DELIVERY_CUT_SEQUENCE + 3),
+                state: OutstandingActionState::NotDispatched,
+            },
+            OutstandingAction {
+                action: delivery_action(0xa2),
+                sequence: GlobalSequence::new(DELIVERY_CUT_SEQUENCE + 4),
+                state: OutstandingActionState::NotDispatched,
+            },
+        ];
+        let uncertain = match crash {
+            DeliveryCrashPoint::BeforeDispatch | DeliveryCrashPoint::AfterCommit => None,
+            DeliveryCrashPoint::AfterDispatchBeforeTerminal => {
+                Some(OutstandingActionState::AdmittedNotTerminal)
+            }
+            DeliveryCrashPoint::AfterTerminalBeforeCommit => {
+                Some(OutstandingActionState::TerminalUncommitted)
+            }
+        };
+        if let Some(state) = uncertain {
+            outstanding.push(OutstandingAction {
+                action: delivery_action(0xb1),
+                sequence: GlobalSequence::new(DELIVERY_CUT_SEQUENCE + 1),
+                state,
+            });
+        }
+        outstanding
+    }
+
+    fn request<'a>(
+        &'a self,
+        outstanding: &'a [OutstandingAction],
+        restarting: &'a DeliveryTopologyBinding,
+    ) -> DeliveryRestartRequest<'a> {
+        DeliveryRestartRequest {
+            mode: self.mode,
+            capability: self.capability,
+            cut: self
+                .mode
+                .has_authoritative_results()
+                .then_some(&self.cut),
+            result_index_root: self
+                .mode
+                .has_authoritative_results()
+                .then(|| ContentDigest::from_bytes([0x73; 32])),
+            committed_binding: &self.binding,
+            restarting_binding: restarting,
+            outstanding,
+        }
+    }
+
+    /// Kill the incarnation at the given point and derive the restart decision.
+    pub fn crash_and_restore(&self, crash: DeliveryCrashPoint) -> RestoredDelivery {
+        let outstanding = Self::outstanding(crash);
+        let restarting = delivery_binding();
+        let decision = deliver_restart_decision(&self.request(&outstanding, &restarting))
+            .expect("identical binding restart is admissible");
+        RestoredDelivery { decision }
+    }
+
+    /// Restart under a binding the caller mutates, returning the raw outcome.
+    pub fn restart_with_binding(
+        &self,
+        mutate: impl FnOnce(&mut DeliveryTopologyBinding),
+    ) -> Result<DeliveryRestartDecision, DeliveryRestartError> {
+        let outstanding = Self::outstanding(DeliveryCrashPoint::AfterDispatchBeforeTerminal);
+        let mut restarting = delivery_binding();
+        mutate(&mut restarting);
+        deliver_restart_decision(&self.request(&outstanding, &restarting))
+    }
+}
+
+/// Freeze one delivery fixture at the given mode and target capability.
+pub fn delivery_fixture(
+    mode: CheckpointDeliveryMode,
+    capability: TargetIdempotencyCapability,
+) -> DeliveryFixture {
+    DeliveryFixture {
+        mode,
+        capability,
+        cut: cut_at(DELIVERY_CUT_SEQUENCE),
+        binding: delivery_binding(),
+    }
 }

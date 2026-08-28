@@ -44,8 +44,8 @@ use crate::streaming::{
     reliability::{
         BudgetOwnedExportIssueReceipt, DerivedExportReceiptReference,
         DurableExportReceiptValidationContext, PreparedExportReceiptPersistence,
-        PreparedStreamingIssuePolicy, StreamingIssueComponentId,
-        VerifiedDerivedSinkAttemptStatus, restore_durable_export_issue_receipt,
+        PreparedStreamingIssuePolicy, StreamingIssueComponentId, VerifiedDerivedSinkAttemptStatus,
+        restore_durable_export_issue_receipt,
     },
 };
 
@@ -285,7 +285,10 @@ pub struct DerivedStatusSubstrate {
     inner: Rc<RefCell<SubstrateInner>>,
 }
 
-fn substrate_key(generation: &CheckpointGeneration, sink_id: &StreamingIssueComponentId) -> SubstrateKey {
+fn substrate_key(
+    generation: &CheckpointGeneration,
+    sink_id: &StreamingIssueComponentId,
+) -> SubstrateKey {
     (
         generation.epoch().get(),
         *generation.digest.as_bytes(),
@@ -694,7 +697,9 @@ impl DerivedSinkStatusStore {
         encoded_budget: &StreamingResourceBudget,
         parsed_budget: &StreamingResourceBudget,
     ) -> Result<BudgetOwnedExportIssueReceipt, ResultPlaneError> {
-        let status = self.reopen_verified_status(final_generation, sink_id).await?;
+        let status = self
+            .reopen_verified_status(final_generation, sink_id)
+            .await?;
         let generation = final_generation.generation();
         let Some(record) = self.substrate.record(&generation, sink_id) else {
             return refuse(SinkFinalizationFailureCode::MissingStatus);
@@ -933,18 +938,16 @@ mod tests {
     }
 
     fn policy() -> PreparedStreamingIssuePolicy {
-        PreparedStreamingIssuePolicy::new([
-            StreamingIssueThresholdRule::new(
-                component("export_retryable"),
-                StreamingIssueScopeKind::Export,
-                StreamingIssueClass::Retryable,
-                None,
-                3,
-                StreamingIssueDisposition::ExportIncomplete,
-                None,
-            )
-            .expect("valid retryable export rule"),
-        ])
+        PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+            component("export_retryable"),
+            StreamingIssueScopeKind::Export,
+            StreamingIssueClass::Retryable,
+            None,
+            3,
+            StreamingIssueDisposition::ExportIncomplete,
+            None,
+        )
+        .expect("valid retryable export rule")])
         .expect("valid export policy")
     }
 
@@ -1072,9 +1075,7 @@ mod tests {
             );
             assert_eq!(
                 reference.receipt_digest(),
-                &ContentDigest::from_bytes(
-                    *blake3::hash(persistence.encoded_bytes()).as_bytes()
-                )
+                &ContentDigest::from_bytes(*blake3::hash(persistence.encoded_bytes()).as_bytes())
             );
 
             drop(persistence);

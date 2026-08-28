@@ -11,3 +11,17 @@ license.workspace = true
 aiperf-core.workspace = true
 aiperf-plugin-api.workspace = true
 aiperf-plugin-sdk.workspace = true
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+semver = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tempfile = { workspace = true }

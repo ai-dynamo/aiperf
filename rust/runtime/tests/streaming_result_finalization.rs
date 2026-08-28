@@ -8,7 +8,6 @@
 
 use aiperf_runtime::streaming::{
     checkpoint::{CheckpointTerminalReason, CommittedCheckpointGeneration},
-    checkpoints::memory::MemoryCheckpointBackend,
     identity::ContentDigest,
     reliability::StreamingIssueComponentId,
     results::{
@@ -49,7 +48,7 @@ fn refusal(code: SinkFinalizationFailureCode) -> ResultPlaneError {
 async fn report_lease_releases_only_after_authoritative_report_commit() {
     let backend = streaming_backend();
     let run = run_id(1);
-    let committed = committed_final_generation(&backend, run, 3).await;
+    let committed = committed_final_generation(&backend, run).await;
     let budget = report_budget();
     let compactor = GenerationResultCompactor::new(run, page_budget(4), budget.clone());
 
@@ -75,7 +74,7 @@ async fn report_lease_releases_only_after_authoritative_report_commit() {
 async fn unsafe_abort_preserves_last_partial_without_fabricating_terminal_root() {
     let backend = streaming_backend();
     let run = run_id(2);
-    let committed = committed_final_generation(&backend, run, 2).await;
+    let committed = committed_final_generation(&backend, run).await;
     let head_before = latest_generation(&backend, run)
         .await
         .expect("committed head");
@@ -97,9 +96,9 @@ async fn unsafe_abort_preserves_last_partial_without_fabricating_terminal_root()
 async fn safe_abort_commits_complete_aborted_generation() {
     let backend = streaming_backend();
     let run = run_id(3);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
 
-    let (transaction, metadata) = staged_abort_transaction(&backend, run, &committed, 2).await;
+    let (transaction, metadata) = staged_abort_transaction(&backend, run, &committed).await;
     let aborted = commit_aborted_generation(transaction, metadata)
         .await
         .expect("commit aborted generation");
@@ -121,7 +120,7 @@ async fn safe_abort_commits_complete_aborted_generation() {
 async fn compaction_order_is_stable_across_page_sizes() {
     let backend = streaming_backend();
     let run = run_id(4);
-    let committed = committed_final_generation(&backend, run, 4).await;
+    let committed = committed_final_generation(&backend, run).await;
 
     let mut digests = Vec::new();
     for page in [1usize, 2, 8] {
@@ -141,7 +140,7 @@ async fn compaction_order_is_stable_across_page_sizes() {
 async fn compaction_failure_retains_reconstructable_generation() {
     let backend = streaming_backend();
     let run = run_id(5);
-    let committed = committed_final_generation(&backend, run, 2).await;
+    let committed = committed_final_generation(&backend, run).await;
 
     // A foreign-run compactor refuses the descriptors it reads. The committed
     // generation is untouched: it is neither rewritten nor invalidated.
@@ -173,7 +172,7 @@ async fn compaction_failure_retains_reconstructable_generation() {
 async fn crash_before_initial_status_is_found_by_generation_sink_reconciliation() {
     let backend = streaming_backend();
     let run = run_id(6);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
 
@@ -202,7 +201,7 @@ async fn crash_before_initial_status_is_found_by_generation_sink_reconciliation(
 async fn crash_or_cancellation_before_receipt_status_cas_reuses_exact_ordinal() {
     let backend = streaming_backend();
     let run = run_id(7);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -238,7 +237,7 @@ async fn crash_or_cancellation_before_receipt_status_cas_reuses_exact_ordinal() 
 async fn crash_or_cancellation_after_receipt_status_cas_reopens_exact_pending_status() {
     let backend = streaming_backend();
     let run = run_id(8);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -285,7 +284,7 @@ async fn crash_or_cancellation_after_receipt_status_cas_reopens_exact_pending_st
 async fn durable_output_before_complete_cas_recovers_complete() {
     let backend = streaming_backend();
     let run = run_id(9);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -340,7 +339,7 @@ async fn durable_output_before_complete_cas_recovers_complete() {
 async fn reopen_rejects_tampered_or_unreachable_export_receipt() {
     let backend = streaming_backend();
     let run = run_id(10);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -396,7 +395,7 @@ async fn reopen_rejects_tampered_or_unreachable_export_receipt() {
 async fn receipt_attempt_or_issue_mismatch_refuses_before_store_io() {
     let backend = streaming_backend();
     let run = run_id(11);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -428,7 +427,7 @@ async fn receipt_attempt_or_issue_mismatch_refuses_before_store_io() {
 async fn illegal_sink_transition_and_terminal_successor_are_unnameable() {
     let backend = streaming_backend();
     let run = run_id(12);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -483,7 +482,7 @@ async fn illegal_sink_transition_and_terminal_successor_are_unnameable() {
 async fn retry_ordinal_overflow_refuses_before_store_io() {
     let backend = streaming_backend();
     let run = run_id(13);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -511,7 +510,7 @@ async fn retry_ordinal_overflow_refuses_before_store_io() {
 async fn reopened_status_and_receipt_retain_exact_encoded_and_parsed_charges() {
     let backend = streaming_backend();
     let run = run_id(14);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -553,7 +552,7 @@ async fn reopened_status_and_receipt_retain_exact_encoded_and_parsed_charges() {
 async fn reporter_prepares_exactly_charged_export_failure_from_retained_receipt() {
     let backend = streaming_backend();
     let run = run_id(15);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -601,7 +600,7 @@ async fn reporter_prepares_exactly_charged_export_failure_from_retained_receipt(
 async fn export_failure_consumes_into_persistence_without_reallocation_or_lease_split() {
     let backend = streaming_backend();
     let run = run_id(16);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let budget = export_budget();
 
@@ -626,7 +625,7 @@ async fn export_failure_consumes_into_persistence_without_reallocation_or_lease_
 async fn status_store_persists_encoded_export_receipt_while_intact_owner_is_live() {
     let backend = streaming_backend();
     let run = run_id(17);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -668,8 +667,8 @@ async fn reporter_rejects_foreign_run_generation_sink_or_ordinal() {
     let backend = streaming_backend();
     let run = run_id(18);
     let foreign_run = run_id(19);
-    let committed = committed_final_generation(&backend, run, 1).await;
-    let foreign_committed = committed_final_generation(&backend, foreign_run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
+    let foreign_committed = committed_final_generation(&backend, foreign_run).await;
     let generation = committed.generation();
     let foreign_generation = foreign_committed.generation();
     let sink = component("native_report");
@@ -767,7 +766,7 @@ async fn reporter_rejects_foreign_run_generation_sink_or_ordinal() {
 async fn durable_writer_and_probe_are_the_only_output_proof_minting_paths() {
     let backend = streaming_backend();
     let run = run_id(20);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -802,7 +801,7 @@ async fn durable_writer_and_probe_are_the_only_output_proof_minting_paths() {
 async fn unbudgeted_or_forged_export_tokens_are_unnameable() {
     let backend = streaming_backend();
     let run = run_id(21);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
 
@@ -835,7 +834,7 @@ async fn post_final_restart_reopens_pending_from_generation_and_derived_store_wi
 {
     let backend = streaming_backend();
     let run = run_id(22);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
 
@@ -886,7 +885,7 @@ async fn post_final_restart_reopens_pending_from_generation_and_derived_store_wi
 async fn missing_or_tampered_embedded_receipt_or_reference_refuses_reopen() {
     let backend = streaming_backend();
     let run = run_id(23);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -944,7 +943,7 @@ async fn missing_or_tampered_embedded_receipt_or_reference_refuses_reopen() {
 async fn restart_reconstructs_exact_sink_ordinal_and_counter() {
     let backend = streaming_backend();
     let run = run_id(24);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -985,7 +984,7 @@ async fn restart_reconstructs_exact_sink_ordinal_and_counter() {
 async fn first_attempt_exhausted_restart_uses_status_ordinal_zero_and_counter_zero() {
     let backend = streaming_backend();
     let run = run_id(25);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -1031,7 +1030,7 @@ async fn first_attempt_exhausted_restart_uses_status_ordinal_zero_and_counter_ze
 async fn multi_retry_exhausted_restart_uses_status_authored_last_ordinal_and_counter() {
     let backend = streaming_backend();
     let run = run_id(26);
-    let committed = committed_final_generation(&backend, run, 1).await;
+    let committed = committed_final_generation(&backend, run).await;
     let sink = component("native_report");
     let substrate = DerivedStatusSubstrate::new();
     let store = DerivedSinkStatusStore::open(run, substrate.clone(), sink_attempt_budget());
@@ -1092,7 +1091,7 @@ fn manual_current_thread_driver_reaches_the_same_status_plane() {
         let backend = streaming_backend();
         let run = run_id(27);
         let committed: CommittedCheckpointGeneration =
-            committed_final_generation(&backend, run, 1).await;
+            committed_final_generation(&backend, run).await;
         let sink: StreamingIssueComponentId = component("native_report");
         let store =
             DerivedSinkStatusStore::open(run, DerivedStatusSubstrate::new(), sink_attempt_budget());

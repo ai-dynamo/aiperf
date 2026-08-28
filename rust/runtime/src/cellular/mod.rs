@@ -21,6 +21,9 @@ pub mod sketch;
 /// Controller-to-cell streaming capability agreement propagation.
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub mod streaming_capability;
+/// Crash-safe route migration driven through the global checkpoint generation.
+#[cfg(all(feature = "streaming", feature = "cellular"))]
+pub mod streaming_migration;
 /// Deterministic sticky session placement and the no-early-issue fence.
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub mod streaming_placement;
@@ -50,11 +53,17 @@ pub use streaming_capability::{
     StreamingCapabilityPropagationEncodeError, StreamingCapabilitySealError,
 };
 #[cfg(all(feature = "streaming", feature = "cellular"))]
+pub use streaming_migration::{
+    CellularStreamingController, CheckpointedRouteSet, HeldFragment, MigrationError,
+    SessionRoutePlacementParticipant,
+};
+#[cfg(all(feature = "streaming", feature = "cellular"))]
 pub use streaming_placement::{
-    ActiveExecutionSet, BudgetOwnedSessionRoute, CellularRouteAdmission, IssueGrant,
-    PlacementError, PlacementRouteCharge, PlacementRouteReservation, ROUTE_ENTRY_BYTES,
-    ReleaseFence, ReleaseSubmitter, SessionPlacementDecision, SessionRoute, StagedState,
-    StickySessionPlacement, StreamingPlacementPolicy, assign_cell, release_at_controller_target,
+    ActiveExecutionSet, BudgetOwnedSessionRoute, CellularRouteAdmission, CheckpointedSessionRoute,
+    IssueGrant, PlacementError, PlacementRouteCharge, PlacementRouteReservation, ROUTE_ENTRY_BYTES,
+    ReleaseFence, ReleaseSubmitter, SessionPlacementDecision, SessionRoute, SessionRouteState,
+    StagedState, StickySessionPlacement, StreamingPlacementPolicy, assign_cell,
+    release_at_controller_target,
 };
 #[cfg(all(feature = "streaming", feature = "cellular"))]
 pub(crate) use streaming_transport::{

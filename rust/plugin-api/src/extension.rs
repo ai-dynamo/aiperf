@@ -21,6 +21,7 @@ use std::{collections::HashSet, fmt, marker::PhantomData};
 use crate::{
     descriptor::{PluginCategoryDescriptor, PluginPackageDescriptor},
     error::ExtensionError,
+    frozen::FrozenPluginUniverse,
     id::RegistryId,
 };
 
@@ -48,6 +49,17 @@ pub type PluginEntryV1 = unsafe fn() -> PluginDeclarationV1;
 /// allocates them and the plugin's library — which stays resident for the whole
 /// process lifetime — owns dropping them, so no plugin-allocated storage is
 /// ever freed by the host allocator.
+///
+/// # SAFETY — fat-pointer layout and the universe guard
+///
+/// This struct crosses the plugin ABI boundary. Fat-pointer layout (`&str`,
+/// `&[T]`, `&dyn Trait`) is stable within a single rustc version but is NOT
+/// guaranteed by the Rust specification across different compiler binaries.
+/// The `HostAbiUniverseRecordV1.rustc_exe_digest` universe guard ensures that
+/// host and every loaded plugin were compiled with the **identical** `rustc`
+/// executable, making the fat-pointer layout identical on both sides.
+/// Never load a plugin compiled with a different `rustc` into this host.
+#[derive(Copy, Clone)]
 pub struct PluginDeclarationV1 {
     /// Package identity, re-checked by the host against the manifest.
     pub package: &'static PluginPackageDescriptor,
@@ -107,15 +119,15 @@ pub struct PluginRegistrar<'a> {
 impl PluginRegistrar<'_> {
     /// Bind a registrar to the package identity the manifest resolved.
     ///
-    /// `pub(crate)` on purpose: binding the origin is a host act. A plugin
-    /// receives a registrar as the argument to [`AIPerfExtension::register`]
-    /// and has no way to mint one over a package it did not come from. The
-    /// out-of-crate seam the loader calls to bind a registrar lands with the
-    /// loader itself; nothing outside this crate constructs one yet.
-    // The first non-test caller is that loader, so within this crate the
-    // constructor is reachable only from the tests below.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn new(package: &'static PluginPackageDescriptor) -> Self {
+    /// The host calls this once per plugin package before passing the registrar
+    /// to [`AIPerfExtension::register`].  The `pub(crate)` restriction that
+    /// existed before Task 15 is lifted here: the first real caller is
+    /// `aiperf-plugin-host`'s `register_plugin`, which binds the origin from
+    /// the manifest it authenticated.  The constraint that "binding the origin
+    /// is a host act" is still enforced by documentation and by the host always
+    /// re-checking the package identity against the manifest before accepting
+    /// any registration.
+    pub fn new(package: &'static PluginPackageDescriptor) -> Self {
         Self {
             package,
             observed: Vec::new(),
@@ -161,6 +173,22 @@ impl PluginRegistrar<'_> {
     /// descriptor asserting another package's identity.
     pub fn describe(&self, id: RegistryId) -> PluginCategoryDescriptor {
         PluginCategoryDescriptor::new(id, self.package)
+    }
+
+    /// Consume the registrar and return an immutable snapshot of everything
+    /// this package registered.
+    ///
+    /// Called by the host after [`AIPerfExtension::register`] returns
+    /// successfully.  The `observed` list is converted to
+    /// [`PluginCategoryDescriptor`] values that carry the manifest-bound
+    /// package identity.
+    pub fn freeze(self) -> FrozenPluginUniverse {
+        let registrations = self
+            .observed
+            .into_iter()
+            .map(|id| PluginCategoryDescriptor::new(id, self.package))
+            .collect();
+        FrozenPluginUniverse::from_parts(self.package, registrations)
     }
 }
 

@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+schema_version: "2.0"
+packages:
+  - id: my-exporter
+    version: "1.0.0"
+    description: "A complete example plugin manifest"
+    priority: 10
+    aliases:
+      - "my-exporter-alias"
+    baseline:
+      aiperf_version: ">=0.13.0"
+      allocator_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    artifacts:
+      - target: x86_64-unknown-linux-gnu
+        path: "dist/x86_64-unknown-linux-gnu/libmy_exporter.so"
+        digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        build_id: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      - target: aarch64-apple-darwin
+        path: "dist/aarch64-apple-darwin/libmy_exporter.dylib"
+        digest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    categories:
+      - category: exporter
+        id: my-exporter
+        aliases:
+          - "my-exporter-v2"
+    depends_on:
+      - id: "other-plugin"
+        version: ">=1.0.0"
+    metadata:
+      author: "NVIDIA"
+      docs: "https://example.com"

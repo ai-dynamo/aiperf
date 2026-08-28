@@ -45,7 +45,6 @@ use crate::dataset::{
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::{EndpointKey, EndpointRegistry, PreparedEndpointTable};
-use crate::export::otel::OtelRecordAccumulator;
 use crate::extensions::AIPerfRegistry;
 use crate::failure::OnFailure;
 use crate::fixed_schedule::{
@@ -120,7 +119,7 @@ use crate::engine::readiness::{PreparedOnlineReadiness, ReadinessTransportFactor
 use crate::engine::record_lane::RecordArtifactLane;
 use crate::engine::records::{
     CapturedHttpExchange, CapturedModelOutput, CapturedRecord, InputSession, group_record_errors,
-    observe_otel_record, write_inputs_json, write_outputs_json, write_raw_records_jsonl,
+    write_inputs_json, write_outputs_json, write_raw_records_jsonl,
     write_records_csv, write_records_jsonl,
 };
 use crate::engine::registry::ValidatedEndpointProfileV2;
