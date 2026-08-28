@@ -85,6 +85,28 @@ pub struct CellLaunchContext {
     pub plugin_lock_digest: Option<String>,
 }
 
+#[cfg(feature = "cellular")]
+impl CellLaunchContext {
+    /// Construct a context without any role material, for tests that exercise
+    /// command-building without a real cellular bootstrap.
+    pub fn without_roles(
+        cell_count: u32,
+        controller_coordinate: impl Into<String>,
+        phase_ordinal_bases: BTreeMap<String, u64>,
+        artifact_authority: Option<String>,
+        plugin_lock_digest: Option<String>,
+    ) -> Self {
+        Self {
+            cell_count,
+            controller_coordinate: controller_coordinate.into(),
+            phase_ordinal_bases,
+            artifact_authority,
+            local_roles: None,
+            plugin_lock_digest,
+        }
+    }
+}
+
 /// A started cell the controller watches for hard failure. For a local subprocess
 /// this wraps the child; for a k8s pod there is nothing to wait on (pod liveness
 /// is the operator's concern; the controller uses a registration timeout).

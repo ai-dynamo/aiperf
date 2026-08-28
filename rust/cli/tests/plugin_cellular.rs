@@ -18,14 +18,13 @@ use aiperf_runtime::engine::cell_launcher::{
 #[test]
 #[cfg(feature = "cellular")]
 fn cell_command_omits_env_when_no_digest() {
-    let ctx = CellLaunchContext {
-        cell_count: 2,
-        controller_coordinate: "file:/tmp/coord".to_owned(),
-        phase_ordinal_bases: BTreeMap::new(),
-        artifact_authority: None,
-        local_roles: None,
-        plugin_lock_digest: None,
-    };
+    let ctx = CellLaunchContext::without_roles(
+        2,
+        "file:/tmp/coord",
+        BTreeMap::new(),
+        None,
+        None,
+    );
     let launcher = LocalLauncher;
     let cmd = launcher.cell_command(&ctx, 0);
     // The debug repr is the only stable way to inspect a tokio::process::Command's
@@ -43,14 +42,13 @@ fn cell_command_omits_env_when_no_digest() {
 #[cfg(feature = "cellular")]
 fn cell_command_injects_digest_when_present() {
     let digest = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-    let ctx = CellLaunchContext {
-        cell_count: 2,
-        controller_coordinate: "file:/tmp/coord".to_owned(),
-        phase_ordinal_bases: BTreeMap::new(),
-        artifact_authority: None,
-        local_roles: None,
-        plugin_lock_digest: Some(digest.to_owned()),
-    };
+    let ctx = CellLaunchContext::without_roles(
+        2,
+        "file:/tmp/coord",
+        BTreeMap::new(),
+        None,
+        Some(digest.to_owned()),
+    );
     let launcher = LocalLauncher;
     let cmd = launcher.cell_command(&ctx, 0);
     let dbg = format!("{cmd:?}");
