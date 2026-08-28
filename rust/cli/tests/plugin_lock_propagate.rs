@@ -9,12 +9,16 @@ use aiperf_cli::plugins::propagate::{ENV_LOCK_DIGEST, ENV_LOCK_PATH, read_lock_e
 
 #[test]
 fn env_vars_roundtrip() {
-    // Isolate via a serial harness: env mutations are process-global.
-    std::env::set_var(ENV_LOCK_PATH, "/tmp/test.lock");
-    std::env::set_var(ENV_LOCK_DIGEST, "abc123");
+    // Safety: single-threaded test process; env mutation is safe here.
+    unsafe {
+        std::env::set_var(ENV_LOCK_PATH, "/tmp/test.lock");
+        std::env::set_var(ENV_LOCK_DIGEST, "abc123");
+    }
     let result = read_lock_env();
-    std::env::remove_var(ENV_LOCK_PATH);
-    std::env::remove_var(ENV_LOCK_DIGEST);
+    unsafe {
+        std::env::remove_var(ENV_LOCK_PATH);
+        std::env::remove_var(ENV_LOCK_DIGEST);
+    }
     let (path, digest) = result.expect("should read both env vars");
     assert_eq!(path, PathBuf::from("/tmp/test.lock"));
     assert_eq!(digest, "abc123");
@@ -22,26 +26,36 @@ fn env_vars_roundtrip() {
 
 #[test]
 fn no_env_vars_returns_none() {
-    std::env::remove_var(ENV_LOCK_PATH);
-    std::env::remove_var(ENV_LOCK_DIGEST);
+    unsafe {
+        std::env::remove_var(ENV_LOCK_PATH);
+        std::env::remove_var(ENV_LOCK_DIGEST);
+    }
     assert!(read_lock_env().is_none());
 }
 
 #[test]
 fn partial_env_path_only_returns_none() {
-    std::env::set_var(ENV_LOCK_PATH, "/tmp/test.lock");
-    std::env::remove_var(ENV_LOCK_DIGEST);
+    unsafe {
+        std::env::set_var(ENV_LOCK_PATH, "/tmp/test.lock");
+        std::env::remove_var(ENV_LOCK_DIGEST);
+    }
     let result = read_lock_env();
-    std::env::remove_var(ENV_LOCK_PATH);
+    unsafe {
+        std::env::remove_var(ENV_LOCK_PATH);
+    }
     assert!(result.is_none());
 }
 
 #[test]
 fn partial_env_digest_only_returns_none() {
-    std::env::remove_var(ENV_LOCK_PATH);
-    std::env::set_var(ENV_LOCK_DIGEST, "deadbeef");
+    unsafe {
+        std::env::remove_var(ENV_LOCK_PATH);
+        std::env::set_var(ENV_LOCK_DIGEST, "deadbeef");
+    }
     let result = read_lock_env();
-    std::env::remove_var(ENV_LOCK_DIGEST);
+    unsafe {
+        std::env::remove_var(ENV_LOCK_DIGEST);
+    }
     assert!(result.is_none());
 }
 
