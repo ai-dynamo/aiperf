@@ -59,8 +59,8 @@ pub const CELL_FLAG: &str = "--cell";
 /// `aiperf --aggregator` refuses unavailable hierarchical aggregation.
 pub const AGGREGATOR_FLAG: &str = "--aggregator";
 
-/// Load and verify the propagated plugin lock, then record its digest as this
-/// process's composed plugin identity.
+/// Load and verify the propagated plugin lock, then record it as this process's
+/// composed plugin identity and report provenance.
 ///
 /// Records `None` only when the environment carries no lock at all, which is
 /// the no-plugins case. Every other failure is fatal: a half-set or malformed
@@ -76,6 +76,7 @@ fn record_verified_plugin_lock() {
         }
     };
     let Some((lock_path, expected_digest)) = propagated else {
+        aiperf_runtime::metrics_core::report::set_plugin_provenance(None);
         aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(None);
         return;
     };
@@ -90,16 +91,49 @@ fn record_verified_plugin_lock() {
             std::process::exit(2);
         }
     };
-    let actual_digest = bundle.lock().digest.hex.as_str();
+    let lock = bundle.lock();
+    let actual_digest = lock.digest.hex.as_str();
     if let Err(error) =
         crate::plugins::propagate::verify_propagated_digest(&expected_digest, actual_digest)
     {
         tracing::error!(error = %error, "plugin lock attestation failed");
         std::process::exit(2);
     }
+    let catalog = lock.packages.iter().map(plugin_catalog_entry).collect();
+    aiperf_runtime::metrics_core::report::set_plugin_provenance(Some((
+        actual_digest.to_owned(),
+        catalog,
+    )));
     aiperf_runtime::engine::cell_launcher::set_composed_plugin_lock_digest(Some(
         actual_digest.to_owned(),
     ));
+}
+
+/// Project one locked package into the report's catalog summary.
+///
+/// Digests are reported as bare hex, matching the lock digest's own
+/// representation; the lock stores artifact digests with a `blake3:` prefix.
+fn plugin_catalog_entry(
+    package: &aiperf_plugin_host::lock::LockedPackageV1,
+) -> aiperf_runtime::metrics_core::report::PluginCatalogEntry {
+    use aiperf_plugin_host::lock::PackageStatus;
+    aiperf_runtime::metrics_core::report::PluginCatalogEntry {
+        package_id: package.id.clone(),
+        version: package.version.clone(),
+        // A locked package is the resolved winner for its ID; a disabled one
+        // contributed nothing, and a failed one was refused registration.
+        status: match package.status {
+            PackageStatus::Active => "winner",
+            PackageStatus::Disabled => "absent",
+            PackageStatus::Failed => "quarantined",
+        }
+        .to_string(),
+        manifest_digest: package
+            .artifact_digest
+            .strip_prefix("blake3:")
+            .unwrap_or(&package.artifact_digest)
+            .to_string(),
+    }
 }
 
 /// Return whether the arguments select an internal execution mode.
