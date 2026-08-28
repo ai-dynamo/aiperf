@@ -38,7 +38,7 @@ here) and `-t <trial>`.
 | `Queued` | Kueue has not admitted the workload | `kubectl get workloads -n <NS>`; see `docs/kubernetes/kueue.md` |
 | `Initializing` > ~120 s | Image pull, ConfigMap, or ZMQ connection probe | `aiperf kube logs <ID> --container control-plane --tail 50` |
 | `Running`, restarts > 3 | Crash loop | `aiperf kube logs <ID> --container <c> --tail 100` |
-| `Running`, OOM-killed pod | Memory limit too low | raise the container's `AIPERF_K8S_<SERVICE>_MEMORY` |
+| `Running`, OOM-killed pod | Memory limit too low | raise the budget on the **operator** deployment: worker pods use `AIPERF_K8S_WORKER_POD_MEMORY`, the `control-plane` container uses `AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY` |
 | `Running`, `requestsCompleted` flat | Stalled benchmark | check endpoint reachability from inside the cluster |
 | `Running`, `request_error_rate.avg > 5` | Endpoint rejecting requests | inspect worker logs and server-side errors |
 | `Failed` | See failure table below | `kubectl ... .status.error` + controller logs |
@@ -77,10 +77,18 @@ exhausted.
 - **Heartbeat expiry is a symptom, not a cause.** `AIPERF_K8S_CONTROLLER_HEARTBEAT_EXPIRY_SECONDS`
   defaults to 30 s and must be at least twice the interval; widening it hides
   the starvation instead of fixing it.
-- **Worker pods that cannot complete the connection probe exit on purpose** so
-  Kubernetes restarts them with a fresh ZMQ context
-  (`AIPERF_K8S_JOBSET_WORKER_CONNECTION_PROBE_TIMEOUT`, backoff limit 20). A few
-  early restarts on first deploy are expected, not a bug.
+- **Workers pass two startup probes, and they fail differently.** The PUB/SUB
+  connection probe fails *closed*: the pod exits on purpose so Kubernetes
+  restarts it with a fresh ZMQ context
+  (`AIPERF_K8S_JOBSET_WORKER_CONNECTION_PROBE_TIMEOUT`, backoff limit 20). A
+  few early restarts on first deploy are expected, not a bug. The credit-return
+  PUSH probe fails *open*: credit dispatch rides the DEALER but returns ride a
+  separate PUSH/PULL fan-in, and on budget expiry
+  (`AIPERF_WORKER_RETURN_PROBE_BUDGET`, default 30 s;
+  `AIPERF_WORKER_RETURN_PROBE_RETRY_DELAY`, default 0.1 s) the worker announces
+  dispatchability anyway and logs a warning. So a dead return path produces a
+  stalled run with **zero restarts** -- grep worker logs for
+  `Credit-return channel still has no peer` before blaming the endpoint.
 - **Operator-mode results are harvested only on terminal phase.** "results
   missing" mid-run is correct behavior; use `--from-pods` to read the live
   controller instead.

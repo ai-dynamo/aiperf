@@ -7,7 +7,10 @@ description: Use when running a parameter sweep, multi-run confidence trial, or 
 
 `aiperf kube sweep` submits one `AIPerfSweep` CR. A dedicated sweep-controller
 pod runs the orchestration loop and creates **one child `AIPerfJob` per
-(variation, trial)** — the kopf operator itself stays sweep-agnostic.
+(variation, trial)**, sequentially. The kopf operator has its own
+`AIPerfSweep` handlers (spec validation, RBAC, the controller JobSet, child
+status roll-up) but stays planner-agnostic — the adaptive/BO loop lives only
+in the sweep-controller pod.
 
 **Related skills:** `aiperf-kube-run` (single-job lifecycle, shared flags),
 `aiperf-kube-triage` (a child is stuck). Reference:
@@ -48,12 +51,13 @@ aiperf kube results <sweep-name>            # whole sweep
 aiperf kube results <sweep-name> -v 7 -t 2  # one child
 ```
 
-**`aiperf kube validate` does not accept this file.** `validate` dispatches on a
-`kind:` field and only handles CR-format `AIPerfJob` / `AIPerfSweep` manifests; a
-Config-v2 `benchmark:`/`sweep:` document has no `kind` and fails with
-`kind: expected one of ['AIPerfJob', 'AIPerfSweep'], got 'None'`. Preview
-Config-v2 sweep input with `--dry-run` instead, and reserve `validate` for
-manifests you would `kubectl apply`.
+**`aiperf kube validate` accepts this file.** A bare Config-v2 document with
+no `apiVersion`/`kind` is detected, checked against the `AIPerfSweep` contract
+(inferred from the presence of `sweep:`), and passes with a warning naming the
+contract it used. Only the wrapped-CR form additionally validates deployment
+fields (`image`, `podTemplate`, worker counts, credential transport), so
+validate the CR you would `kubectl apply` when those matter. `--dry-run` on
+`aiperf kube sweep` remains the way to preview the expanded variation list.
 
 ## Parameter path rules
 
@@ -92,19 +96,24 @@ On `debug`, `--variation` must be spelled long — `-v` is `--verbose` there.
   fails on purpose. The sweep controller strips the parent `multiRun` block from
   each child so a child executes exactly one run instead of recursing.
 - **The cardinality contract is one AIPerfJob and one controller pod per
-  variation.** Sizing `--total-workers` is per child, not per sweep — a 32-way
-  grid at 64 workers wants capacity for 32 concurrent controller+worker sets, or
-  Kueue admission control to serialize them.
+  (variation, trial), and they run one at a time.** The sweep-controller awaits
+  each child to reach a terminal phase before creating the next, so peak
+  cluster demand is a single controller+worker set regardless of grid size.
+  Size `--total-workers` for one child; a 32-way grid at 64 workers needs
+  capacity for 64 workers, not 2048, and needs no Kueue serialization. What
+  scales with the grid is wall-clock, not capacity.
 - **The aggregate is inlined into CR status only up to ~600 KB**
   (`AIPERF_K8S_JOBSET_SWEEP_AGGREGATE_INLINE_MAX_BYTES`; the apiserver rejects
   patches over ~1 MiB with HTTP 413). Past that the sweep-controller drops
-  `confidence` from status and the full document is served only from the
+  `confidence` first, then omits `children` and adds a `childrenTruncated`
+  marker if it is still over budget; the full document is served only from the
   results sidecar / PVC. Read big aggregates via `aiperf kube results`, never
   from `kubectl get -o json`.
 - **Plotting runs once, in the sweep-controller, after cross-variation
-  aggregation.** With `plotRequired: true` a plot failure fails aggregation and
-  withholds the ready marker (nothing is harvested); with `false` it is logged
-  and the aggregate still becomes ready.
+  aggregation**, and only when `benchmark.artifacts.autoPlot` resolves true.
+  With `benchmark.artifacts.plotRequired: true` a plot failure fails
+  aggregation and withholds the ready marker (nothing is harvested); with
+  `false` it is logged and the aggregate still becomes ready.
 - **A partial sweep download fails `aiperf kube results` (exit 1)** even though
   the successfully downloaded children remain on disk.
 - **CR object-map keys get alphabetized by the apiserver.** Anything order-

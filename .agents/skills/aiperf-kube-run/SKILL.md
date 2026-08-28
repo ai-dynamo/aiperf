@@ -65,8 +65,13 @@ Defaults: benchmark namespace `aiperf-benchmarks`, operator namespace
 - **Results come from the operator PVC by default.** `--from-pods` is required
   for direct-mode runs, and on the default `--all` path the controller API is
   the only tier — there is no `kubectl cp` fallback unless `--summary-only`.
-- **Cancel is not delete.** `aiperf kube cancel` patches `spec.cancel: true`;
-  the CR and harvested results survive, so `results` still works.
+- **Cancel is not delete, but it is not a safe pause either.** `aiperf kube
+  cancel` patches `spec.cancel: true`; the CR survives, but the operator
+  deletes the JobSet and sets `phase=Cancelled` **without harvesting**, and
+  every completion path short-circuits once cancellation is requested. Results
+  survive only if a harvest already finished. Cancel an in-flight run and there
+  is nothing on the PVC and no pods left for `--from-pods` — download first,
+  cancel second.
 - **Ambiguous names are refused, not guessed.** When an `AIPerfJob` and an
   `AIPerfSweep` share a name, destructive commands need `--kind job|sweep`.
 
@@ -75,7 +80,7 @@ Defaults: benchmark namespace `aiperf-benchmarks`, operator namespace
 | Group | Commands | Exits non-zero when |
 |---|---|---|
 | Gating | `validate`, `preflight`, `results`, `results list-runs` | any failure, including partial download |
-| Addressing | `attach`, `logs`, `cancel`, `delete`, `shutdown`, `debug`, `list` | only `attach`/`logs`, only when the target does not exist |
+| Addressing | `attach`, `logs`, `cancel`, `delete`, `shutdown`, `debug`, `list` | only `attach`/`logs`, only when the target does not exist (`list` also exits 1 on conflicting status filters) |
 
 Use `--ignore-not-found` on `attach`/`logs` in teardown scripts. A target that
 exists but has nothing to show exits 0 by design.
@@ -91,8 +96,10 @@ no CR and no PVC, and uses an 8-hour JobSet TTL (vs 5 minutes) so pods survive
 long enough for `aiperf kube results --from-pods`. See
 `docs/kubernetes/direct-mode.md`.
 
-`--operator` with an explicit `--namespace` skips the cluster-scoped CRD probe,
-which is how namespace-scoped tenants submit without cluster-wide RBAC.
+`--operator` skips the cluster-scoped CRD probe on its own — that is how
+namespace-scoped tenants submit without cluster-wide RBAC. Pair it with an
+explicit `--namespace`, since skipping the probe also skips operator
+discovery.
 
 ## Common mistakes
 

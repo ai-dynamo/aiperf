@@ -143,7 +143,10 @@ def main() -> int:
             f"{len(body.split())} words"
         )
 
-        for sub, rest in re.findall(r"aiperf kube ([a-z-]+)((?: [^\n`|]*)?)", body):
+        # Fold shell line-continuations so flags on later lines of a multi-line
+        # example are scanned too; the command regex stops at a newline.
+        folded = re.sub(r"\\\n\s*", " ", body)
+        for sub, rest in re.findall(r"aiperf kube ([a-z-]+)((?: [^\n`|]*)?)", folded):
             if sub not in subcommands:
                 fail(f"{name}: unknown subcommand 'aiperf kube {sub}'")
                 continue

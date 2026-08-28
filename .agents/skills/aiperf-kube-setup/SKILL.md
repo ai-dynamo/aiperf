@@ -115,7 +115,7 @@ Other knobs worth knowing, all in
 | `kueue.defaultQueueName` / `kueue.createQueues` | `""` / `false` | gang-scheduled admission (`docs/kubernetes/kueue.md`) |
 | `serviceMonitor.enabled` | `false` | Prometheus Operator scraping of operator metrics |
 | `operator.priorityClassName` | `""` | keep the operator off the eviction list |
-| `operator.env` | — | per-container resource overrides (`AIPERF_K8S_*`) |
+| `operator.env` | — | operator lifecycle/results tunables only (9 fixed keys) |
 | `rbac.create` / `networkPolicy.enabled` | `true` / `false` | hardening; `docs/kubernetes/rbac-security.md` |
 | `dashboard.enabled` | `false` | Plotly results UI |
 
@@ -141,8 +141,15 @@ Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
   required single operator replica, but node failure strands the volume — use
   an RWX class if you need results to survive it.
 - **`benchmarkNamespace.create: true` fails when the namespace already
-  exists.** Pre-created namespaces need `create: false` plus the namespace
-  listed in `benchmarkRbacNamespaces` if it is not `benchmarkNamespace.name`.
+  exists**, and `create: false` does not buy you an escape hatch via
+  `benchmarkRbacNamespaces`: that list is rendered into Namespace objects
+  unconditionally (`deploy/helm/aiperf-operator/templates/benchmark-namespace.yaml` gates only the primary
+  name on `create`), so listing an existing namespace re-triggers the same
+  ownership failure. Either Helm-adopt the namespace (label
+  `app.kubernetes.io/managed-by: Helm` plus annotations
+  `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`) or leave
+  it out of the chart and apply
+  `deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml`'s Role/RoleBinding out of band.
 - **`operator.watchNamespaces` does not narrow RBAC.** The ClusterRole still
   grants cluster-wide reads; a genuinely scoped install also needs
   `rbac.create=false` and namespace-scoped RBAC applied out of band.
@@ -154,8 +161,16 @@ Full matrix: `docs/kubernetes/configuration.md`; hardening and CI patterns:
 - **The per-container CPU defaults are sized for small runs.**
   `AIPERF_K8S_RECORDS_MANAGER_CPU` and `AIPERF_K8S_SYSTEM_CONTROLLER_CPU`
   default to `75m`; past a few hundred thousand requests the records manager
-  pegs a core and heartbeats miss. Raise them via `operator.env` before a
-  large campaign, not after it stalls.
+  pegs a core and heartbeats miss. Raise them before a large campaign, not
+  after it stalls. They are read by the process that renders the JobSet, so
+  they must be set on the **operator container** -- `spec.podTemplate.env` has
+  no effect on container resources, and `operator.env` is a closed 9-key map
+  (monitor/timeout/results tunables) that silently drops anything else:
+
+  ```bash
+  kubectl set env -n "$NS_OP" deploy/aiperf-operator \
+    AIPERF_K8S_RECORDS_MANAGER_CPU=4000m
+  ```
 - **Upgrading the chart does not restart running benchmarks.** In-flight
   AIPerfJobs keep their old controller image.
 
@@ -174,11 +189,16 @@ Then the online check, with the arguments a real job will use:
 aiperf kube preflight --kube-context "$CTX" -n "$NS_BENCH" \
   --image <registry>/aiperf:<tag> --image-pull-secret regcred \
   --endpoint-url http://<svc>.<ns>.svc.cluster.local:8000 \
-  --workers 16 -o json | jq '.checks[] | select(.status != "pass")'
+  --workers 16 -o json | jq '.checks[] | select(.status == "fail" or .status == "warn")'
 ```
 
 `preflight` covers connectivity, API versions, RBAC, node capacity against the
-worker projection, image pullability, and endpoint reachability. Re-run it
+worker projection, image *reference* sanity, and endpoint reachability. It
+does **not** prove the image is pullable: supplying `--image-pull-secret`
+short-circuits the check to `PASS` without contacting the registry, so a
+typo'd tag or an unpushed local build sails through. `CheckStatus` also emits
+`skip` and `info` for benign cases, which is why the filter above matches
+`fail`/`warn` rather than everything that is not `pass`. Re-run it
 whenever the worker count or endpoint changes — capacity is the check that
 goes stale. Finish with a small benchmark from `aiperf-kube-run` before
 handing the cluster to anyone else.
