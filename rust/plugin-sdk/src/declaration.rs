@@ -2,20 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Plugin declaration type returned by the native entry symbol.
+//!
+//! Re-exports [`PluginDeclarationV1`] and [`PluginEntryV1`] from
+//! `aiperf_plugin_api` so SDK users do not need to depend on the API crate
+//! directly. The host-authoritative definition lives in `aiperf_plugin_api`;
+//! the SDK provides a single canonical import path for plugin authors.
 
-/// The static declaration a plugin returns from `aiperf_plugin_entry_v1`.
-///
-/// Must be `#[repr(C)]` for stable memory layout; all fields are `'static`
-/// string slices backed by the plugin's own binary so the caller never frees
-/// them.
-#[repr(C)]
-pub struct PluginDeclarationV1 {
-    /// Plugin name as registered with the host.
-    pub name: &'static str,
-    /// SemVer version string of this plugin build.
-    pub version: &'static str,
-    /// Version of the `aiperf-plugin-sdk` crate this plugin was compiled against.
-    pub aiperf_sdk_version: &'static str,
-    /// Declared capability identifiers (e.g. `"endpoint"`, `"transport"`).
-    pub capabilities: &'static [&'static str],
-}
+pub use aiperf_plugin_api::extension::{PluginDeclarationV1, PluginEntryV1};

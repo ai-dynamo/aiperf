@@ -16,20 +16,32 @@ use syn::{parse_macro_input, ItemFn};
 /// use aiperf_plugin_sdk::declaration::PluginDeclarationV1;
 /// use aiperf_plugin_sdk_macros::aiperf_plugin;
 ///
+/// static PKG: std::sync::LazyLock<aiperf_plugin_api::descriptor::PluginPackageDescriptor> =
+///     std::sync::LazyLock::new(|| {
+///         aiperf_plugin_api::descriptor::PluginPackageDescriptor::from_authored(
+///             "my-plugin", env!("CARGO_PKG_VERSION"), "My plugin"
+///         ).unwrap()
+///     });
+///
+/// struct MyExtension;
+/// impl aiperf_plugin_api::extension::AIPerfExtension for MyExtension {
+///     fn register(&self, _r: &mut aiperf_plugin_api::extension::PluginRegistrar<'_>)
+///         -> Result<(), aiperf_plugin_api::error::ExtensionError> { Ok(()) }
+/// }
+/// static EXT: MyExtension = MyExtension;
+///
 /// #[aiperf_plugin]
 /// fn my_plugin() -> PluginDeclarationV1 {
-///     PluginDeclarationV1 {
-///         name: "my-plugin",
-///         version: env!("CARGO_PKG_VERSION"),
-///         aiperf_sdk_version: "0.13.0",
-///         capabilities: &[],
-///     }
+///     PluginDeclarationV1 { package: &*PKG, extension: &EXT }
 /// }
 /// ```
 ///
 /// The macro preserves the original function and generates a
-/// `#[no_mangle] pub extern "Rust" fn aiperf_plugin_entry_v1()` that returns
-/// a `&'static PluginDeclarationV1` backed by a `OnceLock`.
+/// `#[no_mangle] pub unsafe fn aiperf_plugin_entry_v1()` that returns a
+/// `PluginDeclarationV1` by value, backed by a `OnceLock`.
+///
+/// The generated function has type `unsafe fn() -> PluginDeclarationV1`,
+/// matching the host-authoritative `PluginEntryV1` alias exactly.
 #[proc_macro_attribute]
 pub fn aiperf_plugin(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -40,17 +52,23 @@ pub fn aiperf_plugin(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #inner_vis fn #inner_name(#inner_inputs)
-            -> ::aiperf_plugin_sdk::declaration::PluginDeclarationV1
+            -> ::aiperf_plugin_api::extension::PluginDeclarationV1
         #inner_block
 
+        /// # Safety
+        ///
+        /// The host may call this only after manifest and build-identity
+        /// validation confirms the library's universe digest matches the host
+        /// ABI universe. The returned `PluginDeclarationV1` is `'static` and
+        /// must not be freed by the host.
         #[no_mangle]
-        pub extern "Rust" fn aiperf_plugin_entry_v1()
-            -> &'static ::aiperf_plugin_sdk::declaration::PluginDeclarationV1
+        pub unsafe fn aiperf_plugin_entry_v1()
+            -> ::aiperf_plugin_api::extension::PluginDeclarationV1
         {
             static DECL: ::std::sync::OnceLock<
-                ::aiperf_plugin_sdk::declaration::PluginDeclarationV1
+                ::aiperf_plugin_api::extension::PluginDeclarationV1
             > = ::std::sync::OnceLock::new();
-            DECL.get_or_init(|| #inner_name())
+            *DECL.get_or_init(|| #inner_name())
         }
     };
 

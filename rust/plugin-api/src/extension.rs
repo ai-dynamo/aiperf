@@ -48,6 +48,17 @@ pub type PluginEntryV1 = unsafe fn() -> PluginDeclarationV1;
 /// allocates them and the plugin's library — which stays resident for the whole
 /// process lifetime — owns dropping them, so no plugin-allocated storage is
 /// ever freed by the host allocator.
+///
+/// # SAFETY — fat-pointer layout and the universe guard
+///
+/// This struct crosses the plugin ABI boundary. Fat-pointer layout (`&str`,
+/// `&[T]`, `&dyn Trait`) is stable within a single rustc version but is NOT
+/// guaranteed by the Rust specification across different compiler binaries.
+/// The `HostAbiUniverseRecordV1.rustc_exe_digest` universe guard ensures that
+/// host and every loaded plugin were compiled with the **identical** `rustc`
+/// executable, making the fat-pointer layout identical on both sides.
+/// Never load a plugin compiled with a different `rustc` into this host.
+#[derive(Copy, Clone)]
 pub struct PluginDeclarationV1 {
     /// Package identity, re-checked by the host against the manifest.
     pub package: &'static PluginPackageDescriptor,
