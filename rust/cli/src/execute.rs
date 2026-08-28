@@ -63,6 +63,21 @@ pub fn run_once(
     child_pid: &crate::signals::ChildPid,
     heartbeat_path: Option<&Path>,
 ) -> anyhow::Result<Terminal> {
+    run_once_with_lock(exec_bin, request_json, child_pid, heartbeat_path, None)
+}
+
+/// Spawn one execution child, propagating the plugin lock to the subprocess.
+///
+/// Pass `plugin_lock` as `Some((path, digest))` when the parent has loaded a
+/// frozen plugin universe; the child will inherit the lock path and digest so
+/// it can reconstruct the identical universe without re-discovering the file.
+pub fn run_once_with_lock(
+    exec_bin: &Path,
+    request_json: &[u8],
+    child_pid: &crate::signals::ChildPid,
+    heartbeat_path: Option<&Path>,
+    plugin_lock: Option<(&Path, &str)>,
+) -> anyhow::Result<Terminal> {
     let mut command = Command::new(exec_bin);
     command
         .arg(crate::execute_mode::EXECUTE_FLAG)
@@ -71,6 +86,11 @@ pub fn run_once(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Propagate the plugin lock so the re-exec child reconstructs the same
+    // frozen plugin universe as the parent.
+    if let Some((lock_path, lock_digest)) = plugin_lock {
+        crate::plugins::propagate::set_lock_env(&mut command, lock_path, lock_digest);
+    }
     // Live dashboard: point the child's heartbeat lane
     // (`aiperf_runtime::engine::heartbeat_lane`) at a file the orchestrator tails,
     // so `aiperf profile --serve` streams this run's in-flight metrics (TTFT/ITL/
