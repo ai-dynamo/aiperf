@@ -51,10 +51,10 @@ pub use report::{
     ReportCounterStats, ReportDistributionStats, ReportDynamoCapacityInfo, ReportDynamoParityInfo,
     ReportDynamoRouter, ReportDynamoRunInfo, ReportDynamoTopology, ReportEndpointProfileIdentity,
     ReportError, ReportExtensionIdentity, ReportGraphOutcomeInfo, ReportGraphRunInfo,
-    ReportMetadataError, ReportPairRunFacts, ReportRun, ReportRunInfo, ReportRunMetadata,
-    ReportScalarStats, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
-    ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState, ReportStreamingDistribution,
-    ReportStreamingHorizons, ReportStreamingPlane, ReportQueueHighWater, ReportSummary,
+    ReportMetadataError, ReportPairRunFacts, ReportQueueHighWater, ReportRun, ReportRunInfo,
+    ReportRunMetadata, ReportScalarStats, ReportServerMetricsEndpointInfo,
+    ReportServerMetricsMetadata, ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState,
+    ReportStreamingDistribution, ReportStreamingHorizons, ReportStreamingPlane, ReportSummary,
     ReportTimeslice, ReportValue, Reporter, RunOutcome,
 };
 pub use report_view::ReportView;

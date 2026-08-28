@@ -162,9 +162,7 @@ fn observability_separates_failed_action_from_failed_run() {
     issues
         .by_disposition
         .insert(StreamingIssueDisposition::TerminalActionReceipt, 1);
-    issues
-        .by_scope
-        .insert(StreamingIssueScopeKind::Action, 1);
+    issues.by_scope.insert(StreamingIssueScopeKind::Action, 1);
     issues.by_class.insert(StreamingIssueClass::Permanent, 1);
     recorder.refresh_boundary(issues, horizons(1, 1));
 
@@ -343,7 +341,12 @@ fn queue_high_water_never_exceeds_the_authored_limit() {
     );
 
     let metrics = recorder.snapshot();
-    assert!(metrics.queues.values().all(|queue| queue.is_within_limits()));
+    assert!(
+        metrics
+            .queues
+            .values()
+            .all(|queue| queue.is_within_limits())
+    );
     let session = metrics.queues[&StreamingStage::Session];
     assert_eq!(session.items, session.item_limit);
     assert_eq!(session.bytes, session.byte_limit);
