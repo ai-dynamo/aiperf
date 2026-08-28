@@ -15,7 +15,7 @@ use super::{
     checkpoint::{CheckpointParticipantId, StreamRunIdentity, StreamingCheckpointParticipant},
     failure::StreamingIssueReporterHandle,
     format::{SessionWatermark, StreamingFormatDescriptor},
-    identity::{ContentDigest, SessionCausalFrontier},
+    identity::{ContentDigest, ImmutableObjectIdentity, SessionCausalFrontier},
     source::SourceSeal,
     unit::{ExecutableDatasetAction, StreamingSessionFragment},
 };
@@ -28,8 +28,22 @@ mod reliability_view_seal {
 
 mod host;
 
+/// Session closure proofs and bounded causality policies.
+pub mod closure;
 /// Cross-partition conversation session program.
 pub mod conversation;
+/// Private bounded spill for held session causality state.
+pub mod spill;
+
+pub use closure::{
+    MissingPredecessorPolicy, ProducerTreeClosureTracker, SessionCausalityLimits,
+    SessionClosureDecision, SessionClosureEvidence, SessionClosurePolicy,
+    SessionQuarantineClosureProof, WholeProducerTreeClosureReceipt, validate_session_limits,
+};
+pub use host::tombstones::{SessionQuarantineTombstone, SessionQuarantineTombstoneMap};
+
+/// Append-only cross-chunk agent and graph session program.
+pub mod agent_graph;
 
 #[cfg(test)]
 pub(crate) use host::CheckedSessionQuarantineTombstoneView;
@@ -173,6 +187,12 @@ pub struct StreamingSessionPrepareContext {
     pub participant_id: CheckpointParticipantId,
     /// Semantic namespace of the selected stream.
     pub stream_semantic_digest: ContentDigest,
+    /// Immutable source authority the selected stream reads.
+    ///
+    /// Paired with `stream_semantic_digest` this is the exact input domain that
+    /// keys retained quarantine tombstones, so it cannot be discovered from a
+    /// single fragment's partition.
+    pub source_identity: ImmutableObjectIdentity,
     /// Budget charged for live session state.
     pub session_state_budget: StreamingResourceBudget,
     /// Budget charged for prepared checkpoint payloads.

@@ -262,10 +262,7 @@ pub(crate) fn decode_reply(
 pub(crate) fn controller_streaming_session(
     controller: &ConnectedController,
     run_nonce: [u8; 32],
-) -> Result<
-    crate::cellular::streaming_protocol::ControllerStreamingSessionId,
-    CellTransportError,
-> {
+) -> Result<crate::cellular::streaming_protocol::ControllerStreamingSessionId, CellTransportError> {
     Ok(
         crate::engine::cellular_registration::derive_controller_streaming_session(
             &controller.binding()?,
@@ -1465,9 +1462,13 @@ mod tests {
             .filter(|handler| handler.starts_with("aiperf."))
             .collect();
         handlers.sort();
+        // The two streaming purposes reserve their sequence and replay slots
+        // ahead of the streaming transport that registers their routes, so they
+        // are the only purposes without a live controller handler.
+        const RESERVED_ROUTELESS_PURPOSES: usize = 2;
         assert_eq!(
             handlers.len(),
-            ADMISSION_PURPOSE_COUNT - 1,
+            ADMISSION_PURPOSE_COUNT - 1 - RESERVED_ROUTELESS_PURPOSES,
             "the live controller handler inventory changed without a production-route security test adapter"
         );
         for handler in &handlers {
