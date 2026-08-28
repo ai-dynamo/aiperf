@@ -6,9 +6,11 @@ Tests for streaming_dealer_client.py - ZMQStreamingDealerClient class.
 
 import asyncio
 
+import msgspec
 import msgspec.msgpack
 import pytest
 import zmq
+from pytest import param
 
 from aiperf.common.enums import CreditPhase, LifecycleState
 from aiperf.common.exceptions import NotInitializedError
@@ -531,3 +533,69 @@ class TestPendingRequestsOnStop:
         assert not done.cancelled()
         assert done.result() == "reply"
         assert not client._pending_requests
+
+
+class _RidCidStruct(msgspec.Struct, frozen=True, kw_only=True):
+    """Stand-in for a struct that carries both correlation keys."""
+
+    rid: str = ""
+    cid: str = ""
+
+
+class TestDealerCorrelationKeyGuards:
+    """``request()`` and ``_dispatch_dealer`` must agree on what a usable key is."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "struct",
+        [
+            param(_RidCidStruct(rid="", cid=""), id="both-empty"),
+            param(WorkerDispatchable(worker_id="w"), id="neither-attribute"),
+        ],
+    )  # fmt: skip
+    async def test_request_rejects_falsy_correlation_key(
+        self, struct, mock_zmq_socket, mock_zmq_context
+    ):
+        """An empty-string rid/cid would register a future ``_dispatch_dealer``
+        can never match (its guard is ``if key and ...``), hanging the caller for
+        the full timeout instead of failing fast."""
+        client = ZMQStreamingDealerClient(
+            address="tcp://127.0.0.1:5555", identity="worker-1", bind=False
+        )
+        await client.initialize()
+
+        with pytest.raises(ValueError, match="rid.*cid"):
+            await client.request(struct, timeout=0.1)
+
+        assert not client._pending_requests
+
+    @pytest.mark.asyncio
+    async def test_dispatch_matches_cid_when_rid_does_not(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """A reply carrying a non-matching rid plus the matching cid must still
+        resolve the pending future rather than short-circuiting on rid and
+        falling through to the streaming receiver."""
+        client = ZMQStreamingDealerClient(
+            address="tcp://127.0.0.1:5555", identity="worker-1", bind=False
+        )
+        await client.initialize()
+
+        received: list[object] = []
+
+        async def handler(message) -> None:
+            received.append(message)
+
+        client.register_receiver(handler)
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        client._pending_requests["cid-1"] = future
+
+        reply = _RidCidStruct(rid="some-other-rid", cid="cid-1")
+        client._dispatch_dealer(reply)
+
+        assert future.done()
+        assert future.result() is reply
+        assert not client._pending_requests
+        assert received == []

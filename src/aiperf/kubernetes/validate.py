@@ -216,7 +216,6 @@ def validate_unknown_spec_fields(
             result.warnings.append(msg)
 
 
-
 # Spec/config path segments whose *values* are credentials. Pydantic embeds the
 # offending ``input_value`` in every error string, and ``ValidationResult.errors``
 # is returned verbatim by the unauthenticated ``POST /api/v1/validate`` -- so a
@@ -303,7 +302,9 @@ def validate_deployment_config(
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
         converter.to_deployment_config()
     except (pydantic.ValidationError, ValueError, TypeError, KeyError) as e:
-        result.errors.append(f"DeploymentConfig validation failed: {safe_error_text(e)}")
+        result.errors.append(
+            f"DeploymentConfig validation failed: {safe_error_text(e)}"
+        )
 
 
 def validate_endpoint_credential_transport(

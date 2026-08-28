@@ -71,6 +71,7 @@ __all__ = [
     "format_estimate",
 ]
 
+
 def estimate_memory(
     config: AIPerfConfig,
     total_workers: int = 10,

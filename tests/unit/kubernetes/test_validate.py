@@ -619,3 +619,61 @@ class TestConnectionsPerWorkerArithmetic:
             "Endpoint credential transport validation failed" in e
             for e in result.errors
         ), f"errors: {result.errors}"
+
+
+class TestCredentialRedactionInValidationErrors:
+    """``ValidationResult.errors`` crosses the unauthenticated
+    ``POST /api/v1/validate`` boundary verbatim, so a malformed credential must
+    never be echoed back -- while the field path and the structural reason,
+    which are what make the error actionable, must survive."""
+
+    @pytest.mark.parametrize(
+        "endpoint,secret,loc",
+        [
+            param(
+                {"urls": ["http://svc:8000"], "headers": ["Bearer SUPERSECRETTOKEN"]},
+                "SUPERSECRETTOKEN",
+                "endpoint.headers",
+                id="malformed-authorization-header",
+            ),
+            param(
+                {"urls": {"https://user:SUPERSECRETPW@example.com/v1": "x"}},
+                "SUPERSECRETPW",
+                "endpoint.urls",
+                id="malformed-urls-with-userinfo",
+            ),
+            param(
+                {"urls": ["http://svc:8000"], "apiKey": ["SUPERSECRETKEY"]},
+                "SUPERSECRETKEY",
+                "endpoint.apiKey",
+                id="malformed-api-key",
+            ),
+        ],
+    )  # fmt: skip
+    def test_malformed_credentials_are_not_echoed(
+        self, endpoint: dict, secret: str, loc: str
+    ) -> None:
+        doc = _valid_doc()
+        doc["spec"]["benchmark"]["endpoint"] = endpoint
+
+        result = validate_manifest(doc)
+
+        assert not result.passed
+        joined = "\n".join(result.errors)
+        assert secret not in joined, f"credential leaked: {joined}"
+        assert "<redacted>" in joined
+        # Diagnostics preserved: the user still learns which field is wrong.
+        assert loc in joined
+
+    def test_non_credential_input_values_are_preserved(self) -> None:
+        """Redaction is scoped to credential fields; an ordinary bad value keeps
+        its ``input_value`` so a benchmark user can see what they typed."""
+        doc = _valid_doc()
+        doc["spec"]["benchmark"]["endpoint"]["timeout"] = "not-a-number"
+
+        result = validate_manifest(doc)
+
+        assert not result.passed
+        joined = "\n".join(result.errors)
+        assert "not-a-number" in joined
+        assert "endpoint.timeout" in joined
