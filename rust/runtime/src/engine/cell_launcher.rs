@@ -247,6 +247,8 @@ impl LocalLauncher {
             command.env(CELL_ARTIFACT_ADDR_ENV, authority);
         }
         if let Some(digest) = &ctx.plugin_lock_digest {
+            // AIPERF_PLUGIN_LOCK_PATH is inherited from the controller's environment;
+            // remote cross-host cells must receive it explicitly via their launch spec.
             command.env(CELL_PLUGIN_LOCK_ENV, digest);
         }
         command

@@ -1277,7 +1277,6 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                             // failed to produce.
                             tracing::warn!(
                                 cell_id = register.cell_id,
-                                expected = %expected,
                                 "rejecting cell registration on plugin lock digest mismatch"
                             );
                             anyhow::bail!(
@@ -1287,10 +1286,9 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                         }
                     }
                     (None, None) => {}
-                    (Some(expected), None) => {
+                    (Some(_expected), None) => {
                         tracing::warn!(
                             cell_id = register.cell_id,
-                            expected = %expected,
                             "rejecting cell registration that omitted its plugin lock digest"
                         );
                         anyhow::bail!(

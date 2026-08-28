@@ -134,7 +134,11 @@ pub fn read_lock_env() -> Result<Option<(PathBuf, String)>, PropagateError> {
 /// Returns `Ok(())` when the digests agree, or [`PropagateError::DigestMismatch`]
 /// when they differ.
 pub fn verify_propagated_digest(expected: &str, actual: &str) -> Result<(), PropagateError> {
-    if expected == actual {
+    let expected_hash = blake3::Hash::from_hex(expected)
+        .map_err(|_| PropagateError::MalformedDigest { value: expected.to_owned() })?;
+    let actual_hash = blake3::Hash::from_hex(actual)
+        .map_err(|_| PropagateError::MalformedDigest { value: actual.to_owned() })?;
+    if expected_hash == actual_hash {
         Ok(())
     } else {
         Err(PropagateError::DigestMismatch {
