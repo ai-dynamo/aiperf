@@ -42,6 +42,9 @@ pub use closure::{
 };
 pub use host::tombstones::{SessionQuarantineTombstone, SessionQuarantineTombstoneMap};
 
+/// Append-only cross-chunk agent and graph session program.
+pub mod agent_graph;
+
 #[cfg(test)]
 pub(crate) use host::CheckedSessionQuarantineTombstoneView;
 
