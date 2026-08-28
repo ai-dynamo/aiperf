@@ -665,10 +665,6 @@ impl StreamingPipeline {
             if let PipelinePhase::Draining(reason) = state
                 && this.is_quiescent()
             {
-                // Drop any parked admission cycle before joining owners: the
-                // unit it was building was never accepted, so nothing settles
-                // for it.
-                inflight = None;
                 this.shutdown(reason).await?;
                 epoch = epoch.saturating_add(1);
                 let generation = this
