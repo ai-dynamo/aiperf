@@ -228,9 +228,16 @@ measure it. A dropped metric is a wrong number, not a missing one.
 **I15. One batched request is one record, with `input_sequence_length` the batch
 sum.** Every ingestion rate states its unit against this.
 *Enforces:* the existing batch path.
-*Status:* **HOLDS** (`random_pool_batches.rs:11`-`:66`). Asserted rather than
-assumed, because `rag_documents_per_second` is not derivable from it — a document
-spans several batches and a batch spans several documents.
+**A batch never spans documents.** A document spans several batches; the converse
+is refused. This is forced by the corrected execution design — one document is one
+staged task and its batches are that task's stages, so a cross-document batch would
+belong to two tasks at once and complete neither.
+*Status:* the batch-record half **HOLDS** (`random_pool_batches.rs:11`-`:66`); the
+containment half is NEW and refused-on-violation. An earlier draft of this
+invariant said a batch spans several documents, which contradicted the execution
+design and is corrected here.
+*Without it:* document completion is undefined, because a record would attribute
+to two documents.
 
 **I16. No per-role aggregate is reported before per-record role attribution
 exists.** A role-labelled number is backed by records that carry the role.
@@ -241,10 +248,17 @@ identity, so there is currently nothing to attribute to.
 *Without it:* the answer-role OSL compliance check is computed from records that
 cannot be attributed to the answer role.
 
-**I17. A scored number is exact, never an estimate.** Sketch mode's percentiles
-and standard deviation are streaming estimates; a sketch-mode run refuses
-`aiperf rag compliance` rather than computing its mean from them.
-*Enforces:* the compliance command's precondition. *Status:* NEW.
+**I17. A scored number is exact, never an estimate, and sketch mode is refused
+for the whole scored surface rather than for one command.** Sketch mode's
+percentiles and standard deviation are streaming estimates, and — the part an
+earlier draft of this record missed — `export_results_sketch` drops the inference
+series entirely, so the per-role dimension I20 requires does not survive it at all.
+A sketch-mode run therefore refuses `aiperf rag compliance` *and* refuses to be a
+scored `rag_qna` run: the two refusals are the same refusal, and scoping it to the
+command alone would have let a pinned run report a rate with I20's per-role OSL
+columns silently empty.
+*Enforces:* the compliance command's precondition and the pinned run's report.
+*Status:* NEW.
 
 **I18. Every new metric is verified against raw per-record output.** An e2e test
 against a deterministic `aiperf-mock-server` configuration reads the per-record
@@ -257,8 +271,16 @@ Summary-only assertions do not satisfy this.
 ### Replay
 
 **I19. A pinned run issues byte-identical request bodies across runs, with fixed
-hop count and fixed retrieved sets.** Every node's request inputs come from the
-recorded plan, not from the previous stage's live output.
+hop count and fixed retrieved sets, and refuses every authored option that
+deliberately perturbs request bytes.** Every node's request inputs come from the
+recorded plan, not from the previous stage's live output. The second clause is not
+decorative: `cache_bust_target: first_turn_prefix` exists precisely to make every
+request differ, deriving its marker from the trace instance
+(`agentic_replay.rs:83`-`:95`), so an authored cache bust and a pinned run are
+directly contradictory. A pinned `rag_qna` run requires `cache_bust_target` to be
+`None` and **refuses** any other value rather than silently issuing perturbed
+bytes under a byte-identical claim. An earlier draft of this record stated the
+guarantee without naming its one existing counterexample in the tree.
 *Enforces:* the pinned plan loader. *Status:* NEW.
 
 **I20. Pinning fixes work, not generation, and the unfixed part is reported
@@ -270,7 +292,8 @@ distributions are stable — a property this design does not establish and canno
 The enforceable half is therefore reporting: a pinned run emits mean and p90 OSL
 **per role** beside every scored rate, so run-to-run rate drift is attributable to
 the role that generated it instead of being invisible.
-*Enforces:* the pinned run's report. *Status:* NEW; depends on I16.
+*Enforces:* the pinned run's report. *Status:* NEW; depends on I16, and on
+I17's sketch refusal, without which the per-role columns are empty by construction.
 *Without it:* a rate difference between two pinned runs of the same plan is
 unexplainable, and the reader attributes it to the system under test.
 
@@ -588,7 +611,7 @@ with different tokenizers.
 
 | Workload | Shape | Unit of work | Scored metric |
 |---|---|---|---|
-| `rag_ingest` | `scheduled` run over a new dataset format `rag_corpus` | one source document | `rag_documents_per_second` |
+| `rag_ingest` | graph run over a new graph format `rag_corpus` + staged driver | one source document | `rag_documents_per_second` |
 | `rag_qna` | new graph format `rag_qna` + staged driver | one query task | `rag_tasks_per_second` |
 
 `rag_ingest` is deliberately **not** a new workload kind. There are two seams
@@ -603,13 +626,39 @@ and its own lowering — and the one in-tree attempt at that path,
 (`register_http_static_accuracy_workload`,
 `rust/runtime/src/engine/online_execution.rs:277`, has no non-test call site).
 
-Ingestion needs none of it. It is an ordinary request-bounded scheduled run whose
-dataset loader emits passage batches, dispatched through the existing
-`--batch-size` path. That reduces it to a `DatasetLoader` + `Composer` pair
-registered in `register_builtin_formats`
-(`rust/runtime/src/dataset/loader/mod.rs:379`), which the `hf` format established
-in four commits and roughly 460 lines (`205a8212d4`, `77bacfdef2`, `8cacaa2ae9`,
-`d8fc7e9d7c`).
+Ingestion needs none of it — but it is **not** a linear dataset format either, and
+this record said twice that it was. The first draft put parse and chunk in a
+`DatasetLoader`/`Composer` pair, which measures neither. The correction moved them
+to the worker and made one document a task with a data-dependent stage count, and
+then left the workload on the linear path anyway, which does not execute staged
+programs.
+
+`NativeDatasetPlan` is a closed enum — `PreparedLinear | StaticAccuracy | Graph`
+(`rust/runtime/src/engine/execute/plan.rs:360`-`:368`). `lower_linear` produces
+`PreparedLinear` (`rust/runtime/src/engine/online_execution.rs:1272`-`:1295`);
+scheduled execution rejects a graph plan
+(`rust/runtime/src/engine/execute/compose_sidecars.rs:73`-`:82`) and graph
+execution rejects `PreparedLinear`
+(`rust/runtime/src/engine/execute/entrypoints.rs:403`-`:421`). There is no bridge
+and `CreditMaterializer` is not one: it is a scheduled-turn seam and cannot turn a
+linear dataset into staged programs.
+
+The cheap alternative does not exist either. A scheduled run fixes its credit
+count before dispatch, and a document's passage count is unknown until parse
+completes, so the linear path cannot express the unit of work at all — not as a
+matter of plumbing, but because the count that would size the credits is the
+output of the stage being measured.
+
+**`rag_corpus` is therefore a graph input format, acquired and lowered through a
+`GraphInputAdapter`, and `rag_ingest` is a graph run.** Its adapter fetches and
+interns raw article bytes and emits one staged `GraphTraceProgram` per document,
+whose stages are that document's embed batches. This is the price of measuring
+parse and chunk, and it is charged honestly: ingestion now carries the same
+graph-format obligations as `rag_qna` — a `BUILTIN_GRAPH_FORMATS` entry, a
+resolver adapter, and the fixed-length adapter array — so the inventory grows by
+**two**, to ten, not one, and ingestion depends on the staged-program prerequisite
+(P2) exactly as QnA does. Nothing about ingestion is cheaper than QnA except the
+absence of a control loop.
 
 `rag_qna` genuinely is a graph format, and adding one is not free: it obliges an
 inventory entry (`BUILTIN_GRAPH_FORMATS`,
@@ -651,22 +700,46 @@ origin exists (`engine/execute/sharding.rs:476`). A loader-based ingestion would
 have reported `rag_documents_per_second` for embed and index while calling it the
 four-stage pipeline.
 
-The seam that does run on the worker inside the window is deferred
-materialization — `materialize_credit` executes inline on the worker's message
-loop (`engine/turn_execution.rs:2045`, `:2320`), the same mechanism
-`--dispatch global-push` already uses. So:
+**The seam is the staged driver's `next_stage`, not deferred materialization.**
+An earlier draft of this record named `materialize_credit`
+(`engine/turn_execution.rs:2045`, `:2320`) as the worker-side seam, and that was
+wrong in a way the O11 correction made worse rather than better: `materialize_credit`
+belongs to the scheduled path, and once ingestion moved to
+`NativeDatasetPlan::Graph` nothing calls it. The record kept the mechanism after
+removing the execution path that reaches it.
+
+The seam that actually runs client-side work on the worker inside a trace's
+lifetime is `TraceProgramDriver::next_stage` (`graph/driver.rs:552`-`:559`),
+awaited between stages by `execute_staged_driver`
+(`engine/graph_execution.rs:1841`), with the prior stage's channels and frozen
+terminal outputs handed back through `observe_stage` (`:1903`). A driver may do
+arbitrary local compute there and return the next `GraphTracePlan` built from its
+result, which is exactly the data-dependent stage construction ingestion needs and
+is not available anywhere else on the graph path. So:
 
 - The **loader** fetches and interns raw article bytes. It does not parse. Its
   only job is to make each document a frozen, content-addressed handle.
 - The **worker** parses, chunks, and issues that document's passage batches.
 
 The unit that makes this work is the document. Chunk count is not known until
-parse completes, so batch membership cannot be computed ahead of dispatch; batches
-are therefore formed **within** a document, and one document is one task whose
-stages are its passage batches. That is data-dependent stage count, which is
-exactly what the staged `GraphTraceProgram` driver (P2) provides — ingestion
-reuses it rather than introducing a second deferral mechanism. `--batch-size`
-retains its meaning as the passages-per-request cap.
+parse completes, so batch membership cannot be computed ahead of dispatch — and in
+particular the `rag_corpus` `GraphInputAdapter` **cannot pre-emit the batch
+stages**, because it would have to parse to know how many there are, which is the
+stage being measured. Batches are therefore formed **within** a document by the
+driver, at execution time, and one document is one trace whose stages are its
+passage batches.
+
+Concretely: the `rag_corpus` adapter lowers one trace per document carrying the
+interned raw bytes and nothing else. A **new driver kind**, `rag_ingest`, parses
+those bytes on its first `next_stage`, chunks, and then returns one embed stage
+per batch, `Complete` when the batches are exhausted. `stage_bound()` is the
+authored cap on batches per document, enforced independently by placement
+(`graph_execution.rs:1819`-`:1822`); a document whose chunk count exceeds it is
+refused rather than truncated, because a truncated document is a silently
+under-counted corpus. This makes P2's staged family a hard prerequisite for
+ingestion (it already was, per O11) *and* adds a driver-kind registration to
+ingestion's cost that the earlier draft did not carry. `--batch-size` retains its
+meaning as the passages-per-request cap.
 
 The stages:
 
@@ -689,15 +762,38 @@ The stages:
   through the existing batch path, one stage per batch. Batch size is authorable
   because macro-batching the embedder is one of the optimization levers the
   benchmark exposes; it caps passages per request and does not span documents.
-- **Index.** Append returned vectors to the builder, then seal through a
-  registered `Exporter` into the run's `artifact_dir`.
+- **Index.** Append returned vectors to a **worker-local shard builder**, and
+  seal by merging shards at the run boundary. An earlier draft said "append to
+  the builder, then seal through a registered `Exporter`", which named no owner and
+  did not survive contact with the execution model. `VectorIndexBuilder` is `!Send`
+  and there is one per worker thread, so there is no single builder for many
+  document traces to append to; and the staged driver's `output_handles` are opaque
+  handles resolved against a **trace-local** terminal-output store
+  (`graph_execution.rs:1874`-`:1886`) that is not serialized, so graph output
+  handles cannot carry vectors out of a trace, let alone across a cell boundary.
+
+  The ownership chain is therefore explicit and mirrors the metrics plane, which
+  solves the same problem: each worker owns one shard builder, appends the vectors
+  its own traces returned with no cross-worker synchronization on the per-request
+  path, and seals its shard to a content-addressed part file at end of phase. The
+  cell merges its workers' parts; under `--cells N` each cell uploads its merged
+  part over the existing artifact channel and the **controller** performs the final
+  merge and writes the sealed index. Merge is concatenation plus a rebuilt passage
+  table, and is order-independent because passage identity is content-addressed —
+  so the `corpus_digest` is invariant under worker count and cell count, which is
+  what makes I1 hold across topologies. A missing or short part fails the seal
+  rather than producing a smaller index.
 
 **`rag_documents_per_second` is not derivable from the record plane as it
-stands.** One batched request is one record, a document spans several batches, and
-a batch spans several documents. It requires a document-completion notion carried
-on the record — a new catalog tag plus record-plane plumbing, not a derived
-aggregate over existing columns. The spec's earlier framing of this as "a derived
-aggregate" was wrong.
+stands.** One batched request is one record and a document spans several batches,
+so the rate needs a document identity and a final-batch marker on the record — a
+new catalog tag plus record-plane plumbing, not a derived aggregate over existing
+columns. The spec's earlier framing of this as "a derived aggregate" was wrong.
+
+What batch-within-document containment (I15) buys is that this is the *whole*
+requirement: a document completes when its final batch reaches terminal, and no
+general many-to-many completion notion is needed. An earlier draft asserted the
+opposite containment and would have needed one.
 
 Parse and chunk time are reported as named client-side stage timings, scoped to
 the document task rather than to any one request. The half of that claim that says
@@ -728,10 +824,32 @@ pub trait VectorIndex {
 
 Three registered implementations:
 
-- `flat` (**default**): exact inner-product/cosine scan over an `f32` matrix. For
-  the MLPerf corpus shape (~107k passages × 768 dims ≈ 330 MB) an exact scan is
-  ~82 MFLOP per query — single-digit milliseconds with a chunked, auto-vectorized
-  kernel — and it is *exact*, which removes approximate-search recall from the
+- `flat` (**default**): exact inner-product/cosine scan over an `f32` matrix. The
+  arithmetic in an earlier draft of this record was wrong and its conclusion did
+  not follow. At the MLPerf corpus shape (~107k passages × 768 dims) a scan is
+  82.2 million multiply-accumulate **pairs**, which is ~164 MFLOP under the
+  standard convention, not 82. More importantly the FLOP count is the wrong figure
+  of merit: the kernel has arithmetic intensity of about 0.5 FLOP per byte, so it
+  is memory-bound, and every query streams the entire 329 MB matrix. Per-query
+  latency is bandwidth ÷ 329 MB, and — the part the earlier framing missed
+  entirely — **concurrent queries share that bandwidth**, so aggregate retrieval
+  throughput has a hard ceiling of roughly (total memory bandwidth) ÷ 329 MB
+  queries per second no matter how many cores the harness has. At a few hundred
+  GB/s that is order hundreds of queries per second, and a multi-hop task issues
+  several. No measurement backs any of these numbers, and the earlier
+  "single-digit milliseconds, negligible" framing asserted a conclusion in a regime
+  it had not entered.
+
+  `flat` stays the default, and the reason is measurement correctness rather than
+  cost: exact retrieval removes approximate-search recall as a confound from every
+  scored number, so a QnA result difference is attributable to the system under
+  test rather than to the harness's index. The cost is bounded by a **decision gate
+  with a measurable trigger**: T7 measures single-query latency and the aggregate
+  bandwidth ceiling on the target host before the default is locked. If the ceiling
+  binds below the run's target task rate, `hnsw` becomes the default for scored QnA
+  runs and `flat` is retained as the exactness reference the index-integrity check
+  runs against. That decision is made from the measurement, not from this record.
+  It is *exact*, which removes approximate-search recall from the
   list of things that can silently differ between two submissions. The kernel is
   hand-written `f32` over slices; no linear-algebra dependency is available or
   needed. `rayon` is available if the scan needs parallelism. Memory-mapping
@@ -807,6 +925,22 @@ replace `has_tool_node` with `!matches!(Llm(_))`, and make the llm/tool counts
 explicit rather than derived by subtraction. `inspect.rs`'s
 `GraphNodeInspection` also carries only LLM-shaped optional fields, so retrieval
 attributes (index binding, top-k) require widening that CLI DTO.
+
+**Everything above is the data plane, and none of it makes a retrieval node
+fire.** An earlier draft of this record enumerated the decode/validate/inspect
+surface and stopped there, which reads as a complete cost when it is roughly half
+of one. The execution surface is separate and additive: `GraphExecutor::fire` has
+exactly two arms today, `Llm` → `run_node` and `Tool` → `run_tool_node`
+(`rust/runtime/src/graph/executor.rs:238`-`:259`), and needs a third; `GraphSink`
+exposes only `dispatch_tool_node`, `dispatch`, and request dispatch
+(`rust/runtime/src/graph/sink.rs:134`-`:156`) and needs a retrieval dispatch whose
+`GraphReply` (`:84`-`:93`) carries a passage set; `requires_native_request_record`
+is the bool identity `fn requires_native_request_record(is_llm_node: bool) -> bool
+{ is_llm_node }` (`sink.rs:45`-`:51`) and must become node-kind-aware, or a
+retrieval node produces no record and `rag_retrieval_latency` has nothing to read;
+and admission, materialization, the worker-local `VectorIndex::search` binding,
+the `http` index dispatch path, and record creation are all new. The `ToolNode`
+precedent bounds the data plane only, because `ToolNode` does not dispatch.
 
 ### QnA: `rag_qna`
 
@@ -1099,10 +1233,13 @@ protects.
 | A `rag_qna` graph naming an unregistered endpoint profile | I6 |
 | An authored hop, fan-out, or `k` bound that is zero or unbounded | I9 |
 | A pinned plan whose hop count exceeds `stage_bound()` | I9, I19 |
+| A pinned `rag_qna` run with a `cache_bust_target` other than `None` | I19 |
+| An ingestion document whose chunk count exceeds the driver's `stage_bound()` | corpus completeness |
 | A sufficiency verdict decoder that is absent or ambiguous | I11 |
 | `--steady-state` on a `rag_qna` run, unless the task-level curve is available | I13 |
 | `aiperf rag compliance` before per-record role attribution exists | I16 |
 | `aiperf rag compliance` against a sketch-mode run | I17 |
+| A scored `rag_qna` run under sketch mode (`--sketch-metrics`, `AIPERF_METRICS_SKETCH=1`) | I17, I20 |
 | Retrieval integrity reported from a run that did not retain the retrieval-evidence artifact | I18 |
 | A scored `rag_ingest` run with the parsed-corpus cache enabled | I12 |
 | An ingestion format whose parse or chunk stage is implemented in a `DatasetLoader` or `Composer` | I12 |
