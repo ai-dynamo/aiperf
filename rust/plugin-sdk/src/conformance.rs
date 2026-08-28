@@ -62,9 +62,11 @@ fn check_manifest_section(artifact_path: &Path, report: &mut ConformanceReport) 
             test_name: test.to_string(),
             reason: "no embedded build record found in artifact".to_string(),
         }),
-        Err(_) => {
-            // Missing section is acceptable for early-stage plugins; note but don't fail.
-            report.passed.push(test.to_string());
+        Err(e) => {
+            report.failed.push(ConformanceFailure {
+                test_name: test.to_string(),
+                reason: format!("extract error: {e}"),
+            });
         }
     }
 }
