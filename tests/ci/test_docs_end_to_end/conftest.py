@@ -247,7 +247,7 @@ def parsed_servers() -> dict[str, Server]:
     return md_parser.parse_directory(str(repo_root))
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def server_context(
     aiperf_command: tuple[str, object],
     e2e_config: E2ETestConfig,
