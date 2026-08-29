@@ -1125,6 +1125,16 @@ class SystemController(
                     f"PROFILE_COMPLETE relay to '{service_id}' was unhandled: the "
                     f"service has no {CommandType.PROFILE_COMPLETE} handler"
                 )
+            elif not isinstance(response, CommandAck):
+                # CommandAck is the success shape: PROFILE_COMPLETE handlers
+                # return None, so the dispatcher acks. Anything else is a shape
+                # this loop was not written for, and letting it fall through
+                # would report a peer as successful without ever inspecting it
+                # -- the same silent-success failure mode as the branch above.
+                self.warning(
+                    f"PROFILE_COMPLETE relay to '{service_id}' returned an "
+                    f"unexpected response shape: {type(response).__name__}"
+                )
 
     def _log_relay_transport_error(
         self, cmd: str, service_id: str, error: ErrorDetails
@@ -1267,6 +1277,13 @@ class SystemController(
                 self.warning(
                     f"PROFILE_CANCEL relay to '{service_id}' was unhandled: the "
                     f"service has no {CommandType.PROFILE_CANCEL} handler"
+                )
+            elif not isinstance(response, CommandAck):
+                # Same reasoning as the PROFILE_COMPLETE relay: CommandAck is the
+                # only success shape, so an unrecognised one must not pass as one.
+                self.warning(
+                    f"PROFILE_CANCEL relay to '{service_id}' returned an "
+                    f"unexpected response shape: {type(response).__name__}"
                 )
 
     @on_message(MessageType.PROCESS_ALL_RESULTS)

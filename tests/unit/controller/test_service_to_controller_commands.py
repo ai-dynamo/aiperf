@@ -299,6 +299,32 @@ class TestProfileCompleteRelay:
         assert any("rp-1" in w and "unhandled" in w for w in warnings), warnings
 
     @pytest.mark.asyncio
+    async def test_relay_warns_on_an_unexpected_response_shape(self) -> None:
+        """An unrecognised shape must not pass as success.
+
+        The loop enumerates the shapes it knows; CommandAck is the only one that
+        means "flushed". Letting anything else fall through would report a peer
+        as successful without ever inspecting it -- the same silent-success
+        failure mode as an unhandled command, which is how a missing relay
+        target went unnoticed once already.
+        """
+        controller = _controller({"rp-1": ServiceType.RECORD_PROCESSOR})
+        controller._send_control_command_to_all = AsyncMock(
+            return_value=[
+                CommandOk(cid="c-1", cmd=CommandType.PROFILE_COMPLETE, sid="rp-1")
+            ]
+        )
+
+        await SystemController._handle_profile_complete_relay(
+            controller, Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        warnings = [str(call) for call in controller.warning.call_args_list]
+        assert any(
+            "rp-1" in w and "unexpected response shape" in w for w in warnings
+        ), warnings
+
+    @pytest.mark.asyncio
     async def test_relay_stays_quiet_on_a_plain_ack(self) -> None:
         """The success path must not warn, or the unhandled warning means nothing."""
         controller = _controller({"rp-1": ServiceType.RECORD_PROCESSOR})
