@@ -14,6 +14,7 @@ address for fast, isolated testing without network or IPC overhead.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 import time
 from collections import defaultdict
@@ -203,7 +204,17 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
                 if dealer_client.resolve_pending(message):
                     return
                 if dealer_client.handler:
-                    await dealer_client.handler(message)
+                    # Real ZMQ fires dealer handlers through execute_async (a
+                    # new background Task), so the handler's CancelledError
+                    # never reaches the router caller. _on_shutdown_command
+                    # deliberately raises CancelledError after stop() to
+                    # prevent the dispatcher from sending a duplicate ack;
+                    # without this guard that propagates back to the
+                    # controller and aborts _broadcast_control_command before
+                    # it can deliver SHUTDOWN to remaining services, leaving
+                    # stopped_event unset and hanging the test.
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await dealer_client.handler(message)
                 else:
                     self.warning(f"No handler registered for dealer client {identity}")
                 return
