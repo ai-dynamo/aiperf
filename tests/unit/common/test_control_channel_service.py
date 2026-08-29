@@ -4,9 +4,11 @@
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import orjson
 import pytest
+import zmq
 
 from aiperf.common.control_structs import (
     Command,
@@ -19,6 +21,7 @@ from aiperf.common.control_structs import (
     StatusUpdate,
 )
 from aiperf.common.enums import CommandType
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import AIPerfHook
 
 
@@ -367,3 +370,85 @@ async def test_command_is_routed_to_the_matching_on_command_hook(
     )
     assert [m.cid for m in seen] == ["c-1"]
     assert isinstance(sent[0], CommandAck)
+
+
+@pytest.mark.asyncio
+async def test_error_response_send_survives_a_closed_control_client(
+    component_service,
+) -> None:
+    """Teardown race: a handler that fails *because* the service is stopping
+    finds the DEALER already closed by comms.stop(). The second failure must
+    not replace the logged handler error with an unhandled task exception."""
+
+    async def dead_send(_struct) -> None:
+        raise NotInitializedError("control client is not initialized")
+
+    component_service.control_client.send = dead_send
+
+    async def handler(message):
+        raise ValueError("boom")
+
+    hook = SimpleNamespace(func=handler)
+    await component_service._execute_control_command(
+        Command(cid="c-1", cmd=CommandType.PROFILE_START), hook
+    )
+
+
+@pytest.mark.asyncio
+async def test_error_response_send_survives_a_closed_socket(
+    component_service,
+) -> None:
+    """Same race, surfaced by libzmq instead of the client's own guard."""
+
+    async def dead_send(_struct) -> None:
+        raise zmq.ZMQError(zmq.ENOTSOCK)
+
+    component_service.control_client.send = dead_send
+
+    async def handler(message):
+        raise ValueError("boom")
+
+    hook = SimpleNamespace(func=handler)
+    await component_service._execute_control_command(
+        Command(cid="c-1", cmd=CommandType.PROFILE_START), hook
+    )
+
+
+@pytest.mark.asyncio
+async def test_shutdown_self_ack_survives_a_closed_control_client(
+    component_service,
+) -> None:
+    """A service that cannot ack must still stop."""
+
+    async def dead_send(_struct) -> None:
+        raise NotInitializedError("control client is not initialized")
+
+    component_service.control_client.send = dead_send
+    component_service.stop = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await component_service._on_shutdown_command(
+            Command(cid="c-1", cmd=CommandType.SHUTDOWN)
+        )
+
+    component_service.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_self_ack_still_propagates_cancellation(
+    component_service,
+) -> None:
+    """CancelledError must keep escaping the suppress()."""
+
+    async def cancelled_send(_struct) -> None:
+        raise asyncio.CancelledError()
+
+    component_service.control_client.send = cancelled_send
+    component_service.stop = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await component_service._on_shutdown_command(
+            Command(cid="c-1", cmd=CommandType.SHUTDOWN)
+        )
+
+    component_service.stop.assert_not_awaited()

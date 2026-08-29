@@ -2171,6 +2171,15 @@ class SystemController(
         # BenchmarkComplete makes the API shutdown endpoint eligible only
         # after export/ready publication has finished (or failed closed).
         await self._announce_benchmark_complete()
+        # NARROWING vs the PUB broadcast this replaced, and unavoidable: a ROUTER
+        # can only address a DEALER identity it has already seen, so the target
+        # list is necessarily the REGISTERED set. A service still in a
+        # pre-REGISTERED state used to receive the broadcast and stop
+        # gracefully; it now gets no SHUTDOWN at all and is SIGKILLed by
+        # _wait_for_process after the grace period below. Widening this would
+        # require addressing identities the ROUTER has no route for, which
+        # ROUTER_MANDATORY rejects with EHOSTUNREACH. Not a bug -- a service that
+        # has not registered has also not been given any work.
         await self._broadcast_control_command(
             CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
         )

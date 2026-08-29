@@ -385,15 +385,21 @@ class BaseComponentService(BaseService):
             raise
         except Exception as e:  # noqa: BLE001 - dispatcher must surface handler errors over the control channel
             self.error(f"Failed to handle command {message.cmd}: {e}")
-            await self.control_client.send(
-                CommandErr(
-                    cid=message.cid,
-                    cmd=message.cmd,
-                    sid=self.service_id,
-                    error=str(e),
-                    traceback=traceback.format_exc(),
+            # The error report is itself best effort: a handler that failed
+            # *because* the service is tearing down will find the DEALER already
+            # closed by comms.stop(), and letting that second failure escape
+            # would replace a logged handler error with an unhandled task
+            # exception. CancelledError still propagates.
+            with contextlib.suppress(zmq.ZMQError, NotInitializedError):
+                await self.control_client.send(
+                    CommandErr(
+                        cid=message.cid,
+                        cmd=message.cmd,
+                        sid=self.service_id,
+                        error=str(e),
+                        traceback=traceback.format_exc(),
+                    )
                 )
-            )
             return
 
         if result is None:
@@ -423,9 +429,13 @@ class BaseComponentService(BaseService):
     async def _on_shutdown_command(self, message: Command) -> None:
         # Ack before stopping: after stop() the control client is closed and the
         # dispatcher's post-return response would never reach the controller.
-        await self.control_client.send(
-            CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
-        )
+        # Best effort even so -- a concurrent teardown (a failure path already
+        # running comms.stop(), or a second SHUTDOWN) can close the DEALER out
+        # from under this send, and a service that cannot ack must still stop.
+        with contextlib.suppress(zmq.ZMQError, NotInitializedError):
+            await self.control_client.send(
+                CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
+            )
         self.debug("Received shutdown command")
         try:
             await self.stop()
