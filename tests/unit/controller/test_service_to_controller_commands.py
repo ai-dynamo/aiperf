@@ -49,6 +49,9 @@ def _controller(
     controller._PROFILE_COMPLETE_RELAY_TYPES = (
         SystemController._PROFILE_COMPLETE_RELAY_TYPES
     )
+    controller._PROFILE_CANCEL_RELAY_TYPES = (
+        SystemController._PROFILE_CANCEL_RELAY_TYPES
+    )
 
     # _send_control_command_to_all zips its result against the target list, so
     # the stub must answer once per target.
@@ -426,6 +429,125 @@ class TestServerMetricsProfileCompleteReader:
             "warmup_start_ns": None,
             "warmup_end_ns": None,
         }
+
+
+class TestProfileCancelRelay:
+    """Service-originated aborts reach their peers only through the controller.
+
+    RecordsManager's --failed-request-threshold abort and TimingManager's
+    warmup / worker-loss aborts used to broadcast ProfileCancelCommand on the
+    pub bus. Nothing subscribes to command messages any more, so without this
+    relay both aborts reach nobody and the run hangs instead of terminating.
+    """
+
+    @pytest.mark.asyncio
+    async def test_relay_targets_every_profile_cancel_handler_type(self) -> None:
+        controller = _controller(
+            {
+                "gpu-1": ServiceType.GPU_TELEMETRY_MANAGER,
+                "netlat-1": ServiceType.NETWORK_LATENCY_MANAGER,
+                "rp-1": ServiceType.RECORD_PROCESSOR,
+                "sm-1": ServiceType.SERVER_METRICS_MANAGER,
+                "records-1": ServiceType.RECORDS_MANAGER,
+                "timing-1": ServiceType.TIMING_MANAGER,
+            }
+        )
+
+        await SystemController._relay_profile_cancel(controller, "", b"")
+
+        cmd, service_ids = controller._send_control_command_to_all.await_args.args
+        assert cmd == CommandType.PROFILE_CANCEL
+        # RECORD_PROCESSOR has no @on_command(PROFILE_CANCEL) hook.
+        assert sorted(service_ids) == [
+            "gpu-1",
+            "netlat-1",
+            "records-1",
+            "sm-1",
+            "timing-1",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_relay_excludes_the_originator(self) -> None:
+        """Pub/sub never delivered a broadcast back to its sender.
+
+        Both callers run their own cancel handler locally; re-entering it over
+        the wire would double-finalize the records manager.
+        """
+        controller = _controller(
+            {
+                "records-1": ServiceType.RECORDS_MANAGER,
+                "timing-1": ServiceType.TIMING_MANAGER,
+            }
+        )
+
+        await SystemController._relay_profile_cancel(controller, "records-1", b"")
+
+        _, service_ids = controller._send_control_command_to_all.await_args.args
+        assert service_ids == ["timing-1"]
+
+    @pytest.mark.asyncio
+    async def test_relay_excludes_reaped_services(self) -> None:
+        controller = _controller(
+            {
+                "gpu-1": ServiceType.GPU_TELEMETRY_MANAGER,
+                "sm-1": ServiceType.SERVER_METRICS_MANAGER,
+            },
+            reaped={"gpu-1"},
+        )
+
+        await SystemController._relay_profile_cancel(controller, "", b"")
+
+        _, service_ids = controller._send_control_command_to_all.await_args.args
+        assert service_ids == ["sm-1"]
+
+    @pytest.mark.asyncio
+    async def test_relay_is_a_noop_without_live_targets(self) -> None:
+        controller = _controller({"rp-1": ServiceType.RECORD_PROCESSOR})
+
+        await SystemController._relay_profile_cancel(controller, "", b"")
+
+        controller._send_control_command_to_all.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_relay_warns_on_a_failed_peer_without_raising(self) -> None:
+        controller = _controller({"sm-1": ServiceType.SERVER_METRICS_MANAGER})
+        controller._send_control_command_to_all = AsyncMock(
+            return_value=[
+                CommandErr(
+                    cid="c-1",
+                    cmd=CommandType.PROFILE_CANCEL,
+                    sid="sm-1",
+                    error="cancel blew up",
+                )
+            ]
+        )
+
+        await SystemController._relay_profile_cancel(controller, "", b"")
+
+        assert any(
+            "cancel blew up" in str(call) for call in controller.warning.call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_handler_detaches_the_fan_out_and_reads_the_origin(self) -> None:
+        """The handler must answer at pub/sub latency.
+
+        Awaiting the fan-out inline would make TimingManager's abort wait on
+        RecordsManager's full result processing before cancelling its own
+        orchestrator -- the publish it replaces returned immediately.
+        """
+        controller = _controller({"sm-1": ServiceType.SERVER_METRICS_MANAGER})
+        payload = orjson.dumps({"origin_service_id": "records-1"})
+        controller.execute_async = MagicMock()
+
+        await SystemController._handle_profile_cancel_relay(
+            controller,
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL, payload=payload),
+        )
+
+        controller._send_control_command_to_all.assert_not_awaited()
+        controller.execute_async.assert_called_once()
+        controller._relay_profile_cancel.assert_called_once_with("records-1", payload)
 
 
 @pytest.mark.asyncio

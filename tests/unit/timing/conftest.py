@@ -5,7 +5,7 @@ import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -198,7 +198,11 @@ def create_orchestrator_harness(mock_zmq, time_traveler):
         router = MockCreditRouter()
         pub = MagicMock()
         pub.publish = _async_noop
-        publisher = PhasePublisher(pub_client=pub, service_id="test")
+        publisher = PhasePublisher(
+            pub_client=pub,
+            service_id="test",
+            profile_cancel_sender=_async_noop,
+        )
         orch = PhaseOrchestrator(
             config=cfg,
             phase_publisher=publisher,
@@ -505,6 +509,7 @@ class TimingHarness:
                 CommAddress.EVENT_BUS_PROXY_FRONTEND
             ),
             service_id="test-service",
+            profile_cancel_sender=AsyncMock(),
         )
         self._worker = InstantWorker(
             cli_config=cli_config,

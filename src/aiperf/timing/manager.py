@@ -7,6 +7,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import orjson
+
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_hooks import prepare_endpoint_control_hooks
 from aiperf.common.control_structs import Command
@@ -65,6 +67,7 @@ class TimingManager(BaseComponentService):
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
             service_id=self.service_id,
+            profile_cancel_sender=self._request_profile_cancel,
         )
 
         self._dataset_configured_event = asyncio.Event()
@@ -313,6 +316,26 @@ class TimingManager(BaseComponentService):
                 )
             )
 
+    async def _request_profile_cancel(self) -> None:
+        """Ask the controller to relay PROFILE_CANCEL to the peer services.
+
+        The ROUTER is the only path between two non-controller services, so a
+        TimingManager-originated abort cannot reach the records / telemetry /
+        server-metrics managers directly. The controller's
+        ``_handle_profile_cancel_relay`` fans it out and excludes this service,
+        so callers still cancel their own orchestrator locally.
+
+        Best effort: every caller is already on a terminal abort path and must
+        continue to its own teardown even if the control channel is gone.
+        """
+        try:
+            await self.send_command_to_controller(
+                CommandType.PROFILE_CANCEL,
+                payload=orjson.dumps({"origin_service_id": self.service_id}),
+            )
+        except Exception as e:  # noqa: BLE001 - abort path must not be blocked by transport failure
+            self.warning(f"Failed to request PROFILE_CANCEL from controller: {e!r}")
+
     @on_command(CommandType.PROFILE_CANCEL)
     async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Cancel credit issuance gracefully.
@@ -353,7 +376,7 @@ class TimingManager(BaseComponentService):
         """Publish terminal failure and stop work after worker loss."""
         message = f"Fatal worker loss: {reason}"
         self.error(message)
-        await self.phase_publisher.publish_profile_cancel()
+        await self.phase_publisher.request_profile_cancel()
         if self._phase_orchestrator is not None:
             await self._phase_orchestrator.cancel()
         await self._publish_phase_failure_and_wait(RuntimeError(message))
@@ -403,7 +426,7 @@ class TimingManager(BaseComponentService):
         self._worker_floor_abort_started = True
         message = f"Fatal worker availability threshold breached: {reason}"
         self.error(message)
-        await self.phase_publisher.publish_profile_cancel()
+        await self.phase_publisher.request_profile_cancel()
         if self._phase_orchestrator is not None:
             await self._phase_orchestrator.cancel()
         await self._publish_phase_failure_and_wait(RuntimeError(message))

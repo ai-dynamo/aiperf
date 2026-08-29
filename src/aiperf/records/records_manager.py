@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -40,7 +41,6 @@ from aiperf.common.messages import (
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessTelemetryResultMessage,
-    ProfileCancelCommand,
     RealtimeMetricsMessage,
     RealtimeServerMetricsMessage,
     RecordsMessage,
@@ -882,11 +882,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         No-op when ``--failed-request-threshold`` is unset for that phase, when
         this method already fired once for this run, or when the phase's record
         count has not yet crossed the grace floor (``max(concurrency, 10)``).
-        Otherwise broadcasts ProfileCancelCommand on the message bus -- the
-        existing cancel-path handlers in timing_manager, server_metrics manager,
-        and gpu_telemetry manager stop their work; this manager's own
-        _on_profile_cancel_command marks the phase cancelled and finalizes
-        results with cancelled=True.
+        Otherwise sends PROFILE_CANCEL to the controller, whose relay fans it
+        out -- the existing cancel-path handlers in timing_manager,
+        server_metrics manager, and gpu_telemetry manager stop their work; this
+        manager's own _on_profile_cancel_command marks the phase cancelled and
+        finalizes results with cancelled=True.
         """
         threshold = self._resolve_failed_request_threshold(profiling_index)
         if threshold is None:
@@ -914,19 +914,25 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"{error_records}/{total} = {rate:.3f} > "
             f"{threshold:.3f} "
             f"(grace floor {grace_floor}, phase_index {phase_index}). "
-            "Broadcasting ProfileCancelCommand to terminate the run."
+            "Requesting PROFILE_CANCEL to terminate the run."
         )
-        command = ProfileCancelCommand(service_id=self.service_id)
+        command = Command(
+            cid=uuid.uuid4().hex,
+            cmd=CommandType.PROFILE_CANCEL,
+            payload=orjson.dumps({"origin_service_id": self.service_id}),
+        )
         try:
-            await self.publish(command)
+            await self.send_command_to_controller(
+                CommandType.PROFILE_CANCEL, payload=command.payload
+            )
         except Exception as exc:
             self.warning(
-                f"Failed to publish ProfileCancelCommand for threshold abort: {exc!r}"
+                f"Failed to request PROFILE_CANCEL for threshold abort: {exc!r}"
             )
             self._failed_request_abort_triggered = False
             return
 
-        # A service does not receive its own broadcast, so the local
+        # The controller's relay excludes the originator, so the local
         # PROFILE_CANCEL handler -- which marks the phase cancelled and
         # aggregates partial results -- would never run for a self-originated
         # abort, and the run would wait on the profile result domain forever.
@@ -935,7 +941,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self._self_cancel_and_finalize(command)
         )
 
-    async def _self_cancel_and_finalize(self, command: ProfileCancelCommand) -> None:
+    async def _self_cancel_and_finalize(self, command: Command) -> None:
         """Run the local cancel handler with failure-safe result publishing.
 
         This dispatch is fire-and-forget and the controller's join barrier only

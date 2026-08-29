@@ -272,7 +272,7 @@ class TestTimingManagerWorkerFloor:
         manager = configured_manager
         manager._profiling_active = True
         manager._phase_orchestrator.cancel = AsyncMock()
-        manager.phase_publisher.publish_profile_cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
         manager._publish_phase_failure_and_wait = AsyncMock()
         manager._kill = AsyncMock()
         manager.sticky_router._workers = {
@@ -289,7 +289,7 @@ class TestTimingManagerWorkerFloor:
         assert manager._worker_floor_abort_task is not None
         await manager._worker_floor_abort_task
 
-        manager.phase_publisher.publish_profile_cancel.assert_awaited_once()
+        manager.phase_publisher.request_profile_cancel.assert_awaited_once()
         manager._phase_orchestrator.cancel.assert_awaited_once()
         manager._publish_phase_failure_and_wait.assert_awaited_once()
         manager._kill.assert_awaited_once()
@@ -329,7 +329,7 @@ class TestTimingManagerWorkerFloor:
         manager = configured_manager
         manager._profiling_active = True
         manager._phase_orchestrator.cancel = AsyncMock()
-        manager.phase_publisher.publish_profile_cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
         manager.sticky_router._workers = {"worker-1": MagicMock()}
         manager.sticky_router._workers_cache = list(
             manager.sticky_router._workers.values()
@@ -360,7 +360,7 @@ class TestTimingManagerWorkerFloor:
         manager = configured_manager
         manager._profiling_active = True
         manager._phase_orchestrator.cancel = AsyncMock()
-        manager.phase_publisher.publish_profile_cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
         events: list[str] = []
 
         async def publish(message: BaseServiceErrorMessage) -> None:
@@ -386,14 +386,14 @@ class TestTimingManagerWorkerFloor:
         manager = configured_manager
         manager._profiling_active = True
         manager._phase_orchestrator.cancel = AsyncMock()
-        manager.phase_publisher.publish_profile_cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
         manager._publish_phase_failure_and_wait = AsyncMock()
         manager._kill = AsyncMock()
 
         manager.sticky_router._on_worker_lost("worker_unavailable: worker stopped")
         await manager._worker_loss_abort_task
 
-        manager.phase_publisher.publish_profile_cancel.assert_awaited_once()
+        manager.phase_publisher.request_profile_cancel.assert_awaited_once()
         manager._phase_orchestrator.cancel.assert_awaited_once()
         manager._publish_phase_failure_and_wait.assert_awaited_once()
         manager._kill.assert_awaited_once()

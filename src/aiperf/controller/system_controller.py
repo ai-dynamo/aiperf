@@ -264,6 +264,7 @@ class SystemController(
 
         self._shutdown_triggered = False
         self._pod_failure_watcher_task: asyncio.Task | None = None
+        self._profile_cancel_relay_task: asyncio.Task | None = None
         self._pod_failure_watch_disarmed = False
         self._system_state: SystemState = SystemState.INITIALIZING
         self._replacement_configuring_ids: set[str] = set()
@@ -1301,6 +1302,92 @@ class SystemController(
                 self.warning(
                     f"PROFILE_COMPLETE relay to '{service_id}' was unhandled: the "
                     f"service has no {CommandType.PROFILE_COMPLETE} handler"
+                )
+
+    _PROFILE_CANCEL_RELAY_TYPES: ClassVar[tuple[ServiceTypeT, ...]] = (
+        ServiceType.GPU_TELEMETRY_MANAGER,
+        ServiceType.NETWORK_LATENCY_MANAGER,
+        ServiceType.RECORDS_MANAGER,
+        ServiceType.SERVER_METRICS_MANAGER,
+        ServiceType.TIMING_MANAGER,
+    )
+    """Every service type carrying an ``@on_command(PROFILE_CANCEL)`` hook.
+
+    Enumerated from the hooks themselves, not from the controller's own
+    ``_cancel_profiling`` target list: that path fans at every registered
+    service and lets the non-implementers answer CommandUnhandled, while this
+    relay is a service-originated abort and names its receivers explicitly.
+    """
+
+    @on_command(CommandType.PROFILE_CANCEL)
+    async def _handle_profile_cancel_relay(self, message: Command) -> None:
+        """Relay a service-originated PROFILE_CANCEL to its peer services.
+
+        Two abort paths originate inside a service rather than at the
+        controller: RecordsManager's ``--failed-request-threshold`` abort and
+        TimingManager's warmup / worker-loss aborts. Both used to broadcast
+        ``ProfileCancelCommand`` on the pub bus; the ROUTER is the only path
+        between two non-controller services, so the fan-out has to happen here.
+
+        This is an *additional* entry point, not a replacement: the controller's
+        own ``_cancel_profiling`` fan-out (Ctrl+C and controller-side failures)
+        is unchanged and still waits on the RecordsManager responses.
+
+        The fan-out runs detached so this handler answers the originator at
+        pub/sub latency. Awaiting it inline would make TimingManager's abort
+        block on RecordsManager's full result processing before it could cancel
+        its own orchestrator -- the publish it replaces returned immediately.
+        """
+        origin_service_id = ""
+        if message.payload:
+            payload = orjson.loads(message.payload)
+            origin_service_id = payload.get("origin_service_id", "")
+        self._profile_cancel_relay_task = self.execute_async(
+            self._relay_profile_cancel(origin_service_id, message.payload)
+        )
+
+    async def _relay_profile_cancel(
+        self, origin_service_id: str, payload: bytes
+    ) -> None:
+        """Fan a service-originated PROFILE_CANCEL out to every peer that handles it.
+
+        The originator is excluded, reproducing pub/sub's "a service does not
+        receive its own broadcast" semantics -- both callers run their own local
+        cancel directly, and re-entering their handler over the wire would
+        double-finalize.
+        """
+        service_ids = [
+            service_id
+            for service_id, info in self.service_manager.service_id_map.items()
+            if info.service_type in self._PROFILE_CANCEL_RELAY_TYPES
+            and service_id not in self._reaped_service_ids
+            and service_id != origin_service_id
+        ]
+        if not service_ids:
+            self.debug("No live PROFILE_CANCEL relay targets")
+            return
+
+        self.warning(
+            f"Relaying PROFILE_CANCEL from '{origin_service_id or 'unknown'}' to "
+            f"{len(service_ids)} service(s)"
+        )
+        responses = await self._send_control_command_to_all(
+            CommandType.PROFILE_CANCEL,
+            service_ids,
+            payload=payload,
+            timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,
+        )
+        for service_id, response in zip(service_ids, responses, strict=True):
+            if isinstance(response, ErrorDetails):
+                self.warning(f"PROFILE_CANCEL relay to '{service_id}': {response}")
+            elif isinstance(response, CommandErr):
+                self.warning(
+                    f"PROFILE_CANCEL relay to '{service_id}' failed: {response.error}"
+                )
+            elif isinstance(response, CommandUnhandled):
+                self.warning(
+                    f"PROFILE_CANCEL relay to '{service_id}' was unhandled: the "
+                    f"service has no {CommandType.PROFILE_CANCEL} handler"
                 )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)

@@ -7,12 +7,14 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import orjson
 import pytest
 
 from aiperf.common.accumulator_protocols import ExportContext
-from aiperf.common.enums import CreditPhase
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.messages import BaseServiceErrorMessage, ProfileCancelCommand
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
     RecordsMessage,
@@ -1423,6 +1425,7 @@ class TestRecordsManagerTimingDispatch:
         manager.service_id = "records-manager"
         manager.warning = MagicMock()
         manager.publish = AsyncMock()
+        manager.send_command_to_controller = AsyncMock()
         request_error = ErrorDetails(
             code=500,
             type="ServerError",
@@ -1435,8 +1438,14 @@ class TestRecordsManagerTimingDispatch:
             await manager._on_records(message)
 
         assert manager._failed_request_abort_triggered
-        manager.publish.assert_awaited_once()
-        assert isinstance(manager.publish.await_args.args[0], ProfileCancelCommand)
+        manager.send_command_to_controller.assert_awaited_once()
+        assert (
+            manager.send_command_to_controller.await_args.args[0]
+            == CommandType.PROFILE_CANCEL
+        )
+        assert orjson.loads(
+            manager.send_command_to_controller.await_args.kwargs["payload"]
+        ) == {"origin_service_id": "records-manager"}
         assert (
             manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
             == 10
@@ -1463,6 +1472,7 @@ class TestRecordsManagerTimingDispatch:
         manager.service_id = "records-manager"
         manager.warning = MagicMock()
         manager.publish = AsyncMock()
+        manager.send_command_to_controller = AsyncMock()
         request_error = ErrorDetails(
             code=500,
             type="ServerError",
@@ -1481,8 +1491,14 @@ class TestRecordsManagerTimingDispatch:
             await manager._on_records(message)
 
         assert manager._failed_request_abort_triggered
-        manager.publish.assert_awaited_once()
-        assert isinstance(manager.publish.await_args.args[0], ProfileCancelCommand)
+        manager.send_command_to_controller.assert_awaited_once()
+        assert (
+            manager.send_command_to_controller.await_args.args[0]
+            == CommandType.PROFILE_CANCEL
+        )
+        assert orjson.loads(
+            manager.send_command_to_controller.await_args.kwargs["payload"]
+        ) == {"origin_service_id": "records-manager"}
 
     @pytest.mark.asyncio
     async def test_failed_request_threshold_read_from_owning_phase(self) -> None:
@@ -1700,7 +1716,7 @@ class TestRecordsManagerArtifactFinalization:
 
         with pytest.raises(RuntimeError, match="artifact barrier failed"):
             await manager._on_profile_cancel_command(
-                ProfileCancelCommand(service_id="system-controller")
+                Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
             )
 
         manager._records_tracker.mark_phase_cancelled.assert_called_once_with(
