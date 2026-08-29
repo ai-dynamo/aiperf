@@ -273,8 +273,10 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         is raised only by the REQ/REP state machines and the security
         mechanisms (``req.cpp``, ``rep.cpp``, ``null_mechanism.cpp``,
         ``gssapi_server.cpp``) -- never by ROUTER -- and ``router_t::xsend``
-        returns -1 only when ROUTER_MANDATORY is set, which this codebase never
-        sets. A ROUTER send therefore cannot wedge the socket's state machine.
+        returns -1 only when ROUTER_MANDATORY is set, which only the
+        SystemController's control ROUTER does, and then only with
+        EHOSTUNREACH/EAGAIN. A ROUTER send therefore cannot wedge the socket's
+        state machine.
         """
         if self.stop_requested or not isinstance(error, zmq.ZMQError):
             return

@@ -39,6 +39,10 @@ def system_controller(
     """Create a SystemController instance with mocked dependencies."""
     mock_ui = AsyncMock()
     mock_comm = AsyncMock()
+    # The control ROUTER is created synchronously in SystemController.__init__ and
+    # later awaited on (initialize/start/stop). A bare AsyncMock attribute would
+    # hand back a coroutine object instead of a client.
+    mock_comm.create_streaming_router_client = MagicMock(return_value=AsyncMock())
 
     def mock_get_class(protocol, name):
         if protocol == "service_manager":

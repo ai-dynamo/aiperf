@@ -6,6 +6,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, cast
 
+import zmq
 from rich.console import Console
 from rich.panel import Panel
 
@@ -16,7 +17,9 @@ from aiperf.cli_utils import (
     warn_osl_without_ignore_eos,
 )
 from aiperf.common.base_service import BaseService
+from aiperf.common.control_structs import ControllerBoundMessage
 from aiperf.common.enums import (
+    CommAddress,
     CommandResponseStatus,
     CommandType,
     ExportLevel,
@@ -76,6 +79,7 @@ from aiperf.common.results_markers import (
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
+from aiperf.config.comm import ZMQDualBindConfig
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import (
     KubernetesServiceManagerProtocol,
@@ -84,6 +88,7 @@ from aiperf.controller.protocols import (
 )
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.result_join_coordinator import ResultJoinCoordinator
+from aiperf.controller.system_controller_dispatch import SystemControllerDispatchMixin
 from aiperf.controller.system_controller_models import (
     K8sServiceTopology,
     PodStateSnapshot,
@@ -115,7 +120,12 @@ It is still finite -- an unbounded await here is a zombie container.
 """
 
 
-class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
+class SystemController(
+    PodStateTrackerMixin,
+    SignalHandlerMixin,
+    SystemControllerDispatchMixin,
+    BaseService,
+):
     """System Controller service.
 
     This service is responsible for managing the lifecycle of all other services.
@@ -266,7 +276,32 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         self._telemetry_endpoints_reachable: list[str] = []
         self._server_metrics_endpoints_configured: list[str] = []
         self._server_metrics_endpoints_reachable: list[str] = []
+        self._init_control_router()
         self.debug("System Controller created")
+
+    def _init_control_router(self) -> None:
+        """Create the control ROUTER outside the comms lifecycle.
+
+        It must be initialized and started before comms (services register
+        during their own start) and must outlive comms.stop() (children still
+        shut down over it), so SystemController owns it.
+        """
+        additional_bind: str | None = None
+        comm_config = self.run.comm_config
+        if (
+            isinstance(comm_config, ZMQDualBindConfig)
+            and not comm_config.controller_host
+        ):
+            additional_bind = comm_config.control_tcp_bind_address
+
+        self.control_router = self.comms.create_streaming_router_client(
+            address=CommAddress.CONTROL,
+            bind=True,
+            additional_bind_address=additional_bind,
+            decode_type=ControllerBoundMessage,
+            socket_ops={zmq.ROUTER_MANDATORY: 1},
+            attach_lifecycle=False,
+        )
 
     def get_pod_state_snapshot(self) -> PodStateSnapshot:
         """Return one authoritative copy of controller-owned worker state."""
@@ -408,6 +443,13 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         """
         self.debug("Running ZMQ Proxy Manager Before Initialize")
         await self.proxy_manager.initialize_and_start()
+        # The control ROUTER must accept registrations from the moment the first
+        # child service starts, which happens inside super().initialize()'s
+        # downstream start path -- and comms does not own it, so nothing else
+        # would ever start it.
+        self.control_router.register_receiver(self._handle_control_message)
+        await self.control_router.initialize()
+        await self.control_router.start()
         # Once the proxies are running, call the original initialize method
         await super().initialize()
 
@@ -741,7 +783,7 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
 
         prior_info = ServiceRegistry.get_service(message.service_id)
         was_registered = ServiceRegistry.is_registered(message.service_id)
-        is_replacement = self._is_replacement_worker_group_registration(
+        is_replacement = self._is_replacement_worker_group_command(
             message, prior_info, was_registered
         )
         now_ns = time.time_ns()
@@ -805,13 +847,18 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
                 self._configure_replacement_worker_group(message.service_id)
             )
 
-    def _is_replacement_worker_group_registration(
+    def _is_replacement_worker_group_command(
         self,
         message: RegisterServiceCommand,
         prior_info: ServiceRunInfo | None,
         was_registered: bool,
     ) -> bool:
-        """Return whether a JobSet replacement reused a worker-group ID."""
+        """Return whether a JobSet replacement reused a worker-group ID.
+
+        Pub/sub twin of ``SystemControllerDispatchMixin._is_replacement_worker_group_registration``;
+        distinct name so the mixin's control-channel version is not shadowed by
+        this class's own attribute during the transport migration.
+        """
         if (
             message.service_type != ServiceType.WORKER_GROUP_MANAGER
             or prior_info is None
@@ -2109,6 +2156,9 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
 
         await self.service_manager.shutdown_all_services()
         await self.comms.stop()
+        # Stopped last of the child-facing transports: shutdown_all_services may
+        # still be talking to children over it, and comms does not own it.
+        await self.control_router.stop()
         await self.proxy_manager.stop()
 
         # Clean up the global log queue to prevent semaphore leaks
