@@ -13,11 +13,14 @@ fails at startup (SPAWN_WORKERS) or silently exports an empty metrics window
 
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
+import zmq
+from pytest import param
 
 from aiperf.common.control_structs import (
     Command,
@@ -39,6 +42,7 @@ def _controller(
     services: dict[str, ServiceType],
     reaped: set[str] | None = None,
     unregistered: set[str] | None = None,
+    required: tuple[ServiceType, ...] | None = None,
 ) -> MagicMock:
     """A SystemController stub carrying only what the two handlers read.
 
@@ -54,6 +58,7 @@ def _controller(
         service_id_map={
             sid: SimpleNamespace(service_type=stype) for sid, stype in services.items()
         },
+        required_services=dict.fromkeys(required or (), 1),
         run_service=AsyncMock(),
     )
     for sid, stype in services.items():
@@ -78,6 +83,12 @@ def _controller(
     controller._send_control_command_to_all = AsyncMock(side_effect=_fan_out)
     controller.debug = MagicMock()
     controller.warning = MagicMock()
+    # Bind the real severity helper rather than leaving it a mock, so relay
+    # tests assert the log severity that actually reaches an operator instead
+    # of merely that a decision function was called.
+    controller._log_relay_transport_error = partial(
+        SystemController._log_relay_transport_error, controller
+    )
     return controller
 
 
@@ -656,3 +667,113 @@ async def test_get_pod_states_handler_result_encodes_as_orjson() -> None:
         CommandOk(cid="c-1", cmd=CommandType.GET_POD_STATES, payload=encoded).payload,
         bytes,
     )
+
+
+class TestRelayTransportErrorSeverity:
+    """A departed optional peer is expected; everything else stays a warning.
+
+    The relay builds its target list before the heartbeat watchdog can confirm a
+    service stale -- measured at ~0.9s ahead in a live run -- so it legitimately
+    addresses a peer whose ZMQ socket is already gone. That is unavoidable (peer
+    death is only observable at send time) and must not be logged as a problem.
+    But the discrimination has to stay narrow, which is what these cases pin.
+    """
+
+    @staticmethod
+    def _error(errno: int | None) -> ErrorDetails:
+        """A transport failure as `command_error_details` would produce it."""
+        return ErrorDetails(
+            code=errno, type="ZMQError", message=f"ZMQError(errno={errno})"
+        )
+
+    @pytest.mark.parametrize(
+        "errno",
+        [param(zmq.EHOSTUNREACH, id="ehostunreach"), param(zmq.ENOTCONN, id="enotconn")],
+    )  # fmt: skip
+    def test_peer_gone_from_an_optional_service_is_debug(self, errno: int) -> None:
+        controller = _controller(
+            {"gpu-1": ServiceType.GPU_TELEMETRY_MANAGER},
+            required=(ServiceType.RECORDS_MANAGER,),
+        )
+
+        SystemController._log_relay_transport_error(
+            controller, CommandType.PROFILE_COMPLETE, "gpu-1", self._error(errno)
+        )
+
+        controller.warning.assert_not_called()
+        controller.debug.assert_called_once()
+
+    def test_peer_gone_from_a_required_service_is_still_a_warning(self) -> None:
+        """The half that catches an over-broad "just silence it" refactor.
+
+        A required service that became unreachable mid-relay is exactly what
+        someone needs to see in a log; muting it to kill the optional-service
+        noise would discard real signal.
+        """
+        controller = _controller(
+            {"records-1": ServiceType.RECORDS_MANAGER},
+            required=(ServiceType.RECORDS_MANAGER,),
+        )
+
+        SystemController._log_relay_transport_error(
+            controller,
+            CommandType.PROFILE_COMPLETE,
+            "records-1",
+            self._error(zmq.EHOSTUNREACH),
+        )
+
+        controller.warning.assert_called_once()
+
+    def test_non_peer_gone_failure_from_an_optional_service_is_a_warning(self) -> None:
+        """A live optional service that faults or times out is a real fault."""
+        controller = _controller(
+            {"gpu-1": ServiceType.GPU_TELEMETRY_MANAGER},
+            required=(ServiceType.RECORDS_MANAGER,),
+        )
+
+        SystemController._log_relay_transport_error(
+            controller,
+            CommandType.PROFILE_COMPLETE,
+            "gpu-1",
+            ErrorDetails(type="TimeoutError", message="Command timed out"),
+        )
+
+        controller.warning.assert_called_once()
+
+    def test_unknown_service_id_is_a_warning(self) -> None:
+        """Not in service_id_map means we cannot prove it was optional."""
+        controller = _controller({}, required=(ServiceType.RECORDS_MANAGER,))
+
+        SystemController._log_relay_transport_error(
+            controller,
+            CommandType.PROFILE_COMPLETE,
+            "ghost-1",
+            self._error(zmq.EHOSTUNREACH),
+        )
+
+        controller.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_the_relay_end_to_end_mutes_a_departed_optional_peer(self) -> None:
+        """End to end: the exact log line the smoke run was emitting.
+
+        Asserted through the relay rather than on the helper alone, so a future
+        refactor that stops routing ErrorDetails through the severity decision
+        brings the warning back and fails here.
+        """
+        controller = _controller(
+            {"gpu-1": ServiceType.GPU_TELEMETRY_MANAGER},
+            required=(ServiceType.RECORDS_MANAGER,),
+        )
+        error = self._error(zmq.EHOSTUNREACH)
+
+        async def _fan_out(cmd, service_ids, **_kwargs):
+            return [error for _ in service_ids]
+
+        controller._send_control_command_to_all = AsyncMock(side_effect=_fan_out)
+
+        await SystemController._handle_profile_complete_relay(
+            controller, Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        controller.warning.assert_not_called()

@@ -31,6 +31,15 @@ Returning ``None`` is fire-and-forget streaming; returning a ``Struct`` makes th
 exchange request-reply -- the ROUTER sends it straight back to the originating
 DEALER. The message type is whatever ``decode_type`` selected, hence ``Any``."""
 
+PEER_GONE_ERRNOS = frozenset({zmq.EHOSTUNREACH, zmq.ENOTCONN})
+"""Errnos meaning "that DEALER is gone", not "this ROUTER is broken".
+
+Only a ``ROUTER_MANDATORY`` socket reports these; without it libzmq drops the
+message silently. Callers that fan out to peers which may legitimately have
+departed match on these values rather than on the exception message, because
+``ZMQError`` text is not stable across pyzmq and libzmq versions and a text match
+would fail open with no test noticing."""
+
 
 class ZMQStreamingRouterClient(BaseZMQClient):
     """
@@ -264,7 +273,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         zmq.Socket.send(self.socket, payload, flags=zmq.NOBLOCK, copy=False)
 
     # A departed DEALER: the ROUTER stays valid for every other peer.
-    _PEER_GONE_ERRNOS = frozenset({zmq.EHOSTUNREACH, zmq.ENOTCONN})
+    _PEER_GONE_ERRNOS = PEER_GONE_ERRNOS
 
     async def _recover_from_send_failure(self, identity: str, error: Exception) -> None:
         """Log a send failure that a departed peer explains; nothing else is actionable.

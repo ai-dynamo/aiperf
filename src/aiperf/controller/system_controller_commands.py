@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from typing import Any
 
 import orjson
+import zmq
 from msgspec import Struct
 from pydantic import BaseModel
 
@@ -25,6 +26,22 @@ from aiperf.common.control_structs import (
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import AIPerfHook
 from aiperf.common.models import ErrorDetails
+
+
+def command_error_details(e: Exception) -> ErrorDetails:
+    """Build ErrorDetails for a failed command send, preserving a ZMQ errno.
+
+    ``ErrorDetails.from_exception`` only populates ``code`` from an
+    ``error_code`` attribute, which ``zmq.ZMQError`` does not have -- it carries
+    ``errno``. Without this the errno is dropped and callers are left matching on
+    the exception's message text, which is not stable across pyzmq/libzmq
+    versions. Relay callers use ``code`` to tell "that peer has departed" from
+    "that peer answered with a fault".
+    """
+    details = ErrorDetails.from_exception(e)
+    if isinstance(e, zmq.ZMQError) and e.errno is not None:
+        details.code = e.errno
+    return details
 
 
 class SystemControllerCommandMixin:
@@ -156,7 +173,7 @@ class SystemControllerCommandMixin:
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
-                results.append(ErrorDetails.from_exception(e))
+                results.append(command_error_details(e))
         return results
 
     async def _send_control_command_to_all_fail_fast(
@@ -208,7 +225,7 @@ class SystemControllerCommandMixin:
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:  # noqa: BLE001 - service cmd dispatch boundary
-                    results.append(ErrorDetails.from_exception(e))
+                    results.append(command_error_details(e))
                     break
         finally:
             for task in tasks.values():

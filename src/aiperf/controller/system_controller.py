@@ -91,6 +91,7 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.records.records_manager import ERROR_FATAL_DETAIL_KEY
 from aiperf.ui.protocols import AIPerfUIProtocol
+from aiperf.zmq.streaming_router_client import PEER_GONE_ERRNOS
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -1107,7 +1108,9 @@ class SystemController(
         )
         for service_id, response in zip(service_ids, responses, strict=True):
             if isinstance(response, ErrorDetails):
-                self.warning(f"PROFILE_COMPLETE relay to '{service_id}': {response}")
+                self._log_relay_transport_error(
+                    CommandType.PROFILE_COMPLETE, service_id, response
+                )
             elif isinstance(response, CommandErr):
                 self.warning(
                     f"PROFILE_COMPLETE relay to '{service_id}' failed: {response.error}"
@@ -1122,6 +1125,43 @@ class SystemController(
                     f"PROFILE_COMPLETE relay to '{service_id}' was unhandled: the "
                     f"service has no {CommandType.PROFILE_COMPLETE} handler"
                 )
+
+    def _log_relay_transport_error(
+        self, cmd: str, service_id: str, error: ErrorDetails
+    ) -> None:
+        """Log a relay send failure, muting only an optional peer that has departed.
+
+        A peer-gone errno from an OPTIONAL service is expected rather than
+        noteworthy. The ZMQ peer disconnects the moment the process exits, but
+        the heartbeat watchdog needs ``HEARTBEAT_STALE_CONFIRMATION_TICKS``
+        consecutive stale ticks to agree, so a relay that fans out inside that
+        window legitimately addresses a service that can no longer answer. No
+        target-list filter can close that race -- peer death is only observable
+        at send time -- and on a box with no DCGM exporter it fires on every
+        default run, sending readers to debug a non-problem.
+
+        Everything else keeps warning severity, deliberately:
+        - a peer-gone errno from a REQUIRED service is unreachable
+          infrastructure and someone needs to see it;
+        - any non-peer-gone failure from an optional service (a fault response,
+          or a timeout while still connected) is a real fault, not a departure.
+
+        Matched on ``ErrorDetails.code`` (the ZMQ errno, preserved by
+        ``command_error_details``) rather than on message text, which is not
+        stable across pyzmq and libzmq versions.
+        """
+        info = self.service_manager.service_id_map.get(service_id)
+        is_optional = (
+            info is not None
+            and info.service_type not in self.service_manager.required_services
+        )
+        if is_optional and error.code in PEER_GONE_ERRNOS:
+            self.debug(
+                lambda: f"{cmd} relay to '{service_id}': optional peer already "
+                f"gone (errno={error.code})"
+            )
+            return
+        self.warning(f"{cmd} relay to '{service_id}': {error}")
 
     _PROFILE_CANCEL_RELAY_TYPES: ClassVar[tuple[ServiceTypeT, ...]] = (
         ServiceType.GPU_TELEMETRY_MANAGER,
@@ -1205,7 +1245,9 @@ class SystemController(
         )
         for service_id, response in zip(service_ids, responses, strict=True):
             if isinstance(response, ErrorDetails):
-                self.warning(f"PROFILE_CANCEL relay to '{service_id}': {response}")
+                self._log_relay_transport_error(
+                    CommandType.PROFILE_CANCEL, service_id, response
+                )
             elif isinstance(response, CommandErr):
                 self.warning(
                     f"PROFILE_CANCEL relay to '{service_id}' failed: {response.error}"
