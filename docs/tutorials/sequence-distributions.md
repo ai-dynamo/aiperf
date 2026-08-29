@@ -22,6 +22,7 @@ with different ISL and OSL pairings.
 
 Add variance to make workloads more realistic:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \

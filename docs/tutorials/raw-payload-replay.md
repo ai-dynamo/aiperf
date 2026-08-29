@@ -83,6 +83,7 @@ Auto-detection rejects records that contain a `conversation_id` key or a `data` 
 
 ### Single File
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 cat > payloads.jsonl << 'EOF'
 {"messages": [{"role": "user", "content": "What is machine learning?"}], "model": "Qwen/Qwen3-0.6B", "max_tokens": 100}
@@ -112,6 +113,7 @@ aiperf profile \
 
 ### Directory for Multi-Turn Conversations
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 mkdir -p conversations/
 

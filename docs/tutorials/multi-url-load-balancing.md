@@ -15,6 +15,7 @@ AIPerf supports distributing requests across multiple inference server instances
 
 Specify multiple `--url` options to enable load balancing:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=120 -->
 ```bash
 # Round-robin across two servers
 aiperf profile --model llama \
@@ -48,6 +49,7 @@ INFO     Results saved to: artifacts/llama-chat-rate20/
 JSON Export: artifacts/llama-chat-rate20/profile_export_aiperf.json
 ```
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=120 -->
 ```bash
 # Multi-GPU scaling on a single node
 aiperf profile --model llama \
@@ -92,6 +94,7 @@ Currently supported strategies:
 
 You can explicitly set the strategy with `--url-strategy`:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=120 -->
 ```bash
 aiperf profile --model llama \
     --url http://server1:8000 \

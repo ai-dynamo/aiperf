@@ -51,6 +51,7 @@ zcat syfi_coding_trace.jsonl.gz | head -20000 | gzip > tracelab_slice.jsonl.gz
 
 ## Profile
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
