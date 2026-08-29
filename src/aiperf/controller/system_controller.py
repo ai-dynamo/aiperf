@@ -1292,6 +1292,16 @@ class SystemController(
                 self.warning(
                     f"PROFILE_COMPLETE relay to '{service_id}' failed: {response.error}"
                 )
+            elif isinstance(response, CommandUnhandled):
+                # A peer that lost its @on_command(PROFILE_COMPLETE) hook answers
+                # with an ack-shaped struct. Treating that as success is exactly
+                # the silent data loss CommandUnhandled exists to expose: for a
+                # record processor, "no handler" means its buffered writers were
+                # never flushed before the aggregator read them.
+                self.warning(
+                    f"PROFILE_COMPLETE relay to '{service_id}' was unhandled: the "
+                    f"service has no {CommandType.PROFILE_COMPLETE} handler"
+                )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)
     async def _handle_shutdown_workers_command(self, message: Command) -> None:

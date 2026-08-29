@@ -19,7 +19,13 @@ from unittest.mock import AsyncMock, MagicMock
 import orjson
 import pytest
 
-from aiperf.common.control_structs import Command, CommandAck, CommandErr, CommandOk
+from aiperf.common.control_structs import (
+    Command,
+    CommandAck,
+    CommandErr,
+    CommandOk,
+    CommandUnhandled,
+)
 from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.models import ErrorDetails, PhaseRecordsStats
 from aiperf.controller.system_controller import SystemController
@@ -189,6 +195,41 @@ class TestProfileCompleteRelay:
         assert any(
             "scrape blew up" in str(call) for call in controller.warning.call_args_list
         )
+
+    @pytest.mark.asyncio
+    async def test_relay_warns_on_an_unhandled_peer(self) -> None:
+        """A peer that lost its hook must not report as a successful flush.
+
+        CommandUnhandled is ack-shaped, so swallowing it turns "this record
+        processor never flushed its writers" into silence -- the exact failure
+        the struct was added to make visible.
+        """
+        controller = _controller({"rp-1": ServiceType.RECORD_PROCESSOR})
+        controller._send_control_command_to_all = AsyncMock(
+            return_value=[
+                CommandUnhandled(
+                    cid="c-1", cmd=CommandType.PROFILE_COMPLETE, sid="rp-1"
+                )
+            ]
+        )
+
+        await SystemController._handle_profile_complete_relay(
+            controller, Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        warnings = [str(call) for call in controller.warning.call_args_list]
+        assert any("rp-1" in w and "unhandled" in w for w in warnings), warnings
+
+    @pytest.mark.asyncio
+    async def test_relay_stays_quiet_on_a_plain_ack(self) -> None:
+        """The success path must not warn, or the unhandled warning means nothing."""
+        controller = _controller({"rp-1": ServiceType.RECORD_PROCESSOR})
+
+        await SystemController._handle_profile_complete_relay(
+            controller, Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        controller.warning.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_relay_warns_on_a_timed_out_peer(self) -> None:
