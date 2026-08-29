@@ -33,6 +33,10 @@ import yaml
 
 CHART_PATH = Path(__file__).parents[3] / "deploy" / "helm" / "aiperf-operator"
 
+# Release namespace used by `_helm_template` unless a test overrides it. Also the
+# namespace benchmark RBAC lands in, since the chart no longer owns one of its own.
+DEFAULT_RENDER_NAMESPACE = "test-ns"
+
 
 def _helm_available() -> bool:
     """Report whether the chart can be rendered here.
@@ -49,7 +53,9 @@ pytestmark = pytest.mark.skipif(
 
 
 def _helm_template(
-    *extra: str, namespace: str = "test-ns", release: str = "aiperf-operator"
+    *extra: str,
+    namespace: str = DEFAULT_RENDER_NAMESPACE,
+    release: str = "aiperf-operator",
 ) -> list[dict]:
     """Run ``helm template`` and return parsed YAML docs.
 
@@ -102,27 +108,43 @@ def _find(docs: list[dict], kind: str, name: str) -> dict:
 
 
 class TestBenchmarkNamespaceOwnership:
-    """Namespace creation can be external while benchmark RBAC stays chart-owned."""
+    """Namespace creation is always external while benchmark RBAC stays chart-owned.
 
-    def test_existing_custom_namespace_omits_namespace_but_keeps_rbac(self) -> None:
-        docs = _helm_template(
-            "--set-string",
-            "benchmarkNamespace.name=team-benchmarks",
-            "--set",
-            "benchmarkNamespace.create=false",
-        )
+    The chart used to create and own an ``aiperf-benchmarks`` Namespace, so
+    installing the operator provisioned a namespace the user never asked for
+    and may not have had rights to create. Benchmarks now run in the release
+    namespace and the chart emits no ``Namespace`` object at all.
+    """
 
-        namespaces = {
-            doc.get("metadata", {}).get("name")
-            for doc in docs
-            if doc.get("kind") == "Namespace"
-        }
-        assert "team-benchmarks" not in namespaces
+    def test_chart_creates_no_namespace_but_keeps_rbac_in_release_namespace(
+        self,
+    ) -> None:
+        docs = _helm_template(namespace="team-benchmarks")
+
+        assert [doc for doc in docs if doc.get("kind") == "Namespace"] == []
 
         role = _find(docs, "Role", "aiperf-operator-benchmark")
         role_binding = _find(docs, "RoleBinding", "aiperf-operator-benchmark")
         assert role["metadata"]["namespace"] == "team-benchmarks"
         assert role_binding["metadata"]["namespace"] == "team-benchmarks"
+
+    def test_extra_rbac_namespaces_get_rbac_without_being_created(self) -> None:
+        """The escape hatch grants RBAC in namespaces that must already exist."""
+        docs = _helm_template(
+            "--set",
+            "benchmarkRbacNamespaces={vision-benchmarks}",
+            namespace="team-benchmarks",
+        )
+
+        assert [doc for doc in docs if doc.get("kind") == "Namespace"] == []
+
+        rbac_namespaces = {
+            doc["metadata"]["namespace"]
+            for doc in docs
+            if doc.get("kind") in {"Role", "RoleBinding"}
+            and doc.get("metadata", {}).get("name") == "aiperf-operator-benchmark"
+        }
+        assert rbac_namespaces == {"team-benchmarks", "vision-benchmarks"}
 
 
 # ============================================================
@@ -481,6 +503,7 @@ class TestMetricsDiscoveryRoleBindingSubjects:
     namespaces' `default` ServiceAccount); the object form binds the listed
     ServiceAccounts instead so pods running under a custom
     podTemplate.serviceAccountName are not silently denied 'pods: list'.
+    The benchmark namespace subject is now the release namespace.
     """
 
     def test_plain_string_entry_binds_default_serviceaccount(self) -> None:
@@ -490,7 +513,7 @@ class TestMetricsDiscoveryRoleBindingSubjects:
         binding = _find(docs, "RoleBinding", "aiperf-operator-metrics-discovery")
         assert binding["metadata"]["namespace"] == "dynamo-server"
         assert {(s["name"], s["namespace"]) for s in binding["subjects"]} == {
-            ("default", "aiperf-benchmarks")
+            ("default", DEFAULT_RENDER_NAMESPACE)
         }
 
     def test_object_entry_binds_listed_serviceaccounts(self) -> None:
@@ -505,8 +528,8 @@ class TestMetricsDiscoveryRoleBindingSubjects:
         binding = _find(docs, "RoleBinding", "aiperf-operator-metrics-discovery")
         assert binding["metadata"]["namespace"] == "dynamo-server"
         assert {(s["name"], s["namespace"]) for s in binding["subjects"]} == {
-            ("aiperf-bench", "aiperf-benchmarks"),
-            ("other-sa", "aiperf-benchmarks"),
+            ("aiperf-bench", DEFAULT_RENDER_NAMESPACE),
+            ("other-sa", DEFAULT_RENDER_NAMESPACE),
         }
 
     def test_object_entry_without_serviceaccounts_falls_back_to_default(self) -> None:
@@ -515,5 +538,5 @@ class TestMetricsDiscoveryRoleBindingSubjects:
         )
         binding = _find(docs, "RoleBinding", "aiperf-operator-metrics-discovery")
         assert {(s["name"], s["namespace"]) for s in binding["subjects"]} == {
-            ("default", "aiperf-benchmarks")
+            ("default", DEFAULT_RENDER_NAMESPACE)
         }

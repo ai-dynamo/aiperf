@@ -49,7 +49,11 @@ class HelmValues:
     """Namespaces watched by the operator; empty watches the whole cluster."""
 
     benchmark_namespace: str = "aiperf-benchmarks"
-    """Namespace created for benchmark jobs and their namespaced RBAC."""
+    """Pre-existing namespace granted benchmark RBAC via benchmarkRbacNamespaces.
+
+    The chart no longer creates namespaces, so the harness must create this one
+    before installing (see the helm_job_namespace fixture in conftest).
+    """
 
     monitor_interval: str = "10.0"
     """Operator monitor polling interval in seconds."""
@@ -103,7 +107,7 @@ class HelmValues:
             f"image.tag={self.image_tag}",
             f"image.pullPolicy={self.image_pull_policy}",
             f"operator.replicas={self.operator_replicas}",
-            f"benchmarkNamespace.name={self.benchmark_namespace}",
+            f"benchmarkRbacNamespaces[0]={self.benchmark_namespace}",
             f"operator.env.monitorInterval={self.monitor_interval}",
             f"operator.env.monitorInitialDelay={self.monitor_initial_delay}",
             f"storage.enabled={str(self.storage_enabled).lower()}",

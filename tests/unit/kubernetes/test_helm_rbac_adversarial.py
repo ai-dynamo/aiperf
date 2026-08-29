@@ -308,7 +308,7 @@ class TestBenchmarkRoleStatusPatchContract:
         ]
         namespaces = {_metadata_namespace(binding) for binding in rolebindings}
         assert namespaces == {
-            "aiperf-benchmarks",
+            DEFAULT_OPERATOR_NAMESPACE,
             "vision-benchmarks",
             "audio-benchmarks",
         }
@@ -608,9 +608,7 @@ class TestResultsServerNetworkBoundary:
             "--set",
             "networkPolicy.enabled=true",
             "--set",
-            "benchmarkNamespace.name=mlperf-benchmarks",
-            "--set",
-            "benchmarkRbacNamespaces={vision-benchmarks}",
+            "benchmarkRbacNamespaces={mlperf-benchmarks,vision-benchmarks}",
             namespace="operator-control-plane",
         )
         netpol = _find(docs, "NetworkPolicy", "aiperf-operator")

@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 _FENCE_RE = re.compile(r"^```ya?ml\s*$", re.MULTILINE)
 _SUPPORTED_KINDS = {"AIPerfJob", "AIPerfSweep"}
 _HELM_NOTES_PLACEHOLDERS = {
-    "{{ .Values.benchmarkNamespace.name }}": DEFAULT_BENCHMARK_NAMESPACE,
+    "{{ .Release.Namespace }}": DEFAULT_BENCHMARK_NAMESPACE,
     '{{ include "aiperf-operator.defaultJobImage" . }}': "nvcr.io/nvidia/aiperf:latest",
 }
 
