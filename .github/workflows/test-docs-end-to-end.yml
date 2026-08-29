@@ -138,18 +138,17 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
-      - name: Run test_docs_end_to_end
+      - name: Run docs E2E tests
         env:
-          AIPERF_SOURCE_DIR: ${{ github.workspace }}
-          CI_JOB_NAME: test_docs_end_to_end
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          # Matrix-shard params. SHARD_INDEX/SHARD_TOTAL are unset for the
-          # single-shard servers; setup_test.sh treats their absence as
-          # "no slicing" and runs all commands for the named server.
-          SERVER_NAME: ${{ matrix.shard.server }}
-          SHARD_INDEX: ${{ matrix.shard.shard_index }}
-          SHARD_TOTAL: ${{ matrix.shard.shard_total }}
-        run: bash -x tests/ci/test_docs_end_to_end/setup_test.sh
+        run: |
+          uv run pytest tests/ci/test_docs_end_to_end/ \
+            -m docs_e2e \
+            -v \
+            --tb=short \
+            --docs-e2e-server "${{ matrix.shard.server }}" \
+            --docs-e2e-shard-index "${{ matrix.shard.shard_index || 0 }}" \
+            --docs-e2e-shard-total "${{ matrix.shard.shard_total || 1 }}"
 
       - name: Cleanup Docker containers
         if: always()
