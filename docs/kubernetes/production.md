@@ -436,6 +436,44 @@ benchmark config) instead. See the
 
 ## Multi-Tenant Clusters
 
+### Operator Scope and Namespace Ownership
+
+An operator install is one of two things, decided by `operator.id`:
+
+| | `operator.id` | Namespaces watched | Writes a claim |
+|---|---|---|---|
+| **Global operator** | `""` (default) | all, or `operator.watchNamespaces` | no |
+| **Scoped operator** | a unique string | `operator.watchNamespaces` | yes |
+
+A scoped operator claims each namespace it watches by writing a
+`coordination.k8s.io/v1` Lease named `aiperf-operator` into it, and renews that
+Lease on a timer. Every operator — the global one included — skips any
+namespace whose Lease is held by a different identity and still fresh. Nothing
+is set on the AIPerfJob itself, so a job cannot be submitted to the wrong
+operator by forgetting a label.
+
+This is what lets a scoped build run beside the production operator:
+
+```bash
+helm install aiperf-test deploy/helm/aiperf-operator \
+  --namespace aiperf-system-test --create-namespace \
+  --set operator.id=my-branch \
+  --set 'operator.watchNamespaces={aiperf-test}'
+```
+
+The global operator stops reconciling `aiperf-test` as soon as the claim lands,
+and resumes when the claim lapses. `aiperf kube list` shows the holder in its
+`OWNER` column; `-` means the global operator owns that namespace.
+
+Two scoped operators cannot claim the same namespace: the second one fails at
+startup naming the current holder, rather than silently double-reconciling.
+
+The claim's duration (`AIPERF_OPERATOR_CLAIM_LEASE_SECONDS`, default 300s) is
+deliberately long, so a crash-looping operator keeps its namespaces across
+restarts. Uninstalling a scoped operator lets its claims expire and the
+namespaces fall back to the global operator; nothing needs to be deleted by
+hand.
+
 ### Namespace Isolation
 
 Benchmarks run in the namespace you name with `--namespace`. For multi-tenant setups, give each team its own:
@@ -446,7 +484,9 @@ aiperf kube profile ... --namespace team-b-benchmarks --operator
 ```
 
 By default the operator watches all namespaces for AIPerfJob CRs; set
-`operator.watchNamespaces` in the Helm values to restrict it to a fixed list.
+`operator.watchNamespaces` in the Helm values to restrict it to a fixed list,
+and `operator.id` to also claim those namespaces away from a global operator
+(see [Operator Scope and Namespace Ownership](#operator-scope-and-namespace-ownership)).
 Each job gets its own RBAC scoped to its namespace. Here `--operator` bypasses cluster-scoped CRD
 discovery, and the explicit namespaces are treated as pre-provisioned: the CLI
 does not issue Namespace-create requests. A tenant therefore needs permission

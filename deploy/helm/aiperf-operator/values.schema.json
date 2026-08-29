@@ -52,6 +52,7 @@
             "additionalProperties": false,
             "properties": {
                 "replicas": {"type": "integer", "const": 1},
+                "id": {"type": "string"},
                 "resources": {"type": "object"},
                 "podAnnotations": {"type": "object"},
                 "nodeSelector": {"type": "object"},

@@ -91,6 +91,15 @@ rules:
   resources: ["roles", "rolebindings"]
   verbs: ["create", "delete", "get", "list", "watch"]
 
+# Leases - namespace ownership between a scoped operator and the cluster-wide
+#   one. A scoped operator (operator.id set) writes and renews a Lease named
+#   `aiperf-operator` in each namespace it watches; every operator reads them to
+#   decide whether to reconcile. No `delete`: a claim is meant to outlive
+#   restarts and lapse only by expiry, so nothing in the operator releases one.
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "create", "update", "patch"]
+
 # Namespaces - access for AIPerfJob resources
 - apiGroups: [""]
   resources: ["namespaces"]

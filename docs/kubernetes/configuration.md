@@ -326,6 +326,9 @@ The operator Helm chart is configured via `values.yaml`. Key settings:
 ```yaml
 operator:
   replicas: 1
+  id: ""                            # "" = cluster-wide operator; a unique id
+                                    # claims operator.watchNamespaces so the
+                                    # cluster-wide operator steps aside
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     # No limits set by default (burstable QoS) so the operator can scale
@@ -345,6 +348,12 @@ operator:
 `operator.replicas` is fixed at `1`. The kopf process and runs index have one
 authoritative writer and do not use leader election, so the chart rejects
 multi-replica values instead of presenting unsafe pseudo-HA.
+
+`operator.id` decides namespace ownership between installs. Leave it empty for
+the cluster-wide operator. Set it, together with `operator.watchNamespaces`, to
+run a scoped operator that leases those namespaces away from the cluster-wide
+one — see
+[Operator Scope and Namespace Ownership](production.md#operator-scope-and-namespace-ownership).
 
 ### Storage
 

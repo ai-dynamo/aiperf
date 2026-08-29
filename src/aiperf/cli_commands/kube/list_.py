@@ -158,7 +158,9 @@ async def _run_list_loop(
             if watch:
                 # Clear screen for live refresh
                 kube_console.console.clear()
-            kube_console.print_aiperfjob_table(jobs, wide=wide)
+            kube_console.print_aiperfjob_table(
+                jobs, wide=wide, owners=await _namespace_owners(api, jobs)
+            )
 
         if not watch:
             return
@@ -167,6 +169,37 @@ async def _run_list_loop(
             await asyncio.sleep(interval)
         except (KeyboardInterrupt, asyncio.CancelledError):
             return
+
+
+async def _namespace_owners(
+    api: object, jobs: list[AIPerfJobInfo]
+) -> dict[str, str | None]:
+    """Map each job namespace to the scoped operator holding its claim.
+
+    ``None`` means no live claim, i.e. the cluster-wide operator reconciles
+    that namespace. Failures are reported as ``None`` rather than raising: the
+    OWNER column is informational and must never keep `aiperf kube list` from
+    printing the jobs.
+    """
+    from kubernetes_asyncio.client import CoordinationV1Api
+
+    from aiperf.common.environment import Environment
+    from aiperf.operator.namespace_claim import LEASE_NAME, lease_holder_if_live
+
+    coord_api = CoordinationV1Api(api)
+    owners: dict[str, str | None] = {}
+    for namespace in sorted({job.namespace for job in jobs if job.namespace}):
+        try:
+            lease = await coord_api.read_namespaced_lease(
+                name=LEASE_NAME, namespace=namespace
+            )
+        except Exception:
+            owners[namespace] = None
+            continue
+        owners[namespace] = lease_holder_if_live(
+            lease, default_duration=Environment.OPERATOR.CLAIM_LEASE_SECONDS
+        )
+    return owners
 
 
 async def _fetch_jobs(

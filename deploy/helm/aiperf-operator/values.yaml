@@ -25,6 +25,13 @@ operator:
   # reconciliation/index writer and does not implement leader election.
   replicas: 1
 
+  # operator.id claims namespaces for this operator. Empty (the default) is the
+  # cluster-wide operator: it reconciles every namespace no scoped operator has
+  # claimed. Set a unique id to run a scoped operator alongside the global one --
+  # it claims the namespaces in operator.watchNamespaces and the global operator
+  # steps aside, with nothing to set per job.
+  id: ""
+
   # operator.resources is the CPU and memory requests and limits
   # No limits set (burstable) so the operator can use as much memory/CPU
   # as the node provides — needed for high-concurrency runs with many jobs.

@@ -69,6 +69,10 @@ spec:
         env:
         - name: PYTHONUNBUFFERED
           value: "1"
+        {{- if .Values.operator.id }}
+        - name: AIPERF_OPERATOR_ID
+          value: {{ .Values.operator.id | quote }}
+        {{- end }}
         - name: AIPERF_OPERATOR_MONITOR_INTERVAL
           value: {{ .Values.operator.env.monitorInterval | quote }}
         - name: AIPERF_OPERATOR_MONITOR_INITIAL_DELAY

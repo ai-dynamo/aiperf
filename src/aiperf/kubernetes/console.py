@@ -466,12 +466,16 @@ def print_cr_submission_summary(
 def print_aiperfjob_table(
     jobs: list[AIPerfJobInfo],
     wide: bool = False,
+    owners: dict[str, str | None] | None = None,
 ) -> None:
     """Print a formatted table of AIPerfJob CRs.
 
     Args:
         jobs: List of AIPerfJobInfo objects.
         wide: Show additional columns (model, endpoint, error).
+        owners: Namespace -> scoped operator id holding that namespace's
+            ``aiperf-operator`` Lease, or ``None`` when the cluster-wide
+            operator owns it. Rendered in the OWNER column as ``-``.
     """
     from aiperf.kubernetes.phase import Phase
 
@@ -489,6 +493,7 @@ def print_aiperfjob_table(
 
     table.add_column("NAME", style="cyan")
     table.add_column("NAMESPACE", style="dim")
+    table.add_column("OWNER", style="dim")
     table.add_column("PHASE")
     table.add_column("WORKERS", justify="right")
     table.add_column("PROGRESS", justify="right")
@@ -527,6 +532,7 @@ def print_aiperfjob_table(
         row: list[str | Text] = [
             job.name,
             job.namespace,
+            (owners or {}).get(job.namespace) or "-",
             phase_text,
             workers_text,
             progress_text,
