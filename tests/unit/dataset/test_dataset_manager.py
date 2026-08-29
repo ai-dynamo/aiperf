@@ -1104,8 +1104,6 @@ class TestDatasetConfigStatusRequest:
         300s dataset-configuration timeout."""
         dm = configured_dataset_manager
 
-        # Sanity: the fixture's _profile_configure_command already published
-        # DatasetConfiguredNotification via the mocked publish().
         published = [
             call.args[0]
             for call in dm.publish.call_args_list

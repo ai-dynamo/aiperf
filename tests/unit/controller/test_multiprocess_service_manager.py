@@ -329,8 +329,6 @@ class TestMultiProcessServiceManager:
             service_id="record_processor_2",
         )
         service_manager.multi_process_info = [replica_1, replica_2]
-        # Only the first replica has registered so far -- the second is
-        # still spinning up its subprocess.
         service_manager.service_id_map = {
             "record_processor_1": ServiceRunInfo(
                 service_type=ServiceType.RECORD_PROCESSOR,
