@@ -41,6 +41,7 @@ from aiperf.common.hooks import (
     on_state_change,
     on_stop,
 )
+from aiperf.common.messages import HeartbeatMessage
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -279,16 +280,48 @@ class BaseComponentService(BaseService):
 
     @background_task(interval=Environment.SERVICE.HEARTBEAT_INTERVAL, immediate=False)
     async def _heartbeat_task(self) -> None:
-        """Send a heartbeat to the system controller over the control channel.
+        """Emit this service's two heartbeats: one per transport, per consumer.
 
-        Background tasks are started by a hook that runs before registration, so
-        this must stay silent until the controller knows about this service --
-        otherwise every service logs an "unknown service" warning on the
-        controller during startup.
+        The two sends are NOT redundant and neither may be "cleaned up" as a
+        duplicate of the other. They have different consumers, different
+        transports, and different failure consequences:
+
+        - ``Heartbeat`` on the DEALER control channel is the SystemController's
+          liveness watchdog. Missing it gets the service declared unhealthy and
+          reaped by the controller.
+        - ``HeartbeatMessage`` on the pub bus is the *credit router's* worker
+          liveness clock. ``TimingManager._on_heartbeat`` feeds it to
+          ``StickyCreditRouter.note_worker_heartbeat``, and
+          ``WorkerLoad.last_heartbeat_ns`` has no other source once the value
+          seeded at registration ages out. Missing it makes every worker look
+          stale to ``evict_stale_workers`` after ``WORKER.STALE_TIME *
+          WORKER.ROUTER_STALE_EVICTION_MULTIPLIER`` and fails any run longer
+          than that window with ``Fatal worker loss: worker_unavailable``.
+
+        The bus heartbeat is deliberately not gated on the control channel or on
+        registration: the router's clock is independent of the controller's
+        registration handshake. The control-channel heartbeat is gated, because
+        background tasks start before registration and an early send makes the
+        controller log an "unknown service" warning for every service at
+        startup.
         """
+        if self.stop_requested:
+            return
+
+        try:
+            await self.publish(
+                HeartbeatMessage(
+                    service_id=self.service_id,
+                    service_type=self.service_type,
+                    state=self.state,
+                )
+            )
+        except (zmq.ZMQError, NotInitializedError) as e:
+            self.debug(f"Bus heartbeat saw a closed socket at shutdown: {e!r}")
+
         if not self._uses_controller_control_channel():
             return
-        if not self._registration_complete or self.stop_requested:
+        if not self._registration_complete:
             return
         # The early loop exists only to bridge the gap until this task fires.
         early_task = self._early_heartbeat_task

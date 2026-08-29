@@ -23,6 +23,7 @@ from aiperf.common.control_structs import (
 from aiperf.common.enums import CommandType
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import AIPerfHook
+from aiperf.common.messages import HeartbeatMessage
 
 
 @pytest.mark.asyncio
@@ -187,6 +188,61 @@ async def test_heartbeat_task_is_silent_before_registration(component_service) -
 
     component_service._registration_complete = True
     await component_service._heartbeat_task()
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_task_publishes_bus_heartbeat_for_the_credit_router(
+    component_service,
+) -> None:
+    """The bus HeartbeatMessage is the credit router's only worker-liveness clock.
+
+    ``TimingManager._on_heartbeat`` feeds it to
+    ``StickyCreditRouter.note_worker_heartbeat``; nothing else writes
+    ``WorkerLoad.last_heartbeat_ns`` after registration seeds it. Dropping this
+    publish makes every worker look stale to ``evict_stale_workers`` once
+    ``WORKER.STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER`` elapses, failing
+    any run longer than that window with ``worker_unavailable``. That regression
+    shipped once already; this test is the guard.
+
+    It must fire even before registration completes, because the router's clock
+    is independent of the controller's registration handshake.
+    """
+    published: list[object] = []
+
+    async def fake_publish(message) -> None:
+        published.append(message)
+
+    async def fake_send(struct) -> None:
+        return None
+
+    component_service.publish = fake_publish
+    component_service.control_client.send = fake_send
+
+    await component_service._heartbeat_task()
+
+    assert len(published) == 1
+    assert isinstance(published[0], HeartbeatMessage)
+    assert published[0].service_id == component_service.service_id
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_task_survives_a_closed_pub_socket(component_service) -> None:
+    """A dead pub socket at shutdown must not stop the control-channel heartbeat."""
+    sent: list[object] = []
+
+    async def dead_publish(message) -> None:
+        raise NotInitializedError("Socket not initialized or closed")
+
+    async def fake_send(struct) -> None:
+        sent.append(struct)
+
+    component_service.publish = dead_publish
+    component_service.control_client.send = fake_send
+    component_service._registration_complete = True
+
+    await component_service._heartbeat_task()
+
     assert len(sent) == 1
 
 
