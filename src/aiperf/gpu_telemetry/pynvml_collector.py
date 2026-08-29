@@ -292,13 +292,26 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         """
         try:
             pynvml.nvmlDeviceGetTotalEnergyConsumption(gpu.handle)
-        except pynvml.NVMLError as e:
+        except pynvml.NVMLError_NotSupported as e:
+            # The device does not implement the counter. This is permanent, so
+            # the collection loop can stop asking.
             gpu.energy_counter_supported = False
             self.warning(
                 f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
                 f"NVML total energy counter not available ({e}). Energy metrics "
                 f"will be absent for this GPU; the counter requires Volta or "
                 f"newer."
+            )
+        except pynvml.NVMLError as e:
+            # Anything else may be transient, so leave the capability alone and
+            # let the collection loop try again rather than disabling energy for
+            # the whole run on one bad reading. The message is bound here
+            # because Python clears the exception variable when the block ends,
+            # and self.debug evaluates its lambda later.
+            reason = str(e)
+            self.debug(
+                lambda: f"GPU {gpu.metadata.gpu_index}: energy counter probe "
+                f"failed with a non-fatal error ({reason}); keeping it enabled"
             )
 
     def _free_gpm_samples(self) -> None:
