@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest import param
 
+from aiperf.common.control_structs import Command, CommandAck
 from aiperf.common.enums import (
     CommandType,
     ExportLevel,
@@ -29,8 +30,6 @@ from aiperf.common.enums import (
     SystemState,
 )
 from aiperf.common.messages import (
-    CommandAcknowledgedResponse,
-    FinalizeArtifactsCommand,
     ProcessRecordsResultMessage,
     RegisterServiceCommand,
 )
@@ -574,19 +573,17 @@ class TestFinalizeArtifactsIsReportable:
 
         targeted: list[list[str]] = []
 
-        async def respond(command, service_ids, timeout):  # noqa: ANN001, ARG001
+        async def respond(cmd, service_ids, payload=b"", timeout=0.0):  # noqa: ANN001, ARG001
             targeted.append(list(service_ids))
             return [
-                CommandAcknowledgedResponse.from_command_message(command, service_id)
+                CommandAck(cid="c-1", cmd=cmd, sid=service_id)
                 for service_id in service_ids
             ]
 
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            side_effect=respond
-        )
+        system_controller._send_control_command_to_all = AsyncMock(side_effect=respond)
 
         await system_controller._handle_finalize_artifacts_command(
-            FinalizeArtifactsCommand(service_id="records_manager")
+            Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
         assert targeted == [["record_processor_0"]]
@@ -607,7 +604,7 @@ class TestFinalizeArtifactsIsReportable:
         system_controller.service_manager.service_id_map = {}
 
         await system_controller._handle_finalize_artifacts_command(
-            FinalizeArtifactsCommand(service_id="records_manager")
+            Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
         assert [e.operation for e in system_controller._exit_errors] == [
@@ -653,16 +650,14 @@ class TestRawFinalizeHonoursThePodLossTolerance:
         ]
         targeted: list[list[str]] = []
 
-        async def respond(command, service_ids, timeout):  # noqa: ANN001, ARG001
+        async def respond(cmd, service_ids, payload=b"", timeout=0.0):  # noqa: ANN001, ARG001
             targeted.append(list(service_ids))
             return [
-                CommandAcknowledgedResponse.from_command_message(command, service_id)
+                CommandAck(cid="c-1", cmd=cmd, sid=service_id)
                 for service_id in service_ids
             ]
 
-        k8s_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            side_effect=respond
-        )
+        k8s_controller._send_control_command_to_all = AsyncMock(side_effect=respond)
         with patch(
             "aiperf.controller.system_controller.ServiceRegistry.get_services",
             return_value=registered,
@@ -688,14 +683,14 @@ class TestRawFinalizeHonoursThePodLossTolerance:
         self, k8s_controller: SystemController
     ) -> None:
         """4 pods, 3 lost = 75% >= threshold: withhold readiness, contact nobody."""
-        k8s_controller.send_command_and_wait_for_all_responses = AsyncMock()
+        k8s_controller._send_control_command_to_all = AsyncMock()
         with patch(
             "aiperf.controller.system_controller.ServiceRegistry.get_services",
             return_value=[MagicMock(service_id="worker_group_manager_0")],
         ):
             await k8s_controller._finalize_kubernetes_raw_artifacts()
 
-        k8s_controller.send_command_and_wait_for_all_responses.assert_not_awaited()
+        k8s_controller._send_control_command_to_all.assert_not_awaited()
         assert k8s_controller._export_failed is True
         assert [e.operation for e in k8s_controller._exit_errors] == [
             "finalize_raw_artifacts"
@@ -706,7 +701,7 @@ class TestRawFinalizeHonoursThePodLossTolerance:
         self, k8s_controller: SystemController
     ) -> None:
         """A barrier with no members left proves nothing, at any threshold."""
-        k8s_controller.send_command_and_wait_for_all_responses = AsyncMock()
+        k8s_controller._send_control_command_to_all = AsyncMock()
         with (
             patch(
                 "aiperf.controller.system_controller.ServiceRegistry.get_services",
@@ -719,17 +714,26 @@ class TestRawFinalizeHonoursThePodLossTolerance:
         ):  # fmt: skip
             await k8s_controller._finalize_kubernetes_raw_artifacts()
 
-        k8s_controller.send_command_and_wait_for_all_responses.assert_not_awaited()
+        k8s_controller._send_control_command_to_all.assert_not_awaited()
         assert k8s_controller._export_failed is True
 
 
-def _finalize_command() -> FinalizeArtifactsCommand:
-    return FinalizeArtifactsCommand(
-        service_id="records_manager",
-        target_service_type=ServiceType.RECORD_PROCESSOR,
+def test_finalize_ack_identity_check_is_stable() -> None:
+    """Guards the ACK matching in ``_raw_artifact_finalize_response_error``.
+
+    Invariant I8: the ack must carry both the command it answers and the
+    responding service, or the identity check silently degrades to "any ack".
+    """
+    ack = CommandAck(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS, sid="wgm-0")
+    assert SystemController._raw_artifact_finalize_response_error("wgm-0", ack) is None
+    # Right command, wrong service.
+    assert (
+        SystemController._raw_artifact_finalize_response_error("wgm-1", ack) is not None
     )
-
-
-def test_finalize_command_type_is_stable() -> None:
-    """Guards the ACK matching in ``_raw_artifact_finalize_response_error``."""
-    assert _finalize_command().command == CommandType.FINALIZE_ARTIFACTS
+    # Right service, unpopulated cmd.
+    assert (
+        SystemController._raw_artifact_finalize_response_error(
+            "wgm-0", CommandAck(cid="c-1", sid="wgm-0")
+        )
+        is not None
+    )

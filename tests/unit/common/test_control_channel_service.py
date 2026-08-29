@@ -3,14 +3,23 @@
 """Service side of the DEALER/ROUTER control channel."""
 
 import asyncio
+from types import SimpleNamespace
 
+import orjson
 import pytest
 
 from aiperf.common.control_structs import (
+    Command,
+    CommandAck,
+    CommandErr,
+    CommandOk,
+    CommandUnhandled,
     Registration,
     RegistrationAck,
     StatusUpdate,
 )
+from aiperf.common.enums import CommandType
+from aiperf.common.hooks import AIPerfHook
 
 
 @pytest.mark.asyncio
@@ -228,3 +237,133 @@ async def test_heartbeat_lets_cancellation_propagate(component_service) -> None:
 
     with pytest.raises(asyncio.CancelledError):
         await component_service._heartbeat_task()
+
+
+async def _noop() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_unmatched_command_returns_command_unhandled(component_service) -> None:
+    """Invariant I7: 'no handler' must stay distinguishable from 'acked'."""
+    sent: list = []
+    component_service.control_client.send = lambda s: sent.append(s) or _noop()
+    await component_service._handle_control_command(
+        Command(cid="c-1", cmd="a_command_with_no_handler")
+    )
+    assert isinstance(sent[0], CommandUnhandled)
+    assert sent[0].cid == "c-1"
+    assert sent[0].cmd == "a_command_with_no_handler"
+    assert sent[0].sid == component_service.service_id
+
+
+@pytest.mark.asyncio
+async def test_handler_returning_none_sends_ack_carrying_cmd_and_sid(
+    component_service,
+) -> None:
+    """Invariant I8."""
+    sent: list = []
+    component_service.control_client.send = lambda s: sent.append(s) or _noop()
+
+    async def handler(message):
+        return None
+
+    hook = SimpleNamespace(func=handler)
+    await component_service._execute_control_command(
+        Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS), hook
+    )
+    assert sent[0] == CommandAck(
+        cid="c-1",
+        cmd=CommandType.FINALIZE_ARTIFACTS,
+        sid=component_service.service_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_handler_returning_value_sends_command_ok_with_payload(
+    component_service,
+) -> None:
+    sent: list = []
+    component_service.control_client.send = lambda s: sent.append(s) or _noop()
+
+    async def handler(message):
+        return {"a": 1}
+
+    hook = SimpleNamespace(func=handler)
+    await component_service._execute_control_command(
+        Command(cid="c-1", cmd=CommandType.GET_POD_STATES), hook
+    )
+    assert isinstance(sent[0], CommandOk)
+    assert sent[0].cmd == CommandType.GET_POD_STATES
+    assert orjson.loads(sent[0].payload) == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_handler_raising_sends_command_err_with_traceback(
+    component_service,
+) -> None:
+    sent: list = []
+    component_service.control_client.send = lambda s: sent.append(s) or _noop()
+
+    async def handler(message):
+        raise ValueError("boom")
+
+    hook = SimpleNamespace(func=handler)
+    await component_service._execute_control_command(
+        Command(cid="c-1", cmd=CommandType.PROFILE_START), hook
+    )
+    assert isinstance(sent[0], CommandErr)
+    assert sent[0].cmd == CommandType.PROFILE_START
+    assert sent[0].error == "boom"
+    assert "ValueError" in sent[0].traceback
+
+
+@pytest.mark.asyncio
+async def test_shutdown_handler_cancellation_does_not_send_a_second_response(
+    component_service,
+) -> None:
+    """The SHUTDOWN handler acks then raises CancelledError; the dispatcher must
+    re-raise without also sending a response."""
+    sent: list = []
+    component_service.control_client.send = lambda s: sent.append(s) or _noop()
+
+    async def handler(message):
+        await component_service.control_client.send(
+            CommandAck(
+                cid=message.cid, cmd=message.cmd, sid=component_service.service_id
+            )
+        )
+        raise asyncio.CancelledError()
+
+    hook = SimpleNamespace(func=handler)
+    with pytest.raises(asyncio.CancelledError):
+        await component_service._execute_control_command(
+            Command(cid="c-1", cmd=CommandType.SHUTDOWN), hook
+        )
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_command_is_routed_to_the_matching_on_command_hook(
+    component_service,
+) -> None:
+    """End-to-end through _handle_control_command, not just _execute_*."""
+    sent: list = []
+    component_service.control_client.send = lambda s: sent.append(s) or _noop()
+    seen: list = []
+
+    async def handler(message):
+        seen.append(message)
+
+    for hook in component_service.get_hooks(AIPerfHook.ON_COMMAND):
+        if CommandType.SHUTDOWN in (hook.resolve_params(component_service) or ()):
+            hook.func = handler
+            break
+    else:
+        pytest.fail("component service has no SHUTDOWN @on_command hook")
+
+    await component_service._handle_control_command(
+        Command(cid="c-1", cmd=CommandType.SHUTDOWN)
+    )
+    assert [m.cid for m in seen] == ["c-1"]
+    assert isinstance(sent[0], CommandAck)

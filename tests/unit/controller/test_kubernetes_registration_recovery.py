@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import LifecycleState, SystemState
+from aiperf.common.control_structs import CommandAck
+from aiperf.common.enums import CommandType, LifecycleState, SystemState
 from aiperf.common.messages import HeartbeatMessage, RegisterServiceCommand
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.controller.system_controller import SystemController
@@ -74,8 +75,12 @@ async def test_failed_worker_group_replacement_is_reconfigured(
         fatal=False,
     )
     system_controller._system_state = SystemState.CONFIGURING
-    system_controller.send_command_and_wait_for_response = AsyncMock(
-        return_value=MagicMock()
+    system_controller._send_control_command = AsyncMock(
+        return_value=CommandAck(
+            cid="c-1",
+            cmd=CommandType.PROFILE_CONFIGURE,
+            sid="worker_group_manager_0",
+        )
     )
     scheduled = []
 
@@ -90,8 +95,9 @@ async def test_failed_worker_group_replacement_is_reconfigured(
 
     assert len(scheduled) == 1
     await scheduled[0]
-    command = system_controller.send_command_and_wait_for_response.await_args.args[0]
-    assert command.target_service_id == "worker_group_manager_0"
+    identity, cmd = system_controller._send_control_command.await_args.args
+    assert identity == "worker_group_manager_0"
+    assert cmd == CommandType.PROFILE_CONFIGURE
     assert ServiceRegistry.is_registered("worker_group_manager_0")
 
 

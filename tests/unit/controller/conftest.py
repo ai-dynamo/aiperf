@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.control_structs import CommandErr
 from aiperf.common.enums import CommandType
-from aiperf.common.messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails
 from aiperf.controller.protocols import KubernetesServiceManagerProtocol
 from aiperf.controller.system_controller import SystemController
@@ -92,11 +92,11 @@ def error_details(mock_exception: MockTestException) -> ErrorDetails:
 
 
 @pytest.fixture
-def error_response(error_details: ErrorDetails) -> CommandErrorResponse:
-    """Mock the command responses."""
-    return CommandErrorResponse(
-        service_id="test_service_1",
-        command=CommandType.PROFILE_CONFIGURE,
-        command_id="test_command_id",
-        error=error_details,
+def error_response(error_details: ErrorDetails) -> CommandErr:
+    """A control-channel command failure response."""
+    return CommandErr(
+        cid="test_command_id",
+        cmd=CommandType.PROFILE_CONFIGURE,
+        sid="test_service_1",
+        error=error_details.message,
     )

@@ -4,7 +4,9 @@ import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from msgspec.structs import replace
 
+from aiperf.common.control_structs import CommandErr
 from aiperf.common.enums import (
     CommandType,
     LifecycleState,
@@ -13,7 +15,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
@@ -142,16 +143,12 @@ class TestSystemControllerExitScenarios:
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
+        error_response: CommandErr,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_configure."""
-        error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_CONFIGURE}
-            )
-        ]
+        """Test that SystemController exits when receiving a CommandErr for profile_configure."""
+        error_responses = [replace(error_response, cmd=CommandType.PROFILE_CONFIGURE)]
         # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=error_responses
         )
 
@@ -164,9 +161,9 @@ class TestSystemControllerExitScenarios:
         # Verify that exit errors were recorded
         assert_exit_error(
             system_controller,
-            error_response.error,
+            ErrorDetails(type="CommandError", message=error_response.error),
             "Configure Profiling",
-            error_responses[0].service_id,
+            error_responses[0].sid,
         )
 
     @pytest.mark.asyncio
@@ -174,16 +171,12 @@ class TestSystemControllerExitScenarios:
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
+        error_response: CommandErr,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_start."""
-        error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_START}
-            )
-        ]
+        """Test that SystemController exits when receiving a CommandErr for profile_start."""
+        error_responses = [replace(error_response, cmd=CommandType.PROFILE_START)]
         # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=error_responses
         )
 
@@ -196,9 +189,9 @@ class TestSystemControllerExitScenarios:
         # Verify that exit errors were recorded
         assert_exit_error(
             system_controller,
-            error_response.error,
+            ErrorDetails(type="CommandError", message=error_response.error),
             "Start Profiling",
-            error_responses[0].service_id,
+            error_responses[0].sid,
         )
 
     @pytest.mark.asyncio
@@ -354,9 +347,7 @@ class TestSignalHandling:
     ):
         """First Ctrl+C sets _was_cancelled flag via _cancel_profiling."""
         # Mock the command response
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
         system_controller.stop = AsyncMock()  # Prevent actual stop
 
         assert system_controller._was_cancelled is False
@@ -370,18 +361,28 @@ class TestSignalHandling:
     async def test_cancel_profiling_sends_profile_cancel_command(
         self, system_controller: SystemController, mock_service_manager: AsyncMock
     ):
-        """_cancel_profiling sends ProfileCancelCommand to all services."""
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
+        """_cancel_profiling sends PROFILE_CANCEL to every service.
+
+        The RecordsManagers are awaited (their response carries the final
+        ProcessRecordsResult); every other service gets the same command
+        fire-and-forget, exactly as the pub/sub broadcast this replaced did.
+        """
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller._broadcast_control_command = AsyncMock()
         system_controller.stop = AsyncMock()
 
         await system_controller._cancel_profiling()
 
-        # Verify ProfileCancelCommand was sent
-        system_controller.send_command_and_wait_for_all_responses.assert_called_once()
-        call_args = system_controller.send_command_and_wait_for_all_responses.call_args
-        assert call_args[0][0].command == CommandType.PROFILE_CANCEL
+        system_controller._send_control_command_to_all.assert_called_once()
+        assert (
+            system_controller._send_control_command_to_all.call_args[0][0]
+            == CommandType.PROFILE_CANCEL
+        )
+        system_controller._broadcast_control_command.assert_awaited_once()
+        assert (
+            system_controller._broadcast_control_command.await_args[0][0]
+            == CommandType.PROFILE_CANCEL
+        )
 
     def test_print_cancel_warning_uses_console(
         self, system_controller: SystemController
@@ -539,9 +540,10 @@ class TestStopHookHardening:
         system_controller._announce_benchmark_complete = AsyncMock(
             side_effect=lambda: order.append("benchmark_complete")
         )
-        system_controller.publish = AsyncMock(
-            side_effect=lambda _message: order.append("shutdown_broadcast")
+        system_controller._broadcast_control_command = AsyncMock(
+            side_effect=lambda *_a, **_kw: order.append("shutdown_broadcast")
         )
+        system_controller.publish = AsyncMock()
         mock_service_manager.shutdown_all_services.side_effect = lambda: order.append(
             "services_stopped"
         )
@@ -637,7 +639,7 @@ class TestSSLVerificationWarning:
         """Test that a warning is logged when SSL verification is disabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", False)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=[]
         )
 
@@ -655,7 +657,7 @@ class TestSSLVerificationWarning:
         """Test that no warning is logged when SSL verification is enabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", True)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=[]
         )
 

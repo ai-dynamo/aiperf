@@ -14,19 +14,27 @@ from unittest.mock import AsyncMock
 import pytest
 
 from aiperf.common.control_structs import (
+    Command,
+    CommandAck,
+    CommandErr,
+    CommandUnhandled,
     Heartbeat,
     Registration,
     RegistrationAck,
     StatusUpdate,
 )
 from aiperf.common.enums import (
+    CommandType,
     LifecycleState,
     ServiceRegistrationStatus,
     SystemState,
     make_result_producer_capability,
     parse_result_producer_capability,
 )
-from aiperf.common.models import ServiceRunInfo
+from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.hooks import AIPerfHook
+from aiperf.common.models import ErrorDetails, ServiceRunInfo
+from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceType
@@ -390,3 +398,242 @@ def test_control_router_is_not_lifecycle_managed_by_comms(benchmark_run) -> None
 
     assert stub.control_router is not None
     assert stub.control_router not in comms._children
+
+
+@pytest.mark.asyncio
+async def test_send_control_command_to_all_preserves_input_order(controller) -> None:
+    """Invariant I9: two callers zip(service_ids, responses, strict=True)."""
+    order = ["c", "a", "b"]
+
+    async def fake_request_to(identity, struct, timeout):
+        if identity == "c":
+            await asyncio.sleep(0.05)  # finishes last, must still come first
+        return CommandAck(cid=struct.cid, cmd=struct.cmd, sid=identity)
+
+    controller.control_router.request_to = fake_request_to
+    responses = await controller._send_control_command_to_all(
+        CommandType.FINALIZE_ARTIFACTS, order, timeout=1.0
+    )
+    assert [r.sid for r in responses] == order
+
+
+@pytest.mark.asyncio
+async def test_send_control_command_to_all_reports_timeout_as_error_details(
+    controller,
+) -> None:
+    async def fake_request_to(identity, struct, timeout):
+        raise TimeoutError
+
+    controller.control_router.request_to = fake_request_to
+    responses = await controller._send_control_command_to_all(
+        CommandType.PROFILE_START, ["a"], timeout=0.01
+    )
+    assert isinstance(responses[0], ErrorDetails)
+
+
+@pytest.mark.asyncio
+async def test_control_command_arm_dispatches_to_on_command_hooks(controller) -> None:
+    """The Command arm must reach the hooks, not log-and-drop.
+
+    A stub that returns None short-circuits the real GET_POD_STATES handler,
+    which needs a populated worker cache.
+    """
+    calls: list[Command] = []
+
+    async def handler(message: Command) -> None:
+        calls.append(message)
+
+    for hook in controller.get_hooks(AIPerfHook.ON_COMMAND):
+        if CommandType.GET_POD_STATES in (hook.resolve_params(controller) or ()):
+            hook.func = handler
+            break
+    else:
+        pytest.fail("controller has no GET_POD_STATES @on_command hook")
+
+    response = await controller._handle_control_message(
+        "svc-1", Command(cid="c-1", cmd=CommandType.GET_POD_STATES)
+    )
+    assert [c.cid for c in calls] == ["c-1"]
+    assert response == CommandAck(
+        cid="c-1", cmd=CommandType.GET_POD_STATES, sid=controller.service_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_control_command_unmatched_returns_command_unhandled(
+    controller,
+) -> None:
+    """Invariant I7: no handler is a failure, not an ack."""
+    response = await controller._handle_control_message(
+        "svc-1", Command(cid="c-1", cmd="a_command_with_no_handler")
+    )
+    assert isinstance(response, CommandUnhandled)
+    assert response.cid == "c-1"
+    assert response.cmd == "a_command_with_no_handler"
+    assert response.sid == controller.service_id
+
+
+@pytest.mark.asyncio
+async def test_dispatch_control_command_raising_hook_returns_command_err(
+    controller,
+) -> None:
+    async def handler(message: Command) -> None:
+        raise ValueError("boom")
+
+    for hook in controller.get_hooks(AIPerfHook.ON_COMMAND):
+        if CommandType.GET_POD_STATES in (hook.resolve_params(controller) or ()):
+            hook.func = handler
+            break
+
+    response = await controller._handle_control_message(
+        "svc-1", Command(cid="c-1", cmd=CommandType.GET_POD_STATES)
+    )
+    assert isinstance(response, CommandErr)
+    assert response.cmd == CommandType.GET_POD_STATES
+    assert response.error == "boom"
+    assert "ValueError" in response.traceback
+
+
+@pytest.mark.asyncio
+async def test_finalize_artifacts_treats_unhandled_as_failure(controller) -> None:
+    """Invariant I7 at the consumer: a record processor with no FINALIZE_ARTIFACTS
+    handler must be recorded as a failure, never silently accepted."""
+    controller.service_manager.service_id_map = {
+        "rp-1": ServiceRunInfo(
+            service_id="rp-1",
+            service_type=ServiceType.RECORD_PROCESSOR,
+            registration_status=ServiceRegistrationStatus.REGISTERED,
+            first_seen_ns=1,
+            last_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+    }
+    controller._exit_errors = []
+
+    async def fake_request_to(identity, struct, timeout):
+        return CommandUnhandled(cid=struct.cid, cmd=struct.cmd, sid=identity)
+
+    controller.control_router.request_to = fake_request_to
+    await controller._handle_finalize_artifacts_command(
+        Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
+    )
+    assert len(controller._exit_errors) == 1
+    assert "does not handle" in controller._exit_errors[0].error_details.message
+
+
+@pytest.mark.asyncio
+async def test_finalize_artifacts_rejects_response_with_unpopulated_cmd(
+    controller,
+) -> None:
+    """``cmd`` defaults to "" on every response struct, so a responder that
+    forgets to set it must be named, not silently treated as a mismatch."""
+    controller.service_manager.service_id_map = {
+        "rp-1": ServiceRunInfo(
+            service_id="rp-1",
+            service_type=ServiceType.RECORD_PROCESSOR,
+            registration_status=ServiceRegistrationStatus.REGISTERED,
+            first_seen_ns=1,
+            last_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+    }
+    controller._exit_errors = []
+
+    async def fake_request_to(identity, struct, timeout):
+        return CommandAck(cid=struct.cid, sid=identity)  # cmd left at ""
+
+    controller.control_router.request_to = fake_request_to
+    await controller._handle_finalize_artifacts_command(
+        Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
+    )
+    assert len(controller._exit_errors) == 1
+    assert "no 'cmd' field" in controller._exit_errors[0].error_details.message
+
+
+@pytest.mark.asyncio
+async def test_finalize_artifacts_accepts_matching_ack(controller) -> None:
+    """Invariant I8: the ack identity check passes on cmd + sid."""
+    controller.service_manager.service_id_map = {
+        "rp-1": ServiceRunInfo(
+            service_id="rp-1",
+            service_type=ServiceType.RECORD_PROCESSOR,
+            registration_status=ServiceRegistrationStatus.REGISTERED,
+            first_seen_ns=1,
+            last_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+    }
+    controller._exit_errors = []
+
+    async def fake_request_to(identity, struct, timeout):
+        return CommandAck(cid=struct.cid, cmd=struct.cmd, sid=identity)
+
+    controller.control_router.request_to = fake_request_to
+    await controller._handle_finalize_artifacts_command(
+        Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
+    )
+    assert controller._exit_errors == []
+
+
+@pytest.mark.asyncio
+async def test_finalize_artifacts_excludes_reaped_processors(controller) -> None:
+    """Invariant I3: reaped services stay out of the fan-out target list."""
+    controller.service_manager.service_id_map = {
+        sid: ServiceRunInfo(
+            service_id=sid,
+            service_type=ServiceType.RECORD_PROCESSOR,
+            registration_status=ServiceRegistrationStatus.REGISTERED,
+            first_seen_ns=1,
+            last_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+        for sid in ("rp-1", "rp-2")
+    }
+    controller._reaped_service_ids = {"rp-2"}
+    controller._exit_errors = []
+    targeted: list[str] = []
+
+    async def fake_request_to(identity, struct, timeout):
+        targeted.append(identity)
+        return CommandAck(cid=struct.cid, cmd=struct.cmd, sid=identity)
+
+    controller.control_router.request_to = fake_request_to
+    await controller._handle_finalize_artifacts_command(
+        Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
+    )
+    assert targeted == ["rp-1"]
+
+
+def test_parse_responses_for_errors_ignores_preexisting_exit_errors(
+    controller,
+) -> None:
+    """Invariant I4: only THIS batch's errors raise.
+
+    ``_exit_errors`` may already hold an unrelated optional-producer failure.
+    """
+    controller._exit_errors = [
+        ExitErrorInfo(
+            error_details=ErrorDetails(message="unrelated earlier failure"),
+            operation="telemetry",
+            service_id="tm-1",
+        )
+    ]
+    controller._parse_responses_for_errors(
+        [CommandAck(cid="c-1", cmd=CommandType.PROFILE_START, sid="a")], "Start"
+    )
+    assert len(controller._exit_errors) == 1
+
+
+def test_parse_responses_for_errors_raises_on_command_err(controller) -> None:
+    controller._exit_errors = []
+    with pytest.raises(LifecycleOperationError):
+        controller._parse_responses_for_errors(
+            [
+                CommandErr(
+                    cid="c-1", cmd=CommandType.PROFILE_START, sid="a", error="nope"
+                )
+            ],
+            "Start",
+        )
+    assert controller._exit_errors[0].error_details.message == "nope"
+    assert controller._exit_errors[0].service_id == "a"

@@ -6,7 +6,9 @@ import sys
 import time
 from typing import TYPE_CHECKING, cast
 
+import orjson
 import zmq
+from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 
@@ -17,10 +19,17 @@ from aiperf.cli_utils import (
     warn_osl_without_ignore_eos,
 )
 from aiperf.common.base_service import BaseService
-from aiperf.common.control_structs import ControllerBoundMessage
+from aiperf.common.control_structs import (
+    Command,
+    CommandAck,
+    CommandErr,
+    CommandOk,
+    CommandResponse,
+    CommandUnhandled,
+    ControllerBoundMessage,
+)
 from aiperf.common.enums import (
     CommAddress,
-    CommandResponseStatus,
     CommandType,
     ExportLevel,
     LifecycleState,
@@ -36,28 +45,15 @@ from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     BenchmarkCompleteMessage,
-    CommandAcknowledgedResponse,
-    CommandErrorResponse,
-    CommandResponse,
-    CommandSuccessResponse,
-    CommandUnhandledResponse,
-    FinalizeArtifactsCommand,
-    GetPodStatesCommand,
     HeartbeatMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
-    ProfileCancelCommand,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
-    RealtimeMetricsCommand,
     RegisterServiceCommand,
     ResultsExportedMessage,
     ServerMetricsStatusMessage,
-    ShutdownCommand,
-    ShutdownWorkersCommand,
     SpawnWorkersCommand,
     StatusMessage,
     SystemStateChangedMessage,
@@ -88,6 +84,7 @@ from aiperf.controller.protocols import (
 )
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.result_join_coordinator import ResultJoinCoordinator
+from aiperf.controller.system_controller_commands import SystemControllerCommandMixin
 from aiperf.controller.system_controller_dispatch import SystemControllerDispatchMixin
 from aiperf.controller.system_controller_models import (
     K8sServiceTopology,
@@ -123,6 +120,7 @@ It is still finite -- an unbounded await here is a zombie container.
 class SystemController(
     PodStateTrackerMixin,
     SignalHandlerMixin,
+    SystemControllerCommandMixin,
     SystemControllerDispatchMixin,
     BaseService,
 ):
@@ -428,13 +426,24 @@ class SystemController(
         except (TypeError, ValueError):
             return True
 
+    def _records_manager_ids(self) -> list[str]:
+        """Live RecordsManager service IDs for control-channel command fan-out.
+
+        Reaped services are excluded (Invariant I3): the watchdog already
+        confirmed them dead, so addressing one only buys a full command timeout
+        before failing on a peer that is known to be gone.
+        """
+        return [
+            service_id
+            for service_id, info in self.service_manager.service_id_map.items()
+            if info.service_type == ServiceType.RECORDS_MANAGER
+            and service_id not in self._reaped_service_ids
+        ]
+
     async def request_realtime_metrics(self) -> None:
         """Request real-time metrics from the RecordsManager."""
-        await self.send_command_and_wait_for_response(
-            RealtimeMetricsCommand(
-                service_id=self.service_id,
-                target_service_type=ServiceType.RECORDS_MANAGER,
-            )
+        await self._send_control_command_to_all(
+            CommandType.REALTIME_METRICS, self._records_manager_ids()
         )
 
     async def initialize(self) -> None:
@@ -695,10 +704,8 @@ class SystemController(
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
-        responses = await self.send_command_and_wait_until_first_error(
-            ProfileConfigureCommand(
-                service_id=self.service_id,
-            ),
+        responses = await self._send_control_command_to_all_fail_fast(
+            CommandType.PROFILE_CONFIGURE,
             list(self.service_manager.service_id_map.keys()),
             timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
         )
@@ -718,10 +725,8 @@ class SystemController(
         we abort immediately without waiting for the remaining services.
         """
         self.debug("Sending PROFILE_START command to all services")
-        responses = await self.send_command_and_wait_until_first_error(
-            ProfileStartCommand(
-                service_id=self.service_id,
-            ),
+        responses = await self._send_control_command_to_all_fail_fast(
+            CommandType.PROFILE_START,
             list(self.service_manager.service_id_map.keys()),
             timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
         )
@@ -746,12 +751,14 @@ class SystemController(
                         error_details=response, operation=operation, service_id=None
                     )
                 )
-            elif isinstance(response, CommandErrorResponse):
+            elif isinstance(response, CommandErr):
                 batch_errors.append(
                     ExitErrorInfo(
-                        error_details=response.error,
+                        error_details=ErrorDetails(
+                            type="CommandError", message=response.error
+                        ),
                         operation=operation,
-                        service_id=response.service_id,
+                        service_id=response.sid,
                     )
                 )
         if batch_errors:
@@ -876,13 +883,20 @@ class SystemController(
     async def _configure_replacement_worker_group(self, service_id: str) -> None:
         """Configure a replacement pod after its registration ACK can be sent."""
         try:
-            response = await self.send_command_and_wait_for_response(
-                ProfileConfigureCommand(
-                    service_id=self.service_id,
-                    target_service_id=service_id,
-                ),
-                timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
-            )
+            # ``_send_control_command`` raises on timeout / transport failure,
+            # where the pub/sub helper it replaced returned ErrorDetails. Trap
+            # it back into a value so the failure branch below still runs and
+            # still marks the pod failed non-fatally (Invariants I5, I14).
+            try:
+                response = await self._send_control_command(
+                    service_id,
+                    CommandType.PROFILE_CONFIGURE,
+                    timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - every transport failure is a configure failure
+                response = ErrorDetails.from_exception(e)
             if isinstance(response, ErrorDetails):
                 self.error(
                     f"Replacement worker pod '{service_id}' did not configure: "
@@ -892,10 +906,10 @@ class SystemController(
                     service_id, ServiceType.WORKER_GROUP_MANAGER, fatal=False
                 )
                 return
-            if isinstance(response, CommandErrorResponse):
+            if isinstance(response, CommandErr):
                 self.error(
                     f"Replacement worker pod '{service_id}' rejected configure: "
-                    f"{response.error.message}"
+                    f"{response.error}"
                 )
                 ServiceRegistry.fail_service(
                     service_id, ServiceType.WORKER_GROUP_MANAGER, fatal=False
@@ -1206,24 +1220,6 @@ class SystemController(
         # Re-check shutdown readiness in case results arrived before status message
         await self._check_and_trigger_shutdown()
 
-    @on_message(MessageType.COMMAND_RESPONSE)
-    async def _process_command_response_message(self, message: CommandResponse) -> None:
-        """Process a command response message."""
-        self.debug(lambda: f"Received command response message: {message}")
-        if message.status == CommandResponseStatus.SUCCESS:
-            self.debug(f"Command {message.command} succeeded from {message.service_id}")
-        elif message.status == CommandResponseStatus.ACKNOWLEDGED:
-            self.debug(
-                f"Command {message.command} acknowledged from {message.service_id}"
-            )
-        elif message.status == CommandResponseStatus.UNHANDLED:
-            self.debug(f"Command {message.command} unhandled from {message.service_id}")
-        elif message.status == CommandResponseStatus.FAILURE:
-            message = cast(CommandErrorResponse, message)
-            self.error(
-                f"Command {message.command} failed from {message.service_id}: {message.error}"
-            )
-
     @on_command(CommandType.SPAWN_WORKERS)
     async def _handle_spawn_workers_command(self, message: SpawnWorkersCommand) -> None:
         """Handle a spawn workers command."""
@@ -1241,15 +1237,14 @@ class SystemController(
 
     @on_command(CommandType.GET_POD_STATES)
     async def _handle_get_pod_states_command(
-        self, _message: GetPodStatesCommand
+        self,
+        _message: Command,
     ) -> dict[str, object]:
         """Serve the controller's authoritative worker-state cache."""
         return self.get_pod_state_snapshot().model_dump(mode="json")
 
     @on_command(CommandType.SHUTDOWN_WORKERS)
-    async def _handle_shutdown_workers_command(
-        self, message: ShutdownWorkersCommand
-    ) -> None:
+    async def _handle_shutdown_workers_command(self, message: Command) -> None:
         """Handle a shutdown workers command."""
         self.debug(lambda: f"Received shutdown workers command: {message}")
         # TODO: Handle individual worker shutdowns via worker id
@@ -1653,20 +1648,30 @@ class SystemController(
         # Only wait for RecordsManager's response since it returns ProcessRecordsResult.
         # Other services receive the broadcast cancel command but we don't wait for them.
         # This avoids blocking if a service has exited early (e.g., TelemetryManager).
-        records_manager_ids = [
-            service_id
-            for service_id, info in self.service_manager.service_id_map.items()
-            if info.service_type == ServiceType.RECORDS_MANAGER
-        ]
+        records_manager_ids = self._records_manager_ids()
         self.debug(
             f"Sending cancel to all services, waiting for {len(records_manager_ids)} RecordsManager(s)"
         )
 
+        # The pub/sub original was an un-targeted broadcast: timing, GPU
+        # telemetry, network latency and server metrics all cancel on it, and
+        # only the RecordsManager responses were awaited. ROUTER delivery is
+        # per-peer, so the non-awaited half of that broadcast is explicit here;
+        # awaiting it would reintroduce exactly the block on an
+        # already-exited service the split exists to avoid.
+        await self._broadcast_control_command(
+            CommandType.PROFILE_CANCEL,
+            [
+                service_id
+                for service_id in self.service_manager.service_id_map
+                if service_id not in records_manager_ids
+                and service_id not in self._reaped_service_ids
+            ],
+        )
+
         try:
-            responses = await self.send_command_and_wait_for_all_responses(
-                ProfileCancelCommand(
-                    service_id=self.service_id,
-                ),
+            responses = await self._send_control_command_to_all(
+                CommandType.PROFILE_CANCEL,
                 records_manager_ids,
                 timeout=Environment.SERVICE.PROFILE_CANCEL_TIMEOUT,
             )
@@ -1698,24 +1703,34 @@ class SystemController(
                 self.warning(
                     f"Cancel command error (timeout or service unavailable): {response}"
                 )
-            elif isinstance(response, CommandErrorResponse):
+            elif isinstance(response, CommandErr):
                 self.warning(
-                    f"Cancel command failed from {response.service_id}: {response.error}"
+                    f"Cancel command failed from {response.sid}: {response.error}"
                 )
 
         for response in responses:
             if (
-                isinstance(response, CommandSuccessResponse)
-                and response.command == CommandType.PROFILE_CANCEL
-                and isinstance(response.data, ProcessRecordsResult)
+                not isinstance(response, CommandOk)
+                or response.cmd != CommandType.PROFILE_CANCEL
             ):
-                self.debug(
-                    lambda r=response: (
-                        f"Received ProcessRecordsResult from cancel command: {r.data}"
-                    )
+                continue
+            try:
+                result = ProcessRecordsResult.model_validate(
+                    orjson.loads(response.payload)
                 )
-                self._profile_results = response.data
-                return
+            except (ValidationError, orjson.JSONDecodeError, TypeError) as e:
+                # A RecordsManager that answered PROFILE_CANCEL with anything
+                # other than a ProcessRecordsResult is not a summary; the run
+                # still has to finish cancelling.
+                self.warning(
+                    f"Ignoring undecodable cancel result from '{response.sid}': {e!r}"
+                )
+                continue
+            self.debug(
+                lambda r=result: f"Received ProcessRecordsResult from cancel command: {r}"
+            )
+            self._profile_results = result
+            return
 
     async def _await_cancel_result_domains(self, should_wait: bool) -> None:
         """Wait for result producers that may still be finalizing on cancellation."""
@@ -1762,7 +1777,7 @@ class SystemController(
     @on_command(CommandType.FINALIZE_ARTIFACTS)
     async def _handle_finalize_artifacts_command(
         self,
-        message: FinalizeArtifactsCommand,  # noqa: ARG002
+        message: Command,  # noqa: ARG002
     ) -> None:
         """Coordinate an exact durability barrier for every record processor.
 
@@ -1805,42 +1820,17 @@ class SystemController(
             )
             return
 
-        command = FinalizeArtifactsCommand(
-            service_id=self.service_id,
-            target_service_type=ServiceType.RECORD_PROCESSOR,
-            request_ns=time.time_ns(),
-        )
-        responses = await self.send_command_and_wait_for_all_responses(
-            command,
+        responses = await self._send_control_command_to_all(
+            CommandType.FINALIZE_ARTIFACTS,
             service_ids,
+            payload=orjson.dumps({"request_ns": time.time_ns()}),
             timeout=Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
         )
         failure_count = 0
         for service_id, response in zip(service_ids, responses, strict=True):
-            if (
-                isinstance(response, CommandAcknowledgedResponse)
-                and response.command == CommandType.FINALIZE_ARTIFACTS
-                and response.service_id == service_id
-            ):
+            detail = self._finalize_artifact_response_error(service_id, response)
+            if detail is None:
                 continue
-            if isinstance(response, ErrorDetails):
-                detail = response
-            elif isinstance(response, CommandErrorResponse):
-                detail = response.error
-            elif isinstance(response, CommandUnhandledResponse):
-                detail = ErrorDetails(
-                    message=(
-                        f"Record processor '{service_id}' does not handle "
-                        f"{CommandType.FINALIZE_ARTIFACTS}"
-                    )
-                )
-            else:
-                detail = ErrorDetails(
-                    message=(
-                        "Unexpected artifact finalization response from "
-                        f"'{service_id}': {response!r}"
-                    )
-                )
             self._record_finalize_failure(service_id=service_id, message=detail.message)
             failure_count += 1
         if failure_count:
@@ -1849,6 +1839,51 @@ class SystemController(
                 "failed to acknowledge artifact finalization; their writers were "
                 "already flushed by ProfileCompleteCommand"
             )
+
+    @staticmethod
+    def _finalize_artifact_response_error(
+        service_id: str, response: CommandResponse | ErrorDetails
+    ) -> ErrorDetails | None:
+        """Return an error unless ``response`` is the expected record-processor ACK.
+
+        Twin of ``_raw_artifact_finalize_response_error`` for the local barrier;
+        the two differ only in which peer role the message names.
+        """
+        if (
+            isinstance(response, CommandAck)
+            and response.cmd == CommandType.FINALIZE_ARTIFACTS
+            and response.sid == service_id
+        ):
+            return None
+        if isinstance(response, ErrorDetails):
+            return response
+        if isinstance(response, CommandResponse) and not response.cmd:
+            # ``cmd`` defaults to "" on all four response structs, so a
+            # construction site that forgets to populate it would quietly fail
+            # the identity check above and be reported as a generic mismatch.
+            # Name that defect instead of hiding it.
+            return ErrorDetails(
+                type="CommandError",
+                message=(
+                    f"{type(response).__name__} from '{service_id}' carries no "
+                    "'cmd' field; the responder failed to populate it"
+                ),
+            )
+        if isinstance(response, CommandErr):
+            return ErrorDetails(type="CommandError", message=response.error)
+        if isinstance(response, CommandUnhandled):
+            return ErrorDetails(
+                message=(
+                    f"Record processor '{service_id}' does not handle "
+                    f"{CommandType.FINALIZE_ARTIFACTS}"
+                )
+            )
+        return ErrorDetails(
+            message=(
+                "Unexpected artifact finalization response from "
+                f"'{service_id}': {response!r}"
+            )
+        )
 
     def _record_finalize_failure(self, *, service_id: str, message: str) -> None:
         """Record an artifact-finalization failure so it survives to the exit code.
@@ -1885,16 +1920,26 @@ class SystemController(
     ) -> ErrorDetails | None:
         """Return an error unless ``response`` is the expected peer ACK."""
         if (
-            isinstance(response, CommandAcknowledgedResponse)
-            and response.command == CommandType.FINALIZE_ARTIFACTS
-            and response.service_id == service_id
+            isinstance(response, CommandAck)
+            and response.cmd == CommandType.FINALIZE_ARTIFACTS
+            and response.sid == service_id
         ):
             return None
         if isinstance(response, ErrorDetails):
             return response
-        if isinstance(response, CommandErrorResponse):
-            return response.error
-        if isinstance(response, CommandUnhandledResponse):
+        if isinstance(response, CommandResponse) and not response.cmd:
+            # Same silent-mismatch trap as ``_finalize_artifacts``: an unpopulated
+            # ``cmd`` must be named, not reported as an unexpected response.
+            return ErrorDetails(
+                type="CommandError",
+                message=(
+                    f"{type(response).__name__} from '{service_id}' carries no "
+                    "'cmd' field; the responder failed to populate it"
+                ),
+            )
+        if isinstance(response, CommandErr):
+            return ErrorDetails(type="CommandError", message=response.error)
+        if isinstance(response, CommandUnhandled):
             return ErrorDetails(
                 message=(
                     f"Worker-group manager '{service_id}' does not handle "
@@ -2009,11 +2054,8 @@ class SystemController(
         self.info(f"Finalizing RAW artifacts on {len(service_ids)} worker group(s)...")
         had_failure = False
         try:
-            responses = await self.send_command_and_wait_for_all_responses(
-                FinalizeArtifactsCommand(
-                    service_id=self.service_id,
-                    target_service_type=ServiceType.WORKER_GROUP_MANAGER,
-                ),
+            responses = await self._send_control_command_to_all(
+                CommandType.FINALIZE_ARTIFACTS,
                 service_ids,
                 timeout=Environment.WORKER.RAW_RECORD_UPLOAD_TIMEOUT,
             )
@@ -2129,17 +2171,20 @@ class SystemController(
         # BenchmarkComplete makes the API shutdown endpoint eligible only
         # after export/ready publication has finished (or failed closed).
         await self._announce_benchmark_complete()
-        await self.publish(ShutdownCommand(service_id=self.service_id))
+        await self._broadcast_control_command(
+            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
+        )
 
-        # ShutdownCommand is fire-and-forget on the pub/sub bus: BaseComponentService's
-        # SHUTDOWN handler raises asyncio.CancelledError instead of returning, so the
-        # CommandHandlerMixin wrapper never publishes an ack we could await. Child
+        # SHUTDOWN is fire-and-forget on the control ROUTER: BaseComponentService's
+        # SHUTDOWN handler acks and then raises asyncio.CancelledError instead of
+        # returning, so the dispatcher never sends a second response we could await,
+        # and each per-service send_to is best effort. Child
         # processes also ignore SIGTERM (see bootstrap.py), so
         # MultiProcessServiceManager._wait_for_process skips terminate()+join and
         # goes straight to kill() for any process still alive after this grace —
-        # only a successful message-bus delivery here results in graceful
-        # shutdown rather than SIGKILL. This grace period gives ZMQ inproc/IPC
-        # pub/sub time to deliver the broadcast to every subscriber before we
+        # only a successful delivery here results in graceful
+        # shutdown rather than SIGKILL. This grace period gives the ROUTER's
+        # per-peer sends time to reach every DEALER before we
         # start killing stragglers. 500ms is empirically sufficient under normal
         # load.
         # When the API server is enabled AND still alive, extend the wait so the

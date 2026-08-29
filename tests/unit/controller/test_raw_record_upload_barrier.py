@@ -6,13 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.control_structs import Command, CommandAck, CommandErr
 from aiperf.common.enums import CommandType, ExportLevel
-from aiperf.common.messages import (
-    CommandAcknowledgedResponse,
-    CommandErrorResponse,
-    FinalizeArtifactsCommand,
-)
-from aiperf.common.models import ErrorDetails
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceType
 
@@ -36,8 +31,8 @@ def controller():
     return ctrl
 
 
-def _ack(command: FinalizeArtifactsCommand, service_id: str):
-    return CommandAcknowledgedResponse.from_command_message(command, service_id)
+def _ack(cmd: str, service_id: str) -> CommandAck:
+    return CommandAck(cid="c-1", cmd=cmd, sid=service_id)
 
 
 class TestRawRecordBarrier:
@@ -48,16 +43,13 @@ class TestRawRecordBarrier:
             MagicMock(service_id="worker_group_manager_0"),
         ]
 
-        async def respond(command, service_ids, timeout):
-            assert isinstance(command, FinalizeArtifactsCommand)
-            assert command.target_service_type == ServiceType.WORKER_GROUP_MANAGER
+        async def respond(cmd, service_ids, payload=b"", timeout=0.0):
+            assert cmd == CommandType.FINALIZE_ARTIFACTS
             assert service_ids == ["worker_group_manager_0", "worker_group_manager_1"]
             assert timeout > 0
-            return [_ack(command, service_id) for service_id in service_ids]
+            return [_ack(cmd, service_id) for service_id in service_ids]
 
-        controller.send_command_and_wait_for_all_responses = AsyncMock(
-            side_effect=respond
-        )
+        controller._send_control_command_to_all = AsyncMock(side_effect=respond)
         with patch(
             "aiperf.controller.system_controller.ServiceRegistry.get_services",
             return_value=registered,
@@ -69,14 +61,14 @@ class TestRawRecordBarrier:
 
     @pytest.mark.asyncio
     async def test_missing_worker_group_fails_without_broadcast(self, controller):
-        controller.send_command_and_wait_for_all_responses = AsyncMock()
+        controller._send_control_command_to_all = AsyncMock()
         with patch(
             "aiperf.controller.system_controller.ServiceRegistry.get_services",
             return_value=[MagicMock(service_id="worker_group_manager_0")],
         ):
             await controller._finalize_kubernetes_raw_artifacts()
 
-        controller.send_command_and_wait_for_all_responses.assert_not_awaited()
+        controller._send_control_command_to_all.assert_not_awaited()
         assert controller._export_failed is True
         assert controller._exit_errors[0].operation == "finalize_raw_artifacts"
 
@@ -87,20 +79,16 @@ class TestRawRecordBarrier:
             MagicMock(service_id="worker_group_manager_1"),
         ]
 
-        async def respond(command, service_ids, timeout):
+        async def respond(cmd, service_ids, payload=b"", timeout=0.0):
             del timeout
             return [
-                _ack(command, service_ids[0]),
-                CommandErrorResponse.from_command_message(
-                    command,
-                    service_ids[1],
-                    ErrorDetails(message="upload failed"),
+                _ack(cmd, service_ids[0]),
+                CommandErr(
+                    cid="c-1", cmd=cmd, sid=service_ids[1], error="upload failed"
                 ),
             ]
 
-        controller.send_command_and_wait_for_all_responses = AsyncMock(
-            side_effect=respond
-        )
+        controller._send_control_command_to_all = AsyncMock(side_effect=respond)
         with patch(
             "aiperf.controller.system_controller.ServiceRegistry.get_services",
             return_value=registered,
@@ -114,11 +102,11 @@ class TestRawRecordBarrier:
     @pytest.mark.asyncio
     async def test_non_kubernetes_run_is_unchanged(self, controller):
         controller._is_kubernetes.return_value = False
-        controller.send_command_and_wait_for_all_responses = AsyncMock()
+        controller._send_control_command_to_all = AsyncMock()
 
         await controller._finalize_kubernetes_raw_artifacts()
 
-        controller.send_command_and_wait_for_all_responses.assert_not_awaited()
+        controller._send_control_command_to_all.assert_not_awaited()
         assert controller._exit_errors == []
         assert CommandType.FINALIZE_ARTIFACTS == "finalize_artifacts"
 
@@ -145,25 +133,19 @@ class TestRecordProcessorArtifactBarrier:
 
     @pytest.mark.asyncio
     async def test_waits_for_exact_registered_record_processors(self, local_controller):
-        async def respond(command, service_ids, timeout):
-            assert isinstance(command, FinalizeArtifactsCommand)
-            assert command.target_service_type == ServiceType.RECORD_PROCESSOR
+        async def respond(cmd, service_ids, payload=b"", timeout=0.0):
+            assert cmd == CommandType.FINALIZE_ARTIFACTS
             assert service_ids == ["record_processor_0", "record_processor_1"]
             assert timeout > 0
-            return [_ack(command, service_id) for service_id in service_ids]
+            return [_ack(cmd, service_id) for service_id in service_ids]
 
-        local_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            side_effect=respond
-        )
+        local_controller._send_control_command_to_all = AsyncMock(side_effect=respond)
 
         await local_controller._handle_finalize_artifacts_command(
-            FinalizeArtifactsCommand(
-                service_id="records_manager",
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
-            )
+            Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
-        local_controller.send_command_and_wait_for_all_responses.assert_awaited_once()
+        local_controller._send_control_command_to_all.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_record_processor_failure_degrades_without_raising(
@@ -179,24 +161,18 @@ class TestRecordProcessorArtifactBarrier:
         where raw records genuinely have not been uploaded yet.
         """
 
-        async def respond(command, service_ids, timeout):
+        async def respond(cmd, service_ids, payload=b"", timeout=0.0):
             del timeout
             return [
-                _ack(command, service_ids[0]),
-                CommandErrorResponse.from_command_message(
-                    command,
-                    service_ids[1],
-                    ErrorDetails(message="disk full"),
-                ),
+                _ack(cmd, service_ids[0]),
+                CommandErr(cid="c-1", cmd=cmd, sid=service_ids[1], error="disk full"),
             ]
 
-        local_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            side_effect=respond
-        )
+        local_controller._send_control_command_to_all = AsyncMock(side_effect=respond)
         local_controller.warning = MagicMock()
 
         await local_controller._handle_finalize_artifacts_command(
-            FinalizeArtifactsCommand(service_id="records_manager")
+            Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
         assert [e.operation for e in local_controller._exit_errors] == [
@@ -214,13 +190,13 @@ class TestRecordProcessorArtifactBarrier:
         away a complete, exportable run over a peer that was already gone.
         """
         local_controller.service_manager.service_id_map = {}
-        local_controller.send_command_and_wait_for_all_responses = AsyncMock()
+        local_controller._send_control_command_to_all = AsyncMock()
 
         await local_controller._handle_finalize_artifacts_command(
-            FinalizeArtifactsCommand(service_id="records_manager")
+            Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
-        local_controller.send_command_and_wait_for_all_responses.assert_not_awaited()
+        local_controller._send_control_command_to_all.assert_not_awaited()
         assert [e.operation for e in local_controller._exit_errors] == [
             "finalize_artifacts"
         ]

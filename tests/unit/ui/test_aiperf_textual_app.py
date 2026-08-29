@@ -5,8 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from aiperf.common.enums import GPUTelemetryMode
-from aiperf.common.messages import StartRealtimeTelemetryCommand
+from aiperf.common.enums import CommandType, GPUTelemetryMode
 from aiperf.common.models import MetricResult
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
 
@@ -167,7 +166,7 @@ class TestAIPerfTextualAppActions:
     async def test_action_toggle_maximize_telemetry_enables_mode(
         self, app, mock_controller
     ):
-        """Test that toggling telemetry panel enables telemetry and publishes command."""
+        """Toggling the telemetry panel enables telemetry and commands the RecordsManagers."""
         mock_screen = Mock()
         mock_panel = Mock()
         mock_panel.is_maximized = False
@@ -190,10 +189,11 @@ class TestAIPerfTextualAppActions:
             app.realtime_telemetry_dashboard.set_status_message.assert_called_once_with(
                 "Enabling live GPU telemetry..."
             )
-            mock_controller.publish.assert_called_once()
-
-            call_args = mock_controller.publish.call_args[0][0]
-            assert isinstance(call_args, StartRealtimeTelemetryCommand)
+            mock_controller._send_control_command_to_all.assert_awaited_once()
+            assert (
+                mock_controller._send_control_command_to_all.await_args[0][0]
+                == CommandType.START_REALTIME_TELEMETRY
+            )
 
 
 class TestAIPerfTextualAppProgressHandlers:
