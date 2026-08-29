@@ -11,40 +11,12 @@ from aiperf.common.enums import (
     LifecycleState,
     MessageType,
 )
-from aiperf.common.messages.service_messages import BaseServiceMessage
+from aiperf.common.messages.service_messages import TargetedServiceMessage
 from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
 )
 from aiperf.common.types import CommandTypeT, MessageTypeT, ServiceTypeT
-
-
-class TargetedServiceMessage(BaseServiceMessage):
-    """Message that can be targeted to a specific service by id or type.
-    If both `target_service_type` and `target_service_id` are None, the message is
-    sent to all services that are subscribed to the message type.
-    """
-
-    @model_validator(mode="after")
-    def validate_target_service(self) -> Self:
-        if self.target_service_id is not None and self.target_service_type is not None:
-            raise ValueError(
-                "Either target_service_id or target_service_type can be provided, but not both"
-            )
-        return self
-
-    target_service_id: str | None = Field(
-        default=None,
-        description="ID of the target service to send the message to. "
-        "If both `target_service_type` and `target_service_id` are None, the message is "
-        "sent to all services that are subscribed to the message type.",
-    )
-    target_service_type: ServiceTypeT | None = Field(
-        default=None,
-        description="Type of the service to send the message to. "
-        "If both `target_service_type` and `target_service_id` are None, the message is "
-        "sent to all services that are subscribed to the message type.",
-    )
 
 
 class CommandMessage(TargetedServiceMessage):
@@ -360,9 +332,3 @@ class ProcessRecordsResponse(CommandSuccessResponse):
         default=None,
         description="The result of the process records command",
     )
-
-
-class ConnectionProbeMessage(TargetedServiceMessage):
-    """Message containing a connection probe from a service. This is used to probe the connection to the service."""
-
-    message_type: MessageTypeT = MessageType.CONNECTION_PROBE

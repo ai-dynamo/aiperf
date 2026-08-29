@@ -17,7 +17,6 @@ from aiperf.common.messages.command_messages import (
     CommandResponse,
     CommandSuccessResponse,
     CommandUnhandledResponse,
-    ConnectionProbeMessage,
     FinalizeArtifactsCommand,
     GetPodStatesCommand,
     ProcessRecordsCommand,
@@ -32,7 +31,6 @@ from aiperf.common.messages.command_messages import (
     ShutdownWorkersCommand,
     SpawnWorkersCommand,
     StartRealtimeTelemetryCommand,
-    TargetedServiceMessage,
 )
 from aiperf.common.messages.dataset_messages import (
     ConversationRequestMessage,
@@ -71,9 +69,11 @@ from aiperf.common.messages.service_messages import (
     BaseServiceErrorMessage,
     BaseServiceMessage,
     BaseStatusMessage,
+    ConnectionProbeMessage,
     HeartbeatMessage,
     RegistrationMessage,
     StatusMessage,
+    TargetedServiceMessage,
 )
 from aiperf.common.messages.telemetry_messages import (
     ProcessTelemetryResultMessage,

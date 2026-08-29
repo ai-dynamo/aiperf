@@ -16,7 +16,7 @@ from aiperf.common.hooks import (
     provides_hooks,
 )
 from aiperf.common.messages import Message
-from aiperf.common.messages.command_messages import ConnectionProbeMessage
+from aiperf.common.messages.service_messages import ConnectionProbeMessage
 from aiperf.common.mixins.communication_mixin import CommunicationMixin
 from aiperf.common.types import MessageCallbackMapT, MessageTypeT
 from aiperf.common.utils import yield_to_event_loop
