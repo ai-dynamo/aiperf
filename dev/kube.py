@@ -275,9 +275,11 @@ DYNAMO_1GPU_MEM_UTIL = os.environ.get("DYNAMO_1GPU_MEM_UTIL") or "0.3"
 # Kueue release: manifests.yaml ships all CRDs + the controller deployment.
 KUEUE_VERSION = os.environ.get("KUEUE_VERSION") or _KUEUE_VERSION_DEFAULT
 KUEUE_NAMESPACE = "kueue-system"
-# Default queue pair seeded into the aiperf-benchmarks namespace so test
-# workloads can reference them without extra setup.
-AIPERF_BENCHMARK_NAMESPACE = "aiperf-benchmarks"
+# Namespace this dev script creates and seeds a Kueue queue pair into. The
+# chart no longer creates any namespace, so nothing in the product owns this
+# name -- it is purely a dev-cluster convenience. Override per invocation with
+# `--namespace`, or globally with AIPERF_DEV_NAMESPACE.
+AIPERF_DEV_NAMESPACE = os.environ.get("AIPERF_DEV_NAMESPACE") or "aiperf-dev"
 KUEUE_CLUSTER_QUEUE_NAME = "aiperf-cluster-queue"
 KUEUE_LOCAL_QUEUE_NAME = "aiperf-local-queue"
 KUEUE_RESOURCE_FLAVOR_NAME = "aiperf-default-flavor"
@@ -498,6 +500,7 @@ class RunOptions(BaseModel):
     """Benchmark run configuration."""
     config:  Annotated[str | None, Parameter(name=["--config", "-c"])] = Field(default=DEFAULT_CONFIG,  description="Benchmark config file.")
     workers: Annotated[int,        Parameter(name=["--workers-max", "-w"])] = Field(default=DEFAULT_WORKERS, description="Number of workers.")
+    namespace: Annotated[str | None, Parameter(name=["--namespace", "-n"])] = Field(default=None, description="Namespace to run in. Created if absent. Defaults to AIPERF_DEV_NAMESPACE.")
 
 @Parameter(name="*")
 class DynamoDeployOptions(BaseModel):
@@ -2305,7 +2308,7 @@ def cmd_install_dynamo() -> str:
 
 
 def _kueue_default_queues_manifest() -> str:
-    """Render Namespace + ResourceFlavor + ClusterQueue + LocalQueue for aiperf-benchmarks.
+    """Render Namespace + ResourceFlavor + ClusterQueue + LocalQueue for the dev namespace.
 
     Seeds a best-effort queue pair so benchmark jobs referencing
     `queue-name=aiperf-local-queue` Just Work without extra setup. The
@@ -2313,7 +2316,7 @@ def _kueue_default_queues_manifest() -> str:
     clusters); users running real workloads should tune these numbers.
     """
     manifests: list[dict] = [
-        _namespace_manifest(AIPERF_BENCHMARK_NAMESPACE),
+        _namespace_manifest(AIPERF_DEV_NAMESPACE),
         {
             "apiVersion": "kueue.x-k8s.io/v1beta1",
             "kind": "ResourceFlavor",
@@ -2347,7 +2350,7 @@ def _kueue_default_queues_manifest() -> str:
             "kind": "LocalQueue",
             "metadata": {
                 "name": KUEUE_LOCAL_QUEUE_NAME,
-                "namespace": AIPERF_BENCHMARK_NAMESPACE,
+                "namespace": AIPERF_DEV_NAMESPACE,
             },
             "spec": {"clusterQueue": KUEUE_CLUSTER_QUEUE_NAME},
         },
@@ -2387,7 +2390,7 @@ def cmd_install_kueue() -> str:
         KUEUE_NAMESPACE,
     )
 
-    log_info("Seeding default ClusterQueue / LocalQueue for aiperf-benchmarks...")
+    log_info(f"Seeding default ClusterQueue / LocalQueue for {AIPERF_DEV_NAMESPACE}...")
 
     # Retry briefly — Kueue CRDs can take a moment to register even after the
     # controller deployment reports Available.
@@ -2425,7 +2428,7 @@ def cmd_remove_kueue() -> None:
         "localqueue",
         KUEUE_LOCAL_QUEUE_NAME,
         "-n",
-        AIPERF_BENCHMARK_NAMESPACE,
+        AIPERF_DEV_NAMESPACE,
         "--ignore-not-found",
     )
     kubectl("delete", "clusterqueue", KUEUE_CLUSTER_QUEUE_NAME, "--ignore-not-found")
@@ -3787,7 +3790,7 @@ def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
     )
 
     name = generate_benchmark_name(config)
-    namespace = kube_options.namespace or AIPERF_BENCHMARK_NAMESPACE
+    namespace = opts.namespace or kube_options.namespace or AIPERF_DEV_NAMESPACE
 
     config_dict = config.model_dump(mode="json", exclude_none=True)
     apply_k8s_runtime_config(config_dict, name, namespace)
@@ -3824,6 +3827,7 @@ def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
         print(manifest_yaml, end="")
         return
 
+    kubectl("create", "namespace", namespace, check=False)
     kubectl("apply", "-f", "-", input=manifest_yaml, text=True)
     log_success(f"Deployed to namespace: {namespace} (job_id: {name})")
     _mode.set_result(

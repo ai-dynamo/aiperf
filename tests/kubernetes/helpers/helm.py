@@ -48,11 +48,13 @@ class HelmValues:
     operator_watch_namespaces: list[str] = field(default_factory=list)
     """Namespaces watched by the operator; empty watches the whole cluster."""
 
-    benchmark_namespace: str = "aiperf-benchmarks"
+    benchmark_namespace: str = ""
     """Pre-existing namespace granted benchmark RBAC via benchmarkRbacNamespaces.
 
-    The chart no longer creates namespaces, so the harness must create this one
-    before installing (see the helm_job_namespace fixture in conftest).
+    The chart no longer creates namespaces, so there is no product-default value
+    to fall back on: the caller must name a namespace it created itself.
+    ``HelmDeployer`` fills this in from its ``default_job_namespace``. Empty
+    means "grant no extra benchmark RBAC" and omits the --set entirely.
     """
 
     monitor_interval: str = "10.0"
@@ -107,7 +109,6 @@ class HelmValues:
             f"image.tag={self.image_tag}",
             f"image.pullPolicy={self.image_pull_policy}",
             f"operator.replicas={self.operator_replicas}",
-            f"benchmarkRbacNamespaces[0]={self.benchmark_namespace}",
             f"operator.env.monitorInterval={self.monitor_interval}",
             f"operator.env.monitorInitialDelay={self.monitor_initial_delay}",
             f"storage.enabled={str(self.storage_enabled).lower()}",
@@ -119,6 +120,8 @@ class HelmValues:
             f"operator.resources.limits.cpu={self.resources_limits_cpu}",
             f"operator.resources.limits.memory={self.resources_limits_memory}",
         ]
+        if self.benchmark_namespace:
+            args.append(f"benchmarkRbacNamespaces[0]={self.benchmark_namespace}")
         args.extend(
             f"operator.watchNamespaces[{index}]={namespace}"
             for index, namespace in enumerate(self.operator_watch_namespaces)

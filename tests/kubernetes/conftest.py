@@ -946,7 +946,6 @@ async def _purge_reused_cluster_resources(
     # Purge shared namespaces and this session's own namespaces.
     for ns in (
         "default",
-        "aiperf-benchmarks",
         benchmark_namespace,
         operator_job_namespace,
     ):
