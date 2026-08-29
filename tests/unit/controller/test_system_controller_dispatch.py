@@ -637,3 +637,46 @@ def test_parse_responses_for_errors_raises_on_command_err(controller) -> None:
         )
     assert controller._exit_errors[0].error_details.message == "nope"
     assert controller._exit_errors[0].service_id == "a"
+
+
+@pytest.mark.asyncio
+async def test_fail_fast_does_not_abort_on_an_unhandled_command(controller) -> None:
+    """PROFILE_CONFIGURE fans out at every service; several have no handler.
+
+    RecordsManager has no PROFILE_CONFIGURE hook, so aborting on CommandUnhandled
+    abandoned the fan-out at the first such service and cancelled the rest --
+    the TimingManager never configured and PROFILE_START then died with
+    "No phase orchestrator configured".
+    """
+    reached: list[str] = []
+
+    async def fake_request_to(identity, struct, timeout):
+        reached.append(identity)
+        if identity == "records-manager":
+            return CommandUnhandled(cid=struct.cid, cmd=struct.cmd, sid=identity)
+        return CommandAck(cid=struct.cid, cmd=struct.cmd, sid=identity)
+
+    controller.control_router.request_to = fake_request_to
+    responses = await controller._send_control_command_to_all_fail_fast(
+        CommandType.PROFILE_CONFIGURE,
+        ["records-manager", "timing-manager", "dataset-manager"],
+        timeout=1.0,
+    )
+    assert sorted(reached) == ["dataset-manager", "records-manager", "timing-manager"]
+    assert len(responses) == 3
+
+
+@pytest.mark.asyncio
+async def test_fail_fast_still_aborts_on_a_command_error(controller) -> None:
+    async def fake_request_to(identity, struct, timeout):
+        if identity == "a":
+            return CommandErr(cid=struct.cid, cmd=struct.cmd, sid=identity, error="no")
+        await asyncio.sleep(5)  # must be cancelled, never awaited to completion
+        return CommandAck(cid=struct.cid, cmd=struct.cmd, sid=identity)
+
+    controller.control_router.request_to = fake_request_to
+    responses = await controller._send_control_command_to_all_fail_fast(
+        CommandType.PROFILE_CONFIGURE, ["a", "b"], timeout=10.0
+    )
+    assert len(responses) == 1
+    assert isinstance(responses[0], CommandErr)

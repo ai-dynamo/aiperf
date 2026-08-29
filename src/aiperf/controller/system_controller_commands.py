@@ -170,6 +170,15 @@ class SystemControllerCommandMixin:
 
         Completion-ordered on purpose -- aborting early is the whole point, and
         no caller zips this result against ``service_ids``.
+
+        CommandUnhandled is deliberately NOT an abort condition. Both callers
+        fan PROFILE_CONFIGURE / PROFILE_START at *every* registered service, and
+        several legitimately implement neither (RecordsManager has no
+        PROFILE_CONFIGURE hook). Breaking on "no handler" abandons the fan-out
+        at the first such service and cancels the rest in the ``finally`` below,
+        so the TimingManager never finishes configuring and the run dies at
+        PROFILE_START with "No phase orchestrator configured". The pub/sub
+        predecessor broke on CommandErrorResponse only; keep that.
         """
         tasks = {
             sid: asyncio.create_task(
@@ -183,11 +192,10 @@ class SystemControllerCommandMixin:
                 try:
                     response = await coro
                     results.append(response)
-                    if isinstance(response, CommandErr | CommandUnhandled):
+                    if isinstance(response, CommandErr):
                         self.debug(
-                            f"Received {type(response).__name__} from {response.sid}, "
-                            f"aborting wait for remaining "
-                            f"{len(service_ids) - len(results)} service(s)"
+                            f"Received error from {response.sid}, aborting wait for "
+                            f"remaining {len(service_ids) - len(results)} service(s)"
                         )
                         break
                 except TimeoutError:
