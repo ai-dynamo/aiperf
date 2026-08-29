@@ -166,7 +166,7 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - macOS child processes close terminal FDs to prevent Textual UI corruption.
 - Plugin priority resolves conflicts: higher wins, external beats built-in at equal priority.
 - Decorators: `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`.
-- Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
+- Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_to_controller()` (services) / `_send_control_command*()` (controller) for commands on the DEALER/ROUTER control channel.
 - `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
 - `dag_jsonl` input type: conversation DAG benchmarks (fork + spawn modes). See `docs/benchmark-modes/dag.md` for abstractions and authoring.
 - Validator gate convention: unsupported constructs raise `NotImplementedError` with a leading `"<loc>: <reason>"` prefix where `<loc>` identifies the conversation/turn (e.g. `"conversation 'foo' turn 3: ..."`). New validators must follow this shape.

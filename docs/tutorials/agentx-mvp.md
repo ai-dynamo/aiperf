@@ -594,7 +594,7 @@ resolvable HF repo name (a local server alias, a private build), pass
 `--tokenizer <hf-repo-or-local-path>` explicitly. See
 [Tokenizer Auto-Detection](../reference/tokenizer-auto-detection.md).
 
-**Run aborts early: `aborting run early (broadcasting ProfileCancelCommand)` / warmup failure**
+**Run aborts early: `aborting run early (requesting PROFILE_CANCEL)` / warmup failure**
 Your inference server rejected a warmup request. Each warmup request gets
 exactly one attempt — there is no retry — and AgentX MVP aborts on the
 **first** terminal root-conversation warmup failure rather than producing a
