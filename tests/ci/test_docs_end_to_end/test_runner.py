@@ -20,8 +20,11 @@ from constants import (
     AIPERF_UI_TYPE,
     SETUP_MONITOR_TIMEOUT,
 )
-from data_types import Server
-from utils import get_repo_root
+from data_types import Server, TestConfig
+from utils import (
+    docker_stop_and_remove,
+    get_repo_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +88,13 @@ def test_timeout_killer_skips_process_marked_finished(monkeypatch):
 class EndToEndTestRunner:
     """Runs the end-to-end tests"""
 
-    def __init__(self):
+    def __init__(self, config: TestConfig | None = None):
+        self.config = config or TestConfig()
         self.aiperf_container_id = None
         self.setup_process = None
         self.log_monitoring_thread = None
         self.stop_log_monitoring = threading.Event()
+        self.server_containers: dict[str, set[str]] = {}  # Track containers per server
 
     def _cleanup_all_containers(self):
         """Stop all containers and prune (nuclear cleanup)"""
@@ -113,16 +118,24 @@ class EndToEndTestRunner:
 
         try:
             # Step 0: Force cleanup any leftover containers from previous runs
-            logger.info(
-                "Cleaning up any leftover containers from previous test runs..."
-            )
-            self._cleanup_all_containers()
-            logger.info("All leftover containers cleaned up")
+            # Skip in dev mode to preserve user's already-running containers
+            if not self.config.skip_server_setup:
+                logger.info(
+                    "Cleaning up any leftover containers from previous test runs..."
+                )
+                self._cleanup_all_containers()
+                logger.info("All leftover containers cleaned up")
 
-            # Step 1: Build AIPerf container
-            if not self._build_aiperf_container():
-                logger.error("AIPerf container build failed - stopping all tests")
-                return False
+            # Step 1: Build AIPerf container (skip if using local aiperf)
+            if self.config.use_local_aiperf:
+                logger.info("Using locally installed aiperf (skipping container build)")
+                if not self._verify_local_aiperf():
+                    logger.error("Local aiperf not found - stopping all tests")
+                    return False
+            else:
+                if not self._build_aiperf_container():
+                    logger.error("AIPerf container build failed - stopping all tests")
+                    return False
 
             # Step 2: Validate servers (no duplicates, complete definitions)
             if not self._validate_servers(servers):
@@ -232,18 +245,47 @@ class EndToEndTestRunner:
         logger.info(f"AIPerf version: {verify_result.stdout.strip()}")
         return True
 
+    def _verify_local_aiperf(self) -> bool:
+        """Verify that aiperf is installed and accessible on the host."""
+        logger.info("Verifying local aiperf installation...")
+        try:
+            result = subprocess.run(
+                "aiperf --version",
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                logger.error("Local aiperf not found or not working")
+                logger.error(f"Stderr: {result.stderr}")
+                logger.error("Install with: uv run pip install -e . (from repo root)")
+                return False
+            logger.info(f"Local aiperf version: {result.stdout.strip()}")
+            return True
+        except FileNotFoundError:
+            logger.error("aiperf command not found in PATH")
+            logger.error("Install with: uv run pip install -e . (from repo root)")
+            return False
+        except subprocess.TimeoutExpired:
+            logger.error("aiperf --version timed out")
+            return False
+
     def _validate_servers(self, servers: dict[str, Server]) -> bool:
         """Validate that all servers have required commands and no duplicates"""
         logger.info(f"Validating {len(servers)} servers...")
 
         for server_name, server in servers.items():
-            # Check that server has setup command
-            if server.setup_command is None:
+            # Check that server has setup command (skip if not managing servers)
+            if server.setup_command is None and not self.config.skip_server_setup:
                 logger.error(f"Server '{server_name}' missing setup command")
                 return False
 
-            # Check that server has health check command
-            if server.health_check_command is None:
+            # Check that server has health check command (skip if not checking health)
+            if (
+                server.health_check_command is None
+                and not self.config.skip_health_check
+            ):
                 logger.error(f"Server '{server_name}' missing health-check command")
                 return False
 
@@ -252,8 +294,12 @@ class EndToEndTestRunner:
                 logger.error(f"Server '{server_name}' missing aiperf-run commands")
                 return False
 
+            setup_status = "skipped" if self.config.skip_server_setup else "1 setup"
+            health_status = (
+                "skipped" if self.config.skip_health_check else "1 health-check"
+            )
             logger.info(
-                f"Server '{server_name}': 1 setup, 1 health-check, {len(server.aiperf_commands)} aiperf commands"
+                f"Server '{server_name}': {setup_status}, {health_status}, {len(server.aiperf_commands)} aiperf commands"
             )
 
         logger.info("Server validation passed")
@@ -279,6 +325,158 @@ class EndToEndTestRunner:
 
     def _test_server(self, server: Server) -> bool:
         """Test a single server: setup + health check + aiperf runs"""
+        logger.info(f"Testing server: {server.name}")
+
+        # Skip server setup if configured (using already-running server)
+        if self.config.skip_server_setup:
+            logger.info(
+                f"Skipping server setup for {server.name} (--skip-server-setup)"
+            )
+            self.server_containers[server.name] = set()
+        else:
+            if not self._setup_server(server):
+                return False
+
+        # Skip health check if configured
+        if self.config.skip_health_check:
+            logger.info(
+                f"Skipping health check for {server.name} (--skip-health-check)"
+            )
+        else:
+            if not self._run_health_check(server):
+                return False
+
+        logger.info(f"Server {server.name} ready for testing")
+
+        # Run all aiperf commands for this server
+        all_aiperf_passed = True
+        for i, aiperf_cmd in enumerate(server.aiperf_commands):
+            logger.info(
+                f"Running AIPerf test {i + 1}/{len(server.aiperf_commands)} for {server.name}"
+            )
+
+            returncode = self._execute_aiperf(
+                aiperf_cmd.command, server.name, i + 1, len(server.aiperf_commands)
+            )
+
+            if returncode != 0:
+                logger.error("=" * 60)
+                logger.error(f"AIPerf test {i + 1} failed for {server.name}")
+                logger.error(f"Return code: {returncode}")
+                all_aiperf_passed = False
+            else:
+                logger.info("=" * 60)
+                logger.info(f"AIPerf test {i + 1} passed for {server.name}")
+
+        # Cleanup server containers only if we managed them
+        if not self.config.skip_server_setup:
+            logger.info(
+                f"All AIPerf tests completed for {server.name}. Stopping server containers..."
+            )
+            # Stop all containers except the aiperf test container by filtering out its name
+            if self.aiperf_container_id:
+                stop_cmd = f"docker ps --format '{{{{.Names}}}}' | grep -v '^{self.aiperf_container_id}$' | xargs -r docker stop 2>/dev/null || true"
+                subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=30)
+            subprocess.run(
+                "docker container prune -f", shell=True, capture_output=True, timeout=10
+            )
+            logger.info(
+                "Server containers stopped, aiperf container preserved for next test"
+            )
+        else:
+            logger.info(
+                f"All AIPerf tests completed for {server.name} (server left running)"
+            )
+
+        return all_aiperf_passed
+
+    def _execute_aiperf(
+        self, command: str, server_name: str, test_num: int, total_tests: int
+    ) -> int:
+        """Execute an aiperf command, routing to local or container based on config."""
+        aiperf_command_with_ui = command.replace(
+            "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
+        )
+        logger.info(
+            f"Executing AIPerf command {test_num}/{total_tests} against {server_name}:"
+        )
+        logger.info(f"Command: {command}")
+        logger.info(f"With UI flag: {aiperf_command_with_ui}")
+        logger.info("=" * 60)
+
+        if self.config.use_local_aiperf:
+            return self._run_aiperf_local(aiperf_command_with_ui, server_name)
+        else:
+            return self._run_aiperf_container(
+                aiperf_command_with_ui, server_name, test_num
+            )
+
+    def _run_aiperf_local(self, command: str, server_name: str) -> int:
+        """Run aiperf command directly on the host."""
+        aiperf_process = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+        while True:
+            line = aiperf_process.stdout.readline()
+            if not line and aiperf_process.poll() is not None:
+                break
+            if line:
+                print(f"AIPERF[{server_name}]: {line.rstrip()}")
+        aiperf_process.wait()
+        return aiperf_process.returncode
+
+    def _run_aiperf_container(
+        self, command: str, server_name: str, test_num: int
+    ) -> int:
+        """Run aiperf command inside the Docker container with a watchdog timeout."""
+        exec_command = f"docker exec {self.aiperf_container_id} bash -c '{command}'"
+
+        aiperf_process = subprocess.Popen(
+            exec_command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            start_new_session=True,
+        )
+
+        kill_guard = _ProcessGroupKillGuard()
+        watchdog = threading.Timer(
+            AIPERF_COMMAND_TIMEOUT,
+            _make_process_group_timeout_killer(
+                proc=aiperf_process,
+                test_num=test_num,
+                server_name=server_name,
+                guard=kill_guard,
+            ),
+        )
+        watchdog.daemon = True
+        watchdog.start()
+
+        try:
+            while True:
+                line = aiperf_process.stdout.readline()
+                if not line and aiperf_process.poll() is not None:
+                    break
+                if line:
+                    print(f"AIPERF[{server_name}]: {line.rstrip()}")
+            aiperf_process.wait()
+        finally:
+            kill_guard.mark_finished()
+            watchdog.cancel()
+
+        return aiperf_process.returncode
+
+    def _setup_server(self, server: Server) -> bool:
+        """Execute server setup command and monitor for early failure."""
         logger.info(f"Setting up server: {server.name}")
 
         # Execute setup command in background
@@ -331,9 +529,11 @@ class EndToEndTestRunner:
 
         logger.info("=" * 60)
         logger.info(f"Server {server.name} setup started successfully")
+        return True
 
-        # Start health check immediately in parallel (it has built-in timeout)
-        logger.info(f"Starting health check in parallel for server: {server.name}")
+    def _run_health_check(self, server: Server) -> bool:
+        """Run health check for server."""
+        logger.info(f"Starting health check for server: {server.name}")
         logger.info(f"Health check command: {server.health_check_command.command}")
         logger.info("=" * 60)
 
@@ -347,15 +547,12 @@ class EndToEndTestRunner:
             universal_newlines=True,
         )
 
-        # Wait for health check to complete (it has its own timeout logic)
-        health_output_lines = []
         while True:
             line = health_process.stdout.readline()
             if not line and health_process.poll() is not None:
                 break
             if line:
                 print(f"HEALTH: {line.rstrip()}")
-                health_output_lines.append(line)
 
         health_process.wait()
 
@@ -366,102 +563,19 @@ class EndToEndTestRunner:
             return False
 
         logger.info("=" * 60)
-        logger.info(f"Server {server.name} health check passed - ready for testing")
-
-        # Run all aiperf commands for this server
-        all_aiperf_passed = True
-        for i, aiperf_cmd in enumerate(server.aiperf_commands):
-            logger.info(
-                f"Running AIPerf test {i + 1}/{len(server.aiperf_commands)} for {server.name}"
-            )
-
-            # Execute aiperf command in the container with verbose output
-            # Add --ui-type simple to all aiperf commands
-            aiperf_command_with_ui = aiperf_cmd.command.replace(
-                "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
-            )
-            exec_command = f"docker exec {self.aiperf_container_id} bash -c '{aiperf_command_with_ui}'"
-
-            logger.info(
-                f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)} against {server.name}:"
-            )
-            logger.info(f"Server: {server.name}")
-            logger.info(f"Command: {aiperf_cmd.command}")
-            logger.info(f"With UI flag: {aiperf_command_with_ui}")
-            logger.info("=" * 60)
-
-            aiperf_process = subprocess.Popen(
-                exec_command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-                start_new_session=True,
-            )
-
-            kill_guard = _ProcessGroupKillGuard()
-            watchdog = threading.Timer(
-                AIPERF_COMMAND_TIMEOUT,
-                _make_process_group_timeout_killer(
-                    proc=aiperf_process,
-                    test_num=i + 1,
-                    server_name=server.name,
-                    guard=kill_guard,
-                ),
-            )
-            watchdog.daemon = True
-            watchdog.start()
-
-            try:
-                # Show real-time output
-                aiperf_output_lines = []
-                while True:
-                    line = aiperf_process.stdout.readline()
-                    if not line and aiperf_process.poll() is not None:
-                        break
-                    if line:
-                        print(f"AIPERF[{server.name}]: {line.rstrip()}")
-                        aiperf_output_lines.append(line)
-
-                aiperf_process.wait()
-            finally:
-                kill_guard.mark_finished()
-                watchdog.cancel()
-
-            if aiperf_process.returncode != 0:
-                logger.error("=" * 60)
-                logger.error(f"AIPerf test {i + 1} failed for {server.name}")
-                logger.error(f"Return code: {aiperf_process.returncode}")
-                all_aiperf_passed = False
-            else:
-                logger.info("=" * 60)
-                logger.info(f"AIPerf test {i + 1} passed for {server.name}")
-
-        # Cleanup: Stop all containers EXCEPT the aiperf test container
-        logger.info(
-            f"Test completed for {server.name}. Stopping all containers except aiperf test container..."
-        )
-        # Stop all containers except the aiperf test container by filtering out its name
-        stop_cmd = f"docker ps --format '{{{{.Names}}}}' | grep -v '^{self.aiperf_container_id}$' | xargs -r docker stop 2>/dev/null || true"
-        subprocess.run(
-            stop_cmd,
-            shell=True,
-            capture_output=True,
-            timeout=30,
-        )
-        subprocess.run(
-            "docker container prune -f", shell=True, capture_output=True, timeout=10
-        )
-        logger.info(
-            "All server containers stopped, aiperf container preserved for next test"
-        )
-
-        return all_aiperf_passed
+        logger.info(f"Server {server.name} health check passed")
+        return True
 
     def _cleanup(self):
-        """Cleanup all containers (nuclear approach)"""
-        logger.info("Final cleanup - stopping all containers...")
+        """Cleanup AIPerf container and server containers."""
+        if self.aiperf_container_id:
+            logger.info(f"Cleaning up AIPerf container: {self.aiperf_container_id}")
+            docker_stop_and_remove(self.aiperf_container_id)
+
+        if self.config.skip_server_setup:
+            logger.info("Skipping container cleanup (--skip-server-setup mode)")
+            return
+
+        logger.info("Final cleanup - stopping all remaining containers...")
         self._cleanup_all_containers()
         logger.info("Final cleanup completed")

@@ -11,6 +11,7 @@ builds AIPerf container, and executes tests.
 import logging
 import sys
 
+from data_types import TestConfig
 from parser import MarkdownParser
 from test_runner import EndToEndTestRunner
 from utils import get_repo_root, setup_logging
@@ -59,7 +60,37 @@ def main():
         default=1,
         help="Total shard count for the selected server's commands",
     )
+
+    # Developer options for faster local iteration
+    dev_group = parser.add_argument_group("developer options")
+    dev_group.add_argument(
+        "--use-local-aiperf",
+        action="store_true",
+        help="Use locally installed aiperf instead of building a container",
+    )
+    dev_group.add_argument(
+        "--skip-server-setup",
+        action="store_true",
+        help="Skip server setup (use an already-running server)",
+    )
+    dev_group.add_argument(
+        "--skip-health-check",
+        action="store_true",
+        help="Skip health checks (assumes server is healthy)",
+    )
+    dev_group.add_argument(
+        "--local-dev",
+        action="store_true",
+        help="Local dev mode: enables --use-local-aiperf, --skip-server-setup, --skip-health-check",
+    )
     args = parser.parse_args()
+
+    config = TestConfig(
+        use_local_aiperf=args.local_dev or args.use_local_aiperf,
+        skip_server_setup=args.local_dev or args.skip_server_setup,
+        skip_health_check=args.local_dev or args.skip_health_check,
+        server_filter=args.server,
+    )
 
     if args.shard_total < 1:
         logger.error("--shard-total must be >= 1")
@@ -150,8 +181,18 @@ def main():
         logger.info("Dry run completed")
         return 0
 
+    # Log active dev-mode settings
+    if config.use_local_aiperf or config.skip_server_setup or config.skip_health_check:
+        logger.info("Developer mode settings:")
+        if config.use_local_aiperf:
+            logger.info("  - Using locally installed aiperf")
+        if config.skip_server_setup:
+            logger.info("  - Skipping server setup (using already-running server)")
+        if config.skip_health_check:
+            logger.info("  - Skipping health checks")
+
     # Run tests
-    runner = EndToEndTestRunner()
+    runner = EndToEndTestRunner(config)
     success = runner.run_tests(servers)
 
     if success:
