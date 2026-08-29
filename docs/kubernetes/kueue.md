@@ -138,8 +138,8 @@ description: "High-priority AIPerf benchmark runs"
 AIPerf stamps the `kueue.x-k8s.io/queue-name` label onto the JobSet (and
 starts it suspended) whenever it can resolve a queue name from either
 `spec.scheduling.queueName` or the operator-side
-`AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` env var. The Helm chart adds a
-third, Kueue-side namespace default that works differently.
+`AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` env var. Kueue's own
+namespace-annotation default works differently.
 
 ### 1. CLI flags
 
@@ -187,13 +187,10 @@ spec:
         requests: 500
 ```
 
-### 3. Namespace default via Helm
+### 3. Cluster-wide default via Helm
 
 The `aiperf-operator` Helm chart exposes a `kueue.defaultQueueName` value
-(see `deploy/helm/aiperf-operator/values.yaml`). When set, the chart
-annotates the benchmark namespace with
-`kueue.x-k8s.io/default-queue-name` so Kueue itself can default the queue for
-workloads in that namespace, **and** sets
+(see `deploy/helm/aiperf-operator/values.yaml`). When set, the chart sets
 `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container so
 AIPerf's own manifest builder applies the queue label and starts the JobSet
 suspended.
@@ -204,16 +201,10 @@ kueue:
   defaultQueueName: aiperf-queue
 ```
 
-The annotation is applied by
-`deploy/helm/aiperf-operator/templates/benchmark-namespace.yaml`, and only to
-the namespace whose name equals `benchmarkNamespace.name` — the extra
-namespaces in `benchmarkRbacNamespaces` are created without it. Note that the
-template renders the primary name only under `benchmarkNamespace.create`, but
-renders every `benchmarkRbacNamespaces` entry unconditionally, so the
-annotation still lands if the primary name also appears in that list.
-
-Note that AIPerf's own manifest builder does **not** read the annotation:
-`AIPerfJobSetSpec._resolved_queue_name` in
+Kueue also honours a `kueue.x-k8s.io/default-queue-name` annotation on the
+namespace, which you apply yourself with `kubectl annotate` (see
+Troubleshooting below). AIPerf's own manifest builder does **not** read that
+annotation: `AIPerfJobSetSpec._resolved_queue_name` in
 `src/aiperf/kubernetes/jobset.py` consults only
 `spec.scheduling.queueName` and the `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME`
 env var, so the annotation alone does not make AIPerf add the queue label or
@@ -232,8 +223,9 @@ renders a `ResourceFlavor`, `ClusterQueue`, and `LocalQueue` from
 `kueue.resources` quota map (`cpu`, `memory`, and an optional `gpu` entry that
 is skipped when empty). It is off by default so the chart renders on clusters
 without Kueue CRDs, and even when enabled the template is additionally gated
-on the `kueue.x-k8s.io/v1beta1` API being present. When `defaultQueueName` is
-left empty and `createQueues=true`, the namespace annotation falls back to
+on the `kueue.x-k8s.io/v1beta1` API being present. The `LocalQueue` is created
+in the chart's release namespace. When `defaultQueueName` is left empty and
+`createQueues=true`, the operator's default queue falls back to
 `kueue.localQueueName`.
 
 ---
@@ -272,8 +264,8 @@ Concretely:
 You can observe admission directly with `kubectl`:
 
 ```bash
-kubectl get workloads -n aiperf-benchmarks
-kubectl get aiperfjob latency-sweep-7f2a -n aiperf-benchmarks \
+kubectl get workloads -n my-benchmarks
+kubectl get aiperfjob latency-sweep-7f2a -n my-benchmarks \
   -o jsonpath='{.status.phase}'
 ```
 
@@ -284,7 +276,7 @@ kubectl get aiperfjob latency-sweep-7f2a -n aiperf-benchmarks \
 **Job stuck in `QUEUED` phase.** Kueue has accepted the Workload but has
 not admitted it. Check in order:
 
-1. `kubectl describe workload -n aiperf-benchmarks` — look at the
+1. `kubectl describe workload -n my-benchmarks` — look at the
    `QuotaReserved` and `Admitted` conditions. The message usually names
    the resource that is over quota.
 2. `kubectl get clusterqueue aiperf-cluster-queue -o yaml` — compare
@@ -313,7 +305,7 @@ Kueue is present on the cluster but the job bypasses it. Fix by either passing
 the namespace default:
 
 ```bash
-kubectl annotate namespace aiperf-benchmarks \
+kubectl annotate namespace my-benchmarks \
   kueue.x-k8s.io/default-queue-name=aiperf-queue
 ```
 

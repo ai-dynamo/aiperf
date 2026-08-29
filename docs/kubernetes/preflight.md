@@ -99,7 +99,7 @@ aiperf kube preflight [OPTIONS]
 Composite flags inherited from `KubeManageOptions` — `-n`/`--namespace`,
 `--kubeconfig`, `--kube-context` — resolve connection and namespace identically to
 every other `aiperf kube` subcommand. When `--namespace` is omitted, preflight
-targets `aiperf-benchmarks`.
+targets the namespace your kubeconfig context sets, and fails if it sets none.
 
 Source: `src/aiperf/cli_commands/kube/preflight.py`.
 
@@ -107,7 +107,7 @@ Source: `src/aiperf/cli_commands/kube/preflight.py`.
 
 ```bash
 aiperf kube preflight \
-    --namespace aiperf-benchmarks \
+    --namespace my-benchmarks \
     --image nvcr.io/nvidia/aiperf:25.04 \
     --image-pull-secret nvcr-creds \
     --secret endpoint-api-key \

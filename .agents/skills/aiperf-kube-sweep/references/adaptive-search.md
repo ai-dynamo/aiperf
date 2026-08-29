@@ -54,7 +54,7 @@ apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfSweep
 metadata:
   name: bo-conc-llama8b        # <= 27 chars
-  namespace: aiperf-benchmarks
+  namespace: my-benchmarks
 spec:
   image: aiperf:latest
   benchmark:

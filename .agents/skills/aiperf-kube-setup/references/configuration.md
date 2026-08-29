@@ -27,7 +27,7 @@ kubectl -n jobset-system wait --for=condition=available \
 The chart's values JSON schema sets `additionalProperties: false` on the root
 and on `image`, `podTemplate`, `chaos`, `operator`, `operator.metrics`,
 `resultsServer`, `dashboard`, `rbac`, `storage`, `serviceAccount`,
-`benchmarkNamespace`, `kueue`, `ingress`, `networkPolicy`, `serviceMonitor`,
+`kueue`, `ingress`, `networkPolicy`, `serviceMonitor`,
 `defaults`, `tests`, `tests.image`, and object entries of
 `serverMetricsDiscoveryNamespaces`. An unknown key in any of those is a
 **render-time validation error**.
@@ -165,9 +165,7 @@ Sizing: budget by retained runs; `resultsCompressOnDisk=true` stores zstd and
 | `serviceAccount.name` | `""` | **Required** when `create=false`: the template calls `required` and fails the render rather than silently binding the namespace `default` SA and 403-ing on every reconcile. |
 | `serviceAccount.annotations` | `{}` | e.g. IRSA / workload-identity. |
 | `rbac.create` | `true` | Gates ClusterRole **and** ClusterRoleBinding **and** the whole benchmark-RBAC template. |
-| `benchmarkNamespace.create` | `true` | Renders the Namespace with `helm.sh/resource-policy: keep` so `helm uninstall` does not drop running jobs. |
-| `benchmarkNamespace.name` | `aiperf-benchmarks` | Also referenced by benchmark RBAC, NetworkPolicy selectors, and the Kueue LocalQueue namespace — even when `create=false`. |
-| `benchmarkRbacNamespaces` | `[]` | Extra namespaces: each gets **created** (same keep policy) *and* gets the benchmark Role/RoleBinding. De-duplicated against `benchmarkNamespace.name`. |
+| `benchmarkRbacNamespaces` | `[]` | Extra namespaces beyond the release namespace that get the benchmark Role/RoleBinding. **Not created** — they must already exist. De-duplicated against the release namespace. |
 | `serverMetricsDiscoveryNamespaces` | `[]` | Existing inference namespaces. **Not created.** Each gets only a `pods: get/list/watch` Role bound to subjects from the benchmark namespaces. |
 
 ```yaml
@@ -282,7 +280,7 @@ With `networkPolicy.enabled=true`, one policy targeting the operator pod
 
 - **Ingress** on 8080, `resultsServer.port`, and `operator.metrics.port` (when
   > 0) from: the release namespace (needed for `helm test` to reach
-  `/healthz`), `benchmarkNamespace.name`, every `benchmarkRbacNamespaces` entry,
+  `/healthz`), every `benchmarkRbacNamespaces` entry,
   and every `networkPolicy.allowedNamespaces` entry — all matched via the
   `kubernetes.io/metadata.name` label, so namespace auto-labelling must be on.
 - **Ingress** on the same ports from each `allowedIngressCIDRs` `ipBlock`. Use
@@ -365,11 +363,11 @@ silent no-op, so install Kueue first.
 | `kueue.createQueues` | `false` | Gates ResourceFlavor + ClusterQueue + LocalQueue. |
 | `kueue.flavorName` | `default-flavor` | ResourceFlavor name (no node labels/taints). |
 | `kueue.clusterQueueName` | `aiperf-cluster-queue` | `namespaceSelector: {}` — all namespaces. |
-| `kueue.localQueueName` | `aiperf-local-queue` | Created in `benchmarkNamespace.name`. |
+| `kueue.localQueueName` | `aiperf-local-queue` | Created in the chart's release namespace. |
 | `kueue.resources.cpu` | `"1000"` | ClusterQueue nominalQuota. |
 | `kueue.resources.memory` | `"4Ti"` | ClusterQueue nominalQuota. |
 | `kueue.resources.gpu` | `""` | **Empty omits `nvidia.com/gpu` from `coveredResources` entirely.** Set e.g. `"64"` to add GPU quota. |
-| `kueue.defaultQueueName` | `""` | Sets `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container **and** annotates the rendered benchmark namespace with `kueue.x-k8s.io/default-queue-name`. Auto-fills from `localQueueName` when `createQueues=true`. |
+| `kueue.defaultQueueName` | `""` | Sets `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container. Auto-fills from `localQueueName` when `createQueues=true`. |
 
 Equivalent by hand — note the GPU resource the chart omits unless
 `kueue.resources.gpu` is set:
@@ -395,7 +393,7 @@ spec:
 ---
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: LocalQueue
-metadata: {name: aiperf-local-queue, namespace: aiperf-benchmarks}
+metadata: {name: aiperf-local-queue, namespace: aiperf-system}
 spec: {clusterQueue: aiperf-cluster-queue}
 ```
 ### The three ways to bind a job to a queue
@@ -406,8 +404,8 @@ spec: {clusterQueue: aiperf-cluster-queue}
 | 2 | `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container | operator, cluster-wide fallback | **yes** |
 | 3 | Namespace annotation `kueue.x-k8s.io/default-queue-name` applied by hand | Kueue's own webhook | **no** |
 
-Chart `kueue.defaultQueueName` drives mechanisms 2 and 3 at once, so setting it
-is sufficient: **yes**.
+Chart `kueue.defaultQueueName` drives mechanism 2, so setting it is
+sufficient: **yes**.
 
 Mechanism 2 *is* what chart `kueue.defaultQueueName` sets (`operator.env` is a
 fixed nine-key map and does not carry it). To set it without re-running Helm:
@@ -421,17 +419,11 @@ kubectl -n aiperf-system set env deployment/aiperf-operator -c operator \
 Mechanism 3 is the sharp edge. The operator never reads the annotation, so it
 adds no `kueue.x-k8s.io/queue-name` label and no `spec.suspend: true`; admission
 depends entirely on Kueue's webhook and the operator's phase reporting (which
-keys on the label) will not surface `Queued`. It is also gated on which
-namespaces the chart actually renders: the primary `benchmarkNamespace.name`
-renders only under `create: true`, every `benchmarkRbacNamespaces` entry renders
-unconditionally, and the annotation is applied to whichever rendered namespace
-equals `benchmarkNamespace.name`. So the *annotation half* of
-`kueue.defaultQueueName` is a no-op when `create: false` **and** that name is
-absent from `benchmarkRbacNamespaces` — its operator-env half still applies.
-To annotate a namespace the chart does not render:
+keys on the label) will not surface `Queued`. The chart never applies the
+annotation, so this mechanism only exists if you apply it yourself:
 
 ```bash
-kubectl annotate namespace aiperf-benchmarks \
+kubectl annotate namespace <your-benchmark-namespace> \
   kueue.x-k8s.io/default-queue-name=aiperf-local-queue --overwrite
 ```
 
@@ -477,7 +469,7 @@ operator:
   env: {resultsTtlDays: "14"}
   tmpSizeLimit: "512Mi"
 storage: {size: 2Ti, storageClassName: fast-rwo}
-benchmarkNamespace: {name: aiperf-benchmarks}
+benchmarkRbacNamespaces: [my-benchmarks]
 serverMetricsDiscoveryNamespaces: [dynamo-server]
 kueue:
   createQueues: true

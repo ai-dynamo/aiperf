@@ -427,9 +427,9 @@ CR name) sooner.
 
 - **Operator mode:**
   ```bash
-  aiperf kube delete my-benchmark -n aiperf-benchmarks
+  aiperf kube delete my-benchmark -n my-benchmarks
   # or, equivalently, straight through kubectl:
-  kubectl delete aiperfjob my-benchmark -n aiperf-benchmarks
+  kubectl delete aiperfjob my-benchmark -n my-benchmarks
   ```
   The downstream JobSet, ConfigMap, Role, and RoleBinding carry
   ownerReferences back to the CR, so Kubernetes garbage-collects them. The
@@ -444,7 +444,7 @@ CR name) sooner.
 
 - **Direct mode:**
   ```bash
-  kubectl delete jobset my-benchmark -n aiperf-benchmarks
+  kubectl delete jobset my-benchmark -n my-benchmarks
   ```
   Delete the ConfigMap, Role, and RoleBinding before re-deploying the same
   name. Direct mode reuses an existing Namespace but refuses to adopt any
@@ -464,7 +464,7 @@ The format is:
 ```json
 {
   "job_id": "qwen3-0-6b-openai-throughput",
-  "namespace": "aiperf-benchmarks",
+  "namespace": "my-benchmarks",
   "name": "my-benchmark",
   "kind": "AIPerfJob"
 }

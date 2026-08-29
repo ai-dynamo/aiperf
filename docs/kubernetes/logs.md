@@ -35,7 +35,7 @@ aiperf kube logs [JOB_ID] [OPTIONS]
 | `-v`, `--variation` | `int` | unset | When `JOB_ID` names an `AIPerfSweep`, the child variation index (`0`..`199`). Resolves to `<sweep>-v<idx:02d>`. |
 | `-t`, `--trial` | `int` | unset | Trial index (`0`..`9`) within a sweep variation, resolving to `<sweep>-v<idx:02d>-t<trial>`. Requires `-v`. |
 | `--ignore-not-found` | flag | `false` | Exit `0` instead of `1` when the target benchmark does not exist. Mirrors `kubectl`'s flag of the same name. See [exit codes](#exit-codes). |
-| `-n`, `--namespace` | `str` | `aiperf-benchmarks` (or cached) | Namespace that holds the AIPerfJob. Composite flag from `KubeManageOptions`. |
+| `-n`, `--namespace` | `str` | cached last-benchmark namespace, else the kubeconfig context namespace | Namespace that holds the AIPerfJob. Composite flag from `KubeManageOptions`. |
 | `--kubeconfig` | `str` | `$KUBECONFIG` / `~/.kube/config` | kubeconfig file to use. Composite flag from `KubeManageOptions`. |
 | `--kube-context` | `str` | current context | kubeconfig context to use. Composite flag from `KubeManageOptions`. |
 
@@ -265,8 +265,8 @@ AIPerfSweep, and no bare JobSet — so the command exits `1`. Usually one of:
 - The job ID is wrong (typo, stale cache). Run `aiperf kube list` to
   see live jobs.
 - The CR was deleted (`aiperf kube delete`, or namespace teardown).
-- `--namespace` points at the wrong namespace. The default is
-  `aiperf-benchmarks`.
+- `--namespace` points at the wrong namespace. Without it, the namespace
+  comes from the cached last benchmark or your kubeconfig context.
 
 ### `No matching containers found`
 

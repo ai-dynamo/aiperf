@@ -25,7 +25,6 @@ SHORT_FLAGS = {"-o", "-n", "-j", "-v", "-t", "-a", "-i", "-e", "-w", "-f", "-A",
 HELM_ROOTS = {
     "image",
     "storage",
-    "benchmarkNamespace",
     "operator",
     "kueue",
     "dashboard",
@@ -79,7 +78,6 @@ ENV_DEFAULTS = {
 
 # Constant name -> value quoted by the pack.
 CONSTANT_DEFAULTS = {
-    "DEFAULT_BENCHMARK_NAMESPACE": "aiperf-benchmarks",
     "DEFAULT_OPERATOR_NAMESPACE": "aiperf-system",
 }
 
@@ -89,7 +87,6 @@ HELM_DEFAULTS = [
     "pullPolicy: IfNotPresent",
     "size: 1Ti",
     'accessMode: "ReadWriteOnce"',
-    'name: "aiperf-benchmarks"',
 ]
 
 # Literal facts the pack quotes from files outside the chart and env docs.

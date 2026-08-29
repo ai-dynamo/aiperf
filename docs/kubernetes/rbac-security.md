@@ -108,9 +108,8 @@ this `ClusterRole` to the operator `ServiceAccount` in the release namespace.
 
 `deploy/helm/aiperf-operator/templates/benchmark-rbac.yaml` renders a `Role`
 and a matching `RoleBinding` in every namespace where benchmark pods may
-run: the configured `benchmarkNamespace.name` (default `aiperf-benchmarks`,
-whether the chart creates that namespace or it already exists) plus every
-entry in the `benchmarkRbacNamespaces` list. The `RoleBinding` subject is
+run: the chart's release namespace plus every entry in the
+`benchmarkRbacNamespaces` list. The `RoleBinding` subject is
 hardcoded to that namespace's `default` ServiceAccount; unlike the
 operator-created Role below, it does not follow
 `podTemplate.serviceAccountName`.
@@ -289,7 +288,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: aiperf-operator-benchmark
-  namespace: aiperf-benchmarks
+  namespace: my-benchmarks
 rules:
 - apiGroups: [""]
   resources: ["pods"]
@@ -305,7 +304,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: aiperf-operator-benchmark
-  namespace: aiperf-benchmarks
+  namespace: my-benchmarks
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -313,7 +312,7 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: default
-  namespace: aiperf-benchmarks
+  namespace: my-benchmarks
 ```
 
 `rbac.create=false` only suppresses the chart's own RBAC. The operator still
@@ -586,7 +585,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: aiperf-benchmark-allow
-  namespace: aiperf-benchmarks
+  namespace: my-benchmarks
 spec:
   podSelector:
     matchLabels:
@@ -646,15 +645,15 @@ Enable with `networkPolicy.enabled=true`. The rendered policy:
   `resultsServer.port` (default 8081), and TCP `operator.metrics.port`
   (default 9090, omitted when set to 0) from four namespace selectors: the
   release namespace itself (so `helm test` hook pods can reach `/healthz`),
-  `benchmarkNamespace.name`, every entry in `benchmarkRbacNamespaces`, and
-  every entry in `networkPolicy.allowedNamespaces`. CIDR blocks in
+  every entry in `benchmarkRbacNamespaces`, and every entry in
+  `networkPolicy.allowedNamespaces`. CIDR blocks in
   `networkPolicy.allowedIngressCIDRs` are added as a second ingress rule
   for external scrapers (e.g. Prometheus, ingress controllers) on the same
   ports.
 - **Egress** — allows DNS (UDP/TCP 53 to `kube-system`), the Kubernetes
-  API server (TCP 443 and 6443, no selector), and full egress to
-  `benchmarkNamespace.name` plus any `benchmarkRbacNamespaces` and
-  `allowedNamespaces` entries.
+  API server (TCP 443 and 6443, no selector), and full egress to the release
+  namespace plus any `benchmarkRbacNamespaces` and `allowedNamespaces`
+  entries.
 
 Pair this with a default-deny in the operator namespace so only these
 flows are permitted. The policy's `podSelector` targets the operator

@@ -218,7 +218,7 @@ aiperf kube profile --model ... --no-gpu-telemetry
 After submitting the job, inspect the controller pod:
 
 ```bash
-kubectl -n aiperf-benchmarks get pod -l aiperf.nvidia.com/job-id=<job-id> \
+kubectl -n my-benchmarks get pod -l aiperf.nvidia.com/job-id=<job-id> \
     -o jsonpath='{.items[*].spec.containers[*].name}'
 ```
 
@@ -229,7 +229,7 @@ missing, the JobSet was built with `gpu_telemetry_enabled=False` — either
 ### Verify reachability from inside the controller pod
 
 ```bash
-kubectl -n aiperf-benchmarks exec -c control-plane <controller-pod> -- \
+kubectl -n my-benchmarks exec -c control-plane <controller-pod> -- \
     curl -s -o /dev/null -w '%{http_code}\n' \
     http://dcgm-exporter.gpu-operator.svc.cluster.local:9400/metrics
 ```

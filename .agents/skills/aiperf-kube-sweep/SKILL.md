@@ -44,7 +44,7 @@ sweep:
 ```bash
 aiperf kube sweep --config sweep.yaml --image aiperf:latest --dry-run   # preview
 aiperf kube sweep --config sweep.yaml --image aiperf:latest --total-workers 64 --detach
-kubectl get aiperfsweeps -n aiperf-benchmarks
+kubectl get aiperfsweeps -n my-benchmarks
 kubectl get aiperfjobs -l aiperf.nvidia.com/sweep=<sweep-name>
 aiperf kube results <sweep-name>            # whole sweep
 aiperf kube results <sweep-name> -v 7 -t 2  # one child

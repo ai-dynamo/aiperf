@@ -55,12 +55,12 @@ kubectl --context "$CTX" -n jobset-system \
 
 ## 3. Namespaces and the registry pull secret
 
-Two namespaces: one for the operator, one for benchmark pods. Pre-create both
-when cluster policy forbids chart-managed namespace creation.
+Two namespaces: one for the operator, one for benchmark pods. The chart
+creates neither, so create both yourself.
 
 ```bash
 NS_OP=aiperf-system
-NS_BENCH=aiperf-benchmarks
+NS_BENCH=my-benchmarks
 kubectl --context "$CTX" create ns "$NS_OP"
 kubectl --context "$CTX" create ns "$NS_BENCH"
 
@@ -88,14 +88,13 @@ imagePullSecrets:
 operator:
   nodeSelector: {nodeGroup: <cpu-pool>}
   tolerations: []                 # replace the chart defaults; see below
-  watchNamespaces: [aiperf-benchmarks]
+  watchNamespaces: [my-benchmarks]
 storage:
   size: 1Ti
   storageClassName: <class>
   accessMode: "ReadWriteOnce"
-benchmarkNamespace:
-  create: false                   # you created it in step 3
-  name: "aiperf-benchmarks"
+benchmarkRbacNamespaces:          # you created these in step 3
+  - my-benchmarks
 ```
 
 ```bash
@@ -131,14 +130,11 @@ Full values matrix, hardening posture, and CI patterns:
   and only one of them always fires.** It sets
   `AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME` on the operator container — that
   is what makes the operator stamp `kueue.x-k8s.io/queue-name` on the JobSet and
-  create it `spec.suspend: true`, and it applies unconditionally. It *also*
-  annotates the rendered benchmark Namespace with
-  `kueue.x-k8s.io/default-queue-name` for Kueue's own webhook, but only if that
-  Namespace is actually rendered: the primary `benchmarkNamespace.name` renders
-  only under `create: true`, while every `benchmarkRbacNamespaces` entry renders
-  unconditionally, and the annotation lands on whichever rendered namespace
-  matches `benchmarkNamespace.name`. Per-job `spec.scheduling.queueName`
-  overrides the operator default. AIPerf pins Kueue `v0.10.1`; the chart-created
+  create it `spec.suspend: true`, and it applies unconditionally. Kueue's own
+  webhook instead reads a `kueue.x-k8s.io/default-queue-name` annotation on the
+  benchmark namespace, which the chart does not apply -- annotate the namespace
+  yourself with `kubectl annotate` if you want that half. Per-job
+  `spec.scheduling.queueName` overrides the operator default. AIPerf pins Kueue `v0.10.1`; the chart-created
   ClusterQueue omits `nvidia.com/gpu` from `coveredResources` unless you set
   `kueue.resources.gpu`, so GPU benchmarks are not quota-gated by default.
 
@@ -165,15 +161,10 @@ Full values matrix, hardening posture, and CI patterns:
 - **`accessMode: ReadWriteOnce` binds results to one node.** Fine for the
   required single operator replica, but node failure strands the volume — use
   an RWX class if you need results to survive it.
-- **`benchmarkNamespace.create: true` fails when the namespace already
-  exists**, and `create: false` does not buy you an escape hatch via
-  `benchmarkRbacNamespaces`: that list is rendered into Namespace objects
-  unconditionally (the chart's benchmark-namespace template gates only the
-  primary name on `create`), so listing an existing namespace re-triggers the same
-  ownership failure. Either Helm-adopt the namespace (label
-  `app.kubernetes.io/managed-by: Helm` plus annotations
-  `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`) or leave
-  it out of the chart and apply the benchmark Role/RoleBinding out of band.
+- **`benchmarkRbacNamespaces` entries must already exist.** The chart renders
+  only the benchmark Role/RoleBinding into them, never the Namespace itself, so
+  a typo or an uncreated namespace fails the install on a missing-namespace
+  error rather than silently creating one.
 - **`operator.watchNamespaces` does not narrow RBAC.** The ClusterRole still
   grants cluster-wide reads. Narrowing it is not a one-flag change:
   `rbac.create=false` gates the *whole* benchmark-RBAC template, so it also

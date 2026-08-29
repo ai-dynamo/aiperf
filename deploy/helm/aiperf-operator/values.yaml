@@ -291,14 +291,13 @@ serverMetricsDiscoveryNamespaces: []
 # kueue configures Kueue gang-scheduling integration
 kueue:
   # kueue.defaultQueueName is the default Kueue LocalQueue name.
-  # When set, the benchmark namespace is annotated with
-  # kueue.x-k8s.io/default-queue-name so all AIPerf jobs are automatically
-  # admitted through Kueue even without an explicit --queue-name flag.
   # Leave empty to auto-fill from kueue.localQueueName when createQueues=true.
-  # It also sets AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME on the operator
-  # container, which is what actually makes the operator label and suspend the
-  # JobSet; the namespace annotation alone is read only by Kueue's own webhook
-  # and leaves the operator unable to report the Queued phase.
+  # It sets AIPERF_K8S_JOBSET_KUEUE_DEFAULT_QUEUE_NAME on the operator
+  # container, which is what makes the operator label and suspend the JobSet,
+  # so all AIPerf jobs are admitted through Kueue even without an explicit
+  # --queue-name flag. Annotating a namespace with
+  # kueue.x-k8s.io/default-queue-name instead is read only by Kueue's own
+  # webhook and leaves the operator unable to report the Queued phase.
   defaultQueueName: ""
 
   # kueue.createQueues toggles chart-managed provisioning of the Kueue

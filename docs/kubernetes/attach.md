@@ -60,7 +60,7 @@ aiperf kube attach [JOB_ID] [OPTIONS]
 | `-v`, `--variation` | unset | When `JOB_ID` names an `AIPerfSweep`, the child variation index (`0`..`199`). Resolves to the child `AIPerfJob` named `<sweep>-v<idx:02d>`. |
 | `-t`, `--trial` | unset | Trial index (`0`..`9`) within a sweep variation, resolving to `<sweep>-v<idx:02d>-t<trial>`. Requires `-v`. |
 | `--ignore-not-found` | `false` | Exit `0` instead of `1` when the target benchmark does not exist. Mirrors `kubectl`'s flag of the same name; the error is still printed. |
-| `-n`, `--namespace` | last-benchmark namespace, else `aiperf-benchmarks` | Kubernetes namespace containing the `AIPerfJob`. |
+| `-n`, `--namespace` | last-benchmark namespace, else the kubeconfig context namespace | Kubernetes namespace containing the `AIPerfJob`. |
 | `--kubeconfig` | unset | Path to a kubeconfig file. When unset, the CLI first tries in-cluster config, then the default kubeconfig resolution. |
 | `--kube-context` | unset | Context name to select inside the kubeconfig. |
 
@@ -176,7 +176,7 @@ You do not need to tell `attach` which mode the job was deployed in — the fall
 ## Troubleshooting
 
 **"No AIPerf job found with ID: ..."**
-The `job_id` you passed (or the one stored in `~/.aiperf/last_kube_benchmark.json`) does not exist in the resolved namespace. Note that omitting `--namespace` does **not** search cluster-wide: `resolve_job_id_and_namespace` substitutes the namespace from the last-benchmark file, or `aiperf-benchmarks` when you passed an explicit `job_id`. Run `aiperf kube list -A` to see what is actually deployed, and confirm your current kubeconfig context matches the cluster you deployed to.
+The `job_id` you passed (or the one stored in `~/.aiperf/last_kube_benchmark.json`) does not exist in the resolved namespace. Note that omitting `--namespace` does **not** search cluster-wide: `resolve_job_id_and_namespace` substitutes the namespace from the last-benchmark file, or, when you passed an explicit `job_id`, the one your kubeconfig context sets. Run `aiperf kube list -A` to see what is actually deployed, and confirm your current kubeconfig context matches the cluster you deployed to.
 
 **"Port-forward did not become ready within 60.0s"**
 `kubectl port-forward` never printed its ready line. Common causes: the controller pod is `CrashLoopBackOff`, the pod was evicted, or a network policy is blocking pod-to-apiserver traffic. Check `aiperf kube debug` for pod phases and `aiperf kube logs --container control-plane` for the controller's startup errors.

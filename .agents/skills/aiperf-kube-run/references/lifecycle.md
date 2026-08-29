@@ -6,8 +6,9 @@
 Terminal reference for the single-benchmark lifecycle: operator mode, direct
 mode, and the flag surface of every subcommand in the flow.
 
-Every cluster-touching command accepts `-n`/`--namespace` (unset ->
-`aiperf-benchmarks`), `--kubeconfig` (`~/.kube/config` or `$KUBECONFIG`), and
+Every cluster-touching command accepts `-n`/`--namespace` (unset -> the
+namespace your kubeconfig context sets; an error if it sets none),
+`--kubeconfig` (`~/.kube/config` or `$KUBECONFIG`), and
 `--kube-context` (current context). The operator namespace defaults to
 `aiperf-system`, auto-detected by cluster-wide pod-label search. Commands that
 default their target read `~/.aiperf/last_kube_benchmark.json`.
@@ -124,9 +125,9 @@ aiperf kube results --from-pods --shutdown --namespace aiperf-bench
 Resource names are `aiperf-<name>` for the JobSet; the ConfigMap adds
 `-config`, the Role adds `-role`, the RoleBinding adds `-binding`. `<name>` is
 `--name` or the auto-generated `<model>-<endpoint-type>-<phase-type>` slug. The
-CLI prints one `Created <Kind>/<name>` line each; a
-`Created Namespace/aiperf-benchmarks` line is prepended only when `--namespace`
-is omitted, and an existing namespace is reused as `already exists`.
+CLI prints one `Created <Kind>/<name>` line each. The target namespace must
+already exist -- the CLI never creates it. An existing resource is reused and
+reported as `already exists`.
 
 Preview without submitting — works with no cluster and no kubeconfig; the
 memory estimate goes to stderr, so the redirect yields clean YAML:

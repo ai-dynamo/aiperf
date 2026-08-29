@@ -233,7 +233,7 @@ Relevant `KubeOptions` flags that shape the rendered manifests:
 | `--image` | config value, installed chart default (`--operator`), or `nvcr.io/nvidia/aiperf:latest` (`--no-operator`) | Explicit container-image override. An image authored in workload YAML remains authoritative when omitted. |
 | `--image-pull-policy` | `None` | `Always` / `IfNotPresent` / `Never`. |
 | `--name` | auto-generated | Human-readable DNS label, max 40 chars. |
-| `--namespace` | `aiperf-benchmarks` | Target namespace. |
+| `--namespace` | kubeconfig context namespace | Target namespace; required when your context does not set one. |
 | `--total-workers` | `10` | Total workers; divided across pods by `workers_per_pod`. |
 | `--ttl-seconds` | `300`. In `--no-operator` mode, when the flag is not set explicitly, `generate` overrides the default to `AIPERF_K8S_JOBSET_DIRECT_MODE_TTL_SECONDS` (8h / 28800s) so pods stay alive for `aiperf kube results`. | Seconds to keep pods after completion. |
 | `--node-selector`, `--tolerations` | `{}`, `[]` | Pod placement. |
@@ -291,22 +291,22 @@ when the resolved config requires parameter-sweep or multi-run orchestration,
 because a raw JobSet has no sweep-controller owner and would otherwise execute
 only the base cell.
 
-1. `v1` `Namespace` — always emitted first for the resolved `--namespace`
-   (default: `aiperf-benchmarks`). Applying this minimal manifest is
-   idempotent, so the complete generated stream also works when the target
-   namespace does not exist yet.
-2. `rbac.authorization.k8s.io/v1` `Role` — grants the benchmark pods
+The target namespace is not emitted -- it must already exist. Creating it
+would demand cluster-scoped namespace-create rights that most benchmark
+runners do not have.
+
+1. `rbac.authorization.k8s.io/v1` `Role` — grants the benchmark pods
    get/list/watch on `configmaps`, `services`, `endpoints`, `events`,
    `pods`, `pods/log`, `jobs`, and `jobsets/status`, plus
    get/list/watch/**patch** on `jobsets` and on `aiperfjobs` /
    `aiperfjobs/status`. `patch` is the only write verb; the pods share one
    ServiceAccount, so nothing here can create, replace, or delete an object.
-3. `rbac.authorization.k8s.io/v1` `RoleBinding` — binds the Role to
+2. `rbac.authorization.k8s.io/v1` `RoleBinding` — binds the Role to
    the pods' ServiceAccount (default: `default`).
-4. `v1` `ConfigMap` named `aiperf-<job_id>-config`, containing a single
+3. `v1` `ConfigMap` named `aiperf-<job_id>-config`, containing a single
    key `run_config.json` with the fully materialized `BenchmarkRun`
    (1 MiB hard cap — `generate` validates this before emitting).
-5. `jobset.x-k8s.io/v1alpha2` `JobSet` named `aiperf-<job_id>` — two
+4. `jobset.x-k8s.io/v1alpha2` `JobSet` named `aiperf-<job_id>` — two
    replicated jobs, one `controller` pod and N `workers` pods. GPU
    telemetry and server metrics are optional extra containers inside the
    controller pod, not separate pods.

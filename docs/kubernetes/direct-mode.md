@@ -130,10 +130,10 @@ Created ConfigMap/aiperf-<name>-config
 Created JobSet/aiperf-<name>
 ```
 
-A `Created Namespace/aiperf-benchmarks` line is prepended only when
-`--namespace` is omitted, in which case the CLI creates the default
-benchmark namespace (`aiperf-benchmarks`) itself. An already-existing
-namespace is reused and reported as `Namespace/<name> already exists`.
+The target namespace must already exist -- direct mode never creates one,
+because doing so would require cluster-scoped namespace-create rights that
+most benchmark runners do not have. Any resource that is already present is
+reused and reported as `<Kind>/<name> already exists`.
 
 ## Dry-run inspection
 

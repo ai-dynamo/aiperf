@@ -298,7 +298,7 @@ You will see the job phase, worker readiness (`ready/total`), and each status co
 Press **Ctrl+C** to detach. The benchmark continues running in the cluster. To cancel it, run `aiperf kube cancel` or patch the CR directly:
 
 ```bash
-kubectl patch aiperfjob <name> -n aiperf-benchmarks --type=merge -p '{"spec":{"cancel":true}}'
+kubectl patch aiperfjob <name> -n my-benchmarks --type=merge -p '{"spec":{"cancel":true}}'
 ```
 
 ---
@@ -517,8 +517,8 @@ aiperf kube list
 
 ```
 NAME                 NAMESPACE           PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
-dynamo-benchmark     aiperf-benchmarks   Completed  10/10    100%      142.3 rps   187.0 ms  5m
-disagg-test          aiperf-benchmarks   Running    10/10    42%       98.1 rps    201.4 ms  2m
+dynamo-benchmark     my-benchmarks       Completed  10/10    100%      142.3 rps   187.0 ms  5m
+disagg-test          my-benchmarks       Running    10/10    42%       98.1 rps    201.4 ms  2m
 ```
 
 `WORKERS` is `ready/total` and `LATENCY` is the p99 request latency. Use `--wide` to add model, endpoint, and error columns.

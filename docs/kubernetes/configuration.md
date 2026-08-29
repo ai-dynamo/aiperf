@@ -252,7 +252,7 @@ When using `aiperf kube profile`, you can set deployment options via CLI flags. 
 | `--image-pull-policy` | `spec.imagePullPolicy` | - | Image pull policy (Helm default: `IfNotPresent`) |
 | `--total-workers` | `spec.benchmark.runtime.workers` | 10 | Exact worker target (distributed across pods); when omitted, a YAML-authored `runtime.workers` wins before automatic sizing |
 | `--name` | `metadata.name` | auto-generated | Job name (DNS label, max 40 chars) |
-| `--namespace`, `-n` | `metadata.namespace` | `aiperf-benchmarks` | Target namespace |
+| `--namespace`, `-n` | `metadata.namespace` | kubeconfig context namespace | Target namespace; required when your context does not set one |
 | `--ttl-seconds` | `spec.ttlSecondsAfterFinished` | 300 | TTL after completion |
 | `--node-selector` | `spec.podTemplate.nodeSelector` | `{}` | Node selector labels |
 | `--tolerations` | `spec.podTemplate.tolerations` | `[]` | Pod tolerations |
@@ -400,20 +400,17 @@ Optional Plotly Dash sidecar for the operator Pod. Default off.
 
 See [`dashboard-ui.md`](dashboard-ui.md#isolated-plotly-dashboard-sidecar-opt-in) for the full architecture.
 
-### Benchmark Namespace
+### Benchmark RBAC Namespaces
 
 ```yaml
-benchmarkNamespace:
-  create: true
-  name: "aiperf-benchmarks"
+benchmarkRbacNamespaces: []
 ```
 
-`benchmarkNamespace.create` controls only whether the chart creates the
-namespace. The benchmark `Role` and `RoleBinding` in `benchmarkNamespace.name`
-are installed whenever `rbac.create` is `true` (the default) — including when
-the namespace already exists and `create` is `false`. Use
-`benchmarkRbacNamespaces` to provision the same namespace + RBAC pair in
-additional namespaces.
+The benchmark `Role` and `RoleBinding` are installed in the chart's release
+namespace whenever `rbac.create` is `true` (the default). List additional
+namespaces in `benchmarkRbacNamespaces` to install the same pair there — for
+example when each team runs benchmarks in its own namespace. The chart does
+not create any of these namespaces; they must already exist.
 
 ### Operator ServiceAccount
 

@@ -190,7 +190,7 @@ kubectl create secret docker-registry my-registry \
   --docker-server=nvcr.io \
   --docker-username='$oauthtoken' \
   --docker-password='YOUR_TOKEN' \
-  -n aiperf-benchmarks
+  -n my-benchmarks
 
 # Reference it when deploying
 aiperf kube profile ... --image-pull-secrets my-registry
@@ -213,7 +213,7 @@ Pass API keys to the benchmark pods without embedding them in the config:
 # Create a secret with your API key
 kubectl create secret generic llm-api-key \
   --from-literal=api-key='sk-...' \
-  -n aiperf-benchmarks
+  -n my-benchmarks
 
 # Reference it as an environment variable. Name the pod variable, and pass
 # `<secret>/<key>` as its value.
@@ -352,7 +352,7 @@ kubectl port-forward -n aiperf-system svc/aiperf-operator 8081:8081
 curl localhost:8081/api/v1/results
 
 # Get summary for a specific job
-curl localhost:8081/api/v1/analytics/summary/aiperf-benchmarks/my-benchmark
+curl localhost:8081/api/v1/analytics/summary/my-benchmarks/my-benchmark
 
 # Leaderboard across all benchmarks
 curl localhost:8081/api/v1/analytics/leaderboard
@@ -438,7 +438,7 @@ benchmark config) instead. See the
 
 ### Namespace Isolation
 
-By default, benchmarks run in `aiperf-benchmarks`. For multi-tenant setups, use separate namespaces:
+Benchmarks run in the namespace you name with `--namespace`. For multi-tenant setups, give each team its own:
 
 ```bash
 aiperf kube profile ... --namespace team-a-benchmarks --operator
@@ -494,12 +494,11 @@ helm upgrade aiperf-operator deploy/helm/aiperf-operator \
 helm uninstall aiperf-operator --namespace aiperf-system
 ```
 
-Both CRDs carry `helm.sh/resource-policy: keep`, so the `AIPerfJob` and `AIPerfSweep` CRDs -- and any existing custom resources -- survive the uninstall. The chart-created benchmark namespace carries the same annotation, so it also survives. To remove everything:
+Both CRDs carry `helm.sh/resource-policy: keep`, so the `AIPerfJob` and `AIPerfSweep` CRDs -- and any existing custom resources -- survive the uninstall. To remove everything:
 
 ```bash
 kubectl delete crd aiperfjobs.aiperf.nvidia.com
 kubectl delete crd aiperfsweeps.aiperf.nvidia.com
-kubectl delete namespace aiperf-benchmarks
 kubectl delete namespace aiperf-system
 ```
 

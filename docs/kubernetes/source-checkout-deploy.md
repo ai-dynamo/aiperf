@@ -124,13 +124,13 @@ kubectl create secret docker-registry aiperf-registry \
   --docker-password="${GITHUB_TOKEN}"
 ```
 
-The Helm install below references this secret for the operator. Benchmark jobs also need pull access in their namespace. The chart creates the default benchmark namespace `aiperf-benchmarks`, but Kubernetes secrets are namespace-scoped, so create the same pull secret there too if you use the default namespace:
+The Helm install below references this secret for the operator. Benchmark jobs also need pull access in the namespace you run them in. Kubernetes secrets are namespace-scoped, so create the same pull secret there:
 
 ```bash
-kubectl create namespace aiperf-benchmarks --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace <your-namespace> --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret docker-registry aiperf-registry \
-  --namespace aiperf-benchmarks \
+  --namespace <your-namespace> \
   --docker-server=<registry-host> \
   --docker-username=<username> \
   --docker-password=<token>
@@ -382,7 +382,7 @@ If the server is still starting and you intentionally want the benchmark to wait
 
 ### RBAC or namespace errors
 
-The Helm chart creates benchmark RBAC for `benchmarkNamespace.name` and any namespaces listed in `benchmarkRbacNamespaces`. If you run jobs in a different namespace, either install the chart with that namespace configured or add the namespace to `benchmarkRbacNamespaces`:
+The Helm chart creates benchmark RBAC in the release namespace and in any namespaces listed in `benchmarkRbacNamespaces`. If you run jobs in a different namespace, add that namespace to `benchmarkRbacNamespaces`:
 
 ```bash
 helm upgrade aiperf-operator deploy/helm/aiperf-operator \

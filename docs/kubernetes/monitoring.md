@@ -46,9 +46,9 @@ aiperf kube list
 
 ```
 NAME               NAMESPACE          PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
-qwen3-benchmark    aiperf-benchmarks  Running      10/10       67%    142.3 rps  318.7 ms  3m
-llama-throughput   aiperf-benchmarks  Completed    10/10      100%    137.9 rps  330.1 ms  15m
-mistral-test       aiperf-benchmarks  Failed         0/4         -            -         -  20m
+qwen3-benchmark    my-benchmarks      Running      10/10       67%    142.3 rps  318.7 ms  3m
+llama-throughput   my-benchmarks      Completed    10/10      100%    137.9 rps  330.1 ms  15m
+mistral-test       my-benchmarks      Failed         0/4         -            -         -  20m
 ```
 
 `WORKERS` is `ready/total`, `THROUGHPUT` is requests per second, and `LATENCY`
@@ -145,7 +145,7 @@ convention](./workflow.md#exit-code-convention-for-target-addressing-commands).
 The `debug` command runs a one-shot diagnostic analysis of your deployment:
 
 ```bash
-aiperf kube debug -n aiperf-benchmarks
+aiperf kube debug -n my-benchmarks
 ```
 
 It inspects:
@@ -181,7 +181,7 @@ aiperf kube debug --all-namespaces
 ### Sample Output
 
 ```
-Diagnostic Report: aiperf-benchmarks
+Diagnostic Report: my-benchmarks
 
 POD                              STATUS    RESTARTS  NODE       ISSUES
 aiperf-bench-controller-0-0      Running   0         node-1     0
@@ -425,8 +425,8 @@ finished benchmarks inside one with `aiperf kube cleanup`, or delete the
 namespace outright:
 
 ```bash
-aiperf kube cleanup --namespace aiperf-benchmarks-old --force
-kubectl delete namespace aiperf-benchmarks-old
+aiperf kube cleanup --namespace aiperf-bench-old --force
+kubectl delete namespace aiperf-bench-old
 ```
 
 ---

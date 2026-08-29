@@ -322,8 +322,8 @@ so set them on the operator deployment (`kubectl set env -n aiperf-system
 deploy/aiperf-operator -c operator KEY=VALUE` — `-c operator` matters, the
 Deployment also runs `results-server` and `dashboard` containers and `set env`
 defaults to all of them); `spec.podTemplate.env` has no effect on
-container resources. Default operator namespace `aiperf-system`, default
-benchmark namespace `aiperf-benchmarks`.
+container resources. Default operator namespace `aiperf-system`; the
+benchmark namespace is whatever you pass to `-n`/`--namespace`.
 
 | Variable | Default | What it does |
 |---|---|---|

@@ -49,8 +49,9 @@ pods use `--total-workers 80 -w 8`. A total that is neither <= workersPerPod nor
 a multiple of it is rejected rather than silently collapsed onto one pod.
 
 
-Defaults: benchmark namespace `aiperf-benchmarks`, operator namespace
-`aiperf-system` (auto-detected by cluster-wide pod-label search).
+The benchmark namespace comes from `-n`/`--namespace`, or your kubeconfig
+context when the flag is omitted; there is no fallback. Operator namespace
+defaults to `aiperf-system` (auto-detected by cluster-wide pod-label search).
 
 ## Rules that bite
 

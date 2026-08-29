@@ -176,7 +176,7 @@ curl http://localhost:8081/api/v1/jobs
   "jobs": [
     {
       "name": "aiperf-bench-7f2a",
-      "namespace": "aiperf-benchmarks",
+      "namespace": "my-benchmarks",
       "phase": "Running",
       "jobId": "aiperf-bench-7f2a",
       "created": "2026-04-22T14:08:11Z",
@@ -214,14 +214,14 @@ Archived (PVC-only) jobs have no cluster CR, so the response carries the archive
 | `name` | string | AIPerfJob CR name |
 
 ```bash
-curl http://localhost:8081/api/v1/jobs/aiperf-benchmarks/aiperf-bench-7f2a
+curl http://localhost:8081/api/v1/jobs/my-benchmarks/aiperf-bench-7f2a
 ```
 
 ```json
 {
   "job": {
     "name": "aiperf-bench-7f2a",
-    "namespace": "aiperf-benchmarks",
+    "namespace": "my-benchmarks",
     "phase": "Running"
   },
   "status": {
@@ -262,13 +262,13 @@ curl -X POST \
   -H "Authorization: Bearer ${AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN}" \
   -H 'Content-Type: application/json' \
   -d @- http://localhost:8081/api/v1/jobs <<'EOF'
-{"manifest": {"metadata": {"name": "aiperf-bench-7f2a", "namespace": "aiperf-benchmarks"}, "spec": {}}}
+{"manifest": {"metadata": {"name": "aiperf-bench-7f2a", "namespace": "my-benchmarks"}, "spec": {}}}
 EOF
 ```
 
 ```json
 {
-  "namespace": "aiperf-benchmarks",
+  "namespace": "my-benchmarks",
   "name": "aiperf-bench-7f2a",
   "uid": "9c1e6f3a-1c2b-4f4e-9a0f-7bb4a3d21b55"
 }
@@ -292,7 +292,7 @@ Request cancellation of a running benchmark by patching the CR's `spec.cancel` t
 ```bash
 curl -X POST \
   -H "Authorization: Bearer ${AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN}" \
-  http://localhost:8081/api/v1/jobs/aiperf-benchmarks/aiperf-bench-7f2a/cancel
+  http://localhost:8081/api/v1/jobs/my-benchmarks/aiperf-bench-7f2a/cancel
 ```
 
 ```json
@@ -391,7 +391,7 @@ curl http://localhost:8081/api/v1/results
 {
   "jobs": [
     {
-      "namespace": "aiperf-benchmarks",
+      "namespace": "my-benchmarks",
       "job_id": "aiperf-bench-7f2a",
       "file_count": 8,
       "total_size_bytes": 24837211,
@@ -409,7 +409,7 @@ curl http://localhost:8081/api/v1/results
 List every stored run epoch for one job, newest first, with `latest_epoch` naming the current `latest.txt` target (`null` when the job has no runs yet).
 
 ```bash
-curl http://localhost:8081/api/v1/results/aiperf-benchmarks/aiperf-bench-7f2a/runs
+curl http://localhost:8081/api/v1/results/my-benchmarks/aiperf-bench-7f2a/runs
 ```
 
 ### `GET /api/v1/results/{namespace}/{job_id}/runs/{epoch}`
@@ -417,12 +417,12 @@ curl http://localhost:8081/api/v1/results/aiperf-benchmarks/aiperf-bench-7f2a/ru
 List all result files for one run epoch.
 
 ```bash
-curl http://localhost:8081/api/v1/results/aiperf-benchmarks/aiperf-bench-7f2a/runs/1777472025
+curl http://localhost:8081/api/v1/results/my-benchmarks/aiperf-bench-7f2a/runs/1777472025
 ```
 
 ```json
 {
-  "namespace": "aiperf-benchmarks",
+  "namespace": "my-benchmarks",
   "job_id": "aiperf-bench-7f2a",
   "ready": true,
   "summary_available": true,
@@ -486,12 +486,12 @@ The `common.compression.select_encoding` helper picks the best encoding the clie
 ```bash
 # Native zstd — smallest over the wire
 curl -H "Accept-Encoding: zstd" \
-  http://localhost:8081/api/v1/results/aiperf-benchmarks/aiperf-bench-7f2a/runs/1777472025/profile_export_aiperf.csv \
+  http://localhost:8081/api/v1/results/my-benchmarks/aiperf-bench-7f2a/runs/1777472025/profile_export_aiperf.csv \
   --output profile.csv.zst
 
 # Let curl transparently decompress gzip
 curl --compressed \
-  http://localhost:8081/api/v1/results/aiperf-benchmarks/aiperf-bench-7f2a/runs/1777472025/profile_export_aiperf.csv \
+  http://localhost:8081/api/v1/results/my-benchmarks/aiperf-bench-7f2a/runs/1777472025/profile_export_aiperf.csv \
   -o profile.csv
 ```
 
@@ -545,7 +545,7 @@ curl "http://localhost:8081/api/v1/analytics/leaderboard?metric=request_throughp
   "order": "desc",
   "entries": [
     {
-      "namespace": "aiperf-benchmarks",
+      "namespace": "my-benchmarks",
       "job_id": "aiperf-bench-7f2a",
       "epoch": "1777472025",
       "value": 1842.3,
@@ -587,7 +587,7 @@ curl "http://localhost:8081/api/v1/analytics/history?metric=request_latency&stat
   "stat": "p99",
   "entries": [
     {
-      "namespace": "aiperf-benchmarks",
+      "namespace": "my-benchmarks",
       "job_id": "aiperf-bench-7f2a",
       "epoch": "1777472025",
       "value": 412.7,
@@ -614,7 +614,7 @@ curl http://localhost:8081/api/v1/analytics/scatter
 {
   "entries": [
     {
-      "namespace": "aiperf-benchmarks",
+      "namespace": "my-benchmarks",
       "job_id": "aiperf-bench-7f2a",
       "epoch": "1777472025",
       "model": "meta-llama/Llama-3.1-70B",
@@ -655,8 +655,8 @@ curl "http://localhost:8081/api/v1/analytics/compare?jobs=aiperf-bench-7f2a&jobs
       "stat": "avg",
       "unit": "requests/sec",
       "values": {
-        "aiperf-benchmarks/aiperf-bench-7f2a": 1842.3,
-        "aiperf-benchmarks/aiperf-bench-9d4c": 1790.8
+        "my-benchmarks/aiperf-bench-7f2a": 1842.3,
+        "my-benchmarks/aiperf-bench-9d4c": 1790.8
       }
     }
   ]
@@ -672,7 +672,7 @@ Passing a bare job name that matches runs in more than one namespace returns `40
 Return the full aggregated summary for one job (as a raw JSON object — no Pydantic schema because the shape is driven by the metrics plugin registry). Accepts an optional `?epoch=` query parameter; omitted, it follows `latest.txt`. Endpoint credentials in the embedded input config are redacted before the body is returned.
 
 ```bash
-curl http://localhost:8081/api/v1/analytics/summary/aiperf-benchmarks/aiperf-bench-7f2a
+curl http://localhost:8081/api/v1/analytics/summary/my-benchmarks/aiperf-bench-7f2a
 ```
 
 **Status codes**
@@ -703,7 +703,7 @@ Specs from the first three sources are passed through `redact_endpoint_spec` (`a
 Accepts an optional `?epoch=` query param (default: follow latest).
 
 ```bash
-curl http://localhost:8081/api/v1/config/aiperf-benchmarks/aiperf-bench-7f2a
+curl http://localhost:8081/api/v1/config/my-benchmarks/aiperf-bench-7f2a
 ```
 
 ```json
