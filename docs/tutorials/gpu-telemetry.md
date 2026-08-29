@@ -146,6 +146,7 @@ echo "DCGM GPU metrics are now available"
 
 ## Run AIPerf Benchmark
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -337,6 +338,7 @@ echo "DCGM GPU metrics are now available"
 
 ## Run AIPerf Benchmark
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -384,6 +386,7 @@ For simple local GPU monitoring without DCGM infrastructure, AIPerf supports dir
 
 ## Run AIPerf with pynvml
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -452,6 +455,7 @@ For inference workloads on **AMD Instinct GPUs** (MI300X, MI355X, etc.), use `--
 
 ### Run AIPerf with amdsmi
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model meta-llama/Llama-3.1-8B-Instruct \
@@ -497,6 +501,7 @@ AMD signals are emitted under their own vendor-namespaced field names (not alias
 
 For distributed setups with multiple nodes, you can collect GPU telemetry from all nodes simultaneously:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Example: Collecting telemetry from 3 nodes in a distributed setup
 # Note: The default endpoints http://localhost:9400/metrics and http://localhost:9401/metrics

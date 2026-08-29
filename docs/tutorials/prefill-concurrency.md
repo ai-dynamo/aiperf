@@ -83,6 +83,7 @@ This means:
 
 Benchmark with 16K token prompts, limiting how many can prefill simultaneously:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2.5-7B-Instruct \
@@ -129,6 +130,7 @@ JSON Export: artifacts/Qwen_Qwen2.5-7B-Instruct-chat-concurrency30/profile_expor
 
 Ramp prefill concurrency gradually to observe how TTFT changes as queue depth increases:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2.5-7B-Instruct \
@@ -184,6 +186,7 @@ Prefill Concurrency
 
 Prefill concurrency works with all scheduling modes:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2.5-7B-Instruct \
