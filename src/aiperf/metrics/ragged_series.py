@@ -75,10 +75,21 @@ class RaggedSeries:
     def get_values_for_mask(
         self, record_mask: NDArray[np.bool_]
     ) -> NDArray[np.float64]:
-        """Return values whose record is selected by the boolean mask."""
+        """Return values whose record is selected by the boolean mask.
+
+        Record indices for entries appended after the mask snapshot (index >=
+        len(record_mask)) would cause an out-of-bounds IndexError; clip them
+        out before applying the mask to handle the concurrent-ingestion race.
+        """
         if len(self._record_indices) == 0:
             return np.zeros(0, dtype=np.float64)
-        value_mask = record_mask[self._record_indices.data]
+        n = len(record_mask)
+        rec_idx = self._record_indices.data
+        in_bounds = rec_idx < n
+        # Use 0 as a safe placeholder for out-of-bounds indices so the array
+        # lookup is always valid; AND with in_bounds to exclude those entries.
+        safe_idx = np.where(in_bounds, rec_idx, 0)
+        value_mask = in_bounds & record_mask[safe_idx]
         return self._values.data[value_mask]
 
     def grouped_cumsum(self) -> NDArray[np.float64]:
