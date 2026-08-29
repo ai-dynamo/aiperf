@@ -549,6 +549,15 @@ Network latency calibration configuration. Controls the TCP-handshake RTT probes
 
 ## OPERATOR
 
+Kubernetes operator identity and namespace-ownership configuration. Read by the kopf operator process and by ``aiperf kube`` when it reports which operator owns a namespace.
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_OPERATOR_ID` | `''` | — | Operator identity used to claim namespaces via a coordination.k8s.io Lease named 'aiperf-operator'. Empty (the default) means this is the cluster-wide global operator: it writes no Lease and reconciles every namespace no scoped operator has claimed. Set a unique id to run a scoped operator alongside the global one. |
+| `AIPERF_OPERATOR_CLAIM_LEASE_SECONDS` | `300` | ≥ 10, ≤ 86400 | Duration in seconds of the namespace-ownership Lease. Renewed at one third of this interval. Deliberately long so a crash-looping scoped operator keeps its namespaces across restarts; only an uninstall lets the claim lapse to the global operator. |
+
+## OPERATOR
+
 Operator-service network identity. The operator Pod has three containers but only ONE FastAPI app: the ``results-server`` sidecar on ``resultsServer.port`` (8081 in the chart) hosts every ``/api/v1/*`` router (jobs, sweeps, results, config, admin, analytics, dashboard_proxy). The ``operator`` container on port 8080 runs kopf only — its sole HTTP surface there is ``/healthz``, with Prometheus ``/metrics`` on a separate server bound to ``METRICS_PORT`` (9090 in the chart). So there is no separate "sweeps API URL" and "results API URL" — one base URL, pointing at the results-server. Used when the operator stamps absolute URLs onto CR status (e.g. ``AIPerfSweep.status.apiUrl``, ``AIPerfSweep.status.runsTruncated.fetchURL``) that external clients dereference to fetch results, and when in-pod consumers (e.g. the sweep-controller's empty-summary fallback) need the operator's API endpoint.
 
 | Environment Variable | Default | Constraints | Description |

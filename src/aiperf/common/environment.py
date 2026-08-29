@@ -1032,6 +1032,36 @@ class _MetricsSettings(BaseSettings):
     )
 
 
+class _OperatorSettings(BaseSettings):
+    """Kubernetes operator identity and namespace-ownership configuration.
+
+    Read by the kopf operator process and by ``aiperf kube`` when it reports
+    which operator owns a namespace.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_OPERATOR_",
+    )
+
+    ID: str = Field(
+        default="",
+        description="Operator identity used to claim namespaces via a "
+        "coordination.k8s.io Lease named 'aiperf-operator'. Empty (the default) "
+        "means this is the cluster-wide global operator: it writes no Lease and "
+        "reconciles every namespace no scoped operator has claimed. Set a unique "
+        "id to run a scoped operator alongside the global one.",
+    )
+    CLAIM_LEASE_SECONDS: int = Field(
+        default=300,
+        ge=10,
+        le=86400,
+        description="Duration in seconds of the namespace-ownership Lease. "
+        "Renewed at one third of this interval. Deliberately long so a "
+        "crash-looping scoped operator keeps its namespaces across restarts; "
+        "only an uninstall lets the claim lapse to the global operator.",
+    )
+
+
 class _OTelSettings(BaseSettings):
     """OpenTelemetry metrics streaming configuration.
 
@@ -2412,6 +2442,10 @@ class _Environment(BaseSettings):
     MLFLOW: _MLflowSettings = Field(
         default_factory=_MLflowSettings,
         description="MLflow export settings",
+    )
+    OPERATOR: _OperatorSettings = Field(
+        default_factory=_OperatorSettings,
+        description="Kubernetes operator identity and namespace-ownership settings",
     )
     OTEL: _OTelSettings = Field(
         default_factory=_OTelSettings,

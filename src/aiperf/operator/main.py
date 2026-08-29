@@ -29,6 +29,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -60,12 +61,24 @@ from aiperf.operator.handlers.sweep import child_rollup as sweep_rollup
 from aiperf.operator.handlers.sweep import create as sweep_create
 from aiperf.operator.handlers.sweep import lifecycle as sweep_lifecycle
 from aiperf.operator.metrics import start_metrics_server, track_handler
+from aiperf.operator.namespace_claim import (
+    NamespaceClaim,
+    NamespaceClaimConflict,
+    watched_namespaces_from_argv,
+)
 
 AIPERF_SWEEPS_PLURAL = "aiperfsweeps"
 
 logger = logging.getLogger(__name__)
 
 _sweep_results_retention_task: asyncio.Task[None] | None = None
+
+_CLAIMS = NamespaceClaim()
+
+
+def owns_namespace(namespace: str, **_: Any) -> bool:
+    """Whether this operator reconciles resources in namespace."""
+    return _CLAIMS.owns(namespace)
 
 
 @kopf.on.login()
@@ -97,7 +110,7 @@ def configure(settings: kopf.OperatorSettings, **_: Any) -> None:
     start_metrics_server(OperatorEnvironment.METRICS_PORT)
 
 
-@kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL)
+@kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, when=owns_namespace)
 @track_handler("on_create")
 async def on_create(
     body: dict[str, Any],
@@ -114,7 +127,7 @@ async def on_create(
     )
 
 
-@kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL)
+@kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, when=owns_namespace)
 @track_handler("on_delete")
 async def on_delete(
     name: str,
@@ -127,7 +140,13 @@ async def on_delete(
     await lifecycle.on_delete(name=name, namespace=namespace, uid=uid, status=status)
 
 
-@kopf.on.update(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="spec.cancel")
+@kopf.on.update(
+    AIPERF_GROUP,
+    AIPERF_VERSION,
+    AIPERF_PLURAL,
+    field="spec.cancel",
+    when=owns_namespace,
+)
 @track_handler("on_cancel")
 async def on_cancel(
     body: dict[str, Any],
@@ -156,6 +175,7 @@ async def on_cancel(
     AIPERF_VERSION,
     AIPERF_PLURAL,
     field="spec.timeoutSeconds",
+    when=owns_namespace,
 )
 @track_handler("on_timeout_update")
 async def on_timeout_update(
@@ -172,6 +192,7 @@ async def on_timeout_update(
     AIPERF_VERSION,
     AIPERF_PLURAL,
     annotations={Annotations.BENCHMARK_COMPLETE: "true"},
+    when=owns_namespace,
 )
 @track_handler("on_benchmark_complete")
 async def on_benchmark_complete(
@@ -194,7 +215,7 @@ async def on_benchmark_complete(
     )
 
 
-@kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
+@kopf.on.create(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL, when=owns_namespace)
 @track_handler("on_aiperfsweep_create")
 async def on_aiperfsweep_create(
     body: dict[str, Any],
@@ -210,7 +231,13 @@ async def on_aiperfsweep_create(
     )
 
 
-@kopf.on.update(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL, field="spec.cancel")
+@kopf.on.update(
+    AIPERF_GROUP,
+    AIPERF_VERSION,
+    AIPERF_SWEEPS_PLURAL,
+    field="spec.cancel",
+    when=owns_namespace,
+)
 @track_handler("on_aiperfsweep_cancel")
 async def on_aiperfsweep_cancel(
     body: dict[str, Any],
@@ -231,6 +258,7 @@ async def on_aiperfsweep_cancel(
     AIPERF_VERSION,
     AIPERF_SWEEPS_PLURAL,
     field="spec.ttlSecondsAfterFinished",
+    when=owns_namespace,
 )
 @track_handler("on_aiperfsweep_ttl_update")
 async def on_aiperfsweep_ttl_update(
@@ -937,13 +965,14 @@ async def _resolve_sweep_harvest_identity(
     return str(epoch), sweep_uid
 
 
-@kopf.on.resume(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
+@kopf.on.resume(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL, when=owns_namespace)
 @kopf.on.field(
     AIPERF_GROUP,
     AIPERF_VERSION,
     AIPERF_SWEEPS_PLURAL,
     field="status.aggregation.phase",
     new="Complete",
+    when=owns_namespace,
 )
 @track_handler("on_aiperfsweep_aggregation_complete")
 async def on_aiperfsweep_aggregation_complete(
@@ -1108,7 +1137,13 @@ async def on_aiperfsweep_aggregation_complete(
     )
 
 
-@kopf.on.field(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="status.phase")
+@kopf.on.field(
+    AIPERF_GROUP,
+    AIPERF_VERSION,
+    AIPERF_PLURAL,
+    field="status.phase",
+    when=owns_namespace,
+)
 @track_handler("on_aiperfjob_phase_transition")
 async def on_aiperfjob_phase_transition(
     body: dict[str, Any],
@@ -1126,7 +1161,13 @@ async def on_aiperfjob_phase_transition(
     )
 
 
-@kopf.on.field(AIPERF_GROUP, AIPERF_VERSION, AIPERF_PLURAL, field="status.subPhase")
+@kopf.on.field(
+    AIPERF_GROUP,
+    AIPERF_VERSION,
+    AIPERF_PLURAL,
+    field="status.subPhase",
+    when=owns_namespace,
+)
 @track_handler("on_controller_subphase")
 async def on_controller_subphase(
     *,
@@ -1150,6 +1191,7 @@ async def on_controller_subphase(
     AIPERF_VERSION,
     AIPERF_PLURAL,
     field="status.controllerFailure",
+    when=owns_namespace,
 )
 @track_handler("on_controller_failure")
 async def on_controller_failure(
@@ -1173,6 +1215,7 @@ async def on_controller_failure(
     "v1",
     "pods",
     labels={"jobset.sigs.k8s.io/jobset-name": kopf.PRESENT},
+    when=owns_namespace,
 )
 @track_handler("on_pod_container_status_change")
 async def on_pod_container_status_change(
@@ -1218,6 +1261,7 @@ async def on_pod_container_status_change(
     JOBSET_VERSION,
     JOBSET_PLURAL,
     field="status.conditions",
+    when=owns_namespace,
 )
 @track_handler("on_jobset_conditions")
 async def on_jobset_conditions(
@@ -1245,6 +1289,7 @@ async def on_jobset_conditions(
     JOBSET_VERSION,
     JOBSET_PLURAL,
     field="status.replicatedJobsStatus",
+    when=owns_namespace,
 )
 @track_handler("on_jobset_replicated_jobs_status")
 async def on_jobset_replicated_jobs_status(
@@ -1262,7 +1307,7 @@ async def on_jobset_replicated_jobs_status(
     )
 
 
-@kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL)
+@kopf.on.delete(AIPERF_GROUP, AIPERF_VERSION, AIPERF_SWEEPS_PLURAL, when=owns_namespace)
 @track_handler("on_aiperfsweep_delete")
 async def on_aiperfsweep_delete(
     *,
@@ -1293,6 +1338,7 @@ async def on_aiperfsweep_delete(
     AIPERF_SWEEPS_PLURAL,
     interval=OperatorEnvironment.MONITOR.INTERVAL,
     initial_delay=OperatorEnvironment.MONITOR.INITIAL_DELAY,
+    when=owns_namespace,
 )
 @track_handler("cleanup_old_sweeps")
 async def cleanup_old_sweeps(
@@ -1314,6 +1360,7 @@ async def cleanup_old_sweeps(
     AIPERF_PLURAL,
     interval=OperatorEnvironment.MONITOR.INTERVAL,
     initial_delay=OperatorEnvironment.MONITOR.INITIAL_DELAY,
+    when=owns_namespace,
 )
 @track_handler("startup_issue_deadline")
 async def startup_issue_deadline(
@@ -1341,6 +1388,7 @@ async def startup_issue_deadline(
     AIPERF_PLURAL,
     interval=OperatorEnvironment.MONITOR.INTERVAL,
     initial_delay=OperatorEnvironment.MONITOR.INITIAL_DELAY,
+    when=owns_namespace,
 )
 @track_handler("heartbeat_watchdog")
 async def heartbeat_watchdog(
@@ -1381,6 +1429,7 @@ async def monitor_progress(
     interval=OperatorEnvironment.RESULTS.CLEANUP_INTERVAL_SECONDS,
     initial_delay=OperatorEnvironment.RESULTS.CLEANUP_INITIAL_DELAY_SECONDS,
     idle=OperatorEnvironment.RESULTS.CLEANUP_IDLE_SECONDS,
+    when=owns_namespace,
 )
 @track_handler("cleanup_old_results")
 async def cleanup_old_results(
@@ -1391,6 +1440,28 @@ async def cleanup_old_results(
 ) -> None:
     """Clean up old results based on TTL."""
     await cleanup.cleanup_old_results(body=body, status=status, name=name)
+
+
+@kopf.on.startup()
+async def claim_watched_namespaces(**_: Any) -> None:
+    """Claim the namespaces this operator was scoped to, then renew on a timer.
+
+    A scoped operator (``AIPERF_OPERATOR_ID`` set) leases every namespace it
+    was given via ``--namespace``; the global operator writes nothing and just
+    learns which namespaces are already claimed. Startup fails loudly on a
+    conflict rather than quietly reconciling somebody else's jobs.
+    """
+    namespaces = watched_namespaces_from_argv(sys.argv)
+    try:
+        await _CLAIMS.start(namespaces)
+    except NamespaceClaimConflict as exc:
+        raise kopf.PermanentError(str(exc)) from exc
+    if _CLAIMS.identity:
+        logger.info(
+            "Operator %r claimed namespaces %s",
+            _CLAIMS.identity,
+            ", ".join(namespaces) or "(none)",
+        )
 
 
 @kopf.on.startup()
@@ -1481,6 +1552,7 @@ async def _run_sweep_results_retention(
 async def close_runs_index(**_: Any) -> None:
     """Close the runs_index SQLite connection on operator shutdown."""
     global _sweep_results_retention_task
+    await _CLAIMS.stop()
     if _sweep_results_retention_task is not None:
         _sweep_results_retention_task.cancel()
         await asyncio.gather(_sweep_results_retention_task, return_exceptions=True)
