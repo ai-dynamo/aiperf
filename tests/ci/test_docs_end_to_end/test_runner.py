@@ -350,9 +350,11 @@ def run_aiperf_command(
     ``docker exec``.  For container execution a watchdog timer sends SIGKILL to
     the process group after AIPERF_COMMAND_TIMEOUT seconds.
     """
-    command = cmd.command.replace(
-        "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
-    )
+    command = cmd.command
+    if not re.search(r"--ui(?:-type)?\s+\S", command):
+        command = command.replace(
+            "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
+        )
     prefix = f"AIPERF[{cmd.tag_name}]"
 
     if container_id is None:
