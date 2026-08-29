@@ -560,6 +560,25 @@ class TestBaseCommunicationDualBind:
         )
         assert client.additional_bind_address == "tcp://0.0.0.0:5564"
 
+    def test_create_streaming_router_client_attaches_lifecycle_by_default(self) -> None:
+        comm = ZMQDualBindCommunication()
+        client = comm.create_streaming_router_client(
+            address="tcp://127.0.0.1:5599",
+            bind=True,
+        )
+        assert client in comm._children
+
+    def test_create_streaming_router_client_can_opt_out_of_lifecycle(self) -> None:
+        """The control ROUTER is owned by SystemController: it must be started
+        ahead of comms and outlive comms.stop(), so comms must not manage it."""
+        comm = ZMQDualBindCommunication()
+        client = comm.create_streaming_router_client(
+            address="tcp://127.0.0.1:5598",
+            bind=True,
+            attach_lifecycle=False,
+        )
+        assert client not in comm._children
+
     def test_create_pull_client_without_additional_bind(self) -> None:
         comm = ZMQDualBindCommunication()
         client = comm.create_pull_client(

@@ -644,6 +644,7 @@ class FakeCommunication(BaseCommunication):
         bind: bool = False,
         socket_ops: dict | None = None,  # noqa: ARG002
         max_pull_concurrency: int | None = None,  # noqa: ARG002
+        attach_lifecycle: bool = True,  # noqa: ARG002
         **kwargs,
     ) -> FakeCommunicationClient:
         """Create fake client and auto-wire to counterparts."""
@@ -711,7 +712,8 @@ class FakeCommunication(BaseCommunication):
 
         self.clients_cache[cache_key] = client
         # Note: Don't call attach_child_lifecycle - fake clients can be created
-        # after the fake is started, and don't need lifecycle management
+        # after the fake is started, and don't need lifecycle management. This is
+        # why attach_lifecycle is accepted for signature parity but never read.
         return client
 
     def clients_by_type(

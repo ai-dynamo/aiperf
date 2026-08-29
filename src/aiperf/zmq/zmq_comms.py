@@ -67,6 +67,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
         *,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        attach_lifecycle: bool = True,
         **kwargs,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
@@ -78,6 +79,8 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
             socket_ops: Additional socket options to set.
             max_pull_concurrency: The maximum number of concurrent pull requests to allow. (Only used for pull clients)
             additional_bind_address: Optional second address to bind to for dual-bind mode (e.g., IPC + TCP).
+            attach_lifecycle: Whether this communication layer should manage the client's lifecycle.
+                Pass False when the caller must own the client's start/stop ordering itself.
         """
         if (client_type, address, bind) in self._clients_cache:
             return self._clients_cache[(client_type, address, bind)]
@@ -101,7 +104,12 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
         )
 
         self._clients_cache[(client_type, address, bind)] = client
-        self.attach_child_lifecycle(client)
+        # attach_lifecycle=False lets a caller own the client's lifecycle itself
+        # (the SystemController's control ROUTER must be started ahead of comms
+        # and must outlive comms.stop()). The client is still built through this
+        # factory so FakeCommunication can substitute a fake in tests.
+        if attach_lifecycle:
+            self.attach_child_lifecycle(client)
         return client
 
 
