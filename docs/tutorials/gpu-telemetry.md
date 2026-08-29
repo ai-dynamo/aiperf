@@ -338,7 +338,6 @@ echo "DCGM GPU metrics are now available"
 
 ## Run AIPerf Benchmark
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -362,8 +361,6 @@ aiperf profile \
 
 > [!TIP]
 > The `dashboard` keyword enables a live terminal UI for real-time GPU telemetry visualization. Press `5` to maximize the GPU Telemetry panel during the benchmark run.
-
----
 
 # 3: Using pynvml (Local GPU Monitoring)
 

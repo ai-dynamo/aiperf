@@ -240,7 +240,6 @@ aiperf profile \
 
 For faster encoding with NVIDIA GPUs, using an FFmpeg built with NVENC:
 
-<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -513,7 +512,6 @@ aiperf profile \
 AIPerf supports both **WebM** (default) and **MP4** formats:
 
 **WebM format (default):**
-<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \

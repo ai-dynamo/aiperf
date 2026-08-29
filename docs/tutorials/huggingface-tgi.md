@@ -23,7 +23,7 @@ To launch a Hugging Face TGI server, use the official `ghcr.io` image:
 
 <!-- setup-tgi-default-endpoint-server -->
 ```bash
-docker run --gpus all --rm -it \
+docker run --gpus all --rm \
   -p 8080:80 \
   -e MODEL_ID=TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
   ghcr.io/huggingface/text-generation-inference:latest
@@ -83,16 +83,13 @@ You can also provide your own text prompts using the
 --input-file option.
 The file should be in JSONL format and contain text entries.
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 cat > inputs.jsonl <<'EOF'
 {"text": "Hello TinyLlama!"}
 {"text": "Tell me a joke."}
 EOF
-```
-Then run:
 
-<!-- aiperf-run-tgi-default-endpoint-server -->
-```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
     --endpoint-type huggingface_generate \
@@ -147,18 +144,14 @@ JSON Export: artifacts/TinyLlama_TinyLlama-1.1B-Chat-v1.0-generate-concurrency1/
 
 Create your own prompt file in JSONL format:
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 cat > inputs.jsonl <<'EOF'
 {"text": "Explain quantum computing in simple terms."}
 {"text": "Write a haiku about rain."}
 {"text": "Summarize the causes of the French Revolution."}
 EOF
-```
 
-Then run:
-
-<!-- aiperf-run-tgi-default-endpoint-server -->
-```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
     --endpoint-type huggingface_generate \

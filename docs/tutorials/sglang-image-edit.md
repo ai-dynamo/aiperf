@@ -111,18 +111,14 @@ aiperf profile \
 ### Image Edit Using an Input File
 For deterministic prompt + reference image sequences, use a JSONL input file. Each line must include both the prompt (`text`) and the reference image (`image`, a local path or URL) — the `image_edit` endpoint rejects turns without a reference image, and the `single_turn` loader does not synthesize one.
 
-**Create an input file** (replace the paths/URLs with real reference images you want to edit):
+<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > edit_prompts.jsonl << 'EOF'
 {"text": "Convert this scene to a watercolor painting", "image": "/path/to/ref1.png"}
 {"text": "Make the background a sunset", "image": "/path/to/ref2.png"}
 {"text": "Add snow to the trees", "image": "https://example.com/ref3.png"}
 EOF
-```
 
-**Run the benchmark:**
-<!-- aiperf-run-sglang-image-generation-endpoint-server -->
-```bash
 aiperf profile \
   --model black-forest-labs/FLUX.2-klein-4B \
   --tokenizer builtin \
@@ -158,6 +154,12 @@ Use `--export-level raw` to capture the raw input/output payloads, which lets yo
 
 <!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
+cat > edit_prompts.jsonl << 'EOF'
+{"text": "Convert this scene to a watercolor painting", "image": "/path/to/ref1.png"}
+{"text": "Make the background a sunset", "image": "/path/to/ref2.png"}
+{"text": "Add snow to the trees", "image": "https://example.com/ref3.png"}
+EOF
+
 aiperf profile \
   --model black-forest-labs/FLUX.2-klein-4B \
   --tokenizer builtin \

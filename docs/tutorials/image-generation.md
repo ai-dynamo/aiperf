@@ -101,17 +101,14 @@ Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
 ### Text-to-Image Generation Using Input File
 **Create an input file:**
 
+<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > image_prompts.jsonl << 'EOF'
 {"text": "A serene mountain landscape at sunset"}
 {"text": "A futuristic city with flying cars"}
 {"text": "A cute robot playing with a kitten"}
 EOF
-```
 
-**Run the benchmark:**
-<!-- aiperf-run-sglang-image-generation-endpoint-server -->
-```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
   --tokenizer builtin \
@@ -124,8 +121,6 @@ aiperf profile \
   --concurrency 1 \
   --request-count 3
 ```
-
-**Done!** This sends 3 requests to `http://localhost:30000/v1/images/generations`
 
 **Sample Output (Successful Run):**
 ```
@@ -189,22 +184,14 @@ Image generation endpoints report a focused set of metrics. Unlike LLM text endp
 
 ## Running the benchmark (advanced usage)
 
-**Create an input file:**
+<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > image_prompts.jsonl << 'EOF'
 {"text": "A serene mountain landscape at sunset"}
 {"text": "A futuristic city with flying cars"}
 {"text": "A cute robot playing with a kitten"}
 EOF
-```
 
-**Run the benchmark:**
-
-> [!WARNING]
-> Use `--export-level raw` to get the raw input/output payloads.
-
-<!-- aiperf-run-sglang-image-generation-endpoint-server -->
-```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
   --tokenizer builtin \

@@ -20,7 +20,7 @@ Launch a Hugging Face Text Embeddings Inference (TEI) container in re-ranker mod
 
 <!-- setup-tei-rerank-endpoint-server -->
 ```bash
-docker run --gpus all --rm -it \
+docker run --gpus all --rm \
   -p 8080:80 \
   -e MODEL_ID=BAAI/bge-reranker-base \
   ghcr.io/huggingface/text-embeddings-inference:latest \
@@ -80,6 +80,7 @@ JSON Export: artifacts/BAAI_bge-reranker-base-rankings/profile_export_aiperf.jso
 
 Create a file named rankings.jsonl where each line represents a ranking request with a query and one or more passages.
 
+<!-- aiperf-run-tei-rerank-endpoint-server -->
 ```bash
 cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 0?"]},{"name":"passages","contents":["AI passage 0"]}]}
@@ -88,11 +89,7 @@ cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 3?"]},{"name":"passages","contents":["AI passage 3"]}]}
 {"texts":[{"name":"query","contents":["What is AI topic 4?"]},{"name":"passages","contents":["AI passage 4"]}]}
 EOF
-```
 
-Run AIPerf using the following command:
-<!-- aiperf-run-tei-rerank-endpoint-server -->
-```bash
 aiperf profile \
     -m BAAI/bge-reranker-base \
     --endpoint-type hf_tei_rankings \
@@ -138,7 +135,7 @@ aiperf profile \
 
 ### Profile using Custom Inputs
 
-Create a file named `rankings.jsonl`:
+<!-- aiperf-run-cohere-rerank-endpoint-server -->
 ```bash
 cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 0?"]},{"name":"passages","contents":["AI passage 0"]}]}
@@ -147,12 +144,7 @@ cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 3?"]},{"name":"passages","contents":["AI passage 3"]}]}
 {"texts":[{"name":"query","contents":["What is AI topic 4?"]},{"name":"passages","contents":["AI passage 4"]}]}
 EOF
-```
 
-Run AIPerf:
-
-<!-- aiperf-run-cohere-rerank-endpoint-server -->
-```bash
 aiperf profile \
     -m BAAI/bge-reranker-v2-m3 \
     --endpoint-type cohere_rankings \

@@ -161,18 +161,14 @@ sglang serve \
 
 ### Basic Usage: Text-to-Video with Input File
 
-**Create an input file with video prompts:**
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 cat > video_prompts.jsonl << 'EOF'
 {"text": "A serene lake at sunset with mountains in the background"}
 {"text": "A cat playing with a ball of yarn in a cozy living room"}
 {"text": "A futuristic city with flying cars and neon lights"}
 EOF
-```
 
-**Run the benchmark:**
-<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
-```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
     --tokenizer builtin \

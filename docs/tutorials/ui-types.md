@@ -47,7 +47,6 @@ The full-featured TUI provides:
 - Worker status monitoring
 - Interactive display with multiple tabs
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \

@@ -38,7 +38,7 @@ export IMG_NAME="nvcr.io/nim/nvidia/$CONTAINER_NAME:1.7.0"
 export LOCAL_NIM_CACHE=~/.cache/nim
 mkdir -p "$LOCAL_NIM_CACHE"
 
-docker run -it --rm --name=$CONTAINER_NAME \
+docker run --rm --name=$CONTAINER_NAME \
   --runtime=nvidia \
   --gpus all \
   --shm-size=16GB \
@@ -102,23 +102,14 @@ Bounding box coordinates are normalized (0-1 range) relative to the top-left cor
 
 Create a JSONL input file with image paths or URLs:
 
+<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
 {"image": "https://assets.ngc.nvidia.com/products/api-catalog/nemo-retriever/object-detection/page-elements-example-1.jpg"}
 {"image": "/path/to/local/document_page.png"}
 {"image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..."}
 EOF
-```
 
-Each line should contain an `image` field with either:
-- A URL to a remote image
-- A local file path (automatically encoded to base64)
-- A base64 data URL (passed through as-is)
-
-Run AIPerf against the image retrieval endpoint:
-
-<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
-```bash
 aiperf profile \
     --endpoint-type image_retrieval \
     --model nvidia/nemoretriever-page-elements-v3 \
@@ -128,6 +119,11 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
+
+Each line should contain an `image` field with either:
+- A URL to a remote image
+- A local file path (automatically encoded to base64)
+- A base64 data URL (passed through as-is)
 
 **Sample Output:**
 ```
@@ -158,15 +154,13 @@ Since this endpoint does not produce tokens, no TTFT or ITL metrics are reported
 
 You can send multiple images in a single request:
 
+<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 cat <<EOF > multi_image_inputs.jsonl
 {"images": ["https://example.com/page1.png", "https://example.com/page2.png"]}
 {"images": ["/path/to/chart1.jpg", "/path/to/chart2.jpg", "/path/to/chart3.jpg"]}
 EOF
-```
 
-<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
-```bash
 aiperf profile \
     --endpoint-type image_retrieval \
     --model nvidia/nemoretriever-page-elements-v3 \
