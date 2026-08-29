@@ -30,6 +30,7 @@ echo "$NGC_API_KEY" | docker login nvcr.io --username '$oauthtoken' --password-s
 
 Launch the NIM for Object Detection (page elements):
 
+<!-- setup-nim-image-retrieval-endpoint-server -->
 ```bash
 export NIM_MODEL_NAME=nvidia/nemoretriever-page-elements-v3
 export CONTAINER_NAME=$(basename $NIM_MODEL_NAME)
@@ -47,12 +48,15 @@ docker run -it --rm --name=$CONTAINER_NAME \
   -p 8000:8000 \
   $IMG_NAME
 ```
+<!-- /setup-nim-image-retrieval-endpoint-server -->
 
 Wait for the server to start, then verify it is ready:
 
+<!-- health-check-nim-image-retrieval-endpoint-server -->
 ```bash
-curl -s http://localhost:8000/v1/health/ready
+timeout 900 bash -c 'while ! curl -sf http://localhost:8000/v1/health/ready; do sleep 2; done' || { echo "NIM not ready after 15min"; exit 1; }
 ```
+<!-- /health-check-nim-image-retrieval-endpoint-server -->
 
 ### Verify with a Test Request
 
@@ -113,6 +117,7 @@ Each line should contain an `image` field with either:
 
 Run AIPerf against the image retrieval endpoint:
 
+<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 aiperf profile \
     --endpoint-type image_retrieval \
@@ -160,6 +165,7 @@ cat <<EOF > multi_image_inputs.jsonl
 EOF
 ```
 
+<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 aiperf profile \
     --endpoint-type image_retrieval \
@@ -179,6 +185,7 @@ When sending multiple images per request, the image throughput metric reflects t
 
 Use `--extra-inputs` to pass additional parameters to the NIM endpoint:
 
+<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 aiperf profile \
     --endpoint-type image_retrieval \
