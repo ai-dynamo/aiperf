@@ -576,6 +576,36 @@ class EndpointConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def _validate_responses_store_requires_server_token_count(self) -> Self:
+        """Require server token counts when Responses stateful storage is requested.
+
+        Passing ``store: true`` via ``--extra-inputs`` opts the Responses API into
+        server-side persistence, which enables ``previous_response_id`` chaining:
+        prior turns live server-side and only the newest turn is sent on the wire.
+        Client-side ISL (the default) then reflects only that newest turn and
+        undercounts the combined prompt the model actually prefills. The true count
+        is only recoverable from the server's ``usage.prompt_tokens``, so require
+        ``--use-server-token-count``.
+        """
+        store = self.extra.get("store")
+        store_enabled = store is True or (
+            isinstance(store, str) and store.strip().lower() == "true"
+        )
+        if (
+            self.type == EndpointType.RESPONSES
+            and store_enabled
+            and not self.use_server_token_count
+        ):
+            raise ValueError(
+                "Responses endpoint with --extra-inputs store:true enables "
+                "previous_response_id chaining, which sends only the newest turn "
+                "on the wire; client-side Input Sequence Length would undercount "
+                "the server-side prompt. Add --use-server-token-count so ISL comes "
+                "from the server's usage.prompt_tokens, or remove store:true."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_wait_for_model_coherent(self) -> Self:
         """Reject configurations where probe sub-options are set to non-default
         values without enabling the probe itself (timeout > 0). Catches typos like

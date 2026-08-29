@@ -253,10 +253,41 @@ aiperf profile \
 
 ### Stateful Chaining with `previous_response_id`
 
-When running multi-turn benchmarks with `--endpoint-type responses`:
-- On **Turn 0**, AIPerf sends the initial prompt and captures the server-generated `response.id` (e.g. `resp_<hash>`) from the `response.created` SSE event (or non-streaming response object).
-- On **Turn 1+**, AIPerf automatically sets `previous_response_id: <resp_id>` in the payload and sends only the single newest turn in the `input` array rather than re-sending the entire accumulated conversation history.
-- When server-side conversation storage is required (e.g., vLLM with `VLLM_ENABLE_RESPONSES_API_STORE=1`), enable `store: true` via `--extra-inputs '{"store": true}'`.
+Stateful chaining is **opt-in and driven by the server's `store` field**. It only
+activates when the server confirms it persisted the previous response (`store: true`
+on the response object). Enable it by requesting storage:
+
+```bash
+--extra-inputs '{"store": true}'
+```
+
+Some backends also require a server-side flag (e.g. vLLM with
+`VLLM_ENABLE_RESPONSES_API_STORE=1`). If the server does not store the response,
+AIPerf keeps sending the full history and never chains — so a non-storing server
+never breaks the run.
+
+> **Startup requirement:** requesting `store: true` on `--endpoint-type responses`
+> is rejected at startup unless [`--use-server-token-count`](#server-token-counts)
+> is also set. Chaining sends only the newest turn on the wire, so client-side ISL
+> would undercount the server-side prompt; server-reported token counts are the
+> only accurate source. Add `--use-server-token-count`, or drop `store: true` to
+> keep sending the full history client-side.
+
+When chaining is active with `--endpoint-type responses`:
+- On **Turn 0**, AIPerf sends the initial prompt and captures the server-generated `response.id` (e.g. `resp_<hash>`) from the response object — but only if that object reports `store: true`.
+- On **Turn 1+**, AIPerf sets `previous_response_id: <resp_id>` and sends only the single newest turn in the `input` array rather than re-sending the entire accumulated conversation history.
+
+**Scope:** chaining is applied only in the default delta context mode
+(`deltas_without_responses`), where the newest turn is a genuine delta. The
+`*_with_responses` context modes carry full per-turn history and are left
+unchained to avoid sending the conversation twice.
+
+> **Input Sequence Length note:** because a chained turn only puts the newest turn
+> on the wire (the prior history lives server-side), the default client-side ISL
+> reflects just that turn and undercounts the prompt the server actually prefills.
+> Use [`--use-server-token-count`](#server-token-counts) for accurate multi-turn
+> ISL when chaining is enabled. AIPerf emits a one-time warning if chaining runs
+> without it.
 
 See the [Multi-Turn Conversations](multi-turn.md) tutorial for details on conversation control parameters.
 

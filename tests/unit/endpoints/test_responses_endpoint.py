@@ -973,12 +973,14 @@ class TestResponsesStatefulChaining:
     it as `previous_response_id` on subsequent turns while sending only the latest turn."""
 
     @pytest.fixture
-    def endpoint(self):
+    def endpoint(self) -> ResponsesEndpoint:
         return create_endpoint_with_mock_transport(
             ResponsesEndpoint, create_model_endpoint(EndpointType.RESPONSES)
         )
 
-    def test_extract_response_id_streaming_created(self, endpoint):
+    def test_extract_response_id_streaming_created_returns_id(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
         record = RequestRecord(
             responses=[
                 TextResponse(
@@ -990,6 +992,7 @@ class TestResponsesStatefulChaining:
                                 "id": "resp_b6c65395f4fb8c7d",
                                 "object": "response",
                                 "status": "in_progress",
+                                "store": True,
                             },
                         }
                     ).decode(),
@@ -1007,7 +1010,9 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) == "resp_b6c65395f4fb8c7d"
 
-    def test_extract_response_id_streaming_completed(self, endpoint):
+    def test_extract_response_id_streaming_completed_returns_id(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
         record = RequestRecord(
             responses=[
                 TextResponse(
@@ -1019,6 +1024,7 @@ class TestResponsesStatefulChaining:
                                 "id": "resp_a66a66950cac5561",
                                 "object": "response",
                                 "status": "completed",
+                                "store": True,
                             },
                         }
                     ).decode(),
@@ -1027,7 +1033,9 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) == "resp_a66a66950cac5561"
 
-    def test_extract_response_id_streaming_flat_id(self, endpoint):
+    def test_extract_response_id_streaming_flat_id_returns_id(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
         record = RequestRecord(
             responses=[
                 TextResponse(
@@ -1037,6 +1045,7 @@ class TestResponsesStatefulChaining:
                             "type": "response.created",
                             "id": "resp_flat_id_123",
                             "status": "in_progress",
+                            "store": True,
                         }
                     ).decode(),
                 )
@@ -1044,7 +1053,9 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) == "resp_flat_id_123"
 
-    def test_extract_response_id_non_streaming(self, endpoint):
+    def test_extract_response_id_non_streaming_returns_id(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
         record = RequestRecord(
             responses=[
                 TextResponse(
@@ -1054,6 +1065,7 @@ class TestResponsesStatefulChaining:
                             "id": "resp_non_stream_456",
                             "object": "response",
                             "status": "completed",
+                            "store": True,
                         }
                     ).decode(),
                 )
@@ -1061,7 +1073,9 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) == "resp_non_stream_456"
 
-    def test_extract_response_id_none_when_absent(self, endpoint):
+    def test_extract_response_id_no_id_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
         record = RequestRecord(
             responses=[
                 TextResponse(
@@ -1077,7 +1091,51 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) is None
 
-    def test_format_payload_turn0_without_previous_response_id(self, endpoint):
+    def test_extract_response_id_store_false_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": "resp_not_stored",
+                                "object": "response",
+                                "status": "completed",
+                                "store": False,
+                            },
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
+    def test_extract_response_id_store_absent_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "id": "resp_no_store_field",
+                            "object": "response",
+                            "status": "completed",
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
+    def test_format_payload_turn0_without_previous_response_id_sends_full_history(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
         turn0 = Turn(
             role="user",
             texts=[Text(contents=["First message"])],
@@ -1098,7 +1156,9 @@ class TestResponsesStatefulChaining:
         assert payload["input"][0]["content"] == "First message"
         assert payload["input"][1]["content"] == "Second message"
 
-    def test_format_payload_turn1_with_previous_response_id(self, endpoint):
+    def test_format_payload_turn1_with_previous_response_id_sends_only_latest(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
         turn0 = Turn(
             role="user",
             texts=[Text(contents=["First message"])],

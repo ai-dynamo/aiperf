@@ -192,6 +192,7 @@ class ResponsesEndpoint(BaseEndpoint):
         if request_info.previous_response_id:
             # Stateful chaining: previous_response_id points to server-side history.
             # Only send the newest turn's messages in `input`.
+            self._warn_chaining_isl_once()
             input_items.extend(self.build_messages([turns[-1]]))
         else:
             if request_info.user_context_message:
@@ -237,41 +238,54 @@ class ResponsesEndpoint(BaseEndpoint):
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
-    def extract_response_id(self, record: RequestRecord) -> str | None:
-        """Extract the server-generated response ID (e.g. ``resp_<hash>``) from the response.
+    _warned_chaining_isl: bool = False
 
-        For streaming responses, inspects the ``response.created`` or ``response.completed``
-        SSE events for ``response.id`` or top-level ``id``.
-        For non-streaming responses, inspects the top-level ``id`` or ``response.id``.
+    def _warn_chaining_isl_once(self) -> None:
+        """Warn once that chained turns only send the newest turn on the wire.
+
+        With ``previous_response_id`` the prior history lives server-side, so
+        client-side Input Sequence Length (the default) reflects only the newest
+        turn and undercounts the prompt the server actually prefills. Server-side
+        token counts (``use_server_token_count``) report the true prompt size.
+        """
+        if (
+            self._warned_chaining_isl
+            or self.model_endpoint.endpoint.use_server_token_count
+        ):
+            return
+        self._warned_chaining_isl = True
+        self.warning(
+            "Stateful Responses chaining is active (previous_response_id): only "
+            "the newest turn is sent on the wire, so client-side Input Sequence "
+            "Length undercounts the server-side prompt for chained turns. Enable "
+            "--use-server-token-count for accurate multi-turn ISL."
+        )
+
+    def extract_response_id(self, record: RequestRecord) -> str | None:
+        """Extract the server-generated response ID (``resp_<hash>``) for stateful
+        chaining, but only when the server confirms it persisted the response.
+
+        The Responses API echoes a ``store`` boolean on the response object. We
+        chain the next turn against ``previous_response_id`` only when ``store``
+        is truthy: a response the server did not store cannot be referenced later
+        and chaining against it would 400. When ``store`` is absent or false we
+        return ``None`` so the caller falls back to sending the full history.
+
+        The response object lives under ``response`` for streaming lifecycle
+        events (``response.created`` / ``response.completed`` / ...) and at the
+        top level for a non-streaming response body.
         """
         for response in record.responses:
             json_obj = response.get_json()
-            if not json_obj or not isinstance(json_obj, dict):
+            if not isinstance(json_obj, dict):
                 continue
-            event_type = json_obj.get("type")
-            if event_type in (
-                "response.created",
-                "response.completed",
-                "response.in_progress",
-            ):
-                resp = json_obj.get("response")
-                if isinstance(resp, dict) and (resp_id := resp.get("id")):
-                    if isinstance(resp_id, str) and resp_id:
-                        return resp_id
-                if resp_id := json_obj.get("id"):
-                    if isinstance(resp_id, str) and resp_id:
-                        return resp_id
-                if resp_id := json_obj.get("response_id"):
-                    if isinstance(resp_id, str) and resp_id:
-                        return resp_id
-            if json_obj.get("object") == "response" or "id" in json_obj:
-                if resp_id := json_obj.get("id"):
-                    if isinstance(resp_id, str) and resp_id:
-                        return resp_id
-                resp = json_obj.get("response")
-                if isinstance(resp, dict) and (resp_id := resp.get("id")):
-                    if isinstance(resp_id, str) and resp_id:
-                        return resp_id
+            nested = json_obj.get("response")
+            source = nested if isinstance(nested, dict) else json_obj
+            resp_id = source.get("id")
+            if not (isinstance(resp_id, str) and resp_id):
+                continue
+            if source.get("store"):
+                return resp_id
         return None
 
     @staticmethod

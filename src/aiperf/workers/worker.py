@@ -1225,8 +1225,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         if assistant_turn is not None:
             session.store_response(assistant_turn)
-        if extract_response_id := getattr(
-            self.inference_client.endpoint, "extract_response_id", None
+        # Response-ID chaining is only coherent for the mode that captures live
+        # responses and accumulates genuine deltas (DELTAS_WITHOUT_RESPONSES).
+        # In the *_WITH_RESPONSES modes ``turns[-1]`` already carries the full
+        # authored history, so chaining would double the context on the wire.
+        if session.should_store_response() and (
+            extract_response_id := getattr(
+                self.inference_client.endpoint, "extract_response_id", None
+            )
         ):
             session.store_response_id(extract_response_id(record))
         self._populate_response_metrics(credit_context, record, parsed_responses)
