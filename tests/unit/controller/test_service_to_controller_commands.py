@@ -26,8 +26,9 @@ from aiperf.common.control_structs import (
     CommandOk,
     CommandUnhandled,
 )
-from aiperf.common.enums import CommandType, CreditPhase
+from aiperf.common.enums import CommandType, CreditPhase, LifecycleState
 from aiperf.common.models import ErrorDetails, PhaseRecordsStats
+from aiperf.common.service_registry import ServiceRegistry
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceType
 from aiperf.records.records_manager import RecordsManager
@@ -35,9 +36,19 @@ from aiperf.server_metrics.manager import ServerMetricsManager
 
 
 def _controller(
-    services: dict[str, ServiceType], reaped: set[str] | None = None
+    services: dict[str, ServiceType],
+    reaped: set[str] | None = None,
+    unregistered: set[str] | None = None,
 ) -> MagicMock:
-    """A SystemController stub carrying only what the two handlers read."""
+    """A SystemController stub carrying only what the two handlers read.
+
+    Services are put in *both* places the relays consult: the service manager's
+    ``service_id_map`` and the process-wide ``ServiceRegistry``. Registering in
+    only the former would misrepresent a live service, since the relays
+    intersect the two. ``unregistered`` models the optional-service reaper,
+    which calls ``ServiceRegistry.unregister`` but leaves ``service_id_map``
+    untouched.
+    """
     controller = MagicMock(spec=SystemController)
     controller.service_manager = SimpleNamespace(
         service_id_map={
@@ -45,6 +56,12 @@ def _controller(
         },
         run_service=AsyncMock(),
     )
+    for sid, stype in services.items():
+        ServiceRegistry.register(
+            sid, stype, first_seen_ns=1, state=LifecycleState.RUNNING
+        )
+    for sid in unregistered or ():
+        ServiceRegistry.unregister(sid)
     controller._reaped_service_ids = reaped or set()
     controller._PROFILE_COMPLETE_RELAY_TYPES = (
         SystemController._PROFILE_COMPLETE_RELAY_TYPES
@@ -151,7 +168,51 @@ class TestProfileCompleteRelay:
         assert service_ids == ["sm-1"]
 
     @pytest.mark.asyncio
-    async def test_relay_forwards_the_window_payload_verbatim(self) -> None:
+    async def test_relay_excludes_a_service_the_reaper_unregistered(self) -> None:
+        """A dropped optional service must not be addressed by the relay.
+
+        The optional-service heartbeat reaper calls
+        ``ServiceRegistry.unregister`` and ``record_reaped_service``, but a GPU
+        telemetry manager is not a result producer, so
+        ``SystemController._on_service_reaped`` returns before adding it to
+        ``_reaped_service_ids``. It therefore stays in ``service_id_map`` with
+        the right service_type and the ``reaped`` filter does not catch it.
+
+        Relaying to it makes ROUTER_MANDATORY raise EHOSTUNREACH and logs a
+        ``Host unreachable`` warning on every run on a box without a DCGM
+        exporter -- user-facing noise pointing at a non-problem.
+        """
+        controller = _controller(
+            {
+                "gpu-1": ServiceType.GPU_TELEMETRY_MANAGER,
+                "sm-1": ServiceType.SERVER_METRICS_MANAGER,
+            },
+            unregistered={"gpu-1"},
+        )
+
+        await SystemController._handle_profile_complete_relay(
+            controller, Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        _, service_ids = controller._send_control_command_to_all.await_args.args
+        assert service_ids == ["sm-1"]
+
+    @pytest.mark.asyncio
+    async def test_relay_skips_the_fan_out_when_every_target_is_unregistered(
+        self,
+    ) -> None:
+        """No addressable peer means no fan-out at all, not an empty-list send."""
+        controller = _controller(
+            {"gpu-1": ServiceType.GPU_TELEMETRY_MANAGER},
+            unregistered={"gpu-1"},
+        )
+
+        await SystemController._handle_profile_complete_relay(
+            controller, Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        controller._send_control_command_to_all.assert_not_awaited()
+
         """Dropping the payload collapses every downstream export window."""
         controller = _controller({"sm-1": ServiceType.SERVER_METRICS_MANAGER})
         payload = orjson.dumps({"start_ns": 10, "end_ns": 20})
@@ -465,6 +526,28 @@ class TestProfileCancelRelay:
             "sm-1",
             "timing-1",
         ]
+
+    @pytest.mark.asyncio
+    async def test_relay_excludes_a_service_the_reaper_unregistered(self) -> None:
+        """Kept symmetric with the PROFILE_COMPLETE relay.
+
+        Both relays address peers by type out of ``service_id_map``, so both
+        need the same liveness intersection. Fixing only one would leave the
+        abort path emitting the EHOSTUNREACH warning the completion path no
+        longer emits.
+        """
+        controller = _controller(
+            {
+                "gpu-1": ServiceType.GPU_TELEMETRY_MANAGER,
+                "timing-1": ServiceType.TIMING_MANAGER,
+            },
+            unregistered={"gpu-1"},
+        )
+
+        await SystemController._relay_profile_cancel(controller, "", b"")
+
+        _, service_ids = controller._send_control_command_to_all.await_args.args
+        assert service_ids == ["timing-1"]
 
     @pytest.mark.asyncio
     async def test_relay_excludes_the_originator(self) -> None:

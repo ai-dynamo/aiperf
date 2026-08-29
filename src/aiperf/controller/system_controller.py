@@ -1078,12 +1078,23 @@ class SystemController(
         the RecordsManager's ``PROFILE_COMPLETE_RELAY_TIMEOUT`` wait on *this*
         command, so one slow peer surfaces as a relayed error rather than as a
         timeout on the caller's side with no diagnosis.
+
+        Targets are intersected with ``get_all_registered_ids()`` because being
+        of the right *type* does not make a service addressable. The optional-
+        service heartbeat reaper calls ``ServiceRegistry.unregister`` (flipping
+        ``registration_status`` to UNREGISTERED) but leaves the entry in
+        ``service_manager.service_id_map``, and it is not a result producer so
+        it never lands in ``_reaped_service_ids`` either. Without this filter a
+        box with no DCGM exporter relays to a GPU telemetry manager the
+        controller already dropped, and ROUTER_MANDATORY answers EHOSTUNREACH.
         """
+        registered_ids = ServiceRegistry.get_all_registered_ids()
         service_ids = [
             service_id
             for service_id, info in self.service_manager.service_id_map.items()
             if info.service_type in self._PROFILE_COMPLETE_RELAY_TYPES
             and service_id not in self._reaped_service_ids
+            and service_id in registered_ids
         ]
         if not service_ids:
             self.debug("No live PROFILE_COMPLETE relay targets")
@@ -1163,12 +1174,19 @@ class SystemController(
         receive its own broadcast" semantics -- both callers run their own local
         cancel directly, and re-entering their handler over the wire would
         double-finalize.
+
+        Targets are intersected with ``get_all_registered_ids()`` for the same
+        reason as the PROFILE_COMPLETE relay: a service the reaper unregistered
+        is still in ``service_id_map`` and still of the right type, but can no
+        longer be addressed. Kept symmetric with that relay deliberately.
         """
+        registered_ids = ServiceRegistry.get_all_registered_ids()
         service_ids = [
             service_id
             for service_id, info in self.service_manager.service_id_map.items()
             if info.service_type in self._PROFILE_CANCEL_RELAY_TYPES
             and service_id not in self._reaped_service_ids
+            and service_id in registered_ids
             and service_id != origin_service_id
         ]
         if not service_ids:
