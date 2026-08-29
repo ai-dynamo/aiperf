@@ -692,8 +692,14 @@ class TestDeployDirect:
         mock_wait.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_namespace_propagates_via_kube_options(self) -> None:
-        """KubernetesDeployment receives kube_options.namespace verbatim."""
+    async def test_namespace_propagates_from_the_resolved_argument(self) -> None:
+        """KubernetesDeployment receives the caller's already-resolved namespace.
+
+        The caller resolved it once (explicit --namespace, else the kubeconfig
+        context); re-reading ``kube_options.namespace`` here would drop the
+        inherited value and render manifests for a different namespace than the
+        one the command reported.
+        """
         from aiperf.cli_commands.kube.profile_deploy_direct import deploy_direct
 
         deploy_config = MagicMock(connections_per_worker=1)
@@ -732,14 +738,13 @@ class TestDeployDirect:
                 _make_config(),
                 opts,
                 "bench",
-                "ignored-input-ns",
+                "passed-ns",
                 dry_run=False,
                 detach=False,
                 no_wait=False,
                 attach_port=0,
             )
 
-        # The deployment receives kube_options.namespace, NOT the positional 'namespace' arg
         assert captured.get("namespace") == "passed-ns"
         assert captured.get("job_id") == "bench"
         assert captured.get("worker_replicas") == 1

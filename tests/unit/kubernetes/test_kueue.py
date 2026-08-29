@@ -210,6 +210,7 @@ class TestKubernetesDeploymentKueue:
     def _deployment_kwargs(self, sample_config) -> dict[str, Any]:
         return {
             "job_id": "ktest1",
+            "namespace": "bench-ns",
             "deployment": DeploymentConfig(image="aiperf:latest"),
             "config": sample_config,
         }

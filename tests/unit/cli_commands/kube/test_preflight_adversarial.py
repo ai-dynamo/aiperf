@@ -287,9 +287,10 @@ class TestPreflightCliTrustBoundary:
         assert kube_logger.level == original_level
 
     @pytest.mark.asyncio
-    async def test_run_preflight_default_namespace_is_aiperf_benchmarks(
+    async def test_run_preflight_refuses_to_guess_a_namespace(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """A preflight against an unnamed namespace checks the wrong cluster corner."""
         captured_namespaces: list[str] = []
 
         class FakeChecker:
@@ -310,7 +311,60 @@ class TestPreflightCliTrustBoundary:
             async def run_all_checks(self) -> PreflightResults:
                 return PreflightResults(checks=[_result("Cluster Connectivity")])
 
-        with patch("aiperf.kubernetes.preflight.CLIPreflightChecker", new=FakeChecker):
+        from aiperf.config.loader.errors import ConfigurationError
+
+        with (
+            patch("aiperf.kubernetes.preflight.CLIPreflightChecker", new=FakeChecker),
+            patch(
+                "aiperf.kubernetes.cli_helpers._context_namespace", return_value=None
+            ),
+            pytest.raises(ConfigurationError),
+        ):
+            await preflight_cmd._run_preflight(
+                manage_options=KubeManageOptions(),
+                image=None,
+                image_pull_secrets=None,
+                secrets=None,
+                endpoint_url=None,
+                workers=1,
+                output="json",
+            )
+
+        assert captured_namespaces == []
+        assert capsys.readouterr().out == ""
+
+    @pytest.mark.asyncio
+    async def test_run_preflight_inherits_the_kubeconfig_context_namespace(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Omitting --namespace checks the namespace kubectl would have used."""
+        captured_namespaces: list[str] = []
+
+        class FakeChecker:
+            def __init__(
+                self,
+                namespace: str,
+                *,
+                kubeconfig: str | None = None,
+                kube_context: str | None = None,
+                image: str | None = None,
+                image_pull_secrets: list[str] | None = None,
+                secrets: list[str] | None = None,
+                endpoint_url: str | None = None,
+                workers: int = 1,
+            ) -> None:
+                captured_namespaces.append(namespace)
+
+            async def run_all_checks(self) -> PreflightResults:
+                return PreflightResults(checks=[_result("Cluster Connectivity")])
+
+        with (
+            patch("aiperf.kubernetes.preflight.CLIPreflightChecker", new=FakeChecker),
+            patch(
+                "aiperf.kubernetes.cli_helpers._context_namespace",
+                return_value="team-ns",
+            ),
+        ):
             await preflight_cmd._run_preflight(
                 manage_options=KubeManageOptions(),
                 image=None,
@@ -322,7 +376,7 @@ class TestPreflightCliTrustBoundary:
             )
 
         assert orjson.loads(capsys.readouterr().out)["passed"] is True
-        assert captured_namespaces == ["aiperf-benchmarks"]
+        assert captured_namespaces == ["team-ns"]
 
     def test_preflight_cli_parses_repeated_secret_references(self) -> None:
         _, bound, _ = preflight_cmd.app.parse_args(

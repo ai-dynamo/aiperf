@@ -383,12 +383,16 @@ async def profile(
 
     kube_options = kube_options or KubeOptions()
     with cli_utils.exit_on_error(title="Error Running Kubernetes Benchmark"):
-        from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
+        from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
 
         _check_config_file_for_sweep_keys(cli_config.config_file)
         spec, config, name = _resolve_spec_and_name(cli_config, kube_options)
         _check_resolved_config_for_sweep(config)
-        namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
+        namespace = resolve_benchmark_namespace(
+            kube_options.namespace,
+            kube_options.kubeconfig,
+            kube_options.kube_context,
+        )
         _print_memory_estimate(config, kube_options, spec)
 
         use_operator = not no_operator

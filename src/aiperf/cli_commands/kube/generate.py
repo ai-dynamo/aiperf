@@ -325,10 +325,16 @@ async def generate(
 
     kube_options = kube_options or KubeOptions()
     with cli_utils.exit_on_error(title="Error Generating Kubernetes Manifests"):
-        from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
+        from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
 
         spec, config, name = _resolve_spec_and_name(cli_config, kube_options)
-        namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
+        # Offline rendering still refuses to guess: a manifest whose namespace
+        # was invented here would apply somewhere the author never named.
+        namespace = resolve_benchmark_namespace(
+            kube_options.namespace,
+            kube_options.kubeconfig,
+            kube_options.kube_context,
+        )
 
         yaml = ruamel.yaml.YAML()
         yaml.default_flow_style = False

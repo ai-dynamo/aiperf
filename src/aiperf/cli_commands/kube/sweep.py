@@ -83,7 +83,7 @@ async def sweep(
             --trials 5 --cooldown 30
     """
     from aiperf import cli_utils
-    from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
+    from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
 
     kube_options = kube_options or KubeOptions()
     config_file = cli_config.config_file
@@ -99,7 +99,11 @@ async def sweep(
             convergence_max_runs=convergence_max_runs,
             convergence_threshold=cli_config.convergence_threshold,
         )
-        namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
+        namespace = resolve_benchmark_namespace(
+            kube_options.namespace,
+            kube_options.kubeconfig,
+            kube_options.kube_context,
+        )
         cr_dict.setdefault("metadata", {})["namespace"] = namespace
         if dry_run:
             import orjson

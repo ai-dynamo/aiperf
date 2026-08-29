@@ -112,6 +112,12 @@ def _patched(
             "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
             return_value=(job_id, namespace),
         ),
+        # `cleanup` resolves the namespace directly rather than through a job
+        # id, and must not read the developer's kubeconfig to do it.
+        patch(
+            "aiperf.kubernetes.cli_helpers._context_namespace",
+            return_value=namespace,
+        ),
         patch("aiperf.kubernetes.console.clear_last_benchmark_if_matches"),
     ):
         yield

@@ -22,7 +22,6 @@ from aiperf.kubernetes.console import (
     print_error,
     print_info,
 )
-from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
@@ -30,15 +29,71 @@ if TYPE_CHECKING:
     from aiperf.kubernetes.models import AIPerfJobInfo, AIPerfSweepInfo
 
 
+def _context_namespace(
+    kubeconfig: str | None = None, context: str | None = None
+) -> str | None:
+    """Return the namespace of the active kubeconfig context, if it sets one.
+
+    Split out from :func:`resolve_benchmark_namespace` so tests can drive the
+    resolution chain without a kubeconfig on disk.
+    """
+    try:
+        from kubernetes_asyncio import config as k8s_config
+
+        contexts, active = k8s_config.list_kube_config_contexts(config_file=kubeconfig)
+    except Exception:  # noqa: BLE001 - no kubeconfig is a normal, non-fatal state
+        return None
+    if context is not None:
+        active = next((c for c in contexts or [] if c.get("name") == context), None)
+    if not active:
+        return None
+    return (active.get("context") or {}).get("namespace") or None
+
+
+def resolve_benchmark_namespace(
+    namespace: str | None,
+    kubeconfig: str | None = None,
+    context: str | None = None,
+) -> str:
+    """Resolve the namespace a benchmark runs in. Never guesses.
+
+    Explicit ``--namespace`` wins; otherwise the active kubeconfig context's
+    namespace; otherwise this raises. There is deliberately no fallback -- not
+    ``default``, and not a product-specific namespace. The chart used to create
+    an ``aiperf-benchmarks`` namespace and the CLI assumed it, so a user who
+    never named a namespace had their pods and results land somewhere they were
+    not watching, and hit RBAC failures mid-run rather than at submit time.
+    """
+    if namespace:
+        return namespace
+
+    resolved = _context_namespace(kubeconfig, context)
+    if resolved:
+        return resolved
+
+    from aiperf.config.loader.errors import ConfigurationError
+
+    raise ConfigurationError(
+        "No Kubernetes namespace given and the active kubeconfig context does "
+        "not set one. Pass --namespace <ns>, or set a default for your context:\n"
+        "  kubectl config set-context --current --namespace=<ns>"
+    )
+
+
 def resolve_job_id_and_namespace(
-    job_id: str | None, namespace: str | None, *, quiet: bool = False
+    job_id: str | None,
+    namespace: str | None,
+    *,
+    quiet: bool = False,
+    kubeconfig: str | None = None,
+    context: str | None = None,
 ) -> tuple[str, str] | None:
     """Resolve job_id and namespace, using last benchmark if not specified.
 
     Returns (job_id, namespace) tuple if resolved, None if not found.
     """
     if job_id is not None:
-        return (job_id, namespace or DEFAULT_BENCHMARK_NAMESPACE)
+        return (job_id, resolve_benchmark_namespace(namespace, kubeconfig, context))
 
     last = get_last_benchmark()
     if last is None:
@@ -195,7 +250,9 @@ async def resolve_job(
     """
     from aiperf.kubernetes.client import find_aiperf_job, find_jobset
 
-    resolved = resolve_job_id_and_namespace(job_id, namespace, quiet=quiet)
+    resolved = resolve_job_id_and_namespace(
+        job_id, namespace, quiet=quiet, kubeconfig=kubeconfig, context=kube_context
+    )
     if not resolved:
         return None
     job_id, namespace = resolved
@@ -322,7 +379,9 @@ async def resolve_target(
         find_jobset,
     )
 
-    resolved = resolve_job_id_and_namespace(name, namespace, quiet=quiet)
+    resolved = resolve_job_id_and_namespace(
+        name, namespace, quiet=quiet, kubeconfig=kubeconfig, context=kube_context
+    )
     if not resolved:
         return None
     target_name, namespace = resolved

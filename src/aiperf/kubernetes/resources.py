@@ -18,7 +18,6 @@ from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.kubernetes.constants import (
-    DEFAULT_BENCHMARK_NAMESPACE,
     AIPerfLabels,
     Annotations,
 )
@@ -328,9 +327,10 @@ class KubernetesDeployment(AIPerfBaseModel):
         default=None,
         description="UID of the owning AIPerfJob resource for mutation fencing",
     )
-    namespace: str | None = Field(
-        default=None,
-        description="Kubernetes namespace (auto-generated if None)",
+    namespace: str = Field(
+        description="Kubernetes namespace the benchmark's resources are created in. "
+        "Resolved by the caller (CLI flag, kubeconfig context, or the owning CR's "
+        "own namespace) -- this model never invents one.",
     )
     worker_replicas: int = Field(default=1, ge=1, description="Number of worker pods")
     workers_per_pod: int | None = Field(
@@ -383,13 +383,13 @@ class KubernetesDeployment(AIPerfBaseModel):
 
     @property
     def effective_namespace(self) -> str:
-        """Get the effective namespace (default shared namespace if not specified)."""
-        return self.namespace or DEFAULT_BENCHMARK_NAMESPACE
+        """The namespace every rendered manifest targets.
 
-    @property
-    def auto_namespace(self) -> bool:
-        """Check if namespace is auto-generated."""
-        return self.namespace is None
+        Plain attribute access. The namespace is decided at the CLI or operator
+        boundary before this model exists, so there is nothing left to resolve
+        here and nothing to guess.
+        """
+        return self.namespace
 
     @property
     def jobset_name(self) -> str:
@@ -400,18 +400,6 @@ class KubernetesDeployment(AIPerfBaseModel):
     def configmap_name(self) -> str:
         """Get the ConfigMap name."""
         return f"{self.jobset_name}-config"
-
-    def get_namespace_spec(self) -> NamespaceSpec | None:
-        """Get the Namespace spec (only if using the default shared namespace)."""
-        if not self.auto_namespace:
-            return None
-        return NamespaceSpec(
-            name=self.effective_namespace,
-            labels={
-                AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
-                AIPerfLabels.AUTO_GENERATED: "true",
-            },
-        )
 
     def get_configmap_spec(self) -> ConfigMapSpec:
         """Get the ConfigMap spec from the stored BenchmarkRun."""
@@ -477,24 +465,22 @@ class KubernetesDeployment(AIPerfBaseModel):
         Returns:
             List of Kubernetes resource manifests in creation order.
         """
+        # No Namespace manifest: the benchmark namespace is named by the user
+        # and must already exist. Creating it here would demand cluster-scoped
+        # namespace-create rights that most benchmark runners do not have.
         manifests = []
 
-        # 1. Namespace (if auto-generated)
-        ns_spec = self.get_namespace_spec()
-        if ns_spec:
-            manifests.append(ns_spec.to_k8s_manifest())
-
-        # 2. RBAC resources
+        # 1. RBAC resources
         rbac_spec = self.get_rbac_spec()
         manifests.append(rbac_spec.to_role_manifest())
         manifests.append(rbac_spec.to_role_binding_manifest())
 
-        # 3. ConfigMap (with size validation)
+        # 2. ConfigMap (with size validation)
         configmap_spec = self.get_configmap_spec()
         configmap_spec.validate_size()
         manifests.append(configmap_spec.to_k8s_manifest())
 
-        # 4. JobSet
+        # 3. JobSet
         manifests.append(self.get_jobset_spec().to_k8s_manifest())
 
         return manifests

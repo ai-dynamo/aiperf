@@ -77,6 +77,20 @@ def _sample_job_info(
 # =============================================================================
 
 
+@pytest.fixture(autouse=True)
+def _context_namespace_is_pinned():
+    """Pin the inherited namespace so no test reads the developer's kubeconfig.
+
+    Commands that take no --namespace now inherit the active kubeconfig
+    context's namespace, which would otherwise make these tests depend on the
+    machine they run on (and raise outright on a machine with no kubeconfig).
+    """
+    with patch(
+        "aiperf.kubernetes.cli_helpers._context_namespace", return_value="ctx-ns"
+    ):
+        yield
+
+
 @pytest.fixture
 def manage_options():
     """Create a KubeManageOptions instance for testing."""
@@ -648,10 +662,25 @@ class TestResolveJobIdAndNamespace:
         result = resolve_job_id_and_namespace("abc123", "my-namespace")
         assert result == ("abc123", "my-namespace")
 
-    def test_returns_job_id_with_default_namespace(self) -> None:
-        """Test returns job_id with default namespace when only job_id provided."""
-        result = resolve_job_id_and_namespace("abc123", None)
-        assert result == ("abc123", "aiperf-benchmarks")
+    def test_inherits_the_context_namespace_when_only_job_id_is_given(self) -> None:
+        """No --namespace means the kubeconfig context's namespace, never a guess."""
+        with patch(
+            "aiperf.kubernetes.cli_helpers._context_namespace", return_value="ctx-ns"
+        ):
+            result = resolve_job_id_and_namespace("abc123", None)
+        assert result == ("abc123", "ctx-ns")
+
+    def test_raises_when_only_job_id_is_given_and_no_context_namespace(self) -> None:
+        """Addressing a job in an unnamed namespace would target the wrong cluster corner."""
+        from aiperf.config.loader.errors import ConfigurationError
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers._context_namespace", return_value=None
+            ),
+            pytest.raises(ConfigurationError),
+        ):
+            resolve_job_id_and_namespace("abc123", None)
 
     def test_uses_last_benchmark_when_no_job_id(self, capsys) -> None:
         """Test uses last benchmark info when no job_id specified."""

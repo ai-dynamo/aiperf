@@ -202,6 +202,7 @@ class TestKueueManifestGeneration:
     ) -> None:
         """Verify JobSet manifest includes kueue label and suspend=true when queue_name set."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc12345",
             config=kube_config,
             deployment=DeploymentConfig(
@@ -222,6 +223,7 @@ class TestKueueManifestGeneration:
     ) -> None:
         """Verify no kueue labels and no suspend when queue_name is None."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc12345",
             config=kube_config,
             deployment=DeploymentConfig(image="aiperf:test"),
@@ -239,6 +241,7 @@ class TestKueueManifestGeneration:
     ) -> None:
         """Verify kueue labels appear only on JobSet, not on ConfigMap/Namespace/RBAC."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc12345",
             config=kube_config,
             deployment=DeploymentConfig(
@@ -270,6 +273,7 @@ class TestKueueManifestGeneration:
     ) -> None:
         """Verify priority_class label appears on JobSet manifest."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc12345",
             config=kube_config,
             deployment=DeploymentConfig(
@@ -304,6 +308,7 @@ class TestKueueManifestGeneration:
     ) -> None:
         """Verify suspend=true only when queue_name is set (Kueue requires it)."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc12345",
             config=kube_config,
             deployment=DeploymentConfig(

@@ -3766,7 +3766,6 @@ def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
     from aiperf.config import AIPerfConfig
     from aiperf.config.kube import KubeOptions
     from aiperf.config.loader import load_config
-    from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
     from aiperf.kubernetes.environment import K8sEnvironment
     from aiperf.kubernetes.resources import KubernetesDeployment
     from aiperf.kubernetes.spec_converter import (
@@ -3788,7 +3787,7 @@ def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
     )
 
     name = generate_benchmark_name(config)
-    namespace = kube_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
+    namespace = kube_options.namespace or AIPERF_BENCHMARK_NAMESPACE
 
     config_dict = config.model_dump(mode="json", exclude_none=True)
     apply_k8s_runtime_config(config_dict, name, namespace)
@@ -3810,7 +3809,7 @@ def cmd_run(*, opts: RunOptions, detach: bool, dry_run: bool) -> None:
 
     deployment = KubernetesDeployment(
         job_id=name,
-        namespace=kube_options.namespace,
+        namespace=namespace,
         worker_replicas=num_pods,
         config=config,
         deployment=deploy_config,

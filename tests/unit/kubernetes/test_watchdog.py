@@ -1291,16 +1291,19 @@ class TestBenchmarkWatchdogStaleNamespaces:
         assert len(wd._problems) == 0
 
     @pytest.mark.asyncio
-    async def test_default_benchmark_namespace_excluded(
+    async def test_run_and_operator_namespaces_excluded(
         self, source: FakeDataSource
     ) -> None:
-        """Verify aiperf-benchmarks is never counted as stale."""
+        """The run's own namespace and the operator's are never counted stale.
+
+        There is no longer a product-owned benchmark namespace to exempt: any
+        other leftover ``aiperf-*`` namespace is a genuine stale-run candidate.
+        """
         wd = BenchmarkWatchdog(source, "aiperf-custom")
         wd._start_time = time.time()
 
         source.namespaces = [
             "aiperf-custom",
-            "aiperf-benchmarks",
             "aiperf-system",
             "default",
         ]

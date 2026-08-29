@@ -224,7 +224,7 @@ async def deploy_direct(
 
     deployment = KubernetesDeployment(
         job_id=name,
-        namespace=kube_options.namespace,  # None -> auto_namespace creates the namespace
+        namespace=namespace,
         worker_replicas=num_pods,
         config=config,
         deployment=deploy_config,

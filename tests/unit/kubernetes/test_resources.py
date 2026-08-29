@@ -3,6 +3,7 @@
 """Unit tests for aiperf.kubernetes.resources module."""
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.redact import REDACTED_VALUE
@@ -520,23 +521,26 @@ class TestKubernetesDeployment:
     def basic_deployment(self, sample_config, sample_run) -> KubernetesDeployment:
         """Create a basic KubernetesDeployment for testing."""
         return KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test123",
             config=sample_config,
             run=sample_run,
             deployment=DeploymentConfig(image="aiperf:latest"),
         )
 
-    def test_effective_namespace_auto_generated(self, sample_config) -> None:
-        """Test effective_namespace uses default shared namespace when None."""
-        from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
+    def test_namespace_is_required(self, sample_config) -> None:
+        """The model never invents a namespace, so it refuses to be built without one.
 
-        deployment = KubernetesDeployment(
-            job_id="abc123",
-            config=sample_config,
-            deployment=DeploymentConfig(image="aiperf:latest"),
-        )
-        assert deployment.effective_namespace == DEFAULT_BENCHMARK_NAMESPACE
-        assert deployment.auto_namespace is True
+        Resolution belongs to the CLI (``resolve_benchmark_namespace``) and to
+        the operator (the CR's own ``metadata.namespace``); a deployment that
+        got this far with no namespace is a wiring bug, not a user error.
+        """
+        with pytest.raises(ValidationError):
+            KubernetesDeployment(
+                job_id="abc123",
+                config=sample_config,
+                deployment=DeploymentConfig(image="aiperf:latest"),
+            )
 
     def test_effective_namespace_explicit(self, sample_config) -> None:
         """Test effective_namespace when namespace is specified."""
@@ -547,7 +551,6 @@ class TestKubernetesDeployment:
             deployment=DeploymentConfig(image="aiperf:latest"),
         )
         assert deployment.effective_namespace == "my-namespace"
-        assert deployment.auto_namespace is False
 
     def test_jobset_name(self, basic_deployment: KubernetesDeployment) -> None:
         """Test jobset_name property."""
@@ -556,27 +559,6 @@ class TestKubernetesDeployment:
     def test_configmap_name(self, basic_deployment: KubernetesDeployment) -> None:
         """Test configmap_name property."""
         assert basic_deployment.configmap_name == "aiperf-test123-config"
-
-    def test_get_namespace_spec_auto_generated(
-        self, basic_deployment: KubernetesDeployment
-    ) -> None:
-        """Test get_namespace_spec returns spec for default shared namespace."""
-        ns_spec = basic_deployment.get_namespace_spec()
-        assert ns_spec is not None
-        assert ns_spec.name == basic_deployment.effective_namespace
-        assert ns_spec.labels["app"] == "aiperf"
-        assert ns_spec.labels["aiperf.nvidia.com/auto-generated"] == "true"
-        assert "aiperf.nvidia.com/job-id" not in ns_spec.labels
-
-    def test_get_namespace_spec_explicit_returns_none(self, sample_config) -> None:
-        """Test get_namespace_spec returns None for explicit namespace."""
-        deployment = KubernetesDeployment(
-            job_id="abc123",
-            namespace="existing-namespace",
-            config=sample_config,
-            deployment=DeploymentConfig(image="aiperf:latest"),
-        )
-        assert deployment.get_namespace_spec() is None
 
     def test_get_configmap_spec(self, basic_deployment: KubernetesDeployment) -> None:
         """Test get_configmap_spec returns correct spec."""
@@ -610,6 +592,7 @@ class TestKubernetesDeployment:
         self, sample_config, sample_run
     ) -> None:
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc123",
             config=sample_config,
             run=sample_run,
@@ -629,6 +612,7 @@ class TestKubernetesDeployment:
     def test_get_jobset_spec_propagates_resource_mode(self, sample_config) -> None:
         """Test get_jobset_spec carries DeploymentConfig.resource_mode through."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc123",
             config=sample_config,
             deployment=DeploymentConfig(
@@ -642,6 +626,7 @@ class TestKubernetesDeployment:
     def test_get_jobset_spec_propagates_keep_failed_pods(self, sample_config) -> None:
         """Test get_jobset_spec carries keep_failed_pods into JobSet plumbing."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="abc123",
             config=sample_config,
             deployment=DeploymentConfig(
@@ -652,33 +637,23 @@ class TestKubernetesDeployment:
         jobset_spec = deployment.get_jobset_spec()
         assert jobset_spec.keep_failed_pods is True
 
-    def test_get_all_manifests_auto_namespace(
+    def test_get_all_manifests_never_creates_the_namespace(
         self, basic_deployment: KubernetesDeployment
     ) -> None:
-        """Test get_all_manifests includes namespace when auto-generated."""
+        """The benchmark namespace is the user's, so nothing here creates it.
+
+        Emitting a Namespace would demand cluster-scoped create rights that a
+        benchmark runner scoped to one namespace does not have.
+        """
         manifests = basic_deployment.get_all_manifests()
-        # Should have: Namespace, Role, RoleBinding, ConfigMap, JobSet
-        assert len(manifests) == 5
+        # Should have: Role, RoleBinding, ConfigMap, JobSet
+        assert len(manifests) == 4
         kinds = [m["kind"] for m in manifests]
-        assert "Namespace" in kinds
+        assert "Namespace" not in kinds
         assert "Role" in kinds
         assert "RoleBinding" in kinds
         assert "ConfigMap" in kinds
         assert "JobSet" in kinds
-
-    def test_get_all_manifests_explicit_namespace(self, sample_config) -> None:
-        """Test get_all_manifests excludes namespace when explicit."""
-        deployment = KubernetesDeployment(
-            job_id="abc123",
-            namespace="existing",
-            config=sample_config,
-            deployment=DeploymentConfig(image="aiperf:latest"),
-        )
-        manifests = deployment.get_all_manifests()
-        # Should have: Role, RoleBinding, ConfigMap, JobSet (no Namespace)
-        assert len(manifests) == 4
-        kinds = [m["kind"] for m in manifests]
-        assert "Namespace" not in kinds
 
     def test_get_all_manifests_order(
         self, basic_deployment: KubernetesDeployment
@@ -686,12 +661,11 @@ class TestKubernetesDeployment:
         """Test manifests are in correct creation order."""
         manifests = basic_deployment.get_all_manifests()
         kinds = [m["kind"] for m in manifests]
-        # Namespace first, then RBAC, then ConfigMap, then JobSet
-        ns_idx = kinds.index("Namespace")
+        # RBAC first, then ConfigMap, then JobSet
         role_idx = kinds.index("Role")
         cm_idx = kinds.index("ConfigMap")
         jobset_idx = kinds.index("JobSet")
-        assert ns_idx < role_idx < cm_idx < jobset_idx
+        assert role_idx < cm_idx < jobset_idx
 
 
 class TestKubernetesDeploymentWorkers:
@@ -700,6 +674,7 @@ class TestKubernetesDeploymentWorkers:
     def test_worker_replicas_default(self, sample_config) -> None:
         """Test default worker replica count."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
@@ -710,6 +685,7 @@ class TestKubernetesDeploymentWorkers:
     def test_worker_replicas_custom(self, workers: int, sample_config) -> None:
         """Test custom worker replica count."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             worker_replicas=workers,
             config=sample_config,
@@ -725,6 +701,7 @@ class TestKubernetesDeploymentTTL:
     def test_ttl_default(self, sample_config) -> None:
         """Test default TTL value."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
@@ -735,6 +712,7 @@ class TestKubernetesDeploymentTTL:
     def test_ttl_custom(self, ttl: int | None, sample_config) -> None:
         """Test custom TTL values."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(
@@ -751,6 +729,7 @@ class TestKubernetesDeploymentPodCustomization:
     def test_default_pod_customization(self, sample_config) -> None:
         """Test default pod customization is empty."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
@@ -765,6 +744,7 @@ class TestKubernetesDeploymentPodCustomization:
             annotations={"monitoring": "enabled"},
         )
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest", pod_template=custom),
@@ -777,6 +757,7 @@ class TestKubernetesDeploymentPodCustomization:
     ) -> None:
         """Test pod customization appears in generated manifest."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(
@@ -800,6 +781,7 @@ class TestKubernetesDeploymentImagePullPolicy:
     def test_image_pull_policy(self, policy: str, sample_config) -> None:
         """Test image pull policy is set correctly."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(
@@ -932,6 +914,7 @@ class TestKubernetesDeploymentJobIdValidation:
     def test_valid_job_id(self, sample_config) -> None:
         """Test valid job_id is accepted."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="valid-job-123",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
@@ -941,6 +924,7 @@ class TestKubernetesDeploymentJobIdValidation:
     def test_auto_generated_job_id(self, sample_config) -> None:
         """Test auto-generated job_id is valid DNS label."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
         )
@@ -953,6 +937,7 @@ class TestKubernetesDeploymentJobIdValidation:
         """Test uppercase job_id raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
+                namespace="bench-ns",
                 job_id="Invalid",
                 config=sample_config,
                 deployment=DeploymentConfig(image="aiperf:latest"),
@@ -962,6 +947,7 @@ class TestKubernetesDeploymentJobIdValidation:
         """Test job_id with special characters raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
+                namespace="bench-ns",
                 job_id="job_with_underscores",
                 config=sample_config,
                 deployment=DeploymentConfig(image="aiperf:latest"),
@@ -971,6 +957,7 @@ class TestKubernetesDeploymentJobIdValidation:
         """Test job_id max length is 35 (to fit in resource names)."""
         # 35 chars should pass
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="a" * 35,
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
@@ -980,6 +967,7 @@ class TestKubernetesDeploymentJobIdValidation:
         # 36 chars should fail
         with pytest.raises(ValueError, match="exceeds maximum length of 35"):
             KubernetesDeployment(
+                namespace="bench-ns",
                 job_id="a" * 36,
                 config=sample_config,
                 deployment=DeploymentConfig(image="aiperf:latest"),
@@ -989,6 +977,7 @@ class TestKubernetesDeploymentJobIdValidation:
         """Test job_id starting with hyphen raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
+                namespace="bench-ns",
                 job_id="-invalid",
                 config=sample_config,
                 deployment=DeploymentConfig(image="aiperf:latest"),
@@ -998,6 +987,7 @@ class TestKubernetesDeploymentJobIdValidation:
         """Test job_id ending with hyphen raises validation error."""
         with pytest.raises(ValueError, match="must be a valid DNS label"):
             KubernetesDeployment(
+                namespace="bench-ns",
                 job_id="invalid-",
                 config=sample_config,
                 deployment=DeploymentConfig(image="aiperf:latest"),
@@ -1011,6 +1001,7 @@ class TestKubernetesDeploymentConfigMapValidation:
         """Test get_all_manifests validates ConfigMap size."""
         # This test ensures the validation path is exercised
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
@@ -1020,19 +1011,6 @@ class TestKubernetesDeploymentConfigMapValidation:
         configmap = next(m for m in manifests if m["kind"] == "ConfigMap")
         assert "data" in configmap
 
-    def test_get_namespace_spec_labels_shared_namespace(self, sample_config) -> None:
-        """Test shared namespace labels do not include job_id."""
-        deployment = KubernetesDeployment(
-            job_id="my-job-123",
-            config=sample_config,
-            deployment=DeploymentConfig(image="aiperf:latest"),
-        )
-        ns_spec = deployment.get_namespace_spec()
-        assert ns_spec is not None
-        assert ns_spec.labels["app"] == "aiperf"
-        assert ns_spec.labels["aiperf.nvidia.com/auto-generated"] == "true"
-        assert "aiperf.nvidia.com/job-id" not in ns_spec.labels
-
 
 class TestKubernetesDeploymentManifestContents:
     """Tests for KubernetesDeployment manifest content details."""
@@ -1040,6 +1018,7 @@ class TestKubernetesDeploymentManifestContents:
     def test_role_binding_index_in_manifests(self, sample_config) -> None:
         """Test RoleBinding is after Role in manifests."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest"),
@@ -1053,6 +1032,7 @@ class TestKubernetesDeploymentManifestContents:
     def test_configmap_contains_run_config(self, sample_config, sample_run) -> None:
         """Test ConfigMap manifest contains run_config.json."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             run=sample_run,
@@ -1078,6 +1058,7 @@ class TestKubernetesDeploymentManifestContents:
     def test_jobset_in_manifests_has_correct_image(self, sample_config) -> None:
         """Test JobSet in manifests has correct image."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="my-registry/aiperf:v1.2.3"),
@@ -1096,6 +1077,7 @@ class TestKubernetesDeploymentImagePullPolicyPropagation:
     def test_image_pull_policy_none_uses_default(self, sample_config) -> None:
         """Test None image_pull_policy lets Kubernetes use default."""
         deployment = KubernetesDeployment(
+            namespace="bench-ns",
             job_id="test",
             config=sample_config,
             deployment=DeploymentConfig(image="aiperf:latest", image_pull_policy=None),

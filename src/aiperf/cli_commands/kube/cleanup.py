@@ -88,11 +88,15 @@ async def cleanup(
             list_aiperf_crs,
         )
         from aiperf.kubernetes import console as kube_console
+        from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
         from aiperf.kubernetes.client import k8s_client
-        from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
         from aiperf.kubernetes.cr_refs import AIPERF_JOB_GROUP, AIPERF_JOB_VERSION
 
-        namespace = manage_options.namespace or DEFAULT_BENCHMARK_NAMESPACE
+        namespace = resolve_benchmark_namespace(
+            manage_options.namespace,
+            manage_options.kubeconfig,
+            manage_options.kube_context,
+        )
 
         async with k8s_client(
             kubeconfig=manage_options.kubeconfig,

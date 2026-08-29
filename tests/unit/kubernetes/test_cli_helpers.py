@@ -373,10 +373,10 @@ class TestResolveJob:
         captured = capsys.readouterr()
         assert "prod" in captured.out
 
-    async def test_resolve_job_not_found_defaults_to_benchmark_namespace(
+    async def test_resolve_job_not_found_reports_the_inherited_namespace(
         self, capsys
     ) -> None:
-        """Test that resolve_job defaults to aiperf-benchmarks when namespace is None."""
+        """With no --namespace, the search names the kubeconfig context's namespace."""
         api = MagicMock()
         api.close = AsyncMock()
 
@@ -393,11 +393,15 @@ class TestResolveJob:
                 "aiperf.kubernetes.client.find_jobset",
                 new=AsyncMock(return_value=None),
             ),
+            patch(
+                "aiperf.kubernetes.cli_helpers._context_namespace",
+                return_value="ctx-ns",
+            ),
         ):
             await resolve_job("missing", namespace=None)
 
         captured = capsys.readouterr()
-        assert "aiperf-benchmarks" in captured.out
+        assert "ctx-ns" in captured.out
 
 
 # ============================================================

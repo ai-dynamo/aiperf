@@ -175,7 +175,7 @@ class TestPreflightJsonOutput:
 
         with pytest.raises(SystemExit) as excinfo:
             await preflight_cmd._run_preflight(
-                manage_options=KubeManageOptions(),
+                manage_options=KubeManageOptions(namespace="bench-ns"),
                 image=LONG_IMAGE,
                 image_pull_secrets=None,
                 secrets=None,
@@ -207,7 +207,7 @@ class TestPreflightJsonOutput:
 
         with pytest.raises(SystemExit):
             await preflight_cmd._run_preflight(
-                manage_options=KubeManageOptions(),
+                manage_options=KubeManageOptions(namespace="bench-ns"),
                 image=None,
                 image_pull_secrets=None,
                 secrets=None,

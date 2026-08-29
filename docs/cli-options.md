@@ -1922,7 +1922,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 #### `--name` `<str>`
 
@@ -3515,7 +3515,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 #### `--name` `<str>`
 
@@ -5104,7 +5104,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 #### `--name` `<str>`
 
@@ -5238,7 +5238,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 <hr/>
 
@@ -5258,7 +5258,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 ### Parameters
 
@@ -5303,7 +5303,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 <hr/>
 
@@ -5341,7 +5341,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 <hr/>
 
@@ -5384,7 +5384,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 <hr/>
 
@@ -5440,7 +5440,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 <hr/>
 
@@ -5494,7 +5494,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 <hr/>
 
@@ -5559,7 +5559,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 <hr/>
 
@@ -5589,7 +5589,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 ### Parameters
 
@@ -5631,7 +5631,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 ### Parameters
 
@@ -5679,7 +5679,7 @@ Kubernetes context to use (defaults to current context in kubeconfig).
 
 #### `-n`, `--namespace` `<str>`
 
-Kubernetes namespace (default: aiperf-benchmarks).
+Kubernetes namespace for the benchmark (required; inherited from the current kubeconfig context when not passed).
 
 ### Parameters
 

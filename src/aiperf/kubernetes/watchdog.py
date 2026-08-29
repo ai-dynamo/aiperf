@@ -25,10 +25,7 @@ from kubernetes_asyncio import client  # noqa: F401 - re-exported for test patch
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.kubernetes.constants import (
-    DEFAULT_BENCHMARK_NAMESPACE,
-    DEFAULT_OPERATOR_NAMESPACE,
-)
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.watchdog_events import classify_container_states, classify_event
 from aiperf.kubernetes.watchdog_models import (
@@ -414,7 +411,6 @@ class BenchmarkWatchdog:
             excluded = {
                 self.namespace,
                 DEFAULT_OPERATOR_NAMESPACE,
-                DEFAULT_BENCHMARK_NAMESPACE,
             }
             stale = [
                 ns for ns in all_ns if ns.startswith("aiperf-") and ns not in excluded

@@ -52,6 +52,9 @@ def _run_sweep_dry_run(
             str(config_file),
             "--image",
             image,
+            # Explicit: the CLI no longer guesses, and the subprocess must not
+            # inherit the developer's kubeconfig context namespace.
+            *(() if "--namespace" in placement_args else ("--namespace", "bench-ns")),
             *placement_args,
             "--dry-run",
         ],

@@ -19,7 +19,7 @@ apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
   name: my-benchmark
-  namespace: aiperf-benchmarks  # optional, defaults to aiperf-benchmarks
+  namespace: my-benchmarks  # optional; kubectl uses your current context's namespace when omitted
 spec:
   # Benchmark configuration (what to measure)
   benchmark:

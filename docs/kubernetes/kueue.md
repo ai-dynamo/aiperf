@@ -115,7 +115,7 @@ apiVersion: kueue.x-k8s.io/v1beta1
 kind: LocalQueue
 metadata:
   name: aiperf-queue
-  namespace: aiperf-benchmarks
+  namespace: my-benchmarks
 spec:
   clusterQueue: aiperf-cluster-queue
 ```
@@ -166,7 +166,7 @@ apiVersion: aiperf.nvidia.com/v1alpha1
 kind: AIPerfJob
 metadata:
   name: latency-sweep-7f2a
-  namespace: aiperf-benchmarks
+  namespace: my-benchmarks
 spec:
   scheduling:
     queueName: aiperf-queue

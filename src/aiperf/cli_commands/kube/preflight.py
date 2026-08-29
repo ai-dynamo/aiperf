@@ -110,7 +110,14 @@ async def _run_preflight(
     import orjson
 
     from aiperf.kubernetes import console as kube_console
+    from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
     from aiperf.kubernetes.preflight import CLIPreflightChecker
+
+    namespace = resolve_benchmark_namespace(
+        manage_options.namespace,
+        manage_options.kubeconfig,
+        manage_options.kube_context,
+    )
 
     # In JSON mode stdout must carry only the JSON document; the checker's own
     # summary (including an ERROR record when checks fail) goes to stderr.
@@ -119,7 +126,7 @@ async def _run_preflight(
     )
     with quiet:
         checker = CLIPreflightChecker(
-            namespace=manage_options.namespace or "aiperf-benchmarks",
+            namespace=namespace,
             kubeconfig=manage_options.kubeconfig,
             kube_context=manage_options.kube_context,
             image=image,

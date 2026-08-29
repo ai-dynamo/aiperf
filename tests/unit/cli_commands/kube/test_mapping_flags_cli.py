@@ -77,6 +77,11 @@ def _run_generate(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str
             "--image",
             "aiperf:test",
             "--operator",
+            # The CLI refuses to guess a namespace, and a subprocess must not
+            # depend on whatever the developer's kubeconfig context happens to
+            # select.
+            "--namespace",
+            "bench-ns",
             *args,
         ],
         cwd=_REPO_ROOT,

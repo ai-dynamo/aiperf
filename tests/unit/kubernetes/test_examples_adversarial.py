@@ -26,7 +26,7 @@ import yaml
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.kubernetes.constants import DEFAULT_BENCHMARK_NAMESPACE
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 from aiperf.kubernetes.crd_models import AIPerfJobSpec, AIPerfSweepSpec
 from aiperf.kubernetes.validate import validate_cr, validate_file
 
@@ -38,7 +38,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 _FENCE_RE = re.compile(r"^```ya?ml\s*$", re.MULTILINE)
 _SUPPORTED_KINDS = {"AIPerfJob", "AIPerfSweep"}
 _HELM_NOTES_PLACEHOLDERS = {
-    "{{ .Release.Namespace }}": DEFAULT_BENCHMARK_NAMESPACE,
+    # `.Release.Namespace` in the chart's NOTES is the operator's own release
+    # namespace; the benchmark namespace is the user's and has no default.
+    "{{ .Release.Namespace }}": DEFAULT_OPERATOR_NAMESPACE,
     '{{ include "aiperf-operator.defaultJobImage" . }}': "nvcr.io/nvidia/aiperf:latest",
 }
 
@@ -282,16 +284,27 @@ class TestKubernetesExampleSweepCardinality:
 
 
 class TestKubernetesExampleNamespaceDefaults:
-    """Examples may omit metadata.namespace; omission means benchmark default."""
+    """Examples may omit metadata.namespace, but must never name a fake one."""
 
     @pytest.mark.parametrize("example", _EXAMPLE_PARAMS)
-    def test_metadata_namespace_omission_resolves_to_benchmark_default(
+    def test_metadata_namespace_is_either_absent_or_real(
         self, example: WorkloadExample
     ) -> None:
+        """No example may advertise the retired product-owned benchmark namespace.
+
+        Omission is fine: `kubectl apply` then uses the caller's context
+        namespace, which is exactly what the CLI now does. Naming
+        ``aiperf-benchmarks`` would send readers to a namespace nothing
+        creates any more.
+        """
         for doc in _workload_docs(example):
             metadata = cast(dict[str, object], doc["metadata"])
-            namespace = metadata.get("namespace", DEFAULT_BENCHMARK_NAMESPACE)
+            if "namespace" not in metadata:
+                continue
+            namespace = metadata["namespace"]
 
             assert isinstance(namespace, str) and namespace
-            if "namespace" not in metadata:
-                assert namespace == DEFAULT_BENCHMARK_NAMESPACE
+            assert namespace != "aiperf-benchmarks", (
+                f"{example.source_id}: example names the retired "
+                "aiperf-benchmarks namespace"
+            )

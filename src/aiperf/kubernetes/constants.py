@@ -166,10 +166,6 @@ class KueueLabels:
     """Kueue priority class for scheduling priority."""
 
 
-# Default namespace for benchmark jobs. All benchmark runs land here unless
-# the user provides --namespace explicitly.
-DEFAULT_BENCHMARK_NAMESPACE = "aiperf-benchmarks"
-
 # Default namespace for the aiperf-operator install. Matches the Helm chart's
 # README install command (`helm install ... -n aiperf-system`). Used as the
 # absolute fallback by `resolve_operator_namespace` after auto-detect, and as

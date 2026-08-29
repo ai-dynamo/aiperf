@@ -201,7 +201,10 @@ class KubeManageOptions(BaseModel):
 
     namespace: Annotated[
         str | None,
-        Field(description="Kubernetes namespace (default: aiperf-benchmarks)"),
+        Field(
+            description="Kubernetes namespace for the benchmark (required; "
+            "inherited from the current kubeconfig context when not passed)"
+        ),
         CLIParameter(name=["-n", "--namespace"], group=_KubeGroups.KUBERNETES),
     ] = None
 
