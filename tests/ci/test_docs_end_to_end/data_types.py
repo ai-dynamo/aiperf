@@ -37,8 +37,8 @@ class Server:
 
 
 @dataclass
-class TestConfig:
-    """Test execution configuration for developer-friendly modes."""
+class E2ETestConfig:
+    """Resolved docs E2E test configuration (CLI > env > default)."""
 
     use_local_aiperf: bool = False  # Use pip-installed aiperf instead of container
     skip_server_setup: bool = False  # Don't spin up servers (use already-running)

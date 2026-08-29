@@ -6,7 +6,6 @@ Markdown parser for extracting server setup and AIPerf run commands.
 
 import logging
 import re
-import sys
 from pathlib import Path
 
 from constants import (
@@ -147,12 +146,11 @@ class MarkdownParser:
                 )
 
             if self.servers[server_name].setup_command is not None:
-                logger.error(f"DUPLICATE SETUP COMMAND for server '{server_name}'")
-                logger.error(
-                    f"  First: {self.servers[server_name].setup_command.file_path}"
+                raise ValueError(
+                    f"Duplicate setup command for server '{server_name}': "
+                    f"first={self.servers[server_name].setup_command.file_path}, "
+                    f"second={command.file_path}"
                 )
-                logger.error(f"  Second: {command.file_path}")
-                sys.exit(1)
 
             self.servers[server_name].setup_command = command
 
@@ -171,14 +169,11 @@ class MarkdownParser:
                 )
 
             if self.servers[server_name].health_check_command is not None:
-                logger.error(
-                    f"DUPLICATE HEALTH CHECK COMMAND for server '{server_name}'"
+                raise ValueError(
+                    f"Duplicate health-check command for server '{server_name}': "
+                    f"first={self.servers[server_name].health_check_command.file_path}, "
+                    f"second={command.file_path}"
                 )
-                logger.error(
-                    f"  First: {self.servers[server_name].health_check_command.file_path}"
-                )
-                logger.error(f"  Second: {command.file_path}")
-                sys.exit(1)
 
             self.servers[server_name].health_check_command = command
 
