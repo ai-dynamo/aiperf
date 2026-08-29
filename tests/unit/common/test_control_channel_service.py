@@ -511,6 +511,56 @@ async def test_shutdown_self_ack_still_propagates_cancellation(
 
 
 @pytest.mark.asyncio
+async def test_dispatched_shutdown_reaches_stop_with_a_closed_control_client(
+    component_service,
+) -> None:
+    """The handler the *dispatcher* selects must survive a dead DEALER.
+
+    Hook registration walks ``reversed(__mro__)`` and ``_handle_control_command``
+    returns after the first match, so the SHUTDOWN hook that actually runs is
+    ``BaseService``'s -- not the one plain attribute lookup finds, which resolves
+    to the nearer ``BaseComponentService``. The other shutdown tests in this file
+    call the handler by attribute and so cannot see that difference.
+
+    With the ack unguarded on the live copy, a service already tearing down (a
+    failure path running ``comms.stop()``, or a second SHUTDOWN) raises
+    ``NotInitializedError`` out of the ack, ``_execute_control_command`` converts
+    it to a ``CommandErr``, and ``stop()`` is never reached -- the service hangs
+    until the controller SIGKILLs it after the grace period.
+    """
+
+    async def dead_send(_struct) -> None:
+        raise NotInitializedError("control client is not initialized")
+
+    component_service.control_client.send = dead_send
+    component_service.stop = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await component_service._handle_control_command(
+            Command(cid="c-1", cmd=CommandType.SHUTDOWN)
+        )
+
+    component_service.stop.assert_awaited_once()
+
+
+def test_exactly_one_shutdown_command_hook_is_reachable(component_service) -> None:
+    """Two @on_command(SHUTDOWN) copies means one of them is silently dead.
+
+    The dispatcher stops at the first match, so a second definition anywhere in
+    the MRO is unreachable code that still looks maintained -- which is how the
+    teardown hardening ended up on the copy that never runs.
+    """
+    owners = [
+        cls.__name__
+        for cls in reversed(type(component_service).__mro__)
+        if "_on_shutdown_command" in cls.__dict__
+    ]
+    assert owners == ["BaseService"], (
+        f"expected a single SHUTDOWN handler on BaseService, found {owners}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_send_command_to_controller_correlates_on_cid(component_service) -> None:
     captured: list = []
 

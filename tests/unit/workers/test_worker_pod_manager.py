@@ -671,7 +671,6 @@ class TestHealthMonitoring:
     ) -> None:
         """Test worker health messages are tracked correctly."""
         from aiperf.common.enums import WorkerStatus
-        from aiperf.common.messages import WorkerHealthMessage
 
         manager = worker_group_manager
 
@@ -772,50 +771,6 @@ class TestHealthMonitoring:
         pod_summary = next(
             m for m in published_messages if isinstance(m, WorkerPodStateMessage)
         )
-        assert summary.worker_startup_states == {
-            "worker_0": WorkerStartupState.WAITING_FOR_DATASET
-        }
-        assert isinstance(pod_summary, WorkerPodStateMessage)
-
-    @pytest.mark.asyncio
-    async def test_report_worker_status_summary_command_publishes_summary(
-        self, worker_group_manager: WorkerGroupManager
-    ) -> None:
-        """Controller refresh requests should trigger an immediate worker summary publish."""
-        manager = worker_group_manager
-        manager.publish = AsyncMock()
-        await manager._on_worker_health(
-            WorkerHealthMessage(
-                service_id="worker_0",
-                health=ProcessHealth(
-                    create_time=1000.0,
-                    uptime=100.0,
-                    cpu_usage=10.0,
-                    memory_usage=1024 * 1024 * 100,
-                ),
-                task_stats=WorkerTaskStats(total=10, completed=0, failed=0),
-            )
-        )
-        await manager._on_worker_startup_state(
-            WorkerStartupStateMessage(
-                service_id="worker_0",
-                startup_state=WorkerStartupState.WAITING_FOR_DATASET,
-            )
-        )
-        manager.publish.reset_mock()
-
-        await manager._on_report_worker_status_summary(
-            Command(cid="c-1", cmd=CommandType.REPORT_WORKER_STATUS_SUMMARY)
-        )
-
-        published_messages = [call.args[0] for call in manager.publish.await_args_list]
-        summary = next(
-            m for m in published_messages if isinstance(m, WorkerStatusSummaryMessage)
-        )
-        pod_summary = next(
-            m for m in published_messages if isinstance(m, WorkerPodStateMessage)
-        )
-        assert summary.worker_statuses == {"worker_0": WorkerStatus.HEALTHY}
         assert summary.worker_startup_states == {
             "worker_0": WorkerStartupState.WAITING_FOR_DATASET
         }

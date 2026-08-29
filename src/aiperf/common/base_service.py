@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import uuid
 from abc import ABC
 from typing import TYPE_CHECKING
 
+import zmq
+
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.control_structs import Command, CommandAck
 from aiperf.common.enums import CommandType, LifecycleState
-from aiperf.common.exceptions import ServiceError
+from aiperf.common.exceptions import NotInitializedError, ServiceError
 from aiperf.common.hooks import on_command
 from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.mixins import CommandHandlerMixin
@@ -130,16 +133,31 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
 
     @on_command(CommandType.SHUTDOWN)
     async def _on_shutdown_command(self, message: Command) -> None:
+        """The single SHUTDOWN handler for every service.
+
+        Deliberately defined only here. Hook registration walks
+        ``reversed(__mro__)`` and the dispatcher stops at the first match, so a
+        second copy on a subclass would be unreachable while still looking
+        maintained -- which is exactly how this hardening previously ended up on
+        a dead copy in ``BaseComponentService``.
+        """
         self.debug("Received shutdown command")
         # Ack before stopping: after stop() the control client is closed and the
         # dispatcher's post-return response would never reach the controller.
         # SystemController derives from BaseService directly and has no control
         # client of its own, so the attribute may legitimately be absent.
+        #
+        # Best effort even when present: a concurrent teardown (a failure path
+        # already running comms.stop(), or a second SHUTDOWN) can close the
+        # DEALER out from under this send, and a service that cannot ack must
+        # still stop. Letting that raise would abort this handler before
+        # stop() and leave the service to be SIGKILLed after the grace period.
         control_client = getattr(self, "control_client", None)
         if control_client is not None:
-            await control_client.send(
-                CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
-            )
+            with contextlib.suppress(zmq.ZMQError, NotInitializedError):
+                await control_client.send(
+                    CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
+                )
 
         try:
             await self.stop()
@@ -148,6 +166,10 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
                 f"Failed to stop service {self} ({self.service_id}) after receiving shutdown command: {e}. Killing."
             )
             await self._kill()
+        # The ack above is this command's only response. Cancelling stops the
+        # dispatcher before its success path sends a second one on a DEALER that
+        # stop() has already closed.
+        raise asyncio.CancelledError()
 
     async def stop(self) -> None:
         """Override stop to short-circuit when a stop is already in flight.

@@ -8,12 +8,9 @@ import asyncio
 import traceback
 import uuid
 from collections.abc import Iterable
-from typing import Any
 
-import orjson
 import zmq
 from msgspec import Struct
-from pydantic import BaseModel
 
 from aiperf.common.control_structs import (
     Command,
@@ -22,6 +19,7 @@ from aiperf.common.control_structs import (
     CommandOk,
     CommandResponse,
     CommandUnhandled,
+    encode_command_payload,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import AIPerfHook
@@ -50,15 +48,6 @@ class SystemControllerCommandMixin:
     Covers encode/decode of @on_command results and the fan-out send-and-wait
     patterns used to coordinate services during configure / profile / shutdown.
     """
-
-    @staticmethod
-    def _encode_command_payload(result: Any) -> bytes:
-        """Encode a command-hook result to a payload byte-string."""
-        if isinstance(result, BaseModel):
-            return result.model_dump_json().encode()
-        if isinstance(result, bytes):
-            return result
-        return orjson.dumps(result)
 
     async def _dispatch_control_command(
         self, identity: str, message: Command
@@ -96,7 +85,7 @@ class SystemControllerCommandMixin:
                 cid=message.cid,
                 cmd=message.cmd,
                 sid=self.service_id,
-                payload=self._encode_command_payload(result),
+                payload=encode_command_payload(result),
             )
 
         # Distinct from CommandAck on purpose: callers treat "this peer does not

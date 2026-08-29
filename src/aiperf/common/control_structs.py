@@ -21,9 +21,11 @@ Controller -> Service (ServiceBoundMessage):
     RegistrationAck ("ack") - response to Registration
 """
 
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
+import orjson
 from msgspec import Struct
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Service -> Controller: status
@@ -206,3 +208,25 @@ ControllerBoundMessage: TypeAlias = (
 ServiceBoundMessage: TypeAlias = (
     RegistrationAck | Command | CommandAck | CommandOk | CommandErr | CommandUnhandled
 )
+
+
+def encode_command_payload(result: Any) -> bytes:
+    """Encode an ``@on_command`` hook result into a ``CommandOk`` payload.
+
+    Shared by both dispatchers -- the controller's ``_dispatch_control_command``
+    and the service's ``_execute_control_command`` -- so that a command answered
+    in one direction encodes exactly as the same value would in the other.
+
+    Ordering note: ``bytes`` and ``BaseModel`` are disjoint, so the two branches
+    cannot both match and their relative order is not load-bearing. The previous
+    duplicate implementations differed in that order, which made them look
+    meaningfully different when they were not; the real divergence was
+    ``isinstance(result, BaseModel)`` versus ``hasattr(result, "model_dump_json")``.
+    The isinstance check is kept: it will not silently pick up an unrelated
+    object that happens to expose a same-named method.
+    """
+    if isinstance(result, bytes):
+        return result
+    if isinstance(result, BaseModel):
+        return result.model_dump_json().encode()
+    return orjson.dumps(result)

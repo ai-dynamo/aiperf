@@ -1199,8 +1199,19 @@ class SystemController(
         """
         origin_service_id = ""
         if message.payload:
-            payload = orjson.loads(message.payload)
-            origin_service_id = payload.get("origin_service_id", "")
+            # A malformed payload must not turn an abort into a CommandErr back
+            # to the originator: the originator is already cancelling and would
+            # be left waiting while no peer ever hears about it. The origin id
+            # only suppresses an echo to the sender, so losing it is survivable
+            # -- the sender's own local handler has already run.
+            try:
+                payload = orjson.loads(message.payload)
+                origin_service_id = payload.get("origin_service_id", "")
+            except (orjson.JSONDecodeError, AttributeError) as e:
+                self.warning(
+                    f"Ignoring unreadable {CommandType.PROFILE_CANCEL} payload; "
+                    f"relaying to every handler: {e!r}"
+                )
         self._profile_cancel_relay_task = self.execute_async(
             self._relay_profile_cancel(origin_service_id, message.payload)
         )
@@ -1257,15 +1268,6 @@ class SystemController(
                     f"PROFILE_CANCEL relay to '{service_id}' was unhandled: the "
                     f"service has no {CommandType.PROFILE_CANCEL} handler"
                 )
-
-    @on_command(CommandType.SHUTDOWN_WORKERS)
-    async def _handle_shutdown_workers_command(self, message: Command) -> None:
-        """Handle a shutdown workers command."""
-        self.debug(lambda: f"Received shutdown workers command: {message}")
-        # TODO: Handle individual worker shutdowns via worker id
-        await self.service_manager.stop_service(ServiceType.WORKER)
-        if self.scale_record_processors_with_workers:
-            await self.service_manager.stop_service(ServiceType.RECORD_PROCESSOR)
 
     @on_message(MessageType.PROCESS_ALL_RESULTS)
     async def _on_process_all_results_message(
@@ -2199,10 +2201,14 @@ class SystemController(
             CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
         )
 
-        # SHUTDOWN is fire-and-forget on the control ROUTER: BaseComponentService's
-        # SHUTDOWN handler acks and then raises asyncio.CancelledError instead of
-        # returning, so the dispatcher never sends a second response we could await,
-        # and each per-service send_to is best effort. Child
+        # SHUTDOWN is fire-and-forget on the control ROUTER: the single SHUTDOWN
+        # handler on BaseService (deliberately not duplicated on
+        # BaseComponentService -- the dispatcher stops at the first hook match,
+        # so a second copy would be dead code) acks the command itself, stops the
+        # service, and then raises asyncio.CancelledError instead of returning.
+        # The dispatcher re-raises that before its success path, so it never
+        # sends a second response we could await, and each per-service send_to is
+        # best effort. Child
         # processes also ignore SIGTERM (see bootstrap.py), so
         # MultiProcessServiceManager._wait_for_process skips terminate()+join and
         # goes straight to kill() for any process still alive after this grace —

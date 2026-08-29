@@ -98,11 +98,7 @@ class CommandType(CaseInsensitiveStrEnum):
     PROFILE_COMPLETE = "profile_complete"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
-    REPORT_WORKER_STATUS_SUMMARY = "report_worker_status_summary"
-    """Controller -> worker-group request for an immediate status summary,
-    instead of waiting for the next periodic ``_worker_summary_loop`` tick."""
     SHUTDOWN = "shutdown"
-    SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
     ABORT = "abort"

@@ -597,11 +597,6 @@ class WorkerGroupManagerBase(BaseComponentService):
         for message in (group_stats, summary, pod_summary):
             await self.publish(message)
 
-    @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
-    async def _on_report_worker_status_summary(self, _message: Command) -> None:
-        """Publish an immediate worker status summary on controller request."""
-        await self._publish_worker_summary()
-
     @on_command(CommandType.FINALIZE_ARTIFACTS)
     async def _on_finalize_artifacts(
         self,

@@ -28,6 +28,7 @@ from aiperf.common.control_structs import (
     CommandErr,
     CommandOk,
     CommandUnhandled,
+    encode_command_payload,
 )
 from aiperf.common.enums import CommandType, CreditPhase, LifecycleState
 from aiperf.common.models import ErrorDetails, PhaseRecordsStats
@@ -663,7 +664,7 @@ async def test_get_pod_states_handler_result_encodes_as_orjson() -> None:
         controller, Command(cid="c-1", cmd=CommandType.GET_POD_STATES)
     )
 
-    encoded = SystemController._encode_command_payload(result)
+    encoded = encode_command_payload(result)
     assert orjson.loads(encoded) == {"pod_states": {}}
     assert isinstance(
         CommandOk(cid="c-1", cmd=CommandType.GET_POD_STATES, payload=encoded).payload,

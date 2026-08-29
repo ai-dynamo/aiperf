@@ -9,9 +9,8 @@ import os
 import traceback
 import uuid
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-import orjson
 import zmq
 
 from aiperf.common.base_service import BaseService
@@ -27,15 +26,15 @@ from aiperf.common.control_structs import (
     RegistrationAck,
     ServiceBoundMessage,
     StatusUpdate,
+    encode_command_payload,
 )
-from aiperf.common.enums import CommAddress, CommandType, LifecycleState
+from aiperf.common.enums import CommAddress, LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import (
     AIPerfHook,
     Hook,
     background_task,
-    on_command,
     on_init,
     on_start,
     on_state_change,
@@ -474,36 +473,6 @@ class BaseComponentService(BaseService):
                     cid=message.cid,
                     cmd=message.cmd,
                     sid=self.service_id,
-                    payload=self._serialize_command_result(result),
+                    payload=encode_command_payload(result),
                 )
             )
-
-    @staticmethod
-    def _serialize_command_result(result: Any) -> bytes:
-        """Serialize a command handler result to bytes for CommandOk payload."""
-        if isinstance(result, bytes):
-            return result
-        if hasattr(result, "model_dump_json"):
-            return result.model_dump_json().encode()
-        return orjson.dumps(result)
-
-    @on_command(CommandType.SHUTDOWN)
-    async def _on_shutdown_command(self, message: Command) -> None:
-        # Ack before stopping: after stop() the control client is closed and the
-        # dispatcher's post-return response would never reach the controller.
-        # Best effort even so -- a concurrent teardown (a failure path already
-        # running comms.stop(), or a second SHUTDOWN) can close the DEALER out
-        # from under this send, and a service that cannot ack must still stop.
-        with contextlib.suppress(zmq.ZMQError, NotInitializedError):
-            await self.control_client.send(
-                CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
-            )
-        self.debug("Received shutdown command")
-        try:
-            await self.stop()
-        except Exception as e:
-            self.warning(
-                f"Failed to stop service {self} ({self.service_id}) after receiving shutdown command: {e}. Killing."
-            )
-            await self._kill()
-        raise asyncio.CancelledError()
