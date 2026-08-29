@@ -235,6 +235,7 @@ markers = [
     "network: marks tests that require network access",
     "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
     "looptime: marks tests that use virtual event-loop time",
+    "docs_e2e: marks docs end-to-end tests (require Docker and a running LLM server or --docs-e2e-skip-server-setup)",
 ]
 # Better console output
 console_output_style = "progress"
@@ -243,7 +244,7 @@ verbosity_assertions = 2
 # Deselect performance, ffmpeg, stress, statistical, component_integration, integration, server_unit, fern, and slow tests by default
 # To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical, pytest -m slow
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow'"
+addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow and not docs_e2e'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore:.*torch.jit.script.*:DeprecationWarning",
