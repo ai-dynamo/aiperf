@@ -9,7 +9,7 @@ AIPerf Operator has been installed!
    kind: AIPerfJob
    metadata:
      name: my-benchmark
-     namespace: {{ .Values.benchmarkNamespace.name }}
+     namespace: {{ .Release.Namespace }}
    spec:
      # Deployment fields use camelCase (K8s convention)
      image: {{ include "aiperf-operator.defaultJobImage" . }}
@@ -36,10 +36,10 @@ AIPerf Operator has been installed!
    aiperf kube list my-benchmark --watch
 
    Or with kubectl:
-   kubectl get aiperfjob my-benchmark -n {{ .Values.benchmarkNamespace.name }} -w
+   kubectl get aiperfjob my-benchmark -n {{ .Release.Namespace }} -w
 
 4. View detailed status:
-   kubectl describe aiperfjob my-benchmark -n {{ .Values.benchmarkNamespace.name }}
+   kubectl describe aiperfjob my-benchmark -n {{ .Release.Namespace }}
 
 5. Retrieve results:
    aiperf kube results my-benchmark

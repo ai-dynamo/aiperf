@@ -16,17 +16,14 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow traffic from the release namespace (operator's own namespace — needed
-    # for `helm test` hook pods to hit /healthz), the benchmark namespace, and
-    # any configured additional namespaces. All hit health (8080) and results
-    # (resultsServer.port).
+    # Allow traffic from the release namespace (the operator's own namespace,
+    # where benchmarks run by default -- also needed for `helm test` hook pods
+    # to hit /healthz) and any configured additional namespaces. All hit health
+    # (8080) and results (resultsServer.port).
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.benchmarkNamespace.name | quote }}
         {{- range .Values.benchmarkRbacNamespaces }}
         - namespaceSelector:
             matchLabels:
@@ -80,11 +77,11 @@ spec:
           port: 443
         - protocol: TCP
           port: 6443
-    # Benchmark namespace (spawn/manage JobSets, talk to controller services).
+    # Release namespace (spawn/manage JobSets, talk to controller services).
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.benchmarkNamespace.name | quote }}
+              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
     {{- with .Values.benchmarkRbacNamespaces }}
     - to:
         {{- range . }}

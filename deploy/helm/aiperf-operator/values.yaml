@@ -263,28 +263,21 @@ serviceAccount:
   # serviceAccount.annotations is a map of service account annotations
   annotations: {}
 
-# benchmarkNamespace controls the namespace for running AIPerfJob workloads
-benchmarkNamespace:
-  # benchmarkNamespace.create specifies whether to create the benchmark namespace
-  create: true
-  # benchmarkNamespace.name is the benchmark namespace name
-  name: "aiperf-benchmarks"
-
 # benchmarkRbacNamespaces lists additional namespaces to provision benchmark
 # RBAC (Role + RoleBinding bound to the `default` ServiceAccount) in, beyond
-# benchmarkNamespace.name. Use when benchmark jobs run in multiple namespaces
-# (e.g. per-team). The chart also creates each namespace (with the same keep
-# policy as the primary benchmark namespace); entries are de-duplicated
-# against benchmarkNamespace.name.
+# the release namespace, which is always included. Use when benchmark jobs run
+# in namespaces other than the one the chart is installed into (e.g. per-team).
+# The chart does NOT create these namespaces -- they must already exist.
+# Entries are de-duplicated against the release namespace.
 benchmarkRbacNamespaces: []
 
 # serverMetricsDiscoveryNamespaces lists EXISTING inference namespaces (e.g. a
 # Dynamo deployment namespace) where benchmark pods get a read-only pods
 # Role/RoleBinding so cross-namespace server-metrics endpoint discovery
 # (server_metrics.discovery.namespace) is authorized. Unlike
-# benchmarkRbacNamespaces, entries are NOT created by the chart and receive
-# only `pods: get/list/watch`. Each entry is either a plain namespace string,
-# which binds the `default` ServiceAccount of the benchmark namespace(s), or
+# benchmarkRbacNamespaces, entries receive only `pods: get/list/watch`. Each
+# entry is either a plain namespace string, which binds the `default`
+# ServiceAccount of the benchmark namespace(s), or
 # an object binding custom ServiceAccounts (podTemplate.serviceAccountName)
 # instead:
 #   serverMetricsDiscoveryNamespaces:

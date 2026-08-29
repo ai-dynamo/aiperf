@@ -15,6 +15,8 @@ helm install aiperf-operator deploy/helm/aiperf-operator \
 
 After install, submit a benchmark with `AIPerfJob` — see [`templates/NOTES.txt`](./templates/NOTES.txt) or [`docs/kubernetes/getting-started.md`](../../../docs/kubernetes/getting-started.md).
 
+Benchmarks run in the release namespace. The chart creates no `Namespace` objects of its own; it provisions benchmark RBAC in the namespace you install into, plus any already-existing namespaces you list in `benchmarkRbacNamespaces`.
+
 ## Values
 
 All values are documented inline in [`values.yaml`](./values.yaml). Common overrides:
@@ -24,8 +26,7 @@ All values are documented inline in [`values.yaml`](./values.yaml). Common overr
 | `image.repository` / `image.tag` | Operator image (defaults to `nvcr.io/nvidia/aiperf:<appVersion>`). Override `image.tag` for dev builds — it automatically propagates to the CRD schema default for `spec.image`. |
 | `defaults.image` | Override the benchmark-pod image independently of the operator image. Leave empty to derive from `image.repository`/`image.tag`. |
 | `operator.watchNamespaces` | Namespaces to watch for `AIPerfJob` and `AIPerfSweep` CRs (`--namespace=<ns>` per entry). Empty list (default) passes `--all-namespaces`. |
-| `benchmarkNamespace.name` / `.create` | Namespace where chart creates `AIPerfJob` RBAC (and optionally the namespace itself). |
-| `benchmarkRbacNamespaces` | Extra namespaces to provision benchmark RBAC in (e.g. multi-team setups). |
+| `benchmarkRbacNamespaces` | Extra, already-existing namespaces to provision benchmark RBAC in, beyond the release namespace (e.g. multi-team setups). The chart does not create them. |
 | `serverMetricsDiscoveryNamespaces` | Existing inference namespaces (e.g. a Dynamo deployment) where benchmark pods get read-only `pods` RBAC for cross-namespace server-metrics endpoint discovery. A plain string entry binds the benchmark namespaces' `default` ServiceAccount; use `{namespace, serviceAccounts: [...]}` to bind custom ServiceAccounts (`podTemplate.serviceAccountName`). Namespaces are not created by the chart. |
 | `serviceAccount.create` / `.name` | Default `create: true` provisions the operator ServiceAccount and binds it to the chart's ClusterRole. With `create: false` the chart binds no RBAC, so `serviceAccount.name` becomes **required** — it must name a pre-provisioned account already bound to the operator's ClusterRole. The render fails otherwise, rather than silently using the namespace `default` account, which has no operator permissions. |
 | `storage.enabled` | Default `true`: back the results volume with a `PersistentVolumeClaim` so benchmark results survive operator restarts. Set `false` to fall back to `emptyDir` (ephemeral, useful for clusters with no default `StorageClass`). |
@@ -58,16 +59,14 @@ These resources are annotated `helm.sh/resource-policy: keep` and intentionally 
 
 - `CustomResourceDefinition aiperfjobs.aiperf.nvidia.com`
 - `CustomResourceDefinition aiperfsweeps.aiperf.nvidia.com`
-- `Namespace <benchmarkNamespace.name>` (default: `aiperf-benchmarks`), plus every namespace in `benchmarkRbacNamespaces`
 
-This is so a `helm uninstall` while a benchmark is still running does not drop the live CRs or their namespace. Helm leaves its release-metadata annotations (`meta.helm.sh/release-name`, `meta.helm.sh/release-namespace`) on all of them — which has a concrete side effect:
+This is so a `helm uninstall` while a benchmark is still running does not drop the live CRs. Helm leaves its release-metadata annotations (`meta.helm.sh/release-name`, `meta.helm.sh/release-namespace`) on them — which has a concrete side effect:
 
-**Re-installing under a different release name will fail** with `invalid ownership metadata` on the preserved CRDs and namespace. If you need to switch release names, clean up manually first:
+**Re-installing under a different release name will fail** with `invalid ownership metadata` on the preserved CRDs. If you need to switch release names, clean up manually first:
 
 ```bash
 kubectl delete crd aiperfjobs.aiperf.nvidia.com      # only if no live AIPerfJob CRs
 kubectl delete crd aiperfsweeps.aiperf.nvidia.com    # only if no live AIPerfSweep CRs
-kubectl delete namespace aiperf-benchmarks            # only if empty
 # then install under the new release name
 ```
 
@@ -107,7 +106,7 @@ helm template aiperf-operator deploy/helm/aiperf-operator -n aiperf-system \
 | Symptom | Cause | Fix |
 |---|---|---|
 | `helm test` times out / fails on fresh install | `tests.image` not pullable (airgapped / proxied cluster) | Preload with `kind load docker-image alpine/k8s:1.33.11 --name <cluster>` or `docker save` → node import; or override `tests.image.repository` / `tests.image.tag` to a reachable image with `kubectl` + `curl`. |
-| `invalid ownership metadata` on reinstall | Previous uninstall kept the CRDs/namespace with the old release's metadata | See [Uninstall + reinstall behavior](#uninstall--reinstall-behavior). |
+| `invalid ownership metadata` on reinstall | Previous uninstall kept the CRDs with the old release's metadata | See [Uninstall + reinstall behavior](#uninstall--reinstall-behavior). |
 | Operator pod stuck `ImagePullBackOff` | `image.repository` / `image.tag` not reachable from the cluster | Check `imagePullSecrets`; preload with `kind load docker-image` on kind clusters. |
 | Benchmark-pod image (CRD `spec.image` default) and operator image differ | `defaults.image` set explicitly to a different image | Either unset `defaults.image` (empty → computed from `image.*`) or set both to match. |
 | `helm test --logs` returns `unable to get pod logs` | Previous chart versions annotated test RBAC as `helm.sh/hook: test`, causing Helm to try fetching logs for non-Pod resources | Fixed in current chart — test RBAC is a regular resource. No action on a fresh install. |

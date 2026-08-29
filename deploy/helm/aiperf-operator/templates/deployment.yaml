@@ -95,9 +95,8 @@ spec:
           value: {{ .Values.podTemplate.shareProcessNamespace | default false | quote }}
         - name: AIPERF_DASHBOARD_PORT
           value: {{ if .Values.dashboard.enabled }}{{ .Values.dashboard.port | quote }}{{ else }}"0"{{ end }}
-        {{- /* Same fallback benchmark-namespace.yaml applies to the namespace
-               annotation. createQueues=true with defaultQueueName left empty is
-               the common case, and without this the operator would never stamp
+        {{- /* createQueues=true with defaultQueueName left empty is the common
+               case, and without this the operator would never stamp
                kueue.x-k8s.io/queue-name on the JobSet -- the annotation alone is
                read by Kueue's webhook, never by the operator. */ -}}
         {{- $defaultQueue := .Values.kueue.defaultQueueName }}

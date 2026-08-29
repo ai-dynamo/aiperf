@@ -35,7 +35,7 @@ apiVersion: kueue.x-k8s.io/v1beta1
 kind: LocalQueue
 metadata:
   name: {{ .Values.kueue.localQueueName }}
-  namespace: {{ .Values.benchmarkNamespace.name }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "aiperf-operator.labels" . | nindent 4 }}
 spec:
