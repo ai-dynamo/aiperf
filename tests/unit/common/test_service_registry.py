@@ -12,7 +12,7 @@ from aiperf.common.exceptions import (
     ServiceProcessDiedError,
     ServiceRegistrationTimeoutError,
 )
-from aiperf.common.service_registry import _ServiceRegistry
+from aiperf.common.service_registry import ServiceRegistry, _ServiceRegistry
 from aiperf.plugin.enums import ServiceType
 
 
@@ -298,3 +298,15 @@ async def test_premature_wake_reports_elapsed_not_nominal_timeout(
     assert "after waking" in str(excinfo.value)
     assert excinfo.value.timeout_sec is not None
     assert excinfo.value.timeout_sec < 600.0
+
+
+def test_get_all_registered_ids_returns_only_registered_services() -> None:
+    ServiceRegistry.reset()
+    ServiceRegistry.expect_service("pending-1", ServiceType.WORKER)
+    ServiceRegistry.register(
+        service_id="live-1",
+        service_type=ServiceType.WORKER,
+        first_seen_ns=1,
+        state=LifecycleState.RUNNING,
+    )
+    assert ServiceRegistry.get_all_registered_ids() == {"live-1"}

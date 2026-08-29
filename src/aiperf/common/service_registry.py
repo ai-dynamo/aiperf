@@ -372,6 +372,18 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         """Get a specific service by ID, regardless of registration status."""
         return self.services.get(service_id)
 
+    def get_all_registered_ids(self) -> set[str]:
+        """Return the IDs of every service currently in the REGISTERED state.
+
+        Pre-expected services that have not registered yet are excluded, so
+        command fan-out never targets a service that cannot answer.
+        """
+        return {
+            service_id
+            for service_id, info in self.services.items()
+            if info.registration_status == ServiceRegistrationStatus.REGISTERED
+        }
+
     def get_services_by_pod(self, pod_index: str) -> list[ServiceRunInfo]:
         """Get all registered services belonging to a specific pod index."""
         return [
