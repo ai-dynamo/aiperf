@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import pytest
-from data_types import Command, E2ETestConfig, Server
-from test_runner import run_aiperf_command
+
+from .data_types import Command, E2ETestConfig, Server
+from .test_runner import run_aiperf_command
 
 
 @pytest.mark.docs_e2e
@@ -16,7 +17,6 @@ def test_docs_aiperf_command(
     e2e_config: E2ETestConfig,
     aiperf_container_id: str | None,
 ) -> None:
-    """Run one aiperf command from a docs tutorial and assert it exits 0."""
     _server_name, cmd = aiperf_command
     success, output = run_aiperf_command(
         cmd, e2e_config, container_id=aiperf_container_id

@@ -24,3 +24,6 @@ SETUP_MONITOR_TIMEOUT = 30  # seconds to monitor setup output
 CONTAINER_BUILD_TIMEOUT = 600  # seconds for Docker build
 CONTAINER_START_TIMEOUT = 60  # seconds for container startup
 AIPERF_COMMAND_TIMEOUT = 1200  # seconds for AIPerf commands
+HEALTH_CHECK_TIMEOUT = (
+    1200  # seconds for server health checks (mirrors docs timeout 900 + buffer)
+)

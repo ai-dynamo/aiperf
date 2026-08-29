@@ -5,8 +5,8 @@
 import re
 import socket
 
-from data_types import Command, Server
-from utils import extract_ports_from_command
+from .data_types import Command, Server
+from .utils import extract_ports_from_command
 
 
 def find_free_port() -> int:
@@ -18,9 +18,24 @@ def find_free_port() -> int:
 
 
 def rewrite_command_ports(command: str, port_map: dict[int, int]) -> str:
-    """Replace every occurrence of each original port with its assigned port."""
+    """Replace host-side ports in Docker -p mappings and address/URL references.
+
+    For ``-p HOST:CONTAINER`` flags the HOST (left) side is rewritten while the
+    container-internal port is preserved — the server process inside the
+    container still listens on its default port.  All other occurrences
+    (``localhost:PORT``, ``127.0.0.1:PORT``, ``://host:PORT``) are rewritten so
+    client code and health checks target the new host port.
+    """
     for orig, assigned in port_map.items():
-        command = re.sub(rf"\b{orig}\b", str(assigned), command)
+        s = str(assigned)
+        # Docker publish flag: replace only the host (left) side of -p HOST:CONTAINER
+        command = re.sub(rf"(-p\s+){orig}(:\d+)", rf"\g<1>{s}\2", command)
+        # Address references: localhost:PORT and 127.0.0.1:PORT
+        command = re.sub(
+            rf"((?:localhost|127\.0\.0\.1):){orig}\b", rf"\g<1>{s}", command
+        )
+        # Generic URL port: ://hostname:PORT
+        command = re.sub(rf"(://[^/:\s]+:){orig}\b", rf"\g<1>{s}", command)
     return command
 
 
@@ -44,12 +59,21 @@ def assign_ports_to_server(server: Server) -> dict[int, int]:
     Mutates server.setup_command.command, server.health_check_command.command,
     and each entry in server.aiperf_commands in place.
     Returns {original_port: assigned_port}; empty dict if no ports found.
+    Each original port is guaranteed a unique assigned port.
     """
     original_ports = _collect_ports(server)
     if not original_ports:
         return {}
 
-    port_map = {orig: find_free_port() for orig in original_ports}
+    assigned: set[int] = set()
+    port_map: dict[int, int] = {}
+    for orig in original_ports:
+        while True:
+            candidate = find_free_port()
+            if candidate not in assigned:
+                assigned.add(candidate)
+                port_map[orig] = candidate
+                break
 
     cmds: list[Command] = []
     if server.setup_command:

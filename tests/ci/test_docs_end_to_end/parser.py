@@ -8,7 +8,7 @@ import logging
 import re
 from pathlib import Path
 
-from constants import (
+from .constants import (
     AIPERF_RUN_TAG_PREFIX,
     AIPERF_RUN_TAG_PREFIX_LEN,
     HEALTH_CHECK_TAG_PREFIX,
@@ -18,7 +18,7 @@ from constants import (
     TAG_SUFFIX,
     TAG_SUFFIX_LEN,
 )
-from data_types import Command, Server
+from .data_types import Command, Server
 
 logger = logging.getLogger(__name__)
 

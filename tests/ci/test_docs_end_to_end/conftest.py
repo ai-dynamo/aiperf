@@ -18,24 +18,30 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Generator
 from dataclasses import dataclass
 
 import pytest
-from data_types import E2ETestConfig, Server
-from parser import MarkdownParser
-from port_assigner import assign_ports_to_server
-from test_runner import (
+
+from .data_types import E2ETestConfig, Server
+from .parser import MarkdownParser
+from .port_assigner import assign_ports_to_server
+from .test_runner import (
     build_aiperf_image,
-    cleanup_all_containers,
     run_health_check,
     setup_server,
+    teardown_server,
     verify_local_aiperf,
 )
-from utils import get_repo_root, setup_logging
+from .utils import get_repo_root, setup_logging
 
 logger = logging.getLogger(__name__)
 
 _SETTINGS_KEY = pytest.StashKey["E2ETestSettings"]()
+# Docs are parsed once in pytest_configure; both pytest_generate_tests and
+# the parsed_servers fixture share these same Server/Command objects so that
+# port rewrites applied at runtime are visible to the parametrised test values.
+_SERVERS_KEY = pytest.StashKey[dict[str, Server]]()
 
 
 @dataclass(frozen=True)
@@ -124,7 +130,7 @@ def _get_settings(config: pytest.Config) -> E2ETestSettings:
 
 def _lpt_shard(server: Server, shard_index: int, shard_total: int) -> list:
     """LPT bin-pack server.aiperf_commands; return commands for shard_index in docs order."""
-    from data_types import Command
+    from .data_types import Command
 
     shard_bins: list[list[Command]] = [[] for _ in range(shard_total)]
     shard_load: list[int] = [0] * shard_total
@@ -162,6 +168,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     settings = _resolve_settings(config)
     config.stash[_SETTINGS_KEY] = settings
+    # Parse docs once here so that both pytest_generate_tests and the
+    # parsed_servers fixture operate on the *same* Command instances.
+    # assign_ports_to_server mutates Command.command in place at runtime;
+    # sharing instances ensures the parametrised aiperf_command values
+    # reflect the rewritten ports when the test body executes.
+    repo_root = get_repo_root()
+    md_parser = MarkdownParser()
+    servers = md_parser.parse_directory(str(repo_root))
+    config.stash[_SERVERS_KEY] = servers
     config.addinivalue_line(
         "markers",
         "docs_e2e: docs end-to-end test — requires Docker and an LLM server",
@@ -178,9 +193,16 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         return
 
     settings = _get_settings(metafunc.config)
-    repo_root = get_repo_root()
-    md_parser = MarkdownParser()
-    servers = md_parser.parse_directory(str(repo_root))
+    servers: dict[str, Server] = metafunc.config.stash[_SERVERS_KEY]
+
+    shard_index = settings.shard_index
+    shard_total = settings.shard_total
+    if shard_total < 1:
+        pytest.fail(f"--docs-e2e-shard-total must be >= 1, got {shard_total}")
+    if not (0 <= shard_index < shard_total):
+        pytest.fail(
+            f"--docs-e2e-shard-index {shard_index} out of range [0, {shard_total})"
+        )
 
     if settings.server:
         if settings.server not in servers:
@@ -193,8 +215,8 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     params = []
     for server_name, server in servers.items():
         cmds = server.aiperf_commands
-        if settings.shard_total > 1:
-            cmds = _lpt_shard(server, settings.shard_index, settings.shard_total)
+        if shard_total > 1:
+            cmds = _lpt_shard(server, shard_index, shard_total)
         for cmd in cmds:
             params.append(
                 pytest.param(
@@ -203,6 +225,14 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
                     marks=[pytest.mark.docs_e2e],
                 )
             )
+
+    if not params:
+        fail_msg = (
+            f"Server '{settings.server}' has no runnable aiperf commands"
+            if settings.server
+            else "No docs E2E aiperf commands found in any server"
+        )
+        pytest.fail(fail_msg)
 
     metafunc.parametrize("aiperf_command", params, indirect=False)
 
@@ -218,19 +248,17 @@ def e2e_config(e2e_settings: E2ETestSettings) -> E2ETestConfig:
 
 
 @pytest.fixture(scope="session")
-def aiperf_container_id(e2e_config: E2ETestConfig) -> str | None:
+def aiperf_container_id(e2e_config: E2ETestConfig) -> Generator[str | None, None, None]:
     """Build the AIPerf container once; yield its name; stop it after the session."""
     if e2e_config.use_local_aiperf:
         verify_local_aiperf(e2e_config)
         yield None
         return
-    if not e2e_config.skip_server_setup:
-        cleanup_all_containers()
     container_id = build_aiperf_image(e2e_config)
     try:
         yield container_id
     finally:
-        from utils import docker_stop_and_remove
+        from .utils import docker_stop_and_remove
 
         docker_stop_and_remove(container_id)
 
@@ -241,10 +269,23 @@ def _server_port_maps() -> dict[str, dict[int, int]]:
 
 
 @pytest.fixture(scope="session")
-def parsed_servers() -> dict[str, Server]:
-    repo_root = get_repo_root()
-    md_parser = MarkdownParser()
-    return md_parser.parse_directory(str(repo_root))
+def parsed_servers(request: pytest.FixtureRequest) -> dict[str, Server]:
+    return request.config.stash[_SERVERS_KEY]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _teardown_all_servers(
+    e2e_config: E2ETestConfig,
+    aiperf_container_id: str | None,
+    _server_port_maps: dict[str, dict[int, int]],
+    parsed_servers: dict[str, Server],
+) -> Generator[None, None, None]:
+    """Tear down every server that was started during this session."""
+    yield
+    for server_name in list(_server_port_maps):
+        server = parsed_servers.get(server_name)
+        if server:
+            teardown_server(server, e2e_config, aiperf_container_id)
 
 
 @pytest.fixture(scope="function")
@@ -260,7 +301,12 @@ def server_context(
     server = parsed_servers[server_name]
 
     if server_name not in _server_port_maps:
-        port_map = assign_ports_to_server(server)
+        # Only rewrite ports when we manage the server; skip-setup mode targets
+        # a pre-running server at its default port.
+        if not e2e_config.skip_server_setup:
+            port_map = assign_ports_to_server(server)
+        else:
+            port_map = {}
         _server_port_maps[server_name] = port_map
         if port_map:
             logger.info("Port map for '%s': %s", server_name, port_map)

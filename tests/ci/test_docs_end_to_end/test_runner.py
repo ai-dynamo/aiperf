@@ -6,6 +6,8 @@ Standalone functions for executing server setup, health checks, and AIPerf tests
 
 import logging
 import os
+import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -15,17 +17,22 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
-from constants import (
+from .constants import (
     AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
+    HEALTH_CHECK_TIMEOUT,
     SETUP_MONITOR_TIMEOUT,
 )
-from data_types import Command, E2ETestConfig, Server
-from utils import (
+from .data_types import Command, E2ETestConfig, Server
+from .utils import (
     get_repo_root,
 )
 
 logger = logging.getLogger(__name__)
+
+# Label applied to every Docker container we start so that cleanup stays
+# scoped to this session and does not affect parallel shards on the same runner.
+_SESSION_LABEL = f"aiperf-e2e-session={os.getpid()}"
 
 
 class _ProcessGroupKillGuard:
@@ -98,16 +105,23 @@ def _drain_output(
     return lines, timed_out
 
 
+def _inject_session_label(command: str) -> str:
+    """Inject the session label into the first ``docker run`` in a command string."""
+    return re.sub(
+        r"docker run(\s)", f"docker run --label {_SESSION_LABEL}\\1", command, count=1
+    )
+
+
 def cleanup_all_containers() -> None:
-    """Stop all running containers and prune stopped ones."""
+    """Stop and prune containers started by this test session."""
     subprocess.run(
-        "docker stop $(docker ps -q) 2>/dev/null || true",
+        f"docker ps -q --filter label={_SESSION_LABEL} | xargs -r docker stop 2>/dev/null || true",
         shell=True,
         capture_output=True,
         timeout=30,
     )
     subprocess.run(
-        "docker container prune -f",
+        f"docker container prune -f --filter label={_SESSION_LABEL}",
         shell=True,
         capture_output=True,
         timeout=10,
@@ -182,7 +196,8 @@ def build_aiperf_image(config: E2ETestConfig) -> str:
     repo_root = get_repo_root()
     fixtures_mount = f"-v {repo_root}/tests/fixtures:/fixtures:ro"
     run_command = (
-        f"docker run -d --name {container_name} -e HF_TOKEN {fixtures_mount} "
+        f"docker run -d --name {container_name} --label {_SESSION_LABEL} "
+        f"-e HF_TOKEN {fixtures_mount} "
         f"--network host --entrypoint bash aiperf:test -c 'tail -f /dev/null'"
     )
 
@@ -243,9 +258,12 @@ def setup_server(server: Server, config: E2ETestConfig) -> None:
     Raises RuntimeError if the process exits with a non-zero code during the
     SETUP_MONITOR_TIMEOUT window.
     """
+    if server.setup_command is None:
+        raise RuntimeError(f"Server '{server.name}' has no setup command")
     logger.info(f"Setting up server: {server.name}")
+    labeled_command = _inject_session_label(server.setup_command.command)
     setup_process = subprocess.Popen(
-        server.setup_command.command,
+        labeled_command,
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -287,6 +305,8 @@ def setup_server(server: Server, config: E2ETestConfig) -> None:
 
 def run_health_check(server: Server, config: E2ETestConfig) -> None:
     """Run the server health-check command. Raises RuntimeError on failure."""
+    if server.health_check_command is None:
+        raise RuntimeError(f"Server '{server.name}' has no health-check command")
     logger.info(f"Starting health check for server: {server.name}")
     health_process = subprocess.Popen(
         server.health_check_command.command,
@@ -297,8 +317,8 @@ def run_health_check(server: Server, config: E2ETestConfig) -> None:
         bufsize=1,
         universal_newlines=True,
     )
-    _drain_output(health_process, timeout=None, prefix="HEALTH")
-    health_process.wait()
+    _drain_output(health_process, timeout=HEALTH_CHECK_TIMEOUT, prefix="HEALTH")
+    health_process.wait(timeout=HEALTH_CHECK_TIMEOUT)
     if health_process.returncode != 0:
         logger.error(f"Health check failed for server: {server.name}")
         raise RuntimeError(f"Health check failed for server: {server.name}")
@@ -336,7 +356,7 @@ def run_aiperf_command(
         proc.wait()
         return proc.returncode == 0, "\n".join(lines)
 
-    exec_command = f"docker exec {container_id} bash -c '{command}'"
+    exec_command = f"docker exec {container_id} bash -c {shlex.quote(command)}"
     proc = subprocess.Popen(
         exec_command,
         shell=True,
@@ -373,18 +393,18 @@ def teardown_server(
     config: E2ETestConfig,
     aiperf_container_id: str | None = None,
 ) -> None:
-    """Stop server containers and prune, excluding the long-lived aiperf container."""
+    """Stop server containers started by this session and prune stopped ones."""
     if config.skip_server_setup:
         return
     if aiperf_container_id:
         stop_cmd = (
-            f"docker ps --format '{{{{.Names}}}}' "
-            f"| grep -v '^{aiperf_container_id}$' "
+            f"docker ps -q --filter label={_SESSION_LABEL} "
+            f"| grep -v '^{aiperf_container_id}' "
             f"| xargs -r docker stop 2>/dev/null || true"
         )
         subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=30)
     subprocess.run(
-        "docker container prune -f",
+        f"docker container prune -f --filter label={_SESSION_LABEL}",
         shell=True,
         capture_output=True,
         timeout=10,
