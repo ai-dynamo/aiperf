@@ -3,6 +3,7 @@
 """Service side of the DEALER/ROUTER control channel."""
 
 import asyncio
+import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -558,6 +559,53 @@ def test_exactly_one_shutdown_command_hook_is_reachable(component_service) -> No
     assert owners == ["BaseService"], (
         f"expected a single SHUTDOWN handler on BaseService, found {owners}"
     )
+
+
+def test_no_real_service_class_redefines_the_shutdown_hook() -> None:
+    """The same check, against every service class that actually ships.
+
+    The fixture-based test above only ever saw a minimal ``BaseComponentService``
+    subclass, so it could not catch a redefinition on a real service -- and did
+    not: ``FastAPIService`` carried a shadowed ``@on_command(SHUTDOWN)`` copy
+    holding the Kubernetes carve-out, which meant the API honoured the broadcast
+    shutdown and died five seconds after every K8s benchmark, breaking
+    ``aiperf kube results``. Walk the whole package so a subclass cannot
+    reintroduce that.
+
+    Services opt out of stopping by overriding ``_defers_broadcast_shutdown``,
+    which ordinary attribute lookup resolves to the most-derived class.
+    """
+    import importlib
+    import pkgutil
+
+    import aiperf
+    from aiperf.common.base_service import BaseService
+
+    for mod in pkgutil.walk_packages(aiperf.__path__, prefix="aiperf."):
+        with contextlib.suppress(Exception):
+            importlib.import_module(mod.name)
+
+    offenders = {
+        cls.__name__
+        for cls in _all_subclasses(BaseService)
+        if "_on_shutdown_command" in cls.__dict__
+    }
+    assert not offenders, (
+        f"{sorted(offenders)} redefine the SHUTDOWN hook, which the dispatcher "
+        "will never reach. Override _defers_broadcast_shutdown() instead."
+    )
+
+
+def _all_subclasses(cls: type) -> set[type]:
+    """Every transitive subclass of ``cls`` currently imported."""
+    found: set[type] = set()
+    stack = [cls]
+    while stack:
+        for sub in stack.pop().__subclasses__():
+            if sub not in found:
+                found.add(sub)
+                stack.append(sub)
+    return found
 
 
 @pytest.mark.asyncio

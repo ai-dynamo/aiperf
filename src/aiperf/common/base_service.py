@@ -131,6 +131,23 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             service_id=self.service_id,
         )
 
+    def _defers_broadcast_shutdown(self) -> bool:
+        """Return whether this service ignores the controller's SHUTDOWN broadcast.
+
+        Override this instead of redefining ``_on_shutdown_command``. A second
+        ``@on_command(CommandType.SHUTDOWN)`` on a subclass is silently
+        unreachable -- hook registration walks ``reversed(__mro__)`` and the
+        dispatcher stops at the first match, so the base copy always wins. The
+        API service's Kubernetes carve-out was written that way and never ran
+        once between being written and 2026-08-29, when a live cluster run
+        showed the API exiting five seconds after its benchmark.
+
+        A service that defers is still acked, so the controller sees the command
+        was received; it just does not stop. It must then be retired by some
+        other route (the API's is ``POST /api/shutdown``).
+        """
+        return False
+
     @on_command(CommandType.SHUTDOWN)
     async def _on_shutdown_command(self, message: Command) -> None:
         """The single SHUTDOWN handler for every service.
@@ -139,9 +156,22 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
         ``reversed(__mro__)`` and the dispatcher stops at the first match, so a
         second copy on a subclass would be unreachable while still looking
         maintained -- which is exactly how this hardening previously ended up on
-        a dead copy in ``BaseComponentService``.
+        a dead copy in ``BaseComponentService``. Subclasses that need to opt out
+        of stopping override :meth:`_defers_broadcast_shutdown` instead.
         """
         self.debug("Received shutdown command")
+
+        if self._defers_broadcast_shutdown():
+            # Return without acking by hand: the dispatcher's success path sends
+            # exactly one CommandAck for a handler that returns None. The manual
+            # ack below exists only because stop() closes the DEALER before the
+            # dispatcher could send it, and that does not apply here.
+            self.info(
+                f"{self.service_type} is ignoring the broadcast shutdown; it is "
+                "retired through its own endpoint instead."
+            )
+            return
+
         # Ack before stopping: after stop() the control client is closed and the
         # dispatcher's post-return response would never reach the controller.
         # SystemController derives from BaseService directly and has no control

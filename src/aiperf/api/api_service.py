@@ -26,10 +26,8 @@ from aiperf.api.routers.tokenizer import build_tokenizer_router
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.constants import IS_WINDOWS
-from aiperf.common.control_structs import Command
-from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import on_command, on_start, on_stop
+from aiperf.common.hooks import on_start, on_stop
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType
 
@@ -348,8 +346,7 @@ class FastAPIService(BaseComponentService):
 
         await asyncio.gather(*(_warm_one(n) for n in names))
 
-    @on_command(CommandType.SHUTDOWN)
-    async def _on_shutdown_command(self, message: Command) -> None:
+    def _defers_broadcast_shutdown(self) -> bool:
         """Ignore the controller's broadcast shutdown under Kubernetes.
 
         In Kubernetes the controller pod deliberately outlives its benchmark so
@@ -363,14 +360,17 @@ class FastAPIService(BaseComponentService):
         keeping ``Environment.API_SERVER.POST_COMPLETE_GRACE`` (607977c1a7,
         DYN-701) exactly as it behaves today -- the two mechanisms solve the
         same problem and must not both run.
+
+        This is an override of the base predicate rather than a second
+        ``@on_command(CommandType.SHUTDOWN)`` handler. It was the latter until
+        2026-08-29, which meant it never ran at all: the dispatcher stops at the
+        first hook in ``reversed(__mro__)`` order, so ``BaseService``'s copy
+        always won. A live cluster run showed the API container exiting 0 five
+        seconds after its benchmark with no deference log line, and
+        ``aiperf kube results --from-pods`` then failing with "API service may
+        not be listening on port 9090".
         """
-        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
-            self.info(
-                "Kubernetes mode: ignoring broadcast shutdown; the API stays up "
-                "to serve results until POST /api/shutdown arrives."
-            )
-            return
-        await super()._on_shutdown_command(message)
+        return self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
 
     @on_stop
     async def _stop_api_server(self) -> None:
