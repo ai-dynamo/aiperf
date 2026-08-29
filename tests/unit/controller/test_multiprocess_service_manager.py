@@ -302,19 +302,9 @@ class TestMultiProcessServiceManager:
     async def test_wait_blocks_until_all_replicas_of_a_type_register(
         self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
     ):
-        """Regression: a scaled service type (e.g.
-        RECORD_PROCESSOR, replicated based on worker count) must have every
-        replica registered before the wait returns -- not just the first one.
-
-        Failure mode: RECORD_PROCESSOR replicas register asynchronously as
-        their subprocesses finish starting up. The old check
-        (``required_types.issubset(registered_types)``) treated the type as
-        satisfied the moment ANY one replica registered, letting
-        ProfileConfigureCommand -- and with it DatasetManager's one-shot
-        DatasetConfiguredNotification -- fire while other replicas were
-        still starting. Those late replicas silently missed the
-        notification and hung for DATASET.CONFIGURATION_TIMEOUT (300s).
-        """
+        """A scaled service type (e.g. RECORD_PROCESSOR, replicated based on
+        worker count) must have every replica registered before the wait
+        returns -- not just the first one."""
         from aiperf.common.enums import ServiceRegistrationStatus
         from aiperf.common.models.service_models import ServiceRunInfo
 
@@ -346,8 +336,8 @@ class TestMultiProcessServiceManager:
     async def test_wait_returns_once_all_replicas_of_a_type_register(
         self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
     ):
-        """Companion to the regression above: once every replica of a
-        scaled type has registered, the wait must return cleanly."""
+        """Once every replica of a scaled type has registered, the wait
+        must return cleanly."""
         from aiperf.common.enums import ServiceRegistrationStatus
         from aiperf.common.models.service_models import ServiceRunInfo
 
