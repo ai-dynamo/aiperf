@@ -2243,6 +2243,13 @@ class _ZMQSettings(BaseSettings):
         default=100_000,
         description="Maximum concurrency for ZMQ PULL clients",
     )
+    PUSH_DRAIN_TIMEOUT: float = Field(
+        ge=0.01,
+        le=60.0,
+        default=2.0,
+        description="Seconds to wait for in-flight PUSH tasks to complete during socket shutdown before cancelling them. "
+        "Prevents record loss when a worker process exits while push tasks are still queued.",
+    )
     PUSH_MAX_RETRIES: int = Field(
         ge=1,
         le=100,

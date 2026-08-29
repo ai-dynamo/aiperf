@@ -2186,11 +2186,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         2. Wrap record in InferenceResultsMessage
         3. Push to RecordProcessor via PUSH socket (fire-and-forget)
 
-        Note: Awaited directly (not fire-and-forget) so the ZMQ NOBLOCK send
-        completes before the credit returns to the pool. Fire-and-forget
-        created a race where pending push tasks could be abandoned at worker
-        shutdown (LINGER=0 drops unsent messages), causing the records_manager
-        to stall waiting for records that never arrived.
+        Note: Uses execute_async() so the ZMQ NOBLOCK send does not block the
+        credit-return path. The ZMQ layer drains in-flight push tasks on socket
+        shutdown (bounded by AIPERF_ZMQ_PUSH_DRAIN_TIMEOUT), so records are not
+        lost when the worker process exits.
         """
         # All records will flow through here to be sent to the inference results push client.
         self.task_stats.task_finished(record.valid)
@@ -2229,7 +2228,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             service_id=self.service_id,
             record=record,
         )
-        await self.inference_results_push_client.push(msg)
+        self.execute_async(self.inference_results_push_client.push(msg))
 
     @on_command(CommandType.PROFILE_CONFIGURE)
     async def _on_profile_configure_command(self, message: CommandMessage) -> None:

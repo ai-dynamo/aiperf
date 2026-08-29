@@ -6,6 +6,7 @@ from pathlib import Path
 
 import zmq.asyncio
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InitializationError, NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.loop_scheduler import LoopScheduler
@@ -204,7 +205,20 @@ class BaseZMQClient(AIPerfLifecycleMixin):
     @on_stop
     async def _shutdown_socket(self) -> None:
         """Shutdown the socket."""
-        # TODO: Should we await the cancellation of the tasks?
+        if self.scheduler and not self.scheduler.is_idle():
+            drain_event = asyncio.Event()
+            self.scheduler.set_drain_observer(drain_event.set)
+            if not self.scheduler.is_idle():
+                try:
+                    await asyncio.wait_for(
+                        drain_event.wait(),
+                        timeout=Environment.ZMQ.PUSH_DRAIN_TIMEOUT,
+                    )
+                except TimeoutError:
+                    self.warning(
+                        f"Timed out draining {self.scheduler.running_count} in-flight ZMQ tasks on stop ({self.client_id})"
+                    )
+            self.scheduler.set_drain_observer(None)
         if self.scheduler:
             self.scheduler.cancel_all()
         try:
