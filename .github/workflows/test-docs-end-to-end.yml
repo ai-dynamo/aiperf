@@ -138,6 +138,8 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
+      - uses: astral-sh/setup-uv@v7
+
       - name: Run docs E2E tests
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

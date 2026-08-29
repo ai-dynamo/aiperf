@@ -5,12 +5,19 @@
 from __future__ import annotations
 
 import os
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from tests.ci.test_docs_end_to_end.test_runner import (
     _make_process_group_timeout_killer,
     _ProcessGroupKillGuard,
+)
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="os.killpg not available on Windows"
 )
 
 
