@@ -22,6 +22,7 @@ from aiperf.common.accumulator_protocols import (
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -40,17 +41,14 @@ from aiperf.common.messages import (
     NetworkLatencyRecordMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
-    ProcessRecordsCommand,
     ProcessRecordsResultMessage,
     ProcessTelemetryResultMessage,
     ProfileCancelCommand,
     ProfileCompleteCommand,
-    RealtimeMetricsCommand,
     RealtimeMetricsMessage,
     RealtimeServerMetricsMessage,
     RecordsMessage,
     RecordsProcessingStatsMessage,
-    StartRealtimeTelemetryCommand,
     TelemetryRecordsMessage,
 )
 from aiperf.common.messages.inference_messages import MetricRecordsData
@@ -1485,17 +1483,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     @on_command(CommandType.PROCESS_RECORDS)
     async def _on_process_records_command(
-        self, message: ProcessRecordsCommand
+        self, message: Command
     ) -> ProcessRecordsResult:
         """Handle the process records command by forwarding it to all of the results processors, and returning the results."""
         self.debug(lambda: f"Received process records command: {message}")
+        payload = orjson.loads(message.payload) if message.payload else {}
         return await self._process_results(
-            phase=CreditPhase.PROFILING, cancelled=message.cancelled
+            phase=CreditPhase.PROFILING, cancelled=payload.get("cancelled", False)
         )
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _on_profile_cancel_command(
-        self, message: ProfileCancelCommand
+        self, message: Command
     ) -> ProcessRecordsResult:
         """Handle the profile cancel command by processing current results.
 
@@ -1598,9 +1597,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         )
 
     @on_command(CommandType.START_REALTIME_TELEMETRY)
-    async def _on_start_realtime_telemetry_command(
-        self, message: StartRealtimeTelemetryCommand
-    ) -> None:
+    async def _on_start_realtime_telemetry_command(self, message: Command) -> None:
         """Handle command to start the realtime telemetry background task.
 
         This is called when the user dynamically enables the telemetry dashboard
@@ -1615,9 +1612,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
 
     @on_command(CommandType.REALTIME_METRICS)
-    async def _on_realtime_metrics_command(
-        self, message: RealtimeMetricsCommand
-    ) -> None:
+    async def _on_realtime_metrics_command(self, message: Command) -> None:
         """Handle a real-time metrics command."""
         await self._report_realtime_metrics()
 

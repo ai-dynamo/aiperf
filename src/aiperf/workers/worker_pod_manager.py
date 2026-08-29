@@ -18,6 +18,7 @@ from pathlib import Path
 import aiohttp
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -35,10 +36,8 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
-    CommandMessage,
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
-    FinalizeArtifactsCommand,
     WorkerHealthMessage,
     WorkerStartupStateMessage,
 )
@@ -530,7 +529,7 @@ class WorkerGroupManagerBase(BaseComponentService):
         mark_stale_workers(self.worker_health)
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _on_profile_configure(self, _message: CommandMessage) -> None:
+    async def _on_profile_configure(self, _message: Command) -> None:
         """Wait for group-local startup convergence before profiling."""
         if self._configure_started:
             return
@@ -599,14 +598,14 @@ class WorkerGroupManagerBase(BaseComponentService):
             await self.publish(message)
 
     @on_command(CommandType.REPORT_WORKER_STATUS_SUMMARY)
-    async def _on_report_worker_status_summary(self, _message: CommandMessage) -> None:
+    async def _on_report_worker_status_summary(self, _message: Command) -> None:
         """Publish an immediate worker status summary on controller request."""
         await self._publish_worker_summary()
 
     @on_command(CommandType.FINALIZE_ARTIFACTS)
     async def _on_finalize_artifacts(
         self,
-        message: FinalizeArtifactsCommand,  # noqa: ARG002
+        message: Command,  # noqa: ARG002
     ) -> None:
         """Acknowledge only after every local RAW shard is durable upstream."""
         await self._finalize_raw_artifacts()

@@ -26,6 +26,7 @@ from aiperf.api.routers.tokenizer import build_tokenizer_router
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_start, on_stop
@@ -35,7 +36,6 @@ from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from aiperf.common.messages import CommandMessage
     from aiperf.config import BenchmarkRun
 
 
@@ -349,7 +349,7 @@ class FastAPIService(BaseComponentService):
         await asyncio.gather(*(_warm_one(n) for n in names))
 
     @on_command(CommandType.SHUTDOWN)
-    async def _on_shutdown_command(self, message: CommandMessage) -> None:
+    async def _on_shutdown_command(self, message: Command) -> None:
         """Ignore the controller's broadcast shutdown under Kubernetes.
 
         In Kubernetes the controller pod deliberately outlives its benchmark so

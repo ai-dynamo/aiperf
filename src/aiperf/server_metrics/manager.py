@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommandType,
     CreditPhase,
@@ -25,10 +26,7 @@ from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
     ProcessServerMetricsResultMessage,
-    ProfileCancelCommand,
     ProfileCompleteCommand,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
     RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
 )
@@ -260,9 +258,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the server metrics collectors but don't start them yet.
 
         Creates ServerMetricsDataCollector instances for each configured endpoint,
@@ -442,7 +438,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             raise RuntimeError("; ".join(errors))
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Start all server metrics collectors for profiling phase.
 
         Initializes and starts background collection tasks for each configured
@@ -736,9 +732,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         return identity.phase_index == len(self.run.cfg.phases) - 1
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all server metrics collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_hooks import prepare_endpoint_control_hooks
+from aiperf.common.control_structs import Command
 from aiperf.common.endpoint_auth import auth_headers_for_endpoint
 from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
@@ -20,12 +21,9 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
-    CommandMessage,
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
     HeartbeatMessage,
-    ProfileCancelCommand,
-    ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter
@@ -143,9 +141,7 @@ class TimingManager(BaseComponentService):
         self._dataset_failed_event.set()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Create and configure phase orchestrator."""
         self.info("Waiting for dataset to be configured before configuring timing")
         await self._wait_for_dataset_or_failure()
@@ -204,7 +200,7 @@ class TimingManager(BaseComponentService):
                     task.cancel()
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, _message: CommandMessage) -> None:
+    async def _on_start_profiling(self, _message: Command) -> None:
         """Start credit issuance.
 
         GC is already disabled for this process by the bootstrap path
@@ -318,9 +314,7 @@ class TimingManager(BaseComponentService):
             )
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Cancel credit issuance gracefully.
 
         Stops new credits and cancels in-flight requests.

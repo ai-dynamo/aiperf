@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -24,10 +25,7 @@ from aiperf.common.hooks import (
 )
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
-    FinalizeArtifactsCommand,
     InferenceResultsMessage,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
     RecordsMessage,
 )
 from aiperf.common.messages.inference_messages import MetricRecordsData
@@ -349,16 +347,14 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the tokenizers."""
         await self.inference_result_parser.configure()
 
     @on_command(CommandType.PROFILE_COMPLETE)
     async def _profile_complete_command(
         self,
-        message: ProfileCompleteCommand,  # noqa: ARG002
+        message: Command,  # noqa: ARG002
     ) -> None:
         """Finalize child record artifacts before result aggregation.
 
@@ -375,7 +371,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     @on_command(CommandType.FINALIZE_ARTIFACTS)
     async def _finalize_artifacts_command(
         self,
-        message: FinalizeArtifactsCommand,  # noqa: ARG002
+        message: Command,  # noqa: ARG002
     ) -> None:
         """Acknowledge only after every local artifact writer is durable."""
         await self._finalize_local_artifacts()

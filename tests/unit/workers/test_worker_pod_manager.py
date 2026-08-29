@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest import param
 
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommandType,
     WorkerStartupState,
@@ -170,9 +171,9 @@ def dataset_notification() -> DatasetConfiguredNotification:
 
 
 @pytest.fixture
-def shutdown_command() -> CommandMessage:
+def shutdown_command() -> Command:
     """Create a valid shutdown Command for testing."""
-    return CommandMessage(command=CommandType.SHUTDOWN, service_id="test")
+    return Command(cid="c-1", cmd=CommandType.SHUTDOWN)
 
 
 # =============================================================================
@@ -834,11 +835,12 @@ class TestShutdown:
 
     @pytest.mark.asyncio
     async def test_shutdown_command_triggers_stop(
-        self, worker_group_manager: WorkerGroupManager, shutdown_command: CommandMessage
+        self, worker_group_manager: WorkerGroupManager, shutdown_command: Command
     ) -> None:
         """Test shutdown command triggers stop."""
         manager = worker_group_manager
         manager.stop = AsyncMock()
+        manager.control_client = AsyncMock()
 
         # BaseComponentService re-raises CancelledError after stopping so the
         # command-handler task unwinds; the assertion is that stop() ran.

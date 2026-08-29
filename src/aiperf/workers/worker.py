@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
@@ -33,7 +34,6 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
-    CommandMessage,
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
     ErrorMessage,
@@ -2231,7 +2231,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.execute_async(self.inference_results_push_client.push(msg))
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _on_profile_configure_command(self, message: CommandMessage) -> None:
+    async def _on_profile_configure_command(self, message: Command) -> None:
         """Configure the worker."""
         self.debug("Waiting for dataset to be configured before starting profiling")
         await asyncio.wait_for(

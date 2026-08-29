@@ -18,6 +18,7 @@ import orjson
 from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
@@ -164,9 +165,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the dataset.
 
         Wraps the entire configuration sequence so that any failure (synthetic
