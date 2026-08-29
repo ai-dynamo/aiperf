@@ -10,11 +10,21 @@ builds AIPerf container, and executes tests.
 
 import logging
 import sys
+import time
 
-from data_types import TestConfig
+from data_types import E2ETestConfig
 from parser import MarkdownParser
-from test_runner import EndToEndTestRunner
-from utils import get_repo_root, setup_logging
+from test_runner import (
+    build_aiperf_image,
+    cleanup_all_containers,
+    run_aiperf_command,
+    run_health_check,
+    setup_server,
+    teardown_server,
+    validate_servers,
+    verify_local_aiperf,
+)
+from utils import docker_stop_and_remove, get_repo_root, setup_logging
 
 # Configure logging using centralized utility
 setup_logging()
@@ -85,7 +95,7 @@ def main():
     )
     args = parser.parse_args()
 
-    config = TestConfig(
+    config = E2ETestConfig(
         use_local_aiperf=args.local_dev or args.use_local_aiperf,
         skip_server_setup=args.local_dev or args.skip_server_setup,
         skip_health_check=args.local_dev or args.skip_health_check,
@@ -192,10 +202,91 @@ def main():
             logger.info("  - Skipping health checks")
 
     # Run tests
-    runner = EndToEndTestRunner(config)
-    success = runner.run_tests(servers)
+    start_time = time.time()
+    aiperf_container_id: str | None = None
+    all_passed = True
 
-    if success:
+    try:
+        if not config.skip_server_setup:
+            logger.info(
+                "Cleaning up any leftover containers from previous test runs..."
+            )
+            cleanup_all_containers()
+            logger.info("All leftover containers cleaned up")
+
+        if config.use_local_aiperf:
+            logger.info("Using locally installed aiperf (skipping container build)")
+            try:
+                verify_local_aiperf(config)
+            except RuntimeError as exc:
+                logger.error(f"Local aiperf not found - stopping all tests: {exc}")
+                return 1
+        else:
+            try:
+                aiperf_container_id = build_aiperf_image(config)
+            except RuntimeError as exc:
+                logger.error(
+                    f"AIPerf container build failed - stopping all tests: {exc}"
+                )
+                return 1
+
+        try:
+            validate_servers(servers, config)
+        except RuntimeError as exc:
+            logger.error(f"Server validation failed - stopping all tests: {exc}")
+            return 1
+
+        for server_name, server in servers.items():
+            logger.info(f"Testing server: {server_name}")
+            server_passed = True
+
+            if config.skip_server_setup:
+                logger.info(f"Skipping server setup for {server.name}")
+            else:
+                try:
+                    setup_server(server, config)
+                except RuntimeError as exc:
+                    logger.error(f"Server {server_name} failed: {exc}")
+                    all_passed = False
+                    continue
+
+            if config.skip_health_check:
+                logger.info(f"Skipping health check for {server.name}")
+            else:
+                try:
+                    run_health_check(server, config)
+                except RuntimeError as exc:
+                    logger.error(f"Server {server_name} failed: {exc}")
+                    all_passed = False
+                    teardown_server(server, config, aiperf_container_id)
+                    continue
+
+            for cmd in server.aiperf_commands:
+                success, _output = run_aiperf_command(cmd, config, aiperf_container_id)
+                if not success:
+                    server_passed = False
+
+            teardown_server(server, config, aiperf_container_id)
+
+            if server_passed:
+                logger.info(f"Server {server_name} passed")
+            else:
+                logger.error(f"Server {server_name} failed")
+                all_passed = False
+
+    finally:
+        if aiperf_container_id:
+            docker_stop_and_remove(aiperf_container_id)
+        if not config.skip_server_setup:
+            logger.info("Final cleanup - stopping all remaining containers...")
+            cleanup_all_containers()
+            logger.info("Final cleanup completed")
+        elapsed_time = time.time() - start_time
+        logger.info("=" * 60)
+        logger.info(f"Total test execution time: {elapsed_time:.2f} seconds")
+        logger.info("=" * 60)
+
+    if all_passed:
         logger.info("All tests passed!")
         return 0
     else:
