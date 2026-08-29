@@ -6,13 +6,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import traceback
 import uuid
-from typing import TYPE_CHECKING, ClassVar
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any, ClassVar
 
+import orjson
 import zmq
 
 from aiperf.common.base_service import BaseService
 from aiperf.common.control_structs import (
+    Command,
+    CommandAck,
+    CommandErr,
+    CommandOk,
+    CommandUnhandled,
     Heartbeat,
     Registration,
     RegistrationAck,
@@ -23,6 +31,8 @@ from aiperf.common.enums import CommAddress, CommandType, LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import (
+    AIPerfHook,
+    Hook,
     background_task,
     on_command,
     on_init,
@@ -30,7 +40,6 @@ from aiperf.common.hooks import (
     on_state_change,
     on_stop,
 )
-from aiperf.common.messages import CommandMessage
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -43,8 +52,8 @@ class BaseComponentService(BaseService):
     framework such as the Timing Manager, Dataset Manager, etc.
 
     It extends the BaseService by adding a streaming DEALER client to the
-    SystemController's control ROUTER, over which registration, heartbeats and
-    lifecycle status updates flow. Commands still ride the pub/sub bus.
+    SystemController's control ROUTER, over which registration, heartbeats,
+    lifecycle status updates and command request-reply all flow.
     """
 
     # Capability tags advertised to the SystemController at registration. Result
@@ -330,8 +339,10 @@ class BaseComponentService(BaseService):
     async def _handle_control_command(self, message: ServiceBoundMessage) -> None:
         """Handle messages arriving from the controller on the DEALER.
 
-        Only RegistrationAck is actionable for now; command dispatch still rides
-        the pub/sub bus, so anything else is logged and dropped.
+        RegistrationAck resolves the in-flight registration; Command structs are
+        dispatched to this service's ``@on_command`` hooks. Command responses
+        never reach here -- the DEALER receive loop resolves them against
+        ``_pending_requests`` by ``cid`` first.
         """
         if isinstance(message, RegistrationAck):
             if (
@@ -341,13 +352,81 @@ class BaseComponentService(BaseService):
             ):
                 self._registration_ack_event.set()
             return
-        self.debug(
-            lambda: f"Dropping unexpected control channel message: {type(message).__name__}"
+        if not isinstance(message, Command):
+            self.debug(
+                lambda: f"Dropping unexpected control channel message: {type(message).__name__}"
+            )
+            return
+
+        # One handler per command type: the response we send back is the hook's
+        # result, and a second hook would have no way to answer.
+        for hook in self.get_hooks(AIPerfHook.ON_COMMAND):
+            resolved = hook.resolve_params(self)
+            if isinstance(resolved, Iterable) and message.cmd in resolved:
+                await self._execute_control_command(message, hook)
+                return
+
+        # CommandUnhandled rather than CommandAck: "no handler" is a failure to
+        # callers like the controller's artifact-finalization barrier, and an
+        # ack would report it as success.
+        self.debug(lambda: f"No handler for command {message.cmd}")
+        await self.control_client.send(
+            CommandUnhandled(cid=message.cid, cmd=message.cmd, sid=self.service_id)
         )
 
+    async def _execute_control_command(self, message: Command, hook: Hook) -> None:
+        """Run an @on_command hook and send its response over the DEALER."""
+        try:
+            result = await hook.func(message)
+        except asyncio.CancelledError:
+            # The SHUTDOWN handler acks itself and then cancels: the service is
+            # going away and cannot answer afterwards. Sending a response here
+            # would duplicate that ack.
+            raise
+        except Exception as e:  # noqa: BLE001 - dispatcher must surface handler errors over the control channel
+            self.error(f"Failed to handle command {message.cmd}: {e}")
+            await self.control_client.send(
+                CommandErr(
+                    cid=message.cid,
+                    cmd=message.cmd,
+                    sid=self.service_id,
+                    error=str(e),
+                    traceback=traceback.format_exc(),
+                )
+            )
+            return
+
+        if result is None:
+            await self.control_client.send(
+                CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
+            )
+        else:
+            await self.control_client.send(
+                CommandOk(
+                    cid=message.cid,
+                    cmd=message.cmd,
+                    sid=self.service_id,
+                    payload=self._serialize_command_result(result),
+                )
+            )
+
+    @staticmethod
+    def _serialize_command_result(result: Any) -> bytes:
+        """Serialize a command handler result to bytes for CommandOk payload."""
+        if isinstance(result, bytes):
+            return result
+        if hasattr(result, "model_dump_json"):
+            return result.model_dump_json().encode()
+        return orjson.dumps(result)
+
     @on_command(CommandType.SHUTDOWN)
-    async def _on_shutdown_command(self, message: CommandMessage) -> None:
-        self.debug(f"Received shutdown command: {message}, {self.service_id}")
+    async def _on_shutdown_command(self, message: Command) -> None:
+        # Ack before stopping: after stop() the control client is closed and the
+        # dispatcher's post-return response would never reach the controller.
+        await self.control_client.send(
+            CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
+        )
+        self.debug("Received shutdown command")
         try:
             await self.stop()
         except Exception as e:

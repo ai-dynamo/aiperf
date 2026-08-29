@@ -10,11 +10,10 @@ from abc import ABC
 from typing import TYPE_CHECKING
 
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.control_structs import Command, CommandAck
 from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.hooks import on_command
-from aiperf.common.messages import CommandMessage
-from aiperf.common.messages.command_messages import CommandAcknowledgedResponse
 from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.mixins import CommandHandlerMixin
 from aiperf.common.mixins.health_server_mixin import HealthServerMixin
@@ -130,12 +129,17 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
         )
 
     @on_command(CommandType.SHUTDOWN)
-    async def _on_shutdown_command(self, message: CommandMessage) -> None:
-        self.debug(f"Received shutdown command from {message.service_id}")
-        # Send an acknowledged response back to the sender, because we won't be able to send it after we stop.
-        await self.publish(
-            CommandAcknowledgedResponse.from_command_message(message, self.service_id)
-        )
+    async def _on_shutdown_command(self, message: Command) -> None:
+        self.debug("Received shutdown command")
+        # Ack before stopping: after stop() the control client is closed and the
+        # dispatcher's post-return response would never reach the controller.
+        # SystemController derives from BaseService directly and has no control
+        # client of its own, so the attribute may legitimately be absent.
+        control_client = getattr(self, "control_client", None)
+        if control_client is not None:
+            await control_client.send(
+                CommandAck(cid=message.cid, cmd=message.cmd, sid=self.service_id)
+            )
 
         try:
             await self.stop()

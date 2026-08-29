@@ -63,13 +63,7 @@ class SystemControllerDispatchMixin:
             case StatusUpdate():
                 return self._on_status_update(message)
             case ControlCommand():
-                # Service-initiated commands still ride pub/sub; the control
-                # channel carries none yet.
-                self.debug(
-                    lambda: f"Ignoring control command '{message.cmd}' from {identity}: "
-                    "command dispatch is not on the control channel yet"
-                )
-                return None
+                return await self._dispatch_control_command(identity, message)
             case CommandAck() | CommandOk() | CommandErr() | CommandUnhandled():
                 # Responses to pending requests are resolved by ``cid`` matching
                 # in the ROUTER receive loop before the handler is reached. If we
