@@ -342,6 +342,71 @@ class TestPyNVMLLifecycle:
 # ---------------------------------------------------------------------------
 
 
+class TestPyNVMLEnergyCounterProbe:
+    """The energy counter exists only on Volta and newer.
+
+    Before the probe, an unsupported device raised NVMLError_NotSupported on
+    every sample, the collection loop suppressed it, and the user got a run
+    with no energy metrics and no explanation. These tests pin both halves of
+    the fix: the probe records support once, and the collection loop honours it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_supported_device_is_marked_supported(self, initialized_collector):
+        """A device that answers the query is used normally."""
+        assert all(gpu.energy_counter_supported for gpu in initialized_collector._gpus)
+
+    @pytest.mark.asyncio
+    async def test_unsupported_device_is_detected_once(self, patch_pynvml):
+        """A pre-Volta device is flagged at init, not rediscovered per sample."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+        mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.side_effect = (
+            mock_pynvml.NVMLError("Not Supported")
+        )
+
+        collector = PyNVMLTelemetryCollector()
+        await collector.initialize()
+
+        assert all(not gpu.energy_counter_supported for gpu in collector._gpus)
+
+    @pytest.mark.asyncio
+    async def test_unsupported_device_is_not_queried_again(self, patch_pynvml):
+        """The collection loop skips the call it already knows will fail."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+        mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.side_effect = (
+            mock_pynvml.NVMLError("Not Supported")
+        )
+
+        collector = PyNVMLTelemetryCollector()
+        await collector.initialize()
+        calls_after_init = mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+
+        collector._collect_gpu_metrics()
+        collector._collect_gpu_metrics()
+
+        assert (
+            mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+            == calls_after_init
+        )
+
+    @pytest.mark.asyncio
+    async def test_unsupported_device_still_reports_other_metrics(self, patch_pynvml):
+        """Missing energy must not cost the user the rest of the telemetry."""
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+        mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.side_effect = (
+            mock_pynvml.NVMLError("Not Supported")
+        )
+
+        collector = PyNVMLTelemetryCollector()
+        await collector.initialize()
+        records = collector._collect_gpu_metrics()
+
+        assert len(records) == 2
+        for r in records:
+            assert r.telemetry_data.nvidia_energy_consumption is None
+            assert r.telemetry_data.nvidia_power_usage is not None
+
+
 class TestPyNVMLMetricsCollection:
     """Test GPU metrics collection."""
 
