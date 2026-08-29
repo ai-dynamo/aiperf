@@ -916,14 +916,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"(grace floor {grace_floor}, phase_index {phase_index}). "
             "Requesting PROFILE_CANCEL to terminate the run."
         )
-        command = Command(
-            cid=uuid.uuid4().hex,
-            cmd=CommandType.PROFILE_CANCEL,
-            payload=orjson.dumps({"origin_service_id": self.service_id}),
-        )
+        payload = orjson.dumps({"origin_service_id": self.service_id})
         try:
             await self.send_command_to_controller(
-                CommandType.PROFILE_CANCEL, payload=command.payload
+                CommandType.PROFILE_CANCEL, payload=payload
             )
         except Exception as exc:
             self.warning(
@@ -938,7 +934,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # abort, and the run would wait on the profile result domain forever.
         # Ctrl+C does not hit this because the command originates elsewhere.
         self._cancel_finalize_task = self.execute_async(
-            self._self_cancel_and_finalize(command)
+            self._self_cancel_and_finalize(
+                Command(
+                    cid=uuid.uuid4().hex,
+                    cmd=CommandType.PROFILE_CANCEL,
+                    payload=payload,
+                )
+            )
         )
 
     async def _self_cancel_and_finalize(self, command: Command) -> None:

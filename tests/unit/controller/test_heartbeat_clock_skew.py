@@ -27,7 +27,6 @@ from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceType
 
 SERVICE_ID = "worker_group_manager_0"
-SKEW_NS = 20 * 1_000_000_000
 
 
 def _registration() -> Registration:
@@ -56,10 +55,10 @@ async def _register(system_controller: SystemController) -> None:
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_from_skewed_sender_clock_does_not_backdate_last_seen(
+async def test_heartbeat_stamps_last_seen_from_the_controller_clock(
     system_controller: SystemController,
 ) -> None:
-    """A sender whose clock lags must not be made instantly stale."""
+    """``last_seen_ns`` comes from the receiving side, so a lagging sender is safe."""
     await _register(system_controller)
     before_ns = time.time_ns()
 
@@ -129,7 +128,7 @@ async def test_same_tick_update_still_applies_the_newer_state(
 
 
 @pytest.mark.asyncio
-async def test_status_from_skewed_sender_clock_does_not_backdate_last_seen(
+async def test_status_update_stamps_last_seen_from_the_controller_clock(
     system_controller: SystemController,
 ) -> None:
     """``_on_status_update`` shares the heartbeat handler's shape."""
