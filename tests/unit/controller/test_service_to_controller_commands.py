@@ -224,6 +224,8 @@ class TestProfileCompleteRelay:
 
         controller._send_control_command_to_all.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_relay_forwards_the_window_payload_verbatim(self) -> None:
         """Dropping the payload collapses every downstream export window."""
         controller = _controller({"sm-1": ServiceType.SERVER_METRICS_MANAGER})
         payload = orjson.dumps({"start_ns": 10, "end_ns": 20})
