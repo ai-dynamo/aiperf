@@ -176,3 +176,55 @@ async def test_heartbeat_task_is_silent_before_registration(component_service) -
     component_service._registration_complete = True
     await component_service._heartbeat_task()
     assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_survives_a_socket_closed_underneath_it(
+    component_service,
+) -> None:
+    """comms.stop() closes the DEALER before the task manager cancels this task.
+
+    ``_stop_children`` runs ahead of ``_stop_all_tasks``, so a tick can clear the
+    ``stop_requested`` guard and still reach a dead socket.
+    ``BaseZMQClient._check_initialized`` reports that as ``NotInitializedError``,
+    which must not escape to the background-task runner as a spurious shutdown
+    exception.
+    """
+    from aiperf.common.exceptions import NotInitializedError
+
+    async def dead_socket_send(struct) -> None:
+        raise NotInitializedError("Socket not initialized or closed")
+
+    component_service.control_client.send = dead_socket_send
+    component_service._registration_complete = True
+
+    await component_service._heartbeat_task()
+
+
+@pytest.mark.asyncio
+async def test_early_heartbeat_loop_survives_a_socket_closed_underneath_it(
+    component_service,
+) -> None:
+    from aiperf.common.exceptions import NotInitializedError
+
+    async def dead_socket_send(struct) -> None:
+        raise NotInitializedError("Socket not initialized or closed")
+
+    component_service.control_client.send = dead_socket_send
+
+    await component_service._early_heartbeat_loop()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_lets_cancellation_propagate(component_service) -> None:
+    """CancelledError is how ``_check_initialized`` reports a stopped socket and
+    how the task manager unwinds this task; swallowing it would wedge shutdown."""
+
+    async def cancelled_send(struct) -> None:
+        raise asyncio.CancelledError("Socket was stopped")
+
+    component_service.control_client.send = cancelled_send
+    component_service._registration_complete = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await component_service._heartbeat_task()

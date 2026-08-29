@@ -7,7 +7,7 @@ import asyncio
 import contextlib
 import os
 import uuid
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import zmq
 
@@ -21,6 +21,7 @@ from aiperf.common.control_structs import (
 )
 from aiperf.common.enums import CommAddress, CommandType, LifecycleState
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import (
     background_task,
     on_command,
@@ -109,17 +110,24 @@ class BaseComponentService(BaseService):
     async def _stop_control_client(self) -> None:
         """Cancel the early-heartbeat loop before the DEALER socket goes away.
 
-        The socket itself is closed by ``comms.stop()``, which owns it. Only the
-        loop that this class started outside the background-task machinery has
-        to be unwound here.
+        The socket itself is closed by ``comms.stop()``, which owns it, and every
+        ``@background_task`` is cancelled by ``AIPerfLifecycleMixin._stop_all_tasks``.
+        Neither covers ``_early_heartbeat_task``: it is a bare ``asyncio.create_task``
+        that the task manager never learned about, so nothing else would ever
+        cancel it.
         """
         if not self._uses_controller_control_channel():
             return
         early_task = self._early_heartbeat_task
         if early_task is not None and not early_task.done():
             early_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await early_task
+            with contextlib.suppress(asyncio.CancelledError):
+                try:
+                    await early_task
+                except Exception as e:  # noqa: BLE001 - shutdown boundary; a bug here must be visible, not fatal
+                    # Discarding this would hide a genuine defect in the loop
+                    # behind a clean shutdown.
+                    self.debug(f"Early heartbeat task failed on shutdown: {e!r}")
         self._early_heartbeat_task = None
 
     # -------------------------------------------------------------------------
@@ -250,9 +258,14 @@ class BaseComponentService(BaseService):
                 await asyncio.sleep(Environment.SERVICE.HEARTBEAT_INTERVAL)
         except asyncio.CancelledError:
             raise
-        except zmq.ZMQError as e:
-            # ZMQ socket teardown races shutdown; swallow so the service exits cleanly.
-            self.debug(f"Early heartbeat loop saw ZMQ error during shutdown: {e!r}")
+        except (zmq.ZMQError, NotInitializedError) as e:
+            # The socket is torn down by comms.stop(), which runs in
+            # ``_stop_children`` -- ahead of ``_stop_all_tasks``, so this loop is
+            # still schedulable after its socket is gone. ``BaseZMQClient._check_initialized``
+            # signals that as NotInitializedError (or CancelledError, which must
+            # keep propagating), and libzmq itself as ZMQError. Both are expected
+            # at shutdown; swallow so the service exits cleanly.
+            self.debug(f"Early heartbeat loop saw a closed socket at shutdown: {e!r}")
 
     @background_task(interval=Environment.SERVICE.HEARTBEAT_INTERVAL, immediate=False)
     async def _heartbeat_task(self) -> None:
@@ -279,8 +292,13 @@ class BaseComponentService(BaseService):
                     state=str(self.state),
                 )
             )
-        except zmq.ZMQError as e:
-            self.debug(f"Heartbeat saw ZMQ error during shutdown: {e!r}")
+        except (zmq.ZMQError, NotInitializedError) as e:
+            # The ``stop_requested`` early-return above does NOT cover this: the
+            # socket is closed by comms.stop() in ``_stop_children``, which runs
+            # before ``_stop_all_tasks`` cancels this task, so a tick can pass
+            # that guard and still find the socket gone. CancelledError is
+            # deliberately not caught -- it must reach the task runner.
+            self.debug(f"Heartbeat saw a closed socket at shutdown: {e!r}")
 
     @on_state_change
     async def _on_state_change(
@@ -309,7 +327,7 @@ class BaseComponentService(BaseService):
     # Inbound control channel
     # -------------------------------------------------------------------------
 
-    async def _handle_control_command(self, message: Any) -> None:
+    async def _handle_control_command(self, message: ServiceBoundMessage) -> None:
         """Handle messages arriving from the controller on the DEALER.
 
         Only RegistrationAck is actionable for now; command dispatch still rides
