@@ -62,7 +62,10 @@ async def shutdown(
         from aiperf.kubernetes.port_forward import port_forward_to_controller
 
         resolved = cli_helpers.resolve_job_id_and_namespace(
-            job_id, manage_options.namespace
+            job_id,
+            manage_options.namespace,
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
         )
         if not resolved:
             return

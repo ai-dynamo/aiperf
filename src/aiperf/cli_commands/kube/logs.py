@@ -363,7 +363,10 @@ async def logs(
         from aiperf.kubernetes import cli_helpers
 
         resolved = cli_helpers.resolve_job_id_and_namespace(
-            job_id, manage_options.namespace
+            job_id,
+            manage_options.namespace,
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
         )
         if not resolved:
             cli_helpers.exit_target_not_found(ignore_not_found=ignore_not_found)

@@ -15,7 +15,7 @@ from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION, AIPERF_JOB_KIND
 from aiperf.kubernetes.environment import K8sEnvironment
 
 if TYPE_CHECKING:
-    from kubernetes_asyncio.client import CoreV1Api, CustomObjectsApi
+    from kubernetes_asyncio.client import CustomObjectsApi
 
 
 AIPERF_KIND = AIPERF_JOB_KIND
@@ -204,42 +204,26 @@ async def _replace_existing_cr_if_complete(
 
 async def _submit_cr(
     custom: CustomObjectsApi,
-    core: CoreV1Api,
     cr: dict[str, Any],
     *,
     name: str,
     namespace: str,
     kube_context: str | None,
-    create_cli_owned_namespace: bool,
 ) -> dict[str, Any]:
-    """Optionally create a CLI-owned namespace, replace stale CR, and submit."""
-    from kubernetes_asyncio import client as k8s_client_mod
+    """Replace a stale CR and submit into an already-existing namespace.
+
+    Nothing here creates the namespace. It is the user's -- named with
+    ``--namespace`` or inherited from their kubeconfig context -- so creating
+    it would both stamp someone else's namespace as AIPerf-owned and require
+    cluster-scoped namespace-create rights the submitter may not have.
+    """
     from kubernetes_asyncio.client.exceptions import ApiException
 
-    from aiperf.kubernetes.constants import AIPerfLabels
     from aiperf.kubernetes.cr_refs import (
         AIPERF_JOB_GROUP,
         AIPERF_JOB_PLURAL,
         AIPERF_JOB_VERSION,
     )
-
-    if create_cli_owned_namespace:
-        try:
-            await core.create_namespace(
-                body=k8s_client_mod.V1Namespace(
-                    metadata=k8s_client_mod.V1ObjectMeta(
-                        name=namespace,
-                        labels={
-                            AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
-                            AIPerfLabels.AUTO_GENERATED: "true",
-                            AIPerfLabels.JOB_ID: name,
-                        },
-                    ),
-                )
-            )
-        except ApiException as e:
-            if e.status != 409:
-                raise
 
     await _replace_existing_cr_if_complete(
         custom, name=name, namespace=namespace, kube_context=kube_context
@@ -340,16 +324,13 @@ async def deploy_via_operator(
         kubeconfig=kube_options.kubeconfig,
         context=kube_options.kube_context,
     ) as api:
-        core = k8s_client_mod.CoreV1Api(api)
         custom = k8s_client_mod.CustomObjectsApi(api)
         submitted_cr = await _submit_cr(
             custom,
-            core,
             cr,
             name=name,
             namespace=namespace,
             kube_context=kube_options.kube_context,
-            create_cli_owned_namespace=kube_options.namespace is None,
         )
 
     submitted_spec = submitted_cr.get("spec")

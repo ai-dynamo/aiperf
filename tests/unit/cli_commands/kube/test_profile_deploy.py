@@ -140,8 +140,6 @@ class TestSubmitCr:
     """The create response carries server-defaulted fields used in summaries."""
 
     async def test_returns_server_defaulted_cr(self) -> None:
-        core = MagicMock()
-        core.create_namespace = AsyncMock()
         custom = MagicMock()
         custom.create_namespaced_custom_object = AsyncMock(
             return_value={"spec": {"image": "registry.example/aiperf:chart-default"}}
@@ -154,43 +152,13 @@ class TestSubmitCr:
         ):
             created = await _submit_cr(
                 custom,
-                core,
                 cr,
                 name="my-bench",
                 namespace="ns-1",
                 kube_context=None,
-                create_cli_owned_namespace=True,
             )
 
         assert created["spec"]["image"] == "registry.example/aiperf:chart-default"
-
-    async def test_created_namespace_carries_job_specific_ownership(self) -> None:
-        core = MagicMock()
-        core.create_namespace = AsyncMock()
-        custom = MagicMock()
-        custom.create_namespaced_custom_object = AsyncMock(return_value={})
-        cr = _build_cr("my-bench", "aiperf-my-bench", {"benchmark": {}})
-
-        with patch(
-            "aiperf.cli_commands.kube.profile_deploy._replace_existing_cr_if_complete",
-            new=AsyncMock(),
-        ):
-            await _submit_cr(
-                custom,
-                core,
-                cr,
-                name="my-bench",
-                namespace="aiperf-my-bench",
-                kube_context=None,
-                create_cli_owned_namespace=True,
-            )
-
-        namespace = core.create_namespace.await_args.kwargs["body"]
-        assert namespace.metadata.labels == {
-            "app": "aiperf",
-            "aiperf.nvidia.com/auto-generated": "true",
-            "aiperf.nvidia.com/job-id": "my-bench",
-        }
 
 
 class _ExistingCrApi:
@@ -342,14 +310,20 @@ class TestDeployViaOperatorNamespaceOwnership:
         assert core.created_namespaces == []
         assert custom.created_jobs == [("tenant-a", "my-bench")]
 
-    async def test_default_cli_owned_namespace_is_created(self) -> None:
+    async def test_inherited_namespace_is_not_created_either(self) -> None:
+        """No --namespace means the kubeconfig context's namespace, which exists.
+
+        Creating it would stamp the user's own namespace as AIPerf-owned and
+        fail submission outright for anyone without cluster-scoped
+        namespace-create rights.
+        """
         core, custom = await self._deploy(
             options=KubeOptions(image="registry.example/aiperf:latest"),
-            namespace="aiperf-benchmarks",
+            namespace="inherited-ns",
         )
 
-        assert core.created_namespaces == ["aiperf-benchmarks"]
-        assert custom.created_jobs == [("aiperf-benchmarks", "my-bench")]
+        assert core.created_namespaces == []
+        assert custom.created_jobs == [("inherited-ns", "my-bench")]
 
 
 class TestProfileModeSelection:

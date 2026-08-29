@@ -91,7 +91,10 @@ async def cancel(
         )
 
         resolved = cli_helpers.resolve_job_id_and_namespace(
-            job_id, manage_options.namespace
+            job_id,
+            manage_options.namespace,
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
         )
         if not resolved:
             return
