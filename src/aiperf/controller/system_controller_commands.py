@@ -178,7 +178,7 @@ class SystemControllerCommandMixin:
         at the first such service and cancels the rest in the ``finally`` below,
         so the TimingManager never finishes configuring and the run dies at
         PROFILE_START with "No phase orchestrator configured". The pub/sub
-        predecessor broke on CommandErrorResponse only; keep that.
+        predecessor broke on the error response only; keep that.
         """
         tasks = {
             sid: asyncio.create_task(

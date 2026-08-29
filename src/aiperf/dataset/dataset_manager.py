@@ -38,7 +38,6 @@ from aiperf.common.messages import (
     ConversationTurnResponseMessage,
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
-    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
@@ -174,7 +173,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         exception propagates back to the command-handler. Without this fan-out,
         TimingManager's _profile_configure_command would block on its 300s
         dataset_configured_event timeout while the SystemController has already
-        observed the CommandErrorResponse and is trying to shut down.
+        observed the CommandErr and is trying to shut down.
         """
         try:
             await self._do_profile_configure(message)
@@ -193,7 +192,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 )
             raise
 
-    async def _do_profile_configure(self, message: ProfileConfigureCommand) -> None:
+    async def _do_profile_configure(self, message: Command) -> None:
         """Inner implementation of PROFILE_CONFIGURE handling.
 
         Fast path: cache HIT — restore mmap files and return.

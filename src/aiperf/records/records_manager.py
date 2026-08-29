@@ -717,9 +717,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._warned_missing_cache_reporting: bool = False
         self._log_routing_table()
 
-        # Single-flight guard for _process_results: the background finalize task,
-        # the PROCESS_RECORDS command, and PROFILE_CANCEL can all reach it and
-        # would otherwise double-publish and double-finalize stream exporters.
+        # Single-flight guard for _process_results: the background finalize task
+        # and PROFILE_CANCEL can both reach it and would otherwise double-publish
+        # and double-finalize stream exporters.
         self._process_results_lock = asyncio.Lock()
         self._processed_results: dict[CreditPhase, ProcessRecordsResult] = {}
 
@@ -1492,17 +1492,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             worker_stats=worker_stats,
         )
         await self.publish(message)
-
-    @on_command(CommandType.PROCESS_RECORDS)
-    async def _on_process_records_command(
-        self, message: Command
-    ) -> ProcessRecordsResult:
-        """Handle the process records command by forwarding it to all of the results processors, and returning the results."""
-        self.debug(lambda: f"Received process records command: {message}")
-        payload = orjson.loads(message.payload) if message.payload else {}
-        return await self._process_results(
-            phase=CreditPhase.PROFILING, cancelled=payload.get("cancelled", False)
-        )
 
     @on_command(CommandType.PROFILE_CANCEL)
     async def _on_profile_cancel_command(
@@ -2298,8 +2287,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
     ) -> ProcessRecordsResult:
         """Process the accumulated records into final benchmark results.
 
-        Single-flight: the natural finalize task and the PROCESS_RECORDS /
-        PROFILE_CANCEL commands can race. The lock serializes them and the
+        Single-flight: the natural finalize task and the PROFILE_CANCEL command
+        can race. The lock serializes them and the
         per-phase cache makes every call after the first return the same result
         instead of re-publishing and re-finalizing the stream exporters.
         """

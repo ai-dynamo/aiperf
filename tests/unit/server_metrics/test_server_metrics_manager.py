@@ -12,8 +12,6 @@ from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
 )
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
@@ -124,7 +122,7 @@ class TestServerMetricsManagerInitialization:
             assert count == 1
 
 
-class TestProfileConfigureCommand:
+class TestProfileConfigure:
     """Test profile configuration and endpoint reachability checking."""
 
     @pytest.mark.asyncio
@@ -146,11 +144,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) > 0
@@ -174,11 +168,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) == 0
@@ -204,17 +194,13 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert "old_collector" not in manager._collectors
 
 
-class TestProfileStartCommand:
+class TestProfileStart:
     """Test profile start functionality."""
 
     @pytest.mark.asyncio
@@ -236,9 +222,7 @@ class TestProfileStartCommand:
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_START)
         )
 
         mock_collector.start.assert_called_once()
@@ -269,9 +253,7 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
@@ -294,9 +276,7 @@ class TestProfileStartCommand:
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_START)
         )
 
     @pytest.mark.asyncio
@@ -327,9 +307,7 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
@@ -865,11 +843,7 @@ class TestDisabledServerMetrics:
         manager.publish = AsyncMock()
 
         await manager._profile_configure_command(
-            ProfileConfigureCommand(
-                service_id=manager.id,
-                command=CommandType.PROFILE_CONFIGURE,
-                config={},
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Should not create any collectors
@@ -900,11 +874,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Should handle exception and not add collector
@@ -933,11 +903,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Collector should still be added despite baseline failure
@@ -971,9 +937,7 @@ class TestPartialStartup:
         }
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_START)
         )
 
         # Both should be called
@@ -1139,7 +1103,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile cancel stops all collectors."""
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
@@ -1150,9 +1113,7 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         mock_collector.stop.assert_called_once()
@@ -1165,10 +1126,9 @@ class TestProfileCompleteAndCancel:
     ) -> None:
         """The cancel path must exclude warmup like the non-cancel path does.
 
-        ProfileCancelCommand carries no window, and a null window collapses to
+        PROFILE_CANCEL carries no window, and a null window collapses to
         ``start_ns=0`` in the accumulator, which excludes no sample at all.
         """
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1205,9 +1165,7 @@ class TestProfileCompleteAndCancel:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1222,7 +1180,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """Cancelled before profiling began: the window must start after warmup."""
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1250,9 +1207,7 @@ class TestProfileCompleteAndCancel:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1270,7 +1225,6 @@ class TestProfileCompleteAndCancel:
         Ending at the cancel timestamp would fold the later warmup's traffic
         into the reported profiling deltas.
         """
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1307,9 +1261,7 @@ class TestProfileCompleteAndCancel:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1725,7 +1677,6 @@ class TestScrapeHangContainment:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """profiling -> warmup -> profiling -> cancel must not reuse the first end."""
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1751,9 +1702,7 @@ class TestScrapeHangContainment:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1898,7 +1847,7 @@ class TestScrapeHangContainment:
         ):
             await asyncio.wait_for(
                 manager._profile_configure_command(
-                    ProfileConfigureCommand(service_id="system_controller")
+                    Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                 ),
                 timeout=2.0,
             )

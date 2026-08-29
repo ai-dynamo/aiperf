@@ -1097,8 +1097,8 @@ class RequestRecord(AIPerfBaseModel):
         description="The HTTP status code of the response.",
     )
     # TODO: Maybe we could improve this with subclassing the responses to allow for more specific types.
-    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how we handle
-    #       the CommandMessage and CommandResponse classes for an example.
+    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how
+    #       AutoRoutedModel handles nested discriminators for an example.
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.

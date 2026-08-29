@@ -36,7 +36,6 @@ from aiperf.common.enums import (
     MessageType,
     ServiceRegistrationStatus,
     SystemState,
-    parse_result_producer_capability,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
@@ -45,16 +44,13 @@ from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     BenchmarkCompleteMessage,
-    HeartbeatMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessServerMetricsResultMessage,
     ProcessTelemetryResultMessage,
-    RegisterServiceCommand,
     ResultsExportedMessage,
     ServerMetricsStatusMessage,
-    StatusMessage,
     SystemStateChangedMessage,
     TelemetryStatusMessage,
 )
@@ -62,7 +58,6 @@ from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
-    ServiceRunInfo,
 )
 from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
@@ -677,7 +672,7 @@ class SystemController(
         if state == self._system_state:
             return
         # Forward-only. _cancel_profiling sets STOPPING and then blocks on
-        # ProfileCancelCommand; during that window the cancelled
+        # PROFILE_CANCEL; during that window the cancelled
         # PhaseOrchestrator's finally: publishes CreditsCompleteMessage, which
         # would stamp PROCESSING and walk status.subPhase
         # stopping -> processing -> shutdown, breaking every consumer that
@@ -769,117 +764,6 @@ class SystemController(
                 lifecycle_id=self.id,
             )
 
-    @on_command(CommandType.REGISTER_SERVICE)
-    async def _handle_register_service_command(
-        self, message: RegisterServiceCommand
-    ) -> None:
-        """Process a registration message from a service.
-
-        Adds the service to the service manager's tracking maps (service_id_map and
-        service_map) so it can participate in lifecycle coordination.
-
-        Args:
-            message: The registration message to process
-        """
-
-        self.debug(
-            lambda: (
-                f"Processing registration from {message.service_type} with ID: {message.service_id}"
-            )
-        )
-
-        prior_info = ServiceRegistry.get_service(message.service_id)
-        was_registered = ServiceRegistry.is_registered(message.service_id)
-        is_replacement = self._is_replacement_worker_group_command(
-            message, prior_info, was_registered
-        )
-        now_ns = time.time_ns()
-        ServiceRegistry.register(
-            service_id=message.service_id,
-            service_type=message.service_type,
-            first_seen_ns=now_ns,
-            state=message.state,
-            pod_name=message.pod_name,
-            pod_index=message.pod_index,
-        )
-        service_info = ServiceRegistry.get_service(message.service_id)
-        if service_info is None:
-            raise RuntimeError(
-                f"Service registry lost registration for '{message.service_id}'"
-            )
-
-        # A replacement pod reusing a deterministic service ID is alive again,
-        # so it must stop being excluded from command fan-out.
-        self._reaped_service_ids.discard(message.service_id)
-
-        previous = self.service_manager.service_id_map.get(message.service_id)
-        if previous is not None and previous.service_type != message.service_type:
-            self.service_manager.service_map[previous.service_type] = [
-                info
-                for info in self.service_manager.service_map.get(
-                    previous.service_type, []
-                )
-                if info.service_id != message.service_id
-            ]
-        self.service_manager.service_id_map[message.service_id] = service_info
-        services = self.service_manager.service_map.setdefault(message.service_type, [])
-        for index, existing in enumerate(services):
-            if existing.service_id == message.service_id:
-                services[index] = service_info
-                break
-        else:
-            services.append(service_info)
-
-        # Join every result domain this service advertises into the shutdown
-        # barrier. A telemetry/server-metrics producer may later report it is
-        # disabled via its status message, which unregisters the domain again.
-        for capability in message.capabilities:
-            domain = parse_result_producer_capability(capability)
-            if domain is not None:
-                self._result_join_coordinator.register(domain, message.service_id)
-
-        try:
-            type_name = ServiceType(message.service_type).name.title().replace("_", " ")
-        except (TypeError, ValueError):
-            type_name = message.service_type
-        self.info(lambda: f"Registered {type_name} (id: '{message.service_id}')")
-
-        if (
-            is_replacement
-            and self._system_state != SystemState.INITIALIZING
-            and message.service_id not in self._replacement_configuring_ids
-        ):
-            self._replacement_configuring_ids.add(message.service_id)
-            self.execute_async(
-                self._configure_replacement_worker_group(message.service_id)
-            )
-
-    def _is_replacement_worker_group_command(
-        self,
-        message: RegisterServiceCommand,
-        prior_info: ServiceRunInfo | None,
-        was_registered: bool,
-    ) -> bool:
-        """Return whether a JobSet replacement reused a worker-group ID.
-
-        Pub/sub twin of ``SystemControllerDispatchMixin._is_replacement_worker_group_registration``;
-        distinct name so the mixin's control-channel version is not shadowed by
-        this class's own attribute during the transport migration.
-        """
-        if (
-            message.service_type != ServiceType.WORKER_GROUP_MANAGER
-            or prior_info is None
-        ):
-            return False
-        if prior_info.state == LifecycleState.FAILED:
-            return True
-        return (
-            was_registered
-            and prior_info.pod_name is not None
-            and message.pod_name is not None
-            and prior_info.pod_name != message.pod_name
-        )
-
     async def _configure_replacement_worker_group(self, service_id: str) -> None:
         """Configure a replacement pod after its registration ACK can be sent."""
         try:
@@ -918,41 +802,6 @@ class SystemController(
             self.info(f"Configured replacement worker pod '{service_id}'")
         finally:
             self._replacement_configuring_ids.discard(service_id)
-
-    @on_message(MessageType.HEARTBEAT)
-    async def _process_heartbeat_message(self, message: HeartbeatMessage) -> None:
-        """Process a heartbeat message from a service. It will
-        update the last seen timestamp and state of the service.
-
-        The last-seen timestamp is stamped on receipt rather than taken from
-        ``message.request_ns``: the sender stamps that in its own process, but
-        ``ServiceRegistry.get_stale_services`` compares against this process's
-        clock, so under Kubernetes a pod whose clock lags would be reaped
-        immediately. ``request_ns`` stays useful for latency diagnostics only.
-
-        The registry must also be the sole writer of ``last_seen_ns``/``state``:
-        ``service_id_map`` holds the very ``ServiceRunInfo`` the registry owns,
-        so mutating it here would pre-satisfy — and thereby defeat — the
-        ordering guard inside ``update_service``.
-
-        Args:
-            message: The heartbeat message to process
-        """
-        service_id = message.service_id
-        service_type = message.service_type
-        timestamp = time.time_ns()
-
-        # Update the last heartbeat timestamp if the component exists
-        if service_id not in self.service_manager.service_id_map:
-            self.warning(
-                f"Received heartbeat from unknown service: '{service_id}' ('{service_type}')"
-            )
-            return
-
-        ServiceRegistry.update_service(
-            service_id, service_type, timestamp, message.state
-        )
-        self.debug(lambda: f"Updated heartbeat for '{service_id}' to {timestamp}")
 
     @on_message(MessageType.CREDITS_COMPLETE)
     async def _process_credits_complete_message(
@@ -1120,47 +969,6 @@ class SystemController(
             peer for peer in peers if peer.service_id != service_id
         ]
 
-    @on_message(MessageType.STATUS)
-    async def _process_status_message(self, message: StatusMessage) -> None:
-        """Process a generic service lifecycle status message.
-
-        Updates the service registry with lifecycle state changes (initializing,
-        running, stopping, etc.). Timestamp and ownership rules match
-        ``_process_heartbeat_message``: stamp on receipt with this process's
-        clock, and let the registry be the only writer of the shared
-        ``ServiceRunInfo``.
-
-        Args:
-            message: The status message to process
-        """
-        service_id = message.service_id
-        service_type = message.service_type
-        state = message.state
-
-        self.debug(
-            lambda: (
-                f"Received status update from '{service_type}' (ID: '{service_id}'): {state}"
-            )
-        )
-
-        # Update the component state if the component exists
-        if service_id not in self.service_manager.service_id_map:
-            self.debug(
-                lambda: (
-                    f"Received status update from un-registered service: {service_id} ({service_type})"
-                )
-            )
-            return
-
-        ServiceRegistry.update_service(
-            service_id,
-            service_type,
-            time.time_ns(),
-            message.state,
-        )
-
-        self.debug(f"Updated state for {service_id} to {message.state}")
-
     @on_message(MessageType.TELEMETRY_STATUS)
     async def _on_telemetry_status_message(
         self, message: TelemetryStatusMessage
@@ -1326,7 +1134,7 @@ class SystemController(
         Two abort paths originate inside a service rather than at the
         controller: RecordsManager's ``--failed-request-threshold`` abort and
         TimingManager's warmup / worker-loss aborts. Both used to broadcast
-        ``ProfileCancelCommand`` on the pub bus; the ROUTER is the only path
+        a profile-cancel command on the pub bus; the ROUTER is the only path
         between two non-controller services, so the fan-out has to happen here.
 
         This is an *additional* entry point, not a replacement: the controller's
@@ -1603,7 +1411,7 @@ class SystemController(
         there is no listener for clients to reach, so the extended wait would
         only delay shutdown without serving anyone.
 
-        BaseComponentService._on_state_change suppresses StatusMessage publishes
+        BaseComponentService._on_state_change suppresses StatusUpdate sends
         once stop_requested is set, so service_map[ServiceType.API][*].state
         stays frozen at RUNNING even after the API process self-stopped, crashed,
         or transitioned to FAILED. On the multiprocess backend we cross-check
@@ -1935,7 +1743,7 @@ class SystemController(
         Severity differs by run mode, because the barrier means different
         things in each. Under Kubernetes it fails closed: raw records still
         live on worker pods, so an unacknowledged finalize means data that was
-        never uploaded. Locally it degrades instead. ``ProfileCompleteCommand``
+        never uploaded. Locally it degrades instead. ``PROFILE_COMPLETE``
         broadcasts moments earlier and every ``RecordProcessor`` answers it
         with the same ``_finalize_local_artifacts``, so the writers are already
         flushed by the time this runs; the barrier contributes the
@@ -1984,7 +1792,7 @@ class SystemController(
             self.warning(
                 f"Continuing export after {failure_count} record processor(s) "
                 "failed to acknowledge artifact finalization; their writers were "
-                "already flushed by ProfileCompleteCommand"
+                "already flushed by PROFILE_COMPLETE"
             )
 
     @staticmethod

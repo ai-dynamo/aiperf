@@ -808,7 +808,7 @@ class TestShutdownDeliveryGrace:
     ) -> None:
         """API process exited but service_map state stayed at RUNNING.
 
-        BaseComponentService._on_state_change suppresses StatusMessage publishes
+        BaseComponentService._on_state_change suppresses StatusUpdate sends
         once stop_requested is set, so the controller's view of the API service
         state is frozen at RUNNING even after the API process self-stopped,
         crashed, or transitioned to FAILED. Cross-check process.is_alive() so

@@ -435,7 +435,7 @@ class TestProfileCancelRelay:
     """Service-originated aborts reach their peers only through the controller.
 
     RecordsManager's --failed-request-threshold abort and TimingManager's
-    warmup / worker-loss aborts used to broadcast ProfileCancelCommand on the
+    warmup / worker-loss aborts used to broadcast a profile-cancel command on the
     pub bus. Nothing subscribes to command messages any more, so without this
     relay both aborts reach nobody and the run hangs instead of terminating.
     """

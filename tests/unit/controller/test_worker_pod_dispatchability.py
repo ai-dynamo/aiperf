@@ -13,7 +13,9 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.common.messages import GetPodStatesCommand, WorkerPodStateMessage
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
+from aiperf.common.messages import WorkerPodStateMessage
 from aiperf.common.mixins.pod_state_tracker_mixin import PodStateTracker
 from aiperf.controller.system_controller import SystemController
 from aiperf.controller.system_controller_models import build_aggregate_worker_status
@@ -102,7 +104,7 @@ async def test_get_pod_states_command_reads_controller_tracker() -> None:
     controller._pod_state_tracker.update_pod_state(_pod("7", ready_workers=1))
 
     data = await controller._handle_get_pod_states_command(
-        GetPodStatesCommand(service_id="api-service")
+        Command(cid="c-1", cmd=CommandType.GET_POD_STATES)
     )
 
     pod_states = data["pod_states"]

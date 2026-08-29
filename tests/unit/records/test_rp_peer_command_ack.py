@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType
-from aiperf.common.messages import FinalizeArtifactsCommand
 from aiperf.common.pod_lifecycle_structs import GroupPeerCommand, GroupPeerCommandAck
 from aiperf.records.record_processor_service import RecordProcessor
 
@@ -86,7 +86,7 @@ class TestPeerCommandHandling:
         rp._finalize_local_artifacts = AsyncMock()
 
         await rp._finalize_artifacts_command(
-            FinalizeArtifactsCommand(service_id="records_manager")
+            Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
         rp._finalize_local_artifacts.assert_awaited_once()

@@ -728,7 +728,7 @@ class PhaseRunner(TaskManagerMixin):
             await self._credit_issuer.replay_gate.cancel(notify_refused=False)
 
         # Strategy-specific phase teardown BACKSTOP. Skipped when the live
-        # warmup early-abort already broadcast ProfileCancelCommand (see
+        # warmup early-abort already requested PROFILE_CANCEL (see
         # _should_fire_warmup_backstop), to avoid a double-fire.
         if self._should_fire_warmup_backstop(strategy):
             self._report_warmup_failures(strategy)
@@ -751,7 +751,7 @@ class PhaseRunner(TaskManagerMixin):
 
         In production this is a backstop, not the primary path: when the live
         warmup early-abort is wired (``callback_handler.on_warmup_abort`` is not
-        None), the FIRST terminal failure already broadcast ProfileCancelCommand
+        None), the FIRST terminal failure already requested PROFILE_CANCEL
         and cancelled this runner, so raising here too is unnecessary and would
         double-fire. We therefore fire only when the live path is NOT wired (and
         the runner was not otherwise cancelled). Gating on ``on_warmup_abort is

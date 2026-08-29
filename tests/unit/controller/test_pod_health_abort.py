@@ -242,7 +242,7 @@ async def test_abort_completes_even_though_cancel_disarms_the_watcher(
     ``_watch_pod_failure_abort`` *is* ``_pod_failure_watcher_task``, and the
     cancel path it invokes disarms that same task. Cancelling the currently
     running task delivers CancelledError at the next await, so everything after
-    the first suspension point -- sending ProfileCancelCommand, harvesting
+    the first suspension point -- sending PROFILE_CANCEL, harvesting
     results, stopping -- is silently skipped and the benchmark runs on.
     """
     event = asyncio.Event()

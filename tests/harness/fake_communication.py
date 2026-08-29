@@ -433,7 +433,7 @@ class FakeSubClient(FakeCommunicationClient):
 
     def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
         super().__init__(address, identity, bus)
-        # Keyed by topic string (e.g., "MessageType.COMMAND" or "MessageType.COMMAND.service-id")
+        # Keyed by topic string (e.g., "MessageType.HEARTBEAT" or "MessageType.RECORDS.service-id")
         self.subscriptions: dict[str, list[Callable]] = {}
 
     async def subscribe(

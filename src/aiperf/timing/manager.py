@@ -134,7 +134,7 @@ class TimingManager(BaseComponentService):
         Without this, _profile_configure_command would block on
         _dataset_configured_event for the full DATASET.CONFIGURATION_TIMEOUT
         (300s default) even though the SystemController has already seen the
-        CommandErrorResponse from DatasetManager and is trying to abort.
+        CommandErr from DatasetManager and is trying to abort.
         """
         self.error(
             f"Received dataset configuration failed notification from "

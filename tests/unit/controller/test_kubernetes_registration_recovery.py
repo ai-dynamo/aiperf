@@ -7,19 +7,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.control_structs import CommandAck
+from aiperf.common.control_structs import CommandAck, Heartbeat, Registration
 from aiperf.common.enums import CommandType, LifecycleState, SystemState
-from aiperf.common.messages import HeartbeatMessage, RegisterServiceCommand
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceType
 
 
-def _registration(pod_name: str) -> RegisterServiceCommand:
-    return RegisterServiceCommand(
-        service_id="worker_group_manager_0",
-        service_type=ServiceType.WORKER_GROUP_MANAGER,
-        state=LifecycleState.RUNNING,
+def _registration(pod_name: str) -> Registration:
+    return Registration(
+        sid="worker_group_manager_0",
+        rid="r-1",
+        stype=str(ServiceType.WORKER_GROUP_MANAGER),
+        state=str(LifecycleState.RUNNING),
         pod_name=pod_name,
         pod_index="0",
     )
@@ -32,8 +32,8 @@ async def test_registration_populates_registry_with_pod_identity(
     system_controller.service_manager.service_id_map = {}
     system_controller.service_manager.service_map = {}
 
-    await system_controller._handle_register_service_command(
-        _registration("worker-pod-old")
+    await system_controller._handle_control_message(
+        "worker_group_manager_0", _registration("worker-pod-old")
     )
 
     info = ServiceRegistry.get_service("worker_group_manager_0")
@@ -51,8 +51,8 @@ async def test_duplicate_registration_does_not_duplicate_service_map(
     system_controller.service_manager.service_map = {}
     message = _registration("worker-pod-old")
 
-    await system_controller._handle_register_service_command(message)
-    await system_controller._handle_register_service_command(message)
+    await system_controller._handle_control_message("worker_group_manager_0", message)
+    await system_controller._handle_control_message("worker_group_manager_0", message)
 
     services = system_controller.service_manager.service_map[
         ServiceType.WORKER_GROUP_MANAGER
@@ -66,8 +66,8 @@ async def test_failed_worker_group_replacement_is_reconfigured(
 ) -> None:
     system_controller.service_manager.service_id_map = {}
     system_controller.service_manager.service_map = {}
-    await system_controller._handle_register_service_command(
-        _registration("worker-pod-old")
+    await system_controller._handle_control_message(
+        "worker_group_manager_0", _registration("worker-pod-old")
     )
     ServiceRegistry.fail_service(
         "worker_group_manager_0",
@@ -89,8 +89,8 @@ async def test_failed_worker_group_replacement_is_reconfigured(
         "execute_async",
         side_effect=lambda coroutine: scheduled.append(coroutine) or MagicMock(),
     ):
-        await system_controller._handle_register_service_command(
-            _registration("worker-pod-new")
+        await system_controller._handle_control_message(
+            "worker_group_manager_0", _registration("worker-pod-new")
         )
 
     assert len(scheduled) == 1
@@ -102,7 +102,7 @@ async def test_failed_worker_group_replacement_is_reconfigured(
 
 
 @pytest.mark.asyncio
-async def test_process_heartbeat_message_stamps_registry_timestamp_on_receipt(
+async def test_heartbeat_stamps_registry_timestamp_on_receipt(
     system_controller: SystemController,
 ) -> None:
     """``last_seen_ns`` comes from the controller's clock, never the sender's.
@@ -113,21 +113,20 @@ async def test_process_heartbeat_message_stamps_registry_timestamp_on_receipt(
     """
     system_controller.service_manager.service_id_map = {}
     system_controller.service_manager.service_map = {}
-    await system_controller._handle_register_service_command(
-        _registration("worker-pod-old")
+    await system_controller._handle_control_message(
+        "worker_group_manager_0", _registration("worker-pod-old")
     )
     before_ns = time.time_ns()
 
-    await system_controller._process_heartbeat_message(
-        HeartbeatMessage(
-            service_id="worker_group_manager_0",
-            service_type=ServiceType.WORKER_GROUP_MANAGER,
-            state=LifecycleState.RUNNING,
-            request_ns=12345,
-        )
+    await system_controller._handle_control_message(
+        "worker_group_manager_0",
+        Heartbeat(
+            sid="worker_group_manager_0",
+            stype=str(ServiceType.WORKER_GROUP_MANAGER),
+            state=str(LifecycleState.RUNNING),
+        ),
     )
 
     info = ServiceRegistry.get_service("worker_group_manager_0")
     assert info is not None
-    assert info.last_seen_ns != 12345
     assert info.last_seen_ns >= before_ns

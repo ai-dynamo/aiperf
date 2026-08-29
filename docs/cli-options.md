@@ -1264,7 +1264,7 @@ JSON file containing request-rate points for piecewise-linear request-rate contr
 
 #### `--failed-request-threshold` `<float>`
 
-Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
+Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a PROFILE_CANCEL is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
 
 #### `--trajectory-start-min-ratio` `<float>`
@@ -2857,7 +2857,7 @@ JSON file containing request-rate points for piecewise-linear request-rate contr
 
 #### `--failed-request-threshold` `<float>`
 
-Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
+Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a PROFILE_CANCEL is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
 
 #### `--trajectory-start-min-ratio` `<float>`
@@ -4446,7 +4446,7 @@ JSON file containing request-rate points for piecewise-linear request-rate contr
 
 #### `--failed-request-threshold` `<float>`
 
-Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
+Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a PROFILE_CANCEL is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
 
 #### `--trajectory-start-min-ratio` `<float>`
@@ -6537,7 +6537,7 @@ JSON file containing request-rate points for piecewise-linear request-rate contr
 
 #### `--failed-request-threshold` `<float>`
 
-Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a ProfileCancelCommand is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
+Abort the run early when (failed_records / total_records) exceeds this ratio. Default None disables the check. Only PROFILING-phase records count toward the ratio. A grace floor of max(concurrency, 10) records must accumulate before the check is armed, so a single early failure cannot kill the run. When the threshold is exceeded a PROFILE_CANCEL is broadcast: in-flight requests drain via the normal cancel path, partial results are still aggregated, and the run exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop in record_processor_service so the rate measures real failures only.
 <br/>_Constraints: ≥ 0.0, ≤ 1.0_
 
 #### `--trajectory-start-min-ratio` `<float>`

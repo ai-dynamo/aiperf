@@ -153,7 +153,7 @@ class TestRecordProcessorArtifactBarrier:
     ):
         """A missing ack must not discard an otherwise complete result set.
 
-        ProfileCompleteCommand already drove the same _finalize_local_artifacts
+        PROFILE_COMPLETE already drove the same _finalize_local_artifacts
         on every processor moments earlier, so locally this barrier contributes
         the acknowledgement rather than the flush. The failure still lands in
         _exit_errors and still forces a non-zero exit; it just no longer aborts

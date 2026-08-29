@@ -113,7 +113,7 @@ class CreditCallbackHandler:
                 runner's ``release_all``.
             on_warmup_abort: Optional async callback fired ONCE on the first
                 terminal WARMUP failure. Used by agentic replay to abort the run
-                early (broadcast ProfileCancelCommand) instead of letting warmup
+                early (request PROFILE_CANCEL) instead of letting warmup
                 drain to teardown -- a degraded trajectory pool means PROFILING
                 must not start, so there is no value in waiting for the rest of
                 the warmup credits to return. ``None`` -> legacy teardown-time
@@ -136,7 +136,7 @@ class CreditCallbackHandler:
         """The wired live warmup-abort callback, or None if not enabled.
 
         When non-None, the live path (first terminal warmup failure ->
-        ProfileCancelCommand) is authoritative and PhaseRunner skips its
+        PROFILE_CANCEL) is authoritative and PhaseRunner skips its
         teardown ``report_warmup_failures`` raise (which is only a backstop for
         the un-wired case).
         """
@@ -324,7 +324,7 @@ class CreditCallbackHandler:
         a degraded pool proceed to PROFILING.
 
         When ``on_warmup_abort`` is wired, the FIRST terminal failure also aborts
-        the run live (broadcast ProfileCancelCommand) instead of waiting the full
+        the run live (request PROFILE_CANCEL) instead of waiting the full
         warmup drain for the teardown-time ``report_warmup_failures`` raise: a
         single failure already breaks the contract, and the broadcast cancels
         in-flight warmup and drives a clean records-manager + system-controller
@@ -346,7 +346,7 @@ class CreditCallbackHandler:
         self._warmup_abort_triggered = True
         _logger.warning(
             lambda: f"Terminal warmup failure for trace {credit.conversation_id}; "
-            f"aborting run early (broadcasting ProfileCancelCommand)."
+            f"aborting run early (requesting PROFILE_CANCEL)."
         )
         try:
             await self._on_warmup_abort()

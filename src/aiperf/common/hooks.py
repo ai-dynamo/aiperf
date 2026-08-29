@@ -320,15 +320,15 @@ def on_message(
     Example:
     ```python
     class MyService(MessageBusClientMixin):
-        @on_message(MessageType.STATUS)
-        def _on_status_message(self, message: StatusMessage) -> None:
+        @on_message(MessageType.HEARTBEAT)
+        def _on_heartbeat_message(self, message: HeartbeatMessage) -> None:
             pass
     ```
 
     The above is the equivalent to setting:
     ```python
-    MyService._on_status_message.__aiperf_hook_type__ = AIPerfHook.ON_MESSAGE
-    MyService._on_status_message.__aiperf_hook_params__ = (MessageType.STATUS,)
+    MyService._on_heartbeat_message.__aiperf_hook_type__ = AIPerfHook.ON_MESSAGE
+    MyService._on_heartbeat_message.__aiperf_hook_params__ = (MessageType.HEARTBEAT,)
     ```
     """
     return _hook_decorator_with_params(AIPerfHook.ON_MESSAGE, message_types)

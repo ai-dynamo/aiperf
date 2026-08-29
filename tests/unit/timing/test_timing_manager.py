@@ -7,14 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
-    CommandMessage,
     DatasetConfiguredNotification,
-    ProfileCancelCommand,
-    ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata, MemoryMapClientMetadata
 from aiperf.config.flags.cli_config import CLIConfig
@@ -101,9 +100,7 @@ class TestTimingManagerDatasetConfiguration:
         ) as mock_orch:
             task = asyncio.create_task(
                 mgr._profile_configure_command(
-                    ProfileConfigureCommand.model_construct(
-                        service_id="test-system-controller", config={}
-                    )
+                    Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                 )
             )
             await asyncio.sleep(0.2)
@@ -132,9 +129,7 @@ class TestTimingManagerDatasetConfiguration:
             pytest.raises(asyncio.TimeoutError),
         ):
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
     @pytest.mark.asyncio
@@ -163,9 +158,7 @@ class TestTimingManagerDatasetConfiguration:
             "aiperf.timing.manager.PhaseOrchestrator", return_value=mock_engine
         ) as mock_orch:
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
             assert mock_orch.call_args.kwargs["dataset_metadata"] == mock_metadata
 
@@ -174,7 +167,7 @@ class TestTimingManagerCancelCommand:
     @pytest.mark.asyncio
     async def test_cancel_calls_orchestrator_cancel(self, configured_manager) -> None:
         await configured_manager._handle_profile_cancel_command(
-            ProfileCancelCommand.model_construct(service_id="test-controller")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
         configured_manager._phase_orchestrator.cancel.assert_called_once()
 
@@ -184,14 +177,14 @@ class TestTimingManagerCancelCommand:
     ) -> None:
         mgr = create_manager(cli_config)
         await mgr._handle_profile_cancel_command(
-            ProfileCancelCommand.model_construct(service_id="test-controller")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
     @pytest.mark.asyncio
     async def test_cancel_can_be_called_multiple_times(
         self, configured_manager
     ) -> None:
-        cmd = ProfileCancelCommand.model_construct(service_id="test-controller")
+        cmd = Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         await configured_manager._handle_profile_cancel_command(cmd)
         await configured_manager._handle_profile_cancel_command(cmd)
         assert configured_manager._phase_orchestrator.cancel.call_count == 2
@@ -204,9 +197,7 @@ class TestTimingManagerStartProfilingAndInitialization:
     ) -> None:
         mgr = create_manager(cli_config)
         with pytest.raises(InvalidStateError, match="No phase orchestrator configured"):
-            await mgr._on_start_profiling(
-                CommandMessage.model_construct(service_id="test-controller")
-            )
+            await mgr._on_start_profiling(Command(cid="c-1", cmd=CommandType.SHUTDOWN))
 
     @pytest.mark.asyncio
     async def test_start_profiling_calls_orchestrator_start(
@@ -222,9 +213,7 @@ class TestTimingManagerStartProfilingAndInitialization:
         mock_orchestrator.start = mock_start
         mgr._phase_orchestrator = mock_orchestrator
 
-        await mgr._on_start_profiling(
-            CommandMessage.model_construct(service_id="test-controller")
-        )
+        await mgr._on_start_profiling(Command(cid="c-1", cmd=CommandType.SHUTDOWN))
         await asyncio.sleep(0.05)  # Allow execute_async to run
         assert start_called.is_set()
 
@@ -238,9 +227,7 @@ class TestTimingManagerStartProfilingAndInitialization:
             InvalidStateError, match="Dataset metadata is not available"
         ):
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
     def test_creates_timing_config_from_cfg(self, create_manager, cli_config) -> None:

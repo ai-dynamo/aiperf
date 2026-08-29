@@ -98,7 +98,7 @@ def bootstrap_and_run_service(
 
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
     # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
-    # handled via the message bus (ShutdownCommand); after that path's delivery
+    # handled via the SHUTDOWN control command; after that path's delivery
     # grace, MultiProcessServiceManager goes straight to Process.kill()
     # (SIGKILL) rather than Process.terminate()+join — terminate would be a
     # no-op here and only burn the join timeout. Ignoring SIGTERM prevents

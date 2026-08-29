@@ -174,7 +174,7 @@ class MultiProcessServiceManager(BaseServiceManager):
         # but never added to required_services. On slow targets (Windows VDI
         # multiprocessing.spawn) those optional services register hundreds of
         # ms after the core ones — if we only waited on required_services, the
-        # ProfileConfigureCommand would broadcast before the optionals had
+        # PROFILE_CONFIGURE would fan out before the optionals had
         # subscribed, leaving them un-configured and their data missing from
         # the final export.
         required_types = set(
@@ -276,7 +276,7 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         Children install ``signal.SIG_IGN`` for SIGTERM in
         ``bootstrap_and_run_service`` (to avoid C-extension teardown SIGSEGVs).
-        Graceful exit is exclusively via ``ShutdownCommand`` on the message
+        Graceful exit is exclusively via the ``SHUTDOWN`` command on the control
         bus; by the time we reach here that path has already been given its
         delivery grace. ``Process.terminate()`` (SIGTERM) is therefore a
         no-op on POSIX, and waiting ``TASK_CANCEL_TIMEOUT_SHORT`` (~2s) on

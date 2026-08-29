@@ -21,7 +21,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
-    CommandMessage,
     DatasetConfiguredNotification,
     WorkerHealthMessage,
 )
@@ -806,9 +805,7 @@ class TestHealthMonitoring:
         manager.publish.reset_mock()
 
         await manager._on_report_worker_status_summary(
-            CommandMessage(
-                command=CommandType.REPORT_WORKER_STATUS_SUMMARY, service_id="test"
-            )
+            Command(cid="c-1", cmd=CommandType.REPORT_WORKER_STATUS_SUMMARY)
         )
 
         published_messages = [call.args[0] for call in manager.publish.await_args_list]

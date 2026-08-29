@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pytest import param
 
-from aiperf.common.control_structs import Command, CommandAck
+from aiperf.common.control_structs import Command, CommandAck, Registration
 from aiperf.common.enums import (
     CommandType,
     ExportLevel,
@@ -31,7 +31,6 @@ from aiperf.common.enums import (
 )
 from aiperf.common.messages import (
     ProcessRecordsResultMessage,
-    RegisterServiceCommand,
 )
 from aiperf.common.models import ErrorDetails, ProcessRecordsResult
 from aiperf.common.models.record_models import MetricResult, ProfileResults
@@ -479,23 +478,24 @@ class TestEvictedProducersReachTheOutcome:
         system_controller._cancel_profiling = AsyncMock()
         system_controller._check_and_trigger_shutdown = AsyncMock()
 
-        def registration() -> RegisterServiceCommand:
-            return RegisterServiceCommand(
-                service_id=service_id,
-                service_type=service_type,
-                state=LifecycleState.RUNNING,
+        def registration() -> Registration:
+            return Registration(
+                sid=service_id,
+                rid="r-1",
+                stype=str(service_type),
+                state=str(LifecycleState.RUNNING),
                 capabilities=capabilities,
             )
 
-        with patch("aiperf.controller.system_controller.time") as mock_time:
+        with patch("aiperf.controller.system_controller_dispatch.time") as mock_time:
             mock_time.time_ns.side_effect = [100, 200]
-            await system_controller._handle_register_service_command(registration())
+            await system_controller._handle_control_message(service_id, registration())
             original = ServiceRegistry.get_service(service_id)
             assert original is not None
             manager._suspected_stale[service_id] = 1
             BaseServiceManager._judge_stale_service(manager, original)
 
-            await system_controller._handle_register_service_command(registration())
+            await system_controller._handle_control_message(service_id, registration())
 
         replacement = ServiceRegistry.get_service(service_id)
         assert replacement is not None
@@ -597,7 +597,7 @@ class TestFinalizeArtifactsIsReportable:
 
         The caller may drop the response, so the exit code must not depend on
         it. Locally the barrier no longer raises -- the writers were already
-        flushed by ProfileCompleteCommand, so aborting the export here would
+        flushed by PROFILE_COMPLETE, so aborting the export here would
         discard a complete result set over a missing ack.
         """
         system_controller._is_kubernetes = MagicMock(return_value=False)
