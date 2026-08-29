@@ -54,7 +54,7 @@ curl -s localhost:8000/v1/chat/completions \
 
 LibriSpeech is the standard read-speech benchmark and requires no authentication:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server-asr -->
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -65,7 +65,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server-asr -->
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 **Sample Output:**
 
@@ -114,6 +114,7 @@ aiperf profile \
 
 VoxPopuli contains European Parliament recordings and requires no authentication:
 
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -131,6 +132,7 @@ aiperf profile \
 
 AMI contains meeting recordings with individual headset microphone audio and requires no authentication:
 
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -149,6 +151,7 @@ aiperf profile \
 GigaSpeech is a multi-domain corpus covering audiobooks, podcasts, and YouTube. It requires a
 HuggingFace account and acceptance of the [dataset terms](https://huggingface.co/datasets/speechcolab/gigaspeech):
 
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 uv run hf auth login
 
@@ -169,6 +172,7 @@ aiperf profile \
 SPGISpeech contains financial earnings call recordings. It requires a HuggingFace account and
 acceptance of the [dataset terms](https://huggingface.co/datasets/kensho/spgispeech):
 
+<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 uv run hf auth login
 
