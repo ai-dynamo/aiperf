@@ -77,20 +77,28 @@ class RaggedSeries:
     ) -> NDArray[np.float64]:
         """Return values whose record is selected by the boolean mask.
 
-        Record indices for entries appended after the mask snapshot (index >=
-        len(record_mask)) would cause an out-of-bounds IndexError; clip them
-        out before applying the mask to handle the concurrent-ingestion race.
+        Two races with concurrent ingestion (asyncio.to_thread vs event loop):
+
+        1. ``record_indices`` may contain entries >= len(record_mask) — new records
+           appended after the mask snapshot was taken.
+        2. ``values`` may be longer than ``record_indices`` — ``extend()`` updates
+           ``_values`` first, then ``_record_indices``, so reading them in
+           order (record_indices first, values second) guarantees
+           ``len(values_data) >= n_items``.  Capping values to ``n_items``
+           gives a consistent view of both arrays.
         """
-        if len(self._record_indices) == 0:
+        rec_idx = self._record_indices.data  # read first — values may be longer
+        n_items = len(rec_idx)
+        if n_items == 0:
             return np.zeros(0, dtype=np.float64)
-        n = len(record_mask)
-        rec_idx = self._record_indices.data
-        in_bounds = rec_idx < n
+        values_data = self._values.data[:n_items]  # cap to consistent length
+        n_mask = len(record_mask)
+        in_bounds = rec_idx < n_mask
         # Use 0 as a safe placeholder for out-of-bounds indices so the array
         # lookup is always valid; AND with in_bounds to exclude those entries.
         safe_idx = np.where(in_bounds, rec_idx, 0)
         value_mask = in_bounds & record_mask[safe_idx]
-        return self._values.data[value_mask]
+        return values_data[value_mask]
 
     def grouped_cumsum(self) -> NDArray[np.float64]:
         """Compute per-request cumulative sum across the flat values array.
