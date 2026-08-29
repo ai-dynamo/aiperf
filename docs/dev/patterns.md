@@ -236,6 +236,86 @@ async def _handle(self, msg: MyMsg) -> None:
 
 Auto-subscription happens during `@on_init` phase.
 
+## Control Channel Command Pattern
+
+Commands do **not** ride the pub/sub event bus. They ride a dedicated
+DEALER/ROUTER control channel at `CommAddress.CONTROL`: every component service
+opens a DEALER (identity = its service ID), and `SystemController` binds the
+single ROUTER. The wire format is the `msgspec` tagged-union structs in
+`aiperf.common.control_structs`, not Pydantic `Message` subclasses. The same
+channel also carries registration (`Registration` / `RegistrationAck`),
+`Heartbeat`, and `StatusUpdate`.
+
+Every other message type still goes over the event bus with `publish()` /
+`@on_message`.
+
+### Request/response structs
+
+| Struct | Meaning |
+|---|---|
+| `Command{cid, cmd, payload}` | The request. `cid` correlates the response; `payload` is `orjson`-encoded bytes (`b""` when the command carries no data). |
+| `CommandAck{cid, cmd, sid}` | Handler ran and returned `None`. |
+| `CommandOk{cid, cmd, sid, payload}` | Handler returned a value, serialized into `payload`. |
+| `CommandErr{cid, cmd, sid, error, traceback}` | Handler raised. |
+| `CommandUnhandled{cid, cmd, sid}` | No `@on_command` hook matched. |
+
+`CommandUnhandled` is deliberately not an ack: "no handler" is a *failure* to
+callers that need the work done. `SystemController._finalize_artifact_response_error`
+treats it as one. Do not assume an unhandled command is harmless.
+
+### Adding a new command
+
+1. Add the value to `CommandType` in `common/enums/enums.py`.
+2. Add a handler on the receiving service. It takes a single `Command`:
+
+```python
+from aiperf.common.control_structs import Command
+from aiperf.common.hooks import on_command
+
+@on_command(CommandType.MY_COMMAND)
+async def _on_my_command(self, message: Command) -> None:
+    # Decode the payload only if the command carries data.
+    opts = orjson.loads(message.payload) if message.payload else {}
+    await self._do_the_thing(opts.get("mode"))
+```
+
+Returning `None` makes the dispatcher send `CommandAck`. Returning a value makes
+it send `CommandOk` with the value serialized into `payload` (`bytes` pass
+through, Pydantic models use `model_dump_json()`, everything else goes through
+`orjson.dumps`).
+
+Exactly **one** hook may claim a given `CommandType` per service — the dispatcher
+stops at the first match, because the response it sends back is that hook's
+result and a second hook would have no way to answer.
+
+### Sending a command
+
+From a service to the controller:
+
+```python
+response = await self.send_command_to_controller(
+    CommandType.MY_COMMAND, payload=orjson.dumps({"mode": "fast"})
+)
+```
+
+From the controller to services:
+
+| Method | Behavior |
+|---|---|
+| `_send_control_command(identity, cmd, ...)` | One service, awaits its response. |
+| `_send_control_command_to_all(cmd, service_ids, ...)` | Fan-out, returns responses in **input order** so callers can `zip(service_ids, responses, strict=True)`. Failures become `ErrorDetails` entries rather than raising. |
+| `_send_control_command_to_all_fail_fast(cmd, service_ids, ...)` | Completion-ordered fan-out that stops waiting on the first `CommandErr` or timeout. `CommandUnhandled` is **not** an abort condition here — the two callers fan `PROFILE_CONFIGURE` / `PROFILE_START` at every registered service and several legitimately implement neither. |
+| `_broadcast_control_command(cmd, service_ids, ...)` | Fire-and-forget; per-peer send errors are swallowed so one dead service cannot block the rest. |
+
+### Peer-to-peer commands must be relayed
+
+The ROUTER is the only path between two non-controller services — services have
+no socket to each other. A command aimed at a *peer* therefore needs a
+controller-side handler that re-fans it out. `PROFILE_COMPLETE` and
+`PROFILE_CANCEL` both work this way: the originating service sends to the
+controller, and the controller's handler broadcasts to the other services,
+excluding the originator.
+
 ## Plugin System Pattern
 
 YAML-based registry with lazy-loading:

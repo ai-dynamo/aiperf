@@ -235,7 +235,8 @@ injected as `AIPERF_K8S_ZMQ_CONTROLLER_HOST` (the `AIPERF_K8S_ZMQ_` settings in
 
 | Channel | Port | Protocol | Purpose |
 |---------|------|----------|---------|
-| ZMQ Event Bus | IPC + TCP | ZMQ PUB/SUB | Message broadcasting |
+| ZMQ Event Bus | IPC + TCP | ZMQ PUB/SUB | Message broadcasting (every message type except commands) |
+| ZMQ Control Channel | IPC + 5667 | ZMQ DEALER/ROUTER | Registration, heartbeats, status, commands |
 | API Service | 9090 | HTTP/WS | WebSocket streaming, Dataset API |
 | Health | 8080 | HTTP | Kubernetes probes |
 
@@ -250,6 +251,55 @@ flowchart TD
 
 Port defaults live on the `AIPERF_K8S_PORT_` settings in
 `src/aiperf/kubernetes/environment.py`.
+
+### Control Channel (`CommAddress.CONTROL`)
+
+`CommAddress.CONTROL` is bound, not just declared. `SystemController` binds a
+ROUTER there with `ROUTER_MANDATORY`; every component service — in the
+controller pod and in every worker pod — connects a DEALER whose ZMQ identity is
+its service ID. Registration, heartbeats, lifecycle status, and all commands
+ride this socket as `msgspec` structs.
+
+It dual-binds the same way the event-bus proxies do, but from the
+`SystemController` rather than from a proxy:
+
+```mermaid
+flowchart TD
+    SC["SystemController<br/>ROUTER (ROUTER_MANDATORY)"]
+    SC --> IPCB["IPC bind: control.ipc<br/>control-plane services in the controller pod"]
+    SC --> TCPB["TCP bind: tcp://0.0.0.0:5667<br/>services in remote worker pods"]
+
+    LOCAL["Timing / Dataset / Records / ...<br/>DEALER over IPC"] --> IPCB
+    REMOTE["WorkerGroupManager, Workers,<br/>Record Processors<br/>DEALER over TCP"] --> TCPB
+```
+
+Which address a *connecting* service resolves is decided by
+`ZMQDualBindConfig.control_address`: `tcp://{controller_host}:{control_tcp_port}`
+when `AIPERF_K8S_CONTROLLER_HOST` is set (worker pods), and the IPC path
+otherwise (controller pod). The controller adds the TCP bind via
+`control_tcp_bind_address` only when it is itself the controller — that is, when
+`controller_host` is unset. Port default: `control_tcp_port = 5667`.
+
+**The ROUTER lives outside the comms lifecycle.** It is created with
+`attach_lifecycle=False`, in `SystemController.__init__` rather than in a
+lifecycle hook, because it must bracket the comms layer on both ends:
+
+- It must be listening *before* comms starts, since services register during
+  their own startup and a missed registration would stall the run.
+- It must outlive `comms.stop()`, because children are told to shut down over
+  this very socket. A lifecycle-attached ROUTER would be torn down as part of
+  the shutdown it is supposed to deliver.
+
+Consequently `SystemController` owns the ROUTER's initialize/start/stop itself.
+Service-side DEALERs are ordinary lifecycle children of `self.comms`, so their
+`@on_init` hook only registers the receiver — driving them a second time raises
+`InvalidStateError`.
+
+`ROUTER_MANDATORY` makes a send to an unknown or departed identity raise
+`EHOSTUNREACH` instead of silently dropping. That is intentional: a broadcast
+during teardown will legitimately hit services that have already exited, so
+`_broadcast_control_command` swallows per-peer send errors, while a targeted
+request surfaces them.
 
 ## 5. Dataset Transfer
 
