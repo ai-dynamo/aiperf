@@ -83,7 +83,17 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
                 Pass False when the caller must own the client's start/stop ordering itself.
         """
         if (client_type, address, bind) in self._clients_cache:
-            return self._clients_cache[(client_type, address, bind)]
+            cached = self._clients_cache[(client_type, address, bind)]
+            # Two callers disagree about who owns this client's lifecycle, and only
+            # one can be right. Returning the already-attached client would silently
+            # drop the ordering guarantee attach_lifecycle=False exists to provide.
+            if not attach_lifecycle and cached in self._children:
+                raise InvalidStateError(
+                    f"Cannot create {client_type} client for {address!r} with "
+                    "attach_lifecycle=False: a cached client for this address is "
+                    "already lifecycle-managed by this communication layer."
+                )
+            return cached
 
         if self.state != LifecycleState.CREATED:
             # We require the clients to be created before the communication class is initialized.

@@ -406,9 +406,11 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
         decode_type: Any = None,
+        attach_lifecycle: bool = True,
     ) -> StreamingRouterClientProtocol:
         """Create a STREAMING_ROUTER client for the given address, which will be automatically
-        started and stopped with the CommunicationProtocol instance.
+        started and stopped with the CommunicationProtocol instance unless
+        ``attach_lifecycle=False``, in which case the caller owns the client's lifecycle.
 
         ``decode_type`` selects the msgspec type (or tagged union) used to decode
         incoming messages; None keeps the credit plane's ``WorkerToRouterMessage``."""
