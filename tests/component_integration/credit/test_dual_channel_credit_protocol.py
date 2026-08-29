@@ -24,6 +24,7 @@ import socket
 import uuid
 
 import pytest
+import zmq
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.messages import (
@@ -167,7 +168,16 @@ class _Fixture:
             receiver=dispatch_receiver or self.dispatched.put,
         )
         self.push = await self._make(
-            ZMQStreamingPushClient, address=self.return_addr, bind=False, start=False
+            ZMQStreamingPushClient,
+            address=self.return_addr,
+            bind=False,
+            start=False,
+            # IMMEDIATE must be set before connect() to take effect (libzmq
+            # snapshots connect-time options; a post-connect setsockopt is a
+            # no-op). probe_return_channel relies on zmq.Again when no peer is
+            # present, which only fires when IMMEDIATE=1 was active at connect
+            # time. Production credit-return clients must also pass this.
+            socket_ops={zmq.IMMEDIATE: 1},
         )
         await asyncio.sleep(_SETTLE)
 

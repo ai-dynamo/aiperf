@@ -235,7 +235,24 @@ class ChatEndpoint(BaseEndpoint):
         *,
         capture_assistant_turn: bool,
     ) -> tuple[list[ParsedResponse], Turn | None]:
-        """Parse chat responses and collect replay fields in one JSON pass."""
+        """Parse chat responses and collect replay fields in one JSON pass.
+
+        Falls back to the cached parsed responses when ``record.responses`` has
+        already been freed by the record processor.  In production the record
+        processor runs in a separate process so the raw list is always
+        intact here; in component-integration tests the FakeCommunication push
+        is synchronous and the processor runs inline before this method is
+        called, leaving ``responses`` as ``None``.
+        """
+        if record.responses is None:
+            parsed_responses = record._parsed_responses_cache or []
+            assistant_turn = (
+                self._build_assistant_turn_from_parsed(parsed_responses)
+                if capture_assistant_turn
+                else None
+            )
+            return parsed_responses, assistant_turn
+
         parsed_responses: list[ParsedResponse] = []
         content_parts: list[str] = []
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
