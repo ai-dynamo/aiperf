@@ -91,6 +91,7 @@ EOF
 ```
 Then run:
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
@@ -156,6 +157,7 @@ EOF
 
 Then run:
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \

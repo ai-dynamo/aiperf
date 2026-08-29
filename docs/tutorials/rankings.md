@@ -91,6 +91,7 @@ EOF
 ```
 
 Run AIPerf using the following command:
+<!-- aiperf-run-tei-rerank-endpoint-server -->
 ```bash
 aiperf profile \
     -m BAAI/bge-reranker-base \
@@ -150,6 +151,7 @@ EOF
 
 Run AIPerf:
 
+<!-- aiperf-run-cohere-rerank-endpoint-server -->
 ```bash
 aiperf profile \
     -m BAAI/bge-reranker-v2-m3 \
