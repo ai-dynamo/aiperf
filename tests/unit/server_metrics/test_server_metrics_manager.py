@@ -4,8 +4,10 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
@@ -989,8 +991,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete triggers final metrics scrape."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
@@ -1000,9 +1000,7 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should call final scrape
@@ -1014,9 +1012,7 @@ class TestProfileCompleteAndCancel:
         assert manager._result_published is True
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
         manager.publish.assert_awaited_once()
 
@@ -1026,8 +1022,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """A cooldown must not be reattributed to the preceding named profile."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         profiling = manager.run.cfg.phases[0].model_copy(
             update={"name": "profile-a", "kind": "profiling"}
@@ -1047,10 +1041,10 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id,
-                command=CommandType.PROFILE_COMPLETE,
-                end_ns=1,
+            Command(
+                cid="c-1",
+                cmd=CommandType.PROFILE_COMPLETE,
+                payload=orjson.dumps({"end_ns": 1}),
             )
         )
 
@@ -1065,8 +1059,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete handles final scrape failures gracefully."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
@@ -1078,9 +1070,7 @@ class TestProfileCompleteAndCancel:
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should still stop collector even if final scrape fails
@@ -1093,8 +1083,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete is idempotent when collectors already stopped."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
@@ -1103,9 +1091,7 @@ class TestProfileCompleteAndCancel:
 
         # Should not raise exception
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
     @pytest.mark.asyncio
@@ -1114,8 +1100,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """The final result is the barrier for manager-owned raw artifacts."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         exporter = AsyncMock()
         accumulator = AsyncMock()
@@ -1126,12 +1110,17 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id,
-                start_ns=100,
-                end_ns=200,
-                warmup_start_ns=10,
-                warmup_end_ns=90,
+            Command(
+                cid="c-1",
+                cmd=CommandType.PROFILE_COMPLETE,
+                payload=orjson.dumps(
+                    {
+                        "start_ns": 100,
+                        "end_ns": 200,
+                        "warmup_start_ns": 10,
+                        "warmup_end_ns": 90,
+                    }
+                ),
             )
         )
 
@@ -1779,8 +1768,6 @@ class TestScrapeHangContainment:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """A headers-then-stall endpoint must not block the terminal result."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         manager._scrape_timeout = 0.05
         accumulator = AsyncMock()
@@ -1800,10 +1787,10 @@ class TestScrapeHangContainment:
 
         await asyncio.wait_for(
             manager._handle_profile_complete_command(
-                ProfileCompleteCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_COMPLETE,
-                    end_ns=1,
+                Command(
+                    cid="c-1",
+                    cmd=CommandType.PROFILE_COMPLETE,
+                    payload=orjson.dumps({"end_ns": 1}),
                 )
             ),
             timeout=2.0,

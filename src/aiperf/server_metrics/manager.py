@@ -10,6 +10,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import orjson
+
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Command
@@ -26,7 +28,6 @@ from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
     ProcessServerMetricsResultMessage,
-    ProfileCompleteCommand,
     RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
 )
@@ -629,9 +630,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             self._active_phase = None
 
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         When the last profiling phase is also the final configured phase,
@@ -647,9 +646,14 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         RecordsManager instances send the command). Subsequent calls are no-ops.
 
         Args:
-            message: Profile complete command from RecordsManager signaling that
-                    all client request records have been processed
+            message: Profile complete command relayed by the SystemController on
+                    behalf of RecordsManager, signaling that all client request
+                    records have been processed. Its payload carries the results
+                    time window; every field defaults to ``None`` when absent,
+                    matching the optional window fields it replaced.
         """
+        window = orjson.loads(message.payload) if message.payload else {}
+        end_ns = window.get("end_ns")
         async with self._profile_complete_lock:
             if self._result_published:
                 self.debug(
@@ -661,19 +665,17 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             # join barrier every other service waits on, so no scrape or
             # collector-shutdown failure may skip it.
             try:
-                await self._capture_profile_complete_scrape(message)
+                await self._capture_profile_complete_scrape(end_ns)
                 await self._stop_all_collectors()
             finally:
                 await self._publish_server_metrics_result(
-                    start_ns=message.start_ns,
-                    end_ns=message.end_ns,
-                    warmup_start_ns=message.warmup_start_ns,
-                    warmup_end_ns=message.warmup_end_ns,
+                    start_ns=window.get("start_ns"),
+                    end_ns=end_ns,
+                    warmup_start_ns=window.get("warmup_start_ns"),
+                    warmup_end_ns=window.get("warmup_end_ns"),
                 )
 
-    async def _capture_profile_complete_scrape(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _capture_profile_complete_scrape(self, end_ns: int | None) -> None:
         """Scrape every endpoint one last time, attributed to the final profile."""
         if not self._collectors:
             self.debug("Server Metrics: Already stopped, skipping final scrape")
@@ -686,7 +688,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             )
             return
 
-        flush_end_ns = (message.end_ns or time.time_ns()) + int(
+        flush_end_ns = (end_ns or time.time_ns()) + int(
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
         )
         remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000

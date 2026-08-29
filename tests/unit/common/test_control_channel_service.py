@@ -452,3 +452,73 @@ async def test_shutdown_self_ack_still_propagates_cancellation(
         )
 
     component_service.stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_command_to_controller_correlates_on_cid(component_service) -> None:
+    captured: list = []
+
+    async def fake_request(struct, timeout):
+        captured.append((struct, timeout))
+        return CommandOk(cid=struct.cid, cmd=struct.cmd, sid="ctl", payload=b'{"a":1}')
+
+    component_service.control_client.request = fake_request
+    response = await component_service.send_command_to_controller(
+        CommandType.GET_POD_STATES, timeout=1.0
+    )
+    assert isinstance(response, CommandOk)
+    struct, timeout = captured[0]
+    assert isinstance(struct, Command)
+    assert struct.cmd == CommandType.GET_POD_STATES
+    assert struct.cid and struct.payload == b""
+    assert timeout == 1.0
+    assert response.cid == struct.cid
+    assert orjson.loads(response.payload) == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_send_command_to_controller_mints_a_fresh_cid_per_call(
+    component_service,
+) -> None:
+    """Two commands must not share a cid, or the second reply resolves the first."""
+    captured: list = []
+
+    async def fake_request(struct, timeout):
+        captured.append(struct)
+        return CommandAck(cid=struct.cid, cmd=struct.cmd, sid="ctl")
+
+    component_service.control_client.request = fake_request
+    await component_service.send_command_to_controller(CommandType.SPAWN_WORKERS)
+    await component_service.send_command_to_controller(CommandType.SPAWN_WORKERS)
+    assert captured[0].cid != captured[1].cid
+
+
+@pytest.mark.asyncio
+async def test_send_command_to_controller_forwards_the_payload(
+    component_service,
+) -> None:
+    captured: list = []
+
+    async def fake_request(struct, timeout):
+        captured.append(struct)
+        return CommandAck(cid=struct.cid, cmd=struct.cmd, sid="ctl")
+
+    component_service.control_client.request = fake_request
+    await component_service.send_command_to_controller(
+        CommandType.SPAWN_WORKERS, payload=orjson.dumps({"num_workers": 7})
+    )
+    assert orjson.loads(captured[0].payload) == {"num_workers": 7}
+
+
+@pytest.mark.asyncio
+async def test_send_command_to_controller_propagates_timeout(component_service) -> None:
+    """The caller, not this helper, decides what a missing controller means."""
+
+    async def fake_request(struct, timeout):
+        raise TimeoutError("controller did not answer")
+
+    component_service.control_client.request = fake_request
+    with pytest.raises(TimeoutError):
+        await component_service.send_command_to_controller(
+            CommandType.FINALIZE_ARTIFACTS, timeout=0.01
+        )

@@ -26,7 +26,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CreditPhase
+from aiperf.common.control_structs import CommandAck
+from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.messages import ProcessRecordsResultMessage
 from aiperf.common.mixins.task_manager_mixin import TaskManagerMixin
@@ -47,7 +48,9 @@ def _finalize_manager(finalize_error: Exception) -> MagicMock:
     mgr.error = MagicMock()
     mgr.exception = MagicMock()
     mgr.publish = AsyncMock()
-    mgr.send_command_and_wait_for_response = AsyncMock()
+    mgr.send_command_to_controller = AsyncMock(
+        return_value=CommandAck(cid="c-1", cmd=CommandType.PROFILE_COMPLETE, sid="ctl")
+    )
     mgr._process_results_lock = asyncio.Lock()
     mgr._processed_results = {}
     mgr._incomplete_reason = None

@@ -4,7 +4,7 @@ import asyncio
 import os
 import sys
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import orjson
 import zmq
@@ -54,7 +54,6 @@ from aiperf.common.messages import (
     RegisterServiceCommand,
     ResultsExportedMessage,
     ServerMetricsStatusMessage,
-    SpawnWorkersCommand,
     StatusMessage,
     SystemStateChangedMessage,
     TelemetryStatusMessage,
@@ -1221,18 +1220,17 @@ class SystemController(
         await self._check_and_trigger_shutdown()
 
     @on_command(CommandType.SPAWN_WORKERS)
-    async def _handle_spawn_workers_command(self, message: SpawnWorkersCommand) -> None:
+    async def _handle_spawn_workers_command(self, message: Command) -> None:
         """Handle a spawn workers command."""
         self.debug(lambda: f"Received spawn workers command: {message}")
+        num_workers = int(orjson.loads(message.payload)["num_workers"])
         # Spawn the workers
-        await self.service_manager.run_service(ServiceType.WORKER, message.num_workers)
+        await self.service_manager.run_service(ServiceType.WORKER, num_workers)
         # If we are scaling the record processor service count with the number of workers, spawn the record processors
         if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(
                 ServiceType.RECORD_PROCESSOR,
-                max(
-                    1, message.num_workers // Environment.RECORD.PROCESSOR_SCALE_FACTOR
-                ),
+                max(1, num_workers // Environment.RECORD.PROCESSOR_SCALE_FACTOR),
             )
 
     @on_command(CommandType.GET_POD_STATES)
@@ -1242,6 +1240,58 @@ class SystemController(
     ) -> dict[str, object]:
         """Serve the controller's authoritative worker-state cache."""
         return self.get_pod_state_snapshot().model_dump(mode="json")
+
+    _PROFILE_COMPLETE_RELAY_TYPES: ClassVar[tuple[ServiceTypeT, ...]] = (
+        ServiceType.GPU_TELEMETRY_MANAGER,
+        ServiceType.NETWORK_LATENCY_MANAGER,
+        ServiceType.RECORD_PROCESSOR,
+        ServiceType.SERVER_METRICS_MANAGER,
+    )
+    """Every service type carrying an ``@on_command(PROFILE_COMPLETE)`` hook.
+
+    The pub/sub predecessor was an un-targeted broadcast that reached all four.
+    Dropping any one of them silently changes results: the record processors
+    flush their writers here, and the telemetry / server-metrics managers derive
+    their export window from the payload.
+    """
+
+    @on_command(CommandType.PROFILE_COMPLETE)
+    async def _handle_profile_complete_relay(self, message: Command) -> None:
+        """Relay RecordsManager's PROFILE_COMPLETE to its peer services.
+
+        The ROUTER is the only path between two non-controller services, so
+        this fan-out has to happen here. The original payload (the results time
+        window) is forwarded verbatim: without it the server-metrics and GPU
+        telemetry managers fall back to ``time.time_ns()`` and their near
+        zero-width export window filters out every collected sample.
+
+        The per-peer budget is the standard command timeout, deliberately below
+        the RecordsManager's ``PROFILE_COMPLETE_RELAY_TIMEOUT`` wait on *this*
+        command, so one slow peer surfaces as a relayed error rather than as a
+        timeout on the caller's side with no diagnosis.
+        """
+        service_ids = [
+            service_id
+            for service_id, info in self.service_manager.service_id_map.items()
+            if info.service_type in self._PROFILE_COMPLETE_RELAY_TYPES
+            and service_id not in self._reaped_service_ids
+        ]
+        if not service_ids:
+            self.debug("No live PROFILE_COMPLETE relay targets")
+            return
+        responses = await self._send_control_command_to_all(
+            CommandType.PROFILE_COMPLETE,
+            service_ids,
+            payload=message.payload,
+            timeout=Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
+        )
+        for service_id, response in zip(service_ids, responses, strict=True):
+            if isinstance(response, ErrorDetails):
+                self.warning(f"PROFILE_COMPLETE relay to '{service_id}': {response}")
+            elif isinstance(response, CommandErr):
+                self.warning(
+                    f"PROFILE_COMPLETE relay to '{service_id}' failed: {response.error}"
+                )
 
     @on_command(CommandType.SHUTDOWN_WORKERS)
     async def _handle_shutdown_workers_command(self, message: Command) -> None:

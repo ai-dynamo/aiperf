@@ -22,7 +22,7 @@ from aiperf.common.accumulator_protocols import (
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.control_structs import Command
+from aiperf.common.control_structs import Command, CommandAck, CommandErr
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -34,17 +34,13 @@ from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_command, on_message, on_pull_message
 from aiperf.common.messages import (
     AllRecordsReceivedMessage,
-    CommandAcknowledgedResponse,
-    CommandErrorResponse,
     DatasetConfiguredNotification,
-    FinalizeArtifactsCommand,
     NetworkLatencyRecordMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProcessTelemetryResultMessage,
     ProfileCancelCommand,
-    ProfileCompleteCommand,
     RealtimeMetricsMessage,
     RealtimeServerMetricsMessage,
     RecordsMessage,
@@ -88,7 +84,6 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     AccumulatorType,
     PluginType,
-    ServiceType,
     StreamExporterType,
     UIType,
 )
@@ -1273,21 +1268,35 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         warmup_stats = self._records_tracker.create_aggregate_stats_for_phase(
             CreditPhase.WARMUP
         )
-        response = await self.send_command_and_wait_for_response(
-            ProfileCompleteCommand(
-                service_id=self.service_id,
-                start_ns=profile_stats.start_ns,
-                end_ns=profile_stats.requests_end_ns,
-                warmup_start_ns=warmup_stats.start_ns,
-                warmup_end_ns=warmup_stats.requests_end_ns,
-            ),
-            timeout=Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT,
-        )
-
-        if isinstance(response, ErrorDetails):
-            self.warning(f"Server metrics final scrape timed out or failed: {response}")
+        # The ROUTER is the only path between two non-controller services, so
+        # the controller re-fans this at the telemetry / server-metrics /
+        # network-latency / record-processor services on our behalf. A timeout
+        # must NOT abort this method: skipping _process_results would skip the
+        # ProcessRecordsResultMessage the controller needs to export results.
+        try:
+            response = await self.send_command_to_controller(
+                CommandType.PROFILE_COMPLETE,
+                payload=orjson.dumps(
+                    {
+                        "start_ns": profile_stats.start_ns,
+                        "end_ns": profile_stats.requests_end_ns,
+                        "warmup_start_ns": warmup_stats.start_ns,
+                        "warmup_end_ns": warmup_stats.requests_end_ns,
+                    }
+                ),
+                timeout=Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT,
+            )
+        except TimeoutError:
+            self.warning(
+                "Server metrics final scrape timed out after "
+                f"{Environment.SERVER_METRICS.PROFILE_COMPLETE_RELAY_TIMEOUT}s; "
+                "continuing with results processing"
+            )
         else:
-            self.debug("Server metrics final scrape completed")
+            if isinstance(response, CommandErr):
+                self.warning(f"Server metrics final scrape failed: {response.error}")
+            else:
+                self.debug("Server metrics final scrape completed")
 
         self.debug("Server metrics completion command returned, processing now...")
         await self._process_results(phase=phase, cancelled=cancelled)
@@ -1295,31 +1304,28 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _finalize_record_processor_artifacts(self) -> None:
         """Wait for the controller's exact record-processor durability barrier."""
-        command = FinalizeArtifactsCommand(
-            service_id=self.service_id,
-            target_service_type=ServiceType.SYSTEM_CONTROLLER,
-            request_ns=time.time_ns(),
-        )
-        response = await self.send_command_and_wait_for_response(
-            command,
-            timeout=(
-                Environment.WORKER.RAW_RECORD_UPLOAD_TIMEOUT
-                + Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT
-            ),
-        )
+        try:
+            response = await self.send_command_to_controller(
+                CommandType.FINALIZE_ARTIFACTS,
+                payload=orjson.dumps({"request_ns": time.time_ns()}),
+                timeout=(
+                    Environment.WORKER.RAW_RECORD_UPLOAD_TIMEOUT
+                    + Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT
+                ),
+            )
+        except TimeoutError as e:
+            raise RuntimeError(
+                f"Record-processor artifact finalization timed out: {e!r}"
+            ) from e
         if (
-            isinstance(response, CommandAcknowledgedResponse)
-            and response.command == CommandType.FINALIZE_ARTIFACTS
+            isinstance(response, CommandAck)
+            and response.cmd == CommandType.FINALIZE_ARTIFACTS
         ):
             self.debug("Record-processor artifacts finalized")
             return
-        if isinstance(response, CommandErrorResponse):
+        if isinstance(response, CommandErr):
             raise RuntimeError(
                 f"Record-processor artifact finalization failed: {response.error}"
-            )
-        if isinstance(response, ErrorDetails):
-            raise RuntimeError(
-                f"Record-processor artifact finalization timed out: {response}"
             )
         raise RuntimeError(
             f"Unexpected record-processor artifact finalization response: {response!r}"

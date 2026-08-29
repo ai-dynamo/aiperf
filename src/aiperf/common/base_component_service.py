@@ -20,6 +20,7 @@ from aiperf.common.control_structs import (
     CommandAck,
     CommandErr,
     CommandOk,
+    CommandResponse,
     CommandUnhandled,
     Heartbeat,
     Registration,
@@ -331,6 +332,34 @@ class BaseComponentService(BaseService):
                 state=str(new_state),
             )
         )
+
+    # -------------------------------------------------------------------------
+    # Outbound control channel
+    # -------------------------------------------------------------------------
+
+    async def send_command_to_controller(
+        self,
+        cmd: str,
+        payload: bytes = b"",
+        timeout: float = Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
+    ) -> CommandResponse:
+        """Send a Command to the SystemController and await its response.
+
+        Reuses the existing DEALER/ROUTER control channel -- no new socket and
+        no new bind point. The controller's ``_dispatch_control_command``
+        already routes inbound ``Command`` structs to its ``@on_command``
+        hooks; this helper is the service-side initiator.
+
+        The ROUTER is the only path between two non-controller services, so a
+        command aimed at a *peer* must be re-fanned by a controller-side
+        handler rather than sent directly (see the controller's
+        ``PROFILE_COMPLETE`` relay).
+
+        Raises:
+            TimeoutError: If the controller does not answer within ``timeout``.
+        """
+        command = Command(cid=uuid.uuid4().hex, cmd=cmd, payload=payload)
+        return await self.control_client.request(command, timeout=timeout)
 
     # -------------------------------------------------------------------------
     # Inbound control channel

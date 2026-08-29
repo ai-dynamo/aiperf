@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 
+import orjson
 from starlette.requests import HTTPConnection
 
+from aiperf.common.control_structs import CommandOk
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
-from aiperf.common.messages import CommandSuccessResponse, GetPodStatesCommand
 from aiperf.controller.system_controller_models import PodStateSnapshot
-from aiperf.plugin.enums import ServiceType
 
 _logger = logging.getLogger(__name__)
 
@@ -23,9 +24,9 @@ async def query_controller_pod_states(
     """Return controller state, or ``None`` when the authoritative path fails.
 
     A local controller handle is used when both components share a process.
-    Kubernetes API sidecars use the typed command bus. Callers retain their
-    bus-fed cache as the availability fallback for controller startup,
-    shutdown, timeouts, and malformed responses.
+    Kubernetes API sidecars go over the DEALER/ROUTER control channel. Callers
+    retain their bus-fed cache as the availability fallback for controller
+    startup, shutdown, timeouts, and malformed responses.
     """
     controller = getattr(conn.app.state, "controller", None)
     if controller is None:
@@ -36,27 +37,23 @@ async def query_controller_pod_states(
         return getter()
 
     service = getattr(conn.app.state, "service", None)
-    send_command = getattr(service, "send_command_and_wait_for_response", None)
-    service_id = getattr(service, "service_id", None)
-    if not callable(send_command) or not isinstance(service_id, str):
+    send_command = getattr(service, "send_command_to_controller", None)
+    if not callable(send_command):
         return None
 
     try:
         response = await send_command(
-            GetPodStatesCommand(
-                service_id=service_id,
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
-            ),
+            CommandType.GET_POD_STATES,
             timeout=Environment.API_SERVER.GET_POD_STATES_TIMEOUT,
         )
     except Exception as exc:  # noqa: BLE001 - all transport failures use the cache
         _logger.debug("Controller worker-state query failed; using bus cache: %r", exc)
         return None
-    if not isinstance(response, CommandSuccessResponse):
+    if not isinstance(response, CommandOk):
         return None
     try:
-        return PodStateSnapshot.model_validate(response.data)
-    except (TypeError, ValueError) as exc:
+        return PodStateSnapshot.model_validate(orjson.loads(response.payload))
+    except (TypeError, ValueError, orjson.JSONDecodeError) as exc:
         _logger.debug(
             "Controller worker-state response was invalid; using bus cache: %r",
             exc,

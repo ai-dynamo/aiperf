@@ -9,16 +9,16 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import orjson
 import pytest
 from fastapi import FastAPI
 from kubernetes_asyncio.client.exceptions import ApiException
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.progress import ProgressRouter
-from aiperf.common.enums import SystemState
+from aiperf.common.control_structs import CommandOk
+from aiperf.common.enums import CommandType, SystemState
 from aiperf.common.messages import (
-    CommandSuccessResponse,
-    GetPodStatesCommand,
     SystemStateChangedMessage,
     WorkerPodStateMessage,
 )
@@ -62,26 +62,26 @@ def _pod(pod_index: str, *, declared: int, ready: int) -> WorkerPodStateMessage:
 
 
 def _controller_service(pods: dict[str, WorkerPodStateMessage]) -> object:
-    command = GetPodStatesCommand(service_id="api-service")
-    response = CommandSuccessResponse.from_command_message(
-        command,
-        "system-controller",
-        data={
-            "pod_states": {
-                pod_index: pod.model_dump(mode="json")
-                for pod_index, pod in pods.items()
-            },
-            "worker_startup_states": {},
-        },
+    response = CommandOk(
+        cid="c-1",
+        cmd=CommandType.GET_POD_STATES,
+        sid="system-controller",
+        payload=orjson.dumps(
+            {
+                "pod_states": {
+                    pod_index: pod.model_dump(mode="json")
+                    for pod_index, pod in pods.items()
+                },
+                "worker_startup_states": {},
+            }
+        ),
     )
 
     class _Service:
         service_id = "api-service"
 
-        async def send_command_and_wait_for_response(
-            self, query: GetPodStatesCommand, timeout: float
-        ) -> object:
-            assert isinstance(query, GetPodStatesCommand)
+        async def send_command_to_controller(self, cmd: str, timeout: float) -> object:
+            assert cmd == CommandType.GET_POD_STATES
             assert timeout > 0
             return response
 
@@ -171,10 +171,10 @@ class TestProgressWorkerStateQuery:
         class _UnavailableService:
             service_id = "api-service"
 
-            async def send_command_and_wait_for_response(
-                self, _query: GetPodStatesCommand, timeout: float
+            async def send_command_to_controller(
+                self, cmd: str, timeout: float
             ) -> object:
-                raise TimeoutError(f"controller missed {timeout}s deadline")
+                raise TimeoutError(f"controller missed {timeout}s deadline for {cmd}")
 
         progress_client.app.state.service = _UnavailableService()
 

@@ -5,16 +5,16 @@
 
 from __future__ import annotations
 
+import orjson
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.debug import DebugRouter
 from aiperf.api.routers.progress import ProgressRouter
-from aiperf.common.enums import WorkerStartupState
+from aiperf.common.control_structs import CommandOk
+from aiperf.common.enums import CommandType, WorkerStartupState
 from aiperf.common.messages import (
-    CommandSuccessResponse,
-    GetPodStatesCommand,
     WorkerPodStateMessage,
     WorkerStartupStateMessage,
 )
@@ -143,25 +143,21 @@ def _service_with_controller_response(
     class _FakeService:
         service_id = "api-service"
 
-        async def send_command_and_wait_for_response(
-            self, command: GetPodStatesCommand, timeout: float
-        ) -> object:
-            assert isinstance(command, GetPodStatesCommand)
+        async def send_command_to_controller(self, cmd: str, timeout: float) -> object:
+            assert cmd == CommandType.GET_POD_STATES
             assert timeout > 0
             return response
 
     return _FakeService()
 
 
-def _success_response(
-    pods: dict[str, dict], startup: dict[str, str]
-) -> CommandSuccessResponse:
-    """Build the typed response produced by the controller command handler."""
-    command = GetPodStatesCommand(service_id="api-service")
-    return CommandSuccessResponse.from_command_message(
-        command,
-        "system-controller",
-        data={"pod_states": pods, "worker_startup_states": startup},
+def _success_response(pods: dict[str, dict], startup: dict[str, str]) -> CommandOk:
+    """Build the control-struct response produced by the controller handler."""
+    return CommandOk(
+        cid="c-1",
+        cmd=CommandType.GET_POD_STATES,
+        sid="system-controller",
+        payload=orjson.dumps({"pod_states": pods, "worker_startup_states": startup}),
     )
 
 
@@ -214,10 +210,10 @@ class TestDebugRouterControllerQuery:
         class _UnavailableService:
             service_id = "api-service"
 
-            async def send_command_and_wait_for_response(
-                self, _command: GetPodStatesCommand, timeout: float
+            async def send_command_to_controller(
+                self, cmd: str, timeout: float
             ) -> object:
-                raise RuntimeError(f"controller unavailable after {timeout}s")
+                raise RuntimeError(f"controller unavailable after {timeout}s for {cmd}")
 
         debug_client.app.state.service = _UnavailableService()
 

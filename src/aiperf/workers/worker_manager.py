@@ -6,11 +6,13 @@ import multiprocessing
 import time
 from typing import TYPE_CHECKING
 
+import orjson
+
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import MessageType, WorkerStatus
+from aiperf.common.enums import CommandType, MessageType, WorkerStatus
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_message, on_start
-from aiperf.common.messages import SpawnWorkersCommand, WorkerHealthMessage
+from aiperf.common.messages import WorkerHealthMessage
 from aiperf.plugin.enums import ServiceType
 from aiperf.workers.worker_group_state import (
     WorkerStatusInfo,
@@ -100,13 +102,9 @@ class WorkerManager(BaseComponentService):
         """Start worker manager-specific components."""
         self.debug("WorkerManager starting")
 
-        await self.send_command_and_wait_for_response(
-            SpawnWorkersCommand(
-                service_id=self.service_id,
-                num_workers=self.initial_workers,
-                # Target the system controller directly to avoid broadcasting to all services.
-                target_service_type=ServiceType.SYSTEM_CONTROLLER,
-            )
+        await self.send_command_to_controller(
+            CommandType.SPAWN_WORKERS,
+            payload=orjson.dumps({"num_workers": self.initial_workers}),
         )
         self.debug("WorkerManager started")
 
