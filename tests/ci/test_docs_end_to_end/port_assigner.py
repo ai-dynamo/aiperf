@@ -28,13 +28,10 @@ def rewrite_command_ports(command: str, port_map: dict[int, int]) -> str:
     """
     for orig, assigned in port_map.items():
         s = str(assigned)
-        # Docker publish flag: replace only the host (left) side of -p HOST:CONTAINER
         command = re.sub(rf"(-p\s+){orig}(:\d+)", rf"\g<1>{s}\2", command)
-        # Address references: localhost:PORT and 127.0.0.1:PORT
         command = re.sub(
             rf"((?:localhost|127\.0\.0\.1):){orig}\b", rf"\g<1>{s}", command
         )
-        # Generic URL port: ://hostname:PORT
         command = re.sub(rf"(://[^/:\s]+:){orig}\b", rf"\g<1>{s}", command)
     return command
 

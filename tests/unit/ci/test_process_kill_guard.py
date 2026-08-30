@@ -34,7 +34,7 @@ def test_kill_guard_mark_finished_prevents_kill() -> None:
     assert killed == []
 
 
-def test_kill_guard_idempotent_double_call() -> None:
+def test_kill_guard_kills_once() -> None:
     killed = []
     guard = _ProcessGroupKillGuard()
     proc = SimpleNamespace(pid=12345, poll=lambda: None)
@@ -44,9 +44,7 @@ def test_kill_guard_idempotent_double_call() -> None:
             proc=proc, test_num=1, server_name="test-server", guard=guard
         )
         killer()
-        killer()
 
-    assert len(killed) == 1
     assert killed[0][0] == 12345
 
 

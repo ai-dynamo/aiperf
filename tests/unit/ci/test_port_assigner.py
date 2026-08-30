@@ -59,7 +59,6 @@ def test_assign_ports_to_server_rewrites_all_commands() -> None:
     port_map = assign_ports_to_server(server)
     assert 8000 in port_map
     new_port = str(port_map[8000])
-    # Host port rewritten, container port preserved
     assert f"-p {new_port}:8000" in server.setup_command.command
     assert new_port in server.health_check_command.command
     assert "8000" not in server.health_check_command.command
@@ -79,7 +78,6 @@ def test_assign_ports_to_server_no_ports_returns_empty() -> None:
 
 
 def test_assign_ports_to_server_unique_ports() -> None:
-    # Simulate find_free_port returning the same port twice before a unique one.
     call_count = 0
     ports_sequence = [19100, 19100, 19101]
 

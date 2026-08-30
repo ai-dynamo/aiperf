@@ -322,11 +322,16 @@ def run_health_check(server: Server, config: E2ETestConfig) -> None:
     )
     if timed_out:
         health_process.kill()
-        health_process.wait(timeout=10)
+        with suppress(subprocess.TimeoutExpired):
+            health_process.wait(timeout=10)
         raise RuntimeError(
             f"Health check for server {server.name} exceeded {HEALTH_CHECK_TIMEOUT}s"
         )
-    health_process.wait(timeout=10)
+    try:
+        health_process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        health_process.kill()
+        health_process.wait()
     if health_process.returncode != 0:
         logger.error(f"Health check failed for server: {server.name}")
         raise RuntimeError(f"Health check failed for server: {server.name}")
@@ -419,10 +424,12 @@ def teardown_server(
         stop_cmd = (
             f"docker ps -q {filter_flag} | xargs -r docker stop 2>/dev/null || true"
         )
-    subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=30)
-    subprocess.run(
-        f"docker container prune -f {filter_flag}",
-        shell=True,
-        capture_output=True,
-        timeout=10,
-    )
+    with suppress(subprocess.TimeoutExpired):
+        subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=30)
+    with suppress(subprocess.TimeoutExpired):
+        subprocess.run(
+            f"docker container prune -f {filter_flag}",
+            shell=True,
+            capture_output=True,
+            timeout=10,
+        )

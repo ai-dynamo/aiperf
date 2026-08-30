@@ -168,11 +168,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     settings = _resolve_settings(config)
     config.stash[_SETTINGS_KEY] = settings
-    # Parse docs once here so that both pytest_generate_tests and the
-    # parsed_servers fixture operate on the *same* Command instances.
-    # assign_ports_to_server mutates Command.command in place at runtime;
-    # sharing instances ensures the parametrised aiperf_command values
-    # reflect the rewritten ports when the test body executes.
     repo_root = get_repo_root()
     md_parser = MarkdownParser()
     servers = md_parser.parse_directory(str(repo_root))
