@@ -242,3 +242,23 @@ def test_network_latency_automatic_clears_yaml_mean_ms(tmp_path: Path) -> None:
     assert network_latency.enabled is True
     assert network_latency.mean_ms is None
     assert network_latency.should_probe is True
+
+
+def test_empty_model_name_override_preserves_yaml_models(tmp_path: Path) -> None:
+    """An empty CLI default must not replace configured models."""
+    config_file = _write(
+        tmp_path,
+        _PREAMBLE
+        + """\
+  phases:
+    - name: measured
+      kind: profiling
+      type: concurrency
+      concurrency: 8
+      requests: 10
+""",
+    )
+
+    config = resolve_config(CLIConfig(model_names=[]), config_file)
+
+    assert config.benchmark.get_model_names() == ["yaml-model"]
