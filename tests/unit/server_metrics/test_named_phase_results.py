@@ -148,6 +148,33 @@ async def test_export_results_keeps_repeated_agentic_warmup_instances_distinct()
 
 
 @pytest.mark.asyncio
+async def test_synthetic_storage_indexes_do_not_mutate_public_phase_indexes() -> None:
+    """Synthetic warmup indexes are storage metadata, not model data."""
+    accumulator = ServerMetricsAccumulator(
+        run=make_run_from_cli(
+            CLIConfig(
+                model_names=["model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://server:8000/v1/chat/completions"],
+            )
+        )
+    )
+    first = _warmup_record(10, 1.0, phase_instance_id=1)
+    second = _warmup_record(20, 2.0, phase_instance_id=2)
+
+    await accumulator.process_server_metrics_record(first)
+    await accumulator.process_server_metrics_record(second)
+
+    assert first.phase_index is None
+    assert second.phase_index is None
+    time_series = accumulator.get_hierarchy_for_export().endpoints[first.endpoint_url]
+    data = next(iter(time_series.metrics.values())).data
+    stored_indexes = data._phase_indices[: data._size]
+    assert len(set(stored_indexes)) == 2
+    assert all(index < 0 for index in stored_indexes)
+
+
+@pytest.mark.asyncio
 async def test_interleaved_scrapes_keep_one_warmup_instance_together() -> None:
     """Overlapping scrapes must not split a single warmup instance.
 
