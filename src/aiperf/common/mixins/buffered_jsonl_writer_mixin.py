@@ -132,6 +132,10 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Args:
             record: A Pydantic BaseModel instance to write
         """
+        if self._write_error is not None:
+            raise RuntimeError(
+                f"JSONL writer cannot accept records after a write failure: {self.output_file}"
+            ) from self._write_error
         try:
             # Serialize to bytes using orjson (faster for large records)
             # Use exclude_none=True to omit None fields (smaller output)
@@ -171,9 +175,16 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             # nothing is silently dropped, and ``flush_buffer()`` still raises
             # from ``_write_error`` at the finalization barrier, so the failure
             # is not lost -- just no longer retried on every append.
+            if len(self._flush_tasks) >= _MAX_PENDING_FLUSH_TASKS:
+                done, _ = await asyncio.wait(
+                    self._flush_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                self._record_flush_failures(
+                    await asyncio.gather(*done, return_exceptions=True)
+                )
             if (
                 self._write_error is None
-                and len(self._flush_tasks) < _MAX_PENDING_FLUSH_TASKS
                 and len(self._buffer) >= self._batch_size
             ):
                 buffer_to_flush = self._buffer
