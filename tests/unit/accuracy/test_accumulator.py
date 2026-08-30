@@ -14,13 +14,16 @@ from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
 from tests.unit.conftest import make_benchmark_run
 
 
-def _make_accumulator() -> AccuracyAccumulator:
+def _make_accumulator(tasks: list[str] | None = None) -> AccuracyAccumulator:
+    accuracy: dict = {"benchmark": AccuracyBenchmarkType.MMLU}
+    if tasks is not None:
+        accuracy["tasks"] = tasks
     return AccuracyAccumulator(
         run=make_benchmark_run(
             model_names=["test-model"],
             endpoint_type=EndpointType.COMPLETIONS,
             streaming=False,
-            accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+            accuracy=accuracy,
         )
     )
 
@@ -155,6 +158,32 @@ class TestAccuracyAccumulator:
         assert summary is not None
         assert summary.total_evaluated == 2
         assert summary.total_passed == 1
+        assert set(summary.per_task) == {"math"}
+
+    async def test_requested_tasks_with_no_dispatched_requests_are_zero_filled(
+        self,
+    ) -> None:
+        acc = _make_accumulator(tasks=["math", "physics", "computer science"])
+        await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
+
+        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+
+        assert summary is not None
+        assert set(summary.per_task) == {"math", "physics", "computer science"}
+
+        physics = summary.per_task["physics"]
+        assert physics.total == 0
+        assert physics.passed == 0
+        assert physics.unparsed == 0
+        assert physics.accuracy_rate == 0.0
+
+    async def test_no_accuracy_tasks_configured_does_not_zero_fill(self) -> None:
+        acc = _make_accumulator()
+        await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
+
+        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+
+        assert summary is not None
         assert set(summary.per_task) == {"math"}
 
     async def test_summarize_is_phase_agnostic(self) -> None:

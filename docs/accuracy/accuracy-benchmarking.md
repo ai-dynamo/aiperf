@@ -350,9 +350,16 @@ expected format):
 └─────────────────────────┴─────────┴───────┴──────────┴──────────┘
 ```
 
+When `--accuracy-tasks` names specific tasks, every named task always gets a row,
+even one that received zero dispatched requests because `--num-requests` was too
+small (dataset rows are grouped by category upstream, so a small `--num-requests`
+can exhaust one task's pool before reaching the next). That row shows `0` for
+`Correct`/`Total`/`Unparsed` and `N/A` for `Accuracy`.
+
 **Summary CSV:** `<artifact_dir>/accuracy_results.csv` — one row per task plus a
 trailing `OVERALL` row. Columns: `task, total, passed, unparsed, accuracy_rate,
-unparsed_rate`.
+unparsed_rate`. Same zero-row behavior as the console table; `accuracy_rate` is
+blank rather than `0`.
 
 ### Per-record accuracy JSONL
 

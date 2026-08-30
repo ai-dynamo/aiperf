@@ -69,6 +69,11 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         ``phase`` selects one phase; ``None`` is phase-agnostic (all records).
         Records with ``task is None`` count toward the overall totals but are
         absent from ``per_task``.
+
+        When ``--accuracy-tasks`` names specific tasks, every named task gets a
+        ``per_task`` entry even if zero requests were dispatched to it (e.g.
+        ``--num-requests`` was smaller than an earlier task's pool size), so the
+        task stays visible instead of silently vanishing from the output.
         """
         scoped = (
             self._records
@@ -105,6 +110,15 @@ class AccuracyAccumulator(BaseMetricsProcessor):
                 unparsed=unparsed,
                 accuracy_rate=passed / total if total else 0.0,
                 unparsed_rate=unparsed / total if total else 0.0,
+            )
+
+        requested_tasks = self.run.cfg.accuracy.tasks or []
+        for task in requested_tasks:
+            per_task.setdefault(
+                task,
+                TaskAccuracyStats(
+                    total=0, passed=0, unparsed=0, accuracy_rate=0.0, unparsed_rate=0.0
+                ),
             )
 
         return AccuracySummary(

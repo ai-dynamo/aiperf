@@ -209,6 +209,11 @@ class AccuracySummary(AIPerfBaseModel):
 
         Emitted in this exact order (load-bearing for byte-exact JSON/CSV):
         overall, tasks sorted, unparsed overall, unparsed tasks sorted.
+
+        A task with zero dispatched requests (``stats.total == 0``, seeded by
+        ``AccuracyAccumulator`` for every task named in ``--accuracy-tasks``)
+        gets ``current=None`` instead of ``0.0``, so exporters render it as N/A
+        rather than a misleading 0% accuracy.
         """
         from aiperf.common.enums import MetricConsoleGroup
         from aiperf.common.models import MetricResult
@@ -236,7 +241,7 @@ class AccuracySummary(AIPerfBaseModel):
                     header=f"Accuracy ({task})",
                     unit="ratio",
                     count=stats.total,
-                    current=stats.passed / stats.total if stats.total else 0.0,
+                    current=stats.passed / stats.total if stats.total else None,
                     sum=stats.passed,
                     console_group=MetricConsoleGroup.NONE,
                 )
@@ -263,7 +268,7 @@ class AccuracySummary(AIPerfBaseModel):
                     header=f"Accuracy Unparsed ({task})",
                     unit="ratio",
                     count=stats.total,
-                    current=stats.unparsed / stats.total if stats.total else 0.0,
+                    current=stats.unparsed / stats.total if stats.total else None,
                     sum=stats.unparsed,
                     console_group=MetricConsoleGroup.NONE,
                 )

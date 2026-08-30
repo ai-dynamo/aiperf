@@ -81,6 +81,33 @@ class TestToMetricResults:
         projected = overall.to_json_result().model_dump(exclude_none=True)
         assert projected == {"unit": "ratio", "count": 10, "sum": 8}
 
+    def test_zero_total_task_emits_current_none(self) -> None:
+        summary = AccuracySummary(
+            total_evaluated=5,
+            total_passed=5,
+            accuracy_rate=1.0,
+            overall_unparsed=0,
+            per_task={
+                "math": TaskAccuracyStats(
+                    total=5, passed=5, unparsed=0, accuracy_rate=1.0, unparsed_rate=0.0
+                ),
+                "physics": TaskAccuracyStats(
+                    total=0, passed=0, unparsed=0, accuracy_rate=0.0, unparsed_rate=0.0
+                ),
+            },
+        )
+        by_tag = {r.tag: r for r in summary.to_metric_results()}
+
+        physics = by_tag["accuracy.task.physics"]
+        assert physics.current is None
+        assert physics.count == 0
+        assert physics.sum == 0
+
+        physics_unparsed = by_tag["accuracy.unparsed.task.physics"]
+        assert physics_unparsed.current is None
+        assert physics_unparsed.count == 0
+        assert physics_unparsed.sum == 0
+
     def test_empty_summary_emits_nothing(self) -> None:
         empty = AccuracySummary(
             total_evaluated=0,
