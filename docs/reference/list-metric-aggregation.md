@@ -20,22 +20,24 @@ To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest 
 | `sum` | running `float64` | bit-exact (within float round-off across summation orders) |
 | `min`, `max` | running scalars | bit-exact |
 | `avg` | `sum / count` | bit-exact |
-| `std` | Welford's online algorithm (`sqrt(max(0, m2/count))`) | bit-exact (population std, matches `np.std`) |
+| `std` | Welford's online algorithm (`sqrt(max(0, m2/count))`) | population std; batch `extend` is bit-exact against `np.std`, per-sample `append` agrees to ~1e-14 relative |
 | `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
-Memory cost of the side-channel scalars is **40 bytes** regardless of sample count. T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
+Memory cost of the side-channel scalars is **48 bytes** regardless of sample count (`_count`, `_sum`, `_mean`, `_m2`, `_min`, `_max`). T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
 
 ### Why `std` uses Welford and not the textbook identity
 
 The textbook one-pass form, `sqrt(sum_sq/count − avg²)`, subtracts two large and nearly equal numbers. Latencies are stored as nanoseconds, so the offset is huge and the spread is small, which is exactly where that subtraction loses its significant digits. Measured against `np.std` over 50 K normal samples:
 
-| Samples | Welford (implemented) | `sum_sq/count − avg²` | numpy |
-|---|---|---|---|
-| `5 ± 0.4` ms | 0.400565039429 | 0.400565039429 | 0.400565039429 |
-| `1e9 ± 500` ns | 499.419838165 | 499.599839872 | 499.419838165 |
-| `1e12 ± 500` ns | 502.038855972 | **11585.237503** | 502.038855972 |
+| Samples | Welford rel. error | textbook rel. error |
+|---|---|---|
+| `5 ± 0.4` ms | 1.6e-15 | 5.8e-13 |
+| `1e9 ± 500` ns | 3.1e-14 | 1.3e-02 |
+| `1e12 ± 500` ns | 4.4e-08 | 1.0e+00 |
 
-At nanosecond magnitudes the textbook form is wrong by a factor of 23. Welford is bit-identical to `np.std` in all three cases. `TDigestListMetricAggregator` keeps a running mean and `m2` for this reason; the accuracy claim in the table above depends on it.
+Relative to `np.std`, seed 1342, 50 K samples per case. At `1e12` ns the textbook form cancels to exactly zero while Welford holds to eight digits. `TDigestListMetricAggregator` keeps a running mean and `m2` for this reason.
+
+The two ingest paths reduce in different orders, so they are not bit-identical to each other: `extend` computes a batch mean and `m2` and merges with Chan's parallel combine, which reproduces `np.std` bit-for-bit, while `append` accumulates per sample and lands within about 1e-14. Neither is a correctness problem at nanosecond magnitudes, but only the batch path is bit-exact.
 
 ## Empirical accuracy
 
