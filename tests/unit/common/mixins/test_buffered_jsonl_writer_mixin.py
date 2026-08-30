@@ -36,6 +36,26 @@ class TestBufferedJSONLWriterMixin:
         temp_path.unlink(missing_ok=True)
 
     @pytest.mark.asyncio
+    async def test_buffered_write_rejects_records_after_write_error(
+        self, temp_output_file
+    ) -> None:
+        """A failed artifact does not retain an unbounded later buffer."""
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=1,
+        )
+        await writer.initialize()
+        failure = OSError("artifact volume full")
+        writer._write_error = failure
+
+        with pytest.raises(RuntimeError, match="cannot accept records after a write failure") as exc_info:
+            await writer.buffered_write(SampleRecord(id=1, value="late"))
+
+        assert exc_info.value.__cause__ is failure
+        assert writer._buffer == []
+        await writer.stop()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "batch_size,num_tasks,records_per_task",
         [
