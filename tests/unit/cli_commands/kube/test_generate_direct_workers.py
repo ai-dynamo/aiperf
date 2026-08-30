@@ -175,9 +175,15 @@ def test_dump_raw_manifests_preserves_cr_deployment_spec() -> None:
     assert resolved.pod_template.node_selector == {"region": "west"}
 
 
-def test_dump_raw_manifests_includes_requested_namespace(
+def test_dump_raw_manifests_targets_requested_namespace_without_creating_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Generated YAML must never contain a Namespace manifest.
+
+    The benchmark namespace is named by the user and must already exist;
+    emitting one would make applying the output require cluster-scoped
+    namespace-create rights.
+    """
     import ruamel.yaml
 
     from aiperf.config import AIPerfConfig
@@ -211,10 +217,9 @@ def test_dump_raw_manifests_includes_requested_namespace(
     parser = ruamel.yaml.YAML(typ="safe")
     manifests = list(parser.load_all(capsys.readouterr().out))
     assert [manifest["kind"] for manifest in manifests] == [
-        "Namespace",
         "Role",
         "RoleBinding",
         "ConfigMap",
         "JobSet",
     ]
-    assert manifests[0]["metadata"]["name"] == "tenant-a"
+    assert {manifest["metadata"]["namespace"] for manifest in manifests} == {"tenant-a"}
