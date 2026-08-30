@@ -68,6 +68,48 @@ def test_context_namespace_survives_a_missing_kubeconfig() -> None:
     assert _context_namespace(kubeconfig="/nonexistent/kubeconfig") is None
 
 
+def test_named_context_missing_from_kubeconfig_names_the_context() -> None:
+    """A typo'd --kube-context must not read as "your context sets no namespace".
+
+    Both cases used to return None, so the resolver blamed the context for
+    pinning no namespace when the context did not exist at all.
+    """
+    from aiperf.kubernetes.cli_helpers import _context_namespace
+
+    with (
+        patch(
+            "kubernetes_asyncio.config.list_kube_config_contexts",
+            return_value=([{"name": "real-ctx", "context": {"namespace": "ns"}}], None),
+        ),
+        pytest.raises(ConfigurationError) as exc,
+    ):
+        _context_namespace(context="typo-ctx")
+
+    message = str(exc.value)
+    assert "typo-ctx" in message, message
+    assert "real-ctx" in message, message
+
+
+def test_named_context_without_a_namespace_returns_none() -> None:
+    """The context exists but pins nothing: the caller's message is correct."""
+    from aiperf.kubernetes.cli_helpers import _context_namespace
+
+    with patch(
+        "kubernetes_asyncio.config.list_kube_config_contexts",
+        return_value=([{"name": "real-ctx", "context": {}}], None),
+    ):
+        assert _context_namespace(context="real-ctx") is None
+
+
+def test_unreadable_kubeconfig_is_fatal_only_for_a_named_context() -> None:
+    from aiperf.kubernetes.cli_helpers import _context_namespace
+
+    with pytest.raises(ConfigurationError) as exc:
+        _context_namespace(kubeconfig="/nonexistent/kubeconfig", context="some-ctx")
+
+    assert "some-ctx" in str(exc.value)
+
+
 def test_namespace_keeps_its_short_alias() -> None:
     """`-n` is the short flag for --namespace across every `aiperf kube` command.
 

@@ -32,19 +32,41 @@ if TYPE_CHECKING:
 def _context_namespace(
     kubeconfig: str | None = None, context: str | None = None
 ) -> str | None:
-    """Return the namespace of the active kubeconfig context, if it sets one.
+    """Return the namespace of the selected kubeconfig context, if it sets one.
+
+    ``None`` means "the context exists and pins no namespace" and nothing else.
+    An explicitly named ``--kube-context`` that is absent from the kubeconfig,
+    or a kubeconfig that cannot be read at all, raises ``ConfigurationError``:
+    both used to collapse into the caller's "your context sets no namespace"
+    message, which blames the wrong thing for a typo'd context name.
 
     Split out from :func:`resolve_benchmark_namespace` so tests can drive the
     resolution chain without a kubeconfig on disk.
     """
+    from aiperf.config.loader.errors import ConfigurationError
+
     try:
         from kubernetes_asyncio import config as k8s_config
 
         contexts, active = k8s_config.list_kube_config_contexts(config_file=kubeconfig)
-    except Exception:  # noqa: BLE001 - no kubeconfig is a normal, non-fatal state
-        return None
+    except Exception as exc:  # noqa: BLE001 - no kubeconfig is a normal state
+        # Only fatal when the user named a context: without one, "no readable
+        # kubeconfig" is indistinguishable from "no namespace pinned", and the
+        # caller's message already tells them to pass --namespace.
+        if context is None:
+            return None
+        raise ConfigurationError(
+            f"Could not read kubeconfig to resolve context {context!r}: {exc}"
+        ) from exc
+
     if context is not None:
         active = next((c for c in contexts or [] if c.get("name") == context), None)
+        if active is None:
+            known = ", ".join(sorted(c.get("name", "") for c in contexts or []))
+            raise ConfigurationError(
+                f"kubeconfig context {context!r} not found."
+                + (f" Known contexts: {known}" if known else "")
+            )
     if not active:
         return None
     return (active.get("context") or {}).get("namespace") or None
