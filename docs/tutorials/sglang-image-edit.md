@@ -111,7 +111,6 @@ aiperf profile \
 ### Image Edit Using an Input File
 For deterministic prompt + reference image sequences, use a JSONL input file. Each line must include both the prompt (`text`) and the reference image (`image`, a local path or URL) — the `image_edit` endpoint rejects turns without a reference image, and the `single_turn` loader does not synthesize one.
 
-<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > edit_prompts.jsonl << 'EOF'
 {"text": "Convert this scene to a watercolor painting", "image": "/path/to/ref1.png"}
@@ -152,7 +151,6 @@ Image edit shares its metric set with image generation; both endpoints report im
 
 Use `--export-level raw` to capture the raw input/output payloads, which lets you extract the edited images afterwards.
 
-<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > edit_prompts.jsonl << 'EOF'
 {"text": "Convert this scene to a watercolor painting", "image": "/path/to/ref1.png"}

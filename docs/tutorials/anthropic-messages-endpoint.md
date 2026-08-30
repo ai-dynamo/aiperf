@@ -53,7 +53,6 @@ curl -sf "https://api.anthropic.com/v1/models" \
 
 ### Non-Streaming
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \
@@ -68,7 +67,6 @@ aiperf profile \
 
 Enable streaming to measure time-to-first-token (TTFT) and inter-token latency (ITL):
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \
@@ -84,7 +82,6 @@ aiperf profile \
 
 Control input and output token distributions:
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \
@@ -104,7 +101,6 @@ aiperf profile \
 
 Add a shared system prompt across all requests using `--shared-system-prompt-length`. The system message is placed in the top-level `system` field (not in the messages array), matching the Anthropic API specification:
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \
@@ -243,7 +239,6 @@ A typical streaming sequence:
 
 The Anthropic Messages endpoint uses `x-api-key` header authentication (not `Authorization: Bearer`):
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \
@@ -254,7 +249,6 @@ aiperf profile \
 
 The endpoint also sets the `anthropic-version: 2023-06-01` header by default. To override it or add beta headers (e.g., for extended thinking), use `--header`:
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \
@@ -272,7 +266,6 @@ Custom headers are merged with the defaults. If you provide `anthropic-version` 
 
 Pass additional API parameters with `--extra-inputs`:
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \
@@ -302,7 +295,6 @@ These are merged directly into the request payload, producing:
 
 ### Single-Turn with Custom Prompts
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 cat > prompts.jsonl << 'EOF'
 {"text": "Explain the theory of relativity."}
@@ -323,7 +315,6 @@ aiperf profile \
 
 ### Multi-Turn Conversations
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 cat > conversations.jsonl << 'EOF'
 {"session_id": "s1", "turns": [{"text": "What is Rust?"}, {"text": "Compare it to C++."}]}
@@ -347,7 +338,6 @@ aiperf profile \
 
 To use token counts reported by the server (from `usage` fields) instead of client-side tokenization:
 
-<!-- aiperf-run-anthropic-messages-endpoint-server -->
 ```bash
 aiperf profile \
     --model claude-sonnet-4-20250514 \

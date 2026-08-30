@@ -36,7 +36,7 @@ RUN pip install 'vllm[audio]'
 EOF
 
 docker run --gpus all -p 8000:8000 vllm-audio \
-  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --model Qwen/Qwen2.5-Omni-3B \
   --trust-remote-code
 ```
 
@@ -45,7 +45,7 @@ Verify the server is ready:
 ```bash
 curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2-Audio-7B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+  -d '{"model":"Qwen/Qwen2.5-Omni-3B","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
 ```
 
 ---
@@ -57,7 +57,7 @@ LibriSpeech is the standard read-speech benchmark and requires no authentication
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -117,7 +117,7 @@ VoxPopuli contains European Parliament recordings and requires no authentication
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -125,6 +125,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 ---
 
@@ -135,7 +136,7 @@ AMI contains meeting recordings with individual headset microphone audio and req
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -143,6 +144,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 ---
 
@@ -151,12 +153,11 @@ aiperf profile \
 GigaSpeech is a multi-domain corpus covering audiobooks, podcasts, and YouTube. It requires a
 HuggingFace account and acceptance of the [dataset terms](https://huggingface.co/datasets/speechcolab/gigaspeech):
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -172,12 +173,11 @@ aiperf profile \
 SPGISpeech contains financial earnings call recordings. It requires a HuggingFace account and
 acceptance of the [dataset terms](https://huggingface.co/datasets/kensho/spgispeech):
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \

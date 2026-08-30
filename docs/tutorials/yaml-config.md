@@ -18,10 +18,9 @@ You don't need to choose between the two: CLI flags still work, and they layer o
 
 A typical concurrency sweep on the command line looks like this:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
-  --model meta-llama/Llama-3.1-8B-Instruct \
+  --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000/v1/chat/completions \
   --endpoint-type chat --streaming \
   --synthetic-input-tokens-mean 512 --synthetic-input-tokens-stddev 0 \

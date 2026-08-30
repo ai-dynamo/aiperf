@@ -452,7 +452,6 @@ For inference workloads on **AMD Instinct GPUs** (MI300X, MI355X, etc.), use `--
 
 ### Run AIPerf with amdsmi
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model meta-llama/Llama-3.1-8B-Instruct \

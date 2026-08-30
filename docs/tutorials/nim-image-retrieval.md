@@ -102,7 +102,6 @@ Bounding box coordinates are normalized (0-1 range) relative to the top-left cor
 
 Create a JSONL input file with image paths or URLs:
 
-<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
 {"image": "https://assets.ngc.nvidia.com/products/api-catalog/nemo-retriever/object-detection/page-elements-example-1.jpg"}
@@ -154,7 +153,6 @@ Since this endpoint does not produce tokens, no TTFT or ITL metrics are reported
 
 You can send multiple images in a single request:
 
-<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 cat <<EOF > multi_image_inputs.jsonl
 {"images": ["https://example.com/page1.png", "https://example.com/page2.png"]}
@@ -179,7 +177,6 @@ When sending multiple images per request, the image throughput metric reflects t
 
 Use `--extra-inputs` to pass additional parameters to the NIM endpoint:
 
-<!-- aiperf-run-nim-image-retrieval-endpoint-server -->
 ```bash
 aiperf profile \
     --endpoint-type image_retrieval \

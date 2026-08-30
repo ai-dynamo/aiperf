@@ -86,7 +86,6 @@ The fraction is in `[0.0, 1.0]`. Errors land in the denominator on purpose: a ba
 
 The same `--goodput` invocation that produces `goodput` also produces `good_request_fraction` — no extra flag is required:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     -m Qwen/Qwen3-0.6B \
