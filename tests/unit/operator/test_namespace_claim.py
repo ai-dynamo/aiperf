@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -233,6 +234,139 @@ def test_owns_unknown_namespace_defaults_to_global_yes_scoped_no() -> None:
     api = FakeCoordinationApi()
     assert claim_for(api, "").owns("never-seen") is True
     assert claim_for(api, "scoped").owns("never-seen") is False
+
+
+@pytest.mark.asyncio
+async def test_holder_treats_a_403_as_unclaimed() -> None:
+    """No RBAC on leases must not wedge reconciliation.
+
+    A 403 is indistinguishable from an unclaimed namespace from here, so it
+    resolves to "no holder" rather than propagating and killing the handler.
+    """
+
+    class ForbiddenApi(FakeCoordinationApi):
+        async def read_namespaced_lease(self, *, name: str, namespace: str) -> V1Lease:
+            raise ApiException(status=403, reason="Forbidden")
+
+    api = ForbiddenApi()
+    claim = claim_for(api, "")
+
+    assert await claim.holder("locked-down") is None
+    assert claim.owns("locked-down") is True
+
+
+@pytest.mark.asyncio
+async def test_holder_propagates_unexpected_api_errors() -> None:
+    """Only 403/404 are benign; a 500 must not be read as "unclaimed"."""
+
+    class BrokenApi(FakeCoordinationApi):
+        async def read_namespaced_lease(self, *, name: str, namespace: str) -> V1Lease:
+            raise ApiException(status=500, reason="Internal Server Error")
+
+    claim = claim_for(BrokenApi(), "")
+
+    with pytest.raises(ApiException):
+        await claim.holder("broken")
+
+
+@pytest.mark.asyncio
+async def test_acquire_retries_the_create_when_the_lease_vanishes_mid_conflict() -> (
+    None
+):
+    """409 then 404 means the holder deleted its lease; the namespace is free.
+
+    Without the retry, the read's 404 would surface as a startup failure even
+    though the very next create would have succeeded.
+    """
+
+    class VanishingApi(FakeCoordinationApi):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        async def create_namespaced_lease(
+            self, *, namespace: str, body: V1Lease
+        ) -> V1Lease:
+            if not self.creates:
+                self.creates.append(namespace)
+                raise ApiException(status=409, reason="Conflict")
+            return await super().create_namespaced_lease(namespace=namespace, body=body)
+
+        async def read_namespaced_lease(self, *, name: str, namespace: str) -> V1Lease:
+            self.reads += 1
+            raise ApiException(status=404, reason="Not Found")
+
+    api = VanishingApi()
+    claim = claim_for(api, "test-op")
+
+    await claim.acquire("aiperf-test")
+
+    assert api.reads == 1
+    assert api.creates == ["aiperf-test", "aiperf-test"]
+    assert api.replaces == []
+    assert claim.owns("aiperf-test") is True
+
+
+@pytest.mark.asyncio
+async def test_acquire_gives_up_when_the_lease_vanishes_twice() -> None:
+    """The retry is once, not a loop: a persistent 404 must still surface."""
+
+    class AlwaysConflictingApi(FakeCoordinationApi):
+        async def create_namespaced_lease(
+            self, *, namespace: str, body: V1Lease
+        ) -> V1Lease:
+            self.creates.append(namespace)
+            raise ApiException(status=409, reason="Conflict")
+
+        async def read_namespaced_lease(self, *, name: str, namespace: str) -> V1Lease:
+            raise ApiException(status=404, reason="Not Found")
+
+    api = AlwaysConflictingApi()
+    claim = claim_for(api, "test-op")
+
+    with pytest.raises(ApiException) as excinfo:
+        await claim.acquire("aiperf-test")
+
+    assert excinfo.value.status == 404
+    assert api.creates == ["aiperf-test", "aiperf-test"]
+
+
+@pytest.mark.asyncio
+async def test_owns_cache_miss_fills_the_cache_in_the_background() -> None:
+    """``owns()`` is sync by contract, so a miss answers from the role default.
+
+    The scheduled refresh is what makes the next call accurate; if it never
+    ran, a scoped operator's namespace would stay invisible to the global one
+    forever.
+    """
+    api = FakeCoordinationApi({"held": make_lease("held", "scoped-op")})
+    claim = claim_for(api, "")
+
+    assert claim.owns("held") is True  # optimistic default, cache is empty
+
+    await asyncio.gather(*list(claim._tasks))
+
+    assert claim.owns("held") is False
+    assert claim._tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_renew_releases_a_namespace_taken_over_by_another_operator() -> None:
+    """A lapsed renewal lets a rival claim the namespace legitimately.
+
+    Patching unconditionally would take it straight back and leave both
+    operators reconciling it.
+    """
+    api = FakeCoordinationApi()
+    claim = claim_for(api, "test-op")
+    await claim.acquire("aiperf-test")
+    api.leases["aiperf-test"] = make_lease("aiperf-test", "rival-op")
+
+    await claim.renew()
+
+    assert api.patches == []
+    assert claim.owns("aiperf-test") is False
+    assert api.leases["aiperf-test"].spec.holder_identity == "rival-op"
 
 
 def test_watched_namespaces_from_argv_parses_kopf_flags() -> None:
