@@ -1321,13 +1321,14 @@ def _apply_phase_loadgen_overrides(
         return decision
 
     _reject_loadgen_target_collisions(loadgen_set)
-    _apply_rate_series_override(target, cli, loadgen_set)
     _apply_loadgen_value_overrides(target, cli, loadgen_set)
     _apply_default_grace_period_override(target, cli, loadgen_set)
     _apply_agentic_replay_fields(target, cli)
-    return _apply_phase_shape_overrides(
+    decision = _apply_phase_shape_overrides(
         target, cli, loadgen_set, decision=phase_shape_decision
     )
+    _apply_rate_series_override(target, cli, loadgen_set)
+    return decision
 
 
 def _apply_rate_series_override(
