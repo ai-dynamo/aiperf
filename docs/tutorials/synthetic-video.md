@@ -98,7 +98,6 @@ JSON Export: artifacts/your-model-name-chat-concurrency1/profile_export_aiperf.j
 
 Control the resolution of generated videos:
 
-<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \

@@ -78,7 +78,6 @@ aiperf profile --output-artifact-dir ./run3 --ui dashboard ...
 
 Run the same benchmark 5 times:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -94,7 +93,6 @@ aiperf profile \
 
 Use 99% confidence intervals instead of the default 95%:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -111,7 +109,6 @@ aiperf profile \
 
 Add a 10-second cooldown between runs to reduce correlation:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \

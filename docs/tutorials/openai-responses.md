@@ -147,7 +147,6 @@ This generates a synthetic system prompt of approximately 50 tokens and places i
 
 Profile vision-capable models with synthetic images:
 
-<!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -170,7 +169,6 @@ Image inputs are formatted as `{"type": "input_image", "image_url": "<url>"}` in
 
 Profile audio-capable models with the Responses API:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2.5-Omni-3B \
@@ -194,7 +192,6 @@ See the [Audio](audio.md) tutorial for details on audio input configuration and 
 
 Run without streaming to get full responses:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
