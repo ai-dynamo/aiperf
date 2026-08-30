@@ -331,6 +331,11 @@ class TestProcessResultsCancelled:
         result = await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=True)
 
         assert result.results.was_cancelled is True
+        assert result.results.is_complete is False
+        assert (
+            result.results.incomplete_reason
+            == "Run cancelled before all records were processed."
+        )
 
     @pytest.mark.asyncio
     async def test_cancelled_false_propagated_to_profile_results(self) -> None:
