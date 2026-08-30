@@ -463,7 +463,13 @@ helm install aiperf-test deploy/helm/aiperf-operator \
 
 The global operator stops reconciling `aiperf-test` as soon as the claim lands,
 and resumes when the claim lapses. `aiperf kube list` shows the holder in its
-`OWNER` column; `-` means the global operator owns that namespace.
+`OWNER` column; `-` means the global operator owns that namespace, and `?`
+means the claim could not be read (usually missing RBAC on `leases`).
+
+The global operator caches namespace ownership and refreshes it every
+`AIPERF_OPERATOR_CLAIM_LEASE_SECONDS / 3` seconds (~100 s by default). During
+that window after a scoped operator starts, the global operator may briefly act
+on events in a newly-claimed namespace before its cache updates.
 
 Two scoped operators cannot claim the same namespace: the second one fails at
 startup naming the current holder, rather than silently double-reconciling.
@@ -472,7 +478,15 @@ The claim's duration (`AIPERF_OPERATOR_CLAIM_LEASE_SECONDS`, default 300s) is
 deliberately long, so a crash-looping operator keeps its namespaces across
 restarts. Uninstalling a scoped operator lets its claims expire and the
 namespaces fall back to the global operator; nothing needs to be deleted by
-hand.
+hand for ownership to transfer.
+
+The `aiperf-operator` Lease object itself does survive the uninstall in each
+watched namespace. It is expired, has no effect on ownership, and is only
+visible in `kubectl get leases`. Remove it manually if you want it gone:
+
+```bash
+kubectl delete lease aiperf-operator -n <namespace>
+```
 
 ### Namespace Isolation
 
