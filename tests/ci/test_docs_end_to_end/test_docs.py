@@ -1,7 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Parametrized docs E2E test — one test node per aiperf tutorial command."""
-
 from __future__ import annotations
 
 import pytest

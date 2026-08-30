@@ -317,8 +317,16 @@ def run_health_check(server: Server, config: E2ETestConfig) -> None:
         bufsize=1,
         universal_newlines=True,
     )
-    _drain_output(health_process, timeout=HEALTH_CHECK_TIMEOUT, prefix="HEALTH")
-    health_process.wait(timeout=HEALTH_CHECK_TIMEOUT)
+    _, timed_out = _drain_output(
+        health_process, timeout=HEALTH_CHECK_TIMEOUT, prefix="HEALTH"
+    )
+    if timed_out:
+        health_process.kill()
+        health_process.wait(timeout=10)
+        raise RuntimeError(
+            f"Health check for server {server.name} exceeded {HEALTH_CHECK_TIMEOUT}s"
+        )
+    health_process.wait(timeout=10)
     if health_process.returncode != 0:
         logger.error(f"Health check failed for server: {server.name}")
         raise RuntimeError(f"Health check failed for server: {server.name}")
@@ -396,15 +404,24 @@ def teardown_server(
     """Stop server containers started by this session and prune stopped ones."""
     if config.skip_server_setup:
         return
+    filter_flag = f"--filter label={_SESSION_LABEL}"
     if aiperf_container_id:
-        stop_cmd = (
-            f"docker ps -q --filter label={_SESSION_LABEL} "
-            f"| grep -v '^{aiperf_container_id}' "
-            f"| xargs -r docker stop 2>/dev/null || true"
+        inspect = subprocess.run(
+            ["docker", "inspect", "--format={{.Id}}", aiperf_container_id],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
-        subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=30)
+        helper_id = inspect.stdout.strip()[:12] if inspect.returncode == 0 else ""
+        exclude = f"| grep -v '^{helper_id}' " if helper_id else ""
+        stop_cmd = f"docker ps -q {filter_flag} {exclude}| xargs -r docker stop 2>/dev/null || true"
+    else:
+        stop_cmd = (
+            f"docker ps -q {filter_flag} | xargs -r docker stop 2>/dev/null || true"
+        )
+    subprocess.run(stop_cmd, shell=True, capture_output=True, timeout=30)
     subprocess.run(
-        f"docker container prune -f --filter label={_SESSION_LABEL}",
+        f"docker container prune -f {filter_flag}",
         shell=True,
         capture_output=True,
         timeout=10,
