@@ -497,7 +497,6 @@ AMD signals are emitted under their own vendor-namespaced field names (not alias
 
 For distributed setups with multiple nodes, you can collect GPU telemetry from all nodes simultaneously:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Example: Collecting telemetry from 3 nodes in a distributed setup
 # Note: The default endpoints http://localhost:9400/metrics and http://localhost:9401/metrics

@@ -108,7 +108,7 @@ Run vLLM with the `--runner` pooling flag to enable reranking behavior:
 <!-- setup-cohere-rerank-endpoint-server -->
 ```bash
 docker run --gpus all -p 8080:8000 \
-  -e HF_TOKEN=<HF_TOKEN> \
+  -e HF_TOKEN \
   vllm/vllm-openai:latest \
   --model BAAI/bge-reranker-v2-m3 \
   --runner pooling

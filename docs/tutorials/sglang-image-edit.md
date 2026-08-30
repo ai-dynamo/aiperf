@@ -73,7 +73,6 @@ Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
 ### Image Edit Using Synthetic Reference Images
 The simplest path: AIPerf generates a synthetic reference image for every request and pairs it with a synthetic prompt. The mock image bytes are uploaded as the multipart `image` field — the server processes the request end-to-end just like a real one.
 
-<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.2-klein-4B \
