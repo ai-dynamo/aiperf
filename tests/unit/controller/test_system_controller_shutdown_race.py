@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression coverage for result-barrier readiness during startup."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -72,3 +73,29 @@ class TestVacuousResultBarrier:
 
         await controller._check_and_trigger_shutdown()
         controller.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_result_domain_waits_start_concurrently() -> None:
+    """Each result wait needs its peer to start before it can finish."""
+    controller = _controller(SystemState.PROCESSING)
+    controller._result_join_coordinator.register("accuracy", "records_manager")
+    controller._result_join_coordinator.register("server_metrics", "metrics_manager")
+    accuracy_started = asyncio.Event()
+    metrics_started = asyncio.Event()
+
+    async def wait_for_accuracy() -> None:
+        accuracy_started.set()
+        await metrics_started.wait()
+
+    async def wait_for_metrics() -> None:
+        metrics_started.set()
+        await accuracy_started.wait()
+
+    controller._await_accuracy_results_for_cancel = wait_for_accuracy
+    controller._await_server_metrics_results_for_cancel = wait_for_metrics
+    controller._await_cancel_result_domains = (
+        SystemController._await_cancel_result_domains.__get__(controller)
+    )
+
+    await asyncio.wait_for(controller._await_cancel_result_domains(True), timeout=0.1)
