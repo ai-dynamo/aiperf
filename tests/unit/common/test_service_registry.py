@@ -137,9 +137,16 @@ def test_register_is_idempotent_and_updates_last_seen(
 ) -> None:
     registry.expect_services({ServiceType.WORKER: 1})
     _register(registry, "worker-0", seen_ns=1)
-    _register(registry, "worker-0", seen_ns=99)
+    _register(
+        registry,
+        "worker-0",
+        seen_ns=99,
+        state=LifecycleState.STOPPING,
+    )
     assert registry.is_registered("worker-0")
-    assert registry.get_service("worker-0").last_seen_ns == 99
+    info = registry.get_service("worker-0")
+    assert info.last_seen_ns == 99
+    assert info.state == LifecycleState.STOPPING
 
 
 def test_update_service_ignores_unknown_and_stale_updates(

@@ -124,7 +124,7 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         info = self.services.get(service_id)
         if info:
             if info.registration_status == ServiceRegistrationStatus.REGISTERED:
-                if info.last_seen_ns is None or first_seen_ns > info.last_seen_ns:
+                if info.last_seen_ns is None or first_seen_ns >= info.last_seen_ns:
                     info.last_seen_ns = first_seen_ns
                     info.state = state
                 if pod_name is not None:
