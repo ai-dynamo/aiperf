@@ -405,18 +405,19 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             *(finalize() for _child, finalize in children), return_exceptions=True
         )
         failures: list[Exception] = []
+        cancellation: asyncio.CancelledError | None = None
         for (child, _finalize), result in zip(children, results, strict=True):
             if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, Exception):
+                cancellation = result
+            elif isinstance(result, Exception):
                 failures.append(
                     RuntimeError(f"Failed to finalize child {child}: {result!r}")
                 )
-        if not failures:
-            return
-        if not self._is_group_managed_mode():
-            for failure in failures:
-                self.error(str(failure))
+        for failure in failures:
+            self.error(str(failure))
+        if cancellation is not None:
+            raise cancellation
+        if not failures or not self._is_group_managed_mode():
             return
         raise ExceptionGroup(
             f"Failed to finalize {len(failures)} record artifact writer(s)",

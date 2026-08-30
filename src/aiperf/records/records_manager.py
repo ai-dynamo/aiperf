@@ -2405,6 +2405,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Set by the stall watchdog when it forced finalization on a run that
         # never received all of its records.
         incomplete_reason = self._incomplete_reason
+        if cancelled and incomplete_reason is None:
+            incomplete_reason = "Run cancelled before all records were processed."
 
         result = ProcessRecordsResult(
             results=ProfileResults(
