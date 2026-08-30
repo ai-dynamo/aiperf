@@ -549,7 +549,7 @@ Network latency calibration configuration. Controls the TCP-handshake RTT probes
 
 ## OPERATOR
 
-Kubernetes operator identity and namespace-ownership configuration. Read by the kopf operator process and by ``aiperf kube`` when it reports which operator owns a namespace.
+Kubernetes operator identity and namespace-ownership configuration. Read by the kopf operator process and by ``aiperf kube`` when it reports which operator owns a namespace. The ``AIPERF_OPERATOR_`` prefix is shared with ``aiperf.operator.environment.OperatorEnvironment``, which holds the settings only the operator process reads. A new ``AIPERF_OPERATOR_*`` variable belongs here only if non-operator code (the CLI, a benchmark pod) also reads it; check both files before adding one, so the two do not collide on a name.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|

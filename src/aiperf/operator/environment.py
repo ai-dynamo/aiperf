@@ -13,6 +13,12 @@ Examples:
 See also: ``aiperf.kubernetes.environment.K8sEnvironment`` (cluster defaults
 baked into pod manifests) and ``aiperf.common.environment.Environment``
 (shared AIPerf runtime).
+
+The ``AIPERF_OPERATOR_`` prefix is shared with ``_OperatorSettings`` in
+``aiperf.common.environment``, which holds the ``AIPERF_OPERATOR_*`` settings
+the CLI reads too (operator identity and namespace-claim lease). Check both
+files before adding a new ``AIPERF_OPERATOR_*`` variable, so the two do not
+collide on a name.
 """
 
 from pathlib import Path

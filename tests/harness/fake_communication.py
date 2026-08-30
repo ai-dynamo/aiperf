@@ -213,6 +213,10 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
                     # controller and aborts _broadcast_control_command before
                     # it can deliver SHUTDOWN to remaining services, leaving
                     # stopped_event unset and hanging the test.
+                    # Note: this suppress is broader than the one raise it
+                    # targets -- it also swallows a genuine cancellation of the
+                    # router task (test teardown, timeout). Acceptable in a
+                    # test harness.
                     with contextlib.suppress(asyncio.CancelledError):
                         await dealer_client.handler(message)
                 else:
