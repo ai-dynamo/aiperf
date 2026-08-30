@@ -25,7 +25,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from kubernetes_asyncio.client import (
@@ -38,16 +38,14 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.environment import Environment
 from aiperf.kubernetes.client import k8s_client
+from aiperf.kubernetes.constants import LEASE_NAME
+from aiperf.kubernetes.lease import lease_holder_if_live
 
 __all__ = [
-    "LEASE_NAME",
     "NamespaceClaim",
     "NamespaceClaimConflict",
-    "lease_holder_if_live",
     "watched_namespaces_from_argv",
 ]
-
-LEASE_NAME = "aiperf-operator"
 
 logger = logging.getLogger(__name__)
 
@@ -65,25 +63,6 @@ class NamespaceClaimConflict(RuntimeError):
         )
         self.namespace = namespace
         self.holder = holder
-
-
-def lease_holder_if_live(lease: V1Lease, *, default_duration: int) -> str | None:
-    """Return the lease's holder identity, or ``None`` if it has expired.
-
-    A lease is expired when ``renewTime + leaseDurationSeconds`` is in the past.
-    A lease with no renew/acquire timestamp is treated as live: an unreadable
-    timestamp must not let a second operator steal a namespace.
-    """
-    spec: V1LeaseSpec | None = lease.spec
-    if spec is None or not spec.holder_identity:
-        return None
-    stamp = spec.renew_time or spec.acquire_time
-    if stamp is None:
-        return spec.holder_identity
-    duration = spec.lease_duration_seconds or default_duration
-    if stamp + timedelta(seconds=duration) < datetime.now(UTC):
-        return None
-    return spec.holder_identity
 
 
 def watched_namespaces_from_argv(argv: Sequence[str]) -> list[str]:

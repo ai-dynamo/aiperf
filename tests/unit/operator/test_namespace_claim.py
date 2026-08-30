@@ -13,8 +13,8 @@ import pytest
 from kubernetes_asyncio.client import V1Lease, V1LeaseSpec, V1ObjectMeta
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.kubernetes.constants import LEASE_NAME
 from aiperf.operator.namespace_claim import (
-    LEASE_NAME,
     NamespaceClaim,
     NamespaceClaimConflict,
     watched_namespaces_from_argv,

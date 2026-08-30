@@ -171,34 +171,45 @@ async def _run_list_loop(
             return
 
 
-async def _namespace_owners(
-    api: object, jobs: list[AIPerfJobInfo]
-) -> dict[str, str | None]:
-    """Map each job namespace to the scoped operator holding its claim.
+async def _namespace_owners(api: object, jobs: list[AIPerfJobInfo]) -> dict[str, str]:
+    """Map each job namespace to the OWNER cell describing who reconciles it.
 
-    ``None`` means no live claim, i.e. the cluster-wide operator reconciles
-    that namespace. Failures are reported as ``None`` rather than raising: the
-    OWNER column is informational and must never keep `aiperf kube list` from
-    printing the jobs.
+    ``"-"`` means no live claim, i.e. the cluster-wide operator reconciles that
+    namespace. ``"?"`` means the claim could not be read at all (typically no
+    RBAC on ``leases``) and is deliberately distinct from ``"-"``: "nobody
+    claimed this" and "we are not allowed to look" are different facts.
+
+    One cluster-wide list serves every namespace, so ``--watch`` costs a single
+    API call per refresh rather than one per namespace.
     """
-    from kubernetes_asyncio.client import CoordinationV1Api
+    from kubernetes_asyncio.client import CoordinationV1Api, V1ObjectMeta
 
     from aiperf.common.environment import Environment
-    from aiperf.operator.namespace_claim import LEASE_NAME, lease_holder_if_live
+    from aiperf.kubernetes.constants import LEASE_NAME
+    from aiperf.kubernetes.lease import lease_holder_if_live
+
+    namespaces = {job.namespace for job in jobs if job.namespace}
+    if not namespaces:
+        return {}
 
     coord_api = CoordinationV1Api(api)
-    owners: dict[str, str | None] = {}
-    for namespace in sorted({job.namespace for job in jobs if job.namespace}):
-        try:
-            lease = await coord_api.read_namespaced_lease(
-                name=LEASE_NAME, namespace=namespace
-            )
-        except Exception:
-            owners[namespace] = None
+    try:
+        listing = await coord_api.list_lease_for_all_namespaces(
+            field_selector=f"metadata.name={LEASE_NAME}"
+        )
+    except Exception:
+        return dict.fromkeys(namespaces, "?")
+
+    owners: dict[str, str] = dict.fromkeys(namespaces, "-")
+    for lease in listing.items or []:
+        namespace = (lease.metadata or V1ObjectMeta()).namespace
+        if namespace not in owners:
             continue
-        owners[namespace] = lease_holder_if_live(
+        holder = lease_holder_if_live(
             lease, default_duration=Environment.OPERATOR.CLAIM_LEASE_SECONDS
         )
+        if holder:
+            owners[namespace] = holder
     return owners
 
 

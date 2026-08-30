@@ -178,6 +178,12 @@ DEFAULT_OPERATOR_NAMESPACE = "aiperf-system"
 OPERATOR_POD_LABEL_SELECTOR = "app.kubernetes.io/name=aiperf-operator"
 """Label selector identifying an aiperf-operator controller pod."""
 
+LEASE_NAME = "aiperf-operator"
+"""Name of the ``coordination.k8s.io/v1`` Lease a scoped operator writes into
+every namespace it claims. Shared vocabulary between the operator (which
+writes and renews it) and ``aiperf kube list`` (which reads it to fill the
+OWNER column), hence its home in this dependency-free module."""
+
 # JobSet CRD install command surfaced by preflight when the CRD is missing.
 # Uses GitHub's `releases/latest/download/` redirect rather than a pinned tag,
 # matching docs/kubernetes/getting-started.md. Full install instructions live
