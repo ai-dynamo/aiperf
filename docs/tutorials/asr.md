@@ -54,7 +54,6 @@ curl -s localhost:8000/v1/chat/completions \
 
 LibriSpeech is the standard read-speech benchmark and requires no authentication:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -65,7 +64,6 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 **Sample Output:**
 
@@ -114,7 +112,6 @@ aiperf profile \
 
 VoxPopuli contains European Parliament recordings and requires no authentication:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -125,7 +122,6 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 ---
 
@@ -133,7 +129,6 @@ aiperf profile \
 
 AMI contains meeting recordings with individual headset microphone audio and requires no authentication:
 
-<!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-Audio-7B-Instruct \
@@ -144,7 +139,6 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
-<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 ---
 

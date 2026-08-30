@@ -81,7 +81,7 @@ Run the same benchmark 5 times:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
-  --model llama-3-8b \
+  --model Qwen/Qwen3-0.6B \
   --endpoint-type chat \
   --url http://localhost:8000 \
   --num-profile-runs 5 \
@@ -97,7 +97,7 @@ Use 99% confidence intervals instead of the default 95%:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
-  --model llama-3-8b \
+  --model Qwen/Qwen3-0.6B \
   --endpoint-type chat \
   --url http://localhost:8000 \
   --num-profile-runs 5 \
@@ -114,7 +114,7 @@ Add a 10-second cooldown between runs to reduce correlation:
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
-  --model llama-3-8b \
+  --model Qwen/Qwen3-0.6B \
   --endpoint-type chat \
   --url http://localhost:8000 \
   --num-profile-runs 5 \
@@ -130,7 +130,7 @@ When `--num-profile-runs > 1`, AIPerf creates a hierarchical output structure wi
 
 ```
 artifacts/
-  llama-3-8b-openai-chat-concurrency10/
+  Qwen_Qwen3-0.6B-openai-chat-concurrency10/
     profile_runs/
       run_0001/
         profile_export_aiperf.json
@@ -171,7 +171,7 @@ directory uses `concurrency10`. Sweep + INDEPENDENT multi-run uses
 ### Auto-Generated Directory Name
 
 The directory name is automatically generated based on your benchmark configuration:
-- **Model name**: e.g., `llama-3-8b` (from `--model`)
+- **Model name**: e.g., `Qwen/Qwen3-0.6B` (from `--model`)
 - **Service kind and endpoint type**: e.g., `openai-chat` (from `--endpoint-type`)
 - **Stimulus**: e.g., `concurrency10` (from `--concurrency`) or `request_rate100` (from `--request-rate`)
 
@@ -776,7 +776,7 @@ This complements the standard confidence aggregation — confidence aggregation 
 
 ```
 artifacts/
-  llama-3-8b-openai-chat-concurrency10/
+  Qwen_Qwen3-0.6B-openai-chat-concurrency10/
     profile_runs/
       run_0001/
         profile_export_aiperf.json
