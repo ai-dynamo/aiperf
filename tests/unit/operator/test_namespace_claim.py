@@ -369,6 +369,29 @@ async def test_renew_releases_a_namespace_taken_over_by_another_operator() -> No
     assert api.leases["aiperf-test"].spec.holder_identity == "rival-op"
 
 
+@pytest.mark.asyncio
+async def test_renew_reacquires_a_namespace_whose_rival_lease_expired() -> None:
+    """An expired rival lease means the namespace is unowned, not lost.
+
+    Dropping it here would be a one-way ratchet: the operator would never
+    reconcile that namespace again even though nobody holds it.
+    """
+    api = FakeCoordinationApi()
+    claim = claim_for(api, "test-op")
+    await claim.acquire("aiperf-test")
+    api.leases["aiperf-test"] = make_lease(
+        "aiperf-test", "rival-op", age_seconds=1000, duration_seconds=300
+    )
+
+    await claim.renew()
+
+    assert api.patches == []
+    assert api.replaces == ["aiperf-test"]
+    assert api.leases["aiperf-test"].spec.holder_identity == "test-op"
+    assert "aiperf-test" in claim._claimed
+    assert claim.owns("aiperf-test") is True
+
+
 def test_watched_namespaces_from_argv_parses_kopf_flags() -> None:
     argv = [
         "kopf",

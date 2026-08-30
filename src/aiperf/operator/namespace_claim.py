@@ -217,14 +217,17 @@ class NamespaceClaim:
 
         A renewal that lapsed for longer than the lease duration lets a rival
         operator legitimately take over, so each renewal first re-reads the
-        Lease. A namespace now held by someone else is dropped rather than
-        stolen back: an unconditional patch would silently double-reconcile it.
+        Lease. A namespace now held by someone else *and still live* is dropped
+        rather than stolen back: an unconditional patch would silently
+        double-reconcile it. A rival whose own lease has since expired is a
+        different story -- the namespace is unowned again, so re-acquire it
+        instead of abandoning it forever.
         """
         if self.is_global:
             await self.refresh_all()
             return
 
-        missing: list[str] = []
+        reacquire: list[str] = []
         async with self._api_factory() as api:
             for namespace in sorted(self._claimed):
                 try:
@@ -233,7 +236,7 @@ class NamespaceClaim:
                     )
                 except ApiException as exc:
                     if exc.status == 404:
-                        missing.append(namespace)
+                        reacquire.append(namespace)
                     else:
                         logger.warning(
                             "Failed to read namespace claim on %s: %s", namespace, exc
@@ -242,14 +245,26 @@ class NamespaceClaim:
 
                 current_holder = (current.spec or V1LeaseSpec()).holder_identity
                 if current_holder and current_holder != self.identity:
+                    live_holder = lease_holder_if_live(
+                        current, default_duration=self.lease_seconds
+                    )
+                    if live_holder is None:
+                        logger.warning(
+                            "Namespace claim on %s was taken over by operator %r "
+                            "whose own lease has since expired; re-acquiring it",
+                            namespace,
+                            current_holder,
+                        )
+                        reacquire.append(namespace)
+                        continue
                     logger.warning(
                         "Namespace claim on %s was taken over by operator %r "
                         "while this operator's renewal lapsed; releasing it",
                         namespace,
-                        current_holder,
+                        live_holder,
                     )
                     self._claimed.discard(namespace)
-                    self._record(namespace, current_holder)
+                    self._record(namespace, live_holder)
                     continue
 
                 try:
@@ -266,12 +281,12 @@ class NamespaceClaim:
                     )
                 except ApiException as exc:
                     if exc.status == 404:
-                        missing.append(namespace)
+                        reacquire.append(namespace)
                     else:
                         logger.warning(
                             "Failed to renew namespace claim on %s: %s", namespace, exc
                         )
-        for namespace in missing:
+        for namespace in reacquire:
             with contextlib.suppress(NamespaceClaimConflict, ApiException):
                 await self.acquire(namespace)
 
