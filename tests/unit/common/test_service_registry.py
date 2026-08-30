@@ -27,6 +27,7 @@ def _register(
     service_id: str,
     seen_ns: int = 1,
     service_type: ServiceType = ServiceType.WORKER,
+    state: LifecycleState = LifecycleState.RUNNING,
     **kwargs,
 ) -> None:
     """Register a service with the required keyword-only arguments."""
@@ -34,7 +35,7 @@ def _register(
         service_id=service_id,
         service_type=service_type,
         first_seen_ns=seen_ns,
-        state=LifecycleState.RUNNING,
+        state=state,
         **kwargs,
     )
 
@@ -137,6 +138,7 @@ def test_register_is_idempotent_and_updates_last_seen(
 ) -> None:
     registry.expect_services({ServiceType.WORKER: 1})
     _register(registry, "worker-0", seen_ns=1)
+    _register(registry, "worker-0", seen_ns=99)
     _register(
         registry,
         "worker-0",
