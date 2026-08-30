@@ -91,3 +91,18 @@ async def test_finalize_local_artifacts_cancellation_always_propagates(
 
     with pytest.raises(asyncio.CancelledError):
         await RecordProcessor._finalize_local_artifacts(processor)
+
+
+@pytest.mark.asyncio
+async def test_finalize_local_artifacts_logs_failures_before_reraising_cancellation() -> (
+    None
+):
+    """Cancellation does not hide a sibling artifact-finalization failure."""
+    cancelled = _child("raw_record_writer", asyncio.CancelledError())
+    failed = _child("accuracy_writer", RuntimeError("disk full"))
+    processor = _make_processor(children=[cancelled, failed])
+
+    with pytest.raises(asyncio.CancelledError):
+        await RecordProcessor._finalize_local_artifacts(processor)
+
+    assert any("disk full" in str(call) for call in processor.error.call_args_list)
