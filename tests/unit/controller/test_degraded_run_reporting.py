@@ -514,3 +514,25 @@ class TestEvictedProducersReachTheOutcome:
             system_controller.service_manager.service_map[ServiceType.RECORD_PROCESSOR]
             == []
         )
+
+    @pytest.mark.asyncio
+    async def test_optional_reaped_service_is_dropped_from_command_target_maps(
+        self, system_controller: SystemController
+    ) -> None:
+        """Optional services must not remain as dead finalization targets."""
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+        optional_service_type = MagicMock()
+        info = MagicMock(
+            service_id="optional_collector_0",
+            service_type=optional_service_type,
+            first_seen_ns=100,
+        )
+        system_controller.service_manager.service_id_map = {info.service_id: info}
+        system_controller.service_manager.service_map = {optional_service_type: [info]}
+
+        await system_controller._on_service_reaped(
+            info.service_id, "missed heartbeats", 100
+        )
+
+        assert info.service_id not in system_controller.service_manager.service_id_map
+        assert system_controller.service_manager.service_map[optional_service_type] == []
