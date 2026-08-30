@@ -36,7 +36,6 @@ from aiperf.kubernetes.client import (
     cluster_version,
     controller_selector,
     delete_jobset,
-    delete_namespace,
     find_aiperf_job,
     find_controller_pod,
     find_jobset,
@@ -1072,55 +1071,6 @@ class TestDeleteJobset:
             pytest.raises(ApiException),
         ):
             await delete_jobset(api, "my-js", "default")
-
-
-# ============================================================
-# delete_namespace
-# ============================================================
-
-
-class TestDeleteNamespace:
-    """Verify namespace deletion tolerance."""
-
-    @pytest.mark.asyncio
-    async def test_success(self) -> None:
-        api = MagicMock()
-        mock_core = MagicMock()
-        mock_core.delete_namespace = AsyncMock(return_value={})
-        with patch(
-            "aiperf.kubernetes.client.client.CoreV1Api",
-            return_value=mock_core,
-        ):
-            await delete_namespace(api, "ns")
-        mock_core.delete_namespace.assert_awaited_once_with(name="ns")
-
-    @pytest.mark.asyncio
-    async def test_tolerates_404(self) -> None:
-        api = MagicMock()
-        mock_core = MagicMock()
-        mock_core.delete_namespace = AsyncMock(side_effect=_api_exception(404))
-        with patch(
-            "aiperf.kubernetes.client.client.CoreV1Api",
-            return_value=mock_core,
-        ):
-            # Should not raise
-            await delete_namespace(api, "ns")
-
-    @pytest.mark.asyncio
-    async def test_logs_warning_on_other_errors(self) -> None:
-        api = MagicMock()
-        mock_core = MagicMock()
-        mock_core.delete_namespace = AsyncMock(side_effect=_api_exception(500))
-        with (
-            patch(
-                "aiperf.kubernetes.client.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            pytest.raises(ApiException) as exc_info,
-        ):
-            # Re-raises non-404 ApiExceptions (after logging) so callers can react.
-            await delete_namespace(api, "ns")
-        assert exc_info.value.status == 500
 
 
 # ============================================================

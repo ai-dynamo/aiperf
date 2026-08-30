@@ -41,9 +41,7 @@ async def _apply_manifest(
 
     from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 
-    if kind == "Namespace":
-        await core.create_namespace(body=manifest)
-    elif kind == "ConfigMap":
+    if kind == "ConfigMap":
         await core.create_namespaced_config_map(namespace=manifest_ns, body=manifest)
     elif kind == "Role":
         await rbac.create_namespaced_role(namespace=manifest_ns, body=manifest)

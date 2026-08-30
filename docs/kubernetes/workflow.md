@@ -343,13 +343,8 @@ when stdin is not a terminal, so a CI job cannot delete by accident -- pass
 `--force` when you mean it. Results already harvested onto the operator's PVC
 survive all three commands.
 
-`delete --delete-namespace` additionally requires the namespace name to be
-`aiperf-<job_id>` and the live Namespace to carry AIPerf's canonical
-`aiperf.nvidia.com/auto-generated: "true"` label plus a matching
-`aiperf.nvidia.com/job-id: <job_id>` ownership label. Shared and older
-namespaces without provable job ownership are left in place. The delete uses
-the UID and resource version read with those labels, so a removed, recreated,
-or modified namespace is also left in place.
+Neither command touches the namespace itself. AIPerf never creates one, so
+removing it is your call: `kubectl delete namespace <ns>`.
 
 ## Stage 6: `results` — pull the artifacts
 

@@ -1016,7 +1016,6 @@ class TestApplyManifest:
     @pytest.mark.parametrize(
         "kind, expected_call",
         [
-            param("Namespace", "create_namespace", id="namespace"),
             param("ConfigMap", "create_configmap", id="configmap"),
             param("Role", "create_role", id="role"),
             param("RoleBinding", "create_rolebinding", id="rolebinding"),

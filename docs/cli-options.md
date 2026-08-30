@@ -5218,10 +5218,6 @@ The AIPerf job ID or AIPerfSweep name to delete (default: last deployed job).
 
 Skip the confirmation prompt.
 
-#### `--delete-namespace`, `--no-delete-namespace`
-
-Also delete the namespace, but only when AIPerf generated it (aiperf-&lt;job_id>).
-
 #### `--kind` `<str>`
 
 Target kind when an AIPerfJob and AIPerfSweep share a name.

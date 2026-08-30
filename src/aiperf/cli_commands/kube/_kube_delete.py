@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
 from aiperf.kubernetes.cr_refs import (
@@ -22,12 +21,9 @@ __all__ = [
     "AIPERF_PLURALS",
     "AmbiguousAIPerfTargetError",
     "CliWorkloadKind",
-    "NamespaceDeleteIdentity",
     "confirm_action",
     "delete_aiperf_cr",
-    "delete_namespace_if_unchanged",
     "find_aiperf_cr",
-    "find_deletable_namespace",
     "kind_for_plural",
     "list_aiperf_crs",
     "workload_kind_from_cli",
@@ -52,17 +48,6 @@ class AmbiguousAIPerfTargetError(ValueError):
     """Raised when both workload kinds use the requested name."""
 
 
-@dataclass(frozen=True, slots=True)
-class NamespaceDeleteIdentity:
-    """Kubernetes identity captured with an owned namespace marker."""
-
-    uid: str
-    """Namespace UID observed during the ownership check."""
-
-    resource_version: str
-    """Namespace resource version observed with the ownership marker."""
-
-
 def workload_kind_from_cli(kind: CliWorkloadKind | None) -> AIPerfWorkloadKind | None:
     """Map a short CLI kind to the canonical Kubernetes resource kind."""
     if kind == "job":
@@ -75,95 +60,6 @@ def workload_kind_from_cli(kind: CliWorkloadKind | None) -> AIPerfWorkloadKind |
 def kind_for_plural(plural: str) -> AIPerfWorkloadKind:
     """Return the canonical resource kind for an AIPerf plural."""
     return _PLURAL_TO_KIND[plural]
-
-
-async def find_deletable_namespace(
-    core: Any,
-    *,
-    namespace: str,
-    job_id: str,
-) -> NamespaceDeleteIdentity | None:
-    """Return the stable identity of a CLI-owned, job-specific namespace."""
-    from kubernetes_asyncio.client.exceptions import ApiException
-
-    from aiperf.kubernetes import console as kube_console
-    from aiperf.kubernetes.constants import AIPerfLabels
-
-    if namespace != f"aiperf-{job_id}":
-        kube_console.print_info(
-            f"Namespace {namespace} was not generated for this benchmark; "
-            "leaving it in place."
-        )
-        return None
-
-    try:
-        namespace_obj = await core.read_namespace(name=namespace)
-    except ApiException as error:
-        if error.status == 404:
-            kube_console.print_info(f"Namespace {namespace} already gone")
-        else:
-            kube_console.print_warning(
-                f"Could not verify ownership of namespace {namespace}: "
-                f"{error.reason}; leaving it in place."
-            )
-        return None
-
-    metadata = namespace_obj.metadata
-    labels = metadata.labels or {}
-    if labels.get(AIPerfLabels.AUTO_GENERATED) != "true":
-        kube_console.print_info(
-            f"Namespace {namespace} does not carry AIPerf's auto-generated marker; "
-            "leaving it in place."
-        )
-        return None
-    if labels.get(AIPerfLabels.JOB_ID) != job_id:
-        kube_console.print_info(
-            f"Namespace {namespace} is not owned by benchmark {job_id}; "
-            "leaving it in place."
-        )
-        return None
-    if not metadata.uid or not metadata.resource_version:
-        kube_console.print_warning(
-            f"Namespace {namespace} has no stable Kubernetes identity; "
-            "leaving it in place."
-        )
-        return None
-    return NamespaceDeleteIdentity(
-        uid=metadata.uid,
-        resource_version=metadata.resource_version,
-    )
-
-
-async def delete_namespace_if_unchanged(
-    core: Any,
-    *,
-    namespace: str,
-    identity: NamespaceDeleteIdentity,
-) -> None:
-    """Delete an owned namespace only while its checked identity is unchanged."""
-    from kubernetes_asyncio import client as k8s_client_mod
-    from kubernetes_asyncio.client.exceptions import ApiException
-
-    from aiperf.kubernetes import console as kube_console
-
-    try:
-        await core.delete_namespace(
-            name=namespace,
-            body=k8s_client_mod.V1DeleteOptions(
-                preconditions=k8s_client_mod.V1Preconditions(
-                    uid=identity.uid,
-                    resource_version=identity.resource_version,
-                )
-            ),
-        )
-        kube_console.print_success(f"Deleted namespace {namespace}")
-    except ApiException as error:
-        if error.status == 404:
-            kube_console.print_info(f"Namespace {namespace} already gone")
-        else:
-            kube_console.print_warning(
-                f"Could not delete namespace {namespace}: {error.reason}"
-            )
 
 
 async def delete_aiperf_cr(

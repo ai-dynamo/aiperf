@@ -12,7 +12,7 @@ preserves the single import surface:
 
 - selectors (``job_selector``, ``controller_selector``) — :mod:`client_selectors`
 - AIPerfJob CR helpers — :mod:`client_jobs`
-- JobSet helpers (and ``delete_namespace``) — :mod:`client_jobsets`
+- JobSet helpers — :mod:`client_jobsets`
 - pod helpers and ``cluster_version`` — :mod:`client_pods`
 """
 
@@ -38,7 +38,6 @@ from aiperf.kubernetes.client_jobs import (
 )
 from aiperf.kubernetes.client_jobsets import (
     delete_jobset,
-    delete_namespace,
     find_jobset,
     list_jobsets,
 )
@@ -74,7 +73,6 @@ __all__ = [
     "cluster_version",
     "controller_selector",
     "delete_jobset",
-    "delete_namespace",
     "find_aiperf_job",
     "find_aiperf_sweep",
     "find_aiperfsweep",

@@ -9,7 +9,6 @@ Focuses on gaps left by test_client.py:
 - find_jobset 404 suppressed on both passes, non-404 re-raised on each
 - find_jobset field-selector string on the name-fallback pass
 - delete_jobset swallow-and-warn path for non-404/409 aux failures
-- delete_namespace non-404 re-raises after logging
 - _list_jobsets_raw None items path
 """
 
@@ -21,11 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
-from pytest import param
 
 from aiperf.kubernetes.client_jobsets import (
     delete_jobset,
-    delete_namespace,
     find_jobset,
     list_jobsets,
 )
@@ -293,32 +290,3 @@ class TestDeleteJobsetNonSuppressedAuxError:
         # Subsequent aux deletes still attempted despite the 500 above
         mock_rbac.delete_namespaced_role.assert_awaited_once()
         mock_rbac.delete_namespaced_role_binding.assert_awaited_once()
-
-
-class TestDeleteNamespaceNon404:
-    """Verify delete_namespace re-raises on non-404 errors so callers can react."""
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "status",
-        [
-            param(403, id="forbidden"),
-            param(409, id="conflict"),
-            param(500, id="server_error"),
-        ],
-    )  # fmt: skip
-    async def test_logs_warning_then_raises(self, status: int) -> None:
-        """delete_namespace logs then re-raises non-404 ApiExceptions."""
-        api = MagicMock(spec=ApiClient)
-        mock_core = MagicMock()
-        mock_core.delete_namespace = AsyncMock(side_effect=_api_exception(status))
-        with (
-            patch(
-                "aiperf.kubernetes.client_jobsets.client.CoreV1Api",
-                return_value=mock_core,
-            ),
-            pytest.raises(ApiException) as exc_info,
-        ):
-            await delete_namespace(api, "ns")
-        assert exc_info.value.status == status
-        mock_core.delete_namespace.assert_awaited_once_with(name="ns")

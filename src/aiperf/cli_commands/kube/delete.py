@@ -27,13 +27,6 @@ async def delete(
         bool,
         Parameter(name=["-f", "--force"], help="Skip the confirmation prompt."),
     ] = False,
-    delete_namespace: Annotated[
-        bool,
-        Parameter(
-            name="--delete-namespace",
-            help="Also delete the namespace, but only when AIPerf generated it (aiperf-<job_id>).",
-        ),
-    ] = False,
     kind: Annotated[
         Literal["job", "sweep"] | None,
         Parameter(
@@ -48,15 +41,14 @@ async def delete(
     ConfigMap carry ownerReferences back to it, so Kubernetes garbage-collects
     them; results already harvested onto the operator's PVC are untouched.
 
+    The namespace itself is never touched: AIPerf does not create it.
+
     Examples:
         # Delete the last deployed benchmark (asks first)
         aiperf kube delete
 
         # Delete a specific one without prompting
         aiperf kube delete abc123 --force
-
-        # Also remove the namespace AIPerf generated for it
-        aiperf kube delete abc123 --delete-namespace
     """
     from aiperf import cli_utils
 
@@ -69,9 +61,7 @@ async def delete(
             AmbiguousAIPerfTargetError,
             confirm_action,
             delete_aiperf_cr,
-            delete_namespace_if_unchanged,
             find_aiperf_cr,
-            find_deletable_namespace,
             kind_for_plural,
             workload_kind_from_cli,
         )
@@ -117,36 +107,17 @@ async def delete(
                 return
             plural, cr = found
             found_kind = kind_for_plural(plural)
-            core = k8s_client_mod.CoreV1Api(api)
-            namespace_identity = (
-                await find_deletable_namespace(
-                    core,
-                    namespace=namespace,
-                    job_id=job_id,
-                )
-                if delete_namespace
-                else None
-            )
 
             target = f"{found_kind} {job_id} in namespace {namespace}"
-            if namespace_identity is not None:
-                target += f" AND namespace {namespace}"
             if not force and not confirm_action(f"Delete {target}?"):
                 kube_console.print_info("Aborted.")
                 return
 
-            deleted = await delete_aiperf_cr(
+            await delete_aiperf_cr(
                 custom,
                 plural=plural,
                 namespace=namespace,
                 name=job_id,
                 kind=found_kind,
                 cr=cr,
-            )
-            if not deleted or namespace_identity is None:
-                return
-            await delete_namespace_if_unchanged(
-                core,
-                namespace=namespace,
-                identity=namespace_identity,
             )

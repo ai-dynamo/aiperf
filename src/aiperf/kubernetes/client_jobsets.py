@@ -11,7 +11,7 @@ from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client_selectors import job_selector
-from aiperf.kubernetes.console import print_info, print_success, print_warning
+from aiperf.kubernetes.console import print_success, print_warning
 from aiperf.kubernetes.constants import AIPerfLabels
 from aiperf.kubernetes.cr_refs import (
     JOBSET_GROUP,
@@ -220,22 +220,3 @@ async def delete_jobset(api: ApiClient, name: str, namespace: str) -> None:
                 # 404 already gone; 409 namespace terminating — both benign.
                 continue
             print_warning(f"Failed to delete {kind}/{resource_name}: {e}")
-
-
-async def delete_namespace(api: ApiClient, name: str) -> None:
-    """Delete a Kubernetes namespace.
-
-    Treats 404 as already-gone (logs and returns). Re-raises any other
-    :class:`ApiException` so callers can react -- previously this swallowed
-    every non-404 failure, hiding RBAC, conflict, and 5xx errors.
-    """
-    core = client.CoreV1Api(api)
-    try:
-        await core.delete_namespace(name=name)
-        print_success(f"Deleted Namespace/{name}")
-    except ApiException as e:
-        if e.status == 404:
-            print_info(f"Namespace {name} not found (may already be deleted)")
-            return
-        print_warning(f"Failed to delete namespace: {e}")
-        raise

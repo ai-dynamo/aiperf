@@ -341,7 +341,6 @@ results before cancelling.
 | Flag | Default | Semantic |
 |---|---|---|
 | `-f`, `--force` | false | Skip the confirmation prompt |
-| `--delete-namespace` | false | Also delete the namespace, only if AIPerf generated it as `aiperf-<job_id>` with matching auto-generated/job-id labels, UID and resourceVersion |
 | `--kind` | inferred | `job` or `sweep` when both share a name |
 
 Deletes the CR; JobSet, pods and ConfigMap follow via ownerReferences, and PVC
