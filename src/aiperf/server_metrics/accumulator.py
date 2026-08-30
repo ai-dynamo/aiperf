@@ -174,7 +174,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             self._last_warmup_record_ns = max(
                 self._last_warmup_record_ns or 0, record.timestamp_ns
             )
-        storage_record = record
+        storage_phase_index = record.phase_index
         if record.benchmark_phase is not None:
             phase_name = record.phase_name or str(record.benchmark_phase)
             sample_phase_index = self._resolve_sample_phase_index(
@@ -184,16 +184,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 record.phase_instance_id,
             )
             if record.phase_index is None:
-                # Storage keys samples by phase_index for filtering
-                # (get_phase_index_mask); give this instance's samples the
-                # synthesized index instead of the record's real (None)
-                # value so distinct synthesized-warmup instances don't
-                # collide in storage. Copy rather than mutate: `record` is
-                # shared with sibling processors (e.g. the JSONL writer) via
-                # the same fan-out call in manager.py.
-                storage_record = record.model_copy(
-                    update={"phase_index": sample_phase_index}
-                )
+                # Storage keys samples by phase index for filtering. Keep this
+                # internal index separate from the model's public phase-index
+                # contract because synthesized warmup instances use negatives.
+                storage_phase_index = sample_phase_index
             phase_key = (sample_phase_index, phase_name)
             capture = self._phase_captures.get(phase_key)
             if capture is None:
@@ -210,7 +204,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             else:
                 capture.start_ns = min(capture.start_ns, record.timestamp_ns)
                 capture.end_ns = max(capture.end_ns, record.timestamp_ns)
-        self._server_metrics_hierarchy.add_record(storage_record)
+        self._server_metrics_hierarchy.add_record(
+            record,
+            storage_phase_index=storage_phase_index,
+        )
 
     def _resolve_sample_phase_index(
         self,

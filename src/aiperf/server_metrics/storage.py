@@ -106,7 +106,12 @@ class ServerMetricsTimeSeries:
             for i in range(1, len(sorted_timestamps))
         ]
 
-    def append_snapshot(self, record: ServerMetricsRecord) -> None:
+    def append_snapshot(
+        self,
+        record: ServerMetricsRecord,
+        *,
+        storage_phase_index: int | None = None,
+    ) -> None:
         """Append all metrics from a ServerMetricsRecord.
 
         Extracts gauge, counter, and histogram metrics from the record and
@@ -171,7 +176,11 @@ class ServerMetricsTimeSeries:
                     timestamp_ns,
                     sample,
                     phase=record.benchmark_phase,
-                    phase_index=record.phase_index,
+                    phase_index=(
+                        record.phase_index
+                        if storage_phase_index is None
+                        else storage_phase_index
+                    ),
                 )
 
     def __len__(self) -> int:
@@ -221,7 +230,12 @@ class ServerMetricsHierarchy:
     def __init__(self) -> None:
         self.endpoints: dict[str, ServerMetricsTimeSeries] = {}
 
-    def add_record(self, record: ServerMetricsRecord) -> None:
+    def add_record(
+        self,
+        record: ServerMetricsRecord,
+        *,
+        storage_phase_index: int | None = None,
+    ) -> None:
         """Add server metrics record to hierarchical storage.
 
         Automatically creates new endpoints as needed. Descriptions are stored
@@ -232,7 +246,10 @@ class ServerMetricsHierarchy:
         if url not in self.endpoints:
             self.endpoints[url] = ServerMetricsTimeSeries()
 
-        self.endpoints[url].append_snapshot(record)
+        self.endpoints[url].append_snapshot(
+            record,
+            storage_phase_index=storage_phase_index,
+        )
 
 
 # =============================================================================
