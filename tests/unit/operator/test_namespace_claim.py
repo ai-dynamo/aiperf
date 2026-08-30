@@ -442,13 +442,20 @@ async def test_claim_watched_namespaces_rejects_scoped_operator_without_namespac
     monkeypatch.setattr(
         operator_main.sys, "argv", ["kopf", "run", "--all-namespaces"], raising=False
     )
-    monkeypatch.setattr(operator_main._CLAIMS, "identity", "scoped-op")
+    # _CLAIMS is built by the handler itself, so the identity has to be
+    # injected through the constructor rather than patched onto an instance.
+    monkeypatch.setattr(
+        operator_main,
+        "NamespaceClaim",
+        lambda: claim_for(FakeCoordinationApi(), "scoped-op"),
+    )
 
     with pytest.raises(kopf.PermanentError) as excinfo:
         await operator_main.claim_watched_namespaces()
 
     assert "scoped-op" in str(excinfo.value)
     assert "watchNamespaces" in str(excinfo.value)
+    operator_main.__dict__.pop("_CLAIMS", None)
 
 
 def test_every_object_handler_is_gated_on_namespace_ownership() -> None:

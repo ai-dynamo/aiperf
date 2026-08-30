@@ -73,7 +73,15 @@ logger = logging.getLogger(__name__)
 
 _sweep_results_retention_task: asyncio.Task[None] | None = None
 
-_CLAIMS = NamespaceClaim()
+_CLAIMS: NamespaceClaim
+"""Set by the ``claim_watched_namespaces`` startup handler.
+
+Deliberately unset at import: ``NamespaceClaim.__init__`` reads
+``Environment.OPERATOR.ID``, and freezing that at module-import time binds the
+identity before the process is configured (and forces tests to set env vars
+before importing this module). kopf runs every startup handler before any
+object handler fires, so ``owns_namespace`` never sees it unbound.
+"""
 
 
 def owns_namespace(namespace: str, **_: Any) -> bool:
@@ -1456,6 +1464,8 @@ async def claim_watched_namespaces(**_: Any) -> None:
     ``owns()`` refuses every namespace, so the operator would come up healthy
     and reconcile nothing. Fail startup instead.
     """
+    global _CLAIMS
+    _CLAIMS = NamespaceClaim()
     namespaces = watched_namespaces_from_argv(sys.argv)
     if _CLAIMS.identity and not namespaces:
         raise kopf.PermanentError(
@@ -1563,7 +1573,9 @@ async def _run_sweep_results_retention(
 async def close_runs_index(**_: Any) -> None:
     """Close the runs_index SQLite connection on operator shutdown."""
     global _sweep_results_retention_task
-    await _CLAIMS.stop()
+    # Cleanup also runs when startup failed before _CLAIMS was bound.
+    if "_CLAIMS" in globals():
+        await _CLAIMS.stop()
     if _sweep_results_retention_task is not None:
         _sweep_results_retention_task.cancel()
         await asyncio.gather(_sweep_results_retention_task, return_exceptions=True)
