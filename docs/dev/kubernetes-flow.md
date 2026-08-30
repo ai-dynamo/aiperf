@@ -88,8 +88,7 @@ which is never hand-edited.
 
 ```mermaid
 flowchart TD
-    NS["Namespace (if auto-generated)"] --> ROLE[Role]
-    ROLE --> RB[RoleBinding]
+    ROLE[Role] --> RB[RoleBinding]
     ROLE --> CM[ConfigMap]
     RB --> CM
     CM --> JS[JobSet]

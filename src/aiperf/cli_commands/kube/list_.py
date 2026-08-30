@@ -171,6 +171,21 @@ async def _run_list_loop(
             return
 
 
+async def _read_namespace_owner(
+    coord_api: object, ns: str, lease_name: str, duration: int
+) -> str:
+    """Return the OWNER cell for a single namespace via a namespaced GET."""
+
+    from aiperf.kubernetes.lease import lease_holder_if_live
+
+    try:
+        lease = await coord_api.read_namespaced_lease(lease_name, ns)
+        holder = lease_holder_if_live(lease, default_duration=duration)
+        return holder if holder else "-"
+    except Exception:
+        return "?"
+
+
 async def _namespace_owners(api: object, jobs: list[AIPerfJobInfo]) -> dict[str, str]:
     """Map each job namespace to the OWNER cell describing who reconciles it.
 
@@ -179,10 +194,12 @@ async def _namespace_owners(api: object, jobs: list[AIPerfJobInfo]) -> dict[str,
     RBAC on ``leases``) and is deliberately distinct from ``"-"``: "nobody
     claimed this" and "we are not allowed to look" are different facts.
 
-    One cluster-wide list serves every namespace, so ``--watch`` costs a single
-    API call per refresh rather than one per namespace.
+    Attempts a single cluster-wide list first (fast, one call under ``--watch``).
+    If that returns 403 (namespace-scoped user), falls back to per-namespace reads
+    so each namespace the caller can access still shows ownership.
     """
     from kubernetes_asyncio.client import CoordinationV1Api, V1ObjectMeta
+    from kubernetes_asyncio.client.exceptions import ApiException
 
     from aiperf.common.environment import Environment
     from aiperf.kubernetes.constants import LEASE_NAME
@@ -193,23 +210,28 @@ async def _namespace_owners(api: object, jobs: list[AIPerfJobInfo]) -> dict[str,
         return {}
 
     coord_api = CoordinationV1Api(api)
+    duration = Environment.OPERATOR.CLAIM_LEASE_SECONDS
+    owners: dict[str, str] = dict.fromkeys(namespaces, "-")
     try:
         listing = await coord_api.list_lease_for_all_namespaces(
             field_selector=f"metadata.name={LEASE_NAME}"
         )
+        for lease in listing.items or []:
+            namespace = (lease.metadata or V1ObjectMeta()).namespace
+            if namespace not in owners:
+                continue
+            holder = lease_holder_if_live(lease, default_duration=duration)
+            if holder:
+                owners[namespace] = holder
+    except ApiException as exc:
+        if exc.status != 403:
+            return dict.fromkeys(namespaces, "?")
+        for ns in namespaces:
+            owners[ns] = await _read_namespace_owner(
+                coord_api, ns, LEASE_NAME, duration
+            )
     except Exception:
         return dict.fromkeys(namespaces, "?")
-
-    owners: dict[str, str] = dict.fromkeys(namespaces, "-")
-    for lease in listing.items or []:
-        namespace = (lease.metadata or V1ObjectMeta()).namespace
-        if namespace not in owners:
-            continue
-        holder = lease_holder_if_live(
-            lease, default_duration=Environment.OPERATOR.CLAIM_LEASE_SECONDS
-        )
-        if holder:
-            owners[namespace] = holder
     return owners
 
 
