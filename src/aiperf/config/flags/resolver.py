@@ -768,7 +768,7 @@ def _apply_control_hook_enable_overrides(
 
 def _build_model_override(cli: CLIConfig, fields_set: set[str]) -> dict[str, Any]:
     models: dict[str, Any] = {}
-    if "model_names" in fields_set:
+    if "model_names" in fields_set and cli.model_names:
         models["items"] = [{"name": name} for name in cli.model_names]
     if "model_selection_strategy" in fields_set:
         models["strategy"] = cli.model_selection_strategy
@@ -1627,7 +1627,7 @@ def _transition_phase_type(
     if phase_type not in rate_types:
         removed = ("rate", "rate_ramp", "rate_series", "smoothness", "users")
     else:
-        removed = ("auto_offset", "start_offset", "end_offset")
+        removed = ("auto_offset", "start_offset", "end_offset", "rate_series")
         if phase_type != PhaseType.GAMMA:
             removed += ("smoothness",)
         if phase_type != PhaseType.USER_CENTRIC:

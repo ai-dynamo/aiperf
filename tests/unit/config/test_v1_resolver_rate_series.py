@@ -6,7 +6,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
@@ -92,7 +91,7 @@ def test_cli_request_rate_series_overrides_yaml_phase(tmp_path: Path) -> None:
     assert phase.rate_series.points[1].qps == 12.0
 
 
-def test_cli_request_rate_rejects_yaml_rate_series(tmp_path: Path) -> None:
+def test_cli_request_rate_replaces_yaml_rate_series(tmp_path: Path) -> None:
     cfg_file = tmp_path / "series_only.yaml"
     cfg_file.write_text(
         textwrap.dedent("""\
@@ -119,5 +118,9 @@ def test_cli_request_rate_rejects_yaml_rate_series(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValidationError, match="mutually exclusive"):
-        resolve_config(CLIConfig(request_rate=50), cfg_file)
+    config = resolve_config(CLIConfig(request_rate=50), cfg_file)
+
+    phase = next(p for p in config.benchmark.phases if p.name == "profiling")
+    assert phase.type == PhaseType.POISSON
+    assert phase.rate == 50
+    assert phase.rate_series is None
