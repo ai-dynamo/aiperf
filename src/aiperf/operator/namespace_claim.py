@@ -132,6 +132,7 @@ class NamespaceClaim:
         self._ownership: dict[str, bool] = {}
         self._claimed: set[str] = set()
         self._refreshing: set[str] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
         self._renew_task: asyncio.Task[None] | None = None
 
     @property
@@ -299,6 +300,13 @@ class NamespaceClaim:
 
     async def stop(self) -> None:
         """Stop the renewal timer. The Lease is deliberately left behind."""
+        pending = list(self._tasks)
+        self._tasks.clear()
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._refreshing.clear()
         if self._renew_task is None:
             return
         self._renew_task.cancel()
@@ -357,7 +365,12 @@ class NamespaceClaim:
         except RuntimeError:
             return
         self._refreshing.add(namespace)
-        loop.create_task(self._refresh_one(namespace))
+        # asyncio holds only a weak reference to a task, so an unretained task
+        # can be collected mid-await; that would skip _refresh_one's finally
+        # and lock the namespace out of every future refresh.
+        task = loop.create_task(self._refresh_one(namespace))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     async def _refresh_one(self, namespace: str) -> None:
         try:

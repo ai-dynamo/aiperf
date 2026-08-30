@@ -1450,8 +1450,19 @@ async def claim_watched_namespaces(**_: Any) -> None:
     was given via ``--namespace``; the global operator writes nothing and just
     learns which namespaces are already claimed. Startup fails loudly on a
     conflict rather than quietly reconciling somebody else's jobs.
+
+    A scoped operator with an empty namespace list is a misconfiguration, not a
+    cluster-wide install: kopf would run with ``--all-namespaces`` while
+    ``owns()`` refuses every namespace, so the operator would come up healthy
+    and reconcile nothing. Fail startup instead.
     """
     namespaces = watched_namespaces_from_argv(sys.argv)
+    if _CLAIMS.identity and not namespaces:
+        raise kopf.PermanentError(
+            f"operator.id is set to {_CLAIMS.identity!r} but no watchNamespaces "
+            "are configured -- a scoped operator must have at least one "
+            "namespace to claim"
+        )
     try:
         await _CLAIMS.start(namespaces)
     except NamespaceClaimConflict as exc:

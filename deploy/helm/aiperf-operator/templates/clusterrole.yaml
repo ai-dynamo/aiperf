@@ -96,9 +96,17 @@ rules:
 #   `aiperf-operator` in each namespace it watches; every operator reads them to
 #   decide whether to reconcile. No `delete`: a claim is meant to outlive
 #   restarts and lapse only by expiry, so nothing in the operator releases one.
+#   `create`/`list` cannot be name-restricted (Kubernetes ignores resourceNames
+#   for them), so the name-scoped rule covers only get/update/patch and keeps
+#   this operator away from unrelated leases such as kube-system's
+#   leader-election records.
 - apiGroups: ["coordination.k8s.io"]
   resources: ["leases"]
-  verbs: ["get", "list", "create", "update", "patch"]
+  verbs: ["create", "list"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  resourceNames: ["aiperf-operator"]
+  verbs: ["get", "update", "patch"]
 
 # Namespaces - access for AIPerfJob resources
 - apiGroups: [""]

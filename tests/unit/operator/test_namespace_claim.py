@@ -255,6 +255,45 @@ def test_watched_namespaces_from_argv_empty_for_all_namespaces() -> None:
     assert watched_namespaces_from_argv(argv) == []
 
 
+@pytest.mark.asyncio
+async def test_scoped_start_with_no_namespaces_claims_nothing() -> None:
+    """A scoped operator given no namespaces can never own one.
+
+    ``start([])`` writes no Lease, so every ``owns()`` falls through to the
+    scoped default of False -- the operator would reconcile nothing at all.
+    This is why the startup handler refuses the configuration outright.
+    """
+    api = FakeCoordinationApi()
+    claim = claim_for(api, "scoped-op")
+
+    await claim.start([])
+    try:
+        assert api.creates == []
+        assert claim.owns("aiperf-test") is False
+    finally:
+        await claim.stop()
+
+
+@pytest.mark.asyncio
+async def test_claim_watched_namespaces_rejects_scoped_operator_without_namespaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kopf
+
+    from aiperf.operator import main as operator_main
+
+    monkeypatch.setattr(
+        operator_main.sys, "argv", ["kopf", "run", "--all-namespaces"], raising=False
+    )
+    monkeypatch.setattr(operator_main._CLAIMS, "identity", "scoped-op")
+
+    with pytest.raises(kopf.PermanentError) as excinfo:
+        await operator_main.claim_watched_namespaces()
+
+    assert "scoped-op" in str(excinfo.value)
+    assert "watchNamespaces" in str(excinfo.value)
+
+
 def test_every_object_handler_is_gated_on_namespace_ownership() -> None:
     """Every kopf object handler must skip namespaces this operator does not own.
 

@@ -163,11 +163,11 @@ def _dump_raw_manifests(
     yaml,
     deployment_spec: dict[str, Any] | None = None,
 ):
-    """Apply k8s runtime config and write raw manifests (Namespace, RBAC, ConfigMap, JobSet)."""
+    """Apply k8s runtime config and write raw manifests (RBAC, ConfigMap, JobSet)."""
     from aiperf.cli_commands.kube._kube_common import resolve_total_workers
     from aiperf.config import AIPerfConfig
     from aiperf.kubernetes.environment import K8sEnvironment
-    from aiperf.kubernetes.resources import KubernetesDeployment, NamespaceSpec
+    from aiperf.kubernetes.resources import KubernetesDeployment
     from aiperf.kubernetes.spec_converter import (
         apply_k8s_runtime_config,
         apply_worker_config,
@@ -229,8 +229,6 @@ def _dump_raw_manifests(
     )
 
     manifests = deployment.get_all_manifests()
-    if not any(manifest.get("kind") == "Namespace" for manifest in manifests):
-        manifests.insert(0, NamespaceSpec(name=namespace).to_k8s_manifest())
 
     for i, manifest in enumerate(manifests):
         if i > 0:
