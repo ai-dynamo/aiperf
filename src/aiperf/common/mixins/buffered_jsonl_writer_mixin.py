@@ -183,10 +183,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 self._record_flush_failures(
                     await asyncio.gather(*done, return_exceptions=True)
                 )
-            if (
-                self._write_error is None
-                and len(self._buffer) >= self._batch_size
-            ):
+            if self._write_error is None and len(self._buffer) >= self._batch_size:
                 buffer_to_flush = self._buffer
                 self._buffer = []
 

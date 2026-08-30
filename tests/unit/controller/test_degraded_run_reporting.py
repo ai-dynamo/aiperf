@@ -535,4 +535,6 @@ class TestEvictedProducersReachTheOutcome:
         )
 
         assert info.service_id not in system_controller.service_manager.service_id_map
-        assert system_controller.service_manager.service_map[optional_service_type] == []
+        assert (
+            system_controller.service_manager.service_map[optional_service_type] == []
+        )

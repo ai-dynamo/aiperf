@@ -60,7 +60,9 @@ async def test_finalize_local_artifacts_local_failure_logs_and_continues() -> No
 
 
 @pytest.mark.asyncio
-async def test_finalize_local_artifacts_logs_failures_before_reraising_cancellation() -> None:
+async def test_finalize_local_artifacts_logs_failures_before_reraising_cancellation() -> (
+    None
+):
     """Cancellation does not hide a sibling artifact-finalization failure."""
     cancelled = _child("raw_record_writer", asyncio.CancelledError())
     failed = _child("accuracy_writer", RuntimeError("disk full"))

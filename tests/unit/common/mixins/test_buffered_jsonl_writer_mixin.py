@@ -48,7 +48,9 @@ class TestBufferedJSONLWriterMixin:
         failure = OSError("artifact volume full")
         writer._write_error = failure
 
-        with pytest.raises(RuntimeError, match="cannot accept records after a write failure") as exc_info:
+        with pytest.raises(
+            RuntimeError, match="cannot accept records after a write failure"
+        ) as exc_info:
             await writer.buffered_write(SampleRecord(id=1, value="late"))
 
         assert exc_info.value.__cause__ is failure

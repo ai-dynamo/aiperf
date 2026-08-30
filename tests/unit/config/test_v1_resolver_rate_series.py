@@ -5,8 +5,6 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.plugin.enums import PhaseType
