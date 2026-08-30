@@ -65,13 +65,13 @@ def assign_ports_to_server(server: Server) -> dict[int, int]:
     if not original_ports:
         return {}
 
-    assigned: set[int] = set()
+    reserved_ports: set[int] = set(original_ports)
     port_map: dict[int, int] = {}
     for orig in original_ports:
         while True:
             candidate = find_free_port()
-            if candidate not in assigned:
-                assigned.add(candidate)
+            if candidate not in reserved_ports:
+                reserved_ports.add(candidate)
                 port_map[orig] = candidate
                 break
 
