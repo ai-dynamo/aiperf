@@ -235,6 +235,11 @@ class NamespaceClaim:
         A scoped operator refreshes the ``renewTime`` on each Lease it holds;
         the global operator re-lists every claim so a namespace whose scoped
         operator went away falls back to it.
+
+        A renewal that lapsed for longer than the lease duration lets a rival
+        operator legitimately take over, so each renewal first re-reads the
+        Lease. A namespace now held by someone else is dropped rather than
+        stolen back: an unconditional patch would silently double-reconcile it.
         """
         if self.is_global:
             await self.refresh_all()
@@ -243,6 +248,31 @@ class NamespaceClaim:
         missing: list[str] = []
         async with self._api_factory() as api:
             for namespace in sorted(self._claimed):
+                try:
+                    current = await api.read_namespaced_lease(
+                        name=LEASE_NAME, namespace=namespace
+                    )
+                except ApiException as exc:
+                    if exc.status == 404:
+                        missing.append(namespace)
+                    else:
+                        logger.warning(
+                            "Failed to read namespace claim on %s: %s", namespace, exc
+                        )
+                    continue
+
+                current_holder = (current.spec or V1LeaseSpec()).holder_identity
+                if current_holder and current_holder != self.identity:
+                    logger.warning(
+                        "Namespace claim on %s was taken over by operator %r "
+                        "while this operator's renewal lapsed; releasing it",
+                        namespace,
+                        current_holder,
+                    )
+                    self._claimed.discard(namespace)
+                    self._record(namespace, current_holder)
+                    continue
+
                 try:
                     await api.patch_namespaced_lease(
                         name=LEASE_NAME,
