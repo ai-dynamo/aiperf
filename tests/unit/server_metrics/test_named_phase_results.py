@@ -148,8 +148,14 @@ async def test_export_results_keeps_repeated_agentic_warmup_instances_distinct()
 
 
 @pytest.mark.asyncio
-async def test_synthetic_storage_indexes_do_not_mutate_public_phase_indexes() -> None:
-    """Synthetic warmup indexes are storage metadata, not model data."""
+async def test_synthetic_storage_indexes_do_not_mutate_public_phase_indexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Synthetic warmup indexes are storage metadata, not model copies."""
+    def fail_model_copy(*_args, **_kwargs):
+        raise AssertionError("storage must not bypass phase_index validation via model_copy")
+
+    monkeypatch.setattr(ServerMetricsRecord, "model_copy", fail_model_copy)
     accumulator = ServerMetricsAccumulator(
         run=make_run_from_cli(
             CLIConfig(
