@@ -42,9 +42,6 @@ class AIPerfLabels:
     NAME: str = "aiperf.nvidia.com/name"
     """Human-readable benchmark name."""
 
-    AUTO_GENERATED: str = "aiperf.nvidia.com/auto-generated"
-    """Marks a namespace that AIPerf created and may manage."""
-
     PARENT: str = "aiperf.nvidia.com/parent"
     """Parent resource name."""
 

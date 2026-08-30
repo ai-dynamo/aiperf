@@ -15,7 +15,6 @@ from aiperf.kubernetes.resources import (
     DNS_LABEL_PATTERN,
     ConfigMapSpec,
     KubernetesDeployment,
-    NamespaceSpec,
     RBACSpec,
     validate_dns_label,
 )
@@ -153,37 +152,6 @@ class TestConfigMapSpec:
         """Test ConfigMapSpec has empty dict as default labels."""
         cm = ConfigMapSpec(name="test")
         assert cm.labels == {}
-
-
-class TestNamespaceSpec:
-    """Tests for NamespaceSpec model."""
-
-    def test_basic_namespace(self) -> None:
-        """Test creating a basic namespace spec."""
-        ns = NamespaceSpec(name="aiperf-test")
-        assert ns.name == "aiperf-test"
-        assert ns.labels == {}
-
-    def test_namespace_with_labels(self) -> None:
-        """Test namespace with labels."""
-        ns = NamespaceSpec(
-            name="aiperf-test",
-            labels={"app": "aiperf", "environment": "test"},
-        )
-        assert ns.labels["app"] == "aiperf"
-        assert ns.labels["environment"] == "test"
-
-    def test_to_k8s_manifest(self) -> None:
-        """Test converting namespace spec to Kubernetes manifest."""
-        ns = NamespaceSpec(
-            name="aiperf-test",
-            labels={"app": "aiperf"},
-        )
-        manifest = ns.to_k8s_manifest()
-        assert manifest["apiVersion"] == "v1"
-        assert manifest["kind"] == "Namespace"
-        assert manifest["metadata"]["name"] == "aiperf-test"
-        assert manifest["metadata"]["labels"]["app"] == "aiperf"
 
 
 class TestRBACSpec:
