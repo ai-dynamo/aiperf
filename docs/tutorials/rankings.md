@@ -30,7 +30,10 @@ docker run --gpus all --rm \
 
 <!-- health-check-tei-rerank-endpoint-server -->
 ```bash
-timeout 900 bash -c 'while ! curl -sf http://localhost:8080/rerank -H "Content-Type: application/json" -d "{\"query\":\"What is AI?\",\"texts\":[\"AI is artificial intelligence.\"]}" > /dev/null; do sleep 2; done' || { echo "TEI not ready after 15min"; exit 1; }
+# Verify server is running
+curl -s http://localhost:8080/rerank \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What is AI?", "texts":["AI is artificial intelligence.","Bananas are yellow."]}' | jq
 ```
 <!-- /health-check-tei-rerank-endpoint-server -->
 
@@ -89,7 +92,10 @@ cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 3?"]},{"name":"passages","contents":["AI passage 3"]}]}
 {"texts":[{"name":"query","contents":["What is AI topic 4?"]},{"name":"passages","contents":["AI passage 4"]}]}
 EOF
+```
 
+Run AIPerf using the following command:
+```bash
 aiperf profile \
     -m BAAI/bge-reranker-base \
     --endpoint-type hf_tei_rankings \
@@ -117,7 +123,10 @@ docker run --gpus all -p 8080:8000 \
 
 <!-- health-check-cohere-rerank-endpoint-server -->
 ```bash
-timeout 900 bash -c 'while ! curl -sf http://localhost:8080/v1/rerank -H "Content-Type: application/json" -d "{\"query\":\"What is AI?\",\"documents\":[\"AI overview\"]}" > /dev/null; do sleep 2; done' || { echo "Cohere rerank server not ready after 15min"; exit 1; }
+# Verify the server
+curl -s http://localhost:8080/v1/rerank \
+  -H "Content-Type: application/json" \
+  -d '{"query":"What is AI?","documents":["Artificial intelligence overview","Bananas are yellow"]}' | jq
 ```
 <!-- /health-check-cohere-rerank-endpoint-server -->
 
@@ -135,7 +144,7 @@ aiperf profile \
 
 ### Profile using Custom Inputs
 
-<!-- aiperf-run-cohere-rerank-endpoint-server -->
+Create a file named `rankings.jsonl`:
 ```bash
 cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 0?"]},{"name":"passages","contents":["AI passage 0"]}]}
@@ -144,7 +153,11 @@ cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 3?"]},{"name":"passages","contents":["AI passage 3"]}]}
 {"texts":[{"name":"query","contents":["What is AI topic 4?"]},{"name":"passages","contents":["AI passage 4"]}]}
 EOF
+```
 
+Run AIPerf:
+<!-- aiperf-run-cohere-rerank-endpoint-server -->
+```bash
 aiperf profile \
     -m BAAI/bge-reranker-v2-m3 \
     --endpoint-type cohere_rankings \

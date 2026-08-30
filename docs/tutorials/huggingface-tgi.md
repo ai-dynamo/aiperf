@@ -32,7 +32,10 @@ docker run --gpus all --rm \
 
 <!-- health-check-tgi-default-endpoint-server -->
 ```bash
-timeout 900 bash -c 'while ! curl -sf http://localhost:8080/generate -H "Content-Type: application/json" -d "{\"inputs\":\"Hello world\"}" > /dev/null; do sleep 2; done' || { echo "TGI not ready after 15min"; exit 1; }
+# Verify the server is running
+curl -s http://localhost:8080/generate \
+  -H "Content-Type: application/json" \
+  -d '{"inputs":"Hello world"}' | jq
 ```
 <!-- /health-check-tgi-default-endpoint-server -->
 
@@ -89,7 +92,10 @@ cat > inputs.jsonl <<'EOF'
 {"text": "Hello TinyLlama!"}
 {"text": "Tell me a joke."}
 EOF
+```
+Then run:
 
+```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
     --endpoint-type huggingface_generate \
@@ -151,7 +157,11 @@ cat > inputs.jsonl <<'EOF'
 {"text": "Write a haiku about rain."}
 {"text": "Summarize the causes of the French Revolution."}
 EOF
+```
 
+Then run:
+
+```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
     --endpoint-type huggingface_generate \

@@ -36,7 +36,7 @@ RUN pip install 'vllm[audio]'
 EOF
 
 docker run --gpus all -p 8000:8000 vllm-audio \
-  --model Qwen/Qwen2.5-Omni-3B \
+  --model Qwen/Qwen2-Audio-7B-Instruct \
   --trust-remote-code
 ```
 
@@ -45,7 +45,7 @@ Verify the server is ready:
 ```bash
 curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2.5-Omni-3B","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+  -d '{"model":"Qwen/Qwen2-Audio-7B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
 ```
 
 ---
@@ -57,7 +57,7 @@ LibriSpeech is the standard read-speech benchmark and requires no authentication
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2.5-Omni-3B \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -117,7 +117,7 @@ VoxPopuli contains European Parliament recordings and requires no authentication
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2.5-Omni-3B \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -136,7 +136,7 @@ AMI contains meeting recordings with individual headset microphone audio and req
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2.5-Omni-3B \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -157,7 +157,7 @@ HuggingFace account and acceptance of the [dataset terms](https://huggingface.co
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2.5-Omni-3B \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -177,7 +177,7 @@ acceptance of the [dataset terms](https://huggingface.co/datasets/kensho/spgispe
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2.5-Omni-3B \
+    --model Qwen/Qwen2-Audio-7B-Instruct \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \

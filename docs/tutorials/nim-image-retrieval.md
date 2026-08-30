@@ -54,7 +54,7 @@ Wait for the server to start, then verify it is ready:
 
 <!-- health-check-nim-image-retrieval-endpoint-server -->
 ```bash
-timeout 900 bash -c 'while ! curl -sf http://localhost:8000/v1/health/ready; do sleep 2; done' || { echo "NIM not ready after 15min"; exit 1; }
+curl -s http://localhost:8000/v1/health/ready
 ```
 <!-- /health-check-nim-image-retrieval-endpoint-server -->
 

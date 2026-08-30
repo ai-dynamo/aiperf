@@ -108,7 +108,10 @@ cat > image_prompts.jsonl << 'EOF'
 {"text": "A futuristic city with flying cars"}
 {"text": "A cute robot playing with a kitten"}
 EOF
+```
 
+**Run the benchmark:**
+```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
   --tokenizer builtin \
@@ -121,6 +124,8 @@ aiperf profile \
   --concurrency 1 \
   --request-count 3
 ```
+
+**Done!** This sends 3 requests to `http://localhost:30000/v1/images/generations`
 
 **Sample Output (Successful Run):**
 ```
@@ -184,6 +189,7 @@ Image generation endpoints report a focused set of metrics. Unlike LLM text endp
 
 ## Running the benchmark (advanced usage)
 
+**Create an input file:**
 <!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > image_prompts.jsonl << 'EOF'
@@ -191,7 +197,14 @@ cat > image_prompts.jsonl << 'EOF'
 {"text": "A futuristic city with flying cars"}
 {"text": "A cute robot playing with a kitten"}
 EOF
+```
 
+**Run the benchmark:**
+
+> [!WARNING]
+> Use `--export-level raw` to get the raw input/output payloads.
+
+```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
   --tokenizer builtin \
