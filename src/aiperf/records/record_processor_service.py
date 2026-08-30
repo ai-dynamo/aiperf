@@ -220,15 +220,18 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             *(finalize() for _child, finalize in children), return_exceptions=True
         )
         failures: list[Exception] = []
+        cancellation: asyncio.CancelledError | None = None
         for (child, _finalize), result in zip(children, results, strict=True):
             if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, Exception):
+                cancellation = result
+            elif isinstance(result, Exception):
                 failures.append(
                     RuntimeError(f"Failed to finalize child {child}: {result!r}")
                 )
         for failure in failures:
             self.error(str(failure))
+        if cancellation is not None:
+            raise cancellation
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""

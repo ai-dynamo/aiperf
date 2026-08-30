@@ -673,6 +673,7 @@ class SystemController(SignalHandlerMixin, BaseService):
             await self._check_and_trigger_shutdown()
             return
 
+        self._forget_reaped_service(service_id)
         if info.service_type not in self.required_services:
             return
 
@@ -1309,10 +1310,13 @@ class SystemController(SignalHandlerMixin, BaseService):
         """Wait for result producers that may still be finalizing on cancellation."""
         if not should_wait:
             return
+        tasks = []
         if "accuracy" in self._result_join_coordinator.pending_domains:
-            await self._await_accuracy_results_for_cancel()
+            tasks.append(self._await_accuracy_results_for_cancel())
         if "server_metrics" in self._result_join_coordinator.pending_domains:
-            await self._await_server_metrics_results_for_cancel()
+            tasks.append(self._await_server_metrics_results_for_cancel())
+        if tasks:
+            await asyncio.gather(*tasks)
 
     async def _await_accuracy_results_for_cancel(self) -> None:
         """Bounded wait for the accuracy summary on the cancel (Ctrl+C) path.
