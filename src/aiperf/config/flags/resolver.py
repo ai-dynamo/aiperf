@@ -154,14 +154,23 @@ def _resolve_config_envelopes(
         else copy.deepcopy(yaml_dict)
     )
     base_config = AIPerfConfig.model_validate(pre_merged)
+    base_dataset = base_config.benchmark.datasets[0]
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
-    merged = _merge_overrides_into_envelope(yaml_dict, overrides, cli_config)
+    merged = _merge_overrides_into_envelope(
+        yaml_dict,
+        overrides,
+        cli_config,
+        dataset_type=base_dataset.type,
+        dataset_format=getattr(base_dataset, "format", None),
+    )
     raw_merged = _merge_overrides_into_envelope(
         raw_yaml_dict,
         overrides,
         cli_config,
+        dataset_type=base_dataset.type,
+        dataset_format=getattr(base_dataset, "format", None),
         phase_shape_decision=merged.phase_shape_decision,
     )
 
@@ -302,6 +311,8 @@ def _merge_overrides_into_envelope(
     overrides: dict[str, Any] | None,
     cli_config: CLIConfig,
     *,
+    dataset_type: Any,
+    dataset_format: Any,
     phase_shape_decision: _PhaseShapeDecision | None = None,
 ) -> _MergedEnvelope:
     """Apply the config-file CLI override pipeline to one envelope.
@@ -324,7 +335,12 @@ def _merge_overrides_into_envelope(
     envelope = normalize_server_metrics_base_for_override(envelope, overrides)
     merged = deep_merge(envelope, overrides) if overrides else envelope
     _apply_control_hook_enable_overrides(merged, cli_config)
-    _apply_dataset_overrides(merged, cli_config)
+    _apply_dataset_overrides(
+        merged,
+        cli_config,
+        declared_type=dataset_type,
+        declared_format=dataset_format,
+    )
     decision = _apply_phase_loadgen_overrides(
         merged, cli_config, phase_shape_decision=phase_shape_decision
     )
@@ -969,7 +985,13 @@ def _reject_inert_dataset_flags(
     )
 
 
-def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_dataset_overrides(
+    merged: dict[str, Any],
+    cli: CLIConfig,
+    *,
+    declared_type: Any | None = None,
+    declared_format: Any | None = None,
+) -> None:
     """Overlay explicitly-set dataset flags onto the YAML-supplied dataset.
 
     Delegates to ``build_dataset`` -- the same builder the CLI-only path uses
@@ -1001,16 +1023,17 @@ def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
             )
         return
 
-    # A YAML dataset may omit `type`; validation resolves that to synthetic.
-    # Passing None here would instead switch build_dataset back to inferring
-    # the type from flags -- the CLI-only path, which materializes defaults
-    # meant for building a dataset from nothing. Default it so both spellings
-    # of "synthetic" take the same route.
-    declared_type = dataset.get("type") or DatasetType.SYNTHETIC
+    # Direct helper callers have no separately validated envelope. Preserve
+    # their historical behavior by deriving identity from this concrete dict;
+    # resolver callers always pass the rendered identity so raw Jinja leaves
+    # are never interpreted as dataset discriminators.
+    if declared_type is None:
+        declared_type = dataset.get("type") or DatasetType.SYNTHETIC
+        declared_format = dataset.get("format")
     override = build_dataset(
         cli,
         declared_type=declared_type,
-        declared_format=dataset.get("format"),
+        declared_format=declared_format,
     )
     _reject_inert_dataset_flags(cli, dataset, declared_type)
     if not override:
@@ -1258,12 +1281,12 @@ def _preserve_user_centric_phase(target: dict[str, Any], fields_set: set[str]) -
     if target.get("type") != PhaseType.USER_CENTRIC:
         return False
     if "arrival_pattern" in fields_set:
-        logger.warning(
-            "--arrival-pattern is ignored: the profiling phase in the config "
-            "file is 'user_centric', which has no arrival distribution. The "
-            "phase keeps type 'user_centric' and its 'users' value. Change the "
-            "phase type in YAML to poisson/gamma/constant for an open-loop "
-            "arrival pattern."
+        from aiperf.config.loader.errors import ConfigurationError
+
+        raise ConfigurationError(
+            "--arrival-pattern cannot be applied to the 'user_centric' profiling "
+            "phase from the config file: user-centric phases have no arrival "
+            "distribution. Change the phase type in YAML to poisson/gamma/constant."
         )
     return True
 

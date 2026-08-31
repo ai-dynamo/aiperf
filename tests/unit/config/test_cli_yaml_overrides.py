@@ -134,10 +134,32 @@ def test_explicit_cli_value_overrides_yaml(
     assert assertion(config)
 
 
-def test_model_strategy_without_model_names_is_rejected(config_file: Path) -> None:
-    """The resolver cannot choose which YAML model set to rewrite."""
-    with pytest.raises(ConfigurationError, match="model-selection-strategy"):
-        resolve_config(CLIConfig(model_selection_strategy="random"), config_file)
+def test_model_strategy_overrides_yaml_models_without_cli_model_names(
+    config_file: Path,
+) -> None:
+    config = resolve_config(CLIConfig(model_selection_strategy="random"), config_file)
+
+    assert config.benchmark.models.strategy == "random"
+
+
+def test_per_chunk_usage_uses_yaml_endpoint_prerequisites(config_file: Path) -> None:
+    content = _BASE_YAML.replace(
+        "    urls: [http://localhost:8000]",
+        "    urls: [http://localhost:8000]\n    streaming: true\n"
+        "    useServerTokenCount: true",
+    )
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(per_chunk_usage=True), config_file)
+
+    assert config.benchmark.endpoint.per_chunk_usage
+
+
+def test_per_chunk_usage_without_endpoint_prerequisites_is_rejected(
+    config_file: Path,
+) -> None:
+    with pytest.raises(ValueError, match="per-chunk-usage"):
+        resolve_config(CLIConfig(per_chunk_usage=True), config_file)
 
 
 def test_dataset_modifiers_merge_without_cli_defaults(config_file: Path) -> None:
@@ -228,6 +250,35 @@ def test_dataset_and_phase_overrides_update_raw_jinja_envelope(
     raw_benchmark = config._raw_envelope["benchmark"]
     assert raw_benchmark["datasets"][0]["prompts"]["isl"]["mean"] == 256
     assert raw_benchmark["phases"][0]["requests"] == 5
+
+
+def test_dataset_override_uses_rendered_type_and_replays_to_raw_envelope(
+    config_file: Path,
+) -> None:
+    content = _BASE_YAML.replace(
+        "randomSeed: 91",
+        "variables:\n  dataset_type: public\nrandomSeed: 91",
+    ).replace(
+        "      type: synthetic\n      entries: 77\n"
+        "      prompts:\n"
+        "        isl: {mean: 128, stddev: 7}\n"
+        "        osl: {mean: 32}\n"
+        "        batchSize: 4\n",
+        "      type: '{{ dataset_type }}'\n      dataset: sharegpt\n",
+    )
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(dataset_filters=["language=en"]), config_file)
+
+    assert config.benchmark.datasets[0].type == "public"
+    assert config.benchmark.datasets[0].filters == {"language": "en"}
+    assert config._raw_envelope is not None
+    assert config._raw_envelope["benchmark"]["datasets"][0]["type"] == (
+        "{{ dataset_type }}"
+    )
+    assert config._raw_envelope["benchmark"]["datasets"][0]["filters"] == {
+        "language": "en"
+    }
 
 
 # =============================================================================
@@ -338,11 +389,22 @@ def test_request_rate_preserves_yaml_user_centric_phase(
     assert phase.duration == 120
 
 
-def test_arrival_pattern_without_cli_rate_control_is_rejected(
+def test_arrival_pattern_on_user_centric_phase_is_rejected(
     user_centric_config_file: Path,
 ) -> None:
-    with pytest.raises(ConfigurationError, match="arrival-pattern"):
-        resolve_config(CLIConfig(arrival_pattern="gamma"), user_centric_config_file)
+    with pytest.raises(ConfigurationError, match="user_centric"):
+        resolve_config(
+            CLIConfig(request_rate=9.0, arrival_pattern="gamma"),
+            user_centric_config_file,
+        )
+
+
+def test_arrival_pattern_uses_existing_yaml_rate(config_file: Path) -> None:
+    config = resolve_config(CLIConfig(arrival_pattern="constant"), config_file)
+
+    phase = config.benchmark.phases[0]
+    assert phase.type == PhaseType.CONSTANT
+    assert phase.rate == 2
 
 
 def test_arrival_smoothness_on_user_centric_phase_is_rejected(
