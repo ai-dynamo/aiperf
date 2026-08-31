@@ -114,6 +114,9 @@ class AccuracyAccumulator(BaseMetricsProcessor):
 
         requested_tasks = self.run.cfg.accuracy.tasks or []
         for task in requested_tasks:
+            # "all" is a category-expansion sentinel by convention, not a real task name.
+            if task.lower() == "all":
+                continue
             per_task.setdefault(
                 task,
                 TaskAccuracyStats(

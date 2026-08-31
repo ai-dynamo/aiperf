@@ -177,6 +177,16 @@ class TestAccuracyAccumulator:
         assert physics.unparsed == 0
         assert physics.accuracy_rate == 0.0
 
+    async def test_all_sentinel_is_not_zero_filled_as_a_task(self) -> None:
+        acc = _make_accumulator(tasks=["all"])
+        await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
+
+        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+
+        assert summary is not None
+        assert "all" not in summary.per_task
+        assert set(summary.per_task) == {"math"}
+
     async def test_summarize_is_phase_agnostic(self) -> None:
         acc = _make_accumulator()
         await _seed(
