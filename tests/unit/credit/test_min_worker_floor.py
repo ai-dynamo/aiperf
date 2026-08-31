@@ -34,6 +34,7 @@ def _router(alive: int, peak: int) -> StickyCreditRouter:
     r._credits_complete = False
     r._on_worker_lost = None
     r._stale_worker_strikes = {}
+    r._last_stale_sweep_ns = None
     r._worker_available_event = MagicMock()
     r.warning = MagicMock()
     r.trace = MagicMock()

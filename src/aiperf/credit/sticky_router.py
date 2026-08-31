@@ -355,6 +355,12 @@ class StickyCreditRouter(CommunicationMixin):
         # would have protected it on.
         self._stale_worker_strikes: dict[str, int] = {}
 
+        # Wall-clock of the previous stale sweep, or None when no sweep has run
+        # since the last suppression. Lets the sweep notice that its own tick
+        # was delayed -- if the router's event loop stalls, every worker looks
+        # stale at once purely because nothing consumed their heartbeats.
+        self._last_stale_sweep_ns: int | None = None
+
         # Monotonic deadline through which cancellation-related warnings stay
         # suppressed; see the _cancellation_pending property.
         self._cancellation_pending_until_ns: int = 0
@@ -962,9 +968,39 @@ class StickyCreditRouter(CommunicationMixin):
         has none -- see the class docstring), but it does mean a single
         transient stall can no longer be evicted on the same sweep where a
         process-aware watchdog would have protected it.
+
+        Delayed-sweep guard: staleness here is silence measured by *this* event
+        loop, so a stall in the router's own loop makes every worker look stale
+        simultaneously even though all of them are alive and heartbeating. When
+        the gap since the previous sweep exceeds ``STALE_TIME *
+        ROUTER_STALE_SWEEP_DELAY_FACTOR``, the sweep forgives the round
+        entirely and drops accumulated strikes, mirroring the catch-up
+        detection in ``BaseServiceManager._monitor_heartbeats_tick``.
         """
         if self._credits_complete or self._cancellation_pending:
+            # Sweeps stop during teardown; a resumed sweep must not read that
+            # suppressed span as a stalled event loop.
+            self._last_stale_sweep_ns = None
             return
+
+        now_ns = time.time_ns()
+        last_sweep_ns = self._last_stale_sweep_ns
+        self._last_stale_sweep_ns = now_ns
+        if last_sweep_ns is not None:
+            gap_s = (now_ns - last_sweep_ns) / NANOS_PER_SECOND
+            max_gap_s = (
+                Environment.WORKER.STALE_TIME
+                * Environment.WORKER.ROUTER_STALE_SWEEP_DELAY_FACTOR
+            )
+            if gap_s > max_gap_s:
+                self.warning(
+                    f"Stale-worker sweep delayed {gap_s:.1f}s "
+                    f"(expected ~{Environment.WORKER.STALE_TIME:.1f}s); skipping "
+                    "stale checks this sweep"
+                )
+                self._stale_worker_strikes.clear()
+                return
+
         stale_after_s = (
             Environment.WORKER.STALE_TIME
             * Environment.WORKER.ROUTER_STALE_EVICTION_MULTIPLIER
