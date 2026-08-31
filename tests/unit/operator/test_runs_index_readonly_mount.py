@@ -52,7 +52,10 @@ async def test_open_readonly_writable_mount_succeeds(created_index: Path) -> Non
     assert await runs_index.get_meta("schema_version") == "1"
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses filesystem permissions")
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="requires a non-root POSIX permission model",
+)
 @pytest.mark.asyncio
 async def test_open_readonly_read_only_mount_raises_readonly_mount_error(
     created_index: Path,

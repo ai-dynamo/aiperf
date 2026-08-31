@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.serialized_run import read_serialized_run_json
 
@@ -17,6 +18,10 @@ def test_read_serialized_run_json_reads_regular_file(tmp_path: Path) -> None:
     assert read_serialized_run_json(path) == '{"benchmark_id":"run"}'
 
 
+@pytest.mark.skipif(
+    IS_WINDOWS,
+    reason="Kubernetes ConfigMap atomic symlinks are a POSIX volume contract",
+)
 def test_read_serialized_run_json_accepts_configmap_atomic_symlink(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

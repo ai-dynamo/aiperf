@@ -10,7 +10,7 @@ import io
 import zipfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
 
@@ -56,6 +56,13 @@ class FileArtifact:
 
 def _safe_resolve(base: Path, *parts: str) -> Path | None:
     """Resolve path parts under base, returning None on traversal attempts."""
+    if any(
+        "\x00" in part
+        or PurePosixPath(part).is_absolute()
+        or PureWindowsPath(part).is_absolute()
+        for part in parts
+    ):
+        return None
     try:
         resolved = (base / Path(*parts)).resolve()
         resolved.relative_to(base.resolve())

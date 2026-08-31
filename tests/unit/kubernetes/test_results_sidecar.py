@@ -26,6 +26,7 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.results_markers import (
     CHECKPOINTS_DIR_NAME,
     PROCESSING_MARKER_NAME,
@@ -109,6 +110,12 @@ class TestSafeResolve:
     def test_blocks_traversal(self, base_dir: Path, filename: str) -> None:
         assert _safe_resolve(base_dir, filename) is None
 
+    def test_rejects_windows_absolute_path(self, base_dir: Path) -> None:
+        assert (
+            _safe_resolve(base_dir, r"C:\\Windows\\System32\\drivers\\etc\\hosts")
+            is None
+        )
+
     def test_null_byte_returns_none(self, base_dir: Path) -> None:
         assert _safe_resolve(base_dir, "a\x00b.json") is None
 
@@ -183,6 +190,10 @@ class TestWriteProcessingMarker:
         assert not ready_marker_path(base_dir).exists()
         assert not processing_marker_path(base_dir).exists()
 
+    @pytest.mark.skipif(
+        IS_WINDOWS,
+        reason="Windows does not support the POSIX directory-fsync contract",
+    )
     def test_atomic_install_fsyncs_file_then_replaces_then_fsyncs_directory(
         self, base_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

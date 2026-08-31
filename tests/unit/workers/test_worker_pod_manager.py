@@ -456,7 +456,7 @@ class TestDatasetHandling:
         assert isinstance(response, GroupDatasetStateSnapshot)
         assert response.ready is True
         assert response.dataset_generation == "data-1"
-        assert response.data_file_path == "/tmp/dataset.dat"
+        assert response.data_file_path == str(Path("/tmp/dataset.dat"))
 
     @pytest.mark.asyncio
     async def test_dataset_notification_publishes_group_snapshot_state(

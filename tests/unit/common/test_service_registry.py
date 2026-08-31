@@ -372,7 +372,9 @@ async def test_retracted_failure_does_not_latch_wait_for_type(
         await registry.wait_for_type(ServiceType.WORKER, timeout=0.05)
     elapsed = time.perf_counter() - started
 
-    assert elapsed >= 0.05
+    # Scheduler resolution can finish a nominal 50 ms wait just below the
+    # requested boundary; an immediate wake would still be well below 45 ms.
+    assert elapsed >= 0.045
     assert excinfo.value.timeout_sec == 0.05
 
 

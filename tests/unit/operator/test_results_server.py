@@ -226,6 +226,12 @@ class TestSafeResolve:
         result = _safe_resolve(tmp_path, "file\x00.txt")
         assert result is None
 
+    def test_safe_resolve_rejects_windows_absolute_path(self, tmp_path: Path) -> None:
+        assert (
+            _safe_resolve(tmp_path, r"C:\\Windows\\System32\\drivers\\etc\\hosts")
+            is None
+        )
+
 
 # ============================================================
 # _display_name

@@ -465,7 +465,7 @@ class TestCompletionPartialArtifactTrees:
         assert "summary" not in patch.status
         assert patch.status["runEpoch"] == int(_FIXTURE_EPOCH)
         assert patch.status["resultsPath"].endswith(
-            f"/{_FIXTURE_NAMESPACE}/{_FIXTURE_JOB_ID}/{_FIXTURE_EPOCH}"
+            str(Path(_FIXTURE_NAMESPACE) / _FIXTURE_JOB_ID / _FIXTURE_EPOCH)
         )
         captured.results_stored.assert_called_once()
 
@@ -542,7 +542,10 @@ class TestCompletionPartialArtifactTrees:
         assert mtime_epoch > 0
         assert total_size_bytes >= len(b"not-zstd") + len(b"metric,value\n")
         assert "cannot read summary" in caplog.text
-        assert f"{_FIXTURE_NAMESPACE}/{_FIXTURE_JOB_ID}/{_FIXTURE_EPOCH}" in caplog.text
+        assert (
+            str(Path(_FIXTURE_NAMESPACE) / _FIXTURE_JOB_ID / _FIXTURE_EPOCH)
+            in caplog.text
+        )
 
 
 # =============================================================================

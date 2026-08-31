@@ -11,7 +11,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -72,13 +72,16 @@ def _is_refused_name(display_name: str) -> bool:
     parent traversals are refused by policy. They are advertised in listings
     but never downloaded, so they are skips rather than failures.
     """
-    normalized = Path(display_name)
-    leaf = normalized.name
+    posix_path = PurePosixPath(display_name)
+    windows_path = PureWindowsPath(display_name)
+    leaf = posix_path.name
     return (
         not leaf
         or leaf.startswith(".")
-        or normalized.is_absolute()
-        or ".." in normalized.parts
+        or posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or ".." in posix_path.parts
+        or ".." in windows_path.parts
     )
 
 
@@ -564,12 +567,22 @@ def _is_refused_sweep_name(display_name: str) -> bool:
     advertised in listings but never downloaded, so they are skips, not
     failures.
     """
-    relative = Path(display_name)
-    if relative.is_absolute() or not relative.parts:
+    posix_path = PurePosixPath(display_name)
+    windows_path = PureWindowsPath(display_name)
+    if (
+        posix_path.is_absolute()
+        or windows_path.is_absolute()
+        or not posix_path.parts
+        or not windows_path.parts
+    ):
         return True
-    if any(part in {"", ".", ".."} for part in relative.parts):
+    if any(
+        part in {"", ".", ".."} for part in (*posix_path.parts, *windows_path.parts)
+    ):
         return True
-    return any(part.startswith(".") for part in relative.parts)
+    return any(
+        part.startswith(".") for part in (*posix_path.parts, *windows_path.parts)
+    )
 
 
 def _safe_sweep_artifact_path(output_dir: Path, display_name: str) -> Path | None:

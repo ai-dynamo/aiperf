@@ -24,6 +24,7 @@ Covers the low-level result-fetch retry/backoff machinery:
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -740,7 +741,7 @@ class TestDownloadFinalAndSidecar:
             "checkpoints": None,
             "metrics": None,
         }
-        with pytest.raises(_ResultsVolumeMissingError, match=str(missing)):
+        with pytest.raises(_ResultsVolumeMissingError, match=re.escape(str(missing))):
             await _download_final_and_sidecar(
                 progress_client=client,
                 controller_host="host",

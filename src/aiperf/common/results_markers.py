@@ -22,7 +22,7 @@ import logging
 import os
 import re
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +231,12 @@ def _fsync_directory(directory: Path) -> None:
 
 def _safe_resolve(base_dir: Path, filename: str) -> Path | None:
     """Resolve a path under base_dir, rejecting traversal."""
+    if (
+        "\x00" in filename
+        or PurePosixPath(filename).is_absolute()
+        or PureWindowsPath(filename).is_absolute()
+    ):
+        return None
     try:
         resolved = (base_dir / filename).resolve()
         resolved.relative_to(base_dir.resolve())

@@ -192,7 +192,8 @@ class TestKubernetesExampleDiscovery:
             # which are supplied by the documentation port.
             assert "AIPerfSweep" in kinds
         assert any(
-            "deploy/helm/aiperf-operator/templates/NOTES.txt" in e.source_id
+            "deploy/helm/aiperf-operator/templates/NOTES.txt"
+            in Path(e.source_id).as_posix()
             for e in _EXAMPLES
         )
 

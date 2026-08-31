@@ -50,6 +50,8 @@ class TestRefusalPolicyMatchesResolution:
             param("aggregate/.hidden.json", id="dotted-leaf"),
             param("../aggregate.json", id="parent-traversal"),
             param("/tmp/aggregate.json", id="absolute-path"),
+            param(r"C:\\tmp\\aggregate.json", id="windows-absolute-path"),
+            param(r"..\\aggregate.json", id="windows-parent-traversal"),
             param("", id="empty-name"),
         ],
     )  # fmt: skip
