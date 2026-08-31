@@ -41,7 +41,13 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         self.model_endpoint = model_endpoint
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
-        """Get endpoint headers (auth + user custom). Override to customize."""
+        """Get endpoint headers (auth + user custom). Override to customize.
+
+        Per-turn headers (``Turn.extra_headers``) are merged downstream in
+        ``BaseTransportProtocol.build_headers`` — case-insensitively per
+        RFC 7230 — so a trace-row ``authorization`` replaces the
+        ``Authorization`` set here rather than producing two wire headers.
+        """
         cfg = self.model_endpoint.endpoint
         headers = dict(cfg.headers) if cfg.headers else {}
         if cfg.api_key:
