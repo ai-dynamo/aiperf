@@ -457,6 +457,7 @@ class TestResponsesEndpoint:
         assert payload["input"][1]["role"] == "assistant"
         assert payload["input"][2]["content"] == "Third"
         assert payload["model"] == "m3"
+        assert "previous_response_id" not in payload
 
     def test_format_payload_filters_empty_multimodal_content(
         self, endpoint, model_endpoint
@@ -1089,28 +1090,6 @@ class TestResponsesStatefulChaining:
             ]
         )
         assert endpoint.extract_response_id(record) is None
-
-    def test_format_payload_turn0_without_previous_response_id_sends_full_history(
-        self, endpoint: ResponsesEndpoint
-    ) -> None:
-        turn0 = Turn(
-            role="user",
-            texts=[Text(contents=["First message"])],
-        )
-        turn1 = Turn(
-            role="user",
-            texts=[Text(contents=["Second message"])],
-        )
-        request_info = create_request_info(
-            model_endpoint=endpoint.model_endpoint,
-            turns=[turn0, turn1],
-            previous_response_id=None,
-        )
-        payload = endpoint.format_payload(request_info)
-        assert "previous_response_id" not in payload
-        assert len(payload["input"]) == 2
-        assert payload["input"][0]["content"] == "First message"
-        assert payload["input"][1]["content"] == "Second message"
 
     def test_format_payload_turn1_with_previous_response_id_sends_only_latest(
         self, endpoint: ResponsesEndpoint

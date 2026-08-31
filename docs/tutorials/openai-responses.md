@@ -282,6 +282,17 @@ When chaining is active with `--endpoint-type responses`:
 `*_with_responses` context modes carry full per-turn history and are left
 unchained to avoid sending the conversation twice.
 
+Chaining is also limited to the session-driven request path. Pre-encoded
+datasets (`--input-file` payloads sent verbatim) bypass session tracking, so
+their requests are sent exactly as authored and are never chained — author
+`previous_response_id` into those payloads yourself if you need it.
+
+The startup requirement above inspects the endpoint-level `--extra-inputs`. If
+`store: true` is instead supplied per turn (via a dataset turn's `extra_body`),
+it cannot be seen at startup, but chaining still triggers the one-time runtime
+warning that client-side ISL undercounts the server-side prompt — enable
+`--use-server-token-count` in that case too.
+
 > **Input Sequence Length note:** because a chained turn only puts the newest turn
 > on the wire (the prior history lives server-side), the default client-side ISL
 > reflects just that turn and undercounts the prompt the server actually prefills.
