@@ -27,7 +27,7 @@ import { jobs as jobsSignal, freshness, clearFreshnessSource } from '../lib/stat
 import { FreshnessPill, StaleBanner } from '../components/freshness.js';
 import { fmtNumber, fmtInt, fmtThroughput, fmtBytes, fmtMilliseconds, fmtReqPerSecond } from '../lib/format.js';
 import { ServerMetricsSection } from '../components/server-metrics/index.js';
-import { RelaunchButton, redactConfigForYaml } from '../components/relaunch-button.js';
+import { redactConfigForYaml } from '../lib/config-redaction.js';
 import { ArtifactsCard } from '../components/artifacts-card.js';
 import { TokenModal } from '../components/token-modal.js';
 
@@ -2033,11 +2033,6 @@ export function JobDetail({ namespace, name, epoch }) {
               ${cancelError && html`
                 <span style=${'font-size: var(--font-size-xs); color: ' + colors.error}>Cancel failed: ${cancelError}</span>
               `}
-            </div>
-          `}
-          ${isTerminal && jobConfig?.spec && html`
-            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1)">
-              <${RelaunchButton} namespace=${namespace} name=${name} config=${jobConfig} />
             </div>
           `}
         </div>

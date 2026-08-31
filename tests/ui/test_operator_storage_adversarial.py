@@ -12,13 +12,11 @@ from tests.ui.node_utils import run_node
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _UI_ROOT = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui"
-_LAUNCH_JS = _UI_ROOT / "pages" / "launch.js"
-_RELAUNCH_BUTTON_JS = _UI_ROOT / "components" / "relaunch-button.js"
+_CONFIG_REDACTION_JS = _UI_ROOT / "lib" / "config-redaction.js"
 _JOB_TABLE_JS = _UI_ROOT / "components" / "job-table.js"
 _THEME_SWITCH_JS = _UI_ROOT / "lib" / "theme-switch.js"
 _INDEX_HTML = _UI_ROOT / "index.html"
 
-_PREFILL_KEY = "aiperf.launch.prefill"
 _HIDDEN_COLS_KEY = "aiperf-ui-v1.job-table.hidden-cols"
 _THEME_KEY = "aiperfTheme"
 
@@ -71,52 +69,9 @@ def _storage_literal_keys(source: str) -> list[str]:
     )
 
 
-def test_relaunch_prefill_quota_or_security_errors_block_navigation() -> None:
-    """QuotaExceededError/SecurityError must not navigate to an empty Launch page."""
-    body = _function_body(_source(_RELAUNCH_BUTTON_JS), "RelaunchButton")
-
-    set_pos = body.index(f"sessionStorage.setItem('{_PREFILL_KEY}'")
-    catch_pos = body.index("catch (err)", set_pos)
-    warn_pos = body.index(
-        "console.warn('Unable to prepare launch prefill', err);", catch_pos
-    )
-    return_pos = body.index("return;", warn_pos)
-    navigate_pos = body.index("navigate('/launch')")
-
-    assert set_pos < catch_pos < warn_pos < return_pos < navigate_pos
-
-
-def test_launch_prefill_malformed_json_and_stale_ttl_are_ignored() -> None:
-    """Bad or stale sessionStorage payloads should be consumed without mutating editor state."""
-    body = _function_body(_source(_LAUNCH_JS), "Launch")
-
-    parse_pos = body.index("JSON.parse(raw)")
-    parse_catch_pos = body.index("catch (_e) { return; }", parse_pos)
-    yaml_type_pos = body.index("typeof payload.yaml !== 'string'", parse_catch_pos)
-    stale_pos = body.index("Date.now() - payload.at > 60000", yaml_type_pos)
-    set_yaml_pos = body.index("setYaml(payload.yaml)", stale_pos)
-
-    assert parse_pos < parse_catch_pos < yaml_type_pos < stale_pos < set_yaml_pos
-
-
-def test_launch_prefill_is_one_shot_even_when_payload_is_malformed_or_stale() -> None:
-    """The handoff key must be removed before JSON/TTL validation to prevent replay loops."""
-    body = _function_body(_source(_LAUNCH_JS), "Launch")
-
-    get_pos = body.index(f"sessionStorage.getItem('{_PREFILL_KEY}')")
-    remove_pos = body.index(f"sessionStorage.removeItem('{_PREFILL_KEY}')")
-    parse_pos = body.index("JSON.parse(raw)")
-    stale_pos = body.index("Date.now() - payload.at > 60000")
-
-    assert get_pos < remove_pos < parse_pos < stale_pos
-    assert body.count(f"sessionStorage.removeItem('{_PREFILL_KEY}')") == 1
-
-
 def test_storage_keys_do_not_collide_between_session_and_local_preferences() -> None:
     """Web Storage keys should be purpose-specific so writes cannot overwrite unrelated state."""
     sources = {
-        "launch.js": _source(_LAUNCH_JS),
-        "relaunch-button.js": _source(_RELAUNCH_BUTTON_JS),
         "job-table.js": _source(_JOB_TABLE_JS),
         "theme-switch.js": _source(_THEME_SWITCH_JS),
         "index.html": _source(_INDEX_HTML),
@@ -124,10 +79,7 @@ def test_storage_keys_do_not_collide_between_session_and_local_preferences() -> 
     literal_keys = {name: _storage_literal_keys(src) for name, src in sources.items()}
     all_literal_keys = [key for keys in literal_keys.values() for key in keys]
 
-    assert literal_keys["launch.js"] == [_PREFILL_KEY, _PREFILL_KEY]
-    assert literal_keys["relaunch-button.js"] == [_PREFILL_KEY]
     assert _HIDDEN_COLS_KEY in _source(_JOB_TABLE_JS)
-    assert _PREFILL_KEY != _HIDDEN_COLS_KEY
     # The theme preference key is intentionally gone (see the dark-only guard
     # below), so it can no longer collide with anything.
     assert _THEME_KEY not in all_literal_keys
@@ -137,11 +89,8 @@ def test_relaunch_storage_payload_redacts_sensitive_data_before_serializing() ->
     """The pure redaction helper should scrub nested secret-like keys before sessionStorage."""
     script = f"""
         import fs from 'node:fs';
-        const source = fs.readFileSync({json.dumps(str(_RELAUNCH_BUTTON_JS))}, 'utf8');
-        const helpers = source
-          .slice(0, source.indexOf('/**\\n * Minimal YAML serializer'))
-          .replace(/^import .*$/gm, '')
-          .replace(/export /g, '');
+        const source = fs.readFileSync({json.dumps(str(_CONFIG_REDACTION_JS))}, 'utf8');
+        const helpers = source.replace(/export /g, '');
         eval(helpers + `
           const redacted = redactConfigForYaml({{
             endpoint: {{

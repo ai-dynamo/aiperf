@@ -177,20 +177,3 @@ def test_sweep_detail_has_initial_error_loading_pending_child_and_artifact_state
     assert "running: 'No aggregate artifacts yet.'" in source
     assert "Sweep is being initialized — children will appear here shortly." in source
     assert "No children persisted for this epoch yet." in source
-
-
-def test_launch_page_has_no_cold_loading_state_but_covers_submit_parse_error_http_error_and_success() -> (
-    None
-):
-    source = _source("launch.js")
-
-    assert "useState(() => buildTemplates())" in source
-    assert "sessionStorage.removeItem('aiperf.launch.prefill')" in source
-    assert "setState({ kind: 'submitting' })" in source
-    assert "Launching…" in source
-    assert "Created <" in source
-    assert "launch-success" in source
-    assert "launch-parse-err" in source
-    assert "YAML · ${peek.parseError}" in source
-    assert "launch-err" in source
-    assert "HTTP ${state.status}" in source

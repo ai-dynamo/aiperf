@@ -10,7 +10,6 @@ const PAGES = [
   { label: 'Dashboard', path: '/' },
   { label: 'Jobs', path: '/jobs' },
   { label: 'Sweeps', path: '/sweeps' },
-  { label: 'Launch', path: '/launch' },
   { label: 'Leaderboard', path: '/leaderboard' },
   { label: 'Compare', path: '/compare' },
   { label: 'History', path: '/history' },

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Static edge tests for operator UI config display and relaunch behavior."""
+"""Static edge tests for operator UI config display behavior."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _UI_ROOT = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui"
 _JOB_DETAIL_JS = _UI_ROOT / "pages" / "job-detail.js"
-_RELAUNCH_BUTTON_JS = _UI_ROOT / "components" / "relaunch-button.js"
 
 
 SENSITIVE_KEYS = (
@@ -67,20 +66,6 @@ def test_job_config_yaml_viewer_redacts_secret_like_fields_before_serializing() 
     )
 
 
-def test_relaunch_prefill_redacts_secret_like_fields_before_session_storage() -> None:
-    """Re-launch prefill lives in sessionStorage, so it must not copy raw secrets."""
-    src = _source(_RELAUNCH_BUTTON_JS)
-    body = _function_body(src, "RelaunchButton")
-
-    assert "redact" in src.lower(), (
-        "relaunch should scrub credentials before writing sessionStorage"
-    )
-    assert all(key in src for key in SENSITIVE_KEYS)
-    assert "spec," not in body, (
-        "raw spec should not be embedded in the prefilled manifest"
-    )
-
-
 def test_missing_config_fetch_does_not_leave_job_detail_in_permanent_loading_state() -> (
     None
 ):
@@ -109,18 +94,6 @@ def test_nested_benchmark_and_sweep_config_are_addressed_by_summary_logic() -> N
     assert "spec.sweep" in body or "benchmark.sweep" in body
 
 
-def test_yaml_serializers_quote_urls_so_launch_parser_does_not_split_on_colons() -> (
-    None
-):
-    """The display and relaunch YAML emitters should share URL-safe quoting rules."""
-    job_src = _source(_JOB_DETAIL_JS)
-    relaunch_src = _source(_RELAUNCH_BUTTON_JS)
-
-    assert "/^[\\w./@\\-+]+$/" in relaunch_src
-    assert "/^[\\w./@\\-+]+$/" in job_src
-    assert "/^[\\w./:@\\-+]+$/" not in job_src
-
-
 def test_config_modal_uses_yaml_download_and_preserves_long_nested_values() -> None:
     """Long JSON-ish/YAML values should remain readable and downloadable as YAML."""
     src = _source(_JOB_DETAIL_JS)
@@ -139,21 +112,3 @@ def test_config_modal_uses_yaml_download_and_preserves_long_nested_values() -> N
     css = (_JOB_DETAIL_JS.parents[1] / "style.css").read_text(encoding="utf-8")
     rule = css.split(".job-config-item-value {", 1)[1].split("}", 1)[0]
     assert "text-overflow: ellipsis" in rule
-
-
-def test_relaunch_button_only_renders_for_non_empty_specs_and_keeps_source_identity() -> (
-    None
-):
-    """Relaunch assumes a CR-shaped config and should preserve source metadata in the handoff."""
-    src = _source(_RELAUNCH_BUTTON_JS)
-    body = _function_body(src, "RelaunchButton")
-
-    assert "const spec = config?.spec;" in body
-    assert (
-        "if (!spec || Object.keys(spec).length === 0 || !namespace || !name) return null;"
-        in body
-    )
-    assert "sourceNs: namespace" in body
-    assert "sourceName: name" in body
-    assert "kind: config.kind ?? 'AIPerfJob'" in body
-    assert "apiVersion: config.apiVersion ?? 'aiperf.nvidia.com/v1alpha1'" in body

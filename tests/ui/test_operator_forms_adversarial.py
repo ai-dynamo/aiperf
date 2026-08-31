@@ -13,7 +13,6 @@ UI_DIR = Path(__file__).resolve().parents[2] / "src" / "aiperf" / "operator" / "
 JOBS_PATH = UI_DIR / "pages" / "jobs.js"
 COMPARE_PATH = UI_DIR / "pages" / "compare.js"
 COMPARE_FILTERS_PATH = UI_DIR / "pages" / "compare-filters.js"
-LAUNCH_PATH = UI_DIR / "pages" / "launch.js"
 EPOCH_SELECTOR_PATH = UI_DIR / "components" / "epoch-selector.js"
 METRIC_SELECTOR_PATH = UI_DIR / "components" / "metric-selector.js"
 
@@ -85,10 +84,9 @@ def test_jobs_enter_key_commits_pending_search_without_waiting_for_debounce() ->
     assert "e.preventDefault(); setQuery({ q: searchText });" in source
 
 
-def test_keyboard_shortcuts_cover_button_like_chips_and_launch_editor() -> None:
+def test_keyboard_shortcuts_cover_button_like_chips() -> None:
     jobs = _source(JOBS_PATH)
     compare = _source(COMPARE_PATH)
-    launch = _source(LAUNCH_PATH)
 
     assert "if (e.key === 'Enter' || e.key === ' ')" in jobs
     assert "onkeydown=${chipKeyHandler(() => setQuery({ ns: undefined }))}" in jobs
@@ -100,9 +98,6 @@ def test_keyboard_shortcuts_cover_button_like_chips_and_launch_editor() -> None:
     assert "if (e.key === 'Enter' || e.key === ' ')" in compare
     assert 'data-testid="compare-clear-filters"' in compare
     assert 'data-testid="compare-chips-toggle"' in compare
-
-    assert "if ((e.ctrlKey || e.metaKey) && e.key === 'Enter')" in launch
-    assert "if (state.kind !== 'submitting') launch();" in launch
 
 
 def test_metric_selector_rejects_values_that_are_not_options() -> None:
@@ -119,23 +114,6 @@ def test_epoch_selector_maps_latest_sentinel_and_preserves_epoch_values() -> Non
     assert "onPick(v === '__latest__' ? undefined : v);" in source
     assert '<option value="__latest__">' in source
     assert "<option key=${e.epoch} value=${e.epoch}>" in source
-
-
-def test_launch_submit_handler_rechecks_disabled_state_inside_action() -> None:
-    source = _source(LAUNCH_PATH)
-    handler = source[
-        source.index("async function launch") : source.index("function copyYaml")
-    ]
-
-    assert "const canSubmit = state.kind !== 'submitting'" in source
-    assert "&& state.kind !== 'ok'" in source
-    assert "disabled=${!canSubmit}" in source
-    assert "const submitGuardRef = useRef({ canSubmit, yaml });" in source
-    assert "const guard = submitGuardRef.current;" in handler
-    assert "if (!guard.canSubmit) return;" in handler
-    assert "const yaml = guard.yaml;" in handler
-    assert "manifest = parseLaunchManifest(yaml);" in handler
-    assert "submitGuardRef.current = { canSubmit: false, yaml };" in handler
 
 
 def test_compare_disabled_submit_bypass_is_guarded_in_handler() -> None:

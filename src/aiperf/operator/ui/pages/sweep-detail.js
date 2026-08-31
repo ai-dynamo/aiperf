@@ -27,7 +27,6 @@ import { LoadingPanel } from '../components/spinner.js';
 import { fmtBytes, fmtMilliseconds, fmtNumber, fmtReqPerSecond } from '../lib/format.js';
 import { buildJobPath, navigate, query, setQuery } from '../lib/router.js';
 import { buildSweepVariations, isVariationFeasible, pickObjectiveWinner, pickSweepWinner, resolveSweepManifest, shouldShowSweepDiagnostics, sweepPhaseMode } from './sweep-detail-helpers.js';
-import { RelaunchButton } from '../components/relaunch-button.js';
 
 // ``archived`` is included so polling stops for sweeps whose live CR
 // has been deleted but whose aggregate.json is still served from the
@@ -147,7 +146,6 @@ export function SweepDetail({ namespace, name, epoch }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlAxis]);
   const [error, setError] = useState(null);
-  const [sweepConfig, setSweepConfig] = useState(null);
   // Mirrors job-detail's ``liveStale``: flips true when a poll throws
   // after the first successful detail load. Lets the header indicator
   // downgrade Live → Stale without nuking the rest of the page on a
@@ -208,15 +206,6 @@ export function SweepDetail({ namespace, name, epoch }) {
     let cancelled = false;
     api.getSweepCells(namespace, name, epoch)
       .then(d => { if (!cancelled) setCells(d); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [namespace, name, epoch]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSweepConfig(null);
-    api.getSweepConfig(namespace, name, epoch)
-      .then(d => { if (!cancelled) setSweepConfig(d); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [namespace, name, epoch]);
@@ -622,11 +611,6 @@ export function SweepDetail({ namespace, name, epoch }) {
             `}
           </div>
         </div>
-        ${sweepConfig?.spec && html`
-          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); margin-left: auto; align-self: flex-start">
-            <${RelaunchButton} namespace=${namespace} name=${s.name} config=${sweepConfig} />
-          </div>
-        `}
       </header>
 
       <${StaleBanner} source=${sweepFreshness} label="Sweep detail" />

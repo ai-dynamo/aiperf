@@ -558,7 +558,6 @@ The dashboard provides:
 - **Dashboard** -- Overview with KPI cards, active jobs, and throughput trends
 - **Jobs** -- Sortable table of all benchmark jobs with phase filters
 - **Job Detail** -- Live metrics, charts, phase progress, and pod status for a single job
-- **Launch** -- Submit a new AIPerfJob from the browser
 - **Leaderboard** -- Rank benchmark runs by any metric
 - **Compare** -- Side-by-side comparison of multiple jobs
 - **History** -- Time-series charts showing metrics across runs

@@ -4498,7 +4498,6 @@ select, input {
 }
 
 .btn--primary,
-.launch-action,
 button[type="submit"] {
   background: var(--accent);
   border-color: var(--accent);
@@ -4506,7 +4505,6 @@ button[type="submit"] {
 }
 
 .btn--primary:hover,
-.launch-action:hover,
 button[type="submit"]:hover {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
@@ -5336,13 +5334,6 @@ button[type="submit"]:hover {
   margin-top: 2px;
   padding-left: 14px;
   color: var(--dim);
-}
-
-.job-detail [data-testid="run-relaunch"] {
-  border-color: var(--border) !important;
-  border-radius: 2px !important;
-  background: transparent !important;
-  color: var(--text) !important;
 }
 
 .job-detail .conditions--empty {

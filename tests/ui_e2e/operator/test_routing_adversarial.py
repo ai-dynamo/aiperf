@@ -461,33 +461,6 @@ def test_palette_enter_on_page_match_navigates(harness):
     )
 
 
-def test_launch_token_modal_traps_keyboard_focus(harness):
-    """Tab traversal stays within the token dialog's enabled controls."""
-    page = harness.goto("/launch")
-    page.get_by_test_id("launch-submit").click()
-    token_input = page.get_by_test_id("token-modal-input")
-    token_input.fill("test-token")
-
-    token_input.focus()
-    page.keyboard.press("Shift+Tab")
-    assert page.evaluate("() => document.activeElement?.dataset.testid") == (
-        "token-modal-confirm"
-    )
-    page.keyboard.press("Tab")
-    assert page.evaluate("() => document.activeElement?.dataset.testid") == (
-        "token-modal-input"
-    )
-
-    page.keyboard.press("Tab")
-    assert page.evaluate("() => document.activeElement?.dataset.testid") == (
-        "token-modal-cancel"
-    )
-    page.keyboard.press("Shift+Tab")
-    assert page.evaluate("() => document.activeElement?.dataset.testid") == (
-        "token-modal-input"
-    )
-
-
 # ===========================================================================
 # 11. Topnav cross-links
 # ===========================================================================

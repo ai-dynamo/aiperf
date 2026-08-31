@@ -85,8 +85,8 @@ itself — whoever can reach port 8081 inside the cluster (or through a forward)
 can view every job and every result. Do not expose this port via an
 unauthenticated Ingress.
 
-Mutating actions (launch a job or sweep, cancel a run) *are* reachable from the
-browser, but only through the operator's bearer token. `lib/api.js` routes them
+Mutating actions (cancel a run) *are* reachable from the browser, but only
+through the operator's bearer token. `lib/api.js` routes them
 through `mutatingFetch`, which requires a token in `sessionStorage`; the first
 attempt without one raises a `TOKEN_REQUIRED` error, the page opens
 `components/token-modal.js` to collect it, and the action retries. A `401`
@@ -122,7 +122,6 @@ configuration. The full route table (`src/aiperf/operator/ui/app.js:52-86`):
 | `/compare` | `Compare` | Multi-run comparison (metric table, bar/Pareto charts). |
 | `/compare/:ns/:name/:epochA/:epochB` | `CompareEpochs` | Two-epoch diff of one run. |
 | `/history` | `History` | A metric's value over time across runs. |
-| `/launch` | `Launch` | YAML editor that can copy or submit a manifest (see below). |
 
 Any other path renders a "Not Found" stub.
 
@@ -134,7 +133,6 @@ flowchart TB
     lb["/leaderboard"]
     cmp["/compare"] --> CompareEpochs["/compare/:ns/:name/:a/:b"]
     hist["/history"]
-    launch["/launch"]
 ```
 
 ### Operator top bar
@@ -143,7 +141,7 @@ flowchart TB
 `AIPerf Operator` logo and two labelled tab groups on the left, the search
 trigger on the right.
 
-- **OPERATE:** Dashboard, Jobs, Sweeps, Launch.
+- **OPERATE:** Dashboard, Jobs, Sweeps.
 - **ANALYZE:** Leaderboard, Compare, History.
 
 When `/api/v1/config/features` reports `dashboard_enabled: true`, a third
@@ -159,26 +157,6 @@ Below the top bar, in the workspace chrome, `Breadcrumb`
 **route-path** breadcrumb derived from the current hash — e.g. `Jobs / <ns> /
 <name> / runs / <epoch>` on a job-epoch route. It is a plain path trail with
 clickable ancestors; there is **no** namespace dropdown or namespace switcher.
-
-### Launch helper
-
-`/launch` (`pages/launch.js`) is a YAML editor with template tabs and two
-actions: **Copy** and **Launch**. Copy puts the manifest on the clipboard for
-`kubectl apply -f`; Launch parses the YAML locally (exactly one document,
-non-empty, `metadata.name` present), then POSTs it — `api.createSweep()` for
-`kind: AIPerfSweep`, `api.createJob()` otherwise. Both are mutating routes, so
-the first attempt without a stored token opens the token modal and retries on
-confirm. On success the page reports the created namespace/name.
-
-If the operator has mutating routes disabled, the POST returns `403` and the
-error surfaces inline; fall back to copying the YAML:
-
-```bash
-kubectl apply -f benchmark.yaml
-```
-
-The page can be pre-filled from a completed run via the "Re-launch" button on
-the job workbench (handed off through `sessionStorage`, not a POST).
 
 ### External Plots link
 
@@ -352,11 +330,6 @@ the URL. `GET /api/v1/analytics/history?metric=&stat=&namespace=&model=&endpoint
 — the filters are pushed to the server *and* re-applied client-side, and the
 table warns "may be truncated" once the response hits the 10000-row request cap.
 
-### Launch (`/launch`)
-
-YAML helper — see [Launch helper](#launch-helper) under Navigation. Copy the
-manifest, or submit it directly with the operator's bearer token.
-
 ### Log strip (bottom bar)
 
 `LogStrip` (`components/log-strip.js`) is an always-on strip pinned to the
@@ -377,7 +350,7 @@ the same modal.
 
 The palette (`components/command-palette.js:9-17`) indexes:
 
-- The seven nav pages — Dashboard, Jobs, Sweeps, Launch, Leaderboard, Compare,
+- The six nav pages — Dashboard, Jobs, Sweeps, Leaderboard, Compare,
   History — each with the sub-label "Page".
 - Every AIPerfJob from the current `jobs` signal — sub-label `ns: <namespace>`,
   selecting navigates to that job's workbench (`/jobs/<ns>/<name>`, pinned to
@@ -474,9 +447,9 @@ port across reconnects, so an open browser tab keeps working after a rollout
 that terminates the operator pod — no need to re-run the command. Press
 `Ctrl+C` to stop the forward.
 
-### Launch or cancel fails from the dashboard
+### Cancel fails from the dashboard
 
-Launch and cancel are never unauthenticated: the browser must supply the
+Cancel is never unauthenticated: the browser must supply the
 operator's bearer token. A `401` means the token you entered is wrong (the SPA
 discards it and re-prompts); a `403` means the server has mutating routes turned
 off entirely, or has them on with no token configured, and no browser input can

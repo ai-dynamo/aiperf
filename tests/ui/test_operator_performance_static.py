@@ -24,11 +24,8 @@ _ALLOWED_JSON_STRINGIFY_CALLS = {
     # persistence is not a render or effect diff, which is what this guard exists
     # to catch. Was line 52; moved when readoutDecimals was added above it.
     ("components/job-table.js", 72),
-    ("components/relaunch-button.js", 147),
     ("components/server-metrics/helpers.js", 173),
     ("lib/api.js", 112),
-    ("lib/api.js", 239),  # createJob POST body — bounded transport, not render/diff
-    ("lib/api.js", 249),  # createSweep POST body — bounded transport, not render/diff
     ("lib/job-ws.js", 127),
 }
 
@@ -41,7 +38,7 @@ _ALLOWED_JSON_STRINGIFY_EFFECT_DEPS = {
     # the children-fetch skip gained its rationale comment, then 332 after the
     # state-aware sweep presentation helpers were moved, then 328 after the
     # sweepConfig state + effect were inserted above this block.
-    ("pages/sweep-detail.js", 328),
+    ("pages/sweep-detail.js", 317),
 }
 
 # Module-singleton listeners live for the app lifetime; component listeners must clean up.

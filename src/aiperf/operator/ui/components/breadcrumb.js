@@ -93,7 +93,6 @@ function buildSegments(currentRoute) {
   const PAGE_LABELS = {
     '/jobs': 'Jobs',
     '/sweeps': 'Sweeps',
-    '/launch': 'Launch',
     '/leaderboard': 'Leaderboard',
     '/compare': 'Compare',
     '/history': 'History',

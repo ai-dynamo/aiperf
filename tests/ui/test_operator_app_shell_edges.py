@@ -24,17 +24,17 @@ def _source(path: Path) -> str:
     return path.read_text()
 
 
-def test_launch_route_is_represented_in_all_app_shell_navigation_surfaces() -> None:
-    """The Launch page should not be reachable only from the top nav."""
+def test_launch_route_is_absent_from_all_app_shell_navigation_surfaces() -> None:
+    """The removed Launch page must have no remaining app-shell entry point."""
     app_source = _source(APP_PATH)
     top_nav_source = _source(TOP_NAV_PATH)
     breadcrumb_source = _source(BREADCRUMB_PATH)
     command_palette_source = _source(COMMAND_PALETTE_PATH)
 
-    assert "currentRoute === '/launch'" in app_source
-    assert "{ path: '/launch', label: 'Launch' }" in top_nav_source
-    assert "'/launch': 'Launch'" in breadcrumb_source
-    assert "{ label: 'Launch', path: '/launch' }" in command_palette_source
+    assert "/launch" not in app_source
+    assert "/launch" not in top_nav_source
+    assert "/launch" not in breadcrumb_source
+    assert "/launch" not in command_palette_source
 
 
 def test_top_nav_active_state_matches_path_segment_boundaries() -> None:
@@ -55,7 +55,6 @@ def test_command_palette_search_covers_every_internal_top_nav_destination() -> N
         "/",
         "/jobs",
         "/sweeps",
-        "/launch",
         "/leaderboard",
         "/compare",
         "/history",

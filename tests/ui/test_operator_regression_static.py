@@ -21,23 +21,6 @@ def test_router_decodes_route_and_query_segments_safely() -> None:
     assert "params[pp.slice(1)] = safeDecodeURIComponent(vp)" in source
 
 
-def test_launch_rejects_yaml_prototype_pollution_keys() -> None:
-    source = _source("pages", "launch.js")
-
-    assert (
-        "const DANGEROUS_YAML_KEYS = new Set(['__proto__', 'constructor', 'prototype'])"
-        in source
-    )
-    assert "function assertSafeYamlKey(key, lineNo = null)" in source
-    assert (
-        "throw new Error(`${location}: key '${key}' is not allowed in launch YAML.`)"
-        in source
-    )
-    assert "Object.getPrototypeOf(value) !== Object.prototype" in source
-    assert "assertSafeYamlKey(key)" in source
-    assert "return sanitizeParsedYaml(documents[0]);" in source
-
-
 def test_sweep_detail_uses_archived_child_manifest_fallback() -> None:
     helper_source = _source("pages", "sweep-detail-helpers.js")
     page_source = _source("pages", "sweep-detail.js")
@@ -136,28 +119,3 @@ def test_diagnostics_archived_views_fall_back_to_surviving_tabs() -> None:
         in job_source
     )
     assert "archived=${!viewingCurrentRun}" in job_source
-
-
-def test_relaunch_config_prefill_redacts_raw_secret_values_when_available() -> None:
-    source = _source("components", "relaunch-button.js")
-
-    assert "const SENSITIVE_CONFIG_KEYS = [" in source
-    for key in [
-        "api_key",
-        "apiKey",
-        "authorization",
-        "bearerToken",
-        "client_secret",
-        "password",
-        "secret",
-        "secretRef",
-        "token",
-    ]:
-        assert f"'{key}'" in source
-    assert "function isSensitiveConfigKey(key)" in source
-    assert "export function redactConfigForYaml(value)" in source
-    assert (
-        "isSensitiveConfigKey(key) ? '[REDACTED]' : redactConfigForYaml(item)" in source
-    )
-    assert "spec: redactConfigForYaml(spec)" in source
-    assert "spec:" in source and "spec: spec" not in source

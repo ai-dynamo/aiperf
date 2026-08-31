@@ -233,28 +233,9 @@ export const api = {
     return getSweepLogs(ns, name, opts);
   },
 
-  /** Create an AIPerfJob from a parsed manifest object. Requires a bearer token
-   *  stored in sessionStorage (enter once via the UI token prompt). */
-  createJob(manifest) {
-    return mutatingFetch('/jobs', { method: 'POST', body: JSON.stringify({ manifest }) });
-  },
-
-  /** Cancel a running job. Requires a bearer token (see createJob). */
+  /** Cancel a running job. Requires a bearer token. */
   cancelJob(ns, name) {
     return mutatingFetch(`/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/cancel`, { method: 'POST' });
-  },
-
-  /** Create an AIPerfSweep from a parsed manifest object. Requires a bearer token. */
-  createSweep(manifest) {
-    return mutatingFetch('/sweeps', { method: 'POST', body: JSON.stringify({ manifest }) });
-  },
-
-  /** Fetch the full raw spec of an AIPerfSweep for re-launch prefill. */
-  getSweepConfig(ns, name, epoch = null) {
-    const params = new URLSearchParams();
-    if (epoch) params.set('epoch', String(epoch));
-    const query = params.size ? `?${params}` : '';
-    return apiFetch(`/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/config${query}`);
   },
 
   /** Get cluster-level info */

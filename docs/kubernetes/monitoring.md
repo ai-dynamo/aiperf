@@ -451,7 +451,6 @@ Then open [http://localhost:8081](http://localhost:8081) in your browser.
 - **Jobs Tab** -- Sortable table of all benchmark jobs with phase filters (Running, Completed, Failed)
 - **Job Detail Page** -- Live metrics, charts, phase progress bar, and pod status for a single job
 - **Sweeps Tab** -- Table of AIPerfSweeps with per-sweep drill-down (variation curves, Pareto, children)
-- **Launch Tab** -- Read-only YAML helper for scaffolding a manifest (copy-only; browser submission is disabled)
 - **Leaderboard Tab** -- Rank benchmark runs by any metric (throughput, latency percentiles, etc.)
 - **Compare Tab** -- Side-by-side comparison of multiple jobs to identify performance differences
 - **History Tab** -- Time-series charts showing how metrics evolve across all your benchmark runs

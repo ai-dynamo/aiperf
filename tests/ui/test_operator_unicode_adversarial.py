@@ -14,7 +14,6 @@ _UI_ROOT = _REPO_ROOT / "src" / "aiperf" / "operator" / "ui"
 _ROUTER_PATH = _UI_ROOT / "lib" / "router.js"
 _JOB_TABLE_PATH = _UI_ROOT / "components" / "job-table.js"
 _PILLS_PATH = _UI_ROOT / "components" / "pills.js"
-_RELAUNCH_PATH = _UI_ROOT / "components" / "relaunch-button.js"
 _API_PATH = _UI_ROOT / "lib" / "api.js"
 _EVENTS_TAB_PATH = _UI_ROOT / "components" / "diagnostics-events-tab.js"
 _LOGS_TAB_PATH = _UI_ROOT / "components" / "diagnostics-logs-tab.js"
@@ -131,20 +130,6 @@ def _pills_script(expression: str) -> str:
           return out;
         }}
 
-        {expression}
-    """
-
-
-def _relaunch_script(expression: str) -> str:
-    return f"""
-        import fs from 'node:fs';
-        const source = fs.readFileSync({str(_RELAUNCH_PATH)!r}, 'utf8')
-          .replace(new RegExp('^import .*;\\n', 'gm'), '')
-          .replace(/export function /g, 'function ');
-        function html() {{}}
-        const palette = {{ green: '#a6e3a1' }};
-        function navigate() {{}}
-        eval(source + '\\nglobalThis.serializeYaml = serializeYaml;');
         {expression}
     """
 
@@ -331,24 +316,6 @@ def test_job_table_sorts_unicode_labels_deterministically_and_preserves_text() -
     ]
     assert ADV_JOB in out["text"]
     assert "東京-job" in out["text"]
-
-
-def test_yaml_serializer_quotes_unicode_rtl_control_and_multiline_strings() -> None:
-    script = _relaunch_script(
-        f"""
-        const yaml = serializeYaml({{
-          metadata: {{ name: {json.dumps(ADV_JOB)}, namespace: {json.dumps(ADV_NS)} }},
-          spec: {{ model: {json.dumps(ADV_MODEL)}, prompt: {json.dumps(ADV_MESSAGE)} }},
-        }});
-        console.log(JSON.stringify(yaml));
-        """
-    )
-
-    yaml = json.loads(run_node(script))
-    assert "name: 'job-שלום-‮abc\x00'" in yaml
-    assert "namespace: '研究‮-ns\x1f'" in yaml
-    assert "model: 'mistral/東京‮-7b\x1b'" in yaml
-    assert "prompt: |\n      warning שלום ‮abc\x00\n      next line" in yaml
 
 
 def test_artifact_file_urls_encode_unicode_rtl_control_filename_segments() -> None:

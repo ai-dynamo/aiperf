@@ -129,22 +129,6 @@ def test_archived_children_table_handles_snake_case_child_fields() -> None:
     assert "c.childRunEpoch ?? c.child_run_epoch ?? '---'" in source
 
 
-def test_historical_sweep_requests_config_and_children_at_their_epochs() -> None:
-    """Pinned sweep views must not repopulate from the current sweep or jobs."""
-    api_source = (
-        _REPO_ROOT / "src" / "aiperf" / "operator" / "ui" / "lib" / "api.js"
-    ).read_text(encoding="utf-8")
-    page_source = _SWEEP_DETAIL_PAGE_PATH.read_text(encoding="utf-8")
-
-    assert "getSweepConfig(ns, name, epoch = null)" in api_source
-    assert "params.set('epoch', String(epoch))" in api_source
-    assert "api.getSweepConfig(namespace, name, epoch)" in page_source
-    assert (
-        "api.getJob(c.namespace ?? namespace, c.name, c.childRunEpoch ?? c.child_run_epoch ?? null)"
-        in page_source
-    )
-
-
 def test_diagnostics_only_show_for_active_sweep_phases() -> None:
     script = f"""
         import {{ shouldShowSweepDiagnostics }} from {_SWEEP_DETAIL_HELPERS_PATH.as_uri()!r};

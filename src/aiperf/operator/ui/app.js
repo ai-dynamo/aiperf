@@ -20,7 +20,6 @@ import { CompareEpochs } from './pages/compare-epochs.js';
 import { History } from './pages/history.js';
 import { Sweeps } from './pages/sweeps.js';
 import { SweepDetail } from './pages/sweep-detail.js';
-import { Launch } from './pages/launch.js';
 
 function App() {
   const [showPalette, setShowPalette] = useState(false);
@@ -79,8 +78,6 @@ function App() {
     page = html`<${Compare} />`;
   } else if (currentRoute === '/history') {
     page = html`<${History} />`;
-  } else if (currentRoute === '/launch') {
-    page = html`<${Launch} />`;
   } else {
     page = html`<div class="page-stub"><h2>Not Found</h2><p class="text-dim">${currentRoute}</p></div>`;
   }
