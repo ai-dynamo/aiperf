@@ -357,8 +357,22 @@ def export_records_json(records: list[Record], out_path: Path) -> None:
 
 `scrub_non_finite` recursively walks `dict`/`list`/`tuple` containers and
 rewrites non-finite numeric values to `None`. It leaves `str`/`bytes`/`bool`
-alone and handles numpy scalar types correctly (`numpy.float32`,
-`numpy.float64`).
+alone and normalizes numpy scalars to the native Python type they actually
+mean — `numpy.int64(7)` becomes `7`, not `7.0`, and `numpy.bool_(True)`
+becomes `True`, not `1.0`.
+
+That normalization is load-bearing, not incidental: `orjson.dumps` **raises**
+`TypeError: Type is not JSON serializable: numpy.float64` rather than
+degrading, so a numpy scalar anywhere in a payload aborts the export and
+takes the run down with it. Any code that hands values to an exporter
+(planners, scorers, analysis helpers) should still return native floats —
+`scrub_non_finite` is the backstop, not the excuse.
+
+Most exporters are shielded by accident: they call
+`scrub_non_finite(model.model_dump(mode="json"))`, and Pydantic's JSON-mode
+dump already coerces numpy. Payloads assembled as plain dicts from
+dataclasses (`search_history.json` is the live example) have no such step,
+so `scrub_non_finite` is their only guard.
 
 ### `is_finite_value` for the canonical finiteness check
 
@@ -375,6 +389,11 @@ def maybe_record_throughput(value: float) -> None:
 Use `is_finite_value` instead of `math.isfinite` or `not math.isnan`:
 `isinstance(x, float)` misses numpy scalar types on some numpy versions,
 and `math.isfinite` raises on non-numeric inputs.
+
+It rejects booleans — Python's and numpy's — because a bool is not a metric
+value. That matters for `nan_safe_mean`/`nan_safe_std`, which filter through
+it: admitting `numpy.bool_(True)` as `1.0` would make the same data average
+differently depending only on which bool type produced it.
 
 ### `nan_safe_mean` / `nan_safe_std` for aggregation
 
