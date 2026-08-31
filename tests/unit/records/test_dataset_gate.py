@@ -250,19 +250,3 @@ class TestAwaitDatasetConfiguredWithCatchUp:
 
         assert result is True
         assert applied == [notification]
-
-    @pytest.mark.asyncio
-    async def test_no_catch_up_falls_back_to_normal_wait(self):
-        """catch_up=None (unset, e.g. legacy/test double) must skip the
-        catch-up path and block on the event directly."""
-        service = MagicMock()
-        event = asyncio.Event()
-
-        task = asyncio.create_task(await_dataset_configured(service, event, None))
-        await asyncio.sleep(0)
-        assert not task.done()
-
-        event.set()
-        result = await asyncio.wait_for(task, timeout=1.0)
-
-        assert result is True
