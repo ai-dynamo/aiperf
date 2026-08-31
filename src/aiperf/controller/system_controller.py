@@ -67,6 +67,8 @@ from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.result_join_coordinator import ResultJoinCoordinator
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
+from aiperf.exporters.console_error_exporter import ConsoleErrorExporter
+from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.exporter_manager import ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
@@ -1057,6 +1059,13 @@ class SystemController(SignalHandlerMixin, BaseService):
             if not self._exit_errors:
                 await self._print_post_benchmark_info_and_metrics()
             else:
+                # A mid-run failure (a service failing a lifecycle command, or
+                # crashing) populates ``_exit_errors`` before shutdown and routes
+                # us here, skipping ``_print_post_benchmark_info_and_metrics``
+                # entirely. Export the summary here too, otherwise a run whose
+                # requests also failed loses the error table on exactly the runs
+                # carrying two kinds of failure at once.
+                await self._export_error_summary()
                 self._print_exit_errors_and_log_file()
 
             if Environment.DEV.MODE:
@@ -1090,6 +1099,54 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._print_log_file_info(console)
         console.print()
         console.file.flush()
+
+    async def _export_error_summary(self) -> None:
+        """Print the aggregated per-error breakdown, if any errors were recorded.
+
+        This renders the same Code/Type/Message/Count table that
+        ``ExporterManager`` produces on a partially successful run. The
+        early-return paths in ``_print_post_benchmark_info_and_metrics`` exit
+        before ``ExporterManager`` is constructed, so without this the
+        ``error_summary`` collected during the run is discarded in exactly the
+        runs that carry the least other diagnostic information.
+        """
+        try:
+            if not self._profile_results:
+                return
+            results = self._profile_results.results
+            # ``ProcessRecordsResult.results`` is declared required, but the
+            # PROCESS_RECORDS_RESULT handler still defends against it being
+            # absent (``if not message.results.results``), so match that here
+            # rather than raising AttributeError on ``.error_summary``.
+            if results is None:
+                return
+            if not results.error_summary:
+                return
+
+            console = Console()
+            if console.width < 100:
+                console.width = 100
+
+            exporter = ConsoleErrorExporter(
+                ExporterConfig(
+                    results=results,
+                    cfg=self.run.cfg,
+                    telemetry_results=self._telemetry_results,
+                    server_metrics_results=self._server_metrics_results,
+                    run=self.run,
+                )
+            )
+            await exporter.export(console)
+        except Exception:
+            # Nothing in this method may suppress the exit-error panel and
+            # log-file path that the callers print immediately after. On a run
+            # where every request failed those are the operator's remaining
+            # diagnostics, so the guards are inside the try as well: an
+            # AttributeError while inspecting the results would otherwise
+            # escape and be swallowed by the caller's broad shutdown guard,
+            # taking the panel down with it. ``ExporterManager`` gives this
+            # same exporter equivalent isolation on the normal path.
+            self.exception("Failed to render the error summary table")
 
     def _inject_accuracy_results_into_records(self) -> None:
         """Materialize the dedicated-channel accuracy summary into the profile records.
@@ -1129,6 +1186,7 @@ class SystemController(SignalHandlerMixin, BaseService):
                     service_id=self.id,
                 )
             )
+            await self._export_error_summary()
             self._print_exit_errors_and_log_file()
             return
 
@@ -1145,14 +1203,15 @@ class SystemController(SignalHandlerMixin, BaseService):
                             f"All {results.error_request_count} inference "
                             "request(s) failed. No successful responses were "
                             "collected — check the server URL, endpoint path, "
-                            "and response format. See prior log output for "
-                            "per-request error details."
+                            "and response format. See the error summary table "
+                            "above for the per-error breakdown."
                         ),
                     ),
                     operation="export_results",
                     service_id=self.id,
                 )
             )
+            await self._export_error_summary()
             self._print_exit_errors_and_log_file()
             return
 

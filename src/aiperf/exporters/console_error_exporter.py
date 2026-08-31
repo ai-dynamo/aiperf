@@ -3,6 +3,7 @@
 
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from aiperf.common.models import ErrorDetailsCount
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -35,14 +36,21 @@ class ConsoleErrorExporter:
         for error_details_count in errors_by_type:
             table.add_row(*self._format_row(error_details_count))
 
-    def _format_row(self, error_details_count: ErrorDetailsCount) -> list[str]:
+    def _format_row(self, error_details_count: ErrorDetailsCount) -> list[str | Text]:
         details = error_details_count.error_details
         count = error_details_count.count
 
+        # ``type`` and ``message`` carry server-controlled text verbatim (see
+        # ``ErrorDetails`` construction in ``transports/aiohttp_client``), so they
+        # are wrapped in ``Text`` to keep Rich from parsing them as console markup.
+        # Without this a response body containing a stray closing tag raises
+        # ``MarkupError``, and one containing an opening tag is silently swallowed.
+        # This matches how ``controller_utils._format_field`` renders the same
+        # fields in the exit-error panel.
         return [
             str(details.code) if details.code else "[dim]N/A[/dim]",
-            str(details.type) if details.type else "[dim]N/A[/dim]",
-            str(details.message),
+            Text(str(details.type)) if details.type else "[dim]N/A[/dim]",
+            Text(str(details.message)),
             f"{count:,}",
         ]
 
