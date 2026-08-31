@@ -398,20 +398,28 @@ def test_jobs_list_renders_60_seeded_jobs_without_5xx(harness) -> None:
 
 
 def test_dashboard_kpi_tiles_handle_zero_throughput(harness) -> None:
-    """A throughput=0 completed run must NOT trip Dashboard's findBest
-    (which uses ``> best`` comparison) into spurious rendering.
-    """
-    # See note on the harness contamination caveat above.
+    """A completed zero-throughput run remains the Peak Throughput record."""
     harness.clear_all_seeded_data()
     summary = good_summary(throughput_rps=0.0)
     summary["status"] = "Completed"
     harness.seed_run(
         name="zero-tput-bench", epoch=EPOCH_OLDER, summary=summary, is_latest=True
     )
+
+    status, raw = harness.api_get("/api/v1/jobs")
+    assert status == 200, (status, raw[:200])
+    payload = json.loads(raw)
+    entry = next(job for job in payload["jobs"] if job["name"] == "zero-tput-bench")
+    assert entry["source"] == "both", entry
+    assert entry["phase"] == "Completed", entry
+    assert entry["throughputRps"] == 0.0, entry
+
     harness.goto_dashboard()
     _wait_for_dashboard_settled(harness)
-    body = harness.page.locator("body").inner_text()
-    assert "No active jobs" in body
+    peak_throughput = harness.page.locator("[data-testid=kpi-peak-throughput]")
+    assert "0.00" in peak_throughput.inner_text()
+    assert "req/s" in peak_throughput.inner_text()
+    assert "zero-tput-bench" in peak_throughput.inner_text()
     harness.assert_no_unreachable_banner()
 
 
@@ -969,14 +977,24 @@ def test_history_filter_by_namespace_via_url_param(harness) -> None:
     assert chip.count() >= 1
 
 
-def test_dashboard_excludes_archived_run_with_running_summary_status(harness) -> None:
-    """Persisted runs remain archived even if their historical summary says Running."""
+def test_dashboard_renders_running_persisted_job(harness) -> None:
+    """A persisted Running result remains visible in Active Jobs."""
     _seed_phase_run(harness, name="archived-running-bench", phase="Running")
+
+    status, raw = harness.api_get("/api/v1/jobs")
+    assert status == 200, (status, raw[:200])
+    payload = json.loads(raw)
+    entry = next(
+        job for job in payload["jobs"] if job["name"] == "archived-running-bench"
+    )
+    assert entry["source"] == "both", entry
+    assert entry["phase"] == "Running", entry
+
     harness.goto_dashboard()
     _wait_for_dashboard_settled(harness)
-    body = harness.page.locator("body").inner_text()
-    assert "No active jobs" in body
-    assert "archived-running-bench" not in body
+    job_card = harness.page.locator(".job-card", has_text="archived-running-bench")
+    assert job_card.count() == 1
+    assert job_card.locator(".job-badge.running").inner_text() == "Running"
 
 
 def test_jobs_list_clear_filters_button_removes_url_chips(harness) -> None:
