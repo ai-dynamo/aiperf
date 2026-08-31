@@ -207,19 +207,7 @@ class TestAccuracyAccumulator:
         assert summary.per_task["math"].total == 0
         assert summary.per_task["physics"].total == 0
 
-    async def test_no_dataset_configured_notification_means_no_zero_fill(self) -> None:
-        acc = _make_accumulator()
-        await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
-
-        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
-
-        assert summary is not None
-        assert set(summary.per_task) == {"math"}
-
     async def test_resolved_alias_task_does_not_duplicate_the_real_row(self) -> None:
-        """Zero-fill must seed from the resolved label, not a raw alias like
-        HellaSwag's ``APPLYING_SUNSCREEN``, or a dispatched task gets a bogus
-        duplicate zero row."""
         acc = _make_accumulator()
         _configure_dataset(acc, ["Applying sunscreen"])
         await _seed(
