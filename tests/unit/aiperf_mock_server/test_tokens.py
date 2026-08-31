@@ -76,6 +76,24 @@ def test_load_corpus_batches_token_decoding_into_a_single_call(
     tokenizer.decode.assert_not_called()
 
 
+def test_load_corpus_decodes_repeated_ids_once_and_preserves_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Large corpora repeat IDs; decoding each occurrence delays server readiness."""
+    tokenizer = Mock()
+    tokenizer.decode_batch.return_value = [" token-7", " token-11"]
+    from_pretrained = Mock(return_value=tokenizer)
+    prompt_generator = Mock(return_value=SimpleNamespace(_tokenized_corpus=[7, 11, 7]))
+    server_config = MockServerConfig(tokenizer="builtin")
+
+    monkeypatch.setattr(config, "server_config", server_config)
+    monkeypatch.setattr(Tokenizer, "from_pretrained", from_pretrained)
+    monkeypatch.setattr(prompt_module, "PromptGenerator", prompt_generator)
+
+    assert tokens._load_corpus() == (" token-7", " token-11", " token-7")
+    tokenizer.decode_batch.assert_called_once_with([[7], [11]])
+
+
 def test_load_corpus_does_not_hide_prompt_generator_api_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
