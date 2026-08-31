@@ -177,15 +177,6 @@ class TestAccuracyAccumulator:
         assert physics.unparsed == 0
         assert physics.accuracy_rate == 0.0
 
-    async def test_no_accuracy_tasks_configured_does_not_zero_fill(self) -> None:
-        acc = _make_accumulator()
-        await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
-
-        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
-
-        assert summary is not None
-        assert set(summary.per_task) == {"math"}
-
     async def test_summarize_is_phase_agnostic(self) -> None:
         acc = _make_accumulator()
         await _seed(

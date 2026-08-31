@@ -125,8 +125,6 @@ class TestAccuracyConsoleExporterExport:
         assert "60.00%" in buf.getvalue()
 
     async def test_zero_total_task_renders_na_row(self) -> None:
-        """A requested task with no dispatched requests (current=None,
-        zero-filled by AccuracyAccumulator) must render as N/A, not 0.00%."""
         exporter = _make_exporter(
             records=[
                 _make_metric("accuracy.overall", correct=1, total=30, accuracy=1 / 30),
