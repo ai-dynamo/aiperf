@@ -85,11 +85,6 @@ def test_omitted_cli_defaults_preserve_yaml(config_file: Path) -> None:
     [
         param(CLIConfig(random_seed=0), lambda c: c.random_seed == 0, id="random-seed-zero"),
         param(
-            CLIConfig(model_selection_strategy="random"),
-            lambda c: c.benchmark.models.strategy == "random",
-            id="model-strategy-without-model-names",
-        ),
-        param(
             CLIConfig(headers=[]),
             lambda c: c.benchmark.endpoint.headers == {},
             id="empty-headers-clear-yaml",
@@ -139,6 +134,12 @@ def test_explicit_cli_value_overrides_yaml(
     assert assertion(config)
 
 
+def test_model_strategy_without_model_names_is_rejected(config_file: Path) -> None:
+    """The resolver cannot choose which YAML model set to rewrite."""
+    with pytest.raises(ConfigurationError, match="model-selection-strategy"):
+        resolve_config(CLIConfig(model_selection_strategy="random"), config_file)
+
+
 def test_dataset_modifiers_merge_without_cli_defaults(config_file: Path) -> None:
     config = resolve_config(
         CLIConfig(prompt_input_tokens_mean=256, prompt_output_tokens_mean=64),
@@ -154,18 +155,14 @@ def test_dataset_modifiers_merge_without_cli_defaults(config_file: Path) -> None
     assert dataset.prompts.batch_size == 4
 
 
-def test_dataset_source_flag_replaces_sole_yaml_dataset(
+def test_dataset_source_flag_does_not_replace_yaml_dataset_type(
     config_file: Path, tmp_path: Path
 ) -> None:
     input_path = tmp_path / "input.jsonl"
     input_path.write_text('{"text":"hello"}\n', encoding="utf-8")
 
-    config = resolve_config(CLIConfig(input_file=str(input_path)), config_file)
-
-    dataset = config.benchmark.datasets[0]
-    assert dataset.name == "workload"
-    assert dataset.type == "file"
-    assert dataset.path == input_path
+    with pytest.raises(ValueError, match="applies to a file dataset"):
+        resolve_config(CLIConfig(input_file=str(input_path)), config_file)
 
 
 def test_phase_shape_overrides_target_unique_profiling_phase(
@@ -341,19 +338,11 @@ def test_request_rate_preserves_yaml_user_centric_phase(
     assert phase.duration == 120
 
 
-def test_arrival_pattern_preserves_yaml_user_centric_phase(
-    user_centric_config_file: Path, caplog: pytest.LogCaptureFixture
+def test_arrival_pattern_without_cli_rate_control_is_rejected(
+    user_centric_config_file: Path,
 ) -> None:
-    with caplog.at_level("WARNING"):
-        config = resolve_config(
-            CLIConfig(arrival_pattern="gamma"), user_centric_config_file
-        )
-
-    phase = config.benchmark.phases[0]
-    assert phase.type == PhaseType.USER_CENTRIC
-    assert phase.users == 30
-    assert phase.rate == 1.0
-    assert "--arrival-pattern is ignored" in caplog.text
+    with pytest.raises(ConfigurationError, match="arrival-pattern"):
+        resolve_config(CLIConfig(arrival_pattern="gamma"), user_centric_config_file)
 
 
 def test_arrival_smoothness_on_user_centric_phase_is_rejected(
