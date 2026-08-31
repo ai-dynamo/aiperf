@@ -274,7 +274,7 @@ verbosity_assertions = 2
 # Deselect performance, ffmpeg, stress, statistical, component_integration, integration, server_unit, fern, and slow tests by default
 # To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical, pytest -m slow
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow and not ui_e2e and not gpu'"
+addopts = "-p no:base_url --strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow and not ui_e2e and not gpu'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore:.*torch.jit.script.*:DeprecationWarning",
