@@ -25,6 +25,37 @@ async def _return_result(result: BenchmarkResult, _timeout: int) -> BenchmarkRes
 
 
 @pytest.mark.asyncio
+async def test_generate_manifest_passes_endpoint_readiness_options(
+    tmp_path: Path,
+) -> None:
+    """GPU benchmarks preserve the configured inference-readiness gate."""
+    deployer = BenchmarkDeployer(kubectl=MagicMock(), project_root=tmp_path)
+    process = AsyncMock()
+    process.returncode = 0
+    process.communicate = AsyncMock(
+        return_value=(b"apiVersion: aiperf.nvidia.com/v1alpha1\nkind: AIPerfJob\n", b"")
+    )
+
+    with patch(
+        "tests.kubernetes.helpers.benchmark.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=process),
+    ) as create_process:
+        await deployer._generate_manifest(
+            BenchmarkConfig(
+                wait_for_model_timeout=300.0,
+                wait_for_model_interval=2.0,
+                wait_for_model_mode="inference",
+            ),
+            tmp_path / "config.yaml",
+        )
+
+    command = create_process.await_args.args
+    assert command[command.index("--wait-for-model-timeout") + 1] == "300.0"
+    assert command[command.index("--wait-for-model-interval") + 1] == "2.0"
+    assert command[command.index("--wait-for-model-mode") + 1] == "inference"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("timeout", "expected_timeout"),
     [

@@ -99,6 +99,15 @@ class BenchmarkConfig:
     node_selector: dict[str, str] | None = None
     """Node selector labels for benchmark pods, or None."""
 
+    wait_for_model_timeout: float = 0.0
+    """Seconds to wait for inference readiness before benchmarking, or zero to skip."""
+
+    wait_for_model_interval: float = 5.0
+    """Seconds between endpoint readiness probes."""
+
+    wait_for_model_mode: str = "inference"
+    """Readiness probe mode passed to the AIPerf CLI."""
+
     def to_temp_file(self) -> Path:
         """Write a placeholder config file (not used by generate, kept for API compat).
 
@@ -498,6 +507,9 @@ class BenchmarkDeployer:
         default_image_pull_secret_source_namespace: str | None = None,
         image_pull_policy: str = "Never",
         default_tolerations: list[dict] | None = None,
+        default_wait_for_model_timeout: float = 0.0,
+        default_wait_for_model_interval: float = 5.0,
+        default_wait_for_model_mode: str = "inference",
     ) -> None:
         """Initialize benchmark deployer.
 
@@ -522,6 +534,10 @@ class BenchmarkDeployer:
                 that does not already specify its own tolerations.  Used to allow
                 scheduling on GPU nodes that carry NoSchedule taints on remote
                 clusters.
+            default_wait_for_model_timeout: Endpoint inference-readiness wait
+                used when a config does not enable its own wait.
+            default_wait_for_model_interval: Readiness probe interval.
+            default_wait_for_model_mode: Readiness probe strategy.
         """
         self.kubectl = kubectl
         self.project_root = project_root
@@ -534,6 +550,9 @@ class BenchmarkDeployer:
         )
         self.image_pull_policy = image_pull_policy
         self.default_tolerations: list[dict] = default_tolerations or []
+        self.default_wait_for_model_timeout = default_wait_for_model_timeout
+        self.default_wait_for_model_interval = default_wait_for_model_interval
+        self.default_wait_for_model_mode = default_wait_for_model_mode
         self._deployments: list[BenchmarkResult] = []
 
     async def deploy(
@@ -770,6 +789,31 @@ class BenchmarkDeployer:
 
         if self.default_namespace is not None:
             cmd.extend(["--namespace", self.default_namespace])
+
+        wait_for_model_timeout = (
+            config.wait_for_model_timeout or self.default_wait_for_model_timeout
+        )
+        if wait_for_model_timeout > 0:
+            interval = (
+                config.wait_for_model_interval
+                if config.wait_for_model_timeout > 0
+                else self.default_wait_for_model_interval
+            )
+            mode = (
+                config.wait_for_model_mode
+                if config.wait_for_model_timeout > 0
+                else self.default_wait_for_model_mode
+            )
+            cmd.extend(
+                [
+                    "--wait-for-model-timeout",
+                    str(wait_for_model_timeout),
+                    "--wait-for-model-interval",
+                    str(interval),
+                    "--wait-for-model-mode",
+                    mode,
+                ]
+            )
 
         for secret in self.default_image_pull_secrets:
             cmd.extend(["--image-pull-secrets", secret])

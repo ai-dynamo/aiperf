@@ -1348,6 +1348,9 @@ async def benchmark_deployer(
         default_namespace=s.benchmark_namespace,
         default_image_pull_secrets=s.image_pull_secrets,
         default_image_pull_secret_source_namespace=s.image_pull_secret_source_namespace,
+        default_wait_for_model_timeout=600.0,
+        default_wait_for_model_interval=2.0,
+        default_wait_for_model_mode="inference",
     )
 
     yield deployer
