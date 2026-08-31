@@ -58,9 +58,13 @@ async def _register(system_controller: SystemController) -> None:
 async def test_heartbeat_stamps_last_seen_from_the_controller_clock(
     system_controller: SystemController,
 ) -> None:
-    """``last_seen_ns`` comes from the receiving side, so a lagging sender is safe."""
+    """``last_seen_ns`` comes from the receiving side, so a lagging sender is safe.
+
+    The stamp is monotonic (``liveness_clock_ns``), not wall-clock, so that a
+    clock correction cannot distort the heartbeat age.
+    """
     await _register(system_controller)
-    before_ns = time.time_ns()
+    before_ns = time.monotonic_ns()
 
     await system_controller._handle_control_message(
         SERVICE_ID, _heartbeat(LifecycleState.RUNNING)
@@ -90,7 +94,6 @@ async def test_out_of_order_heartbeat_does_not_move_state_backwards(
     # (also stale) timestamp it carries.
     ServiceRegistry.update_service(
         SERVICE_ID,
-        service_type=ServiceType.WORKER_MANAGER,
         last_seen_ns=newest_ns - 1,
         state=LifecycleState.RUNNING,
         seq=0,
@@ -109,7 +112,7 @@ async def test_same_tick_update_still_applies_the_newer_state(
 
     Both callers stamp ``last_seen_ns`` on receipt from the controller's own
     clock, so equal timestamps mean two messages landed within one tick --
-    ``time.time_ns()`` is ~15.6ms granular on Windows, coarser than a startup
+    the clock is coarser (~15.6ms on Windows) than a startup
     state sequence. Ordering is decided by the sender-stamped ``seq``, not by
     this (possibly tied) timestamp, so a strictly newer ``seq`` at an
     identical tick must still be applied.
@@ -123,7 +126,6 @@ async def test_same_tick_update_still_applies_the_newer_state(
 
     ServiceRegistry.update_service(
         SERVICE_ID,
-        service_type=ServiceType.WORKER_MANAGER,
         last_seen_ns=tick_ns,
         state=LifecycleState.RUNNING,
         seq=2,
@@ -140,7 +142,7 @@ async def test_status_update_stamps_last_seen_from_the_controller_clock(
 ) -> None:
     """``_on_status_update`` shares the heartbeat handler's shape."""
     await _register(system_controller)
-    before_ns = time.time_ns()
+    before_ns = time.monotonic_ns()
 
     await system_controller._handle_control_message(
         SERVICE_ID,
@@ -155,6 +157,41 @@ async def test_status_update_stamps_last_seen_from_the_controller_clock(
     assert info is not None
     assert info.last_seen_ns >= before_ns
     assert ServiceRegistry.get_stale_services(threshold_sec=10.0) == []
+
+
+@pytest.mark.asyncio
+async def test_backward_wall_clock_step_does_not_mask_a_dead_service(
+    system_controller: SystemController,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Liveness age must come from a monotonic source, not the settable clock.
+
+    A backward NTP step (or a manual ``date`` correction) makes
+    ``wall_now - last_seen`` small or negative, so a service that stopped
+    heartbeating stays "fresh" for however long the correction was. The
+    shutdown path and the result-join barrier both wait on dead-component
+    detection, so a suppressed reap hangs the run rather than delaying a log
+    line.
+    """
+    await _register(system_controller)
+    await system_controller._handle_control_message(
+        SERVICE_ID, _heartbeat(LifecycleState.RUNNING)
+    )
+
+    real_time_ns = time.time_ns
+    real_monotonic_ns = time.monotonic_ns
+    # 30 real seconds elapse with no further heartbeat, while NTP steps the
+    # wall clock 60 seconds backwards.
+    monkeypatch.setattr(time, "time_ns", lambda: real_time_ns() - 60_000_000_000)
+    monkeypatch.setattr(
+        time, "monotonic_ns", lambda: real_monotonic_ns() + 30_000_000_000
+    )
+
+    stale_ids = [
+        info.service_id
+        for info in ServiceRegistry.get_stale_services(threshold_sec=5.0)
+    ]
+    assert stale_ids == [SERVICE_ID]
 
 
 def test_control_structs_carry_no_sender_timestamp() -> None:

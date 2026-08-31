@@ -3,11 +3,14 @@
 """Tests for the process-wide service registry and its async waiting mixin."""
 
 import asyncio
+import inspect
 import time
+from unittest.mock import patch
 
 import pytest
 
 from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     ServiceProcessDiedError,
     ServiceRegistrationTimeoutError,
@@ -158,7 +161,6 @@ def test_update_service_ignores_unknown_and_stale_updates(
     _register(registry, "worker-0", seen_ns=10)
     registry.update_service(
         "ghost",
-        service_type=ServiceType.WORKER,
         last_seen_ns=50,
         state=LifecycleState.RUNNING,
         seq=1,
@@ -167,7 +169,6 @@ def test_update_service_ignores_unknown_and_stale_updates(
 
     registry.update_service(
         "worker-0",
-        service_type=ServiceType.WORKER,
         last_seen_ns=5,
         state=LifecycleState.STOPPING,
         seq=5,
@@ -180,7 +181,6 @@ def test_update_service_ignores_unknown_and_stale_updates(
     # whole, even though its last_seen_ns is larger.
     registry.update_service(
         "worker-0",
-        service_type=ServiceType.WORKER,
         last_seen_ns=50,
         state=LifecycleState.RUNNING,
         seq=3,
@@ -191,7 +191,6 @@ def test_update_service_ignores_unknown_and_stale_updates(
 
     registry.update_service(
         "worker-0",
-        service_type=ServiceType.WORKER,
         last_seen_ns=50,
         state=LifecycleState.RUNNING,
         seq=6,
@@ -199,6 +198,20 @@ def test_update_service_ignores_unknown_and_stale_updates(
     info = registry.get_service("worker-0")
     assert info.last_seen_ns == 50
     assert info.state == LifecycleState.RUNNING
+
+
+def test_update_service_does_not_accept_a_service_type_it_never_reads(
+    registry: _ServiceRegistry,
+) -> None:
+    """A parameter that is accepted and dropped reads like an enforced contract.
+
+    ``update_service`` looks the canonical ``ServiceRunInfo`` up by
+    ``service_id`` and rewrites only state/timestamp/seq; ``register`` is the
+    sole owner of ``service_type`` and ``by_type`` bucketing. Accepting a
+    ``service_type`` here implied a validation that never happened.
+    """
+    params = inspect.signature(registry.update_service).parameters
+    assert "service_type" not in params
 
 
 def test_update_service_wallclock_ordering_lets_late_stale_update_regress_state(
@@ -219,7 +232,6 @@ def test_update_service_wallclock_ordering_lets_late_stale_update_regress_state(
     # controller first and is stamped with the controller's receipt clock.
     registry.update_service(
         "worker-0",
-        service_type=ServiceType.WORKER,
         last_seen_ns=200,
         state=LifecycleState.STOPPING,
         seq=5,
@@ -229,7 +241,6 @@ def test_update_service_wallclock_ordering_lets_late_stale_update_regress_state(
     # time only moves forward at the controller.
     registry.update_service(
         "worker-0",
-        service_type=ServiceType.WORKER,
         last_seen_ns=300,
         state=LifecycleState.RUNNING,
         seq=4,
@@ -278,7 +289,7 @@ def test_get_stale_services_uses_the_heartbeat_threshold(
     import time
 
     registry.expect_services({ServiceType.WORKER: 2})
-    now_ns = time.time_ns()
+    now_ns = time.monotonic_ns()
     _register(registry, "fresh", seen_ns=now_ns)
     _register(registry, "stale", seen_ns=now_ns - 10_000_000_000)
     stale_ids = [info.service_id for info in registry.get_stale_services(5.0)]
@@ -407,3 +418,26 @@ def test_register_type_mismatch_correction_preserves_total_expected(
 
     assert registry._total_expected == 2
     assert sum(registry.expected_by_type.values()) == registry._total_expected
+
+
+@pytest.mark.asyncio
+async def test_progress_log_interval_is_read_at_wait_time(
+    registry: _ServiceRegistry,
+) -> None:
+    """The registry is a module-level singleton constructed at import time.
+
+    Binding the interval to a class attribute froze it before any test or
+    subprocess could set ``AIPERF_SERVICE_REGISTRATION_PROGRESS_LOG_INTERVAL``,
+    which is inconsistent with every other ``Environment`` read in this file.
+    """
+    registry.expect_services({ServiceType.WORKER: 1})
+    with (
+        patch.object(Environment.SERVICE, "REGISTRATION_PROGRESS_LOG_INTERVAL", 0.01),
+        patch.object(registry, "_log_waiting_for") as log_waiting,
+        pytest.raises(ServiceRegistrationTimeoutError),
+    ):
+        await registry.wait_for_all(timeout=0.2)
+
+    # A frozen 5.0s default yields one wait_for that consumes the whole
+    # timeout, so no progress line is ever emitted.
+    assert log_waiting.call_count > 1

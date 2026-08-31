@@ -116,7 +116,7 @@ async def test_heartbeat_stamps_registry_timestamp_on_receipt(
     await system_controller._handle_control_message(
         "worker_group_manager_0", _registration("worker-pod-old")
     )
-    before_ns = time.time_ns()
+    before_ns = time.monotonic_ns()
 
     await system_controller._handle_control_message(
         "worker_group_manager_0",

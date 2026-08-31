@@ -252,9 +252,13 @@ async def test_replacement_configure_is_not_started_twice(
 async def test_heartbeat_stamps_last_seen_from_controller_clock(
     controller: SystemController,
 ) -> None:
-    """Invariant I1: the wire carries no timestamp; the controller stamps."""
+    """Invariant I1: the wire carries no timestamp; the controller stamps.
+
+    The stamp comes from the monotonic ``liveness_clock_ns``, the same clock
+    ``get_stale_services`` ages it against.
+    """
     await controller._handle_control_message("svc-1", _registration())
-    before = time.time_ns()
+    before = time.monotonic_ns()
     result = await controller._handle_control_message(
         "svc-1",
         Heartbeat(
@@ -263,7 +267,7 @@ async def test_heartbeat_stamps_last_seen_from_controller_clock(
             state=str(LifecycleState.RUNNING),
         ),
     )
-    after = time.time_ns()
+    after = time.monotonic_ns()
 
     assert result is None, "heartbeat is fire-and-forget"
     info = ServiceRegistry.get_service("svc-1")
@@ -377,7 +381,6 @@ async def test_status_update_does_not_write_through_service_id_map(
     # already applied above.
     ServiceRegistry.update_service(
         "svc-1",
-        service_type=ServiceType.WORKER,
         last_seen_ns=newest_ns - 1,
         state=LifecycleState.RUNNING,
         seq=0,

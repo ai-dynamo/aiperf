@@ -14,7 +14,6 @@ a unit test without a socket.
 from __future__ import annotations
 
 import contextlib
-import time
 from typing import TYPE_CHECKING
 
 import zmq
@@ -41,7 +40,7 @@ from aiperf.common.enums import (
     parse_result_producer_capability,
 )
 from aiperf.common.exceptions import NotInitializedError
-from aiperf.common.service_registry import ServiceRegistry
+from aiperf.common.service_registry import ServiceRegistry, liveness_clock_ns
 from aiperf.plugin.enums import ServiceType
 
 if TYPE_CHECKING:
@@ -99,7 +98,7 @@ class SystemControllerDispatchMixin:
         ServiceRegistry.register(
             service_id=message.sid,
             service_type=service_type,
-            first_seen_ns=time.time_ns(),
+            first_seen_ns=liveness_clock_ns(),
             state=state,
             pod_name=message.pod_name,
             pod_index=message.pod_index,
@@ -182,10 +181,11 @@ class SystemControllerDispatchMixin:
 
         The last-seen timestamp is stamped here rather than taken from the
         wire: the sender's clock may lag under Kubernetes, and
-        ``get_stale_services`` compares against this process's clock. The
-        registry is also the sole writer of ``last_seen_ns``/``state`` --
-        ``service_id_map`` holds the very ``ServiceRunInfo`` it owns, so
-        writing here would defeat the ordering guard in ``update_service``.
+        ``get_stale_services`` compares against this process's monotonic
+        clock (``liveness_clock_ns``). The registry is also the sole writer of
+        ``last_seen_ns``/``state`` -- ``service_id_map`` holds the very
+        ``ServiceRunInfo`` it owns, so writing here would defeat the ordering
+        guard in ``update_service``.
         """
         if message.sid not in self.service_manager.service_id_map:
             self.warning(
@@ -195,8 +195,7 @@ class SystemControllerDispatchMixin:
             return
         ServiceRegistry.update_service(
             message.sid,
-            service_type=ServiceType(message.stype),
-            last_seen_ns=time.time_ns(),
+            last_seen_ns=liveness_clock_ns(),
             state=LifecycleState(message.state),
             seq=message.seq,
         )
@@ -216,8 +215,7 @@ class SystemControllerDispatchMixin:
             return
         ServiceRegistry.update_service(
             message.sid,
-            service_type=ServiceType(message.stype),
-            last_seen_ns=time.time_ns(),
+            last_seen_ns=liveness_clock_ns(),
             state=LifecycleState(message.state),
             seq=message.seq,
         )

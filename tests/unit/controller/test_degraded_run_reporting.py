@@ -424,6 +424,46 @@ class TestEvictedProducersReachTheOutcome:
         system_controller._cancel_profiling.assert_awaited_once_with()
 
     @pytest.mark.asyncio
+    async def test_a_reaped_required_producer_that_already_delivered_does_not_cancel(
+        self, system_controller: SystemController
+    ) -> None:
+        """The counterpart to the test above, and why ``evict_service`` returns
+        barrier *membership* rather than "the readiness barrier changed".
+
+        RecordsManager is both required and a barrier producer. Once it has
+        delivered every domain it owed, its death costs the run nothing. The
+        return value routes it into the producer branch, where ``evicted``
+        decides degradation; if the return instead reported only whether
+        readiness changed, a delivered-then-OOMKilled RecordsManager would fall
+        through to the required-non-producer branch and abort a run whose
+        results are complete and already in hand.
+        """
+        system_controller._system_state = SystemState.PROFILING
+        system_controller._cancel_profiling = AsyncMock()
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+        coordinator = system_controller._result_join_coordinator
+        coordinator.register("profile", "records_manager")
+        coordinator.complete_domain("profile")
+        info = MagicMock(
+            service_id="records_manager",
+            service_type=ServiceType.RECORDS_MANAGER,
+            first_seen_ns=100,
+        )
+        system_controller.service_manager.service_id_map = {"records_manager": info}
+        system_controller.service_manager.service_map = {
+            ServiceType.RECORDS_MANAGER: [info]
+        }
+
+        await system_controller._on_service_reaped(
+            "records_manager", "pod OOMKilled", 100
+        )
+
+        assert coordinator.evicted == {}
+        assert system_controller._exit_errors == []
+        system_controller._cancel_profiling.assert_not_awaited()
+        system_controller._check_and_trigger_shutdown.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "service_type,is_producer",
         [
@@ -527,8 +567,10 @@ class TestEvictedProducersReachTheOutcome:
                 capabilities=capabilities,
             )
 
-        with patch("aiperf.controller.system_controller_dispatch.time") as mock_time:
-            mock_time.time_ns.side_effect = [100, 200]
+        with patch(
+            "aiperf.controller.system_controller_dispatch.liveness_clock_ns",
+            side_effect=[100, 200],
+        ):
             await system_controller._handle_control_message(service_id, registration())
             original = ServiceRegistry.get_service(service_id)
             assert original is not None

@@ -28,11 +28,16 @@ class ServiceRunInfo(
     service_id: str
     first_seen_ns: int | None = None
     last_seen_ns: int | None = None
+    """Controller-stamped receipt times on the monotonic
+    ``aiperf.common.service_registry.liveness_clock_ns`` clock, never the wall
+    clock: ``get_stale_services`` ages heartbeats by subtracting them, and an
+    NTP step would otherwise hide a dead service or reap live ones. The epoch
+    is per-process, which is safe because these never leave the controller."""
     last_seq: int | None = None
     """Highest sender-stamped Heartbeat/StatusUpdate sequence number applied so
-    far. Ordering authority for ``update_service`` -- never wall-clock time,
-    which is monotone by construction at the controller and so can never
-    detect real out-of-order delivery."""
+    far. Ordering authority for ``update_service`` -- never the receipt
+    timestamp, which is monotone by construction at the controller and so can
+    never detect real out-of-order delivery."""
     state: LifecycleState = LifecycleState.CREATED
     pod_name: str | None = None
     pod_index: str | None = None

@@ -16,6 +16,24 @@ from aiperf.common.models import ServiceRunInfo
 from aiperf.common.types import ServiceTypeT
 
 
+def liveness_clock_ns() -> int:
+    """Stamp source for ``first_seen_ns``/``last_seen_ns``.
+
+    Monotonic, not wall-clock. ``get_stale_services`` subtracts these stamps
+    from a reading of the same clock to age a heartbeat, and an NTP step or a
+    manual clock correction would otherwise make that age negative (masking a
+    dead service for the duration of the correction) or hugely positive
+    (reaping live services in one sweep).
+
+    A per-process epoch is safe here because these stamps never cross a
+    process boundary: the control-channel structs carry no sender timestamp,
+    the controller stamps every ``ServiceRunInfo`` itself at receipt time, and
+    ``ServiceRunInfo`` is never serialized. Anything user-facing that needs a
+    real date must read the wall clock itself.
+    """
+    return time.monotonic_ns()
+
+
 class _ServiceRegistry(AIPerfLoggerMixin):
     """Centralized service registry for tracking service registration and state.
 
@@ -23,10 +41,6 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     cooperative model, code between await points runs atomically — no locks needed.
     Only the wait_for_* methods are async (they suspend on asyncio.Event).
     """
-
-    _PROGRESS_LOG_INTERVAL: float = (
-        Environment.SERVICE.REGISTRATION_PROGRESS_LOG_INTERVAL
-    )
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -184,7 +198,6 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         self,
         service_id: str,
         *,
-        service_type: ServiceTypeT,
         last_seen_ns: int,
         state: LifecycleState,
         seq: int,
@@ -195,9 +208,15 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         StatusUpdate and Heartbeat messages can arrive before Registration
         due to message ordering across ZMQ sockets.
 
+        Takes no ``service_type``: the canonical ``ServiceRunInfo`` is looked
+        up by ``service_id``, and ``register`` is the sole owner of
+        ``info.service_type`` and the ``by_type`` bucketing. Letting a
+        heartbeat re-bucket identity would be strictly worse than ignoring a
+        conflicting type, so the parameter had nothing correct to do.
+
         Ordering is decided by ``seq``, a per-service counter the SENDING
         service increments and stamps on every Heartbeat/StatusUpdate --
-        never by wall-clock time. ``last_seen_ns`` is stamped by the
+        never by the receipt timestamp. ``last_seen_ns`` is stamped by the
         controller at receipt time and is therefore monotone by construction,
         so comparing it can never catch real out-of-order delivery caused by
         HWM backlog or reconnect-flush reordering: a message that was sent
@@ -402,13 +421,17 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     def get_stale_services(self, threshold_sec: float) -> list[ServiceRunInfo]:
         """Get registered services whose last heartbeat exceeds the threshold.
 
+        Ages are measured on the monotonic ``liveness_clock_ns`` the write side
+        stamps with, so a clock correction can neither hide a dead service nor
+        reap a live one.
+
         Args:
             threshold_sec: Seconds since last heartbeat before a service is stale.
 
         Returns:
             List of ServiceRunInfo for stale services.
         """
-        now_ns = time.time_ns()
+        now_ns = liveness_clock_ns()
         threshold_ns = int(threshold_sec * 1_000_000_000)
         stale: list[ServiceRunInfo] = []
         for sid, info in self.services.items():
@@ -550,11 +573,15 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     ) -> None:
         """Wait on an event with periodic progress logging.
 
-        Logs registration progress every _PROGRESS_LOG_INTERVAL seconds while
-        waiting, then checks for failures and completeness after waking.
+        Logs registration progress every
+        ``Environment.SERVICE.REGISTRATION_PROGRESS_LOG_INTERVAL`` seconds
+        while waiting, then checks for failures and completeness after waking.
+        The interval is read here rather than bound to a class attribute: this
+        registry is a module-level singleton, so a class attribute would freeze
+        the setting at import time.
         """
         elapsed = 0.0
-        interval = self._PROGRESS_LOG_INTERVAL
+        interval = Environment.SERVICE.REGISTRATION_PROGRESS_LOG_INTERVAL
         started = time.perf_counter()
 
         while not event.is_set():
