@@ -31,7 +31,6 @@ def _make_accumulator() -> AccuracyAccumulator:
 
 
 def _configure_dataset(acc: AccuracyAccumulator, resolved_tasks: list[str]) -> None:
-    """Simulate the DatasetConfiguredNotification a real dataset load would send."""
     acc.on_dataset_configured(
         DatasetMetadata(
             sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
