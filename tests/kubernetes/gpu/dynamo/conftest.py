@@ -39,21 +39,20 @@ from tests.kubernetes.helpers.kubectl import KubectlClient
 logger = AIPerfLogger(__name__)
 
 
-def _dynamo_helm_sets(local_keygen: bool) -> list[str]:
+def _dynamo_helm_sets() -> list[str]:
     """Return Dynamo platform chart values compatible with Dynamo 1.x."""
     helm_sets = [
         "--set",
-        "grove.enabled=false",
+        "global.grove.install=false",
         "--set",
-        "kai-scheduler.enabled=false",
+        "global.grove.enabled=false",
+        "--set",
+        "global.kai-scheduler.install=false",
+        "--set",
+        "global.kai-scheduler.enabled=false",
         "--set",
         "dynamo-operator.controllerManager.kubeRbacProxy.image.repository=registry.k8s.io/kubebuilder/kube-rbac-proxy",
     ]
-    if local_keygen:
-        helm_sets += [
-            "--set",
-            "dynamo-operator.dynamo.mpiRun.sshKeygen.enabled=false",
-        ]
     return helm_sets
 
 
@@ -337,7 +336,7 @@ async def dynamo_operator(
         ["helm", "fetch", f"{ngc_base}/{platform_tgz}"],
         "Failed to fetch Dynamo platform chart",
     )
-    helm_sets = _dynamo_helm_sets(local_keygen)
+    helm_sets = _dynamo_helm_sets()
     try:
         await _run_streaming(
             [

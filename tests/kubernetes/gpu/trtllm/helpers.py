@@ -108,11 +108,9 @@ class TRTLLMDeployer:
             str(c.tensor_parallel_size),
             *c.extra_args,
         ]
-
-        _ld_path = (
+        ld_library_path = (
             "/usr/local/tensorrt/lib:"
             "/usr/local/cuda/lib64:"
-            "/usr/local/cuda/compat/lib.real:"
             "/usr/local/lib/python3.12/dist-packages/torch/lib:"
             "/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
         )
@@ -123,9 +121,7 @@ class TRTLLMDeployer:
             "command": [args[0]],
             "args": args[1:],
             "ports": [{"containerPort": c.port, "name": "http"}],
-            "env": [
-                {"name": "LD_LIBRARY_PATH", "value": _ld_path},
-            ],
+            "env": [{"name": "LD_LIBRARY_PATH", "value": ld_library_path}],
             "resources": {
                 "limits": {"nvidia.com/gpu": c.gpu_count},
                 "requests": {"nvidia.com/gpu": c.gpu_count},

@@ -197,12 +197,18 @@ async def test_dynamo_operator_installs_for_local_kind_context_when_missing(
         )
 
 
-def test_dynamo_helm_sets_omit_removed_webhook_setting() -> None:
-    """Dynamo 1.x chart values must not disable an always-on webhook."""
-    helm_sets = dynamo_conftest._dynamo_helm_sets(local_keygen=True)
+def test_dynamo_helm_sets_omit_removed_chart_settings() -> None:
+    """Dynamo 1.x chart values must not use retired chart settings."""
+    helm_sets = dynamo_conftest._dynamo_helm_sets()
 
     assert "dynamo-operator.webhook.enabled=false" not in helm_sets
-    assert "dynamo-operator.dynamo.mpiRun.sshKeygen.enabled=false" in helm_sets
+    assert "dynamo-operator.dynamo.mpiRun.sshKeygen.enabled=false" not in helm_sets
+    assert "grove.enabled=false" not in helm_sets
+    assert "global.grove.install=false" in helm_sets
+    assert "global.grove.enabled=false" in helm_sets
+    assert "kai-scheduler.enabled=false" not in helm_sets
+    assert "global.kai-scheduler.install=false" in helm_sets
+    assert "global.kai-scheduler.enabled=false" in helm_sets
 
 
 @pytest.mark.asyncio
