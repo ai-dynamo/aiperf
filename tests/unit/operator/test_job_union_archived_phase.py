@@ -103,3 +103,18 @@ async def test_missing_index_phase_remains_neutral(
     [job] = await job_union.list_all_jobs(None, tmp_path)
 
     assert job.phase == "Archived"
+
+
+@pytest.mark.asyncio
+async def test_archived_running_uses_indexed_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(job_union, "list_aiperf_jobs", _no_live_jobs)
+    _write_summary(tmp_path)
+    _stub_index(monkeypatch, _row(phase="Running"))
+
+    [job] = await job_union.list_all_jobs(None, tmp_path)
+
+    assert job.source == "archived"
+    assert job.phase == "Running"

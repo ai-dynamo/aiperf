@@ -405,6 +405,14 @@ def test_dashboard_kpi_tiles_handle_zero_throughput(harness) -> None:
     harness.seed_run(
         name="zero-tput-bench", epoch=EPOCH_OLDER, summary=summary, is_latest=True
     )
+    harness.register_cr(
+        FakeLiveCR(
+            name="zero-tput-bench",
+            namespace=harness.ns,
+            phase="Completed",
+            created="2026-05-19T00:00:00Z",
+        )
+    )
 
     status, raw = harness.api_get("/api/v1/jobs")
     assert status == 200, (status, raw[:200])
@@ -978,8 +986,16 @@ def test_history_filter_by_namespace_via_url_param(harness) -> None:
 
 
 def test_dashboard_renders_running_persisted_job(harness) -> None:
-    """A persisted Running result remains visible in Active Jobs."""
+    """A persisted result merged with a Running CR appears in Active Jobs."""
     _seed_phase_run(harness, name="archived-running-bench", phase="Running")
+    harness.register_cr(
+        FakeLiveCR(
+            name="archived-running-bench",
+            namespace=harness.ns,
+            phase="Running",
+            created="2026-05-19T00:00:00Z",
+        )
+    )
 
     status, raw = harness.api_get("/api/v1/jobs")
     assert status == 200, (status, raw[:200])

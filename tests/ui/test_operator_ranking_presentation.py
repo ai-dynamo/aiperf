@@ -229,6 +229,30 @@ def test_dashboard_record_tiles_name_the_run_and_its_model() -> None:
     assert sub == "tiny-smoke · tiny-1b"
 
 
+def test_dashboard_record_tiles_preserve_zero_throughput() -> None:
+    """A completed zero remains a record when it is the sole eligible run."""
+    jobs = [
+        {
+            "name": "zero-tput-bench",
+            "phase": "Completed",
+            "throughputRps": 0.0,
+        },
+        {
+            "name": "archived-higher-throughput",
+            "phase": "Archived",
+            "throughputRps": 500.0,
+        },
+    ]
+
+    record = json.loads(
+        _dashboard_eval(f"findBest({json.dumps(jobs)}, 'throughputRps')")
+    )
+
+    assert record["value"] == 0.0
+    assert record["name"] == "zero-tput-bench"
+    assert record["candidates"] == 1
+
+
 def test_dashboard_record_tooltip_warns_when_candidates_are_incomparable() -> None:
     """Say plainly that the field of candidates was not a like-for-like set."""
     title = json.loads(
