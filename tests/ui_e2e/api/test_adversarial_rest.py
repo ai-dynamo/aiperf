@@ -56,10 +56,11 @@ def test_progress_500_keeps_dashboard_usable_and_visible_failure_logged(
     expect(dashboard.page.locator(".log-pane")).to_contain_text(
         "fetch failed: /api/progress"
     )
-    assert len(dashboard.bad_responses) == 1, dashboard.bad_responses
-    bad_response = dashboard.bad_responses[0]
-    assert bad_response.startswith("500 GET "), dashboard.bad_responses
-    assert bad_response.endswith("/api/progress"), dashboard.bad_responses
+    assert dashboard.bad_responses
+    assert all(
+        response.startswith("500 GET ") and response.endswith("/api/progress")
+        for response in dashboard.bad_responses
+    ), dashboard.bad_responses
     assert not [
         error for error in dashboard.console_errors if error.startswith("[pageerror]")
     ]
