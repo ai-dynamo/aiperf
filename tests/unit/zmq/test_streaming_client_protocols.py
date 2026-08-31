@@ -32,7 +32,7 @@ class TestDealerProtocolSurface:
     """``request`` is part of the contract, not an implementation extra."""
 
     def test_protocol_declares_request(self) -> None:
-        assert "request" in StreamingDealerClientProtocol.__protocol_attrs__
+        assert "request" in vars(StreamingDealerClientProtocol)
 
     def test_declared_surface_is_a_subset_of_the_zmq_implementation(self) -> None:
         """Every member declared here must exist on the only implementation.

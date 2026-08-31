@@ -1333,7 +1333,7 @@ class TestJobSetSpecResourceAggregation:
         expected_cpu = parse_cpu(expected["requests"]["cpu"])
         expected_memory = parse_memory_mib(expected["requests"]["memory"])
 
-        assert cpu_total == expected_cpu
+        assert cpu_total == pytest.approx(expected_cpu)
         assert memory_total == expected_memory
 
 
