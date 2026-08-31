@@ -1548,10 +1548,8 @@ class TestProcessServerMetricsResults:
             start_ns=10_000_000_000, requests_end_ns=20_000_000_000
         )
         warmup_stats = MagicMock(start_ns=1_000_000_000, requests_end_ns=5_000_000_000)
-        manager._records_tracker.create_stats_for_phase.side_effect = (
-            lambda phase: profiling_stats
-            if phase == CreditPhase.PROFILING
-            else warmup_stats
+        manager._records_tracker.create_stats_for_phase.side_effect = lambda phase: (
+            profiling_stats if phase == CreditPhase.PROFILING else warmup_stats
         )
         exported = ServerMetricsResults(
             start_ns=10_000_000_000,

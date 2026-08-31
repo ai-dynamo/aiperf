@@ -373,9 +373,11 @@ class StickyCreditRouter(CommunicationMixin):
             await self._on_return_callback("", credit_return)
         except Exception as e:
             self.exception(
-                lambda: f"virtual no_request return callback failed for credit "
-                f"{credit_return.credit.id} (x_correlation_id="
-                f"{credit_return.credit.x_correlation_id})"
+                lambda: (
+                    f"virtual no_request return callback failed for credit "
+                    f"{credit_return.credit.id} (x_correlation_id="
+                    f"{credit_return.credit.x_correlation_id})"
+                )
             )
             if self._on_fatal_error is not None:
                 self._on_fatal_error(e)
@@ -570,9 +572,11 @@ class StickyCreditRouter(CommunicationMixin):
             entry.ref_count += 1
         else:
             self.warning(
-                lambda: f"register_child_routing: parent "
-                f"{parent_correlation_id!r} has no sticky entry; "
-                f"child will not co-locate with parent's worker"
+                lambda: (
+                    f"register_child_routing: parent "
+                    f"{parent_correlation_id!r} has no sticky entry; "
+                    f"child will not co-locate with parent's worker"
+                )
             )
 
     def release_child_routing(self, parent_correlation_id: str) -> None:
