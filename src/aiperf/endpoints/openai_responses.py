@@ -191,7 +191,6 @@ class ResponsesEndpoint(BaseEndpoint):
         input_items: list[dict[str, Any]] = []
         if request_info.previous_response_id:
             # Stateful chaining: previous_response_id points to server-side history.
-            # Only send the newest turn's messages in `input`.
             self._warn_chaining_isl_once()
             input_items.extend(self.build_messages([turns[-1]]))
         else:
@@ -274,19 +273,27 @@ class ResponsesEndpoint(BaseEndpoint):
         The response object lives under ``response`` for streaming lifecycle
         events (``response.created`` / ``response.completed`` / ...) and at the
         top level for a non-streaming response body.
+
+        A streaming request that returns HTTP 200 but ends in
+        ``response.failed`` / ``response.incomplete`` does not set
+        ``RequestRecord.error``, yet the earlier ``response.created`` event
+        already advertised a stored id. Chaining onto that aborted response
+        would corrupt the next turn, so any stream-end failure event yields
+        ``None`` regardless of the advertised id.
         """
+        resp_id: str | None = None
         for response in record.responses:
             json_obj = response.get_json()
             if not isinstance(json_obj, dict):
                 continue
+            if _replay.is_failure_event(json_obj):
+                return None
             nested = json_obj.get("response")
             source = nested if isinstance(nested, dict) else json_obj
-            resp_id = source.get("id")
-            if not (isinstance(resp_id, str) and resp_id):
-                continue
-            if source.get("store"):
-                return resp_id
-        return None
+            candidate = source.get("id")
+            if isinstance(candidate, str) and candidate and source.get("store"):
+                resp_id = candidate
+        return resp_id
 
     @staticmethod
     def _maybe_enable_usage_stream_options(

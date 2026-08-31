@@ -341,6 +341,12 @@ class UserSessionManager:
         assistant responses) into the child so that the request-builder
         prepends the full parent context before the child's own messages.
 
+        The parent's ``previous_response_id`` is copied too so a FORK child
+        continues the server-side Responses chain instead of replaying
+        history: replay drops filtered outputs (e.g. reasoning items) that
+        only survive server-side, so a child that lost the chain would lack
+        equivalent parent context.
+
         No-op (with a debug-friendly silent return) if either session is
         already evicted — the FORK-pin refcount usually keeps the parent
         resident, but late-arriving children may race past eviction. The
@@ -352,6 +358,7 @@ class UserSessionManager:
         if parent is None or child is None:
             return
         child.turn_list = list(parent.turn_list)
+        child.previous_response_id = parent.previous_response_id
 
     def release_fork_child(self, x_correlation_id: str) -> None:
         """Decrement the FORK-pin refcount on the session, floored at 0.

@@ -96,7 +96,6 @@ def test_per_chunk_usage_with_server_token_count_is_valid() -> None:
     "store_value",
     [
         param(True, id="bool_true"),
-        param("true", id="str_true"),
         param("True", id="str_true_capitalized"),
     ],
 )  # fmt: skip

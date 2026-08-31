@@ -1011,6 +1011,43 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) == "resp_b6c65395f4fb8c7d"
 
+    def test_extract_response_id_stream_ends_in_failure_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.created",
+                            "response": {
+                                "id": "resp_aborted",
+                                "object": "response",
+                                "status": "in_progress",
+                                "store": True,
+                            },
+                        }
+                    ).decode(),
+                ),
+                TextResponse(
+                    perf_ns=2,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.failed",
+                            "response": {
+                                "id": "resp_aborted",
+                                "object": "response",
+                                "status": "failed",
+                                "store": True,
+                            },
+                        }
+                    ).decode(),
+                ),
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
     def test_extract_response_id_non_streaming_returns_id(
         self, endpoint: ResponsesEndpoint
     ) -> None:

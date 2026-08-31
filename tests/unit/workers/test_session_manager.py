@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.dataset_models import DatasetMetadata
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -486,3 +486,24 @@ class TestSessionPreviousResponseId:
 
         session.advance_turn(1)
         assert session.previous_response_id == "resp_turn0"
+
+    def test_seed_from_parent_copies_previous_response_id(self) -> None:
+        manager = UserSessionManager()
+        conv = Conversation(
+            conversation_id="test-conv-fork",
+            turns=[Turn(messages=[{"role": "user", "content": "Q1"}])],
+        )
+        parent = manager.create_and_store("parent-corr", conv, num_turns=1)
+        parent.store_response_id("resp_parent_last")
+        child = manager.create_and_store(
+            "child-corr",
+            conv,
+            num_turns=1,
+            parent_correlation_id="parent-corr",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        assert child.previous_response_id is None
+
+        manager.seed_from_parent("child-corr", "parent-corr")
+
+        assert child.previous_response_id == "resp_parent_last"
