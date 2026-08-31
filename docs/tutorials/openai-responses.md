@@ -288,7 +288,7 @@ their requests are sent exactly as authored and are never chained — author
 `previous_response_id` into those payloads yourself if you need it.
 
 The startup requirement above inspects the endpoint-level `--extra-inputs`. If
-`store: true` is instead supplied per turn (via a dataset turn's `extra_body`),
+`store: true` is instead supplied per turn (via a dataset row's `extra`),
 it cannot be seen at startup, but chaining still triggers the one-time runtime
 warning that client-side ISL undercounts the server-side prompt — enable
 `--use-server-token-count` in that case too.
