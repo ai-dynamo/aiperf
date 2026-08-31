@@ -282,7 +282,9 @@ def test_drop_log_does_not_count_non_positive_values_as_missing(caplog) -> None:
     with caplog.at_level("DEBUG"):
         _inject(store)
 
-    message = next(r.getMessage() for r in caplog.records if "dropped" in r.getMessage())
+    message = next(
+        r.getMessage() for r in caplog.records if "dropped" in r.getMessage()
+    )
     assert "2 of 5 requests dropped" in message
     # Only the absent row is "missing"; the zero-latency row is not.
     assert "1 with no recorded latency/OSL" in message
