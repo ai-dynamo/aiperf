@@ -167,14 +167,24 @@ def _compute_best_trials(
     # was serialized as [100.0, null]. Being incomparable is the safe answer
     # for a pairwise question and the wrong answer for front membership; the
     # pool is where that has to be settled. An absent or short vector is
-    # deliberately NOT filtered -- see _objective_is_poisoned.
+    # deliberately NOT filtered out of the pool -- see _objective_is_poisoned;
+    # its asymmetry is settled pairwise inside _dominates instead.
+    #
+    # Poison-dropping is scoped to the objectives that some iteration actually
+    # scored. An objective that came back non-finite on EVERY iteration hands
+    # nobody a free pass -- the gap is symmetric again -- so keeping it in the
+    # filter only emptied the pool and reported best_trials=null for a run the
+    # remaining objectives rank perfectly well.
     n_obj = len(cfg.objectives)
+    live_indices = _live_objective_indices(history, n_obj)
+    if not live_indices:
+        return None
     scored = [
         h
         for h in history
         if (h.objective_values or h.objective_value is not None)
-        and is_finite_value(_primary(h))
-        and not any(_objective_is_poisoned(h, index) for index in range(n_obj))
+        and any(_objective_at(h, index) is not None for index in live_indices)
+        and not any(_objective_is_poisoned(h, index) for index in live_indices)
     ]
     feasible = [h for h in scored if h.feasible]
     ranking_pool = feasible if feasible else scored
@@ -189,7 +199,7 @@ def _compute_best_trials(
             best = min(ranking_pool, key=_primary)
         return [_serialize_trial(best, len(feasible), pareto_rank=0)]
 
-    front = _pareto_front(ranking_pool, cfg.objectives)
+    front = _pareto_front(ranking_pool, cfg.objectives, live_indices)
     return [_serialize_trial(h, len(feasible), pareto_rank=0) for h in front]
 
 
@@ -228,11 +238,13 @@ def _objective_is_poisoned(iteration: SearchIteration, index: int) -> bool:
     """Whether this objective is *present but unusable* (NaN/inf).
 
     Distinct from simply absent. A short or missing ``objective_values`` vector
-    is a benign, symmetric gap -- every trial in a run is described the same
-    way, so the objective carries no information for anyone and skipping it
-    compares the trials on the objectives that do exist. A non-finite value is
-    the opposite: this one trial reported garbage, and skipping it hands that
-    trial a free pass on an objective the others were actually scored against.
+    keeps the trial in the ranking pool: when every trial in the run is
+    described the same way the objective carries no information for anyone, and
+    skipping it compares the trials on the objectives that do exist. (When the
+    vectors differ in length that gap stops being symmetric, which ``_dominates``
+    handles pairwise rather than by eviction.) A non-finite value is the
+    opposite: this one trial reported garbage, and skipping it hands that trial
+    a free pass on an objective the others were actually scored against.
     """
     values = iteration.objective_values
     if values is not None and index < len(values):
@@ -244,16 +256,41 @@ def _objective_is_poisoned(iteration: SearchIteration, index: int) -> bool:
     return value is not None and not is_finite_value(value)
 
 
+def _live_objective_indices(history: list[SearchIteration], n_obj: int) -> set[int]:
+    """Objective indices that at least one iteration scored with a finite value.
+
+    An objective outside this set was never usably measured in the run: either
+    no trial recorded that dimension at all, or every trial that did recorded
+    NaN/inf. Ranking has to ignore it rather than let it disqualify the whole
+    pool, because there is no trial it could unfairly advantage.
+    """
+    return {
+        index
+        for index in range(n_obj)
+        if any(_objective_at(h, index) is not None for h in history)
+    }
+
+
 def _dominates(
     candidate: SearchIteration,
     other: SearchIteration,
     objectives: list,
+    active_indices: set[int] | None = None,
 ) -> bool:
     """Return whether ``candidate`` is no worse everywhere and better somewhere.
 
-    An objective that is merely *absent* on a side (short or missing vector)
-    is skipped: that gap is symmetric across the run, so the remaining
-    objectives still decide the comparison.
+    ``active_indices`` restricts the comparison to the objectives some
+    iteration actually scored (see ``_live_objective_indices``); ``None``
+    compares every objective.
+
+    An objective that is merely *absent* on BOTH sides (short or missing
+    vector) is skipped: that gap is symmetric, so the remaining objectives
+    still decide the comparison. Absent on only ONE side is not symmetric and
+    is not skipped -- the side that lacks the dimension cannot dominate, and
+    the side that has it counts as strictly better there. Skipping it let a
+    trial scored on throughput alone, ``[20.0]``, drop the latency objective
+    it was never evaluated on and dominate ``[15.0, 3.0]``, a trial actually
+    measured on both.
 
     An objective that is present but *non-finite* instead makes the pair
     incomparable, and no domination is claimed in either direction. Skipping
@@ -274,13 +311,20 @@ def _dominates(
 
     strictly_better = False
     for index, objective in enumerate(objectives):
+        if active_indices is not None and index not in active_indices:
+            continue
         candidate_value = _objective_at(candidate, index)
         other_value = _objective_at(other, index)
         if _objective_is_poisoned(candidate, index) or _objective_is_poisoned(
             other, index
         ):
             return False
-        if candidate_value is None or other_value is None:
+        if candidate_value is None and other_value is None:
+            continue
+        if candidate_value is None:
+            return False
+        if other_value is None:
+            strictly_better = True
             continue
         maximize = objective.direction == OptimizationDirection.MAXIMIZE
         if (maximize and candidate_value < other_value) or (
@@ -292,14 +336,16 @@ def _dominates(
 
 
 def _pareto_front(
-    pool: list[SearchIteration], objectives: list
+    pool: list[SearchIteration],
+    objectives: list,
+    active_indices: set[int] | None = None,
 ) -> list[SearchIteration]:
     """Return the direction-aware non-dominated set."""
 
     front: list[SearchIteration] = []
     for point in pool:
         if any(
-            _dominates(candidate, point, objectives)
+            _dominates(candidate, point, objectives, active_indices)
             for candidate in pool
             if candidate is not point
         ):
