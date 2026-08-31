@@ -313,6 +313,22 @@ class TestRuntimeSettings:
 
         assert settings.RECONNECT_IVL_MAX == 0
 
+    def test_zmq_reconnect_max_below_initial_interval_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="AIPERF_ZMQ_RECONNECT_IVL_MAX"):
+            _ZMQSettings(RECONNECT_IVL=5000, RECONNECT_IVL_MAX=100)
+
+    def test_zmq_reconnect_max_equal_to_initial_interval_is_accepted(self) -> None:
+        settings = _ZMQSettings(RECONNECT_IVL=500, RECONNECT_IVL_MAX=500)
+
+        assert settings.RECONNECT_IVL_MAX == 500
+
+    def test_zmq_reconnect_zero_max_with_large_initial_interval_is_accepted(
+        self,
+    ) -> None:
+        settings = _ZMQSettings(RECONNECT_IVL=5000, RECONNECT_IVL_MAX=0)
+
+        assert settings.RECONNECT_IVL_MAX == 0
+
 
 class TestServiceSettingsUvloopWindows:
     """Test suite for automatic uvloop disabling on Windows."""

@@ -2218,6 +2218,14 @@ class _WorkerSettings(BaseSettings):
         description="Worker stale-time multiplier used by the credit router before "
         "evicting a silent dispatchable worker",
     )
+    ROUTER_STALE_SWEEP_DELAY_FACTOR: float = Field(
+        ge=1.0,
+        le=100.0,
+        default=2.0,
+        description="Sweep-interval multiplier above which the credit router's "
+        "stale-worker sweep considers its own tick to have been delayed and skips "
+        "eviction decisions for that sweep",
+    )
     SESSION_CACHE_MAX_ENTRIES: int = Field(
         ge=1,
         le=10000000,
@@ -2394,6 +2402,31 @@ class _ZMQSettings(BaseSettings):
         description="Default TCP port for the event-bus XPUB/XSUB proxy backend "
         "(subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``.",
     )
+
+    @model_validator(mode="after")
+    def validate_reconnect_ivl_max_not_below_reconnect_ivl(self) -> Self:
+        """Reject a reconnect backoff ceiling that sits below its starting interval.
+
+        ``ZMQBaseClient._configure_socket`` sets both options on every connecting
+        socket. libzmq treats ``RECONNECT_IVL_MAX == 0`` as "no exponential
+        backoff, retry every ``RECONNECT_IVL`` forever", so zero is a legitimate
+        sentinel and must stay accepted. A *nonzero* ceiling below the starting
+        interval is not: libzmq clamps each computed interval to the ceiling, so
+        the socket silently reconnects faster than the interval the operator
+        explicitly asked for, and the backoff the ceiling was meant to bound
+        never happens. Fail at config time rather than hiding the inversion in
+        reconnect timing nobody inspects.
+        """
+        if 0 < self.RECONNECT_IVL_MAX < self.RECONNECT_IVL:
+            raise ValueError(
+                f"AIPERF_ZMQ_RECONNECT_IVL_MAX ({self.RECONNECT_IVL_MAX}ms) must be "
+                f">= AIPERF_ZMQ_RECONNECT_IVL ({self.RECONNECT_IVL}ms) when nonzero; "
+                "a backoff ceiling below the starting interval clamps every "
+                "reconnect attempt down to the ceiling instead of backing off. "
+                "Use AIPERF_ZMQ_RECONNECT_IVL_MAX=0 to disable exponential backoff "
+                "and retry at a flat AIPERF_ZMQ_RECONNECT_IVL."
+            )
+        return self
 
 
 class _Environment(BaseSettings):

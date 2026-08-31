@@ -836,6 +836,7 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | `AIPERF_WORKER_RETURN_PROBE_BUDGET` | `30.0` | ≥ 0.0, ≤ 100000.0 | Total seconds a worker may spend probing the credit-RETURN PUSH channel before announcing itself dispatchable. Credit dispatch and credit returns ride two different sockets, so a DEALER that has handshaked with the credit ROUTER proves nothing about the PUSH side; without this gate a worker can be routed credits it can never return, and the phase stalls until a run-level timeout. On expiry the worker announces itself anyway with a warning, because the PUSH client buffers unsendable returns and drains them on reconnect. 0 disables the gate. |
 | `AIPERF_WORKER_RETURN_PROBE_RETRY_DELAY` | `0.1` | ≥ 0.001, ≤ 1000.0 | Seconds between credit-RETURN channel probe attempts. Also sets the attempt count, which is AIPERF_WORKER_RETURN_PROBE_BUDGET divided by this delay. |
 | `AIPERF_WORKER_ROUTER_STALE_EVICTION_MULTIPLIER` | `3.0` | ≥ 1.0, ≤ 100.0 | Worker stale-time multiplier used by the credit router before evicting a silent dispatchable worker |
+| `AIPERF_WORKER_ROUTER_STALE_SWEEP_DELAY_FACTOR` | `2.0` | ≥ 1.0, ≤ 100.0 | Sweep-interval multiplier above which the credit router's stale-worker sweep considers its own tick to have been delayed and skips eviction decisions for that sweep |
 | `AIPERF_WORKER_SESSION_CACHE_MAX_ENTRIES` | `100000` | ≥ 1, ≤ 10000000 | Maximum multi-turn sessions cached by each worker before oldest unpinned sessions are evicted |
 
 ## ZMQ
