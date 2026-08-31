@@ -118,10 +118,19 @@ def _context_growth_figure(
     )
     for sid in sample_ids:
         turns = sessions[sid]
+        # turns[i].input_length is the Mooncake-incremental value (new tokens
+        # only) for turn 1+; reconstruct the cumulative context so the line
+        # actually shows growth instead of dropping at each turn boundary.
+        cumulative_context = 0.0
+        y_vals = []
+        for t in turns:
+            cumulative_context += t.input_length
+            y_vals.append(cumulative_context)
+            cumulative_context += t.output_length
         fig.add_trace(
             go.Scatter(
                 x=list(range(len(turns))),
-                y=[t.input_length for t in turns],
+                y=y_vals,
                 mode="lines",
                 name=sid[:8],
             )
