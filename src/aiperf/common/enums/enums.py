@@ -434,6 +434,8 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASE_START = "credit_phase_start"
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
+    DATASET_CONFIG_STATUS_REQUEST = "dataset_config_status_request"
+    DATASET_CONFIG_STATUS_RESPONSE = "dataset_config_status_response"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
     DATASET_DOWNLOADED_NOTIFICATION = "dataset_downloaded_notification"
     DATASET_CONFIGURATION_FAILED = "dataset_configuration_failed"

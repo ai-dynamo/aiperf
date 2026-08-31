@@ -36,6 +36,8 @@ from aiperf.common.messages import (
     ConversationResponseMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
+    DatasetConfigStatusRequest,
+    DatasetConfigStatusResponse,
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
 )
@@ -154,6 +156,16 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._cache_key_for_run: str | None = None
         self._cache_hit_used: bool = False
         self._dataset_rebroadcast_task: asyncio.Task[None] | None = None
+        # Last DatasetConfiguredNotification published this run, if any.
+        # DatasetConfiguredNotification is a one-shot PUB/SUB broadcast with
+        # no replay; a subscriber that finishes subscribing after it was
+        # published never receives it. Cached here so DATASET_CONFIG_STATUS_REQUEST
+        # (sent by a RecordProcessor/RecordsManager that hasn't seen the
+        # notification yet) can hand back the already-published config
+        # instead of the requester blocking until CONFIGURATION_TIMEOUT.
+        self._last_dataset_configured_notification: (
+            DatasetConfiguredNotification | None
+        ) = None
 
     def _is_kubernetes_run(self) -> bool:
         """Return whether the optional KUBERNETES service-run plugin is active."""
@@ -875,15 +887,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             f"unique conversations: {len(self.dataset_metadata.conversations)}, "
             f"unique turn count: {self.dataset_metadata.total_turn_count}"
         )
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-                metadata=self.dataset_metadata,
-                client_metadata=client_metadata,
-                benchmark_generation=self.run.benchmark_id,
-                dataset_generation=_dataset_generation_of(client_metadata),
-            )
+        notification = DatasetConfiguredNotification(
+            service_id=self.service_id,
+            metadata=self.dataset_metadata,
+            client_metadata=client_metadata,
+            benchmark_generation=self.run.benchmark_id,
+            dataset_generation=_dataset_generation_of(client_metadata),
         )
+        self._last_dataset_configured_notification = notification
+        await self.publish(notification)
 
     def _populate_cache_after_run(self) -> None:
         """Write the just-finalized run's mmap files into the cache."""
@@ -1027,8 +1039,23 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             benchmark_generation=self.run.benchmark_id,
             dataset_generation=_dataset_generation_of(client_metadata),
         )
+        self._last_dataset_configured_notification = notification
         await self.publish(notification)
         self._start_dataset_rebroadcast(notification)
+
+    @on_request(MessageType.DATASET_CONFIG_STATUS_REQUEST)
+    async def _handle_dataset_config_status_request(
+        self, message: DatasetConfigStatusRequest
+    ) -> DatasetConfigStatusResponse:
+        """Return the published configuration to a late subscriber."""
+        self.debug(
+            lambda: f"Handling dataset config status request from {message.service_id}"
+        )
+        return DatasetConfigStatusResponse(
+            service_id=self.service_id,
+            request_id=message.request_id,
+            notification=self._last_dataset_configured_notification,
+        )
 
     def _start_dataset_rebroadcast(
         self, notification: DatasetConfiguredNotification

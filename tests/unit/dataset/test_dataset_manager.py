@@ -13,6 +13,7 @@ from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationTurnRequestMessage,
+    DatasetConfigStatusRequest,
     DatasetConfiguredNotification,
 )
 from aiperf.common.models import Conversation, Image, Text, Turn
@@ -1102,3 +1103,75 @@ class TestPayloadBytesBodyMutatingGates:
         assert dm.run.cfg.get_cache_bust_target() == CacheBustTarget.NONE
 
         dm._reject_body_mutators_for_payload_bytes(MemoryMapFormat.PAYLOAD_BYTES)
+
+
+class TestDatasetConfigStatusRequest:
+    """Late-join catch-up for DatasetConfiguredNotification.
+
+    DatasetConfiguredNotification is a one-shot PUB/SUB broadcast with no
+    replay. A RecordProcessor/RecordsManager that finishes subscribing after
+    DatasetManager already published it must be able to recover the config
+    via DatasetConfigStatusRequest instead of blocking for the full
+    CONFIGURATION_TIMEOUT.
+    """
+
+    @pytest.mark.asyncio
+    async def test_before_configuration_returns_no_notification(
+        self, initialized_dataset_manager
+    ) -> None:
+        """Before PROFILE_CONFIGURE has run, no notification has been
+        published yet -- the response must say so (None), so the requester
+        falls back to waiting on the normal PUB/SUB path."""
+        dm = initialized_dataset_manager
+
+        response = await dm._handle_dataset_config_status_request(
+            DatasetConfigStatusRequest(service_id="late_record_processor")
+        )
+
+        assert response.notification is None
+
+    @pytest.mark.asyncio
+    async def test_echoes_request_id_so_the_dealer_client_can_match_it(
+        self, initialized_dataset_manager
+    ) -> None:
+        """Regression: ZMQDealerRequestClient matches an in-flight request to
+        its response by ``response_message.request_id`` (see
+        ``aiperf.zmq.dealer_request_client``). A response that doesn't echo
+        the request's ``request_id`` is silently unmatched -- the caller's
+        request never resolves and every catch-up attempt times out instead
+        of self-healing."""
+        dm = initialized_dataset_manager
+
+        response = await dm._handle_dataset_config_status_request(
+            DatasetConfigStatusRequest(
+                service_id="late_record_processor", request_id="req-123"
+            )
+        )
+
+        assert response.request_id == "req-123"
+
+    @pytest.mark.asyncio
+    async def test_after_configuration_replays_last_notification(
+        self, configured_dataset_manager
+    ) -> None:
+        """After PROFILE_CONFIGURE has run and DatasetConfiguredNotification
+        was published, a late-joining requester must get back the exact
+        notification that was broadcast -- this is what lets a RecordProcessor
+        that missed the broadcast self-heal instead of hanging until the
+        300s dataset-configuration timeout."""
+        dm = configured_dataset_manager
+
+        published = [
+            call.args[0]
+            for call in dm.publish.call_args_list
+            if isinstance(call.args[0], DatasetConfiguredNotification)
+        ]
+        assert len(published) == 1
+
+        response = await dm._handle_dataset_config_status_request(
+            DatasetConfigStatusRequest(service_id="late_record_processor")
+        )
+
+        assert response.notification is not None
+        assert response.notification.metadata == published[0].metadata
+        assert response.notification.client_metadata == published[0].client_metadata

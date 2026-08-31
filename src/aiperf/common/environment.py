@@ -345,6 +345,16 @@ class _DatasetSettings(BaseSettings):
         description="Total seconds to keep re-announcing the dataset-configured "
         "notification for late-joining worker pods. Set 0 to disable.",
     )
+    CATCH_UP_REQUEST_TIMEOUT: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=10.0,
+        description="Timeout in seconds for the one-shot DatasetConfigStatusRequest "
+        "a RecordProcessor/RecordsManager sends to DatasetManager when it hasn't yet "
+        "received DatasetConfiguredNotification. Recovers a subscriber that finished "
+        "subscribing after DatasetManager already published the one-shot notification, "
+        "instead of blocking for the full CONFIGURATION_TIMEOUT.",
+    )
     BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
         Field(
             default="provided_session_id",
