@@ -10,20 +10,35 @@ from aiperf.accuracy.models import AccuracyRecordsData, AccuracySummary
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from aiperf.common.models import ConversationMetadata, DatasetMetadata
+from aiperf.plugin.enums import (
+    AccuracyBenchmarkType,
+    DatasetSamplingStrategy,
+    EndpointType,
+)
 from tests.unit.conftest import make_benchmark_run
 
 
-def _make_accumulator(tasks: list[str] | None = None) -> AccuracyAccumulator:
-    accuracy: dict = {"benchmark": AccuracyBenchmarkType.MMLU}
-    if tasks is not None:
-        accuracy["tasks"] = tasks
+def _make_accumulator() -> AccuracyAccumulator:
     return AccuracyAccumulator(
         run=make_benchmark_run(
             model_names=["test-model"],
             endpoint_type=EndpointType.COMPLETIONS,
             streaming=False,
-            accuracy=accuracy,
+            accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+        )
+    )
+
+
+def _configure_dataset(acc: AccuracyAccumulator, resolved_tasks: list[str]) -> None:
+    """Simulate the DatasetConfiguredNotification a real dataset load would send."""
+    acc.on_dataset_configured(
+        DatasetMetadata(
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+            conversations=[
+                ConversationMetadata(conversation_id=f"conv-{i}", accuracy_task=task)
+                for i, task in enumerate(resolved_tasks)
+            ],
         )
     )
 
@@ -160,10 +175,11 @@ class TestAccuracyAccumulator:
         assert summary.total_passed == 1
         assert set(summary.per_task) == {"math"}
 
-    async def test_requested_tasks_with_no_dispatched_requests_are_zero_filled(
+    async def test_configured_tasks_with_no_dispatched_requests_are_zero_filled(
         self,
     ) -> None:
-        acc = _make_accumulator(tasks=["math", "physics", "computer science"])
+        acc = _make_accumulator()
+        _configure_dataset(acc, ["math", "physics", "computer science"])
         await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
 
         summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
@@ -177,15 +193,30 @@ class TestAccuracyAccumulator:
         assert physics.unparsed == 0
         assert physics.accuracy_rate == 0.0
 
-    async def test_all_sentinel_is_not_zero_filled_as_a_task(self) -> None:
-        acc = _make_accumulator(tasks=["all"])
+    async def test_no_dataset_configured_notification_means_no_zero_fill(self) -> None:
+        acc = _make_accumulator()
         await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
 
         summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
 
         assert summary is not None
-        assert "all" not in summary.per_task
         assert set(summary.per_task) == {"math"}
+
+    async def test_resolved_alias_task_does_not_duplicate_the_real_row(self) -> None:
+        """Zero-fill must seed from the resolved label, not a raw alias like
+        HellaSwag's ``APPLYING_SUNSCREEN``, or a dispatched task gets a bogus
+        duplicate zero row."""
+        acc = _make_accumulator()
+        _configure_dataset(acc, ["Applying sunscreen"])
+        await _seed(
+            acc, [_record(timestamp_ns=10, task="Applying sunscreen", passed=True)]
+        )
+
+        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+
+        assert summary is not None
+        assert set(summary.per_task) == {"Applying sunscreen"}
+        assert summary.per_task["Applying sunscreen"].total == 1
 
     async def test_summarize_is_phase_agnostic(self) -> None:
         acc = _make_accumulator()

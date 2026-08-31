@@ -17,6 +17,7 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.common.enums import CreditPhase
+    from aiperf.common.models import DatasetMetadata
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
@@ -25,9 +26,9 @@ class AccuracyAccumulator(BaseMetricsProcessor):
 
     Ingests per-graded-response ``AccuracyRecordsData`` and rolls them up into an
     ``AccuracySummary`` (overall + per-task pass rates and unparsed counts).
-    Because each record carries its own ``task`` label, this accumulator needs no
-    ``on_dataset_configured`` hook — task bucketing is read straight off the
-    record.
+    Records are bucketed by their own ``task`` field; the zero-fill task
+    universe instead comes from ``on_dataset_configured``, the benchmark's
+    resolved/canonical labels rather than the raw ``--accuracy-tasks`` input.
 
     Phase scoping mirrors ``ServerMetricsAccumulator``: ``export_results(ctx)``
     filters records to ``ctx.phase`` so warmup grades never leak into the
@@ -49,10 +50,21 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         super().__init__(run=run, **kwargs)
         self.run = run
         self._records: list[AccuracyRecordsData] = []
+        self._configured_tasks: set[str] = set()
 
     async def process_record(self, record: AccuracyRecordsData) -> None:
         """Append a graded record in arrival order."""
         self._records.append(record)
+
+    def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
+        """Capture the resolved task universe from the full (pre-truncation) dataset.
+
+        ``accuracy_task`` is the benchmark's canonical, already-resolved label —
+        never the ``"all"`` sentinel or a raw alias — regardless of ``--num-requests``.
+        """
+        self._configured_tasks = {
+            c.accuracy_task for c in metadata.conversations if c.accuracy_task
+        }
 
     def query_time_range(self, start_ns: int, end_ns: int) -> list[AccuracyRecordsData]:
         """Return records whose ``timestamp_ns`` is in ``[start_ns, end_ns)``.
@@ -70,10 +82,9 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         Records with ``task is None`` count toward the overall totals but are
         absent from ``per_task``.
 
-        When ``--accuracy-tasks`` names specific tasks, every named task gets a
-        ``per_task`` entry even if zero requests were dispatched to it (e.g.
-        ``--num-requests`` was smaller than an earlier task's pool size), so the
-        task stays visible instead of silently vanishing from the output.
+        Every task in ``_configured_tasks`` gets a ``per_task`` entry even with
+        zero dispatched requests (e.g. ``--num-requests`` was too small to reach
+        it), so it stays visible instead of vanishing from the output.
         """
         scoped = (
             self._records
@@ -112,11 +123,7 @@ class AccuracyAccumulator(BaseMetricsProcessor):
                 unparsed_rate=unparsed / total if total else 0.0,
             )
 
-        requested_tasks = self.run.cfg.accuracy.tasks or []
-        for task in requested_tasks:
-            # "all" is a category-expansion sentinel by convention, not a real task name.
-            if task.lower() == "all":
-                continue
+        for task in self._configured_tasks:
             per_task.setdefault(
                 task,
                 TaskAccuracyStats(

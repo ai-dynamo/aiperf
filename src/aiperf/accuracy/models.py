@@ -210,10 +210,8 @@ class AccuracySummary(AIPerfBaseModel):
         Emitted in this exact order (load-bearing for byte-exact JSON/CSV):
         overall, tasks sorted, unparsed overall, unparsed tasks sorted.
 
-        A task with zero dispatched requests (``stats.total == 0``, seeded by
-        ``AccuracyAccumulator`` for every task named in ``--accuracy-tasks``)
-        gets ``current=None`` instead of ``0.0``, so exporters render it as N/A
-        rather than a misleading 0% accuracy.
+        A zero-total task gets ``current=None`` instead of ``0.0``, so exporters
+        render N/A instead of a misleading 0% accuracy.
         """
         from aiperf.common.enums import MetricConsoleGroup
         from aiperf.common.models import MetricResult
