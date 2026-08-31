@@ -63,6 +63,12 @@ class InferenceResultParser(CommunicationMixin):
         self.disable_tokenization: bool = resolve_disable_tokenization(
             run.cfg, endpoint_meta
         )
+        # (endpoint instance, disable_tokenization) for per-row endpoint routing
+        # (``Turn.endpoint_type``), which lets one run's records come from
+        # several endpoints. Holds ONLY the non-run-level endpoints; the
+        # run-level one always resolves through ``self.endpoint`` so callers
+        # that replace it are still honored.
+        self._routed_endpoints: dict[str, tuple[Any, bool]] = {}
         self.debug(
             lambda: (
                 f"Created endpoint for {self.model_endpoint.endpoint.type}, "
@@ -178,7 +184,8 @@ class InferenceResultParser(CommunicationMixin):
         if request_record.has_error:
             # Even for error records, compute input token count if possible
             input_token_count = None
-            if not self.disable_tokenization:
+            _, disable_tokenization = self._endpoint_for_record(request_record)
+            if not disable_tokenization:
                 # Suppress exceptions during token counting for error records to avoid masking the original error.
                 # If token counting fails, we still return the error record with token_counts.input=None.
                 with suppress(Exception):
@@ -232,7 +239,8 @@ class InferenceResultParser(CommunicationMixin):
                 request_record.error = ErrorDetails.from_exception(e)
                 input_token_count = None
 
-                if not self.disable_tokenization:
+                _, disable_tokenization = self._endpoint_for_record(request_record)
+                if not disable_tokenization:
                     # Suppress exceptions during token counting for error records to avoid masking the original error.
                     # If token counting fails, we still return the error record with token_counts.input=None.
                     with suppress(Exception):
@@ -248,6 +256,33 @@ class InferenceResultParser(CommunicationMixin):
                     ),
                     media_counts=media_counts,
                 )
+
+    def _endpoint_for_record(self, request_record: RequestRecord) -> tuple[Any, bool]:
+        """Return ``(endpoint, disable_tokenization)`` for a record's endpoint.
+
+        Records carry ``RecordContext.endpoint_type`` when the dataset row routed
+        the request to an endpoint other than the run-level one; that endpoint
+        must do the parsing, and its own ``tokenizes_input`` metadata decides
+        whether client-side tokenization applies. Instances are memoized per
+        plugin name.
+        """
+        request_info = request_record.request_info
+        endpoint_type = request_info.endpoint_type if request_info else None
+        if endpoint_type is None or endpoint_type == str(
+            self.model_endpoint.endpoint.type
+        ):
+            return self.endpoint, self.disable_tokenization
+
+        resolved = self._routed_endpoints.get(endpoint_type)
+        if resolved is None:
+            EndpointClass = plugins.get_class(PluginType.ENDPOINT, endpoint_type)
+            endpoint_meta = plugins.get_endpoint_metadata(endpoint_type)
+            resolved = (
+                EndpointClass(model_endpoint=self.model_endpoint),
+                resolve_disable_tokenization(self.run.cfg, endpoint_meta),
+            )
+            self._routed_endpoints[endpoint_type] = resolved
+        return resolved
 
     def _extract_payload_inputs_for_record(
         self, request_record: RequestRecord
@@ -271,7 +306,8 @@ class InferenceResultParser(CommunicationMixin):
             return None
         if not isinstance(payload, dict):
             return None
-        return self.endpoint.extract_payload_inputs(payload)
+        endpoint, _ = self._endpoint_for_record(request_record)
+        return endpoint.extract_payload_inputs(payload)
 
     async def process_valid_record(
         self,
@@ -299,7 +335,8 @@ class InferenceResultParser(CommunicationMixin):
                 media_counts=media_counts or MediaCounts(),
             )
 
-        resp = self.endpoint.extract_response_data(request_record)
+        endpoint, disable_tokenization = self._endpoint_for_record(request_record)
+        resp = endpoint.extract_response_data(request_record)
 
         # Free the raw responses list after extraction.
         # Skip when RAW export needs the original responses for serialization.
@@ -309,7 +346,7 @@ class InferenceResultParser(CommunicationMixin):
         # Compute token counts based on configuration
         if self.run.cfg.endpoint.use_server_token_count:
             token_counts = await self._compute_server_token_counts(resp)
-        elif not self.disable_tokenization:
+        elif not disable_tokenization:
             token_counts = await self._compute_client_side_token_counts(
                 request_record, resp, inputs=inputs
             )

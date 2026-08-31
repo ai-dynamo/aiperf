@@ -92,6 +92,13 @@ class MetricsJsonExporter(MetricsBaseExporter):
         if dataset is not None:
             run_metadata["dataset"] = dataset
 
+        # Requests that per-row endpoint routing sent elsewhere. Recorded as
+        # metadata rather than a metric: they were issued but deliberately not
+        # measured, so they belong to neither the metric set nor the error count.
+        unmeasured = getattr(self._results, "unmeasured_request_counts", None)
+        if unmeasured:
+            run_metadata["unmeasured_request_counts"] = dict(unmeasured)
+
         # ProfileResults.context_overflow_count is the AGENTIC_REPLAY skip-path
         # side channel only (not in error_request_count / ContextOverflowCountMetric).
         # Metric-path overflows are already in error_request_count (ERROR_ONLY).

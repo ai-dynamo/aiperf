@@ -52,12 +52,67 @@ Required fields for trace replay:
 - `hash_ids`: List of block hashes (optional)
 - `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
 - `extra`: Dict of vendor extras (optional). Shallow-merged into the top of the request body at dispatch; user-supplied keys win over `--extra-inputs`.
+- `endpoint_type`: Name of a registered endpoint plugin (optional). Routes this row to a different endpoint of the same server. See [Per-Row Endpoint Routing](#per-row-endpoint-routing).
 
 Example entry:
 
 ```json
 {"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
 ```
+
+> **Note:** `endpoint_type` is an AIPerf extension. The published Mooncake FAST'25 traces carry only `timestamp`, `input_length`, `output_length`, and `hash_ids`; a trace using this field will not be portable to other Mooncake replay tools.
+
+## Per-Row Endpoint Routing
+
+Production traffic is rarely homogeneous: one timeline can interleave chat completions with embeddings requests against the same server. Add `endpoint_type` to a row to send it to a different endpoint than the run-level `--endpoint-type`:
+
+```json
+{"timestamp": 0,   "input_length": 300, "output_length": 40}
+{"timestamp": 100, "input_length": 300, "endpoint_type": "embeddings"}
+{"timestamp": 200, "input_length": 300, "output_length": 40}
+```
+
+The named endpoint determines the URL path, the request body format, and the response parser for that row. Rows without the field use `--endpoint-type` as before. Run `aiperf plugins endpoint` to see the registered names.
+
+### Metrics for Routed Requests
+
+Requests routed to an endpoint other than `--endpoint-type` are **issued but not measured**. Their latency metrics do not appear in the results; instead AIPerf reports a per-endpoint count:
+
+```
+                     Requests Not Measured
+  1 request(s) were sent to an endpoint other than chat by
+  per-row dataset routing.
+    - embeddings: 1 request
+```
+
+The count is also written to `profile_export_aiperf.json` under `metadata.unmeasured_request_counts`.
+
+This exclusion is deliberate. Metric applicability is a property of the endpoint — the embeddings endpoint declares `produces_tokens: false`, so time-to-first-token, inter-token latency, and output sequence length are undefined for its requests. Averaging them into the chat results would silently corrupt those statistics. Routed requests still:
+
+- dispatch on their scheduled timestamp, so they exert real load and affect the measured endpoint's numbers,
+- count toward the error totals and `--failed-request-threshold` if they fail.
+
+Per-endpoint metric sections are planned; until then, benchmark an endpoint's own performance in a run where it is the `--endpoint-type`.
+
+### Limitations
+
+`endpoint_type` is rejected at load time in these combinations, so a mistake fails before the benchmark starts rather than producing misleading results:
+
+- **With `payload`.** A `payload` row is sent verbatim and bypasses endpoint formatting entirely, so naming an endpoint would apply only its URL path while ignoring its request format — the row would not really be going to that endpoint. Build routed rows with `input_length`, `text_input`, or `messages`.
+- **With `session_id`.** Per-row routing is single-turn only, because multi-turn dispatch replays the whole conversation history on every turn and endpoints such as `embeddings` accept exactly one turn.
+- **Naming an endpoint with no path**, such as `raw`. Those are passthroughs for non-standard APIs, configured run-wide via `--endpoint-type` with `--custom-endpoint`, not per row.
+
+`output_length` is accepted but ignored when the row targets an endpoint that generates no tokens (embeddings, rankings, image and video generation, audio transcription). Native Mooncake rows always carry `output_length`, so a real trace routes without edits; AIPerf reports the affected rows once when the trace loads:
+
+```
+WARNING  412 row(s) routed to 'embeddings' carry 'output_length'; that endpoint
+         generates no tokens, so the value does not apply and is ignored.
+```
+
+Two further constraints apply at runtime:
+
+- Authentication (`--api-key`, `--header`) is applied per run, not per endpoint. Every row is sent with the same credentials.
+- `--custom-endpoint` applies only to the run-level endpoint. A routed row always uses its own endpoint's registered path.
 
 ## Profile using a Custom Trace File
 

@@ -67,11 +67,46 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _group_traces(
         self, items: list[MooncakeTrace]
     ) -> dict[str, list[MooncakeTrace]]:
+        self._warn_ignored_output_length(items)
         data: dict[str, list[MooncakeTrace]] = defaultdict(list)
         for trace in items:
             session_id = trace.session_id or self.session_id_generator.next()
             data[session_id].append(trace)
         return dict(data)
+
+    @staticmethod
+    def _endpoint_produces_tokens(endpoint_type: str) -> bool:
+        """Whether an endpoint returns generated tokens (cached per endpoint)."""
+        from aiperf.plugin import plugins
+
+        return bool(plugins.get_endpoint_metadata(endpoint_type).produces_tokens)
+
+    def _warn_ignored_output_length(self, items: list[MooncakeTrace]) -> None:
+        """Warn once per endpoint about output_length that cannot apply.
+
+        ``output_length`` is one of the four native Mooncake fields, so real
+        traces carry it on every row -- including rows routed to an endpoint
+        that generates no tokens (embeddings, rankings, image generation).
+        Rather than reject those rows or log per request, drop the value in
+        :meth:`_build_turn` and account for it once here, so the user learns
+        the field was ignored without the count being buried in per-request
+        noise.
+        """
+        ignored: dict[str, int] = defaultdict(int)
+        for trace in items:
+            if (
+                trace.endpoint_type is not None
+                and trace.output_length is not None
+                and not self._endpoint_produces_tokens(trace.endpoint_type)
+            ):
+                ignored[trace.endpoint_type] += 1
+
+        for endpoint_type, count in sorted(ignored.items()):
+            self.warning(
+                f"{count:,} row(s) routed to '{endpoint_type}' carry "
+                f"'output_length'; that endpoint generates no tokens, so the "
+                f"value does not apply and is ignored."
+            )
 
     # ------------------------------------------------------------------
     # Conversation-building hooks
@@ -130,15 +165,32 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
             return Turn(
                 timestamp=trace.timestamp,
                 delay=self._delay_cap_tracker.clamp(trace.delay),
-                max_tokens=trace.output_length,
+                max_tokens=self._effective_max_tokens(trace),
                 raw_messages=trace.messages,
                 raw_tools=trace.tools,
                 extra_body=trace.extra,
+                endpoint_type=trace.endpoint_type,
             )
         turn = super()._build_turn(trace, prompt)
         if trace.extra is not None:
             turn.extra_body = trace.extra
+        turn.endpoint_type = trace.endpoint_type
+        turn.max_tokens = self._effective_max_tokens(trace)
         return turn
+
+    def _effective_max_tokens(self, trace: MooncakeTrace) -> int | None:
+        """Return the row's output_length, or None when the endpoint ignores it.
+
+        Endpoints that generate no tokens reject a max_tokens they were handed
+        (``EmbeddingsEndpoint`` logs an error for every such request). Dropping
+        it here keeps that path silent; the count is reported once at load time
+        by :meth:`_warn_ignored_output_length`.
+        """
+        if trace.endpoint_type is None or trace.output_length is None:
+            return trace.output_length
+        if self._endpoint_produces_tokens(trace.endpoint_type):
+            return trace.output_length
+        return None
 
     # ------------------------------------------------------------------
     # Synthesis hooks

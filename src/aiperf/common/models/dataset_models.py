@@ -410,6 +410,14 @@ class Turn(AIPerfBaseModel):
         default=None,
         description="Per-turn HTTP headers merged into the request at dispatch time.",
     )
+    endpoint_type: str | None = Field(
+        default=None,
+        description="Registered endpoint plugin this turn is dispatched to, "
+        "overriding the run-level endpoint type. Selects the URL path, the "
+        "payload formatter, and the response parser for this request. None "
+        "means use the run-level endpoint type. Set by dataset loaders that "
+        "support per-row endpoint routing (currently mooncake_trace).",
+    )
     prerequisites: list[TurnPrerequisite] = Field(
         default_factory=list,
         description="Conditions gating dispatch of this turn (DAG authoring). "

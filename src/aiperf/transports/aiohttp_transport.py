@@ -186,11 +186,11 @@ class AioHttpTransport(BaseTransport):
         """
         accept = (
             "text/event-stream"
-            if request_info.model_endpoint.endpoint.streaming
+            if request_info.resolved_streaming
             else "application/json"
         )
         headers: dict[str, str] = {"Accept": accept}
-        content_type = request_info.model_endpoint.endpoint.request_content_type
+        content_type = request_info.resolved_request_content_type
         if content_type != RequestContentType.MULTIPART_FORM_DATA:
             headers["Content-Type"] = (
                 content_type or RequestContentType.APPLICATION_JSON
@@ -205,6 +205,10 @@ class AioHttpTransport(BaseTransport):
 
         When multiple URLs are configured, uses request_info.url_index to select
         the appropriate URL for load balancing.
+
+        The path comes from ``request_info.resolved_endpoint_type``, so a turn
+        that overrides the endpoint (per-row routing) reaches that endpoint's
+        registered path on the same base URL.
 
         Path-joining happens on the URL's path component only; any query string
         or fragment in the base URL is preserved untouched. Dedup of an overlap
@@ -232,13 +236,21 @@ class AioHttpTransport(BaseTransport):
         # Determine the endpoint path component to append.
         # custom_endpoint is checked with `is not None` so that the empty string
         # is distinguishable from "unset" — empty-string means "no path append".
-        if endpoint_info.custom_endpoint is not None:
+        # It is deliberately not applied to per-row endpoint overrides: a row that
+        # names its own endpoint must not inherit a custom path configured for a
+        # different one.
+        if (
+            endpoint_info.custom_endpoint is not None
+            and not request_info.is_endpoint_overridden
+        ):
             sub_path = endpoint_info.custom_endpoint.lstrip("/")
         else:
-            endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
+            endpoint_metadata = plugins.get_endpoint_metadata(
+                request_info.resolved_endpoint_type
+            )
             endpoint_path = endpoint_metadata.endpoint_path
             if (
-                self.model_endpoint.endpoint.streaming
+                request_info.resolved_streaming
                 and endpoint_metadata.streaming_path is not None
             ):
                 endpoint_path = endpoint_metadata.streaming_path
