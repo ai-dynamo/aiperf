@@ -979,6 +979,35 @@ class TestResponsesStatefulChaining:
             ResponsesEndpoint, create_model_endpoint(EndpointType.RESPONSES)
         )
 
+    @pytest.fixture
+    def store_endpoint(self) -> ResponsesEndpoint:
+        return create_endpoint_with_mock_transport(
+            ResponsesEndpoint,
+            create_model_endpoint(EndpointType.RESPONSES, extra=[("store", True)]),
+        )
+
+    def test_extract_response_id_store_requested_response_omits_store_returns_id(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": "resp_no_echo",
+                                "object": "response",
+                                "status": "completed",
+                            },
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert store_endpoint.extract_response_id(record) == "resp_no_echo"
+
     def test_extract_response_id_streaming_created_returns_id(
         self, endpoint: ResponsesEndpoint
     ) -> None:

@@ -253,18 +253,24 @@ aiperf profile \
 
 ### Stateful Chaining with `previous_response_id`
 
-Stateful chaining is **opt-in and driven by the server's `store` field**. It only
-activates when the server confirms it persisted the previous response (`store: true`
-on the response object). Enable it by requesting storage:
+Stateful chaining is **opt-in and driven by requesting storage**. Enable it with:
 
 ```bash
 --extra-inputs '{"store": true}'
 ```
 
+`store` is a *request* parameter, not a standard field of the Responses object,
+so AIPerf keys chaining off the storage you requested rather than off an echoed
+response field — the OpenAI spec does not include `store` on the response, and
+servers such as vLLM's agentic-api accept it on the request but never serialize
+it back. (If a server *does* echo `store: true` on the response object, that is
+honored too.)
+
 Some backends also require a server-side flag (e.g. vLLM with
-`VLLM_ENABLE_RESPONSES_API_STORE=1`). If the server does not store the response,
-AIPerf keeps sending the full history and never chains — so a non-storing server
-never breaks the run.
+`VLLM_ENABLE_RESPONSES_API_STORE=1`) to actually persist responses. If the
+server does not persist a requested response, the next chained request fails
+against the missing `previous_response_id`; use a storing backend when enabling
+this feature.
 
 > **Startup requirement:** requesting `store: true` on `--endpoint-type responses`
 > is rejected at startup unless [`--use-server-token-count`](#server-token-counts)
@@ -274,7 +280,7 @@ never breaks the run.
 > keep sending the full history client-side.
 
 When chaining is active with `--endpoint-type responses`:
-- On **Turn 0**, AIPerf sends the initial prompt and captures the server-generated `response.id` (e.g. `resp_<hash>`) from the response object — but only if that object reports `store: true`.
+- On **Turn 0**, AIPerf sends the initial prompt and captures the server-generated `response.id` (e.g. `resp_<hash>`) from the response object — because `store: true` was requested for the run.
 - On **Turn 1+**, AIPerf sets `previous_response_id: <resp_id>` and sends only the single newest turn in the `input` array rather than re-sending the entire accumulated conversation history.
 
 **Scope:** chaining is applied only in the default delta context mode

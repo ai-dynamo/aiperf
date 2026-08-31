@@ -262,13 +262,18 @@ class ResponsesEndpoint(BaseEndpoint):
 
     def extract_response_id(self, record: RequestRecord) -> str | None:
         """Extract the server-generated response ID (``resp_<hash>``) for stateful
-        chaining, but only when the server confirms it persisted the response.
+        chaining, but only when storage was requested for this run.
 
-        The Responses API echoes a ``store`` boolean on the response object. We
-        chain the next turn against ``previous_response_id`` only when ``store``
-        is truthy: a response the server did not store cannot be referenced later
-        and chaining against it would 400. When ``store`` is absent or false we
-        return ``None`` so the caller falls back to sending the full history.
+        ``store`` is a *request* parameter, not a standard field of the Responses
+        object: the OpenAI spec does not list it on the response, and real
+        servers (e.g. vLLM's agentic-api) accept it on the request but never
+        serialize it back onto ``response.created`` / ``response.completed``.
+        Gating on the echoed response ``store`` therefore never fires against
+        those servers and silently disables chaining. We instead chain when
+        storage was requested via ``--extra-inputs store:true`` (endpoint
+        ``extra``); a server that *does* echo ``store: true`` is honored too.
+        When neither is set we return ``None`` so the caller falls back to
+        sending the full history.
 
         The response object lives under ``response`` for streaming lifecycle
         events (``response.created`` / ``response.completed`` / ...) and at the
@@ -281,6 +286,7 @@ class ResponsesEndpoint(BaseEndpoint):
         would corrupt the next turn, so any stream-end failure event yields
         ``None`` regardless of the advertised id.
         """
+        store_requested = self._store_requested()
         resp_id: str | None = None
         for response in record.responses:
             json_obj = response.get_json()
@@ -291,9 +297,23 @@ class ResponsesEndpoint(BaseEndpoint):
             nested = json_obj.get("response")
             source = nested if isinstance(nested, dict) else json_obj
             candidate = source.get("id")
-            if isinstance(candidate, str) and candidate and source.get("store"):
+            if not (isinstance(candidate, str) and candidate):
+                continue
+            if store_requested or source.get("store"):
                 resp_id = candidate
         return resp_id
+
+    def _store_requested(self) -> bool:
+        """Whether the run requested server-side storage via endpoint ``extra``.
+
+        ``EndpointInfo.extra`` is a list of ``(key, value)`` pairs; ``store`` may
+        arrive as a bool or a string depending on how ``--extra-inputs`` was
+        supplied.
+        """
+        store = dict(self.model_endpoint.endpoint.extra or []).get("store")
+        return store is True or (
+            isinstance(store, str) and store.strip().lower() == "true"
+        )
 
     @staticmethod
     def _maybe_enable_usage_stream_options(
