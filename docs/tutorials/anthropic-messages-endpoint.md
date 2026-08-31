@@ -117,7 +117,7 @@ Key formatting rules:
 - **Stream**: Set from `--streaming` flag (default: `false`)
 - **System**: Placed as a top-level string field when a system message is provided (never in the messages array)
 - **Tools**: Included at the top level when tool definitions are present in the conversation
-- **System (raw)**: When a turn carries `raw_system` (a list of content blocks), it is placed verbatim in the payload's top-level `system` field, overriding the conversation-level `system_message` string. See [Per-block system prompts (`raw_system`)](#per-block-system-prompts-raw_system)
+- **System (raw)**: When a turn carries `raw_system` (a list of content blocks), it is placed verbatim in the payload's top-level `system` field. A conversation-level `system_message` is not discarded — it is prepended as a leading text block. See [Per-block system prompts (`raw_system`)](#per-block-system-prompts-raw_system)
 - **Extra inputs**: Merged into the payload via `--extra-inputs` (e.g., `--extra-inputs temperature:0.7`)
 
 ### Simple Text Content
@@ -346,7 +346,7 @@ The usage object may include `cache_creation_input_tokens` and `cache_read_input
 
 The conversation-level `system_message` string (set, for example, by `--shared-system-prompt-length`) is rendered as a plain top-level `system: "..."` string. That works for most cases, but cannot express Anthropic's per-block extensions — most importantly `cache_control: {"type": "ephemeral"}` for prompt caching.
 
-To opt in, set `raw_system` on a `Turn` to a list of content blocks. The endpoint resolves it the same way as `raw_tools`: walking the turn list from the end and taking the first non-`None` value (`base_endpoint.py::_latest_turn_attr`). When set, it wins over `system_message`:
+To opt in, set `raw_system` on a `Turn` to a list of content blocks. The endpoint resolves it the same way as `raw_tools`: walking the turn list from the end and taking the first non-`None` value (`base_endpoint.py::_latest_turn_attr`). When set, it replaces the plain-string rendering — but it does not displace a conversation-level `system_message`, which is prepended as a leading text block ahead of the authored ones (see below):
 
 ```json
 {
@@ -371,7 +371,8 @@ Notes:
 - The field is Anthropic-specific. Other endpoints (`chat`, `responses`, ...) ignore it.
 - Block contents flow into ISL accounting via the endpoint's system-prompt walk; see [Input token accounting (ISL)](#input-token-accounting-isl) below.
 - `raw_system` is currently populated by trace-replay loaders that ingest Anthropic-shaped traces; programmatic callers building `Turn` objects directly can set it as well.
-- `--cache-bust system-prefix` / `system-suffix` targets `raw_system` when it is set, since that is what actually ships. The marker is appended or prepended as its own `{"type": "text", ...}` block rather than being spliced into an existing block's text, so a neighbouring `cache_control` breakpoint stays attached to the bytes it was authored against.
+- A conversation-level `system_message` (from `--system-prompt`/`--system-prompt-file` or `--shared-system-prompt-length`) is **prepended as block 0**, ahead of the authored blocks, which are passed through untouched along with their `cache_control`. The two coexist rather than one winning.
+- `--cache-bust system-prefix` / `system-suffix` targets `raw_system` only when there is no `system_message`. When both are present the marker goes on `system_message` instead, because that is block 0 — marking `raw_system` would leave a constant leading block the server could still prefix-hit on. On the `raw_system` path the marker is appended or prepended as its own `{"type": "text", ...}` block rather than being spliced into an existing block's text, so a neighbouring `cache_control` breakpoint stays attached to the bytes it was authored against.
 
 ### Audio and video are unsupported
 

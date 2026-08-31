@@ -197,7 +197,34 @@ class ResponsesEndpoint(BaseEndpoint):
                     "content": request_info.user_context_message,
                 }
             )
-        input_items.extend(self.build_messages(turns))
+        rendered = self.build_messages(turns)
+        instructions = request_info.system_message or None
+
+        # A dataset that authored its own leading ``role: system`` input item
+        # collides with ``instructions``: both ship, and the server sees two
+        # system prompts. Merge into the authored item and drop
+        # ``instructions``, matching ``ChatEndpoint._format_messages`` -- the
+        # de-dup invariant is endpoint-wide, and repeated system roles are
+        # mishandled by many OpenAI-compatible servers.
+        #
+        # Checked against ``rendered`` rather than ``input_items`` because
+        # ``user_context_message`` may already occupy index 0.
+        if (
+            instructions
+            and rendered
+            and isinstance(rendered[0], dict)
+            and rendered[0].get("role") == "system"
+        ):
+            # Copy rather than mutate: ``rendered`` aliases the turn's
+            # raw_messages, reused across credits in a session.
+            merged = dict(rendered[0])
+            merged["content"] = self._prepend_system_text(
+                instructions, merged.get("content")
+            )
+            rendered = [merged, *rendered[1:]]
+            instructions = None
+
+        input_items.extend(rendered)
 
         # Conversation-level fields walk turns from the end so FORK-mode
         # children whose final turn lacks model/tools still inherit the parent's
@@ -212,7 +239,7 @@ class ResponsesEndpoint(BaseEndpoint):
             "stream": model_endpoint.endpoint.streaming,
         }
         for key, value in (
-            ("instructions", request_info.system_message or None),
+            ("instructions", instructions),
             ("max_output_tokens", max_tokens),
             ("tools", self._latest_turn_attr(turns, "raw_tools")),
         ):

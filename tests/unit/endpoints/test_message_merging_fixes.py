@@ -377,6 +377,38 @@ class TestChatDeDupsLeadingSystem:
         assert len(systems) == 1
         assert systems[0]["content"] == "authored system"
 
+    def test_authored_leading_system_list_content_keeps_separator(self, chat_endpoint):
+        """The list branch must join with the same separator as the string one.
+
+        Servers that concatenate content parts would otherwise see
+        ``request_info systemauthored system`` -- a different prefix
+        tokenization for a semantically identical dataset.
+        """
+        authored = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "authored system"}],
+            },
+            {"role": "user", "content": "hi"},
+        ]
+        turn = Turn(role="user", raw_messages=authored)
+        request_info = create_request_info(
+            model_endpoint=chat_endpoint.model_endpoint,
+            turns=[turn],
+            system_message="request_info system",
+        )
+        payload = chat_endpoint.format_payload(request_info)
+        systems = [m for m in payload["messages"] if m["role"] == "system"]
+        assert len(systems) == 1
+        assert systems[0]["content"] == [
+            {"type": "text", "text": "request_info system\n\n"},
+            {"type": "text", "text": "authored system"},
+        ]
+        # Concatenating the parts must match what the string branch produces.
+        assert "".join(p["text"] for p in systems[0]["content"]) == (
+            "request_info system\n\nauthored system"
+        )
+
     def test_authored_leading_system_not_restacked_across_calls(self, chat_endpoint):
         """Formatting twice must not stack the prefix onto shared turn state.
 

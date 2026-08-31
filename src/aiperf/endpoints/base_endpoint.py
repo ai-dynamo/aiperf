@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.enums import MediaType
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -347,6 +348,32 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
                 if not content:
                     continue
                 parts.append(render_fn(content))
+
+    def _prepend_system_text(self, prefix: str, content: Any) -> Any:
+        """Return ``content`` with ``prefix`` prepended, preserving its shape.
+
+        System-message content is normally a plain string, but every
+        system-aware endpoint's schema also permits a list of content parts; a
+        raw-payload dataset may author either. Both branches join with
+        ``SYSTEM_PROMPT_JOIN_SEP`` so the two shapes tokenize identically --
+        servers that concatenate content parts would otherwise see the verbatim
+        prompt run into the dataset's own text with no separator.
+
+        The list branch renders through ``_render_text_part`` so each endpoint
+        contributes its own part shape (``text`` for chat and Anthropic,
+        ``input_text`` for Responses) without a shape table here.
+
+        Returns a new object in both cases -- callers pass content that aliases
+        reusable turn state.
+        """
+        if isinstance(content, list):
+            return [
+                self._render_text_part(prefix + SYSTEM_PROMPT_JOIN_SEP),
+                *content,
+            ]
+        if isinstance(content, str) and content:
+            return f"{prefix}{SYSTEM_PROMPT_JOIN_SEP}{content}"
+        return prefix
 
     # --- Content-part hooks: override per endpoint to change type names ------
 

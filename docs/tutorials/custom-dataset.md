@@ -551,6 +551,12 @@ Behavior worth knowing:
 - **Supported on `chat`, `responses`, `messages`, and `chat_embeddings`.** Endpoints with no
   system role (`completions`, `embeddings`, the rankings endpoints) reject the option at
   startup rather than silently dropping it.
+- **Not supported on datasets that author their own request payloads** — `raw_payload`,
+  `inputs_json`, and `mooncake_trace` in payload mode. Those payloads are sent to the server
+  byte-for-byte, bypassing the formatting step that puts the system message on the wire, so
+  the prompt would be silently dropped. AIPerf rejects the combination at startup. Either
+  author the system message directly into the trace payloads, or use a dataset type that
+  produces structured turns (`single_turn`, `multi_turn`, `dag_jsonl`).
 - **Mutually exclusive** with `--shared-system-prompt-length` and with
   `--num-prefix-prompts`/`--prefix-prompt-length`, all of which fill the same slot. Setting
   two of them is rejected at startup rather than one taking precedence, so a misconfigured

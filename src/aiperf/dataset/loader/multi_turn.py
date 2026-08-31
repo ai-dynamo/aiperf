@@ -114,11 +114,10 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     chat_embeddings); on others the system turn is left in place rather than
     silently dropped. A conversation
     that leads with two or more consecutive ``role: "system"`` turns is
-    un-hoisted: the endpoint only merges ``system_message`` into a rendered
-    leading system message during warmup, so a hoisted prompt sitting in front
-    of another leading system turn would never reach the wire in profiling
-    while still counting toward ISL. Both system turns are dispatched normally
-    instead, matching pre-hoist behavior.
+    un-hoisted: hoisting would fold the first system turn into the second on
+    the wire, collapsing two authored messages the trace deliberately kept
+    apart. Both system turns are dispatched normally instead, matching
+    pre-hoist behavior.
     """
 
     _hoist_leading_system_message: ClassVar[bool] = True
@@ -228,13 +227,14 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 conversation.turns.append(self._build_turn(*hoisted))
                 hoisted = None
 
-            # A second consecutive leading system turn fails the hoist guard and
-            # stays as turn 0 (role="system"). The endpoint only merges
-            # system_message into a rendered leading system message during
-            # warmup, so in profiling the hoisted prompt never reaches the wire
-            # while ISL still counts it. Un-hoist: restore the hoisted turn as
-            # turn 0 so both system turns dispatch normally, matching pre-hoist
-            # behavior for this ambiguous input.
+            # A second consecutive leading system turn fails the hoist guard
+            # and stays as turn 0 (role="system"). The endpoints now merge
+            # system_message into a rendered leading system message
+            # unconditionally, so the hoisted prompt would reach the wire --
+            # but fused into the second system turn as a single message,
+            # silently collapsing two the trace kept separate. Un-hoist:
+            # restore the hoisted turn as turn 0 so both dispatch normally,
+            # matching pre-hoist behavior for this ambiguous input.
             elif hoisted is not None and conversation.turns[0].role == "system":
                 conversation.system_message = None
                 conversation.turns.insert(0, self._build_turn(*hoisted))
