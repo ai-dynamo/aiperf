@@ -54,10 +54,7 @@ jobs:
           uv run python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); browser = p.chromium.launch(headless=True); browser.close(); p.stop()"
 
       - name: Run UI browser E2E
-        run: |
-          uv run pytest -m ui_e2e tests/ui_e2e/api/ -n 0 -v --tb=long
-          uv run pytest -m ui_e2e tests/ui_e2e/dashboard/ -n 0 -v --tb=long
-          uv run pytest -m ui_e2e tests/ui_e2e/operator/ -n 0 -v --tb=long
+        run: uv run pytest -m ui_e2e tests/ui_e2e/ -n 0 -v --tb=long
 
   kubernetes-tests:
     runs-on: ubuntu-latest
