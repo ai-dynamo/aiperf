@@ -52,6 +52,25 @@ __all__ = [
 ]
 
 
+def _native_scalar(x: Any) -> Any:
+    """Return the native Python counterpart of a numpy scalar, else ``x``.
+
+    Numpy's ``.item()`` maps each scalar to the Python type it actually
+    means -- ``numpy.bool_`` to ``bool``, ``numpy.int64`` to ``int``,
+    ``numpy.float32`` to ``float`` -- which ``float()`` alone would flatten.
+    Used instead of ``import numpy`` so this module stays import-light; it
+    is pulled in on per-record paths. Python scalars have no ``.item()`` and
+    cost one failed attribute lookup.
+    """
+    item = getattr(x, "item", None)
+    if not callable(item):
+        return x
+    try:
+        return item()
+    except (TypeError, ValueError):
+        return x
+
+
 def is_finite_value(x: Any) -> bool:
     """Return True if ``x`` is a finite real number.
 
@@ -61,11 +80,17 @@ def is_finite_value(x: Any) -> bool:
     ``int``/``float`` and numpy scalar types (``float32``, ``float64``,
     ``int64``, ...) because ``float(np.float64(...))`` round-trips.
 
+    ``numpy.bool_`` is rejected alongside Python ``bool``. It does not
+    subclass ``bool``, so without an explicit check it would be admitted as
+    the value ``1.0`` and skew :func:`nan_safe_mean` / :func:`nan_safe_std`
+    -- the same input would average differently depending only on which
+    bool type produced it.
+
     Strings, bytes, lists, dicts and other non-numeric types return False
     (the ``float()`` coercion either raises ``ValueError`` or
     ``TypeError``, both of which are caught).
     """
-    if x is None or isinstance(x, bool):
+    if x is None or isinstance(_native_scalar(x), bool):
         return False
     try:
         return math.isfinite(float(x))
@@ -102,24 +127,57 @@ Example::
 """
 
 
+def _scrub_scalar(obj: Any) -> Any:
+    """Normalize one non-container value for :func:`scrub_non_finite`.
+
+    Finite numerics come back as their native Python type, non-finite ones
+    as ``None``, and anything non-numeric passes through untouched.
+    """
+    if isinstance(obj, float):
+        # ``numpy.float64`` is the one numpy scalar type that subclasses
+        # ``float``, so it matches here rather than taking the ``.item()``
+        # path below. Returning it unconverted leaks it into orjson.dumps(),
+        # which rejects it outright ("Type is not JSON serializable").
+        # float() is a no-op on an exact float -- CPython returns the same
+        # object, and the call is cheaper than the isfinite() beside it.
+        return float(obj) if math.isfinite(obj) else None
+    if not hasattr(obj, "__float__") or isinstance(obj, int):
+        return obj
+    # Numpy scalar or other duck-typed number. ``numpy.int64(7)`` must stay
+    # ``7`` rather than widen to ``7.0``, and ``numpy.bool_(True)`` must stay
+    # ``True`` rather than collapse to ``1.0``.
+    native = _native_scalar(obj)
+    # bool is caught here too, since bool subclasses int; returning
+    # ``native`` keeps True a bool instead of flattening it to 1.
+    if isinstance(native, int):
+        return native
+    try:
+        f = float(native)
+    except (TypeError, ValueError):
+        return obj
+    return f if math.isfinite(f) else None
+
+
 def scrub_non_finite(obj: Any) -> Any:
     """Recursively replace non-finite numeric values with ``None``.
 
     Walks ``dict``, ``list``, and ``tuple`` containers; leaves ``str``,
     ``bytes``, and ``bytearray`` alone (a string literal ``"nan"`` is not a
-    numeric NaN and must not be rewritten). Coerces numpy floats correctly
-    by checking ``__float__`` and using ``float()`` directly (mirroring
-    :func:`is_finite_value`'s strategy) -- ``isinstance(x, float)`` would
-    miss ``numpy.float32``/``numpy.float64`` on some numpy versions.
+    numeric NaN and must not be rewritten). Numpy scalars are normalized to
+    their native Python counterpart rather than uniformly to ``float``, so
+    ``numpy.int64(7)`` yields ``7`` (not ``7.0``) and ``numpy.bool_(True)``
+    yields ``True`` (not ``1.0``). ``numpy.float64`` needs an explicit cast
+    because it subclasses ``float``; the rest go through ``.item()``.
 
     Use before ``orjson.dumps`` on any payload that may contain metric
-    values. orjson 3.x silently coerces NaN/inf to JSON ``null`` which is
-    indistinguishable from explicit-None semantics in downstream tooling.
+    values. This is the guard for two distinct orjson behaviors: it
+    silently coerces NaN/inf to JSON ``null`` (indistinguishable from
+    explicit-None semantics downstream), and it raises outright on numpy
+    scalars ("Type is not JSON serializable: numpy.float64").
 
-    The returned structure preserves the input container types (dict
-    stays dict, tuple stays tuple); numpy scalars are coerced to Python
-    ``float``. Booleans are passed through unchanged because they are not
-    metric values.
+    The returned structure preserves the input container types (dict stays
+    dict, tuple stays tuple). Booleans are passed through unchanged because
+    they are not metric values -- a non-finite check does not apply to them.
     """
     if isinstance(obj, (str, bytes, bytearray)):
         return obj
@@ -131,17 +189,7 @@ def scrub_non_finite(obj: Any) -> Any:
         return [scrub_non_finite(v) for v in obj]
     if isinstance(obj, tuple):
         return tuple(scrub_non_finite(v) for v in obj)
-    if isinstance(obj, float):
-        return obj if math.isfinite(obj) else None
-    # Numpy scalar / other numeric: duck-typed ``float()`` coercion (same
-    # strategy as is_finite_value). Non-numeric objects fall through unchanged.
-    if hasattr(obj, "__float__") and not isinstance(obj, int):
-        try:
-            f = float(obj)
-        except (TypeError, ValueError):
-            return obj
-        return f if math.isfinite(f) else None
-    return obj
+    return _scrub_scalar(obj)
 
 
 def nan_safe_mean(values: Any) -> float | None:
