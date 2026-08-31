@@ -74,6 +74,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
         self._response_futures: dict[str, asyncio.Future[Message | None]] = {}
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.REPLY_YIELD_INTERVAL
+        self._response_timeout: float = Environment.SERVICE.COMMS_REQUEST_TIMEOUT
 
     @on_stop
     async def _clear_request_handlers(self) -> None:
@@ -185,10 +186,30 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
         This method will wait for the response future to be set and then send the response
         back to the client.
+
+        The future entry is always removed in a ``finally`` block: it is what gates
+        duplicate-request rejection, so a stranded entry would leak memory and
+        permanently reject every later request reusing the same request_id. The wait is
+        bounded by the same timeout the requesting DEALER applies, so a handler that
+        never resolves the future cannot strand it forever either.
         """
         try:
-            # Wait for the response asynchronously.
-            response = await self._response_futures[request_id]
+            try:
+                # Wait for the response asynchronously.
+                response = await asyncio.wait_for(
+                    self._response_futures[request_id], timeout=self._response_timeout
+                )
+            except TimeoutError:
+                self.warning(
+                    lambda req_id=request_id: f"Timed out waiting for a response to request {req_id}"
+                )
+                response = ErrorMessage(
+                    request_id=request_id,
+                    error=ErrorDetails(
+                        type="RESPONSE_TIMEOUT",
+                        message="Timed out waiting for a response to the request.",
+                    ),
+                )
 
             if response is None:
                 self.warning(
@@ -202,8 +223,6 @@ class ZMQRouterReplyClient(BaseZMQClient):
                     ),
                 )
 
-            self._response_futures.pop(request_id, None)
-
             # Send the response back to the client.
             await self.socket.send_multipart(
                 [*routing_envelope, response.to_json_bytes()]
@@ -212,6 +231,8 @@ class ZMQRouterReplyClient(BaseZMQClient):
             self.exception(
                 f"Exception waiting for response for request {request_id}: {e}"
             )
+        finally:
+            self._response_futures.pop(request_id, None)
 
     @background_task(immediate=True, interval=None)
     async def _rep_router_receiver(self) -> None:

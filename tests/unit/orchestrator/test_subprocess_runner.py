@@ -225,3 +225,105 @@ class TestExceptionHandling:
             subprocess_runner.main()
         assert exc.value.code == 1
         assert "Missing required config key" in capsys.readouterr().err
+
+
+class TestErrorOutputRedaction:
+    """Credentials rehydrated by the runner must never reach stderr.
+
+    ``LocalSubprocessExecutor`` splices this process's stderr verbatim into
+    ``RunResult.error`` and into the orchestrator's logs, so any credential
+    echoed by an exception message or traceback would be persisted there.
+    """
+
+    @staticmethod
+    def _write_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "run.json"
+        cfg.write_bytes(orjson.dumps({"placeholder": "value"}))
+        _set_argv(monkeypatch, str(cfg))
+
+    def test_injected_api_key_is_not_echoed_in_error_or_traceback(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        mock_benchmark_run: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from aiperf.common.redact import REDACTED_VALUE
+
+        secret = "sk-secret12345"
+        monkeypatch.setenv("AIPERF_INJECTED_API_KEY", secret)
+        run = mock_benchmark_run.model_validate.return_value
+        run.cfg.endpoint.api_key = REDACTED_VALUE
+        run.cfg.endpoint.headers = {}
+        run.cfg.endpoint.urls = ["http://localhost:8000"]
+        self._write_config(tmp_path, monkeypatch)
+
+        def boom(*_: object, **__: object) -> None:
+            raise RuntimeError(f"connection refused while authenticating {secret}")
+
+        monkeypatch.setattr("aiperf.cli_runner._run_single_benchmark", boom)
+
+        with pytest.raises(SystemExit) as exc:
+            subprocess_runner.main()
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert secret not in err
+        assert "Failed to run benchmark" in err
+        assert "Traceback" in err
+        assert REDACTED_VALUE in err
+
+    def test_sensitive_header_value_is_not_echoed_in_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        mock_benchmark_run: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        secret = "hdr-secret-98765"
+        monkeypatch.setenv(
+            "AIPERF_INJECTED_HEADERS", orjson.dumps({"X-Api-Key": secret}).decode()
+        )
+        run = mock_benchmark_run.model_validate.return_value
+        run.cfg.endpoint.api_key = None
+        run.cfg.endpoint.headers = {}
+        run.cfg.endpoint.urls = ["http://localhost:8000"]
+        self._write_config(tmp_path, monkeypatch)
+
+        def boom(*_: object, **__: object) -> None:
+            raise RuntimeError(f"upstream rejected header value {secret}")
+
+        monkeypatch.setattr("aiperf.cli_runner._run_single_benchmark", boom)
+
+        with pytest.raises(SystemExit):
+            subprocess_runner.main()
+
+        assert secret not in capsys.readouterr().err
+
+    def test_userinfo_url_is_not_echoed_in_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        mock_benchmark_run: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        secret = "urlpass4321"
+        url = f"http://user:{secret}@example.com:8000"
+        monkeypatch.setenv(
+            "AIPERF_INJECTED_ENDPOINT_URLS", orjson.dumps([url]).decode()
+        )
+        run = mock_benchmark_run.model_validate.return_value
+        run.cfg.endpoint.api_key = None
+        run.cfg.endpoint.headers = {}
+        run.cfg.endpoint.urls = []
+        self._write_config(tmp_path, monkeypatch)
+
+        def boom(*_: object, **__: object) -> None:
+            raise RuntimeError(f"could not connect to {url}")
+
+        monkeypatch.setattr("aiperf.cli_runner._run_single_benchmark", boom)
+
+        with pytest.raises(SystemExit):
+            subprocess_runner.main()
+
+        assert secret not in capsys.readouterr().err

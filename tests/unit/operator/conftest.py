@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from aiperf.common.constants import IS_LINUX
 from tests.harness.operator import (
     build_full_aiperfjob_spec,
     build_high_concurrency_spec,
@@ -20,6 +21,11 @@ from tests.harness.operator import (
     build_progress_response_with_error,
     build_sample_body,
     build_sample_conditions_list,
+)
+
+pytestmark = pytest.mark.skipif(
+    not IS_LINUX,
+    reason="AIPerf operator runs only in Linux Kubernetes containers",
 )
 
 # =============================================================================

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -392,6 +393,85 @@ def apply_endpoint_credentials(
             "benchmark-run contains redacted endpoint credentials; supply them "
             f"through the environment variable(s): {names}"
         )
+
+
+_MIN_REDACTABLE_SECRET_LENGTH = 4
+
+
+def credential_values(
+    *,
+    credentials: EndpointCredentialInjection | None = None,
+    endpoint: Any = None,
+) -> list[str]:
+    """Return every plaintext endpoint credential value known to this process.
+
+    Collected from the injected environment payload and/or a resolved
+    ``EndpointConfig``: the API key, the values of credential-bearing headers,
+    and any endpoint URL carrying userinfo or a credential query parameter.
+    Attributes are read defensively (``isinstance`` gated) so a partially
+    constructed or mocked endpoint can never turn error reporting into a second
+    failure. The redaction placeholder is never returned as a secret.
+    """
+    values: list[str] = []
+
+    if credentials is not None:
+        if isinstance(credentials.api_key, str):
+            values.append(credentials.api_key)
+        if credentials.headers:
+            values.extend(
+                value
+                for value in credentials.headers.values()
+                if isinstance(value, str)
+            )
+        if credentials.urls:
+            values.extend(
+                url
+                for url in credentials.urls
+                if isinstance(url, str) and redact_url(url) != url
+            )
+
+    if endpoint is not None:
+        api_key = getattr(endpoint, "api_key", None)
+        if isinstance(api_key, str):
+            values.append(api_key)
+        headers = getattr(endpoint, "headers", None)
+        if isinstance(headers, dict):
+            values.extend(
+                value
+                for value in extract_sensitive_headers(headers).values()
+                if isinstance(value, str)
+            )
+        urls = getattr(endpoint, "urls", None)
+        if isinstance(urls, list | tuple):
+            values.extend(
+                url for url in urls if isinstance(url, str) and redact_url(url) != url
+            )
+
+    return [value for value in values if value and value != REDACTED_VALUE]
+
+
+def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
+    """Scrub known credential values out of arbitrary text.
+
+    Exact-value replacement runs first because an exception message or
+    traceback frame can embed a raw key with none of the ``api_key=`` /
+    ``Authorization:`` context that pattern-based redaction keys off. The
+    generic string and URL redactors then run as a fallback for credentials
+    this process never held. Values shorter than
+    ``_MIN_REDACTABLE_SECRET_LENGTH`` are skipped: a one- or two-character
+    "credential" would shred every unrelated word in a traceback while
+    protecting nothing real.
+    """
+    unique = {
+        secret
+        for secret in secrets
+        if len(secret) >= _MIN_REDACTABLE_SECRET_LENGTH and secret != REDACTED_VALUE
+    }
+    # Longest first so a secret that contains another (a userinfo URL and the
+    # password inside it) is replaced whole rather than left partially intact.
+    for secret in sorted(unique, key=len, reverse=True):
+        text = text.replace(secret, REDACTED_VALUE)
+    return redact_url(redact_string(text))
 
 
 def validate_kubernetes_credential_transport(

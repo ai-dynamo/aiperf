@@ -197,6 +197,83 @@ class TestZMQRouterReplyClientRequestHandling:
             mock_socket.send_multipart.assert_called_once()
 
 
+class TestZMQRouterReplyClientResponseFutureCleanup:
+    """A response future must never outlive its request.
+
+    The entry is what gates duplicate-request rejection, so a stranded future
+    permanently rejects every later request that reuses the same request_id
+    (retries do), on top of leaking memory for the life of the process.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wait_for_response_cancelled_removes_response_future(
+        self, router_test_helper, sample_message
+    ):
+        """Test that cancelling the waiter still drops the response future."""
+        router_test_helper.setup_mock_socket()
+
+        async with router_test_helper.create_client() as client:
+            client._response_futures[sample_message.request_id] = asyncio.Future()
+
+            task = asyncio.ensure_future(
+                client._wait_for_response(sample_message.request_id, (b"client_id",))
+            )
+            for _ in range(10):
+                await asyncio.sleep(0)
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            assert client._response_futures == {}
+
+    @pytest.mark.asyncio
+    async def test_wait_for_response_timeout_removes_future_and_replies_error(
+        self, router_test_helper, sample_message
+    ):
+        """Test that a handler that never resolves the future times out and cleans up."""
+        mock_socket = router_test_helper.setup_mock_socket()
+
+        async with router_test_helper.create_client() as client:
+            client._response_timeout = 0.01
+            client._response_futures[sample_message.request_id] = asyncio.Future()
+
+            await asyncio.wait_for(
+                client._wait_for_response(sample_message.request_id, (b"client_id",)),
+                timeout=5.0,
+            )
+
+            assert client._response_futures == {}
+            mock_socket.send_multipart.assert_called_once()
+            sent = mock_socket.send_multipart.call_args[0][0]
+            error_msg = Message.from_json(sent[-1])
+            assert isinstance(error_msg, ErrorMessage)
+            assert error_msg.error is not None
+            assert error_msg.error.type == "RESPONSE_TIMEOUT"
+
+    @pytest.mark.asyncio
+    async def test_wait_for_response_send_failure_removes_future(
+        self, router_test_helper, sample_message
+    ):
+        """Test that a failed reply send does not strand the response future."""
+        mock_socket = router_test_helper.setup_mock_socket()
+        mock_socket.send_multipart.side_effect = RuntimeError("send failed")
+
+        async with router_test_helper.create_client() as client:
+            future = asyncio.Future()
+            future.set_result(
+                Message(
+                    message_type=MessageType.HEARTBEAT,
+                    request_id=sample_message.request_id,
+                )
+            )
+            client._response_futures[sample_message.request_id] = future
+
+            await client._wait_for_response(sample_message.request_id, (b"client_id",))
+
+            assert client._response_futures == {}
+
+
 class TestZMQRouterReplyClientBackgroundTask:
     """Test router reply client background task."""
 
