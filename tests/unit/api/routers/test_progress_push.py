@@ -756,9 +756,10 @@ async def test_push_aiperfjob_status_prefers_concrete_phase_over_legacy_aggregat
             # Legacy aggregate: key equals str(phase) and no phase_name.
             "profiling": CombinedPhaseStats(
                 phase="profiling",
-                total_expected_requests=100,
-                requests_sent=30,
-                requests_completed=25,
+                total_expected_requests=999,
+                requests_sent=100,
+                requests_completed=99,
+                requests_per_second=99.0,
                 start_ns=99_000,
                 last_update_ns=99_500,
             ),
@@ -768,6 +769,9 @@ async def test_push_aiperfjob_status_prefers_concrete_phase_over_legacy_aggregat
     status = _status_body(custom)
     assert status["currentPhase"] == "steady_state"
     assert status["currentPhase"] in status["phases"]
+    assert status["requestsCompleted"] == 25
+    assert status["requestsTotal"] == 100
+    assert status["requestsPerSecond"] == 0.0
 
 
 def test_merge_patch_value_strips_nulls_when_target_is_not_an_object() -> None:

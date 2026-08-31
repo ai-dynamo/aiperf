@@ -251,6 +251,29 @@ async def test_set_latest_flips_one_row_only(index_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_runs_for_job_orders_equal_mtime_epochs_numerically(
+    index_path,
+) -> None:
+    """A newer 10-digit epoch must sort above a 9-digit epoch on an mtime tie."""
+    old_epoch = "999999999"
+    new_epoch = "1714069323"
+    for epoch in (old_epoch, new_epoch):
+        await runs_index.upsert_run_completed(
+            "ns",
+            "j",
+            epoch,
+            summary_blob=b"",
+            metrics={},
+            files=[],
+            mtime_epoch=100,
+        )
+
+    rows = await runs_index.list_runs_for_job("ns", "j")
+
+    assert [row.epoch for row in rows] == [new_epoch, old_epoch]
+
+
+@pytest.mark.asyncio
 async def test_delete_run_removes_row(index_path) -> None:
     await runs_index.upsert_run_created("ns", "j", "100", spec={})
     await runs_index.delete_run("ns", "j", "100")
@@ -1302,29 +1325,38 @@ async def test_failed_run_end_time_is_offset_aware_iso(index_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_readonly_concurrent_callers_share_one_connection(
+async def test_open_readonly_concurrent_callers_wait_for_shared_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Concurrent sidecar requests must not create leaked SQLite connections."""
+    """A second caller must not return before the shared connection is ready."""
     path = tmp_path / ".aiperf_index.sqlite"
     await runs_index.open(path)
     await runs_index.close()
 
     real_connect = runs_index.aiosqlite.connect
+    connect_started = asyncio.Event()
+    allow_connect = asyncio.Event()
     connect_calls = 0
 
-    def counted_connect(*args, **kwargs):
+    async def delayed_connect(*args, **kwargs):
         nonlocal connect_calls
         connect_calls += 1
-        return real_connect(*args, **kwargs)
+        connect_started.set()
+        await allow_connect.wait()
+        return await real_connect(*args, **kwargs)
 
-    monkeypatch.setattr(runs_index.aiosqlite, "connect", counted_connect)
+    monkeypatch.setattr(runs_index.aiosqlite, "connect", delayed_connect)
 
-    await asyncio.gather(
-        runs_index.open_readonly(path),
-        runs_index.open_readonly(path),
-    )
+    first = asyncio.create_task(runs_index.open_readonly(path))
+    await connect_started.wait()
+    second = asyncio.create_task(runs_index.open_readonly(path))
+    await asyncio.sleep(0)
+    assert not second.done()
+
+    allow_connect.set()
+    await asyncio.gather(first, second)
     try:
         assert connect_calls == 1
+        assert runs_index.is_open()
     finally:
         await runs_index.close()

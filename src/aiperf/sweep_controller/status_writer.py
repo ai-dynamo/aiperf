@@ -243,7 +243,46 @@ class SweepStatusWriter:
                         body["status"][key] = parent[key]
         if terminal_phase is not None:
             body["status"]["phase"] = terminal_phase
-        await self._patch(body)
+
+        resource_version = await self._temporary_aggregate_resource_version()
+        if resource_version is None and self.uid is not None:
+            return
+        await self._patch(body, resource_version=resource_version)
+
+    async def _temporary_aggregate_resource_version(self) -> str | None:
+        """Return a resource version that fences temporary aggregate publication.
+
+        The operator replaces the controller's live ref with a durable PVC-backed
+        ref. A resource-version JSON-patch test makes a concurrent replacement
+        fail instead of letting this temporary payload overwrite it.
+        """
+        if self.uid is None:
+            return None
+
+        current = await CustomObjectsApi(self._api).get_namespaced_custom_object(
+            group="aiperf.nvidia.com",
+            version="v1alpha1",
+            plural="aiperfsweeps",
+            namespace=self.namespace,
+            name=self.name,
+        )
+        metadata = current.get("metadata") or {}
+        if metadata.get("uid") != self.uid:
+            return None
+        status = current.get("status") or {}
+        aggregate_ref = status.get("aggregateRef") or {}
+        if (
+            status.get("resultsAvailable") is True
+            and isinstance(aggregate_ref, dict)
+            and (aggregate_ref.get("url"))
+        ):
+            return None
+        resource_version = metadata.get("resourceVersion")
+        if not isinstance(resource_version, str):
+            raise RuntimeError(
+                f"AIPerfSweep {self.namespace}/{self.name} has no resourceVersion"
+            )
+        return resource_version
 
     async def aggregation_failed(self, *, error: str) -> None:
         """Mark aggregation Failed and promote ``status.phase`` to ``Failed``.
@@ -276,12 +315,22 @@ class SweepStatusWriter:
             }
         )
 
-    async def _patch(self, body: dict[str, Any]) -> None:
+    async def _patch(
+        self, body: dict[str, Any], *, resource_version: str | None = None
+    ) -> None:
         custom = CustomObjectsApi(self._api)
         if self.uid is not None:
             patch: list[dict[str, Any]] = [
                 {"op": "test", "path": "/metadata/uid", "value": self.uid}
             ]
+            if resource_version is not None:
+                patch.append(
+                    {
+                        "op": "test",
+                        "path": "/metadata/resourceVersion",
+                        "value": resource_version,
+                    }
+                )
             for key, value in (body.get("status") or {}).items():
                 escaped_key = key.replace("~", "~0").replace("/", "~1")
                 patch.append(

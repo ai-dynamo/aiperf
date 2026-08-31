@@ -138,6 +138,11 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         info = self.services.get(service_id)
         if info:
             if info.registration_status == ServiceRegistrationStatus.REGISTERED:
+                # Registration starts a new sender process epoch. A replacement
+                # service reuses its stable ID but restarts its local sequence
+                # counter at one, so retaining the old watermark would reject
+                # every early heartbeat and status update from the replacement.
+                info.last_seq = None
                 if info.last_seen_ns is None or first_seen_ns >= info.last_seen_ns:
                     info.last_seen_ns = first_seen_ns
                     info.state = state

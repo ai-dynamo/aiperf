@@ -547,6 +547,12 @@ class TestAIPerfJobInfoModel:
         info = AIPerfJobCR.model_validate(raw).to_info()
         assert info.model == "model-a"
 
+    def test_model_from_model_shorthand(self) -> None:
+        """The singular user-facing shorthand appears in job list projections."""
+        raw = _make_raw_aiperfjob(spec={"benchmark": {"model": "llama-70b"}})
+        info = AIPerfJobCR.model_validate(raw).to_info()
+        assert info.model == "llama-70b"
+
     def test_model_none_when_empty_list(self) -> None:
         raw = _make_raw_aiperfjob(spec={"benchmark": {"models": []}})
         info = AIPerfJobCR.model_validate(raw).to_info()

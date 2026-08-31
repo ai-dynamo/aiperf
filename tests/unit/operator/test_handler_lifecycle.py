@@ -307,7 +307,7 @@ class TestOnBenchmarkComplete:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                "aiperf.operator.handlers.lifecycle.acquire_progress_client",
                 new_callable=AsyncMock,
                 return_value=mock_client,
             ),
@@ -354,7 +354,7 @@ class TestOnBenchmarkComplete:
                 new_callable=AsyncMock,
             ) as mock_handle,
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                "aiperf.operator.handlers.lifecycle.acquire_progress_client",
                 new_callable=AsyncMock,
             ),
         ):
@@ -399,7 +399,7 @@ class TestOnBenchmarkComplete:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                "aiperf.operator.handlers.lifecycle.acquire_progress_client",
                 new_callable=AsyncMock,
                 return_value=mock_client,
             ),
@@ -450,7 +450,7 @@ class TestOnBenchmarkComplete:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                "aiperf.operator.handlers.lifecycle.acquire_progress_client",
                 new_callable=AsyncMock,
                 return_value=mock_client,
             ),
@@ -502,7 +502,7 @@ class TestOnBenchmarkComplete:
                 new_callable=AsyncMock,
             ),
             mock_patch(
-                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                "aiperf.operator.handlers.lifecycle.acquire_progress_client",
                 new_callable=AsyncMock,
                 return_value=mock_client,
             ),

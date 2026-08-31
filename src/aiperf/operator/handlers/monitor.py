@@ -54,11 +54,12 @@ from aiperf.kubernetes.spec_converter import (
 from aiperf.operator import events, runs_index
 from aiperf.operator.client_cache import (
     _shutdown_sent,
+    acquire_progress_client,
     close_progress_client,
-    get_or_create_progress_client,
     is_cancellation_requested,
     is_completion_claimed,
     job_key,
+    release_progress_client,
     try_claim_completion,
 )
 from aiperf.operator.environment import OperatorEnvironment
@@ -1418,23 +1419,26 @@ async def _benchmark_appears_complete(
             return False
 
     host = controller_dns_name(jobset_name, namespace)
-    progress_client = await get_or_create_progress_client(key)
+    progress_client = await acquire_progress_client(key)
     try:
-        progress = await progress_client.get_progress(host)
-        if not progress.connection_error and progress.is_complete:
-            return True
-    except (TimeoutError, aiohttp.ClientError, OSError) as e:
-        logger.debug(
-            "progress probe for %s during orphan-claim gate failed: %s",
-            jobset_name,
-            e,
-        )
-    except Exception as e:  # noqa: BLE001 - gate is best-effort; fall through to the pod-status check on any parse/transport error
-        logger.debug(
-            "progress probe for %s during orphan-claim gate failed: %s",
-            jobset_name,
-            e,
-        )
+        try:
+            progress = await progress_client.get_progress(host)
+            if not progress.connection_error and progress.is_complete:
+                return True
+        except (TimeoutError, aiohttp.ClientError, OSError) as e:
+            logger.debug(
+                "progress probe for %s during orphan-claim gate failed: %s",
+                jobset_name,
+                e,
+            )
+        except Exception as e:  # noqa: BLE001 - gate is best-effort; fall through to the pod-status check on any parse/transport error
+            logger.debug(
+                "progress probe for %s during orphan-claim gate failed: %s",
+                jobset_name,
+                e,
+            )
+    finally:
+        await release_progress_client(key)
 
     pod = await _get_controller_pod(api, namespace, jobset_name)
     if pod is None:
@@ -1524,24 +1528,27 @@ async def _recover_orphaned_completion_claim(
             )
             return
         host = controller_dns_name(jobset_name, namespace)
-        progress_client = await get_or_create_progress_client(key)
+        progress_client = await acquire_progress_client(key)
         try:
-            await progress_client.send_shutdown(host)
-        except (TimeoutError, aiohttp.ClientError, OSError) as e:
-            logger.debug(
-                "send_shutdown during orphaned-claim recovery for %s/%s failed "
-                "(expected if controller pod already gone): %s",
-                namespace,
-                name,
-                e,
-            )
-        except Exception as e:  # noqa: BLE001 - recovery path must not raise; shutdown signal is best-effort
-            logger.debug(
-                "send_shutdown during orphaned-claim recovery for %s/%s failed: %s",
-                namespace,
-                name,
-                e,
-            )
+            try:
+                await progress_client.send_shutdown(host)
+            except (TimeoutError, aiohttp.ClientError, OSError) as e:
+                logger.debug(
+                    "send_shutdown during orphaned-claim recovery for %s/%s failed "
+                    "(expected if controller pod already gone): %s",
+                    namespace,
+                    name,
+                    e,
+                )
+            except Exception as e:  # noqa: BLE001 - recovery path must not raise; shutdown signal is best-effort
+                logger.debug(
+                    "send_shutdown during orphaned-claim recovery for %s/%s failed: %s",
+                    namespace,
+                    name,
+                    e,
+                )
+        finally:
+            await release_progress_client(key)
     finally:
         await close_progress_client(key)
 

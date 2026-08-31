@@ -127,6 +127,9 @@ class _CredentialWaitingApiClient(ApiClient):
         self._context = context
         self._credential_generation = 0
         self._credential_refresh_lock = asyncio.Lock()
+        self._rest_client_lock = asyncio.Lock()
+        self._rest_client_leases: dict[rest.RESTClientObject, int] = {}
+        self._retired_rest_clients: set[rest.RESTClientObject] = set()
         self._credential_wait_announced = False
         self._credential_retry_attempt = 0
 
@@ -144,8 +147,7 @@ class _CredentialWaitingApiClient(ApiClient):
         while True:
             generation = self._credential_generation
             try:
-                result = super().call_api(*args, **kwargs)
-                response = await result
+                response = await self._call_api_once(args, kwargs)
             except ApiException as error:
                 if not is_api_authentication_error(error):
                     raise
@@ -173,6 +175,38 @@ class _CredentialWaitingApiClient(ApiClient):
                     continue
                 self._credential_generation += 1
 
+    async def _call_api_once(
+        self,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """Lease the transport used by one request until its response completes."""
+        async with self._rest_client_lock:
+            rest_client = self.rest_client
+            self._rest_client_leases[rest_client] = (
+                self._rest_client_leases.get(rest_client, 0) + 1
+            )
+            result = super().call_api(*args, **kwargs)
+        try:
+            return await result
+        finally:
+            await self._release_rest_client(rest_client)
+
+    async def _release_rest_client(self, rest_client: rest.RESTClientObject) -> None:
+        """Release a request lease and close an idle retired transport."""
+        close_client: rest.RESTClientObject | None = None
+        async with self._rest_client_lock:
+            remaining = self._rest_client_leases[rest_client] - 1
+            if remaining:
+                self._rest_client_leases[rest_client] = remaining
+            else:
+                del self._rest_client_leases[rest_client]
+                if rest_client in self._retired_rest_clients:
+                    self._retired_rest_clients.remove(rest_client)
+                    close_client = rest_client
+        if close_client is not None:
+            await close_client.close()
+
     async def _reload_kubeconfig(self) -> None:
         """Reload credentials and TLS material into this client.
 
@@ -187,11 +221,18 @@ class _CredentialWaitingApiClient(ApiClient):
             persist_config=False,
         )
         new_rest_client = rest.RESTClientObject(configuration)
-        old_rest_client = self.rest_client
-        self.configuration = configuration
-        self.client_side_validation = configuration.client_side_validation
-        self.rest_client = new_rest_client
-        await old_rest_client.close()
+        close_client: rest.RESTClientObject | None = None
+        async with self._rest_client_lock:
+            old_rest_client = self.rest_client
+            self.configuration = configuration
+            self.client_side_validation = configuration.client_side_validation
+            self.rest_client = new_rest_client
+            if self._rest_client_leases.get(old_rest_client, 0):
+                self._retired_rest_clients.add(old_rest_client)
+            else:
+                close_client = old_rest_client
+        if close_client is not None:
+            await close_client.close()
 
 
 async def _load_kubeconfig(

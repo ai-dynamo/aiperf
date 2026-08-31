@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -124,6 +125,23 @@ def test_list_job_epochs(tmp_path: Path) -> None:
     assert epoch_strs == ["1714069323", "1714069400"]
     assert body["epochs"][-1]["isLatest"] is True
     assert body["epochs"][0]["isLatest"] is False
+
+
+def test_list_job_epochs_orders_equal_mtime_epochs_numerically(tmp_path: Path) -> None:
+    """The API returns mixed-width epoch seconds in ascending numeric order."""
+    old_epoch = "999999999"
+    new_epoch = "1714069323"
+    for epoch in (old_epoch, new_epoch):
+        _write_summary(tmp_path, "bench", "j1", epoch)
+        target = tmp_path / "bench" / "j1" / epoch
+        os.utime(target, (100, 100))
+
+    api = MagicMock()
+    c = _client(api, tmp_path)
+    r = c.get("/api/v1/jobs/bench/j1/epochs")
+
+    assert r.status_code == 200, r.text
+    assert [entry["epoch"] for entry in r.json()["epochs"]] == [old_epoch, new_epoch]
 
 
 def test_list_job_epochs_returns_status_unknown_when_index_empty(

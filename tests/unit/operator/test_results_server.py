@@ -25,10 +25,14 @@ import httpx
 import orjson
 import pytest
 import zstandard
+from fastapi.testclient import TestClient
 from pytest import param
 
+from aiperf.common.results_markers import write_ready_marker
 from aiperf.operator import runs_index
+from aiperf.operator import runs_index as runs_index_mod
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.results_layout import job_dir, run_dir, write_latest
 from aiperf.operator.results_server import (
     RESULTS_DIR,
     SERVER_PORT,
@@ -63,7 +67,6 @@ def _create_result_file(
     ``.aiperf_results_ready.json`` marker so ``runs_index.bootstrap`` will
     pick the run up — the analytics endpoints read from runs_index now.
     """
-    from aiperf.operator.results_layout import run_dir, write_latest
 
     default_epoch = "1714064523"
     job_dir = run_dir(base_dir, namespace, job_id, default_epoch)
@@ -271,8 +274,6 @@ class TestHealthEndpoint:
 
     def test_results_server_mounts_dashboard_proxy_route(self, tmp_path: Path) -> None:
         """results-server registers the /dashboard/{path:path} proxy route."""
-        from aiperf.operator.results_server import create_app
-
         app = create_app(results_dir=tmp_path)
         paths = collect_app_paths(app)
         assert "/dashboard/{path:path}" in paths
@@ -282,9 +283,6 @@ class TestHealthEndpoint:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The results-server sidecar must not become a second SQLite writer."""
-        from aiperf.operator import runs_index as runs_index_mod
-        from aiperf.operator.results_server import create_app
-
         calls: list[tuple[str, Path]] = []
 
         async def fake_open(path: Path) -> None:
@@ -1014,9 +1012,6 @@ def _seed_epoch_run(
     filename: str,
     content: bytes = b"{}",
 ) -> Path:
-    from aiperf.common.results_markers import write_ready_marker
-    from aiperf.operator.results_layout import run_dir, write_latest
-
     d = run_dir(base, namespace, name, epoch)
     d.mkdir(parents=True, exist_ok=True)
     (d / filename).write_bytes(content)
@@ -1030,10 +1025,6 @@ _EPOCH_NEW = "1714150923"
 
 
 def test_list_job_files_requires_explicit_epoch(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json", b'{"v":1}')
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json", b'{"v":2}')
 
@@ -1048,10 +1039,6 @@ def test_list_job_files_requires_explicit_epoch(tmp_path: Path) -> None:
 
 
 def test_historical_route_pins_epoch(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json", b'{"v":1}')
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json", b'{"v":2}')
 
@@ -1063,10 +1050,6 @@ def test_historical_route_pins_epoch(tmp_path: Path) -> None:
 
 
 def test_historical_route_invalid_epoch_rejected(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json")
     with TestClient(create_app(results_dir=tmp_path)) as client:
         r = client.get("/api/v1/results/ns/job/runs/..%2Fevil")
@@ -1074,10 +1057,6 @@ def test_historical_route_invalid_epoch_rejected(tmp_path: Path) -> None:
 
 
 def test_historical_zip_bundle_pins_epoch(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json", b'{"v":1}')
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json", b'{"v":2}')
     with TestClient(create_app(results_dir=tmp_path)) as client:
@@ -1087,10 +1066,6 @@ def test_historical_zip_bundle_pins_epoch(tmp_path: Path) -> None:
 
 
 def test_scan_job_dirs_collapses_to_latest_epoch(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "old.json")
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "new.json")
     with TestClient(create_app(results_dir=tmp_path)) as client:
@@ -1103,10 +1078,6 @@ def test_scan_job_dirs_collapses_to_latest_epoch(tmp_path: Path) -> None:
 
 
 def test_list_runs_returns_epochs_newest_first(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "b.json")
 
@@ -1129,11 +1100,6 @@ def test_list_runs_returns_epochs_newest_first(tmp_path: Path) -> None:
 def test_list_runs_breaks_equal_mtime_ties_by_epoch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_layout import job_dir
-    from aiperf.operator.results_server import create_app
-
     old_run = _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
     new_run = _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "b.json")
     for run in (old_run, new_run):
@@ -1155,21 +1121,12 @@ def test_list_runs_breaks_equal_mtime_ties_by_epoch(
 
 
 def test_list_runs_404_when_no_runs(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     with TestClient(create_app(results_dir=tmp_path)) as client:
         r = client.get("/api/v1/results/ns/absent/runs")
         assert r.status_code == 404
 
 
 def test_list_runs_skips_non_epoch_dirs(tmp_path: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_layout import job_dir
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
     (job_dir(tmp_path, "ns", "job") / "not-an-epoch").mkdir()
 
@@ -1183,11 +1140,6 @@ def test_list_runs_skips_non_epoch_dirs(tmp_path: Path) -> None:
 def test_readonly_list_runs_does_not_schedule_lazy_backfill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator import runs_index as runs_index_mod
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
     lazy_backfill = AsyncMock()
     monkeypatch.setattr(runs_index_mod, "is_open", lambda: True, raising=False)
@@ -1204,11 +1156,6 @@ def test_readonly_list_runs_does_not_schedule_lazy_backfill(
 def test_readonly_sidecar_missing_index_does_not_schedule_lazy_backfill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator import runs_index as runs_index_mod
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
     lazy_backfill = AsyncMock()
     monkeypatch.setattr(runs_index_mod, "lazy_backfill_run", lazy_backfill)
@@ -1224,11 +1171,6 @@ def test_config_retention_endpoint_returns_current_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """GET /api/v1/config/retention returns the live OperatorEnvironment values."""
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.environment import OperatorEnvironment
-    from aiperf.operator.results_server import create_app
-
     # The singleton is constructed once at module import, so values are fixed
     # from the test-runner's environment. Patch the already-loaded settings
     # object directly rather than reloading the module (which would strand
@@ -1256,10 +1198,6 @@ def test_profile_export_quick_route_returns_json_when_present(tmp_path: Path) ->
     """The quick-export route returns the raw profile_export_aiperf.json bytes
     with application/json + canonical Content-Disposition, skipping the
     directory-listing roundtrip the artifacts table normally requires."""
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     payload = orjson.dumps({"request_throughput": {"avg": 123.4, "unit": "req/s"}})
     _seed_epoch_run(
         tmp_path,
@@ -1290,12 +1228,6 @@ def test_profile_export_quick_route_decompresses_zst(tmp_path: Path) -> None:
     """The quick-export route falls back to the .zst companion when the
     uncompressed JSON is absent — mirrors the per-file route's transparent
     decompression but pins media_type to application/json."""
-    from fastapi.testclient import TestClient
-
-    from aiperf.common.results_markers import write_ready_marker
-    from aiperf.operator.results_layout import run_dir, write_latest
-    from aiperf.operator.results_server import create_app
-
     payload = orjson.dumps({"output_token_throughput": {"avg": 987.6, "unit": "tok/s"}})
     cctx = zstandard.ZstdCompressor()
     compressed = cctx.compress(payload)
@@ -1319,10 +1251,6 @@ def test_profile_export_quick_route_decompresses_zst(tmp_path: Path) -> None:
 def test_profile_export_quick_route_404_when_missing(tmp_path: Path) -> None:
     """The run dir exists with other artifacts but no profile_export — must
     return 404 with a meaningful detail naming the missing file."""
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     _seed_epoch_run(
         tmp_path,
         "acme-bench",
@@ -1348,10 +1276,6 @@ def test_profile_export_quick_route_does_not_shadow_filename_route(
     {filename:path} catch-all that follows it. A real file named
     'profile_export' (no extension) under the run dir would be served by the
     catch-all, but the registered literal wins for ambiguity-free callers."""
-    from fastapi.testclient import TestClient
-
-    from aiperf.operator.results_server import create_app
-
     payload = orjson.dumps({"sentinel": True})
     _seed_epoch_run(
         tmp_path,

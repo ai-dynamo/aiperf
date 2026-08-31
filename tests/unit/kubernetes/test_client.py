@@ -379,6 +379,48 @@ class TestCredentialWaitingApiClient:
         restored.assert_called_once_with("ctx")
 
     @pytest.mark.asyncio
+    async def test_reload_defers_old_transport_close_until_inflight_request_finishes(
+        self,
+    ) -> None:
+        """A credential refresh must not close a transport still serving a request."""
+        api = _CredentialWaitingApiClient(kubeconfig="/cfg", context="ctx")
+        old_rest = MagicMock()
+        old_rest.close = AsyncMock()
+        new_rest = MagicMock()
+        new_rest.close = AsyncMock()
+        api.rest_client = old_rest
+        request_started = asyncio.Event()
+        allow_response = asyncio.Event()
+
+        async def _request() -> dict[str, bool]:
+            request_started.set()
+            await allow_response.wait()
+            return {"ok": True}
+
+        try:
+            with (
+                patch.object(ApiClient, "call_api", return_value=_request()),
+                patch(
+                    "aiperf.kubernetes.client.config.load_kube_config",
+                    new=AsyncMock(),
+                ),
+                patch(
+                    "aiperf.kubernetes.client.rest.RESTClientObject",
+                    return_value=new_rest,
+                ),
+            ):
+                request = asyncio.create_task(api.call_api("/api", "GET"))
+                await request_started.wait()
+                await api._reload_kubeconfig()
+                old_rest.close.assert_not_awaited()
+                allow_response.set()
+                assert await request == {"ok": True}
+
+            old_rest.close.assert_awaited_once_with()
+        finally:
+            await api.close()
+
+    @pytest.mark.asyncio
     async def test_repeated_auth_failure_keeps_waiting_until_recovered(self) -> None:
         from kubernetes_asyncio import config as k8s_config
 

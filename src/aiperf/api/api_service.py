@@ -337,7 +337,7 @@ class FastAPIService(BaseComponentService):
                 # the request, exceeding the 300s aiohttp client timeout
                 # and never completing because each retry restarted the
                 # work from scratch).
-                await prewarm_bundle(name)
+                await prewarm_bundle(name, revision=revision)
                 self.info(f"Pre-warmed tokenizer '{name}'")
             except Exception as exc:  # noqa: BLE001
                 self.warning(

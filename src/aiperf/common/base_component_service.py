@@ -83,6 +83,8 @@ class BaseComponentService(BaseService):
         self._registration_ack_event: asyncio.Event | None = None
         self._pending_registration_rid: str | None = None
         self._registration_complete = False
+        self._reregistration_requested = False
+        self._reregistration_task: asyncio.Task | None = None
         self._early_heartbeat_task: asyncio.Task | None = None
         self._control_state_seq = 0
         """Monotonic per-service counter stamped on every Heartbeat/StatusUpdate
@@ -239,6 +241,7 @@ class BaseComponentService(BaseService):
                             f"({elapsed_time:.1f}s)"
                         )
                     self._registration_complete = True
+                    self._reregistration_requested = False
                     return
                 except TimeoutError:
                     elapsed_time += send_interval
@@ -268,14 +271,17 @@ class BaseComponentService(BaseService):
         must not block the DEALER receive loop for the whole handshake, and
         ``_register_until_ack`` retries on its own schedule until acked.
 
-        Guarded by ``_registration_complete`` so a burst of nudges (e.g. one
-        per Heartbeat and one per StatusUpdate while the controller still has
-        no record of this service) does not stack concurrent handshakes.
+        Guarded by the in-flight task so a burst of nudges (e.g. one per
+        Heartbeat and one per StatusUpdate while the controller still has no
+        record of this service) does not stack concurrent handshakes. A later
+        heartbeat restarts a handshake that exhausted its bounded timeout.
         """
-        if not self._registration_complete:
+        self._reregistration_requested = True
+        task = self._reregistration_task
+        if task is not None and not task.done():
             return
         self._registration_complete = False
-        self.execute_async(
+        self._reregistration_task = self.execute_async(
             self._register_until_ack(
                 send_interval=Environment.SERVICE.REGISTRATION_INTERVAL,
                 overall_timeout=Environment.SERVICE.REGISTRATION_TIMEOUT,
@@ -368,6 +374,8 @@ class BaseComponentService(BaseService):
         if not self._uses_controller_control_channel():
             return
         if not self._registration_complete:
+            if self._reregistration_requested:
+                self._reregister_after_controller_nudge()
             return
         # The early loop exists only to bridge the gap until this task fires.
         early_task = self._early_heartbeat_task

@@ -341,7 +341,8 @@ class TestSplitWorkerPodResources:
             parse_memory_mib(entry["requests"]["memory"]) for entry in result[1:11]
         ]
         assert len(worker_mib) == 10
-        assert set(worker_mib) == {manager_mib}
+        assert max(worker_mib) - min(worker_mib) <= 1
+        assert max(abs(memory - manager_mib) for memory in worker_mib) <= 1
 
     def test_default_guaranteed_worker_share_clears_import_floor(self) -> None:
         """Stock guaranteed-mode resources leave every worker enough import RSS."""
@@ -374,6 +375,23 @@ class TestSplitWorkerPodResources:
                 record_processor_cpu_request=None,
                 burstable=False,
             )
+
+    def test_floor_clamping_preserves_cpu_budget(self) -> None:
+        """The minimum-share floor must not inflate a valid aggregate budget."""
+        budget = {"requests": {"cpu": "3m", "memory": "648Mi"}}
+
+        result = split_worker_pod_resources(
+            budget,
+            worker_count=1,
+            record_processor_count=1,
+            record_processor_cpu_request=None,
+            burstable=False,
+        )
+
+        assert (
+            sum(parse_cpu(entry["requests"]["cpu"]) * 1000 for entry in result if entry)
+            == 3
+        )
 
 
 class TestAllocateWorkerHealthPorts:

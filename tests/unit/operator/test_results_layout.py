@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from pytest import param
 
+from aiperf.cli_commands.kube.results import annotate_preview
 from aiperf.common.results_markers import EPOCH_RE
 from aiperf.operator.results_layout import (
     LATEST_POINTER,
@@ -30,6 +31,7 @@ from aiperf.operator.results_layout import (
     epoch_key_seconds,
     job_dir,
     list_run_epochs,
+    list_runs,
     list_runs_async,
     list_sweep_epochs,
     list_sweep_epochs_async,
@@ -141,6 +143,49 @@ def test_epoch_re_unproducible_shapes_rejected(epoch: str) -> None:
     assert EPOCH_RE.match(epoch) is None
     with pytest.raises(ValueError, match="epoch must be"):
         _validate_epoch(epoch)
+
+
+def test_retention_preview_matches_enforcement_for_fractional_mtimes(
+    tmp_path: Path,
+) -> None:
+    """Preview and enforcement choose the same keeper within an mtime second."""
+    newer_epoch = "1714069323"
+    older_epoch = "1714069324"
+    base_second_ns = 1_714_069_323_000_000_000
+    for epoch, offset_ns in ((newer_epoch, 900_000_000), (older_epoch, 100_000_000)):
+        target = run_dir(tmp_path, "ns", "job", epoch)
+        target.mkdir(parents=True)
+        os.utime(
+            target,
+            ns=(base_second_ns + offset_ns, base_second_ns + offset_ns),
+        )
+
+    newer_path = run_dir(tmp_path, "ns", "job", newer_epoch)
+    older_path = run_dir(tmp_path, "ns", "job", older_epoch)
+    assert newer_path.stat().st_mtime_ns > older_path.stat().st_mtime_ns
+    assert int(newer_path.stat().st_mtime) == int(older_path.stat().st_mtime)
+
+    runs = list_runs(tmp_path, "ns", "job")
+    payload = {
+        "runs": [{"epoch": run.epoch, "mtime_epoch": run.mtime_epoch} for run in runs],
+        "latest_epoch": None,
+    }
+    annotate_preview(payload, {"retain_runs": 1, "retain_days": 0})
+
+    preview_deleted = {run["epoch"] for run in payload["runs"] if run["would_delete"]}
+    enforced_deleted = set(
+        enforce_retention(
+            tmp_path,
+            "ns",
+            "job",
+            keep=1,
+            protect_epoch=None,
+            retain_days=0,
+            dry_run=True,
+        )
+    )
+
+    assert preview_deleted == enforced_deleted == {newer_epoch}
 
 
 def test_enforce_retention_keeps_n_newest(tmp_path: Path) -> None:
@@ -469,6 +514,24 @@ def test_epoch_key_from_body_disambiguates_same_second_k8s_uids() -> None:
     assert int(second_key) <= INT64_MAX
     assert EPOCH_RE.match(first_key) is not None
     assert EPOCH_RE.match(second_key) is not None
+
+
+@pytest.mark.asyncio
+async def test_list_runs_async_orders_equal_mtime_epochs_numerically(
+    tmp_path: Path,
+) -> None:
+    """The disk fallback orders mixed-width epoch seconds by their numeric value."""
+    old_epoch = "999999999"
+    new_epoch = "1714069323"
+    for epoch in (old_epoch, new_epoch):
+        target = run_dir(tmp_path, "bench", "job", epoch)
+        target.mkdir(parents=True)
+        (target / "result.json").write_text("{}")
+        os.utime(target, (100, 100))
+
+    runs = await list_runs_async(tmp_path, "bench", "job")
+
+    assert [run.epoch for run in runs] == [new_epoch, old_epoch]
 
 
 @pytest.mark.asyncio

@@ -52,6 +52,13 @@ class _FakeUpstreamResponse:
     chunks: list[bytes] = field(default_factory=lambda: [b"dashboard-ok"])
 
     @property
+    def raw_headers(self) -> tuple[tuple[bytes, bytes], ...]:
+        return tuple(
+            (key.encode("latin-1"), value.encode("latin-1"))
+            for key, value in self.headers.items()
+        )
+
+    @property
     def content(self) -> _FakeUpstreamContent:
         return _FakeUpstreamContent(self.chunks)
 

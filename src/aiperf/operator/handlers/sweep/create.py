@@ -667,7 +667,6 @@ async def _create_sweep_controller_jobset(
     container = {
         "name": "sweep-controller",
         "image": image,
-        "imagePullPolicy": template_spec.get("imagePullPolicy", "IfNotPresent"),
         "command": ["python", "-m", "aiperf.sweep_controller.main"],
         "env": [
             {"name": "AIPERF_SWEEP_NAME", "value": name},
@@ -733,7 +732,6 @@ async def _create_sweep_controller_jobset(
     sidecar = {
         "name": Containers.RESULTS_SIDECAR,
         "image": image,
-        "imagePullPolicy": template_spec.get("imagePullPolicy", "IfNotPresent"),
         "command": ["python", "-m", "aiperf.kubernetes.results_sidecar"],
         "env": [
             {"name": "AIPERF_RESULTS_DIR", "value": "/results"},
@@ -749,6 +747,10 @@ async def _create_sweep_controller_jobset(
         ],
         "ports": [{"containerPort": sidecar_port, "name": "results"}],
     }
+    image_pull_policy = template_spec.get("imagePullPolicy")
+    if image_pull_policy is not None:
+        container["imagePullPolicy"] = image_pull_policy
+        sidecar["imagePullPolicy"] = image_pull_policy
     if resource_mode != "none":
         # Mirrors jobset.AIPerfJobSetSpec._create_results_sidecar, which has always
         # resolved these; this copy carried no resources at all.

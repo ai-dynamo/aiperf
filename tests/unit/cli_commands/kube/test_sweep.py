@@ -693,6 +693,35 @@ sweep:
     assert cr["spec"]["multiRun"]["numRuns"] == 5
 
 
+def test_build_sweep_cr_dict_max_runs_caps_yaml_defined_convergence(
+    tmp_path: Path,
+) -> None:
+    """--max-runs caps convergence configured entirely in the YAML file."""
+    config_file = tmp_path / "yaml-convergence-cap.yaml"
+    config_file.write_text(
+        _yaml_with(
+            """\
+multiRun:
+  numRuns: 8
+  convergence:
+    metric: time_to_first_token
+    minRuns: 3
+    threshold: 0.05
+sweep:
+  type: grid
+  parameters: {phases.profiling.concurrency: [1, 2, 3]}
+"""
+        )
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options(),
+        **_kwargs(convergence_max_runs=5),
+    )
+
+    assert cr["spec"]["multiRun"]["numRuns"] == 5
+
+
 # ---------------------------------------------------------------------------
 # sweep() command — convergence_metric comes from cli_config, not a shadowed
 # local param (b903289182)

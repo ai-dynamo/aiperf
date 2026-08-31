@@ -241,7 +241,7 @@ def _walk_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
                 is_latest=(p.name == latest),
             )
         )
-    runs.sort(key=lambda r: (r.mtime_epoch, r.epoch), reverse=True)
+    runs.sort(key=lambda r: (r.mtime_epoch, int(r.epoch)), reverse=True)
     return runs
 
 
@@ -312,7 +312,7 @@ async def list_runs_async(base: Path, namespace: str, name: str) -> list[RunEntr
     for entry in disk_runs:
         combined[entry.epoch] = entry
     return sorted(
-        combined.values(), key=lambda r: (r.mtime_epoch, r.epoch), reverse=True
+        combined.values(), key=lambda r: (r.mtime_epoch, int(r.epoch)), reverse=True
     )
 
 
@@ -707,7 +707,7 @@ def enforce_retention(
     if not candidates:
         return []
 
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates.sort(key=lambda p: (int(p.stat().st_mtime), int(p.name)), reverse=True)
     count_keepers = {p.name for p in candidates[:keep]}
     age_cutoff = time.time() - retain_days * 86400 if retain_days > 0 else None
 
@@ -716,7 +716,7 @@ def enforce_retention(
         if child.name == protect_epoch:
             continue
         count_reap = child.name not in count_keepers
-        age_reap = age_cutoff is None or child.stat().st_mtime < age_cutoff
+        age_reap = age_cutoff is None or int(child.stat().st_mtime) < age_cutoff
         if not (count_reap and age_reap):
             continue
         if dry_run:

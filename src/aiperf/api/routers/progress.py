@@ -697,7 +697,9 @@ def _primary_phase_stats(
     profiling.
     """
     profiling = [
-        s for s in phases.values() if (s.phase_kind or "profiling") == "profiling"
+        s
+        for s in _concrete_phases(phases).values()
+        if (s.phase_kind or "profiling") == "profiling"
     ]
     return max(profiling, key=lambda s: s.start_ns or 0) if profiling else None
 

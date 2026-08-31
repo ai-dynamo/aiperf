@@ -64,8 +64,13 @@ async def test_fetch_results_with_retry_evicted_client_reresolves_and_completes(
         downloaded=["profile_export_aiperf.json"],
     )
 
-    async def _get_client(_key: str) -> MagicMock:
+    released: list[str] = []
+
+    async def _acquire_client(_key: str) -> MagicMock:
         return handed_out.pop(0) if handed_out else live
+
+    async def _release_client(key: str) -> None:
+        released.append(key)
 
     async def _fetch_once_into_state(
         *, progress_client: MagicMock, state: dict[str, Any], **_kwargs: Any
@@ -82,7 +87,10 @@ async def test_fetch_results_with_retry_evicted_client_reresolves_and_completes(
 
     with (
         mock_patch.object(
-            completion_fetch, "get_or_create_progress_client", new=_get_client
+            completion_fetch, "acquire_progress_client", new=_acquire_client
+        ),
+        mock_patch.object(
+            completion_fetch, "release_progress_client", new=_release_client
         ),
         mock_patch.object(
             completion_fetch, "_fetch_once_into_state", new=_fetch_once_into_state
@@ -99,5 +107,6 @@ async def test_fetch_results_with_retry_evicted_client_reresolves_and_completes(
         )
 
     assert used == [evicted, live]
+    assert released == ["ns/bench@job-uid", "ns/bench@job-uid"]
     assert not fetched.error
     assert fetched.downloaded == ["profile_export_aiperf.json"]

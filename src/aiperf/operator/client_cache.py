@@ -59,6 +59,7 @@ class _JobCacheState:
     # creating a new aiohttp session every monitor tick.
     progress_clients: dict[str, ProgressClient] = {}
     client_cache_lock: asyncio.Lock = asyncio.Lock()
+    progress_client_leases: dict[str, int] = {}
 
     # Tracks (pod_name, restart_count) pairs already warned about per
     # job. Prevents emitting the same pod restart event every tick.
@@ -91,6 +92,7 @@ class _JobCacheState:
 # attributes, so writes through either name are visible to the other).
 _progress_clients = _JobCacheState.progress_clients
 _client_cache_lock = _JobCacheState.client_cache_lock
+_progress_client_leases = _JobCacheState.progress_client_leases
 _warned_pod_restarts = _JobCacheState.warned_pod_restarts
 _shutdown_sent = _JobCacheState.shutdown_sent
 _cancellation_events = _JobCacheState.cancellation_events
@@ -206,31 +208,64 @@ def job_key(namespace: str, job_id: str, uid: str | None = None) -> str:
 
 
 async def get_or_create_progress_client(key: str) -> ProgressClient:
-    """Get a cached ProgressClient for a job, creating one if needed.
+    """Get a cached ProgressClient without reserving it for active I/O.
 
-    Serialized by _client_cache_lock to prevent concurrent interleaving
-    between the None check and dict assignment (which includes an await).
+    New request paths should use ``acquire_progress_client`` and
+    ``release_progress_client`` so capacity eviction cannot close a session
+    while a request still owns it. This compatibility helper remains for
+    callers that only need to inspect or seed the cache.
     """
     async with _client_cache_lock:
-        client = _progress_clients.get(key)
-        if client is not None:
-            # Mark as most-recently-used. Without this the cache evicted in
-            # pure insertion order, so the longest-lived job -- the one most
-            # likely still running -- was always the first closed, and a
-            # mid-flight fetch on it then raised out of progress_client and
-            # stamped the job Failed/ResultsFetchFailed with results ready.
-            _progress_clients[key] = _progress_clients.pop(key)
-            return client
+        return await _get_or_create_progress_client_unlocked(key)
 
-        while len(_progress_clients) >= _max_cache_size():
-            if not _progress_clients:
-                break
-            oldest_key = next(iter(_progress_clients))
-            await _close_unlocked(oldest_key)
-        client = ProgressClient()
-        await client.__aenter__()
-        _progress_clients[key] = client
+
+async def acquire_progress_client(key: str) -> ProgressClient:
+    """Reserve a cached ProgressClient until ``release_progress_client`` runs."""
+    async with _client_cache_lock:
+        client = await _get_or_create_progress_client_unlocked(key)
+        _progress_client_leases[key] = _progress_client_leases.get(key, 0) + 1
         return client
+
+
+async def release_progress_client(key: str) -> None:
+    """Release one active ProgressClient reservation and trim idle entries."""
+    async with _client_cache_lock:
+        leases = _progress_client_leases.get(key, 0)
+        if leases <= 1:
+            _progress_client_leases.pop(key, None)
+        else:
+            _progress_client_leases[key] = leases - 1
+        await _evict_idle_clients_unlocked()
+
+
+async def _get_or_create_progress_client_unlocked(key: str) -> ProgressClient:
+    """Return a cached client while the caller holds ``_client_cache_lock``."""
+    client = _progress_clients.get(key)
+    if client is not None:
+        _progress_clients[key] = _progress_clients.pop(key)
+        return client
+
+    await _evict_idle_clients_unlocked(needs_room=True)
+    client = ProgressClient()
+    await client.__aenter__()
+    _progress_clients[key] = client
+    return client
+
+
+async def _evict_idle_clients_unlocked(*, needs_room: bool = False) -> None:
+    """Trim least-recently-used clients that no request currently owns."""
+    while (
+        len(_progress_clients) >= _max_cache_size()
+        if needs_room
+        else len(_progress_clients) > _max_cache_size()
+    ):
+        oldest_key = next(
+            (key for key in _progress_clients if not _progress_client_leases.get(key)),
+            None,
+        )
+        if oldest_key is None:
+            return
+        await _close_unlocked(oldest_key)
 
 
 async def close_progress_client(key: str) -> None:
@@ -242,6 +277,7 @@ async def close_progress_client(key: str) -> None:
 async def _close_unlocked(key: str) -> None:
     """Close a cached ProgressClient without acquiring the lock (caller holds it)."""
     client = _progress_clients.pop(key, None)
+    _progress_client_leases.pop(key, None)
     if client is not None:
         await client.__aexit__(None, None, None)
     _warned_pod_restarts.pop(key, None)
@@ -696,6 +732,7 @@ async def _read_live_startup_failure_claimed(
 def _reset_for_testing() -> None:
     """Clear all cached state. For use in tests only."""
     _progress_clients.clear()
+    _progress_client_leases.clear()
     _warned_pod_restarts.clear()
     _shutdown_sent.clear()
     _cancellation_events.clear()

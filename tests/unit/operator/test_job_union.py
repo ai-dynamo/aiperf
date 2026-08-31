@@ -223,6 +223,67 @@ async def test_list_all_jobs_pvc_only(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_all_jobs_reuses_recent_pvc_scan_without_sharing_models(
+    tmp_path, monkeypatch
+):
+    """Fresh CR state does not require a second full PVC directory walk."""
+    from aiperf.operator import job_union
+
+    calls = 0
+    archived = AIPerfJobInfo(
+        name="archive-a",
+        namespace="ns",
+        phase="Archived",
+        job_id="archive-a",
+        source="archived",
+    )
+
+    async def fake_list(api, *, all_namespaces=True, namespace=None, **_):
+        return []
+
+    def scan(base_dir, *, namespace=None):
+        nonlocal calls
+        calls += 1
+        return [archived]
+
+    monkeypatch.setattr(job_union, "list_aiperf_jobs", fake_list)
+    monkeypatch.setattr(job_union, "_scan_pvc_jobs", scan)
+
+    first = await job_union.list_all_jobs(api=None, results_dir=tmp_path)
+    first[0].phase = "Mutated"
+    second = await job_union.list_all_jobs(api=None, results_dir=tmp_path)
+
+    assert calls == 1
+    assert second[0].phase == "Archived"
+
+
+@pytest.mark.asyncio
+async def test_list_all_jobs_starts_pvc_cache_ttl_after_the_scan(tmp_path, monkeypatch):
+    """A slow scan still gets the full cache lifetime after it returns."""
+    from aiperf.operator import job_union
+
+    calls = 0
+    clock = iter((0.0, 10.0, 10.1))
+
+    async def fake_list(api, *, all_namespaces=True, namespace=None, **_):
+        return []
+
+    def scan(base_dir, *, namespace=None):
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(job_union, "list_aiperf_jobs", fake_list)
+    monkeypatch.setattr(job_union, "_scan_pvc_jobs", scan)
+    monkeypatch.setattr(job_union, "monotonic", lambda: next(clock))
+
+    await job_union.list_all_jobs(api=None, results_dir=tmp_path)
+    await job_union.list_all_jobs(api=None, results_dir=tmp_path)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_list_all_jobs_orders_archived_records_by_newest_timestamp(
     tmp_path,
     monkeypatch,

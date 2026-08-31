@@ -38,10 +38,12 @@ from aiperf.kubernetes.spec_converter import (
 )
 from aiperf.operator import events, runs_index
 from aiperf.operator.client_cache import (
+    acquire_progress_client,
     get_cancellation_event,
     get_or_create_progress_client,
     is_cancellation_requested,
     job_key,
+    release_progress_client,
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers._completion_fetch import (
@@ -1444,7 +1446,7 @@ async def _get_phase_refresh_client(
     """Acquire the cached progress client without blocking cancellation."""
     _raise_if_phase_refresh_cancelled(cancellation_event)
     progress_client = await _await_or_cancel(
-        get_or_create_progress_client(key), cancellation_event
+        acquire_progress_client(key), cancellation_event
     )
     _raise_if_phase_refresh_cancelled(cancellation_event)
     return progress_client
@@ -1532,14 +1534,17 @@ async def _refresh_final_phase_progress(
         key = job_key(namespace, job_id, expected_parent_uid)
         cancellation_event = get_cancellation_event(key)
         progress_client = await _get_phase_refresh_client(key, cancellation_event)
-        host = controller_dns_name(jobset_name, namespace)
-        phases_data = await _collect_final_phase_progress(
-            progress_client=progress_client,
-            host=host,
-            cancellation_event=cancellation_event,
-        )
-        if phases_data:
-            patch.status["phases"] = phases_data
+        try:
+            host = controller_dns_name(jobset_name, namespace)
+            phases_data = await _collect_final_phase_progress(
+                progress_client=progress_client,
+                host=host,
+                cancellation_event=cancellation_event,
+            )
+            if phases_data:
+                patch.status["phases"] = phases_data
+        finally:
+            await release_progress_client(key)
     except _FetchCancelled:
         logger.info(
             "Cancellation interrupted final phase-progress refresh for %s/%s",

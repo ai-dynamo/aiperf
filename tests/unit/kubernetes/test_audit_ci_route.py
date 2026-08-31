@@ -42,3 +42,14 @@ def test_kubernetes_audit_ci_route_selects_serial_audit_suite() -> None:
     # interpolation, which a quote in the input could break out of.
     assert "PYTEST_ARGS: ${{ inputs.pytest_args }}" in workflow
     assert "${{ inputs.pytest_args }}'" not in workflow
+
+
+def test_kubernetes_ci_ignores_absent_kind_action_registry_cleanup() -> None:
+    """The Kind installer post-action must tolerate its optional registry missing."""
+    workflow = (
+        REPO_ROOT / ".github" / "workflows" / "run-kubernetes-tests.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "uses: helm/kind-action@v1" in workflow
+    assert "install_only: true" in workflow
+    assert "ignore_failed_clean: true" in workflow

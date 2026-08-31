@@ -170,6 +170,7 @@ class CREndpoint(K8sCamelModel):
 class CRBenchmark(K8sCamelModel):
     """Benchmark section from AIPerfJob spec (nested under spec.benchmark)."""
 
+    model: str | None = Field(default=None, description="Single model shorthand.")
     models: str | list | dict[str, Any] = Field(
         default_factory=list, description="Model name(s) to benchmark."
     )
@@ -428,7 +429,8 @@ class AIPerfJobCR(K8sCamelModel):
             inter_token_latency_ms=_summary_stat(summary, "inter_token_latency", "avg"),
             total_requests=_total_requests(summary),
             error_rate=_error_rate(summary),
-            model=_first_model_name(self.spec.benchmark.models),
+            model=_first_model_name(self.spec.benchmark.models)
+            or self.spec.benchmark.model,
             endpoint=_endpoint_url(self.spec.benchmark.endpoint),
             sweep_name=sweep_name,
             variation_index=variation_index,

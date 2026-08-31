@@ -413,16 +413,10 @@ class TestBufferedJSONLWriterMixin:
         await asyncio.gather(unrelated_task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_close_file_closes_handle_when_cancelled_mid_flush(
+    async def test_close_file_propagates_cancel_while_final_flush_continues(
         self, temp_output_file
     ):
-        """Cancel during the final flush must still close the file handle.
-
-        ``asyncio.shield`` keeps the flush running, but ``CancelledError`` still
-        exits the outer ``_close_file`` await. Cleanup must finish flush+close
-        before returning so the handle is not leaked and drained records are
-        not dropped by closing under an in-flight write.
-        """
+        """Cancellation must not wait indefinitely for a shielded final flush."""
         writer = BufferedJSONLWriterMixin[SampleRecord](
             output_file=temp_output_file,
             batch_size=10,
@@ -449,12 +443,14 @@ class TestBufferedJSONLWriterMixin:
         assert flush_started.is_set(), "final flush never started"
 
         close_task.cancel()
-        # Let the cancel land on the shield await before unblocking the flush.
-        await asyncio.sleep(0)
-        flush_continue.set()
-        with contextlib.suppress(asyncio.CancelledError):
-            await close_task
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(close_task, timeout=0.1)
 
+        flush_continue.set()
+        for _ in range(10_000):
+            if writer._file_handle is None:
+                break
+            await asyncio.sleep(0)
         assert writer._file_handle is None
         with open(temp_output_file) as f:
             lines = [line.strip() for line in f if line.strip()]

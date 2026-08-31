@@ -1072,6 +1072,16 @@ def _pod_spec_from_jobset(body: dict) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_create_sweep_controller_jobset_preserves_kubernetes_pull_default(
+    monkeypatch,
+):
+    """An omitted imagePullPolicy lets Kubernetes apply its tag-aware default."""
+    body = await _capture_jobset_body(monkeypatch, _valid_workload_spec())
+
+    assert "imagePullPolicy" not in _container_from_jobset(body)
+
+
+@pytest.mark.asyncio
 async def test_create_sweep_controller_jobset_lifts_container_resources(monkeypatch):
     """`podTemplate.resources` must land on container.resources."""
     workload_spec = _valid_workload_spec(

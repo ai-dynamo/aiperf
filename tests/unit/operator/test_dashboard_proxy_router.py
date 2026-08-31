@@ -52,6 +52,7 @@ def test_proxy_forwards_to_localhost_port(monkeypatch: pytest.MonkeyPatch) -> No
     class _FakeResp:
         status = 200
         headers = {"content-type": "application/json"}
+        raw_headers = ((b"content-type", b"application/json"),)
         content = _FakeContent()
 
     class _FakeStream:
@@ -76,6 +77,46 @@ def test_proxy_forwards_to_localhost_port(monkeypatch: pytest.MonkeyPatch) -> No
     assert captured["method"] == "GET"
     assert captured["url"] == "http://localhost:8082/dashboard/foo/bar?x=1"
     assert b'"hello": "world"' in resp.content
+
+
+def test_proxy_preserves_duplicate_upstream_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multiple Set-Cookie values survive the upstream relay independently."""
+    app = _make_app(monkeypatch, enabled=True, port=8082)
+
+    class _FakeContent:
+        async def iter_any(self):
+            yield b"ok"
+
+    class _FakeResp:
+        status = 200
+        headers = {"content-type": "text/plain", "set-cookie": "session=first"}
+        raw_headers = (
+            (b"content-type", b"text/plain"),
+            (b"set-cookie", b"session=first; Path=/"),
+            (b"set-cookie", b"preferences=dark; Path=/"),
+        )
+        content = _FakeContent()
+
+    class _FakeStream:
+        async def __aenter__(self):
+            return _FakeResp()
+
+        async def __aexit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(
+        aiohttp.ClientSession, "request", lambda *_args, **_kwargs: _FakeStream()
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/dashboard/")
+
+    assert response.headers.get_list("set-cookie") == [
+        "session=first; Path=/",
+        "preferences=dark; Path=/",
+    ]
 
 
 def test_proxy_returns_503_when_upstream_unreachable(

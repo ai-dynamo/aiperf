@@ -131,14 +131,18 @@ def split_weighted_total(total: int, weights: list[int]) -> list[int]:
     return shares
 
 
-def _apply_minimum_share(shares: list[int], minimum: int) -> list[int]:
-    """Clamp every share to at least ``minimum``.
-
-    Safety net for `split_weighted_total`: a lightly weighted bucket can floor
-    to 0 even when the aggregate budget technically covers `minimum * len(shares)`,
-    since the largest-remainder allocation rounds per-bucket, not per-floor.
-    """
-    return [max(share, minimum) for share in shares]
+def _split_with_minimum(total: int, weights: list[int], minimum: int) -> list[int]:
+    """Split ``total`` by weight while reserving a minimum for every bucket."""
+    minimum_total = minimum * len(weights)
+    if total < minimum_total:
+        raise ValueError(
+            f"Budget ({total}) cannot cover the {minimum} minimum across "
+            f"{len(weights)} containers"
+        )
+    return [
+        minimum + share
+        for share in split_weighted_total(total - minimum_total, weights)
+    ]
 
 
 def format_mcpu(mcpu: int) -> str:
@@ -166,9 +170,7 @@ def _compute_cpu_shares(
     """
     cpu_weights = [100] + ([131] * worker_count) + ([389] * record_processor_count)
     if record_processor_cpu_request is None or record_processor_count == 0:
-        return _apply_minimum_share(
-            split_weighted_total(total_mcpu, cpu_weights), MIN_CONTAINER_CPU_MCPU
-        )
+        return _split_with_minimum(total_mcpu, cpu_weights, MIN_CONTAINER_CPU_MCPU)
 
     record_processor_mcpu = int(round(parse_cpu(record_processor_cpu_request) * 1000))
     fixed_total = record_processor_mcpu * record_processor_count
@@ -186,10 +188,7 @@ def _compute_cpu_shares(
             f"lower AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST."
         )
     return (
-        _apply_minimum_share(
-            split_weighted_total(remaining_mcpu, non_record_weights),
-            MIN_CONTAINER_CPU_MCPU,
-        )
+        _split_with_minimum(remaining_mcpu, non_record_weights, MIN_CONTAINER_CPU_MCPU)
         + [record_processor_mcpu] * record_processor_count
     )
 
@@ -255,8 +254,8 @@ def split_worker_pod_resources(
         record_processor_count,
         record_processor_cpu_request,
     )
-    memory_shares = _apply_minimum_share(
-        split_weighted_total(total_mib, memory_weights), MIN_CONTAINER_MEMORY_MIB
+    memory_shares = _split_with_minimum(
+        total_mib, memory_weights, MIN_CONTAINER_MEMORY_MIB
     )
     worker_memory_shares = memory_shares[1 : 1 + worker_count]
     if (

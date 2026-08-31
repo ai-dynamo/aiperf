@@ -355,6 +355,22 @@ async def test_main_ready_restart_republishes_without_orchestrator_replay(
             True,
             id="already-cancelled-before-start",
         ),
+        pytest.param(
+            [
+                SimpleNamespace(
+                    label="cell-0",
+                    success=True,
+                    error=None,
+                    variation_values={"index": 0},
+                    variation_label="v0",
+                    trial_index=0,
+                    child_run_epoch="1714069324",
+                )
+            ],
+            "during-aggregation",
+            False,
+            id="during-aggregation",
+        ),
     ],
 )  # fmt: skip
 async def test_main_marks_cancelled_when_cancel_requested(
@@ -381,9 +397,12 @@ async def test_main_marks_cancelled_when_cancel_requested(
             AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs)),
         )
 
+        aggregation_started = asyncio.Event()
         if not initial_cancel:
 
             async def _request_cancel(*args, **kwargs) -> None:
+                if case == "during-aggregation":
+                    await aggregation_started.wait()
                 kwargs["flag"]["requested"] = True
 
             monkeypatch.setattr(main_mod, "_poll_cancel_flag", _request_cancel)
@@ -456,6 +475,9 @@ async def test_main_marks_cancelled_when_cancel_requested(
 
         async def _aggregate_and_export(all_results, *args, **kwargs) -> None:
             calls["aggregated_results"] = list(all_results)
+            if case == "during-aggregation":
+                aggregation_started.set()
+                await asyncio.sleep(0)
 
         if results:
             monkeypatch.setattr(
@@ -487,7 +509,7 @@ async def test_main_marks_cancelled_when_cancel_requested(
             ):
                 await asyncio.sleep(0)
                 assert cancel_check is not None
-                assert cancel_check() is True
+                assert cancel_check() is (case != "during-aggregation")
                 return list(results)
 
         monkeypatch.setattr(

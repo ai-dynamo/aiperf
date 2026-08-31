@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -46,6 +48,24 @@ logger = logging.getLogger("aiperf.operator.job_union")
 # pointer after the AIPerfJob CR is TTL-reaped.
 _SWEEP_MARKER_FILE = "sweep.json"
 _ARCHIVED_PHASE_PLACEHOLDER = "Archived"
+_PVC_SCAN_CACHE_TTL_SECONDS = 5.0
+_MAX_PVC_SCAN_CACHE_ENTRIES = 32
+
+
+@dataclass(slots=True)
+class _PVCScanCache:
+    """Bounded snapshots of archived PVC jobs."""
+
+    entries: OrderedDict[
+        tuple[str, str | None], tuple[float, tuple[AIPerfJobInfo, ...]]
+    ] = field(default_factory=OrderedDict)
+
+
+# A list request must always fetch live CR status, but completed PVC artifacts
+# change much less frequently. Caching this half avoids a full directory walk
+# for each dashboard poll while bounded storage prevents one-off results roots
+# from accumulating in a long-lived results server.
+_pvc_scan_cache = _PVCScanCache()
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +392,31 @@ def _scan_pvc_jobs(
     return out
 
 
+async def _recent_pvc_jobs(
+    results_dir: Path,
+    *,
+    namespace: str | None,
+) -> list[AIPerfJobInfo]:
+    """Return a short-lived snapshot of archived jobs without sharing models."""
+    key = (str(results_dir), namespace)
+    now = monotonic()
+    cached = _pvc_scan_cache.entries.get(key)
+    if cached is not None and cached[0] > now:
+        _pvc_scan_cache.entries.move_to_end(key)
+        return [job.model_copy(deep=True) for job in cached[1]]
+
+    scanned = await asyncio.to_thread(_scan_pvc_jobs, results_dir, namespace=namespace)
+    snapshot = tuple(job.model_copy(deep=True) for job in scanned)
+    _pvc_scan_cache.entries[key] = (
+        monotonic() + _PVC_SCAN_CACHE_TTL_SECONDS,
+        snapshot,
+    )
+    _pvc_scan_cache.entries.move_to_end(key)
+    while len(_pvc_scan_cache.entries) > _MAX_PVC_SCAN_CACHE_ENTRIES:
+        _pvc_scan_cache.entries.popitem(last=False)
+    return [job.model_copy(deep=True) for job in snapshot]
+
+
 def _archived_job_from_dir(
     base_dir: Path,
     namespace_dir: Path,
@@ -598,10 +643,10 @@ async def list_all_jobs(
     for j in cr_jobs:
         j.source = "live"
 
-    # Full PVC walk (iterdir/stat/read per run dir) — pure filesystem work,
-    # so offload it; the UI polls this endpoint every few seconds and a
-    # synchronous scan would stall the event loop on large PVCs.
-    pvc_jobs = await asyncio.to_thread(_scan_pvc_jobs, results_dir, namespace=namespace)
+    # Archived artifacts are immutable after publication. Keep a short-lived,
+    # bounded snapshot so dashboard polling does not repeatedly walk a large
+    # results PVC, while every request still reads fresh live CR status.
+    pvc_jobs = await _recent_pvc_jobs(results_dir, namespace=namespace)
 
     indexed = await _indexed_rows_by_key(pvc_jobs)
     for pvc_job in pvc_jobs:

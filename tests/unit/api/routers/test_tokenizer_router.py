@@ -117,7 +117,7 @@ async def test_prewarm_serves_request_without_resolving(
 
     resolve_calls: list[str] = []
 
-    async def _counting_resolver(name: str) -> Path:
+    async def _counting_resolver(name: str, revision: str = "main") -> Path:
         resolve_calls.append(name)
         return snap
 
@@ -140,6 +140,27 @@ async def test_prewarm_serves_request_without_resolving(
     assert len(resolve_calls) == 1, (
         f"resolver re-invoked on request path despite prewarm: {resolve_calls}"
     )
+
+
+@pytest.mark.asyncio
+async def test_prewarm_resolves_configured_revision(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A prewarmed non-main tokenizer must resolve the matching HF snapshot."""
+    snap = _make_snapshot(tmp_path, {"tokenizer.json": "{}"})
+    resolve_calls: list[tuple[str, str]] = []
+
+    async def _revision_aware_resolver(name: str, revision: str) -> Path:
+        resolve_calls.append((name, revision))
+        return snap
+
+    monkeypatch.setattr(
+        tokenizer_router_mod, "_resolve_snapshot_dir", _revision_aware_resolver
+    )
+
+    await tokenizer_router_mod.prewarm_bundle("org/model", revision="release-1")
+
+    assert resolve_calls == [("org/model", "release-1")]
 
 
 @pytest.mark.asyncio
@@ -194,7 +215,7 @@ async def test_prewarm_failure_does_not_poison_request_path(
 
     call = {"n": 0}
 
-    async def _flaky_resolver(name: str) -> Path:
+    async def _flaky_resolver(name: str, revision: str = "main") -> Path:
         call["n"] += 1
         if call["n"] == 1:
             raise HTTPException(status_code=503, detail="cold cache")

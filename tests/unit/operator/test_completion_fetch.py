@@ -1216,7 +1216,7 @@ class TestFetchResultsWithRetry:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            cf, "get_or_create_progress_client", AsyncMock(return_value=MagicMock())
+            cf, "acquire_progress_client", AsyncMock(return_value=MagicMock())
         )
         with pytest.raises(ValueError, match="need either"):
             await fetch_results_with_retry(
@@ -1240,7 +1240,7 @@ class TestFetchResultsWithRetry:
         )
         monkeypatch.setattr(
             cf,
-            "get_or_create_progress_client",
+            "acquire_progress_client",
             AsyncMock(return_value=client),
         )
         monkeypatch.setattr(
@@ -1285,7 +1285,7 @@ class TestFetchResultsWithRetry:
             return_value=["profile_export_aiperf.json"]
         )
         monkeypatch.setattr(
-            cf, "get_or_create_progress_client", AsyncMock(return_value=client)
+            cf, "acquire_progress_client", AsyncMock(return_value=client)
         )
 
         explicit = tmp_path / "explicit-target"
@@ -1313,7 +1313,7 @@ class TestFetchResultsWithRetry:
         client.get_metrics = AsyncMock()
         client.download_all_results = AsyncMock()
         monkeypatch.setattr(
-            cf, "get_or_create_progress_client", AsyncMock(return_value=client)
+            cf, "acquire_progress_client", AsyncMock(return_value=client)
         )
 
         explicit = tmp_path / "target"

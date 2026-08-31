@@ -252,6 +252,27 @@ def test_update_service_wallclock_ordering_lets_late_stale_update_regress_state(
     )
 
 
+def test_reregistered_service_accepts_restarted_sequence(
+    registry: _ServiceRegistry,
+) -> None:
+    """A same-ID replacement starts its sender sequence at one again."""
+    registry.expect_services({ServiceType.WORKER: 1})
+    _register(registry, "worker-0", seen_ns=1)
+    registry.update_service(
+        "worker-0", last_seen_ns=2, state=LifecycleState.RUNNING, seq=42
+    )
+
+    _register(registry, "worker-0", seen_ns=3, state=LifecycleState.INITIALIZING)
+    registry.update_service(
+        "worker-0", last_seen_ns=4, state=LifecycleState.RUNNING, seq=1
+    )
+
+    info = registry.get_service("worker-0")
+    assert info is not None
+    assert info.last_seq == 1
+    assert info.state == LifecycleState.RUNNING
+
+
 def test_unregister_keeps_the_entry_but_clears_registration(
     registry: _ServiceRegistry,
 ) -> None:

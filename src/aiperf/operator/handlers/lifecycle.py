@@ -18,10 +18,11 @@ from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.phase import Phase
 from aiperf.operator import events, runs_index
 from aiperf.operator.client_cache import (
+    acquire_progress_client,
     close_progress_client,
-    get_or_create_progress_client,
     is_cancellation_requested,
     job_key,
+    release_progress_client,
     request_cancellation,
     revoke_cancellation,
     try_claim_completion,
@@ -333,13 +334,12 @@ async def _shutdown_after_completion(
         return
 
     host = controller_dns_name(jobset_name, namespace)
+    progress_client = await acquire_progress_client(key)
     try:
-        progress_client = await get_or_create_progress_client(key)
         await progress_client.send_shutdown(host)
-    # RuntimeError covers the cross-CR case where the cached session was closed
-    # by another job's cache eviction between the get and the send: ProgressClient
-    # raises RuntimeError on a None session, and letting that escape would fail
-    # the kopf handler for a run whose results are already stored.
+    # RuntimeError covers a caller that holds a client after explicit cleanup:
+    # ProgressClient raises when its session is gone, and completion must not
+    # fail after results have already been stored.
     except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         logger.exception(f"Failed to send shutdown to {host}")
         kopf.event(
@@ -348,6 +348,8 @@ async def _shutdown_after_completion(
             reason="ShutdownSignalFailed",
             message=f"Failed to send shutdown to controller at {host}: {e}",
         )
+    finally:
+        await release_progress_client(key)
 
     await close_progress_client(key)
 

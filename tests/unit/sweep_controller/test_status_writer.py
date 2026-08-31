@@ -246,7 +246,63 @@ async def test_aggregation_failed_writes_error_and_completed_at(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_aggregation_complete_writes_top_level_completion_time(monkeypatch):
+async def test_aggregation_complete_fences_temporary_ref_against_durable_status(
+    monkeypatch,
+):
+    """A stale controller patch must not overwrite an operator durable ref."""
+    api = MagicMock()
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(
+        return_value={
+            "metadata": {"uid": "sweep-uid", "resourceVersion": "42"},
+            "status": {"resultsAvailable": False},
+        }
+    )
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns", uid="sweep-uid")
+    await writer.aggregation_complete(
+        aggregate_path="/api/v1/results/ns/s/aggregate",
+        controller_host="ctrl-host",
+        port=19090,
+    )
+
+    custom.get_namespaced_custom_object.assert_awaited_once()
+    body = custom.patch_namespaced_custom_object_status.await_args.kwargs["body"]
+    assert {"op": "test", "path": "/metadata/resourceVersion", "value": "42"} in body
+
+
+@pytest.mark.asyncio
+async def test_aggregation_complete_skips_existing_durable_aggregate_ref(monkeypatch):
+    """The controller must retain an aggregate ref already made durable."""
+    api = MagicMock()
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(
+        return_value={
+            "metadata": {"uid": "sweep-uid", "resourceVersion": "42"},
+            "status": {
+                "resultsAvailable": True,
+                "aggregateRef": {"url": "http://operator/aggregate.json"},
+            },
+        }
+    )
+    custom.patch_namespaced_custom_object_status = AsyncMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.CustomObjectsApi", lambda _api: custom
+    )
+
+    writer = SweepStatusWriter(api, name="s", namespace="ns", uid="sweep-uid")
+    await writer.aggregation_complete(
+        aggregate_path="/api/v1/results/ns/s/aggregate",
+        controller_host="ctrl-host",
+        port=19090,
+    )
+
+    custom.patch_namespaced_custom_object_status.assert_not_awaited()
+
     """`aggregation_complete` writes top-level `status.completionTime` (CRD name).
 
     The TTL reaper reads exactly this field — `status.completedAt` is the

@@ -26,10 +26,11 @@ from aiperf.kubernetes.spec_converter import (
     key_export_names_from_body,
 )
 from aiperf.operator.client_cache import (
+    acquire_progress_client,
     get_cancellation_event,
-    get_or_create_progress_client,
     is_cancellation_requested,
     job_key,
+    release_progress_client,
 )
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.progress_client import ProgressClient
@@ -504,16 +505,19 @@ async def fetch_results_with_retry(
         # actually available. Re-resolving both revives an evicted entry and
         # marks this one most-recently-used, so an in-flight fetch is no
         # longer the first candidate for eviction.
-        progress_client = await get_or_create_progress_client(key)
-        return await _fetch_once_into_state(
-            key=key,
-            controller_host=controller_host,
-            dest_dir=dest_dir,
-            progress_client=progress_client,
-            state=state,
-            key_files=key_files,
-            cancellation_event=cancellation_event,
-        )
+        progress_client = await acquire_progress_client(key)
+        try:
+            return await _fetch_once_into_state(
+                key=key,
+                controller_host=controller_host,
+                dest_dir=dest_dir,
+                progress_client=progress_client,
+                state=state,
+                key_files=key_files,
+                cancellation_event=cancellation_event,
+            )
+        finally:
+            await release_progress_client(key)
 
     return await _run_fetch_loop_safely(
         _fetch_once,

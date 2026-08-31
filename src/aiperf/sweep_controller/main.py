@@ -372,6 +372,13 @@ async def _poll_cancel_flag(
         await asyncio.sleep(poll_interval)
 
 
+async def _stop_cancel_poll(cancel_task: asyncio.Task[None]) -> None:
+    """Stop and await the cancellation poller during controller teardown."""
+    cancel_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await cancel_task
+
+
 def _child_status(result: Any) -> str:
     """Terminal status string for one child, matching the rollup's buckets."""
     if result.success:
@@ -1010,25 +1017,14 @@ async def main() -> int:
                 )
         except Exception as exc:  # noqa: BLE001 - terminal status must record all execution failures
             await _record_child_execution_failure(status_writer, exc)
+            await _stop_cancel_poll(cancel_task)
             return 1
-        finally:
-            cancel_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await cancel_task
 
         cancelled_count = sum(1 for r in all_results if _is_cancelled_result(r))
         failed_count = sum(
             1 for r in all_results if not r.success and not _is_cancelled_result(r)
         )
         completed_count = len(all_results) - failed_count - cancelled_count
-        terminal_phase = resolve_terminal_phase(
-            completed=completed_count,
-            failed=failed_count,
-            max_failures=spec.failure_policy.max_failures,
-            cancel_requested=cancel_flag["requested"],
-            cancelled=cancelled_count,
-            on_child_failure=spec.failure_policy.on_child_failure,
-        )
 
         await status_writer.aggregation_running()
         try:
@@ -1052,6 +1048,14 @@ async def main() -> int:
                     logger=aiperf_logger,
                 )
                 artifact_dir.mkdir(parents=True, exist_ok=True)
+            terminal_phase = resolve_terminal_phase(
+                completed=completed_count,
+                failed=failed_count,
+                max_failures=spec.failure_policy.max_failures,
+                cancel_requested=cancel_flag["requested"],
+                cancelled=cancelled_count,
+                on_child_failure=spec.failure_policy.on_child_failure,
+            )
             _write_aggregate_manifest(artifact_dir, sweep_cr, all_results, plan)
             _mirror_strategy_aggregate_to_sweep_dir(
                 base_dir=RESULTS_DIR,
@@ -1084,6 +1088,7 @@ async def main() -> int:
             await status_writer.aggregation_failed(
                 error=str(redact_sweep_public_data(str(e)))
             )
+            await _stop_cancel_poll(cancel_task)
             return 1
 
         # Idempotent across pod restarts: load disk artifacts and patch the CR
@@ -1115,6 +1120,7 @@ async def main() -> int:
             # leaks the pod (JobSet `completions=1` requires a clean exit
             # for the parent Job to complete and the CR-side TTL to fire).
             logger.exception("CR aggregate patch failed; exiting non-zero for restart")
+            await _stop_cancel_poll(cancel_task)
             return 1
 
     # The controller container exits 0, but the pod's results-sidecar runs
@@ -1124,6 +1130,7 @@ async def main() -> int:
     # JobSet down promptly after harvesting the aggregate
     # (`on_aiperfsweep_aggregation_complete`), which stops the sidecar and
     # reaps this pod without waiting for CR TTL.
+    await _stop_cancel_poll(cancel_task)
     return 0
 
 

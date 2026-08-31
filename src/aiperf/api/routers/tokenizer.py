@@ -162,7 +162,7 @@ def _stream_bytes(payload: bytes) -> AsyncIterator[bytes]:
     return _iter()
 
 
-async def _resolve_snapshot_dir(name: str) -> Path:
+async def _resolve_snapshot_dir(name: str, revision: str = "main") -> Path:
     """Return the local snapshot dir for ``name`` from the shared HF cache.
 
     Returns 503 when the cache is cold (worker pods retry through this) and
@@ -182,6 +182,7 @@ async def _resolve_snapshot_dir(name: str) -> Path:
             snapshot_download,
             repo_id=name,
             repo_type="model",
+            revision=revision,
             local_files_only=True,
         )
     except LocalEntryNotFoundError as exc:
@@ -198,7 +199,7 @@ async def _resolve_snapshot_dir(name: str) -> Path:
     return Path(path)
 
 
-async def prewarm_bundle(name: str) -> None:
+async def prewarm_bundle(name: str, revision: str = "main") -> None:
     """Materialise ``name``'s tar+zstd payload into the module-level cache.
 
     Called by ``api_service._prewarm_tokenizers`` after
@@ -216,7 +217,7 @@ async def prewarm_bundle(name: str) -> None:
     async with lock:
         if name in _store.bundles:
             return
-        snapshot_dir = await _resolve_snapshot_dir(name)
+        snapshot_dir = await _resolve_snapshot_dir(name, revision)
         payload = await asyncio.to_thread(_materialize_bundle, snapshot_dir)
         _store.bundles[name] = payload
 

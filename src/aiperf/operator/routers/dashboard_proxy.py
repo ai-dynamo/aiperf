@@ -187,11 +187,11 @@ def create_dashboard_proxy_router() -> APIRouter:
                 media_type="text/plain; charset=utf-8",
             )
 
-        response_headers = {
-            k: v
-            for k, v in upstream.headers.items()
-            if k.lower() not in _FORWARD_RESPONSE_HEADER_DROP
-        }
+        response_headers = [
+            (key, value)
+            for key, value in upstream.raw_headers
+            if key.decode("latin-1").lower() not in _FORWARD_RESPONSE_HEADER_DROP
+        ]
 
         async def _iter_upstream():
             try:
@@ -201,10 +201,11 @@ def create_dashboard_proxy_router() -> APIRouter:
                 await stream_ctx.__aexit__(None, None, None)
                 await session.close()
 
-        return StreamingResponse(
+        response = StreamingResponse(
             _iter_upstream(),
             status_code=upstream.status,
-            headers=response_headers,
         )
+        response.raw_headers.extend(response_headers)
+        return response
 
     return router

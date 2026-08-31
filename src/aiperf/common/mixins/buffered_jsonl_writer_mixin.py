@@ -411,22 +411,13 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                     self._file_handle = None
 
     async def _await_shielded_cleanup(self, cleanup_task: asyncio.Task) -> None:
-        """Await a shielded cleanup task through outer cancellation.
+        """Await cleanup without cancelling its flush-and-close operation.
 
-        If we are cancelled while waiting on the shield, the inner task keeps
-        running. Drain our cancellation so we can await it to completion before
-        leaving — otherwise the caller would return with the handle still open
-        (or a naive finally-close would race the still-running flush).
+        Propagate outer cancellation promptly. The shielded task retains the
+        file handle until its own write and close complete, so cancellation
+        cannot race it or turn shutdown into an unbounded wait.
         """
-        current = asyncio.current_task()
-        try:
-            await asyncio.shield(cleanup_task)
-        finally:
-            if current is not None:
-                while current.cancelling():
-                    current.uncancel()
-            if not cleanup_task.done():
-                await cleanup_task
+        await asyncio.shield(cleanup_task)
 
     @on_stop
     async def _close_file(self) -> None:

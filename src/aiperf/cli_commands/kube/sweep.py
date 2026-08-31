@@ -344,14 +344,19 @@ def _merged_multirun_config(
     if cooldown_seconds:
         multirun_cfg = multirun_cfg or {}
         multirun_cfg["cooldownSeconds"] = cooldown_seconds
+    yaml_convergence = (
+        isinstance(multirun_cfg, dict) and multirun_cfg.get("convergence") is not None
+    )
+    if convergence_max_runs is not None and (
+        convergence_metric is not None or yaml_convergence
+    ):
+        multirun_cfg = multirun_cfg or {}
+        # --max-runs is a hard cap, including when convergence is declared in
+        # YAML rather than repeated on the CLI.
+        multirun_cfg["numRuns"] = convergence_max_runs
     if convergence_metric is not None:
         multirun_cfg = multirun_cfg or {}
-        if convergence_max_runs is not None:
-            # --max-runs is a hard cap, not a floor.  Overwrite numRuns outright
-            # so a YAML numRuns:20 + --max-runs 10 is capped to 10, not floored
-            # to 20.  Without the flag, --trials / YAML numRuns stands.
-            multirun_cfg["numRuns"] = convergence_max_runs
-        elif "numRuns" not in multirun_cfg:
+        if "numRuns" not in multirun_cfg:
             multirun_cfg["numRuns"] = _DEFAULT_CONVERGENCE_MAX_RUNS
         convergence = dict(multirun_cfg.get("convergence") or {})
         convergence.update(

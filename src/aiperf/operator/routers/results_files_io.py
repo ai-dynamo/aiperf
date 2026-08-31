@@ -118,7 +118,7 @@ def _download_headers(display_name: str) -> dict[str, str]:
         disposition = f'attachment; filename="{display_name}"'
     return {
         "Content-Disposition": disposition,
-        "X-Filename": display_name,
+        "X-Filename": quote(display_name, safe=""),
         **_NO_CACHE_HEADERS,
     }
 

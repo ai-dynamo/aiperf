@@ -186,7 +186,7 @@ class TestArtifactDownloadHeaderTrustBoundary:
         disposition = response.headers["content-disposition"]
         assert "filename*=UTF-8''metrics%20caf%C3%A9%20summary.json" in disposition
         assert 'filename="metrics café summary.json"' not in disposition
-        assert response.headers["x-filename"] == filename
+        assert response.headers["x-filename"] == "metrics%20caf%C3%A9%20summary.json"
 
     @pytest.mark.asyncio
     async def test_download_historical_file_reserved_ready_marker_returns_404(

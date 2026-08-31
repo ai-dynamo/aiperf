@@ -608,7 +608,7 @@ async def _list_job_epochs_impl(
 
     return JobEpochsResponse(
         epochs=sorted(
-            by_epoch.values(), key=lambda entry: (entry.mtime_epoch, entry.epoch)
+            by_epoch.values(), key=lambda entry: (entry.mtime_epoch, int(entry.epoch))
         )
     )
 

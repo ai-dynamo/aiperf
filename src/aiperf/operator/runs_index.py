@@ -73,6 +73,9 @@ _READ_ONLY = False
 # connection before the first assignment lands.  asyncio is single-threaded so
 # the check+set below is atomic (no await between them).
 _opening: bool = False
+_open_complete: asyncio.Event | None = None
+_open_complete_loop: asyncio.AbstractEventLoop | None = None
+
 
 # Serializes every write API on the single shared connection. The lock is
 # bound to the running loop the first time a writer acquires it, so unit tests
@@ -92,6 +95,23 @@ def _writer_lock() -> asyncio.Lock:
         _write_lock = asyncio.Lock()
         _write_lock_loop = loop
     return _write_lock
+
+
+def _open_waiter() -> asyncio.Event:
+    """Return the current loop's event that signals lazy open completion."""
+    global _open_complete, _open_complete_loop
+    loop = asyncio.get_running_loop()
+    if _open_complete is None or _open_complete_loop is not loop:
+        _open_complete = asyncio.Event()
+        _open_complete_loop = loop
+    return _open_complete
+
+
+def _finish_opening() -> None:
+    """Release callers waiting for the in-progress lazy open."""
+    global _opening
+    _opening = False
+    _open_waiter().set()
 
 
 _SCHEMA_V1 = """
@@ -212,17 +232,21 @@ async def open(path: Path) -> None:
     """
     global _DB, _DB_PATH, _READ_ONLY, _opening
 
-    if _DB is not None or _opening:
+    if _DB is not None:
+        return
+    if _opening:
+        await _open_waiter().wait()
         return
     # Mark in-progress atomically (no await between the guard above and this
-    # assignment, so a concurrent coroutine that was suspended cannot sneak past).
+    # assignment, so a concurrent coroutine cannot sneak past).
     _opening = True
+    _open_waiter().clear()
 
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         db = await aiosqlite.connect(str(path), isolation_level=None)
     except BaseException:
-        _opening = False
+        _finish_opening()
         raise
     # Any failure after connect but before _DB is assigned must close the
     # connection: aiosqlite spawns a non-daemon worker thread per connection,
@@ -253,12 +277,13 @@ async def open(path: Path) -> None:
                 )
     except BaseException:
         await db.close()
-        _opening = False
+        _finish_opening()
         raise
 
     _DB = db
     _DB_PATH = path
     _READ_ONLY = False
+    _finish_opening()
     logger.info("runs_index opened at %s (schema_version=%d)", path, SCHEMA_VERSION)
 
 
@@ -309,18 +334,22 @@ async def open_readonly(path: Path) -> None:
     """
     global _DB, _DB_PATH, _READ_ONLY, _opening
 
-    if _DB is not None or _opening:
+    if _DB is not None:
+        return
+    if _opening:
+        await _open_waiter().wait()
         return
     _opening = True
+    _open_waiter().clear()
 
     uri = f"file:{quote(str(path), safe='/')}?mode=ro&cache=shared"
     try:
         db = await aiosqlite.connect(uri, uri=True, isolation_level=None)
     except sqlite3.OperationalError as exc:
-        _opening = False
+        _finish_opening()
         raise (await _classify_readonly_open_failure(path, exc)) from exc
     except BaseException:
-        _opening = False
+        _finish_opening()
         raise
     # Same leak guard as open(): a failure between connect and _DB assignment
     # (e.g. missing meta table on a foreign sqlite file) would otherwise leak
@@ -344,17 +373,17 @@ async def open_readonly(path: Path) -> None:
         # WAL shm initialization is deferred to the first statement, so a
         # read-only mount surfaces here rather than at connect().
         await db.close()
-        _opening = False
+        _finish_opening()
         raise (await _classify_readonly_open_failure(path, exc)) from exc
     except BaseException:
         await db.close()
-        _opening = False
+        _finish_opening()
         raise
 
     _DB = db
     _DB_PATH = path
     _READ_ONLY = True
-    _opening = False
+    _finish_opening()
     logger.info("runs_index opened read-only at %s (schema_version=%d)", path, existing)
 
 
@@ -366,7 +395,7 @@ async def close() -> None:
     _DB = None
     _DB_PATH = None
     _READ_ONLY = False
-    _opening = False
+    _finish_opening()
     _write_lock = None
     _write_lock_loop = None
 
@@ -966,7 +995,7 @@ async def list_runs_for_job(namespace: str, job_id: str) -> list[RunIndexRow]:
     """List indexed runs for a job, newest first by run-dir mtime then epoch."""
     cur = await _conn().execute(
         f"SELECT {_RUN_ROW_COLS} FROM runs WHERE namespace = ? AND job_id = ? "
-        "ORDER BY mtime_epoch DESC NULLS LAST, epoch DESC",
+        "ORDER BY mtime_epoch DESC NULLS LAST, CAST(epoch AS INTEGER) DESC",
         (namespace, job_id),
     )
     rows = await cur.fetchall()

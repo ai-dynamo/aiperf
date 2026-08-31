@@ -223,6 +223,29 @@ async def test_heartbeat_task_is_silent_before_registration(component_service) -
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_retries_recovery_when_reregistration_is_incomplete(
+    component_service,
+) -> None:
+    """A timed-out re-registration must be retried by a later heartbeat tick."""
+    recovery_calls: list[None] = []
+
+    async def fake_publish(message) -> None:
+        return None
+
+    def retry_registration() -> None:
+        recovery_calls.append(None)
+
+    component_service.publish = fake_publish
+    component_service._registration_complete = False
+    component_service._reregistration_requested = True
+    component_service._reregister_after_controller_nudge = retry_registration
+
+    await component_service._heartbeat_task()
+
+    assert recovery_calls == [None]
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_task_publishes_bus_heartbeat_for_the_credit_router(
     component_service,
 ) -> None:
