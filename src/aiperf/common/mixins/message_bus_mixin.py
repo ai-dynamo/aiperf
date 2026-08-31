@@ -4,10 +4,12 @@
 import asyncio
 from abc import ABC
 from collections.abc import Callable, Coroutine
+from time import monotonic
 from typing import Any
 
 from aiperf.common.enums import CommAddress, MessageType
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import ShutdownError
 from aiperf.common.hooks import (
     AIPerfHook,
     Hook,
@@ -87,6 +89,11 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
         next_warning_time = initial_warning_threshold
         probe_interval = Environment.SERVICE.CONNECTION_PROBE_INTERVAL
         overall_timeout = Environment.SERVICE.CONNECTION_PROBE_TIMEOUT
+        # Wall-clock reference for the deadline. Time spent inside publish(),
+        # event-loop scheduling delay, or a starved/pegged event loop is
+        # invisible to a virtual attempt_count * probe_interval estimate, so
+        # the deadline must be measured against real elapsed time instead.
+        start_time = monotonic()
 
         while not self.stop_requested:
             attempt_count += 1
@@ -101,8 +108,7 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
                     )
                 return
             except TimeoutError:
-                # Compute from count to avoid floating point accumulation errors
-                elapsed_time = attempt_count * probe_interval
+                elapsed_time = monotonic() - start_time
 
                 # Log warnings at increasing intervals when probes are taking too long
                 if elapsed_time >= next_warning_time:
@@ -123,6 +129,15 @@ class MessageBusClientMixin(CommunicationMixin, ABC):
                     "Timeout waiting for connection probe message, sending another probe"
                 )
                 await yield_to_event_loop()
+
+        # The loop only exits this way when stop_requested flipped true mid-retry.
+        # A silent return here would be treated as a PASSED lifecycle hook by
+        # run_hooks, letting a service whose bus connectivity was never
+        # confirmed proceed straight into control-channel registration.
+        raise ShutdownError(
+            f"Stop requested for {self.id} while waiting for connection probe "
+            "response; message bus connectivity was never confirmed"
+        )
 
     async def _process_connection_probe_message(
         self, message: ConnectionProbeMessage

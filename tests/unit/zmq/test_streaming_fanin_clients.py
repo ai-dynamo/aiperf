@@ -174,6 +174,66 @@ class TestStreamingPushClient:
 
         assert mock_zmq_socket._sync_send.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_drain_task_survives_zmq_error_and_flushes_backlog(
+        self, mock_zmq_socket, mock_zmq_context, sample_credit_return
+    ):
+        """[F31] A ZMQError in the drain loop must retry, not kill the drain task.
+
+        The pre-fix handler was a bare ``return``, so a single transient ZMQError
+        (EINTR, a socket reconfigured under the loop) permanently retired the
+        only coroutine that flushes parked credit returns. Every subsequent
+        credit routed to this PUSH side then stalled invisibly until the run
+        timeout, because ``send`` short-circuits to the buffer whenever a
+        backlog exists and nothing was left to drain it.
+        """
+        client = ZMQStreamingPushClient(address="tcp://localhost:5555", bind=False)
+        await client.initialize()
+
+        mock_zmq_socket._sync_send.side_effect = zmq.Again()
+        await client.send(sample_credit_return, max_retries=0)
+        assert len(client._send_buf) == 1
+
+        # First drain attempt raises, the retry succeeds.
+        mock_zmq_socket._sync_send.reset_mock()
+        mock_zmq_socket._sync_send.side_effect = [zmq.ZMQError(), None]
+
+        await client.start()
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        # Pre-fix the buffer stayed at 1 forever: the task had already returned.
+        assert not client._send_buf
+        assert mock_zmq_socket._sync_send.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_with_undrained_backlog_notifies_backlog_dropped_callback(
+        self, mock_zmq_socket, mock_zmq_context, sample_credit_return
+    ):
+        """Dropping a non-empty backlog on stop must be observable, not just logged.
+
+        A log line alone never reaches the CLI exit code or run summary, so a
+        transient stall on the PULL side near shutdown can silently drop an
+        arbitrary number of credit returns with no operator-visible signal.
+        The owning service (e.g. Worker) wires ``on_backlog_dropped`` to its
+        exit-error mechanism; the client must invoke it with the dropped count
+        whenever LINGER=0 discards a non-empty backlog on stop.
+        """
+        client = ZMQStreamingPushClient(address="tcp://localhost:5555", bind=False)
+        await client.initialize()
+
+        mock_zmq_socket._sync_send.side_effect = zmq.Again()
+        await client.send(sample_credit_return, max_retries=0)
+        await client.send(sample_credit_return, max_retries=0)
+        assert len(client._send_buf) == 2
+
+        dropped_counts: list[int] = []
+        client.on_backlog_dropped = dropped_counts.append
+
+        await client.stop()
+
+        assert dropped_counts == [2]
+
 
 # ============================================================================
 # ZMQStreamingPullClient

@@ -9,15 +9,20 @@ the PUSH/PULL fan-in.
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import msgspec.msgpack
 import pytest
 import zmq
 
+from aiperf.common.enums import CommAddress
+from aiperf.common.exceptions import ConfigurationError
 from aiperf.credit.messages import WorkerConnected, WorkerToRouterMessage
+from aiperf.plugin.enums import CommClientType
 from aiperf.workers.return_channel_probe import probe_return_channel
 from aiperf.workers.worker import Worker
+from tests.harness.fake_communication import FakeCommunication
 
 
 class _FakePushClient:
@@ -27,9 +32,10 @@ class _FakePushClient:
         self.socket = socket
 
 
-def _client_raising(*side_effects) -> _FakePushClient:
+def _client_raising(*side_effects, immediate: int = 1) -> _FakePushClient:
     socket = MagicMock(spec=zmq.Socket)
     socket.send.side_effect = list(side_effects)
+    socket.getsockopt.return_value = immediate
     return _FakePushClient(socket)
 
 
@@ -94,6 +100,24 @@ async def test_probe_stops_on_socket_error(sent_frames):
 
 
 @pytest.mark.asyncio
+async def test_probe_raises_when_immediate_not_set(sent_frames):
+    """A caller that forgot socket_ops={zmq.IMMEDIATE: 1} must fail loudly.
+
+    Without IMMEDIATE=1, libzmq buffers the NOBLOCK send in the not-yet-
+    connected pipe and the send always succeeds -- so a probe that ignored
+    this would report a dead return channel as live on the very first
+    attempt, regardless of whether a real peer exists.
+    """
+    client = _client_raising(None, immediate=0)
+
+    with pytest.raises(ConfigurationError):
+        await probe_return_channel(
+            client, worker_id="worker-1", budget=1.0, retry_delay=0.1
+        )
+    assert sent_frames == []
+
+
+@pytest.mark.asyncio
 async def test_probe_skips_transports_without_a_socket():
     """Non-ZMQ transports have no separate return socket to fail."""
 
@@ -114,6 +138,43 @@ async def test_zero_budget_disables_probe(sent_frames):
         client, worker_id="worker-1", budget=0.0, retry_delay=0.1
     )
     assert sent_frames == []
+
+
+def test_worker_enables_immediate_on_credit_return_client(
+    benchmark_run, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[tuple[Any, Any], dict[Any, Any] | None] = {}
+    create_client = FakeCommunication.create_client
+
+    def capture_create_client(
+        self: FakeCommunication,
+        client_type: Any,
+        address: Any,
+        bind: bool = False,
+        socket_ops: dict[Any, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        captured[(client_type, address)] = socket_ops
+        return create_client(
+            self,
+            client_type,
+            address,
+            bind=bind,
+            socket_ops=socket_ops,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(FakeCommunication, "create_client", capture_create_client)
+
+    Worker(run=benchmark_run, service_id="worker-immediate-test")
+
+    return_client = (CommClientType.STREAMING_PUSH, CommAddress.CREDIT_RETURN)
+    assert captured[return_client] == {zmq.IMMEDIATE: 1}
+    assert all(
+        zmq.IMMEDIATE not in (socket_ops or {})
+        for key, socket_ops in captured.items()
+        if key != return_client
+    )
 
 
 class TestWorkerReadinessGate:

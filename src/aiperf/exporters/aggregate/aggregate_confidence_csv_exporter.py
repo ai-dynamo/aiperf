@@ -13,9 +13,9 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
     """Exports confidence aggregate results to CSV format.
 
     Creates a simple CSV with:
-    - Metrics table (statistics as columns)
-    - Blank line separator
     - Metadata section (key-value pairs)
+    - Blank line separator
+    - Metrics table (statistics as columns)
 
     Uses similar formatting approach as MetricsCsvExporter for consistency.
     """
@@ -42,13 +42,8 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Write metrics section FIRST (for test compatibility)
         self._write_metrics_section(writer)
-
-        # Blank line separator (same as MetricsCsvExporter)
         writer.writerow([])
-
-        # Write metadata section
         self._write_metadata_section(writer)
 
         return buf.getvalue()

@@ -11,7 +11,7 @@ Focuses on:
 - multi-pod rosters where only the requested pod is tailed
 
 Out of scope: UI log-strip rendering and event severity counters, covered by
-``tests/unit/ui/test_operator_logs_events_edges.py`` and diagnostics router tests.
+``tests/ui/test_operator_logs_events_edges.py`` and diagnostics router tests.
 """
 
 from __future__ import annotations

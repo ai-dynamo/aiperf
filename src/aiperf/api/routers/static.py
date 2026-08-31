@@ -23,6 +23,7 @@ static_router = APIRouter(tags=["Static"])
 
 _STATIC_DIR = (Path(__file__).parent.parent / "static").resolve()
 _STATIC_V2_DIR = (Path(__file__).parent.parent / "static-v2").resolve()
+_STATIC_VENDOR_DIR = _STATIC_DIR / "vendor"
 
 
 class StaticRouter(BaseRouter):
@@ -45,15 +46,29 @@ async def _read_static(filename: str) -> str:
         raise HTTPException(404, f"{filename} not found") from None
 
 
-async def _read_v2_asset(rel_path: str) -> tuple[bytes, str]:
-    """Read a v2 dashboard asset, returning ``(bytes, content_type)``.
+def _guess_content_type(file_path: Path) -> str:
+    """Sniff content type from extension, with an override for .js/.mjs.
 
-    Enforces path traversal protection: resolved path must stay under
-    ``static-v2/``. Content type is sniffed from the extension with an
-    explicit override for ``.js`` so browsers treat ES modules as JS.
+    Browsers must see JS module files served as ``application/javascript``
+    regardless of what ``mimetypes`` guesses from the local OS config.
     """
-    file_path = (_STATIC_V2_DIR / rel_path).resolve()
-    if not file_path.is_relative_to(_STATIC_V2_DIR):
+    content_type, _ = guess_type(str(file_path))
+    if file_path.suffix in (".js", ".mjs"):
+        return "application/javascript; charset=utf-8"
+    if file_path.suffix == ".css" and content_type is None:
+        return "text/css; charset=utf-8"
+    return content_type or "application/octet-stream"
+
+
+async def _read_vendor_asset(base_dir: Path, rel_path: str) -> tuple[bytes, str]:
+    """Read a vendored third-party asset, returning ``(bytes, content_type)``.
+
+    Shared by the legacy ``static/vendor/`` and ``static-v2/vendor/`` trees.
+    Enforces path traversal protection: resolved path must stay under
+    ``base_dir``.
+    """
+    file_path = (base_dir / rel_path).resolve()
+    if not file_path.is_relative_to(base_dir):
         raise HTTPException(400, "Invalid asset path")
 
     try:
@@ -64,21 +79,20 @@ async def _read_v2_asset(rel_path: str) -> tuple[bytes, str]:
     except IsADirectoryError:
         raise HTTPException(404, f"{rel_path} is a directory") from None
 
-    content_type, _ = guess_type(str(file_path))
-    if file_path.suffix == ".js" or file_path.suffix == ".mjs":
-        content_type = "application/javascript; charset=utf-8"
-    elif file_path.suffix == ".css" and content_type is None:
-        content_type = "text/css; charset=utf-8"
-    elif content_type is None:
-        content_type = "application/octet-stream"
-
-    return data, content_type
+    return data, _guess_content_type(file_path)
 
 
 @static_router.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def index() -> HTMLResponse:
     """Serve the index page."""
     return HTMLResponse(await _read_static("index.html"))
+
+
+@static_router.get("/static-vendor/{asset:path}", include_in_schema=False)
+async def static_vendor_asset(asset: str) -> Response:
+    """Serve a vendored third-party asset (e.g. PrismJS) for the legacy dashboard."""
+    data, content_type = await _read_vendor_asset(_STATIC_VENDOR_DIR, asset)
+    return Response(content=data, media_type=content_type)
 
 
 @static_router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
@@ -104,15 +118,15 @@ async def dashboard_v2_redirect() -> RedirectResponse:
 )
 async def dashboard_v2_index() -> HTMLResponse:
     """Serve the v2 dashboard entrypoint (``static-v2/index.html``)."""
-    data, _ = await _read_v2_asset("index.html")
+    data, _ = await _read_vendor_asset(_STATIC_V2_DIR, "index.html")
     return HTMLResponse(data.decode("utf-8"))
 
 
 @static_router.get("/dashboard-v2/{asset:path}", include_in_schema=False)
 async def dashboard_v2_asset(asset: str) -> Response:
-    """Serve any asset under ``static-v2/`` (e.g. ``app.js``, ``lib/state.js``)."""
+    """Serve any asset under ``static-v2/`` (e.g. ``app.js``, ``lib/state.js``, ``vendor/*``)."""
     if asset in ("", "/"):
-        data, _ = await _read_v2_asset("index.html")
+        data, _ = await _read_vendor_asset(_STATIC_V2_DIR, "index.html")
         return HTMLResponse(data.decode("utf-8"))
-    data, content_type = await _read_v2_asset(asset)
+    data, content_type = await _read_vendor_asset(_STATIC_V2_DIR, asset)
     return Response(content=data, media_type=content_type)

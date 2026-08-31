@@ -205,7 +205,8 @@ class FastAPIService(BaseComponentService):
         # without this, they 503-retry while dataset-manager incidentally
         # populates the cache via its own `_configure_tokenizer` load. With
         # this, the bundle endpoint serves on the first attempt.
-        await self._prewarm_tokenizers()
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            await self._prewarm_tokenizers()
 
         config = uvicorn.Config(
             self.app,

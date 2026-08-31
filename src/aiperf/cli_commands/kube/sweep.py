@@ -51,8 +51,15 @@ _CONV_MIN_PARAM = Parameter(
 )
 _CONV_MAX_PARAM = Parameter(
     name="--max-runs",
-    help="Hard cap on runs even if not converged (default 10).",
+    help=(
+        "Hard cap on runs even if not converged. Defaults to --trials when "
+        "given, else the YAML multiRun.numRuns, else 10."
+    ),
 )
+
+# Fallback cap applied only when neither --max-runs, --trials, nor a YAML
+# multiRun.numRuns supplies one.
+_DEFAULT_CONVERGENCE_MAX_RUNS = 10
 
 
 @app.default
@@ -63,7 +70,7 @@ async def sweep(
     multi_run_trials: Annotated[int | None, _TRIALS_PARAM] = None,
     cooldown_seconds: Annotated[float, _COOLDOWN_PARAM] = 0.0,
     convergence_min_runs: Annotated[int, _CONV_MIN_PARAM] = 3,
-    convergence_max_runs: Annotated[int, _CONV_MAX_PARAM] = 10,
+    convergence_max_runs: Annotated[int | None, _CONV_MAX_PARAM] = None,
     detach: Annotated[bool, _DETACH_PARAM] = False,  # noqa: ARG001 - reserved for future tailing
     dry_run: Annotated[bool, _DRY_RUN_PARAM] = False,
 ) -> None:
@@ -316,15 +323,16 @@ def _merged_multirun_config(
     cooldown_seconds: float,
     convergence_metric: str | None,
     convergence_min_runs: int,
-    convergence_max_runs: int,
+    convergence_max_runs: int | None,
     convergence_threshold: float,
 ) -> dict[str, Any] | None:
     """Merge the YAML ``multiRun`` config with CLI flag overrides.
 
     Convergence is a nested object on ``multiRun``. CLI
-    maps --convergence-metric/--convergence-threshold/--min-runs to the
-    canonical ConvergenceConfig (mode defaults to ci_width); --max-runs maps
-    to ``multiRun.numRuns`` (the hard cap on trials).
+    maps --convergence-metric/--convergence-threshold/--min-runs onto the
+    canonical ConvergenceConfig, preserving any other keys (``mode``,
+    ``stat``, ...) the YAML already set; --max-runs maps to
+    ``multiRun.numRuns`` (the hard cap on trials) and only when given.
     """
     multirun_cfg: dict[str, Any] | None = None
     if multirun_cfg_from_yaml is not None:
@@ -338,13 +346,22 @@ def _merged_multirun_config(
         multirun_cfg["cooldownSeconds"] = cooldown_seconds
     if convergence_metric is not None:
         multirun_cfg = multirun_cfg or {}
-        existing = multirun_cfg.get("numRuns") or multirun_cfg.get("num_runs") or 1
-        multirun_cfg["numRuns"] = max(int(existing), convergence_max_runs)
-        multirun_cfg["convergence"] = {
-            "metric": convergence_metric,
-            "minRuns": convergence_min_runs,
-            "threshold": convergence_threshold,
-        }
+        if convergence_max_runs is not None:
+            # --max-runs is a hard cap, not a floor.  Overwrite numRuns outright
+            # so a YAML numRuns:20 + --max-runs 10 is capped to 10, not floored
+            # to 20.  Without the flag, --trials / YAML numRuns stands.
+            multirun_cfg["numRuns"] = convergence_max_runs
+        elif "numRuns" not in multirun_cfg:
+            multirun_cfg["numRuns"] = _DEFAULT_CONVERGENCE_MAX_RUNS
+        convergence = dict(multirun_cfg.get("convergence") or {})
+        convergence.update(
+            {
+                "metric": convergence_metric,
+                "minRuns": convergence_min_runs,
+                "threshold": convergence_threshold,
+            }
+        )
+        multirun_cfg["convergence"] = convergence
     return multirun_cfg
 
 
@@ -404,7 +421,7 @@ def _build_sweep_cr_dict(
     cooldown_seconds: float,
     convergence_metric: str | None,
     convergence_min_runs: int,
-    convergence_max_runs: int,
+    convergence_max_runs: int | None,
     convergence_threshold: float,
 ) -> dict[str, Any]:
     """Build an AIPerfSweep CR dict from a YAML config file with sweep config.

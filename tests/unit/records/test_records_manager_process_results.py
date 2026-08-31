@@ -245,6 +245,51 @@ class TestProcessResultsAccumulatorPath:
         assert _STUB_METRIC_RESULT in result.results.records
 
     @pytest.mark.asyncio
+    async def test_local_artifact_barrier_failure_preserves_summary(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._is_kubernetes_run = MagicMock(return_value=False)
+        mgr._finalize_record_processor_artifacts = AsyncMock(
+            side_effect=RuntimeError("artifact barrier failed")
+        )
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert result.results.records == [_STUB_METRIC_RESULT]
+        assert result.results.completed == 1
+        assert any(
+            error.message == "RuntimeError('artifact barrier failed')"
+            and error.details
+            == {
+                "stage": "record_processor_artifact_finalize",
+                "fatal": False,
+            }
+            for error in result.errors
+        )
+        mgr.error.assert_called_once_with(
+            "Non-fatal record-processor artifact finalization failure: "
+            "RuntimeError('artifact barrier failed')"
+        )
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_artifact_barrier_failure_remains_fatal(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._is_kubernetes_run = MagicMock(return_value=True)
+        mgr._finalize_record_processor_artifacts = AsyncMock(
+            side_effect=RuntimeError("artifact barrier failed")
+        )
+
+        with pytest.raises(RuntimeError, match="artifact barrier failed"):
+            await mgr._process_results_impl(
+                phase=CreditPhase.PROFILING, cancelled=False
+            )
+
+        acc.summarize.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_legacy_list_shape_accumulator_results_extended(self) -> None:
         """``list[MetricResult]`` accumulator output is appended to records."""
         acc_list = _make_list_accumulator([_STUB_METRIC_RESULT])

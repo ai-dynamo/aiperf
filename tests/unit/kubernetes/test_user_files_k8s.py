@@ -18,6 +18,10 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.endpoint_credentials import (
+    EndpointCredentialInjection,
+    apply_endpoint_credentials,
+)
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.config.user_files import RunMeta, UserFileError
 from aiperf.kubernetes.resources import ConfigMapSpec
@@ -128,6 +132,42 @@ def test_materialize_serialized_run_user_files_declared_files_writes_them(
     }
     assert (run_dir / "meta" / "notes.md").read_text() == (
         "Run bench-job in bench-ns at 1714069323.\n"
+    )
+
+
+def test_materialize_serialized_run_user_files_rehydrated_url_is_redacted(
+    tmp_path: Path,
+) -> None:
+    run = _serialized_pod_run(
+        _job_spec(
+            [
+                {
+                    "path": "endpoint.txt",
+                    "format": "text",
+                    "content": "{{ endpoint_url }}",
+                }
+            ]
+        ),
+        run_meta=RunMeta(
+            epoch="1714069323", job_name="bench-job", namespace="bench-ns"
+        ),
+    )
+    apply_endpoint_credentials(
+        run,
+        EndpointCredentialInjection(
+            api_key=None,
+            api_key_from_alias=False,
+            headers=None,
+            urls=["https://alice:s3cr3t@api.example.com/v1?api_key=sk-LEAKCANARY"],
+        ),
+        require_resolved=True,
+    )
+    run_dir = tmp_path / "results"
+
+    materialize_serialized_run_user_files(_repoint(run, run_dir))
+
+    assert (run_dir / "endpoint.txt").read_text() == (
+        "https://<redacted>@api.example.com/v1?api_key=<redacted>"
     )
 
 

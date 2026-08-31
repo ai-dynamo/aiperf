@@ -5,7 +5,7 @@
 The test_client facade tests already exercise the happy paths via patches on the
 facade module. This file focuses on:
 
-- namespace=None default-resolution behaviour
+- namespace handling (explicit namespace required for a scoped list)
 - find_aiperf_job fallback-list error paths (404 suppressed, non-404 re-raises)
 - find_aiperf_job name-match branch in fallback
 - cluster-wide find (no namespace -> no direct get, list cluster with field_selector)
@@ -62,11 +62,11 @@ def _api_exception(status: int) -> ApiException:
 
 
 class TestListAIPerfJobsNamespaceResolution:
-    """Verify namespace=None fallback to 'default'."""
+    """Verify the scoped-list namespace is used verbatim."""
 
     @pytest.mark.asyncio
-    async def test_none_namespace_resolves_to_default(self) -> None:
-        """Passing namespace=None with all_namespaces=False uses 'default'."""
+    async def test_explicit_namespace_is_forwarded(self) -> None:
+        """A scoped list forwards the caller-resolved namespace verbatim."""
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
         mock_custom.list_namespaced_custom_object = AsyncMock(
@@ -76,9 +76,9 @@ class TestListAIPerfJobsNamespaceResolution:
             "aiperf.kubernetes.client_jobs.client.CustomObjectsApi",
             return_value=mock_custom,
         ):
-            await list_aiperf_jobs(api, namespace=None)
+            await list_aiperf_jobs(api, namespace="ns-1")
         kwargs = mock_custom.list_namespaced_custom_object.call_args.kwargs
-        assert kwargs["namespace"] == "default"
+        assert kwargs["namespace"] == "ns-1"
 
     @pytest.mark.asyncio
     async def test_empty_items_returns_empty_list(self) -> None:
@@ -424,3 +424,14 @@ class TestFindAIPerfSweep:
             result = await find_aiperf_sweep(api, "x", namespace="ns")
         assert result is None
         mock_custom.list_cluster_custom_object.assert_not_called()
+
+
+class TestListAIPerfJobsRequiresNamespace:
+    """A namespace-scoped list must never silently fall back to 'default'."""
+
+    @pytest.mark.asyncio
+    async def test_none_namespace_without_all_namespaces_raises(self) -> None:
+        """namespace=None + all_namespaces=False is a caller bug, not 'default'."""
+        api = MagicMock(spec=ApiClient)
+        with pytest.raises(ValueError, match="namespace"):
+            await list_aiperf_jobs(api, namespace=None, all_namespaces=False)

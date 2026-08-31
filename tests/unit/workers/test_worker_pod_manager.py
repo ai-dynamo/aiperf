@@ -45,6 +45,7 @@ from aiperf.common.pod_lifecycle_structs import (
 )
 from aiperf.config import AIPerfConfig, BenchmarkRun
 from aiperf.controller.proxy_manager import ProxyManager
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.plugin.enums import DatasetSamplingStrategy, ServiceType
 from aiperf.workers.worker_group_manager import WorkerGroupManager
 
@@ -205,18 +206,18 @@ class TestWorkerGroupManagerInit:
     @pytest.mark.parametrize(
         ("workers", "expected_rps"),
         [
-            param(1, 1, id="min_one_rp"),
-            param(2, 1, id="two_workers"),
-            param(4, 1, id="four_workers"),
-            param(8, 2, id="eight_workers"),
-            param(12, 3, id="twelve_workers"),
-            param(16, 4, id="sixteen_workers"),
+            param(1, 1, id="one_worker"),
+            param(2, 2, id="two_workers"),
+            param(4, 4, id="four_workers"),
+            param(8, 8, id="eight_workers"),
+            param(12, 12, id="twelve_workers"),
+            param(16, 16, id="sixteen_workers"),
         ],
     )  # fmt: skip
     def test_default_record_processors_calculation(
         self, workers: int, expected_rps: int
     ) -> None:
-        """Test record processors default to workers / PROCESSOR_SCALE_FACTOR."""
+        """Test record processors use the Kubernetes scale factor."""
         test_run = _make_run(workers_per_pod=workers)
 
         with (
@@ -229,6 +230,20 @@ class TestWorkerGroupManagerInit:
             )
 
         assert manager.record_processors_per_pod == expected_rps
+
+    def test_default_record_processors_use_kubernetes_scale_factor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(K8sEnvironment, "RECORD_PROCESSOR_SCALE_FACTOR", 2)
+        test_run = _make_run(workers_per_pod=8)
+
+        with (
+            patch.object(WorkerGroupManager, "debug"),
+            patch.object(WorkerGroupManager, "info"),
+        ):
+            manager = WorkerGroupManager(run=test_run, service_id="test")
+
+        assert manager.record_processors_per_pod == 4
 
     def test_initial_state(self, worker_group_manager: WorkerGroupManager) -> None:
         """Test initial state is correct."""

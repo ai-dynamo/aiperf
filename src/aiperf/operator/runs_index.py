@@ -68,12 +68,20 @@ SCHEMA_VERSION = 1
 _DB: aiosqlite.Connection | None = None
 _DB_PATH: Path | None = None
 _READ_ONLY = False
+# True while open() is in progress; prevents a second concurrent caller from
+# racing through the `if _DB is not None: return` guard and opening a second
+# connection before the first assignment lands.  asyncio is single-threaded so
+# the check+set below is atomic (no await between them).
+_opening: bool = False
 
 # Serializes every write API on the single shared connection. The lock is
 # bound to the running loop the first time a writer acquires it, so unit tests
 # that spin a fresh event loop per test never inherit a lock from a dead loop.
 _write_lock: asyncio.Lock | None = None
 _write_lock_loop: asyncio.AbstractEventLoop | None = None
+
+# Prevents duplicate concurrent lazy-backfill work for the same run.
+_backfill_in_flight: set[tuple[str, str, str, str]] | None = None
 
 
 def _writer_lock() -> asyncio.Lock:
@@ -202,13 +210,20 @@ async def open(path: Path) -> None:
 
     Idempotent — calling twice is safe and does not duplicate state.
     """
-    global _DB, _DB_PATH, _READ_ONLY
+    global _DB, _DB_PATH, _READ_ONLY, _opening
 
-    if _DB is not None:
+    if _DB is not None or _opening:
         return
+    # Mark in-progress atomically (no await between the guard above and this
+    # assignment, so a concurrent coroutine that was suspended cannot sneak past).
+    _opening = True
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    db = await aiosqlite.connect(str(path), isolation_level=None)
+    try:
+        db = await aiosqlite.connect(str(path), isolation_level=None)
+    except BaseException:
+        _opening = False
+        raise
     # Any failure after connect but before _DB is assigned must close the
     # connection: aiosqlite spawns a non-daemon worker thread per connection,
     # and callers (e.g. ResultsDB) retry open() per request, so a leak here
@@ -238,6 +253,7 @@ async def open(path: Path) -> None:
                 )
     except BaseException:
         await db.close()
+        _opening = False
         raise
 
     _DB = db
@@ -291,16 +307,21 @@ async def open_readonly(path: Path) -> None:
     have to be writable. Raises ``ReadOnlyMountError`` when the filesystem
     denies that.
     """
-    global _DB, _DB_PATH, _READ_ONLY
+    global _DB, _DB_PATH, _READ_ONLY, _opening
 
-    if _DB is not None:
+    if _DB is not None or _opening:
         return
+    _opening = True
 
     uri = f"file:{quote(str(path), safe='/')}?mode=ro&cache=shared"
     try:
         db = await aiosqlite.connect(uri, uri=True, isolation_level=None)
     except sqlite3.OperationalError as exc:
+        _opening = False
         raise (await _classify_readonly_open_failure(path, exc)) from exc
+    except BaseException:
+        _opening = False
+        raise
     # Same leak guard as open(): a failure between connect and _DB assignment
     # (e.g. missing meta table on a foreign sqlite file) would otherwise leak
     # the connection's non-daemon thread on every retry.
@@ -323,25 +344,29 @@ async def open_readonly(path: Path) -> None:
         # WAL shm initialization is deferred to the first statement, so a
         # read-only mount surfaces here rather than at connect().
         await db.close()
+        _opening = False
         raise (await _classify_readonly_open_failure(path, exc)) from exc
     except BaseException:
         await db.close()
+        _opening = False
         raise
 
     _DB = db
     _DB_PATH = path
     _READ_ONLY = True
+    _opening = False
     logger.info("runs_index opened read-only at %s (schema_version=%d)", path, existing)
 
 
 async def close() -> None:
     """Close the DB. Safe to call when never opened."""
-    global _DB, _DB_PATH, _READ_ONLY, _write_lock, _write_lock_loop
+    global _DB, _DB_PATH, _READ_ONLY, _write_lock, _write_lock_loop, _opening
     if _DB is not None:
         await _DB.close()
     _DB = None
     _DB_PATH = None
     _READ_ONLY = False
+    _opening = False
     _write_lock = None
     _write_lock_loop = None
 
@@ -1371,24 +1396,19 @@ _TERMINAL_RUN_PHASES: frozenset[str] = frozenset({"Failed", "Cancelled"})
 """Phases a disk backfill must never overwrite with "Succeeded"."""
 
 
-async def _index_run_from_disk(
-    base: Path, namespace: str, job_id: str, epoch: str, *, is_latest: bool
-) -> bool:
-    """Read the run-specific summary JSON and upsert a runs row.
+def _collect_run_files(run_path: Path) -> dict | None:
+    """Sync: collect all filesystem data for one run dir.
 
-    Returns True on success, False when the readiness marker or summary is
-    absent or unreadable. Re-ingest is unconditional, so bootstrap can be
-    re-run safely: the upserts are idempotent, and an existing terminal phase
-    (or one recorded in the readiness marker) wins over the disk-derived
-    "Succeeded".
+    Pure FS reads with no sqlite access — safe to run in a worker thread via
+    ``asyncio.to_thread``. Returns a dict of collected data, or None when the
+    run is not ready or the summary is missing/corrupt.
     """
-    run_path = base / namespace / job_id / epoch
     if not is_run_ready(run_path):
-        return False
+        return None
     try:
         summary_path = find_summary_path(run_path)
         if summary_path is None:
-            return False
+            return None
         if summary_path.suffix == ".zst":
             blob = summary_path.read_bytes()
             metrics = orjson.loads(zstd_decompress(blob))
@@ -1399,15 +1419,55 @@ async def _index_run_from_disk(
             summary_blob = zstandard.ZstdCompressor().compress(raw)
     except (OSError, orjson.JSONDecodeError, zstandard.ZstdError) as exc:
         logger.warning("bootstrap: cannot read summary at %s: %s", run_path, exc)
-        return False
+        return None
 
     files = [
         f.name for f in run_path.iterdir() if f.is_file() and f.name != READY_MARKER
     ]
     total_size = sum((run_path / f).stat().st_size for f in files)
     mtime_epoch = int(run_path.stat().st_mtime)
+    try:
+        marker: Any = orjson.loads((run_path / READY_MARKER).read_bytes())
+    except (OSError, orjson.JSONDecodeError):
+        marker = {}
+    return {
+        "metrics": metrics,
+        "summary_blob": summary_blob,
+        "files": files,
+        "total_size": total_size,
+        "mtime_epoch": mtime_epoch,
+        "marker": marker,
+        "spec": metrics.get("input_config", {}) or {},
+    }
 
-    spec = metrics.get("input_config", {}) or {}
+
+async def _index_run_from_disk(
+    base: Path, namespace: str, job_id: str, epoch: str, *, is_latest: bool
+) -> bool:
+    """Read the run-specific summary JSON and upsert a runs row.
+
+    Returns True on success, False when the readiness marker or summary is
+    absent or unreadable. Re-ingest is unconditional, so bootstrap can be
+    re-run safely: the upserts are idempotent, and an existing terminal phase
+    (or one recorded in the readiness marker) wins over the disk-derived
+    "Succeeded".
+
+    Blocking filesystem reads run in a worker thread via ``asyncio.to_thread``
+    so a large run dir or slow NFS mount does not stall the kopf event loop.
+    """
+    run_path = base / namespace / job_id / epoch
+    collected = await asyncio.to_thread(_collect_run_files, run_path)
+    if collected is None:
+        return False
+
+    metrics = collected["metrics"]
+    summary_blob = collected["summary_blob"]
+    files = collected["files"]
+    total_size = collected["total_size"]
+    mtime_epoch = collected["mtime_epoch"]
+    marker = collected["marker"]
+    spec = collected["spec"]
+
     # An exported summary on disk proves artifacts exist, NOT that the run
     # succeeded. Stamping "Succeeded" unconditionally let a lazy backfill flip
     # a genuinely Failed row back to Succeeded while `error` still held the
@@ -1419,10 +1479,6 @@ async def _index_run_from_disk(
         else "Succeeded"
     )
     error = existing.error if phase in _TERMINAL_RUN_PHASES and existing else None
-    try:
-        marker = orjson.loads((run_path / READY_MARKER).read_bytes())
-    except (OSError, orjson.JSONDecodeError):
-        marker = {}
     if isinstance(marker, dict):
         marker_phase = marker.get("terminal_phase")
         marker_error = marker.get("terminal_error")
@@ -1990,8 +2046,15 @@ async def lazy_backfill_run(
     base: Path, namespace: str, job_id: str, epoch: str
 ) -> None:
     """Background task fired from writer read-path fallback. Best-effort, never raises."""
+    global _backfill_in_flight
     if is_readonly():
         return
+    if _backfill_in_flight is None:
+        _backfill_in_flight = set()
+    key = (str(base), namespace, job_id, epoch)
+    if key in _backfill_in_flight:
+        return
+    _backfill_in_flight.add(key)
     try:
         latest_epoch = resolve_latest(base, namespace, job_id)
         indexed = await _index_run_from_disk(
@@ -2013,6 +2076,8 @@ async def lazy_backfill_run(
             epoch,
             exc,
         )
+    finally:
+        _backfill_in_flight.discard(key)
 
 
 _VALID_IDENTIFIER_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz_0123456789")

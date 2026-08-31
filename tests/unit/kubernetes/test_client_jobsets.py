@@ -4,7 +4,7 @@
 
 Focuses on gaps left by test_client.py:
 
-- list_jobsets default-namespace fallback, non-404 re-raise
+- list_jobsets namespace handling (explicit required), non-404 re-raise
 - list_jobsets label-selector construction (app=aiperf only vs. + job_id)
 - find_jobset 404 suppressed on both passes, non-404 re-raised on each
 - find_jobset field-selector string on the name-fallback pass
@@ -91,8 +91,8 @@ class TestListJobsetsSelectorConstruction:
         assert selector == "app=aiperf,aiperf.nvidia.com/job-id=abc"
 
     @pytest.mark.asyncio
-    async def test_default_namespace_when_none(self) -> None:
-        """namespace=None + all_namespaces=False resolves to 'default'."""
+    async def test_explicit_namespace_is_forwarded(self) -> None:
+        """A scoped list forwards the caller-resolved namespace verbatim."""
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
         mock_custom.list_namespaced_custom_object = AsyncMock(
@@ -102,9 +102,9 @@ class TestListJobsetsSelectorConstruction:
             "aiperf.kubernetes.client_jobsets.client.CustomObjectsApi",
             return_value=mock_custom,
         ):
-            await list_jobsets(api, namespace=None)
+            await list_jobsets(api, namespace="ns-1")
         kwargs = mock_custom.list_namespaced_custom_object.call_args.kwargs
-        assert kwargs["namespace"] == "default"
+        assert kwargs["namespace"] == "ns-1"
 
     @pytest.mark.asyncio
     async def test_non_404_raises(self) -> None:
@@ -290,3 +290,14 @@ class TestDeleteJobsetNonSuppressedAuxError:
         # Subsequent aux deletes still attempted despite the 500 above
         mock_rbac.delete_namespaced_role.assert_awaited_once()
         mock_rbac.delete_namespaced_role_binding.assert_awaited_once()
+
+
+class TestListJobsetsRequiresNamespace:
+    """A namespace-scoped list must never silently fall back to 'default'."""
+
+    @pytest.mark.asyncio
+    async def test_none_namespace_without_all_namespaces_raises(self) -> None:
+        """namespace=None + all_namespaces=False is a caller bug, not 'default'."""
+        api = MagicMock(spec=ApiClient)
+        with pytest.raises(ValueError, match="namespace"):
+            await list_jobsets(api, namespace=None, all_namespaces=False)

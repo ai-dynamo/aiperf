@@ -53,10 +53,10 @@ collected regardless of individual failures — users see every problem in one p
 rather than fix-and-retry whack-a-mole.
 
 The whole sequence is bounded by `AIPERF_PREFLIGHT_TIMEOUT` (default 30 s,
-`src/aiperf/operator/environment.py:367`). A timeout is reported as a synthetic
-`Preflight Timeout` check with status `WARN` — a slow apiserver must not
-permanently fail a job when the aggregate deadline fires before individual checks
-can complete (see `_checker.py:154-169`).
+`src/aiperf/operator/environment.py:367`). If the deadline fires while a
+sequential blocking check is still running, the synthetic `Preflight Timeout`
+check is `FAIL` and the operator rejects the CR. A timeout among concurrent
+advisory checks is reported as `WARN`; completed results are retained.
 
 ## Operator vs. CLI invocation
 
@@ -64,7 +64,7 @@ can complete (see `_checker.py:154-169`).
 |---|---|---|
 | Trigger | `kopf.on.create` for `AIPerfJob` | `aiperf kube preflight` |
 | Inputs | Fully resolved `DeploymentConfig`, `KubernetesDeployment`, `AIPerfConfig` | CLI flags only |
-| Check count | 19 | 13 |
+| Check count | 19 | 14 |
 | On FAIL | CR → `Failed`, `kopf.PermanentError` raised | CLI exits 1, JSON output on stdout if `-o json` |
 | Source | `src/aiperf/operator/preflight/_checker.py` | `src/aiperf/kubernetes/preflight.py:CLIPreflightChecker` |
 
@@ -94,6 +94,8 @@ aiperf kube preflight [OPTIONS]
 | `--secret`, `--secrets` | string (repeatable) | unset | Referenced Kubernetes secret name to verify. Repeat for multiple names. |
 | `-e`, `--endpoint-url` | string | unset | LLM endpoint URL to probe. Enables the endpoint-connectivity check (cluster-service lookup for `*.svc` URLs; informational for external URLs). |
 | `-w`, `--workers` | int | 1 | Planned worker pod count. Used to project CPU and memory requirements against node capacity and namespace quotas. |
+| `--node-selector` | string (JSON or repeatable `key=value`) | unset | Restricts capacity admission to nodes matching the planned pod selector. |
+| `--tolerations` | JSON object or array | unset | Tolerations the planned pods carry; allows capacity admission to include matching NoSchedule or NoExecute taints. |
 | `-o`, `--output` | `text`\|`json` | `text` | Output format. `text` prints rich-formatted progress; `json` prints only the machine-parseable `PreflightResults` dict on stdout. Log records are retargeted to stderr for the duration and quietened to `WARNING`, so stdout is safe to pipe into `jq` even when checks fail. |
 
 Composite flags inherited from `KubeManageOptions` — `-n`/`--namespace`,
@@ -152,7 +154,7 @@ aiperf kube preflight \
       "details": ["ResourceQuota 'team-quota':", "    cpu: 40 / 64"],
       "hints": [
         "Request a quota increase or reduce worker count",
-        "Quota may not apply if benchmark creates its own namespace"
+        "Quota may be scoped to a different namespace than the one you targeted"
       ],
       "duration_ms": 33.2
     }
@@ -238,14 +240,14 @@ caller, never on a benchmark pod.
 
 ### Namespace (CLI only)
 
-- **Validates**: target namespace exists, or the user can create it.
+- **Validates**: the target namespace already exists. AIPerf never creates
+  namespaces, so "you could create it" is not a pass.
 - **Source**: `src/aiperf/kubernetes/preflight_checks.py:check_namespace`
 - **Status**:
-  - `pass` — namespace exists, or 404 + create permission granted.
-  - `fail` — namespace missing and no create permission, or a non-404/403 HTTP error.
-  - `warn` — namespace missing and create-permission probe itself failed.
+  - `pass` — namespace exists.
+  - `fail` — namespace missing, or a non-404/403 HTTP error.
   - `skip` — 403 on `read_namespace` (cannot verify; the namespace may still work).
-- **Fix**: create the namespace, or have an admin do so.
+- **Fix**: `kubectl create namespace <ns>`, or have an admin do so, then re-run.
 
 ### JobSet Controller
 
@@ -260,6 +262,17 @@ caller, never on a benchmark pod.
   - `skip` — cannot list `jobset-system` (403).
 - **Fix**: `kubectl get pods -n jobset-system` to diagnose; reinstall the JobSet
   controller if missing.
+
+### AIPerf Operator (CLI only)
+
+- **Validates**: the `AIPerfJob` CRD is registered and an AIPerf operator pod can
+  be found cluster-wide.
+- **Source**: `src/aiperf/kubernetes/preflight_checks.py:check_aiperf_operator`
+- **Status**: `pass` when a running operator pod is found; `warn` when the CRD or
+  pod cannot be verified, including a forbidden cluster-wide pod list. Direct-mode
+  submission does not require the operator.
+- **Fix**: install or diagnose the operator, grant cluster-wide pod-list access to
+  verify it, or submit with `--direct`.
 
 ### Service Account (operator only)
 
@@ -343,21 +356,31 @@ still run. See `OperatorPreflightChecker._resource_mode_skip`.
 
 ### Node Resources
 
-- **Validates**: sum of allocatable CPU and memory across Ready nodes is at least
+- **Validates**: free CPU and memory across Ready, uncordoned nodes is at least
   the deployment's estimated requirement (controller pods + `workers * worker-pod`).
-  The operator additionally excludes Ready nodes whose `NoSchedule` / `NoExecute`
-  taints are not tolerated by `spec.podTemplate.tolerations`, so a cluster of
-  all-tainted GPU nodes does not report false capacity for a CPU-only workload.
+  The CLI check subtracts the resource *requests* of all Running pods
+  (`list_pod_for_all_namespaces`) from each node's allocatable, so a
+  95%-booked cluster no longer reports full capacity; nodes with
+  `spec.unschedulable` (cordoned) are excluded entirely. When the pod list is
+  unavailable — typically a user without cluster-wide pod read — the check falls
+  back to raw allocatable and says so in its details rather than silently
+  overstating free space. The operator additionally excludes Ready nodes whose
+  `NoSchedule` / `NoExecute` taints are not tolerated by
+  `spec.podTemplate.tolerations`, so a cluster of all-tainted GPU nodes does not
+  report false capacity for a CPU-only workload.
 - **Source**: `src/aiperf/operator/preflight/_resources.py:_check_node_resources`,
   `src/aiperf/kubernetes/preflight_capacity_checks.py:check_node_resources`
 - **Status**:
-  - `pass` — cluster has sufficient aggregate capacity and at least one node
+  - `pass` — cluster has sufficient aggregate free capacity and at least one node
     can fit the single largest pod (CLI combined check).
   - `warn` — aggregate shortfall. Message includes required vs. available CPU/mem.
+    The CLI also warns when every node is individually too booked right now to
+    fit the largest pod, since those pods stay Pending until capacity frees up.
     The operator also warns when no nodes exist at all, or when no node is both
     Ready and schedulable.
   - `fail` (CLI only) — no nodes in the cluster, or no single node can fit any
-    one pod. (The operator covers the per-node case with `Per-Node
+    one pod even when empty (a structural sizing problem rather than a transient
+    booking). (The operator covers the per-node case with `Per-Node
     Schedulability` instead.)
 - **Fix**: reduce worker count, add nodes, or right-size the pods via
   `AIPERF_K8S_WORKER_POD_*` and the per-container control-plane resource vars

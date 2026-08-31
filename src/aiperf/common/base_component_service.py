@@ -24,6 +24,7 @@ from aiperf.common.control_structs import (
     Heartbeat,
     Registration,
     RegistrationAck,
+    ReRegisterRequest,
     ServiceBoundMessage,
     StatusUpdate,
     encode_command_payload,
@@ -83,6 +84,12 @@ class BaseComponentService(BaseService):
         self._pending_registration_rid: str | None = None
         self._registration_complete = False
         self._early_heartbeat_task: asyncio.Task | None = None
+        self._control_state_seq = 0
+        """Monotonic per-service counter stamped on every Heartbeat/StatusUpdate
+        sent on the control channel. Never reset -- it is the ordering
+        authority ``ServiceRegistry.update_service`` uses instead of
+        wall-clock time, which the controller stamps at receipt and so cannot
+        detect real out-of-order delivery."""
 
         # Routed through self.comms so FakeCommunication can substitute an
         # in-process dealer instead of binding a real socket on fake://.
@@ -131,13 +138,18 @@ class BaseComponentService(BaseService):
         early_task = self._early_heartbeat_task
         if early_task is not None and not early_task.done():
             early_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                try:
-                    await early_task
-                except Exception as e:  # noqa: BLE001 - shutdown boundary; a bug here must be visible, not fatal
-                    # Discarding this would hide a genuine defect in the loop
-                    # behind a clean shutdown.
-                    self.debug(f"Early heartbeat task failed on shutdown: {e!r}")
+            try:
+                await early_task
+            except asyncio.CancelledError:
+                # Only swallow the cancellation we asked for. If the task did
+                # not end up cancelled, this CancelledError is our own caller
+                # being cancelled and must propagate.
+                if not early_task.cancelled():
+                    raise
+            except Exception as e:  # noqa: BLE001 - shutdown boundary; a bug here must be visible, not fatal
+                # Discarding this would hide a genuine defect in the loop
+                # behind a clean shutdown.
+                self.debug(f"Early heartbeat task failed on shutdown: {e!r}")
         self._early_heartbeat_task = None
 
     # -------------------------------------------------------------------------
@@ -247,9 +259,43 @@ class BaseComponentService(BaseService):
             self._registration_ack_event = None
             self._pending_registration_rid = None
 
+    def _reregister_after_controller_nudge(self) -> None:
+        """Re-run the registration handshake on a controller ``ReRegisterRequest``.
+
+        Fires when a controller ROUTER restart comes back up with an empty
+        ``ServiceRegistry`` while this service survived and kept
+        heartbeating. Runs as a background task: ``_handle_control_command``
+        must not block the DEALER receive loop for the whole handshake, and
+        ``_register_until_ack`` retries on its own schedule until acked.
+
+        Guarded by ``_registration_complete`` so a burst of nudges (e.g. one
+        per Heartbeat and one per StatusUpdate while the controller still has
+        no record of this service) does not stack concurrent handshakes.
+        """
+        if not self._registration_complete:
+            return
+        self._registration_complete = False
+        self.execute_async(
+            self._register_until_ack(
+                send_interval=Environment.SERVICE.REGISTRATION_INTERVAL,
+                overall_timeout=Environment.SERVICE.REGISTRATION_TIMEOUT,
+                initial_warning_threshold=5.0,
+                warning_interval=10.0,
+            )
+        )
+
     # -------------------------------------------------------------------------
     # Heartbeat & status
     # -------------------------------------------------------------------------
+
+    def _next_control_state_seq(self) -> int:
+        """Mint the next sequence number for a Heartbeat/StatusUpdate send.
+
+        Shared across both message types so the controller can order them
+        against each other, not just within their own type.
+        """
+        self._control_state_seq += 1
+        return self._control_state_seq
 
     async def _early_heartbeat_loop(self) -> None:
         """Send heartbeats during the STARTING phase to keep the DEALER alive.
@@ -263,6 +309,7 @@ class BaseComponentService(BaseService):
                         sid=self.service_id,
                         stype=str(self.service_type),
                         state=str(self.state),
+                        seq=self._next_control_state_seq(),
                     )
                 )
                 await asyncio.sleep(Environment.SERVICE.HEARTBEAT_INTERVAL)
@@ -332,6 +379,7 @@ class BaseComponentService(BaseService):
                     sid=self.service_id,
                     stype=str(self.service_type),
                     state=str(self.state),
+                    seq=self._next_control_state_seq(),
                 )
             )
         except (zmq.ZMQError, NotInitializedError) as e:
@@ -362,6 +410,7 @@ class BaseComponentService(BaseService):
                 sid=self.service_id,
                 stype=str(self.service_type),
                 state=str(new_state),
+                seq=self._next_control_state_seq(),
             )
         )
 
@@ -400,7 +449,8 @@ class BaseComponentService(BaseService):
     async def _handle_control_command(self, message: ServiceBoundMessage) -> None:
         """Handle messages arriving from the controller on the DEALER.
 
-        RegistrationAck resolves the in-flight registration; Command structs are
+        RegistrationAck resolves the in-flight registration; ReRegisterRequest
+        re-runs the registration handshake from scratch; Command structs are
         dispatched to this service's ``@on_command`` hooks. Command responses
         never reach here -- the DEALER receive loop resolves them against
         ``_pending_requests`` by ``cid`` first.
@@ -412,6 +462,9 @@ class BaseComponentService(BaseService):
                 and message.rid == self._pending_registration_rid
             ):
                 self._registration_ack_event.set()
+            return
+        if isinstance(message, ReRegisterRequest):
+            self._reregister_after_controller_nudge()
             return
         if not isinstance(message, Command):
             self.debug(

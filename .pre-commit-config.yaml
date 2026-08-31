@@ -107,6 +107,13 @@ repos:
         files: (^deploy/helm/aiperf-operator/values\.yaml$|^src/aiperf/operator/environment\.py$|^src/aiperf/kubernetes/(constants|results_operator)\.py$|^deploy/helm/aiperf-operator/README\.md$|^tools/check_chart_consistency\.py$)
         pass_filenames: false
         args: []
+      - id: check-vendor-ui-deps
+        name: check-vendor-ui-deps
+        entry: make check-vendor-ui-deps
+        language: python
+        files: (^src/aiperf/api/static(-v2)?/vendor/|^tools/vendor_ui_deps\.py$|^package\.json$)
+        pass_filenames: false
+        args: []
       - id: test-imports
         name: test-imports
         entry: make test-imports

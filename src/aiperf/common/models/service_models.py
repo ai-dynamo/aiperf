@@ -28,6 +28,11 @@ class ServiceRunInfo(
     service_id: str
     first_seen_ns: int | None = None
     last_seen_ns: int | None = None
+    last_seq: int | None = None
+    """Highest sender-stamped Heartbeat/StatusUpdate sequence number applied so
+    far. Ordering authority for ``update_service`` -- never wall-clock time,
+    which is monotone by construction at the controller and so can never
+    detect real out-of-order delivery."""
     state: LifecycleState = LifecycleState.CREATED
     pod_name: str | None = None
     pod_index: str | None = None

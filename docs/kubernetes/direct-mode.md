@@ -9,9 +9,10 @@ sidebar-title: Direct Mode (no operator)
 Direct mode runs an AIPerf benchmark on Kubernetes without requiring the AIPerf
 operator (and the `AIPerfJob` CRD it owns) to be installed. The `aiperf kube`
 CLI instead creates the underlying Kubernetes resources — `Role`,
-`RoleBinding`, `ConfigMap`, and `JobSet`, plus a `Namespace` when
-`--namespace` is omitted — directly against the API server via
-`kubernetes_asyncio`.
+`RoleBinding`, `ConfigMap`, and `JobSet` — directly against the API server via
+`kubernetes_asyncio`. The namespace is never created for you: it must already
+exist, and `--namespace` (or a namespace pinned on your kubeconfig context) is
+required.
 
 It is triggered explicitly with `--no-operator`:
 
@@ -59,7 +60,7 @@ overlay that YAML with the same precedence used in operator mode.
 
 | Feature                                   | Operator mode                                       | Direct mode                                                                         |
 | ----------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Submission object                         | `AIPerfJob` CR                                      | `Role` + `RoleBinding` + `ConfigMap` + `JobSet` (+ `Namespace` if auto-created)     |
+| Submission object                         | `AIPerfJob` CR                                      | `Role` + `RoleBinding` + `ConfigMap` + `JobSet` (the namespace must already exist) |
 | Status surface                            | `AIPerfJob.status.phase` reconciled by the operator | `JobSet` + pod status only (`kubectl get jobset`, `kubectl get pods`)               |
 | Web dashboard (port 8081)                 | Served by operator Deployment                       | Not available                                                                       |
 | Analytics: leaderboard / compare / history | Served by operator (cross-job view over PVC)       | Not available (no cross-job storage)                                                |
@@ -70,7 +71,7 @@ overlay that YAML with the same precedence used in operator mode.
 | RBAC footprint                            | Cluster-scoped ServiceAccount for the operator      | Benchmark namespace only: one `Role` + `RoleBinding` per run                        |
 | Multi-user fairness (Kueue)               | Operator submits with Kueue labels end-to-end       | Supported — Kueue labels still flow through the `JobSet` spec                       |
 | `aiperf kube results` default path        | Pulls from the operator PVC (works post-pod-GC)     | Requires `--from-pods`; pulls from the controller pod while it's still alive        |
-| Concurrent benchmark isolation            | Operator reconciles; CR conflicts rejected          | CLI fails closed on any same-named non-Namespace resource, whatever its phase; you clean up |
+| Concurrent benchmark isolation            | Operator reconciles; CR conflicts rejected          | CLI fails closed on any same-named resource, whatever its phase; you clean up |
 
 ## When direct mode is appropriate
 
@@ -120,8 +121,7 @@ On a successful deploy the CLI prints one `Created <Kind>/<name>` line per
 resource. All names derive from the benchmark name as `aiperf-<name>` (the
 ConfigMap adds a `-config` suffix), where `<name>` is either your `--name` or
 the auto-generated `<model>-<endpoint-type>-<phase-type>` slug
-(`generate_benchmark_name`). For the run above — `--namespace aiperf-bench` is
-explicit, so the Namespace is not created:
+(`generate_benchmark_name`). For the run above:
 
 ```
 Created Role/aiperf-<name>
@@ -132,8 +132,8 @@ Created JobSet/aiperf-<name>
 
 The target namespace must already exist -- direct mode never creates one,
 because doing so would require cluster-scoped namespace-create rights that
-most benchmark runners do not have. Any resource that is already present is
-reused and reported as `<Kind>/<name> already exists`.
+most benchmark runners do not have. Every other resource is created fresh: a
+name collision fails the deploy rather than adopting the existing object.
 
 ## Dry-run inspection
 
@@ -243,8 +243,8 @@ accumulate).
   `kubectl get jobset` and `kubectl get pods -l app=aiperf` (plus
   `aiperf kube logs` and `aiperf kube list`, which falls back to listing
   JobSets when no `AIPerfJob` CRs are found) to observe the run.
-- **Existing resources with the same name.** Direct mode can safely reuse the
-  Namespace, but it refuses to adopt an existing Role, RoleBinding, ConfigMap,
+- **Existing resources with the same name.** Direct mode refuses to adopt an
+  existing Role, RoleBinding, ConfigMap,
   or JobSet because there is no owner CR or immutable run UID that can prove
   the resource belongs to the new invocation. Pass a unique `--name` or delete
   all resources from the prior direct-mode run first.

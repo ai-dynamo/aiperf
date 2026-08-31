@@ -18,7 +18,7 @@ tunables) and ``aiperf.common.environment.Environment`` (shared AIPerf runtime).
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
@@ -758,8 +758,8 @@ class _K8sEnvironment(BaseSettings):
     #
     # Worker pod: one worker-pod-manager plus one container per worker and
     # record processor, all sharing the WORKER_POD request budget.
-    #   The 4Gi default holds the per-pod RSS we measured at up to 10K
-    #   concurrency (1.8-3 GiB working-set per pod). Push higher with
+    #   The 6Gi default clears the import-RSS floor for every worker at the
+    #   shipped 10-worker/10-record-processor topology. Push higher with
     #   AIPERF_K8S_WORKER_POD_MEMORY for memory-heavy datasets or extreme
     #   concurrency.
     # fmt: off
@@ -773,12 +773,29 @@ class _K8sEnvironment(BaseSettings):
     SERVER_METRICS_MANAGER: ResourceSettings = Field(default_factory=lambda: _resource_settings("SERVER_METRICS_MANAGER_", "25m", "192Mi"), description="Server metrics container resources")
     RESULTS_SIDECAR: ResourceSettings = Field(default_factory=lambda: _resource_settings("RESULTS_SIDECAR_", "25m", "192Mi"), description="Results sidecar resources for serving exported files")
     EVENT_BUS_PROXY: ResourceSettings = Field(default_factory=lambda: _resource_settings("EVENT_BUS_PROXY_", "50m", "64Mi"), description="Event-bus XPUB/XSUB proxy sidecar resources; isolates pub/sub socket I/O from control-plane")
-    WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "150m", "4Gi"), description="Worker pod container resources (workers + record processors + WPM)")
+    WORKER_POD: ResourceSettings = Field(default_factory=lambda: _resource_settings("WORKER_POD_", "3350m", "6Gi"), description="Worker pod container resources (workers + record processors + WPM)")
     # fmt: on
     RECORD_PROCESSOR_CPU_REQUEST: str | None = Field(
         default=None,
         description="Optional per-record-processor CPU request override inside worker pods",
     )
+
+    @field_validator("RECORD_PROCESSOR_CPU_REQUEST", mode="before")
+    @classmethod
+    def validate_cpu_quantity(cls, v: object) -> object:
+        if v is None or v == "":
+            return v
+        import re
+
+        s = str(v).strip()
+        # Accept Kubernetes CPU quantities: plain integer/decimal or with m/u/n suffix.
+        if not re.fullmatch(r"[0-9]+(\.[0-9]+)?[mun]?", s):
+            raise ValueError(
+                f"AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST={s!r} is not a valid "
+                "Kubernetes CPU quantity. Use millicores (e.g. '500m') or cores (e.g. '2')."
+            )
+        return s
+
     RECORD_PROCESSOR_SCALE_FACTOR: int = Field(
         default=1,
         ge=1,

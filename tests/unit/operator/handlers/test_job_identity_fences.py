@@ -114,6 +114,11 @@ async def test_completion_fetch_uses_uid_scoped_progress_client_key() -> None:
             completion_fetch,
             "_run_fetch_loop_safely",
             new=AsyncMock(return_value=result),
+        ) as run_loop,
+        mock_patch.object(
+            completion_fetch,
+            "_fetch_once_into_state",
+            new=AsyncMock(return_value=result),
         ),
     ):
         fetched = await completion_fetch.fetch_results_with_retry(
@@ -123,6 +128,10 @@ async def test_completion_fetch_uses_uid_scoped_progress_client_key() -> None:
             dest_dir=Path("/tmp/aiperf-test-results"),
             body=_body(),
         )
+        # The client is resolved per fetch attempt (so an eviction mid-run is
+        # survivable), not once up front, so drive one attempt to observe the
+        # key it asks the cache for.
+        await run_loop.await_args.args[0]()
 
     assert fetched is result
     get_client.assert_awaited_once_with("ns/bench@job-uid-old")

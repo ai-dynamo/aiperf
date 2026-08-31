@@ -1041,6 +1041,51 @@ class TestProfileCompleteAndCancel:
         mock_collector.stop.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_profile_complete_final_scrape_timeout_surfaces_visible_warning(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """A timed-out PROFILE_COMPLETE scrape must not be silently swallowed.
+
+        The final scrape exists specifically to capture accurate final
+        counter/histogram deltas. If it times out, the run must not complete
+        "successfully" with an undercounted result and only a log line -- the
+        failure must be surfaced through the same visible-warning mechanism
+        (``_error_state`` -> ``error_summary`` -> console error table) used
+        elsewhere in this module, so it reaches the CLI summary.
+        """
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+
+        mock_collector = AsyncMock()
+        mock_collector.collect_and_process_metrics.side_effect = TimeoutError(
+            "final scrape timed out"
+        )
+        manager._collectors = {"endpoint1": mock_collector}
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+
+        await manager._handle_profile_complete_command(
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        # The timeout must be recorded as a visible warning, not just logged.
+        assert sum(manager._error_state.error_counts.values()) >= 1
+
+        # It must also reach the exported result's error_summary, which is
+        # what ConsoleErrorExporter renders into the CLI summary table.
+        export_ctx = accumulator.export_results.await_args.args[0]
+        assert export_ctx.error_summary
+        assert any(
+            "final" in entry.error_details.message.lower()
+            for entry in export_ctx.error_summary
+        )
+
+    @pytest.mark.asyncio
     async def test_profile_complete_when_already_stopped(
         self,
         cli_config: CLIConfig,

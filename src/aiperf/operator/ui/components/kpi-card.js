@@ -16,7 +16,7 @@ const progressWidth = (progress) => Number.isFinite(Number(progress))
   : 0;
 
 // aiperf:kpi-card-pure:begin
-// Dependency-free sizing helpers. `tests/unit/ui/test_operator_kpi_sla_regime.py`
+// Dependency-free sizing helpers. `tests/ui/test_operator_kpi_sla_regime.py`
 // slices this block out by the sentinel comments and evaluates it in bare node
 // -- the module itself imports `htm/preact`, which node cannot resolve and no
 // bundler in this repo rewrites, so without the fence the only available

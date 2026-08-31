@@ -25,6 +25,7 @@ import orjson
 
 from aiperf.common.environment import Environment
 from aiperf.common.finite import scrub_non_finite
+from aiperf.common.redact import redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ def _project_series(
         return None
 
     projected: dict[str, Any] = {
-        "endpoint_url": series.get("endpoint_url") or endpoint_url
+        "endpoint_url": redact_url(str(series.get("endpoint_url") or endpoint_url))
     }
     if isinstance(labels, dict):
         projected["labels"] = {str(k): str(v) for k, v in labels.items()}
@@ -232,7 +233,7 @@ def project_server_metrics_for_cr(
     for endpoint_key, summary in endpoint_summaries.items():
         if not isinstance(summary, dict):
             continue
-        endpoint_url = str(summary.get("endpoint_url") or endpoint_key)
+        endpoint_url = redact_url(str(summary.get("endpoint_url") or endpoint_key))
         endpoints_configured.append(endpoint_url)
         first_ns, last_ns = _update_window(summary.get("info"), first_ns, last_ns)
 
@@ -259,20 +260,18 @@ def project_server_metrics_for_cr(
             ", ".join(sorted(dropped)),
         )
 
+    summary = _build_summary(
+        endpoints_configured=endpoints_configured,
+        endpoints_successful=endpoints_successful,
+        first_ns=first_ns,
+        last_ns=last_ns,
+    )
     if not metrics:
+        if dropped:
+            return {"summary": summary, "metrics": {}}
         return None
 
-    projected = scrub_non_finite(
-        {
-            "summary": _build_summary(
-                endpoints_configured=endpoints_configured,
-                endpoints_successful=endpoints_successful,
-                first_ns=first_ns,
-                last_ns=last_ns,
-            ),
-            "metrics": metrics,
-        }
-    )
+    projected = scrub_non_finite({"summary": summary, "metrics": metrics})
 
     max_bytes = Environment.SERVER_METRICS.CR_PROJECTION_MAX_BYTES
     size = len(orjson.dumps(projected))

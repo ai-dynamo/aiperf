@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from msgspec.structs import replace
 
-from aiperf.common.control_structs import CommandErr
+from aiperf.common.control_structs import CommandErr, CommandUnhandled
 from aiperf.common.enums import (
     CommandType,
     LifecycleState,
@@ -133,6 +134,24 @@ class TestSystemController:
         )
 
         system_controller._cancel_profiling.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_start_realtime_telemetry_sends_command_to_records_managers(
+        self, system_controller: SystemController
+    ) -> None:
+        """start_realtime_telemetry is the public entry point callers (e.g. the
+        dashboard) use instead of reaching into the private control-command and
+        records-manager-id internals directly."""
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller._records_manager_ids = MagicMock(
+            return_value=["records_manager_1"]
+        )
+
+        await system_controller.start_realtime_telemetry()
+
+        system_controller._send_control_command_to_all.assert_awaited_once_with(
+            CommandType.START_REALTIME_TELEMETRY, ["records_manager_1"]
+        )
 
 
 class TestSystemControllerExitScenarios:
@@ -384,6 +403,31 @@ class TestSignalHandling:
             == CommandType.PROFILE_CANCEL
         )
 
+    def test_consume_profile_cancel_responses_warns_on_unhandled(
+        self, system_controller: SystemController
+    ):
+        """A RecordsManager with no PROFILE_CANCEL hook must not report clean.
+
+        CommandUnhandled is ack-shaped: nothing else in the loop distinguishes
+        it from success. Swallowing it silently turns "this RecordsManager
+        never had a chance to flush its final summary" into a clean-looking
+        cancel with ``_profile_results`` left as None -- exactly the failure
+        mode the other PROFILE_CANCEL/PROFILE_COMPLETE relay and finalize call
+        sites already guard against.
+        """
+        with patch.object(system_controller, "warning") as mock_warning:
+            system_controller._consume_profile_cancel_responses(
+                [
+                    CommandUnhandled(
+                        cid="c-1", cmd=CommandType.PROFILE_CANCEL, sid="rm-1"
+                    )
+                ]
+            )
+
+        assert system_controller._profile_results is None
+        warnings = [str(call) for call in mock_warning.call_args_list]
+        assert any("rm-1" in w and "unhandled" in w for w in warnings), warnings
+
     def test_print_cancel_warning_uses_console(
         self, system_controller: SystemController
     ):
@@ -521,12 +565,46 @@ class TestStopHookHardening:
             assert mock_exit.call_args[0][0] == 1
 
     @pytest.mark.asyncio
-    async def test_stop_hook_exports_before_message_bus_shutdown(
+    async def test_stop_hook_propagates_reporting_cancellation(
         self,
         system_controller: SystemController,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """ResultsExported must be publishable while the API subscriber is alive."""
+        """Cancellation must not be converted into a successful process exit."""
+        system_controller._exit_errors = []
+        system_controller.publish = AsyncMock()
+        system_controller.service_manager = mock_service_manager
+        system_controller.comms = AsyncMock()
+        system_controller.proxy_manager = AsyncMock()
+        system_controller.ui = AsyncMock()
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock(
+            side_effect=asyncio.CancelledError
+        )
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+            patch(
+                "aiperf.controller.system_controller.cleanup_global_log_queue",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+            patch("aiperf.controller.system_controller.os._exit") as mock_exit,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await system_controller._stop_system_controller()
+
+        mock_cleanup.assert_not_awaited()
+        mock_exit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stop_hook_stops_children_before_exporting(
+        self,
+        system_controller: SystemController,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Result export starts only after inference children have stopped."""
         order: list[str] = []
         system_controller._exit_errors = []
         system_controller._set_system_state = AsyncMock()
@@ -553,16 +631,17 @@ class TestStopHookHardening:
             patch(
                 "aiperf.controller.system_controller.asyncio.sleep",
                 new=AsyncMock(),
-            ),
+            ) as sleep,
             patch("aiperf.controller.system_controller.os._exit"),
         ):
             await system_controller._stop_system_controller()
 
+        sleep.assert_any_await(0.1)
         assert order == [
-            "export",
-            "benchmark_complete",
             "shutdown_broadcast",
             "services_stopped",
+            "export",
+            "benchmark_complete",
             "comms_stopped",
         ]
 
@@ -858,6 +937,7 @@ class TestFailureShutdownTimeoutStaysFinite:
         timeout = system_controller.failure_shutdown_timeout
 
         assert timeout is not None, "an unbounded failure teardown is a zombie"
+        assert timeout == Environment.SERVICE.CONTROLLER_FAILURE_SHUTDOWN_TIMEOUT
         assert timeout > Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT, (
             "the override exists to widen the global bound, not to match it"
         )

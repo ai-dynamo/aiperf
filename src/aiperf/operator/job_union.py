@@ -692,7 +692,9 @@ async def find_any_job(
     or ``None`` falls through to ``latest.txt`` (legacy behavior).
     """
     cr = await _find_live_cr(api, namespace, name)
-    pvc = _find_archived_job(results_dir, namespace, name, epoch)
+    pvc = await asyncio.to_thread(
+        _find_archived_job, results_dir, namespace, name, epoch
+    )
     if pvc is not None:
         _apply_indexed_phase(pvc, await _indexed_row_for(namespace, name, epoch))
 

@@ -34,16 +34,19 @@ def _count_expected_fork_children(conversation: Conversation) -> int:
     ``is_fork_parent``: ``conversation.branches`` is dropped on the
     PAYLOAD_BYTES wire round-trip, so it cannot be recomputed later.
 
-    This is an upper bound on how many children will pin the parent
-    (branches on turns the run never reaches contribute too). Over-counting
-    only keeps the parent resident longer, which the cache cap reclaims;
-    under-counting would evict it out from under a child that has not
-    arrived yet, which is the failure this count exists to prevent.
+    Only branches named by a parent turn can dispatch children. Descriptors
+    that no turn declares are inert and must not keep terminal parents pinned.
     """
+    declared_branch_ids = {
+        branch_id for turn in conversation.turns for branch_id in turn.branch_ids or []
+    }
     return sum(
-        len(b.child_conversation_ids)
-        for b in conversation.branches
-        if b.mode == ConversationBranchMode.FORK
+        len(branch.child_conversation_ids)
+        for branch in conversation.branches
+        if (
+            branch.mode == ConversationBranchMode.FORK
+            and branch.branch_id in declared_branch_ids
+        )
     )
 
 
@@ -412,19 +415,18 @@ class UserSessionManager:
             return
 
         # Second pass: reclaim parents whose terminal turn already fired and
-        # whose FORK children are no longer outstanding. Those entries are
-        # otherwise immortal -- ``release_fork_child`` is the only collector
-        # and it never runs for children that failed to spawn or that sticky-
-        # missed onto another worker -- so the first pass alone lets a
-        # fork-heavy run defeat the cap entirely and OOM the container, which
-        # is the exact failure the cap exists to prevent.
+        # whose FORK children are no longer actively holding the session lock
+        # (fork_refcount == 0).  Children that sticky-missed onto another worker
+        # never call release_fork_child on this worker, so joined_fork_children
+        # never reaches expected_fork_children and fork_children_outstanding stays
+        # True indefinitely -- those entries would otherwise be immortal.  The
+        # hard pin is fork_refcount > 0 (child currently dispatching on this
+        # worker); outstanding-but-not-pinned parents are stale stragglers.
         for x_correlation_id in list(self._cache):
             if len(self._cache) <= self._max_sessions:
                 break
             session = self._cache[x_correlation_id]
             if session.fork_refcount > 0 or not session.pending_fork_eviction:
-                continue
-            if session.fork_children_outstanding:
                 continue
             self._stale_fork_evictions += 1
             del self._cache[x_correlation_id]

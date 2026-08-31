@@ -2,10 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the Kubernetes deployment configuration models."""
 
+import pytest
+from pydantic import ValidationError
+
 from aiperf.config.deployment import (
     DeploymentConfig,
     PodTemplateConfig,
     SchedulingConfig,
+    privilege_escalating_keys,
 )
 
 
@@ -32,3 +36,14 @@ def test_deployment_config_serializes_camel_case():
     dumped = cfg.model_dump(mode="json", by_alias=True)
     assert dumped["podTemplate"]["nodeSelector"] == {"a": "b"}
     assert "ttlSecondsAfterFinished" in dumped
+
+
+def test_privilege_escalating_keys_truthy_non_bool_privileged_flagged():
+    # YAML `privileged: 1` parses as int 1, not bool True. The forbidden-value
+    # check must not silently miss it via bool identity comparison.
+    assert privilege_escalating_keys({"privileged": 1}) == ["privileged"]
+
+
+def test_pod_template_config_container_security_context_truthy_int_privileged_rejected():
+    with pytest.raises(ValidationError, match="privileged"):
+        PodTemplateConfig(container_security_context={"privileged": 1})

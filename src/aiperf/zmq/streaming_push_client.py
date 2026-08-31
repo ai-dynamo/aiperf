@@ -15,6 +15,7 @@ the PUSH sync-send fast path used elsewhere.
 
 import asyncio
 from collections import deque
+from collections.abc import Callable
 
 import msgspec
 import zmq
@@ -77,6 +78,12 @@ class ZMQStreamingPushClient(BaseZMQClient):
         # timeout, so retaining the frame always beats discarding it.
         self._send_buf: deque[bytes] = deque()
         self._drain_wakeup = asyncio.Event()
+        # Set by the owning service (e.g. Worker) to learn when a non-empty
+        # backlog is discarded on stop. The client has no access to the
+        # exit-error mechanism itself, so a dropped backlog would otherwise be
+        # visible only as a log line -- never reaching the CLI exit code or
+        # run summary.
+        self.on_backlog_dropped: Callable[[int], None] | None = None
 
     async def send(
         self,
@@ -150,16 +157,26 @@ class ZMQStreamingPushClient(BaseZMQClient):
                 except zmq.Again:
                     await asyncio.sleep(Environment.ZMQ.PUSH_RETRY_DELAY)
                     continue
-                except zmq.ZMQError:
-                    return
+                except zmq.ZMQError as e:
+                    self.warning(
+                        lambda e=e: f"ZMQError draining credit-return buffer; retrying: {e}"
+                    )
+                    await asyncio.sleep(Environment.ZMQ.PUSH_RETRY_DELAY)
+                    continue
                 self._send_buf.popleft()
 
     @on_stop
     async def _warn_on_undrained_backlog(self) -> None:
-        """LINGER=0 discards anything still parked; say so rather than hide it."""
+        """LINGER=0 discards anything still parked; say so rather than hide it.
+
+        A log line alone never reaches the CLI exit code or run summary, so
+        the drop is also reported through ``on_backlog_dropped`` when set,
+        letting the owning service surface it via its own exit-error list.
+        """
         self._drain_wakeup.set()
         if self._send_buf:
-            self.warning(
-                f"Dropping {len(self._send_buf)} undelivered credit-return frames on stop"
-            )
+            dropped = len(self._send_buf)
+            self.warning(f"Dropping {dropped} undelivered credit-return frames on stop")
             self._send_buf.clear()
+            if self.on_backlog_dropped is not None:
+                self.on_backlog_dropped(dropped)

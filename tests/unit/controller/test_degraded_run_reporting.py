@@ -384,6 +384,46 @@ class TestEvictedProducersReachTheOutcome:
             system_controller._cancel_profiling.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_a_reaped_required_producer_cancels_profiling(
+        self, system_controller: SystemController
+    ) -> None:
+        """RecordsManager is both required and a result-join barrier producer.
+
+        Before the fix, ``_on_service_reaped`` branched on
+        ``evict_service``'s return value: since RecordsManager is registered
+        under the 'profile' domain, eviction succeeds and the function
+        returns early, never reaching the ``required_services`` check or
+        ``_cancel_profiling()`` below it. A watchdog-confirmed death of
+        RecordsManager must abort the run through the same dedicated cancel
+        path a required non-producer's death takes -- not silently degrade
+        into a barrier no-op that lets ``_check_and_trigger_shutdown`` race
+        straight to a generic ``stop()``.
+        """
+        system_controller._system_state = SystemState.PROFILING
+        system_controller._cancel_profiling = AsyncMock()
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+        system_controller._result_join_coordinator.register(
+            "profile", "records_manager"
+        )
+        info = MagicMock(
+            service_id="records_manager",
+            service_type=ServiceType.RECORDS_MANAGER,
+            first_seen_ns=100,
+        )
+        system_controller.service_manager.service_id_map = {
+            "records_manager": info,
+        }
+        system_controller.service_manager.service_map = {
+            ServiceType.RECORDS_MANAGER: [info]
+        }
+
+        await system_controller._on_service_reaped(
+            "records_manager", "pod OOMKilled", 100
+        )
+
+        system_controller._cancel_profiling.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "service_type,is_producer",
         [
@@ -607,9 +647,7 @@ class TestFinalizeArtifactsIsReportable:
             Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
-        assert [e.operation for e in system_controller._exit_errors] == [
-            "finalize_artifacts"
-        ]
+        assert system_controller._exit_errors == []
 
 
 class TestRawFinalizeHonoursThePodLossTolerance:

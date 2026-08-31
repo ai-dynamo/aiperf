@@ -502,8 +502,8 @@ By default the operator watches all namespaces for AIPerfJob CRs; set
 and `operator.id` to also claim those namespaces away from a global operator
 (see [Operator Scope and Namespace Ownership](#operator-scope-and-namespace-ownership)).
 Each job gets its own RBAC scoped to its namespace. Here `--operator` bypasses cluster-scoped CRD
-discovery, and the explicit namespaces are treated as pre-provisioned: the CLI
-does not issue Namespace-create requests. A tenant therefore needs permission
+discovery, and the namespaces must already exist -- the CLI never issues a
+Namespace-create request. A tenant therefore needs permission
 to create `AIPerfJob` resources in its namespace, not permission to read CRDs or
 create namespaces.
 
@@ -541,6 +541,14 @@ If the namespace has a ResourceQuota, preflight projects the total CPU and memor
 helm upgrade aiperf-operator deploy/helm/aiperf-operator \
   --namespace aiperf-system
 ```
+
+> **WARNING:** Drain active benchmarks before upgrading from a chart older than
+> 0.8.0. Those versions rendered the benchmark `Role` and `RoleBinding` into a
+> chart-owned `aiperf-benchmarks` namespace; the upgrade deletes that RBAC and
+> recreates it in the release namespace. A benchmark running in
+> `aiperf-benchmarks` at that moment loses its RBAC mid-flight and starts
+> failing its pod, ConfigMap, and JobSet reads. Wait for in-flight runs to
+> reach a terminal phase (`aiperf kube list`) before running `helm upgrade`.
 
 ### Uninstalling
 

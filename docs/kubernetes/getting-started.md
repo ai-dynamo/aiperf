@@ -516,12 +516,14 @@ aiperf kube list
 ```
 
 ```
-NAME                 NAMESPACE           PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
-dynamo-benchmark     my-benchmarks       Completed  10/10    100%      142.3 rps   187.0 ms  5m
-disagg-test          my-benchmarks       Running    10/10    42%       98.1 rps    201.4 ms  2m
+NAME                 NAMESPACE           OWNER  PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
+dynamo-benchmark     my-benchmarks       -      Completed  10/10    100%      142.3 rps   187.0 ms  5m
+disagg-test          my-benchmarks       -      Running    10/10    42%       98.1 rps    201.4 ms  2m
 ```
 
-`WORKERS` is `ready/total` and `LATENCY` is the p99 request latency. Use `--wide` to add model, endpoint, and error columns.
+`WORKERS` is `ready/total` and `LATENCY` is the p99 request latency. `OWNER` is
+the scoped operator holding that namespace's claim, `-` when the cluster-wide
+operator reconciles it, or `?` when the claim could not be read. Use `--wide` to add model, endpoint, and error columns.
 
 Filter by status:
 
@@ -598,7 +600,7 @@ aiperf kube profile \
   --no-operator
 ```
 
-This creates a Namespace, RBAC, ConfigMap, and JobSet directly. You lose operator features (automated monitoring, results storage, conditions) but the benchmark itself works the same way.
+This creates RBAC, ConfigMap, and JobSet directly in an existing namespace. You lose operator features (automated monitoring, results storage, conditions) but the benchmark itself works the same way.
 
 To generate the manifests without applying them (useful for GitOps):
 

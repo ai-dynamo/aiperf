@@ -404,7 +404,8 @@ class AIPerfJobSpecConverter:
         Uses an explicit runtime.workers override when provided, verbatim --
         an authored total that cannot fill uniform pods is an error, not
         something to reshape. Otherwise workers = ceil(concurrency /
-        connections_per_worker), rounded up to a whole number of pods.
+        connections_per_worker), floored at ``runtime.workers_min`` when set,
+        and rounded up to a whole number of pods.
 
         Args:
             dc: Optional DeploymentConfig to read connections_per_worker from.
@@ -413,13 +414,38 @@ class AIPerfJobSpecConverter:
         Returns:
             Number of worker pods needed.
         """
+        # Derive from the validated config so the profiling:/warmup: named
+        # shorthands are normalized into phases before concurrency is read.
+        # Reading the raw config_dict as the old code did meant those shorthands
+        # produced an empty phases list and fell back to concurrency=1, silently
+        # provisioning one worker for any load.
+        with contextlib.suppress(Exception):
+            validated = self.to_aiperf_config()
+            runtime = validated.benchmark.runtime
+            if runtime.workers:
+                return runtime.workers
+
+            phases = validated.benchmark.phases
+            concurrency = max(
+                (p.concurrency for p in phases if p.concurrency is not None),
+                default=1,
+            )
+            if dc is None:
+                dc = self.to_deployment_config()
+            connections_per_worker = dc.connections_per_worker
+            derived = workers_for_concurrency(concurrency, connections_per_worker)
+            derived = max(derived, runtime.workers_min or 0)
+            return round_workers_to_pod_multiple(
+                derived,
+                runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD,
+            )
+
+        # Fallback: raw dict path (expansion failed; _int() falls back to 1).
         config_dict = self._get_config_dict()
-        # Expand so Jinja2/env-var concurrency values resolve to integers.
-        # Suppress errors: if expansion fails, _int() below falls back to 1.
         with contextlib.suppress(Exception):
             config_dict = self._expanded_envelope().get("benchmark", config_dict)
 
-        runtime = config_dict.get("runtime", {})
+        runtime_dict = config_dict.get("runtime", {})
         phases = config_dict.get("phases", [])
 
         def _int(v: object, default: int = 1) -> int:
@@ -428,14 +454,11 @@ class AIPerfJobSpecConverter:
             except (TypeError, ValueError):
                 return default
 
-        explicit_workers = _int(runtime.get("workers"), 0)
+        explicit_workers = _int(runtime_dict.get("workers"), 0)
         if explicit_workers >= 1:
             return explicit_workers
 
-        # Find max concurrency across all phases.
-        # phases is a list of named phase configs (each a dict with "name" and "type").
         if isinstance(phases, dict) and "type" in phases:
-            # legacy single-config dict shorthand still understood by normalizer
             concurrency = _int(phases.get("concurrency", 1))
         else:
             phase_iter = phases if isinstance(phases, list) else []
@@ -456,9 +479,10 @@ class AIPerfJobSpecConverter:
             )
 
         derived = workers_for_concurrency(concurrency, connections_per_worker)
+        derived = max(derived, _int(runtime_dict.get("workers_min"), 0))
         return round_workers_to_pod_multiple(
             derived,
-            _int(runtime.get("workers_per_pod"), 0)
+            _int(runtime_dict.get("workers_per_pod"), 0)
             or Environment.WORKER.DEFAULT_WORKERS_PER_POD,
         )
 

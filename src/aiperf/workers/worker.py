@@ -10,6 +10,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import zmq
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import BYTES_PER_MIB
@@ -51,6 +53,7 @@ from aiperf.common.models import (
     DatasetClientMetadata,
     DatasetMetadata,
     ErrorDetails,
+    ExitErrorInfo,
     MemoryMapClientMetadata,
     ModelEndpointInfo,
     ParsedResponse,
@@ -723,8 +726,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.comms.create_streaming_push_client(
                 CommAddress.CREDIT_RETURN,
                 bind=False,
+                socket_ops={zmq.IMMEDIATE: 1},
             )
         )
+        # Duck-typed: only the streaming PUSH client currently buffers
+        # undelivered frames and can report a drop; the protocol doesn't
+        # declare this hook since no other client type buffers. The client
+        # has no access to this service's exit-error mechanism itself, so
+        # without this wiring a dropped backlog is only ever a log line.
+        if hasattr(self.credit_return_push_client, "on_backlog_dropped"):
+            self.credit_return_push_client.on_backlog_dropped = (
+                self._on_credit_return_backlog_dropped
+            )
 
         self.memory_usage_before_profiling: float | None = None
 
@@ -1046,6 +1059,31 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             "dispatchability anyway. Returns are buffered and drained on "
             "reconnect, so credits routed before then complete late rather "
             "than being lost."
+        )
+
+    def _on_credit_return_backlog_dropped(self, dropped_count: int) -> None:
+        """Surface a silent credit-return drop through the exit-error mechanism.
+
+        ``credit_return_push_client`` discards its undelivered backlog on stop
+        (LINGER=0). A log line alone never reaches the CLI exit code or run
+        summary, so a transient stall on the PULL side near shutdown could
+        otherwise drop an arbitrary number of credit returns with no
+        operator-visible signal -- meaning final counts/metrics could be
+        silently wrong.
+        """
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    message=(
+                        f"Dropped {dropped_count} undelivered credit-return "
+                        "frames on shutdown; final counts/metrics may be "
+                        "incomplete."
+                    ),
+                    type="CreditReturnBacklogDropped",
+                ),
+                operation="Stop",
+                service_id=self.service_id,
+            )
         )
 
     async def _measure_baseline_rtt(self) -> None:

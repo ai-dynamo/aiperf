@@ -27,6 +27,8 @@ from typing import Self
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
+
 __all__ = [
     "OperatorEnvironment",
 ]
@@ -467,7 +469,7 @@ class _OperatorServiceSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="AIPERF_OPERATOR_")
 
     BASE_URL: str = Field(
-        default="http://aiperf-operator.aiperf-system:8081",
+        default=f"http://aiperf-operator.{DEFAULT_OPERATOR_NAMESPACE}:8081",
         description="Base URL (no trailing slash) for the operator's HTTP API. "
         "All ``/api/v1/*`` routers — jobs, sweeps, results, config, admin, "
         "analytics, dashboard_proxy — are served by the ``results-server`` "

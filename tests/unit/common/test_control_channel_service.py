@@ -104,6 +104,36 @@ async def test_register_until_ack_times_out_without_ack(component_service) -> No
 
 
 @pytest.mark.asyncio
+async def test_re_register_request_reruns_registration_handshake(
+    component_service,
+) -> None:
+    """Bug A: a controller nudge for a sid it no longer recognizes (e.g. after
+    a controller ROUTER restart) must make the service re-run registration
+    from scratch, not be silently dropped as an unrecognized message."""
+    from aiperf.common.control_structs import ReRegisterRequest
+
+    component_service._registration_complete = True
+    sent: list = []
+
+    async def fake_send(struct) -> None:
+        sent.append(struct)
+        component_service._registration_ack_event.set()
+
+    component_service.control_client.send = fake_send
+
+    await component_service._handle_control_command(
+        ReRegisterRequest(sid=component_service.service_id)
+    )
+    # The re-registration handshake runs as a background task.
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert any(isinstance(s, Registration) for s in sent), (
+        "a ReRegisterRequest must cause a fresh Registration to be sent"
+    )
+
+
+@pytest.mark.asyncio
 async def test_registration_advertises_extra_capabilities(component_service) -> None:
     """Capabilities ride the registration so the controller can join results."""
     type(component_service).extra_capabilities = ("result_producer:telemetry",)

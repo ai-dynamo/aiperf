@@ -23,6 +23,7 @@ from aiperf.operator.client_cache import (
     is_cancellation_requested,
     job_key,
     request_cancellation,
+    revoke_cancellation,
     try_claim_completion,
 )
 from aiperf.operator.handlers._job_identity import (
@@ -128,7 +129,9 @@ async def on_cancel(
 
     Side effects:
         - Sets the same sticky in-process cancellation flag as ``on_delete`` so
-          in-flight completion/fetch paths cannot overwrite Cancelled.
+          in-flight completion/fetch paths cannot overwrite Cancelled; the flag
+          is revoked again if the JobSet delete is abandoned on an identity
+          fence, because that path returns without cancelling anything.
         - Deletes the JobSet custom object; a foreign same-name JobSet or a
           UID-precondition conflict abandons the cancel with no status patch,
           while transient read/delete failures raise ``kopf.TemporaryError``
@@ -170,10 +173,19 @@ async def on_cancel(
             parent_uid=parent_uid,
             context="cancel",
         )
-        if deleted:
-            logger.info(f"Deleted JobSet {jobset_name}")
-        else:
+        if not deleted:
+            # Identity-fenced abandon (foreign same-name JobSet, or a 409 on the
+            # UID precondition because the CR was replaced). Unlike a transient
+            # delete failure -- which raises kopf.TemporaryError above and gets
+            # retried with the flag usefully armed -- this path is permanent and
+            # returns without a status patch, so kopf records success. Revoke the
+            # flag before returning: it otherwise lives for the process lifetime
+            # while the ``spec.cancel`` field watcher never re-fires for an
+            # unchanged value, so every later monitor tick would short-circuit
+            # and strand the CR in its pre-cancel phase forever.
+            revoke_cancellation(key)
             return
+        logger.info(f"Deleted JobSet {jobset_name}")
 
     try:
         await current_aiperfjob_resource_version(namespace, name, parent_uid)

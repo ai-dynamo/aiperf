@@ -65,7 +65,11 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
         self._request_handlers: dict[
             MessageTypeT,
-            tuple[str, Callable[[Message], Coroutine[Any, Any, Message | None]]],
+            tuple[
+                str,
+                Callable[[Message], Coroutine[Any, Any, Message | None]],
+                bool,
+            ],
         ] = {}
         self._response_futures: dict[str, asyncio.Future[Message | None]] = {}
         self._msg_count: int = 0
@@ -80,10 +84,17 @@ class ZMQRouterReplyClient(BaseZMQClient):
         service_id: str,
         message_type: MessageTypeT,
         handler: Callable[[Message], Coroutine[Any, Any, Message | None]],
+        *,
+        fire_and_forget: bool = False,
     ) -> None:
         """Register a request handler. Anytime a request is received that matches the
-        message type, the handler will be called. The handler should return a response
-        message. If the handler returns None, the request will be ignored.
+        message type, the handler will be called.
+
+        For request-reply handlers (the default), the handler should return a response
+        message. If the handler returns None, an ErrorMessage is sent back to the caller.
+
+        For fire-and-forget handlers (``fire_and_forget=True``), no response is sent back
+        to the caller and the handler's return value is ignored.
 
         Note that there is a limit of 1 to 1 mapping between message type and handler.
 
@@ -91,6 +102,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
             service_id: The service ID to register the handler for
             message_type: The message type to register the handler for
             handler: The handler to register
+            fire_and_forget: If True, no response is sent back to the caller
         """
         if message_type in self._request_handlers:
             raise ValueError(
@@ -101,7 +113,26 @@ class ZMQRouterReplyClient(BaseZMQClient):
             lambda service_id=service_id,
             type=message_type: f"Registering request handler for {service_id} with message type {type}"
         )
-        self._request_handlers[message_type] = (service_id, handler)
+        self._request_handlers[message_type] = (service_id, handler, fire_and_forget)
+
+    async def _handle_fire_and_forget(self, request: Message) -> None:
+        """Call the registered handler for a fire-and-forget message.
+
+        No response is sent back to the caller, and the handler's return value is
+        discarded. Handler failures are logged rather than raised because there is no
+        response channel on which to report them.
+        """
+        message_type = request.message_type
+
+        try:
+            _, handler, _ = self._request_handlers[message_type]
+            await handler(request)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - fire-and-forget boundary, no response channel
+            self.exception(
+                f"Exception calling fire-and-forget handler for {message_type}: {e}"
+            )
 
     async def _handle_request(self, request_id: str, request: Message) -> None:
         """Handle a request.
@@ -114,7 +145,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
         message_type = request.message_type
 
         try:
-            _, handler = self._request_handlers[message_type]
+            _, handler, _ = self._request_handlers[message_type]
             response = await handler(request)
 
         except Exception as e:
@@ -216,7 +247,13 @@ class ZMQRouterReplyClient(BaseZMQClient):
                     await yield_to_event_loop()
                     continue
 
-                if request.request_id in self._response_futures:
+                _, _, fire_and_forget = self._request_handlers.get(
+                    request.message_type, (None, None, False)
+                )
+
+                if fire_and_forget:
+                    self.execute_async(self._handle_fire_and_forget(request))
+                elif request.request_id in self._response_futures:
                     # Overwriting the in-flight Future would strand the first
                     # waiter forever and route the response to the second
                     # request's envelope -- i.e. answer the wrong caller.

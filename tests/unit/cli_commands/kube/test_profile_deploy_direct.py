@@ -7,8 +7,8 @@ and ``wait_or_detach``). This file exercises the helpers that wrap the direct-
 deploy (no operator) flow:
 
 - ``_prepare_direct_deploy`` — applies K8s overlays, computes pod count
-- ``_apply_all_manifests`` — opens the API, dispatches per manifest, reuses an
-  existing Namespace, and rejects workload-resource name collisions
+- ``_apply_all_manifests`` — opens the API, dispatches per manifest, and
+  rejects every resource name collision, Namespace included
 - ``deploy_direct`` — full glue: dry-run prints YAML, wet-run creates resources
   and saves the last-benchmark hint, then hands off to ``wait_or_detach``
 """
@@ -388,38 +388,32 @@ class TestApplyAllManifests:
         assert mock_success.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_namespace_409_is_reused_and_creation_continues(self) -> None:
-        """An existing namespace is safe to share across direct-mode runs."""
+    async def test_namespace_409_fails_closed_like_any_other_resource(self) -> None:
+        """Direct mode never emits a Namespace, so a 409 on one is not special.
+
+        The old carve-out reused an existing Namespace silently. Nothing
+        renders a Namespace manifest any more, so the only way to reach a
+        409 with that kind is a hand-authored manifest -- which should fail
+        closed exactly like a colliding ConfigMap.
+        """
         from kubernetes_asyncio.client.exceptions import ApiException
 
         from aiperf.cli_commands.kube.profile_deploy_direct import _apply_all_manifests
 
-        manifests = [
-            {"kind": "Namespace", "metadata": {"name": "ns1"}},
-            {"kind": "ConfigMap", "metadata": {"name": "cm2"}},
-        ]
+        manifests = [{"kind": "Namespace", "metadata": {"name": "ns1"}}]
         opts = _make_kube_options()
 
-        side_effects: list[Any] = [
-            ApiException(status=409, reason="AlreadyExists"),
-            "ConfigMap/cm2",
-        ]
         with (
             patch("aiperf.kubernetes.client.k8s_client", new=_fake_k8s_client),
             patch(
                 "aiperf.cli_commands.kube.profile_deploy_direct._apply_manifest",
-                new=AsyncMock(side_effect=side_effects),
+                new=AsyncMock(
+                    side_effect=ApiException(status=409, reason="AlreadyExists")
+                ),
             ),
-            patch("aiperf.kubernetes.console.print_info") as mock_info,
-            patch("aiperf.kubernetes.console.print_success") as mock_success,
+            pytest.raises(RuntimeError, match="already exists"),
         ):
             await _apply_all_manifests(manifests, opts, effective_ns="ns1")
-
-        # First manifest: 409 -> print_info, no success
-        # Second manifest: success
-        assert mock_info.call_count == 1
-        assert "already exists" in mock_info.call_args.args[0]
-        assert mock_success.call_count == 1
 
     @pytest.mark.asyncio
     async def test_workload_resource_409_fails_closed(self) -> None:

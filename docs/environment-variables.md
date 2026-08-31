@@ -494,8 +494,8 @@ Worker Pod container CPU and memory. Emitted as requests only under the default 
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_K8S_WORKER_POD_CPU` | `150m` | — | CPU request (also the limit under resourceMode: guaranteed) |
-| `AIPERF_K8S_WORKER_POD_MEMORY` | `4Gi` | — | Memory request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_WORKER_POD_CPU` | `3350m` | — | CPU request (also the limit under resourceMode: guaranteed) |
+| `AIPERF_K8S_WORKER_POD_MEMORY` | `6Gi` | — | Memory request (also the limit under resourceMode: guaranteed) |
 
 ## K8SZMQ
 
@@ -562,7 +562,7 @@ Operator-service network identity. The operator Pod has three containers but onl
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_OPERATOR_BASE_URL` | `'http://aiperf-operator.aiperf-system:8081'` | — | Base URL (no trailing slash) for the operator's HTTP API. All ``/api/v1/*`` routers — jobs, sweeps, results, config, admin, analytics, dashboard_proxy — are served by the ``results-server`` container on this port; the operator container exposes only ``/healthz`` + ``/metrics`` on port 8080. Stamped onto ``AIPerfSweep.status.apiUrl`` and ``AIPerfSweep.status.runsTruncated.fetchURL`` so external clients can fetch per-sweep summaries; also consumed by the sweep-controller's per-child summary fallback. Override via ``AIPERF_OPERATOR_BASE_URL`` when the operator's Service+Namespace differ from the Helm chart defaults (e.g. a non-default ``Release.Name`` or an alternate namespace). |
+| `AIPERF_OPERATOR_BASE_URL` | `f'http://aiperf-operator.{DEFAULT_OPERATOR_NAMESPACE}:8081'` | — | Base URL (no trailing slash) for the operator's HTTP API. All ``/api/v1/*`` routers — jobs, sweeps, results, config, admin, analytics, dashboard_proxy — are served by the ``results-server`` container on this port; the operator container exposes only ``/healthz`` + ``/metrics`` on port 8080. Stamped onto ``AIPerfSweep.status.apiUrl`` and ``AIPerfSweep.status.runsTruncated.fetchURL`` so external clients can fetch per-sweep summaries; also consumed by the sweep-controller's per-child summary fallback. Override via ``AIPERF_OPERATOR_BASE_URL`` when the operator's Service+Namespace differ from the Helm chart defaults (e.g. a non-default ``Release.Name`` or an alternate namespace). |
 
 ## OPERATORMONITOR
 
@@ -704,11 +704,16 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_COMMS_REQUEST_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 1000.0 | Timeout in seconds for requests from req_clients to rep_clients |
 | `AIPERF_SERVICE_CONNECTION_PROBE_INTERVAL` | `0.1` | ≥ 0.1, ≤ 600.0 | Interval in seconds for connection probes while waiting for initial connection to the zmq message bus |
 | `AIPERF_SERVICE_CONNECTION_PROBE_TIMEOUT` | `90.0` | ≥ 1.0, ≤ 100000.0 | Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus |
+| `AIPERF_SERVICE_HEALTH_ENABLED` | `False` | — | Enable the lightweight health server for Kubernetes liveness/readiness probes. When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints. |
+| `AIPERF_SERVICE_HEALTH_HOST` | `'127.0.0.1'` | — | Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments. |
+| `AIPERF_SERVICE_HEALTH_PORT` | `8080` | ≥ 1, ≤ 65535 | Port for the health server HTTP endpoints (/healthz, /readyz). |
+| `AIPERF_SERVICE_HEALTH_REQUEST_TIMEOUT` | `5.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for reading health check HTTP requests. |
 | `AIPERF_SERVICE_CREDIT_PROGRESS_REPORT_INTERVAL` | `2.0` | ≥ 1, ≤ 100000.0 | Interval in seconds between credit progress report messages |
 | `AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL` | `30.0` | ≥ 0.0, ≤ 100000.0 | Interval in seconds between warmup progress heartbeat log messages. Set to 0 to disable. |
 | `AIPERF_SERVICE_DISABLE_UVLOOP` | `False` | — | Disable uvloop and use default asyncio event loop instead |
 | `AIPERF_SERVICE_HEARTBEAT_INTERVAL` | `5.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between heartbeat messages for component services |
 | `AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD` | `3` | ≥ 1, ≤ 100 | Consecutive heartbeat intervals a registered service may miss before the watchdog suspects it. Failure then requires HEARTBEAT_STALE_CONFIRMATION_TICKS consecutive stale watchdog ticks. |
+| `AIPERF_SERVICE_CONTROLLER_FAILURE_SHUTDOWN_TIMEOUT` | `600.0` | ≥ 1.0, ≤ 100000.0 | Wall-clock cap for SystemController failure-path teardown, including child reaping and result export. |
 | `AIPERF_SERVICE_FAILURE_SHUTDOWN_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 300.0 | Wall-clock cap on the shutdown path inside AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task cancellation) does not complete within this window after a failed on_init/on_start transition, a containerized (operator-managed) service hard-exits via os._exit(1), preventing silent zombie containers when cleanup blocks on a cancelled C-extension call. A local run logs the wedged shutdown and reports the failure normally instead, so the traceback and artifact export are not discarded. |
 | `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `600.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile configure command |
 | `AIPERF_SERVICE_PROFILE_START_TIMEOUT` | `60.0` | ≥ 1.0, ≤ 100000.0 | Timeout in seconds for profile start command |
@@ -728,10 +733,6 @@ Service lifecycle and inter-service communication configuration. Controls timeou
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_ENABLED` | `True` | — | Enable event loop health monitoring to detect blocked event loops. When enabled, TimingManager and Worker services periodically check if the event loop is responsive and log warnings when latency exceeds the threshold. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_INTERVAL` | `0.25` | ≥ 0.05, ≤ 10.0 | Interval in seconds between event loop health checks (default: 250ms). The monitor sleeps for this duration and measures actual elapsed time to detect blocking. |
 | `AIPERF_SERVICE_EVENT_LOOP_HEALTH_WARN_THRESHOLD_MS` | `25.0` | > 1.0, ≤ 10000.0 | Warning threshold in milliseconds for event loop latency (default: 25ms). If the actual sleep duration exceeds the expected duration by this amount, a warning is logged. |
-| `AIPERF_SERVICE_HEALTH_ENABLED` | `False` | — | Enable the lightweight health server for Kubernetes liveness/readiness probes. When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints. |
-| `AIPERF_SERVICE_HEALTH_HOST` | `'127.0.0.1'` | — | Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments. |
-| `AIPERF_SERVICE_HEALTH_PORT` | `8080` | ≥ 1, ≤ 65535 | Port for the health server HTTP endpoints (/healthz, /readyz). |
-| `AIPERF_SERVICE_HEALTH_REQUEST_TIMEOUT` | `5.0` | ≥ 0.1, ≤ 60.0 | Timeout in seconds for reading health check HTTP requests. |
 | `AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT` | `28000` | ≥ 1024, ≤ 65535 | Windows-only: starting port for the ZMQ IPC TCP-loopback fallback range. Per-endpoint ports are derived as ``base + (sha256_hash mod range)``. No-op on POSIX where ipc:// is used directly. |
 | `AIPERF_SERVICE_WINDOWS_TCP_PORT_RANGE` | `20000` | ≥ 64, ≤ 60000 | Windows-only: size of the TCP-loopback port window for the ZMQ IPC fallback. Birthday-paradox collision probability for n sockets is ``1 - exp(-n*n/(2*range))``. Widen if AIPerf grows to many more sockets per run, or relocate via ``AIPERF_SERVICE_WINDOWS_TCP_BASE_PORT`` if 28000-48000 conflicts. |
 
@@ -815,7 +816,7 @@ Worker management and auto-scaling configuration. Controls worker pool sizing, h
 | `AIPERF_WORKER_CLOCK_OFFSET_OUTLIER_FACTOR` | `4.0` | ≥ 0.0, ≤ 1000.0 | Multiplier on the median absolute deviation of the offset window below which a new clock-offset sample is rejected as a low outlier. Low outliers are the dangerous ones: the estimator is a minimum, so a single spuriously low sample would set the correction for the whole window. Set to 0 to disable low-outlier rejection. Kubernetes mode only. |
 | `AIPERF_WORKER_CLOCK_OFFSET_OUTLIER_FLOOR_SEC` | `0.001` | ≥ 0.0, ≤ 100000.0 | Floor in seconds on the low-outlier rejection band, so a window of near-identical samples (median absolute deviation near zero) does not reject every subsequent sample. Kubernetes mode only. |
 | `AIPERF_WORKER_CLOCK_OFFSET_RESET_AFTER_REJECTS` | `10` | ≥ 1, ≤ 10000 | Consecutive low-outlier rejections after which the clock-offset window is cleared and re-seeded. A sustained run of rejections means the true offset stepped down (controller restart, NTP step), not that the samples are bad, so the filter must follow it. Kubernetes mode only. |
-| `AIPERF_WORKER_CLOCK_PROBE_MAX_RTT_SEC` | `1.0` | ≥ 0.0, ≤ 100000.0 | Plausibility bound in seconds on a single TimePing/TimePong round trip. A probe slower than this is discarded rather than used as the baseline RTT, because a probe queued behind real credits or delayed by a GC pause would otherwise halve into a wildly overstated one-way transit estimate. Set to 0 to disable the bound. Kubernetes mode only. |
+| `AIPERF_WORKER_CLOCK_PROBE_MAX_RTT_SEC` | `0.05` | ≥ 0.0, ≤ 100000.0 | Plausibility bound in seconds on a single TimePing/TimePong round trip. A probe slower than this is discarded rather than used as the baseline RTT, because a probe queued behind real credits or delayed by a GC pause would otherwise halve into a wildly overstated one-way transit estimate. Set to 0 to disable the bound. Must be strictly less than AIPERF_WORKER_CLOCK_PROBE_TIMEOUT when non-zero (a probe already timed out before the bound check can fire). Kubernetes mode only. |
 | `AIPERF_WORKER_CLOCK_REMEASURE_INTERVAL` | `300.0` | ≥ 1.0, ≤ 100000.0 | Interval in seconds between worker baseline-RTT re-measurements. The startup probe alone goes stale for the rest of the run when the controller restarts or the network path changes, so the probe repeats on this cadence. Raise it past the run duration to keep the startup probe as the only measurement. Kubernetes mode only. |
 | `AIPERF_WORKER_CLOCK_PROBE_COUNT` | `5` | ≥ 1, ≤ 1000 | Successful startup TimePing/TimePong round trips targeted per worker |
 | `AIPERF_WORKER_CLOCK_PROBE_TIMEOUT` | `1.0` | ≥ 0.1, ≤ 100000.0 | Per-probe timeout in seconds for a single startup TimePing/TimePong round trip. Kept short so an unreachable credit ROUTER costs a fast retry instead of consuming AIPERF_WORKER_CLOCK_PROBE_BUDGET on one probe. Kubernetes mode only. |
@@ -851,11 +852,12 @@ ZMQ socket and communication configuration. Controls ZMQ socket timeouts, keepal
 | `AIPERF_ZMQ_SUB_YIELD_INTERVAL` | `10` | ≥ 0, ≤ 1000000 | Yield to the event loop after every N received messages from ZMQ SUB clients. Prevents event loop starvation during message bursts. 0 disables yielding, 1 yields after every message, 10 yields every 10 messages, etc. |
 | `AIPERF_ZMQ_PULL_MAX_CONCURRENCY` | `100000` | ≥ 1, ≤ 10000000 | Maximum concurrency for ZMQ PULL clients |
 | `AIPERF_ZMQ_PUSH_DRAIN_TIMEOUT` | `2.0` | ≥ 0.01, ≤ 60.0 | Seconds to wait for in-flight PUSH tasks to complete during socket shutdown before cancelling them. Prevents record loss when a worker process exits while push tasks are still queued. |
+| `AIPERF_ZMQ_PROXY_TERMINATE_TIMEOUT` | `5.0` | ≥ 0.01, ≤ 60.0 | Seconds to wait for a `zmq.proxy_steerable` background thread to exit after sending it a TERMINATE control command during proxy shutdown. The frontend/backend sockets it reads from must not be closed until this thread has actually exited, since libzmq sockets are not safe to close while another thread is blocked inside them. |
 | `AIPERF_ZMQ_PUSH_MAX_RETRIES` | `2` | ≥ 1, ≤ 100 | Maximum number of retry attempts when pushing messages to ZMQ PUSH socket |
 | `AIPERF_ZMQ_PUSH_RETRY_DELAY` | `0.1` | ≥ 0.1, ≤ 1000.0 | Delay in seconds between retry attempts for ZMQ PUSH operations |
 | `AIPERF_ZMQ_RCVTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket receive timeout in milliseconds (default: 5 minutes) |
-| `AIPERF_ZMQ_RECONNECT_IVL` | `100` | ≥ 1, ≤ 100000 | Delay in milliseconds before the first ZMQ reconnect attempt |
-| `AIPERF_ZMQ_RECONNECT_IVL_MAX` | `5000` | ≥ 1, ≤ 100000 | Ceiling in milliseconds on the exponential ZMQ reconnect backoff |
+| `AIPERF_ZMQ_RECONNECT_IVL` | `100` | ≥ 0, ≤ 600000 | Milliseconds before the first reconnect attempt for connecting ZMQ sockets |
+| `AIPERF_ZMQ_RECONNECT_IVL_MAX` | `5000` | ≥ 0, ≤ 600000 | Maximum milliseconds for exponential reconnect backoff on connecting ZMQ sockets |
 | `AIPERF_ZMQ_SNDTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket send timeout in milliseconds (default: 5 minutes) |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_IDLE` | `60` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle ZMQ connections |
 | `AIPERF_ZMQ_TCP_KEEPALIVE_INTVL` | `10` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes for ZMQ connections |

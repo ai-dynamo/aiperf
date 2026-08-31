@@ -36,6 +36,12 @@ class RequestErrorRateMetric(BaseDerivedMetric[float]):
     # Either counter can legitimately be absent: successes on an all-error run,
     # or errors on a clean run.
     required_metrics = None
+    optional_metrics = frozenset(
+        {
+            RequestCountMetric.tag,
+            ErrorRequestCountMetric.tag,
+        }
+    )
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
         successes = int(metric_results.get(RequestCountMetric.tag, 0) or 0)

@@ -123,6 +123,7 @@ class ClockOffsetTracker:
         "_min_samples",
         "_outlier_factor",
         "_outlier_floor_ns",
+        "_next_ping_sequence",
         "_pending_pong_future",
         "_pending_pong_sequence",
         "_reset_after_rejects",
@@ -186,6 +187,7 @@ class ClockOffsetTracker:
         self.estimated_one_way_ns: int | None = None
         self._pending_pong_future: asyncio.Future[TimePong] | None = None
         self._pending_pong_sequence: int | None = None
+        self._next_ping_sequence: int = 0
 
     def _now_ns(self) -> int:
         """Current wall-clock-domain time, advanced monotonically from the anchors."""
@@ -367,7 +369,11 @@ class ClockOffsetTracker:
         A pong whose sequence does not match the probe currently in flight is
         dropped: after a probe times out its reply may still arrive, and
         crediting it to the next probe would report an RTT far shorter than the
-        real round trip, which then wins ``min(rtts)`` in the baseline.
+        real round trip, which then wins ``min(rtts)`` in the baseline. Ping
+        sequence numbers are monotonic across the tracker's whole lifetime
+        (never reset per round), so a stale reply from a prior
+        ``measure_baseline_rtt`` round can never numerically collide with the
+        sequence the current round is awaiting.
 
         Args:
             pong: The TimePong message received from the router.
@@ -426,9 +432,11 @@ class ClockOffsetTracker:
         previous_baseline = self.baseline_rtt_ns
 
         try:
-            for seq in range(attempts):
+            for _ in range(attempts):
                 if len(rtts) >= probe_count:
                     break
+                seq = self._next_ping_sequence
+                self._next_ping_sequence += 1
                 self._pending_pong_future = loop.create_future()
                 self._pending_pong_sequence = seq
                 sent_at_perf_ns = time.perf_counter_ns()
@@ -450,7 +458,14 @@ class ClockOffsetTracker:
                     )
                     continue
                 rtts.append(rtt)
+        except asyncio.CancelledError:
+            # A caller that cancels on budget expiry still keeps whatever
+            # round-tripped: unwinding past the apply below would throw away
+            # probes that already succeeded and leave the baseline unmeasured.
+            if rtts:
                 self._apply_baseline_rtt(rtts, probe_count)
+                self.baseline_measurement_count += 1
+            raise
         finally:
             self._pending_pong_future = None
             self._pending_pong_sequence = None
@@ -461,6 +476,12 @@ class ClockOffsetTracker:
             )
             return
 
+        # Apply the baseline once per round, not after each probe.  If applied
+        # mid-round, a re-measurement under load (first probe slow: 50ms) replaces
+        # the startup baseline (400µs) immediately, stepping every subsequent
+        # exported timestamp by ~24.8ms for the rest of the round.  Deferring to
+        # here means the round's full min() is used, not the running partial min.
+        self._apply_baseline_rtt(rtts, probe_count)
         self.baseline_measurement_count += 1
         min_rtt = min(rtts)
         if previous_baseline is not None and (

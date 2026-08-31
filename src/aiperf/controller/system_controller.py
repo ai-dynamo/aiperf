@@ -102,15 +102,6 @@ _PRE_BENCHMARK_STATES = frozenset(
 )
 """States in which no benchmark result can legitimately have been produced yet."""
 
-_FAILURE_SHUTDOWN_TIMEOUT_SEC: float = 600.0
-"""Cap on ``SystemController``'s failure-path teardown.
-
-Deliberately far above ``Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT``: this
-teardown exports every artifact and reaps every child service before its own
-``os._exit()``, so the generic per-service bound would truncate a large export.
-It is still finite -- an unbounded await here is a zombie container.
-"""
-
 
 class SystemController(
     PodStateTrackerMixin,
@@ -144,7 +135,7 @@ class SystemController(
         finishes inside it, and a wedged one still unwinds to the FAILED state
         rather than hanging.
         """
-        return _FAILURE_SHUTDOWN_TIMEOUT_SEC
+        return Environment.SERVICE.CONTROLLER_FAILURE_SHUTDOWN_TIMEOUT
 
     def __init__(
         self,
@@ -231,6 +222,7 @@ class SystemController(
         self._profile_results: ProcessRecordsResult | None = None
         self._exit_errors: list[ExitErrorInfo] = []
         self._export_failed = False
+        self._failed_exporters: list[str] = []
         self._raw_artifacts_finalized = False
         self._raw_artifacts_finalize_succeeded = False
         self._telemetry_results: TelemetryExportData | None = None
@@ -260,7 +252,6 @@ class SystemController(
 
         self._shutdown_triggered = False
         self._pod_failure_watcher_task: asyncio.Task | None = None
-        self._profile_cancel_relay_task: asyncio.Task | None = None
         self._pod_failure_watch_disarmed = False
         self._system_state: SystemState = SystemState.INITIALIZING
         self._replacement_configuring_ids: set[str] = set()
@@ -422,6 +413,21 @@ class SystemController(
         except (TypeError, ValueError):
             return True
 
+    def _live_service_ids(self) -> list[str]:
+        """Every service ID that is still addressable on the control channel.
+
+        Reaped services are excluded (Invariant I3): a service the watchdog
+        already confirmed dead is still in ``service_id_map``, so a fan-out
+        that does not filter it gets ``EHOSTUNREACH`` from ROUTER_MANDATORY --
+        which, on a fail-fast fan-out, aborts the whole benchmark because one
+        optional peer (GPU telemetry with no DCGM, say) went away.
+        """
+        return [
+            service_id
+            for service_id in self.service_manager.service_id_map
+            if service_id not in self._reaped_service_ids
+        ]
+
     def _records_manager_ids(self) -> list[str]:
         """Live RecordsManager service IDs for control-channel command fan-out.
 
@@ -440,6 +446,12 @@ class SystemController(
         """Request real-time metrics from the RecordsManager."""
         await self._send_control_command_to_all(
             CommandType.REALTIME_METRICS, self._records_manager_ids()
+        )
+
+    async def start_realtime_telemetry(self) -> None:
+        """Tell every RecordsManager to start streaming real-time GPU telemetry."""
+        await self._send_control_command_to_all(
+            CommandType.START_REALTIME_TELEMETRY, self._records_manager_ids()
         )
 
     async def initialize(self) -> None:
@@ -702,7 +714,7 @@ class SystemController(
         begin = time.perf_counter()
         responses = await self._send_control_command_to_all_fail_fast(
             CommandType.PROFILE_CONFIGURE,
-            list(self.service_manager.service_id_map.keys()),
+            self._live_service_ids(),
             timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
         )
         duration = time.perf_counter() - begin
@@ -723,7 +735,7 @@ class SystemController(
         self.debug("Sending PROFILE_START command to all services")
         responses = await self._send_control_command_to_all_fail_fast(
             CommandType.PROFILE_START,
-            list(self.service_manager.service_id_map.keys()),
+            self._live_service_ids(),
             timeout=Environment.SERVICE.PROFILE_START_TIMEOUT,
         )
         self._parse_responses_for_errors(responses, "Start Profiling")
@@ -881,7 +893,11 @@ class SystemController(
         Result producers are evicted from the result-join barrier so surviving
         results can still be exported as a degraded run. A required non-producer
         has no barrier membership to evict, but its death is still fatal and must
-        cancel active profiling. Optional non-producers remain a no-op here.
+        cancel active profiling. Optional non-producers remain a no-op here. A
+        producer that is *also* a required service (e.g. RecordsManager) still
+        owed results at the time it died must cancel active profiling the same
+        way a required non-producer does, rather than let barrier eviction alone
+        release the shutdown gate.
         """
         info = self.service_manager.service_id_map.get(service_id)
         if info is None or info.first_seen_ns != first_seen_ns:
@@ -916,11 +932,24 @@ class SystemController(
                         service_id=service_id,
                     )
                 )
-            else:
-                self.info(
-                    f"Producer '{service_id}' died after delivering all of its "
-                    f"results ({reason}); the export is unaffected"
-                )
+                self._forget_reaped_service(service_id)
+                # A producer that is also a required service (RecordsManager)
+                # still owed results here, so barrier eviction alone must not
+                # release the shutdown gate through the generic path -- it must
+                # take the same dedicated abort flow as a required non-producer.
+                if (
+                    info.service_type in self.required_services
+                    and self._system_state
+                    not in {SystemState.STOPPING, SystemState.SHUTDOWN}
+                ):
+                    await self._cancel_profiling()
+                else:
+                    await self._check_and_trigger_shutdown()
+                return
+            self.info(
+                f"Producer '{service_id}' died after delivering all of its "
+                f"results ({reason}); the export is unaffected"
+            )
             self._forget_reaped_service(service_id)
             await self._check_and_trigger_shutdown()
             return
@@ -1222,9 +1251,23 @@ class SystemController(
                     f"Ignoring unreadable {CommandType.PROFILE_CANCEL} payload; "
                     f"relaying to every handler: {e!r}"
                 )
-        self._profile_cancel_relay_task = self.execute_async(
-            self._relay_profile_cancel(origin_service_id, message.payload)
+        self.execute_async(
+            self._relay_profile_cancel_guarded(origin_service_id, message.payload)
         )
+
+    async def _relay_profile_cancel_guarded(
+        self, origin_service_id: str, payload: bytes
+    ) -> None:
+        """Run the PROFILE_CANCEL relay, logging rather than raising on failure.
+
+        This runs detached on an abort path, so an escaping exception would only
+        ever surface as an "exception was never retrieved" warning at GC time --
+        long after the information could have been useful.
+        """
+        try:
+            await self._relay_profile_cancel(origin_service_id, payload)
+        except Exception as e:
+            self.error(f"PROFILE_CANCEL relay failed: {e!r}")
 
     async def _relay_profile_cancel(
         self, origin_service_id: str, payload: bytes
@@ -1335,14 +1378,23 @@ class SystemController(
             if fatal_errors:
                 self._export_failed = True
 
-            # Under Kubernetes every entry also reaches ``print_exit_errors``
+            # Under Kubernetes these entries also reach ``print_exit_errors``
             # and ``os._exit(1 if self._exit_errors ...)``: the operator reads
             # the exit code to mark the CR, so a silently-degraded run there
-            # must surface. Locally only the fatal ones do -- otherwise a
-            # no-GPU run whose telemetry drain times out exits 1 with an error
-            # panel despite complete, correct results.
+            # must surface, including errors that say nothing about their own
+            # fatality. But an error the producer explicitly marked non-fatal
+            # (the GPU-telemetry drain timeout) is advisory by construction --
+            # reporting it would stamp a complete, correctly-exported run as
+            # Failed. Locally only the fatal ones report at all.
             reportable_errors = (
-                message.results.errors if self._is_kubernetes() else fatal_errors
+                [
+                    error
+                    for error in message.results.errors
+                    if not isinstance(error.details, dict)
+                    or error.details.get(ERROR_FATAL_DETAIL_KEY, True)
+                ]
+                if self._is_kubernetes()
+                else fatal_errors
             )
             self._exit_errors.extend(
                 ExitErrorInfo(
@@ -1741,6 +1793,16 @@ class SystemController(
                 self.warning(
                     f"Cancel command failed from {response.sid}: {response.error}"
                 )
+            elif isinstance(response, CommandUnhandled):
+                # A RecordsManager that lost its @on_command(PROFILE_CANCEL)
+                # hook answers with an ack-shaped struct. Treating that as
+                # clean success would leave _profile_results as None with no
+                # warning at all -- the same silent data loss CommandUnhandled
+                # exists to expose on the relay call sites above.
+                self.warning(
+                    f"Cancel command unhandled by {response.sid}: the service "
+                    f"has no {CommandType.PROFILE_CANCEL} handler"
+                )
 
         for response in responses:
             if (
@@ -1829,8 +1891,8 @@ class SystemController(
         acknowledgement, not the flush. Raising here would discard a complete,
         exportable result set over a missing ack -- and with local record
         processors auto-scaled to one below eight workers, a single reap is
-        enough to trigger it. Failures are still recorded in ``_exit_errors``,
-        so they stay visible and still force a non-zero exit.
+        enough to trigger it. Failures remain visible in the error log but do
+        not turn an otherwise exportable local run into a failed process.
         """
         if self._is_kubernetes():
             finalize_succeeded = await self._finalize_kubernetes_raw_artifacts()
@@ -1920,19 +1982,11 @@ class SystemController(
         )
 
     def _record_finalize_failure(self, *, service_id: str, message: str) -> None:
-        """Record an artifact-finalization failure so it survives to the exit code.
+        """Log a local artifact-finalization acknowledgement failure.
 
-        Recording is what makes the failure reportable: the caller may drop the
-        command response, but ``_exit_errors`` still forces a non-zero exit and
-        a printed error panel instead of a silent success.
+        Local writers flush on ``PROFILE_COMPLETE`` before this advisory retry,
+        so a missing acknowledgement must not alter the benchmark exit status.
         """
-        self._exit_errors.append(
-            ExitErrorInfo(
-                error_details=ErrorDetails(message=message, type="FinalizeArtifacts"),
-                operation="finalize_artifacts",
-                service_id=service_id,
-            )
-        )
         self.error(message)
 
     def _record_raw_artifact_finalize_failure(
@@ -2119,26 +2173,24 @@ class SystemController(
         return self._raw_artifacts_finalize_succeeded
 
     def _surface_export_failures(self, failures: list[ExporterFailure]) -> bool:
-        """Record local export failures and report whether readiness is blocked.
+        """Record exit-affecting export failures and report whether any occurred.
 
-        Deferred exporters only upload already-complete local artifacts, so a
-        remote service outage is warning-worthy but does not make the local
-        result set unsafe to serve. This is an intentional asymmetry: a
-        non-deferred (local) export failure now appends to ``_exit_errors``
-        and flips the process exit code to non-zero, whereas a deferred
-        exporter (e.g. wandb/mlflow) failure only logs a warning and never
-        sets ``marker_blocking`` -- a CI pipeline relying solely on exit code
-        will not observe a failed remote upload.
+        A phase artifact is supplemental to the root artifacts and a failure
+        writing it is advisory. Deferred remote uploaders, on the other hand,
+        are explicit requested outputs; their failure must retain a non-zero
+        exit code so CI can observe it.
         """
-        marker_blocking = False
+        has_exit_failure = False
         for failure in failures:
-            if failure.is_deferred:
+            if not failure.is_exit_failure:
                 self.warning(
-                    f"Deferred exporter '{failure.exporter}' failed; local "
-                    f"results are unaffected: {failure.error!r}"
+                    f"Supplemental exporter '{failure.exporter}' failed; "
+                    f"root results are unaffected: {failure.error!r}"
                 )
                 continue
-            marker_blocking = True
+            has_exit_failure = True
+            if not failure.is_deferred:
+                self._failed_exporters.append(failure.exporter)
             self._exit_errors.append(
                 ExitErrorInfo(
                     error_details=ErrorDetails.from_exception(failure.error),
@@ -2146,7 +2198,7 @@ class SystemController(
                     service_id=self.service_id,
                 )
             )
-        return marker_blocking
+        return has_exit_failure
 
     async def _announce_benchmark_complete(self) -> None:
         """Tell the API service the benchmark is over.
@@ -2169,11 +2221,22 @@ class SystemController(
         """Stop the system controller and all running services."""
         await self._set_system_state(SystemState.SHUTDOWN)
 
-        # Stop the local UI before console rendering, but keep services and the
-        # message bus alive through export. In Kubernetes the API router must
-        # receive ResultsExportedMessage after the durable ready marker commits;
-        # exporting after comms.stop() made that live-bus contract impossible.
+        await self._broadcast_control_command(
+            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
+        )
+        delivery_grace = 0.5
+        if self._api_enabled and self._is_api_service_alive():
+            delivery_grace = max(
+                delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
+            )
+        await asyncio.sleep(delivery_grace)
+        await self.service_manager.shutdown_all_services()
+
+        # Stop the local UI before console rendering. The message bus remains
+        # live through export so publishing the durable completion state does
+        # not race transport shutdown.
         await self.ui.stop()
+        await asyncio.sleep(0.1)
         await self.ui.wait_for_tasks()
 
         # Reporting must never prevent the service shutdown below. At this
@@ -2195,9 +2258,11 @@ class SystemController(
 
             if Environment.DEV.MODE:
                 print_developer_mode_warning()
+        except asyncio.CancelledError:
+            raise
         except (UnicodeEncodeError, OSError) as e:
             self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
-        except BaseException:
+        except Exception:
             self.exception(
                 "Unexpected pre-shutdown reporting failure (continuing to exit)"
             )
@@ -2205,48 +2270,6 @@ class SystemController(
         # BenchmarkComplete makes the API shutdown endpoint eligible only
         # after export/ready publication has finished (or failed closed).
         await self._announce_benchmark_complete()
-        # NARROWING vs the PUB broadcast this replaced, and unavoidable: a ROUTER
-        # can only address a DEALER identity it has already seen, so the target
-        # list is necessarily the REGISTERED set. A service still in a
-        # pre-REGISTERED state used to receive the broadcast and stop
-        # gracefully; it now gets no SHUTDOWN at all and is SIGKILLed by
-        # _wait_for_process after the grace period below. Widening this would
-        # require addressing identities the ROUTER has no route for, which
-        # ROUTER_MANDATORY rejects with EHOSTUNREACH. Not a bug -- a service that
-        # has not registered has also not been given any work.
-        await self._broadcast_control_command(
-            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
-        )
-
-        # SHUTDOWN is fire-and-forget on the control ROUTER: the single SHUTDOWN
-        # handler on BaseService (deliberately not duplicated on
-        # BaseComponentService -- the dispatcher stops at the first hook match,
-        # so a second copy would be dead code) acks the command itself, stops the
-        # service, and then raises asyncio.CancelledError instead of returning.
-        # The dispatcher re-raises that before its success path, so it never
-        # sends a second response we could await, and each per-service send_to is
-        # best effort. Child
-        # processes also ignore SIGTERM (see bootstrap.py), so
-        # MultiProcessServiceManager._wait_for_process skips terminate()+join and
-        # goes straight to kill() for any process still alive after this grace —
-        # only a successful delivery here results in graceful
-        # shutdown rather than SIGKILL. This grace period gives the ROUTER's
-        # per-peer sends time to reach every DEALER before we
-        # start killing stragglers. 500ms is empirically sufficient under normal
-        # load.
-        # When the API server is enabled AND still alive, extend the wait so the
-        # API process can honor its POST_COMPLETE_GRACE window before
-        # _wait_for_process SIGKILLs it. If the API never registered or has
-        # already failed/stopped, the extension would only delay shutdown without
-        # serving any client, so skip it.
-        delivery_grace = 0.5
-        if self._api_enabled and self._is_api_service_alive():
-            delivery_grace = max(
-                delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
-            )
-        await asyncio.sleep(delivery_grace)
-
-        await self.service_manager.shutdown_all_services()
         await self.comms.stop()
         # Stopped last of the child-facing transports: shutdown_all_services may
         # still be talking to children over it, and comms does not own it.
@@ -2376,8 +2399,14 @@ class SystemController(
 
         # Export data files (CSV, JSON) with complete dataset including telemetry
         export_failures = await exporter_manager.export_data()
-        local_export_failed = self._surface_export_failures(export_failures)
-        self._export_failed = self._export_failed or local_export_failed
+        # A local exporter failure no longer flips `_export_failed`: exporters
+        # run independently, so one exporter's disk-full write must not
+        # withhold artifacts a sibling exporter already wrote successfully.
+        # `_surface_export_failures` still records the failure in
+        # `_exit_errors` (non-zero exit code) and `_failed_exporters`, which
+        # `_announce_results_exported` publishes on the ready marker as a
+        # partial export.
+        self._surface_export_failures(export_failures)
 
         # Export console output with complete dataset including telemetry
         await exporter_manager.export_console(console=console)
@@ -2460,6 +2489,14 @@ class SystemController(
         ``is_complete`` after ResultsExportedMessage. The controller then patches
         the parent AIPerfJob's benchmark-complete annotation so kopf can harvest
         immediately; its timer remains the recovery path for a failed patch.
+
+        ``_export_failed`` still withholds the marker entirely -- it is only
+        set for failures that leave nothing safe to serve (a failed
+        transaction begin, a required auto-plot failure, an incomplete RAW
+        artifact barrier). Local exporter failures alone no longer set it: a
+        failed exporter's name is recorded in ``_failed_exporters`` instead,
+        and the marker still commits, flagged ``partial``, so files that DID
+        export successfully remain servable.
         """
         if getattr(self, "_export_failed", False):
             self.error(
@@ -2477,6 +2514,8 @@ class SystemController(
                 write_ready_marker,
                 artifact_dir,
                 was_cancelled=self._was_cancelled,
+                partial=bool(self._failed_exporters),
+                failed_exporters=self._failed_exporters,
             )
         except OSError as e:
             self._exit_errors.append(

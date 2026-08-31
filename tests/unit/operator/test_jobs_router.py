@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -558,3 +559,48 @@ class TestListJobEvents:
 
         assert resp.status_code == 200
         assert [e["reason"] for e in resp.json()["events"]] == ["PolicyViolation"]
+
+
+@pytest.mark.asyncio
+async def test_archived_job_detail_offloads_summary_and_conditions_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Archived detail requests must not read compressed files on the event loop."""
+    from aiperf.kubernetes.models import AIPerfJobInfo
+    from aiperf.operator.routers import jobs as jobs_module
+
+    epoch = "1714064523"
+    run_dir = tmp_path / "ns" / "archived" / epoch
+    run_dir.mkdir(parents=True)
+    (run_dir / "profile_export_aiperf.json").write_bytes(orjson.dumps({}))
+    (run_dir / "conditions.json").write_bytes(orjson.dumps([]))
+
+    archived = AIPerfJobInfo(
+        name="archived",
+        namespace="ns",
+        phase="Succeeded",
+        job_id="archived",
+        jobset_name="aiperf-archived",
+        workers_ready=0,
+        workers_total=0,
+        source="archived",
+    )
+
+    async def find_archived(*_args, **_kwargs) -> AIPerfJobInfo:
+        return archived
+
+    calls: list[object] = []
+
+    async def tracking_to_thread(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(jobs_module, "find_any_job", find_archived)
+    monkeypatch.setattr(asyncio, "to_thread", tracking_to_thread)
+
+    result = await jobs_module._get_job_impl(
+        MagicMock(), tmp_path, "ns", "archived", epoch=epoch
+    )
+
+    assert result.status["jobId"] == "archived"
+    assert len(calls) == 1

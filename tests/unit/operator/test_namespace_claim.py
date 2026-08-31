@@ -392,6 +392,174 @@ async def test_renew_reacquires_a_namespace_whose_rival_lease_expired() -> None:
     assert claim.owns("aiperf-test") is True
 
 
+@pytest.mark.asyncio
+async def test_acquire_waits_out_a_namespace_that_does_not_exist_yet() -> None:
+    """A 404 on create is a wait state, not a startup failure.
+
+    Raising here propagates out of the kopf startup handler, which retries
+    forever: the operator reports Running while watching nothing.
+    """
+
+    class MissingNamespaceApi(FakeCoordinationApi):
+        async def create_namespaced_lease(
+            self, *, namespace: str, body: V1Lease
+        ) -> V1Lease:
+            raise ApiException(status=404, reason="Not Found")
+
+    api = MissingNamespaceApi()
+    claim = claim_for(api, "test-op")
+
+    await claim.acquire("not-yet")
+
+    assert claim._claimed == set()
+    assert "not-yet" in claim._pending
+
+
+@pytest.mark.asyncio
+async def test_renew_reacquires_a_namespace_that_appeared_after_startup() -> None:
+    """The pending namespace has to be retried, or the wait state is a wedge."""
+
+    class LateNamespaceApi(FakeCoordinationApi):
+        def __init__(self) -> None:
+            super().__init__()
+            self.namespace_exists = False
+
+        async def create_namespaced_lease(
+            self, *, namespace: str, body: V1Lease
+        ) -> V1Lease:
+            if not self.namespace_exists:
+                raise ApiException(status=404, reason="Not Found")
+            return await super().create_namespaced_lease(namespace=namespace, body=body)
+
+    api = LateNamespaceApi()
+    claim = claim_for(api, "test-op")
+    await claim.acquire("late-ns")
+    assert api.creates == []
+
+    api.namespace_exists = True
+    await claim.renew()
+
+    assert api.creates == ["late-ns"]
+    assert claim.owns("late-ns") is True
+    assert "late-ns" not in claim._pending
+
+
+@pytest.mark.asyncio
+async def test_renew_patch_carries_the_resource_version_it_read() -> None:
+    """Without it the patch is unconditional and steals a rival's fresh claim."""
+    api = FakeCoordinationApi()
+    claim = claim_for(api, "test-op")
+    await claim.acquire("aiperf-test")
+
+    bodies: list[dict[str, Any]] = []
+    original = api.patch_namespaced_lease
+
+    async def recording_patch(*, name: str, namespace: str, body: dict[str, Any]):
+        bodies.append(body)
+        return await original(name=name, namespace=namespace, body=body)
+
+    api.patch_namespaced_lease = recording_patch  # type: ignore[method-assign]
+    await claim.renew()
+
+    assert bodies[0]["metadata"]["resourceVersion"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_renew_releases_the_namespace_on_a_conflicting_patch() -> None:
+    """A 409 means a rival won the read-then-write race; do not retry over it."""
+
+    class ConflictingApi(FakeCoordinationApi):
+        async def patch_namespaced_lease(
+            self, *, name: str, namespace: str, body: dict[str, Any]
+        ) -> V1Lease:
+            raise ApiException(status=409, reason="Conflict")
+
+    api = ConflictingApi()
+    claim = claim_for(api, "test-op")
+    await claim.acquire("aiperf-test")
+
+    await claim.renew()
+
+    assert "aiperf-test" not in claim._claimed
+    assert claim.owns("aiperf-test") is False
+
+
+def test_lease_holder_if_live_tolerates_a_naive_timestamp() -> None:
+    """``owns()`` runs this inside kopf's ``when=`` filter for every event.
+
+    A naive stamp compared against an aware ``now`` raises TypeError there,
+    which would take down event filtering rather than one lease read.
+    """
+    from aiperf.kubernetes.lease import lease_holder_if_live
+
+    lease = V1Lease(
+        metadata=V1ObjectMeta(name=LEASE_NAME, namespace="aiperf-test"),
+        spec=V1LeaseSpec(
+            holder_identity="test-op",
+            lease_duration_seconds=300,
+            renew_time=datetime.now(UTC).replace(tzinfo=None),
+        ),
+    )
+
+    assert lease_holder_if_live(lease, default_duration=300) == "test-op"
+
+
+@pytest.mark.asyncio
+async def test_holder_of_reports_the_cached_claim_holder() -> None:
+    api = FakeCoordinationApi({"aiperf-test": make_lease("aiperf-test", "rival-op")})
+    claim = claim_for(api, "")
+
+    assert claim.holder_of("aiperf-test") is None
+    await claim.holder("aiperf-test")
+    assert claim.holder_of("aiperf-test") == "rival-op"
+
+
+def test_watched_namespaces_from_argv_warns_on_a_glob(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """kopf expands globs; NamespaceClaim does not, so the Lease never lands."""
+    with caplog.at_level("WARNING"):
+        namespaces = watched_namespaces_from_argv(
+            ["kopf", "run", "--namespace", "team-*"]
+        )
+
+    assert namespaces == ["team-*"]
+    assert "pattern" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_claim_watched_namespaces_retries_on_an_api_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare ApiException makes kopf retry startup forever with no reason shown."""
+    import kopf
+
+    from aiperf.operator import main as operator_main
+
+    class BrokenApi(FakeCoordinationApi):
+        async def create_namespaced_lease(
+            self, *, namespace: str, body: V1Lease
+        ) -> V1Lease:
+            raise ApiException(status=500, reason="Internal Server Error")
+
+    monkeypatch.setattr(
+        operator_main.sys,
+        "argv",
+        ["kopf", "run", "--namespace", "aiperf-test"],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        operator_main,
+        "NamespaceClaim",
+        lambda: claim_for(BrokenApi(), "scoped-op"),
+    )
+
+    with pytest.raises(kopf.TemporaryError):
+        await operator_main.claim_watched_namespaces()
+
+    operator_main.__dict__.pop("_CLAIMS", None)
+
+
 def test_watched_namespaces_from_argv_parses_kopf_flags() -> None:
     argv = [
         "kopf",

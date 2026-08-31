@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import contextlib
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -325,6 +326,27 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             return str(run_type).lower() == "kubernetes"
         return os.environ.get("AIPERF_OPERATOR_MANAGED") == "1"
 
+    @staticmethod
+    def _describe_in_flight_stop(task: asyncio.Task) -> str:
+        """Describe where a wedged ``stop()`` task was suspended.
+
+        Walks the task's coroutine await chain (outermost to innermost) so
+        the reported description names the actual on_stop hook that was
+        still running when the failure_shutdown_timeout bound was hit,
+        rather than only the generic ``stop()``/``run_hooks()`` frames that
+        wrap it.
+        """
+        frames: list[str] = []
+        coro = task.get_coro()
+        while coro is not None:
+            frame = getattr(coro, "cr_frame", None)
+            if frame is not None:
+                code = frame.f_code
+                name = getattr(code, "co_qualname", code.co_name)
+                frames.append(f"{name}:{frame.f_lineno}")
+            coro = getattr(coro, "cr_await", None)
+        return " -> ".join(frames) if frames else "an unknown step"
+
     async def _fail(self, e: Exception) -> None:
         """Set the state to FAILED and raise an asyncio.CancelledError.
         This is used when the transition from one state to another fails.
@@ -354,20 +376,33 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             if timeout is None:
                 await self.stop()
             else:
-                try:
-                    await asyncio.wait_for(self.stop(), timeout=timeout)
-                except TimeoutError:
+                stop_task = asyncio.ensure_future(self.stop())
+                done, pending = await asyncio.wait({stop_task}, timeout=timeout)
+                if stop_task in pending:
+                    # Report exactly which stop hook was suspended before
+                    # cutting it off: a bare "timed out" message gives an
+                    # operator nothing to act on when the truncated step was,
+                    # e.g., a buffered writer flush or an in-flight export.
+                    in_flight = self._describe_in_flight_stop(stop_task)
+                    stop_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await stop_task
                     if self._hard_exit_on_wedged_shutdown:
                         self.error(
-                            f"Shutdown after failure did not complete in {timeout}s; "
-                            f"force-exiting"
+                            f"Shutdown after failure did not complete in {timeout}s "
+                            f"(stuck in: {in_flight}); force-exiting"
                         )
                         os._exit(1)
                     else:
                         self.error(
-                            f"Shutdown after failure did not complete in {timeout}s; "
-                            f"continuing teardown and reporting the failure"
+                            f"Shutdown after failure did not complete in {timeout}s "
+                            f"(stuck in: {in_flight}); continuing teardown and "
+                            f"reporting the failure"
                         )
+                else:
+                    # Propagate any exception raised by stop() itself, matching
+                    # the exception-propagation behavior of a plain await.
+                    stop_task.result()
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 

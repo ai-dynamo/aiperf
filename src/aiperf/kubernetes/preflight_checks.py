@@ -54,7 +54,7 @@ __all__ = [
     "check_secrets",
 ]
 
-# Required RBAC permissions for AIPerf deployment: (verb, resource, api_group)
+# Required RBAC permissions for direct deployment: (verb, resource, api_group)
 REQUIRED_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
     ("create", "configmaps", ""),
     ("get", "pods", ""),
@@ -64,6 +64,10 @@ REQUIRED_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
     ("create", "jobsets", JOBSET_GROUP),
     ("get", "jobsets", JOBSET_GROUP),
     ("delete", "jobsets", JOBSET_GROUP),
+]
+
+_OPERATOR_RBAC_PERMISSIONS: list[tuple[str, str, str]] = [
+    ("create", AIPERF_JOB_PLURAL, AIPERF_JOB_GROUP),
 ]
 
 _CLUSTER_API_ERRORS: tuple[type[BaseException], ...] = (
@@ -150,7 +154,11 @@ async def check_kubernetes_version(api: ApiClient) -> CheckResult:
 
 
 async def check_namespace(api: ApiClient, *, namespace: str) -> CheckResult:
-    """Check if namespace exists or can be created."""
+    """Check that the namespace already exists.
+
+    Nothing in AIPerf creates namespaces, so a missing one is a hard failure
+    regardless of whether the caller could create it.
+    """
     from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 
     try:
@@ -162,7 +170,7 @@ async def check_namespace(api: ApiClient, *, namespace: str) -> CheckResult:
         )
     except ApiException as e:
         if e.status == 404:
-            return await _namespace_missing_result(api, namespace)
+            return _namespace_missing_result(namespace)
         if e.status == 403:
             return CheckResult(
                 name="Namespace",
@@ -182,39 +190,31 @@ async def check_namespace(api: ApiClient, *, namespace: str) -> CheckResult:
         )
 
 
-async def _namespace_missing_result(api: ApiClient, namespace: str) -> CheckResult:
+def _namespace_missing_result(namespace: str) -> CheckResult:
+    """Report a missing namespace as a hard failure.
+
+    This used to PASS with "will be created" when the caller held
+    ``create`` on ``namespaces``. Nothing creates namespaces any more, so that
+    permission is irrelevant and the PASS was a false green: the run failed
+    later, at pod-create time, in a namespace that never existed.
+    """
     from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 
-    try:
-        allowed = await _shared_check_rbac_access(
-            api, verb="create", resource="namespaces", group="", namespace=namespace
-        )
-        if allowed:
-            return CheckResult(
-                name="Namespace",
-                status=CheckStatus.PASS,
-                message=f"Namespace '{namespace}' will be created",
-            )
-        return CheckResult(
-            name="Namespace",
-            status=CheckStatus.FAIL,
-            message=f"Namespace '{namespace}' does not exist",
-            hints=[f"Ask an admin to create namespace '{namespace}'"],
-        )
-    except _CLUSTER_API_ERRORS as perm_err:
-        return CheckResult(
-            name="Namespace",
-            status=CheckStatus.WARN,
-            message=(
-                f"Namespace '{namespace}' does not exist, "
-                "cannot verify create permission"
-            ),
-            details=[str(perm_err)],
-        )
+    return CheckResult(
+        name="Namespace",
+        status=CheckStatus.FAIL,
+        message=f"Namespace '{namespace}' does not exist -- create it first, then re-run",
+        hints=[
+            f"kubectl create namespace {namespace}",
+            "Or pass --namespace <ns> naming a namespace that already exists",
+        ],
+    )
 
 
-async def check_rbac_permissions(api: ApiClient, *, namespace: str) -> CheckResult:
-    """Check required RBAC permissions.
+async def check_rbac_permissions(
+    api: ApiClient, *, namespace: str, use_operator: bool = True
+) -> CheckResult:
+    """Check required RBAC permissions for the selected submission path.
 
     Distinguishes three outcomes per permission:
       - explicitly allowed -> ``passed``
@@ -228,7 +228,10 @@ async def check_rbac_permissions(api: ApiClient, *, namespace: str) -> CheckResu
     passed: list[str] = []
     transient: list[str] = []
 
-    for verb, resource, group in REQUIRED_RBAC_PERMISSIONS:
+    permissions = (
+        _OPERATOR_RBAC_PERMISSIONS if use_operator else REQUIRED_RBAC_PERMISSIONS
+    )
+    for verb, resource, group in permissions:
         display = f"{group}/{resource}" if group else resource
         try:
             allowed = await _shared_check_rbac_access(
@@ -395,7 +398,7 @@ async def check_aiperf_operator(api: ApiClient) -> CheckResult:
         if e.status == 403:
             return CheckResult(
                 name=name,
-                status=CheckStatus.PASS,
+                status=CheckStatus.WARN,
                 message=(
                     "AIPerfJob CRD installed; operator pod not verified "
                     "(cluster-wide pod list forbidden)"
@@ -575,7 +578,7 @@ async def check_endpoint_connectivity(
             f"Host: {host}, Port: {port}",
         ]
 
-        if ".svc" in host or ".svc.cluster.local" in host:
+        if host.endswith(".svc") or host.endswith(".svc.cluster.local"):
             return await _check_cluster_service_endpoint(api, host, details)
 
         return CheckResult(
@@ -615,11 +618,27 @@ async def _check_cluster_service_endpoint(
             message=f"Cluster service '{svc_name}' found in namespace '{svc_ns}'",
             details=details,
         )
-    except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
+    except ApiException as e:
+        if e.status == 404:
+            return CheckResult(
+                name="Endpoint Connectivity",
+                status=CheckStatus.FAIL,
+                message=f"Cluster service not found: {host}",
+                details=details,
+                hints=[
+                    f"Verify the service exists: kubectl get svc -A | grep {svc_name}"
+                ],
+            )
         return CheckResult(
             name="Endpoint Connectivity",
-            status=CheckStatus.FAIL,
-            message=f"Cluster service not found: {host}",
+            status=CheckStatus.WARN,
+            message=f"Could not verify cluster service {host}: HTTP {e.status}",
             details=details,
-            hints=[f"Verify the service exists: kubectl get svc -A | grep {svc_name}"],
+        )
+    except (TimeoutError, aiohttp.ClientError, OSError) as e:
+        return CheckResult(
+            name="Endpoint Connectivity",
+            status=CheckStatus.WARN,
+            message=f"Could not verify cluster service {host}: {e}",
+            details=details,
         )

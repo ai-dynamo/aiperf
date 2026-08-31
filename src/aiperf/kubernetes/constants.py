@@ -9,6 +9,7 @@ without circular deps.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -204,3 +205,18 @@ JOBSET_INSTALL_HINT = (
 # config-time validation below.
 MIN_CONTAINER_CPU_MCPU = 1
 MIN_CONTAINER_MEMORY_MIB = 1
+WORKER_IMPORT_MEMORY_FLOOR_MIB = 162
+"""Minimum worker-container memory needed for CPython, aiohttp, and ZMQ imports."""
+
+# RFC 1123 name shapes Kubernetes requires. Namespaces are DNS labels;
+# object metadata.name (AIPerfJob, AIPerfSweep, JobSet) is a DNS subdomain,
+# where each dot-separated label is non-empty and alphanumeric-bounded --
+# so no traversal segment, scheme, port, or credential can match. These live
+# here, in the dependency-free module, because both the operator's HTTP path
+# validators and the DNS-name builders in jobset.py must agree on them.
+DNS_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+DNS_LABEL_MAX = 63
+DNS_SUBDOMAIN_RE = re.compile(
+    r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+)
+DNS_SUBDOMAIN_MAX = 253

@@ -226,12 +226,12 @@ class TestWriteReadyMarker:
     def test_marker_contents_default(self, base_dir: Path) -> None:
         path = write_ready_marker(base_dir)
         data = orjson.loads(path.read_bytes())
-        assert data == {"ready": True, "was_cancelled": False}
+        assert data == {"ready": True, "was_cancelled": False, "partial": False}
 
     def test_marker_contents_cancelled(self, base_dir: Path) -> None:
         path = write_ready_marker(base_dir, was_cancelled=True)
         data = orjson.loads(path.read_bytes())
-        assert data == {"ready": True, "was_cancelled": True}
+        assert data == {"ready": True, "was_cancelled": True, "partial": False}
 
     def test_creates_base_dir_if_missing(self, tmp_path: Path) -> None:
         target = tmp_path / "does_not_exist"

@@ -393,6 +393,7 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> ReplyClientProtocol:
         """Create a REPLY client for the given address, which will be automatically
         started and stopped with the CommunicationProtocol instance."""

@@ -144,6 +144,7 @@ class _ServiceRegistry(AIPerfLoggerMixin):
                 self.expected_by_type[service_type] = (
                     self.expected_by_type.get(service_type, 0) + 1
                 )
+                self._total_expected += 1
                 info.service_type = service_type
             info.registration_status = ServiceRegistrationStatus.REGISTERED
             info.first_seen_ns = first_seen_ns
@@ -182,9 +183,11 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     def update_service(
         self,
         service_id: str,
+        *,
         service_type: ServiceTypeT,
         last_seen_ns: int,
         state: LifecycleState,
+        seq: int,
     ) -> None:
         """Update a service's last-seen timestamp and state.
 
@@ -192,22 +195,26 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         StatusUpdate and Heartbeat messages can arrive before Registration
         due to message ordering across ZMQ sockets.
 
-        A strictly older ``last_seen_ns`` is a genuinely out-of-order update and
-        is dropped whole. An *equal* one is not out-of-order, though: callers
-        stamp on receipt from the controller's own clock, so two messages
-        processed within one clock tick collide here -- and ``time.time_ns()``
-        has ~15.6ms granularity on Windows, easily coarser than a startup state
-        sequence. Treating that collision as stale would silently drop the newer
-        state, so equal timestamps still apply their state.
+        Ordering is decided by ``seq``, a per-service counter the SENDING
+        service increments and stamps on every Heartbeat/StatusUpdate --
+        never by wall-clock time. ``last_seen_ns`` is stamped by the
+        controller at receipt time and is therefore monotone by construction,
+        so comparing it can never catch real out-of-order delivery caused by
+        HWM backlog or reconnect-flush reordering: a message that was sent
+        earlier but delivered later still receives a *later* receipt stamp.
+        A ``seq`` that is not strictly greater than the last-applied one is
+        dropped whole; ``last_seen_ns`` is still recorded for staleness
+        detection (``get_stale_services``) on every accepted update.
         """
         if service_id not in self.services:
             return
 
         info = self.services[service_id]
-        if info.last_seen_ns is not None and info.last_seen_ns > last_seen_ns:
+        if info.last_seq is not None and seq <= info.last_seq:
             return
         info.state = state
         info.last_seen_ns = last_seen_ns
+        info.last_seq = seq
 
     def unregister(self, service_id: str) -> None:
         """Unregister a service."""

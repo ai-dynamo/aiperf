@@ -534,3 +534,223 @@ async def test_sweep_dry_run_invalid_config_exits_nonzero(tmp_path: Path) -> Non
         )
 
     assert excinfo.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# _merged_multirun_config — convergence merge and --max-runs precedence
+# ---------------------------------------------------------------------------
+
+
+def test_build_sweep_cr_dict_convergence_preserves_yaml_mode_and_stat(
+    tmp_path: Path,
+) -> None:
+    """CLI convergence flags merge into the YAML block instead of replacing it.
+
+    ``multiRun.convergence`` was previously assigned wholesale from the three
+    CLI-mapped keys, so a YAML ``mode``/``stat`` silently reverted to the
+    ConvergenceConfig defaults the moment ``--convergence-metric`` was passed --
+    a different stopping rule than the user wrote down.
+    """
+    config_file = tmp_path / "conv-merge.yaml"
+    config_file.write_text(
+        _yaml_with(
+            """\
+multiRun:
+  convergence:
+    mode: cv
+    stat: p99
+sweep:
+  type: grid
+  parameters: {phases.profiling.concurrency: [1, 2, 3]}
+"""
+        )
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options(),
+        **_kwargs(
+            convergence_metric="output_token_throughput",
+            convergence_min_runs=3,
+            convergence_max_runs=None,
+            convergence_threshold=0.05,
+        ),
+    )
+    convergence = cr["spec"]["multiRun"]["convergence"]
+    assert convergence["mode"] == "cv"
+    assert convergence["stat"] == "p99"
+    # The three CLI-mapped keys still win.
+    assert convergence["metric"] == "output_token_throughput"
+    assert convergence["minRuns"] == 3
+    assert convergence["threshold"] == 0.05
+
+
+def test_build_sweep_cr_dict_convergence_without_max_runs_keeps_trials(
+    tmp_path: Path,
+) -> None:
+    """``--trials N`` survives a convergence run when ``--max-runs`` is absent.
+
+    ``--max-runs`` used to default to a concrete 10 and overwrite numRuns
+    unconditionally, so ``--trials 8 --convergence-metric X`` silently ran 10.
+    """
+    config_file = tmp_path / "conv-trials.yaml"
+    config_file.write_text(
+        _yaml_with(
+            """\
+sweep:
+  type: grid
+  parameters: {phases.profiling.concurrency: [1, 2, 3]}
+"""
+        )
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options(),
+        **_kwargs(
+            multi_run_trials=8,
+            convergence_metric="output_token_throughput",
+            convergence_max_runs=None,
+        ),
+    )
+    assert cr["spec"]["multiRun"]["numRuns"] == 8
+
+
+def test_build_sweep_cr_dict_convergence_without_max_runs_keeps_yaml_num_runs(
+    tmp_path: Path,
+) -> None:
+    """A YAML ``multiRun.numRuns`` also survives when ``--max-runs`` is absent."""
+    config_file = tmp_path / "conv-yaml-runs.yaml"
+    config_file.write_text(
+        _yaml_with(
+            """\
+multiRun:
+  numRuns: 8
+sweep:
+  type: grid
+  parameters: {phases.profiling.concurrency: [1, 2, 3]}
+"""
+        )
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options(),
+        **_kwargs(
+            convergence_metric="output_token_throughput",
+            convergence_max_runs=None,
+        ),
+    )
+    assert cr["spec"]["multiRun"]["numRuns"] == 8
+
+
+def test_build_sweep_cr_dict_convergence_falls_back_to_default_cap(
+    tmp_path: Path,
+) -> None:
+    """With no --max-runs, no --trials, and no YAML numRuns, the 10 fallback applies."""
+    config_file = tmp_path / "conv-default.yaml"
+    config_file.write_text(
+        _yaml_with(
+            """\
+sweep:
+  type: grid
+  parameters: {phases.profiling.concurrency: [1, 2, 3]}
+"""
+        )
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options(),
+        **_kwargs(
+            convergence_metric="output_token_throughput",
+            convergence_max_runs=None,
+        ),
+    )
+    assert cr["spec"]["multiRun"]["numRuns"] == 10
+
+
+def test_build_sweep_cr_dict_explicit_max_runs_still_caps_yaml_num_runs(
+    tmp_path: Path,
+) -> None:
+    """An explicit --max-runs remains a hard cap, overriding a larger YAML numRuns."""
+    config_file = tmp_path / "conv-cap.yaml"
+    config_file.write_text(
+        _yaml_with(
+            """\
+multiRun:
+  numRuns: 8
+sweep:
+  type: grid
+  parameters: {phases.profiling.concurrency: [1, 2, 3]}
+"""
+        )
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        kube_options=_kube_options(),
+        **_kwargs(
+            convergence_metric="output_token_throughput",
+            convergence_max_runs=5,
+        ),
+    )
+    assert cr["spec"]["multiRun"]["numRuns"] == 5
+
+
+# ---------------------------------------------------------------------------
+# sweep() command — convergence_metric comes from cli_config, not a shadowed
+# local param (b903289182)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sweep_dry_run_propagates_convergence_metric_from_cli_config(
+    tmp_path: Path,
+) -> None:
+    """sweep() must pass cli_config.convergence_metric to _build_sweep_cr_dict.
+
+    Before b903289182, sweep() declared its own ``convergence_metric`` and
+    ``convergence_threshold`` parameters.  The CLIConfig binding wins when
+    cyclopts resolves the function, so those local params were always None,
+    and _merged_multirun_config's convergence branch was never entered.
+
+    After the fix, the params are removed and cli_config.convergence_metric is
+    read directly, so --convergence-metric propagates.
+    """
+    from unittest.mock import patch as mock_patch
+
+    from aiperf.cli_commands.kube import sweep as sweep_cmd
+    from aiperf.config.flags.cli_config import CLIConfig
+
+    config_file = tmp_path / "bench.yaml"
+    config_file.write_text(_yaml_with())
+
+    captured_kwargs: list[dict] = []
+
+    def _fake_build(**kwargs):
+        captured_kwargs.append(kwargs)
+        return {"metadata": {}, "spec": {}}
+
+    with (
+        mock_patch.object(sweep_cmd, "_build_sweep_cr_dict", side_effect=_fake_build),
+        mock_patch(
+            "aiperf.kubernetes.cli_helpers.resolve_benchmark_namespace",
+            return_value="ns-test",
+        ),
+        mock_patch("aiperf.kubernetes.console.emit_raw"),
+    ):
+        await sweep_cmd.sweep(
+            cli_config=CLIConfig(
+                config_file=config_file,
+                convergence_metric="ttft_p99",
+                convergence_threshold=0.03,
+            ),
+            kube_options=_kube_options(),
+            convergence_min_runs=1,
+            convergence_max_runs=5,
+            dry_run=True,
+        )
+
+    assert len(captured_kwargs) == 1, "_build_sweep_cr_dict must be called exactly once"
+    call_kwargs = captured_kwargs[0]
+    assert call_kwargs["convergence_metric"] == "ttft_p99", (
+        "convergence_metric was not forwarded from cli_config — "
+        "it may still be coming from a now-removed local parameter shadow"
+    )
+    assert call_kwargs["convergence_threshold"] == pytest.approx(0.03)

@@ -199,6 +199,16 @@ class RuntimeConfig(BaseConfig):
             raise ValueError("api_host requires api_port to be set")
         return self
 
+    @model_validator(mode="after")
+    def _validate_workers_min_le_workers(self) -> Self:
+        if (
+            self.workers is not None
+            and self.workers_min is not None
+            and self.workers_min > self.workers
+        ):
+            raise ValueError("workers_min must be <= workers")
+        return self
+
     def realtime_metrics_interval(self, ui_type: UIType) -> float:
         """Resolve the realtime stats tick interval for this config.
 

@@ -92,6 +92,17 @@ async def _mock_port_forward(port: int = 9999):
     yield port
 
 
+class _FakeResponseContent:
+    """Stream a test response body with aiohttp's chunk iterator shape."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def iter_chunked(self, chunk_size: int):
+        for start in range(0, len(self._body), chunk_size):
+            yield self._body[start : start + chunk_size]
+
+
 class FakeResponse:
     """Minimal fake aiohttp response for testing."""
 
@@ -104,6 +115,7 @@ class FakeResponse:
     ) -> None:
         self.status = status
         self._body = body
+        self.content = _FakeResponseContent(body)
         self.headers = headers or {}
         self._json_data = json_data
 
@@ -740,6 +752,50 @@ class TestRetrieveAllArtifacts:
         assert result is True
         assert (tmp_path / "renamed.json").exists()
         assert not (tmp_path / "file1").exists()
+
+    @pytest.mark.asyncio
+    async def test_partial_download_failure_returns_false(self, tmp_path: Path) -> None:
+        """One landed file must not be reported as a successful retrieval.
+
+        The listing advertises two artifacts and only one is delivered. Before
+        this was fixed the caller saw a non-empty downloaded list, printed
+        "Artifacts saved to: ..." and returned True, so ``aiperf kube results``
+        exited zero on a silently incomplete artifact directory.
+        """
+        api = _make_api()
+
+        list_resp = FakeResponse(
+            json_data={"files": [{"name": "a.json"}, {"name": "b.txt"}]}
+        )
+        base = "http://localhost:9999"
+        responses = {
+            f"{base}{API_RESULTS_LIST_PATH}": list_resp,
+            f"{base}{API_RESULTS_FILES_PATH}/a.json": FakeResponse(body=b'{"data": 1}'),
+            f"{base}{API_RESULTS_FILES_PATH}/b.txt": FakeResponse(status=404),
+        }
+        session = FakeSession(responses)
+
+        with (
+            _patch_find_retrievable_pod(
+                ("pod-0", PodPhase.RUNNING), module=_ARTIFACTS_MODULE
+            ),
+            patch(
+                "aiperf.kubernetes.results_artifacts.port_forward_with_status",
+                side_effect=lambda *a, **kw: _mock_port_forward(9999),
+            ),
+            patch("aiohttp.ClientSession", return_value=session),
+            patch(
+                "aiperf.transports.aiohttp_client.create_tcp_connector",
+                return_value=None,
+            ),
+        ):
+            result = await retrieve_all_artifacts(
+                "job-1", "ns", tmp_path, _make_jobset_info(), api, 0
+            )
+
+        assert result is False
+        # The file that did land is still kept on disk for the user.
+        assert (tmp_path / "a.json").exists()
 
     @pytest.mark.asyncio
     async def test_empty_file_list_returns_false(self, tmp_path: Path) -> None:

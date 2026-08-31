@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
-from aiperf.kubernetes.validate import validate_manifest
+from aiperf.kubernetes.validate import safe_error_text, validate_manifest
 
 logger = logging.getLogger("aiperf.operator.ui")
 
@@ -56,7 +56,9 @@ def create_validate_router() -> APIRouter:
             logger.exception("Manifest validation raised on POST /api/v1/validate")
             return ValidateResponse(
                 passed=False,
-                errors=[f"Validation aborted: {type(e).__name__}: {e}"],
+                errors=[
+                    f"Validation aborted: {type(e).__name__}: {safe_error_text(e)}"
+                ],
                 warnings=[],
             )
         return ValidateResponse(

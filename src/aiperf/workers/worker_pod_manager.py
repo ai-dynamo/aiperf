@@ -57,6 +57,7 @@ from aiperf.common.pod_lifecycle_structs import (
 from aiperf.common.protocols import StreamingRouterClientProtocol
 from aiperf.config import BenchmarkRun
 from aiperf.controller.proxy_manager import ProxyManager
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.plugin.enums import ServiceType
 from aiperf.workers import worker_pod_dataset_download as _dataset_dl
 from aiperf.workers.worker_group_state import (
@@ -144,7 +145,8 @@ class WorkerGroupManagerBase(BaseComponentService):
             self.record_processors_per_pod = cfg.runtime.record_processors_per_pod
         else:
             self.record_processors_per_pod = max(
-                1, self.workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
+                1,
+                self.workers_per_pod // K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR,
             )
 
     def _init_pod_state(self) -> None:

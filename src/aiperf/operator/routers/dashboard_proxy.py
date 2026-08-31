@@ -16,6 +16,7 @@ fails clearly instead of 404'ing.
 from __future__ import annotations
 
 import logging
+from urllib.parse import unquote
 
 import aiohttp
 from fastapi import APIRouter, Request
@@ -40,14 +41,32 @@ _FORWARD_RESPONSE_HEADER_DROP = frozenset(
 )
 
 
+def _decode_to_fixed_point(path: str) -> str:
+    """Percent-decode ``path`` until stable.
+
+    Starlette decodes the request path once before handing it to route handlers,
+    so a single-encoded ``%2e%2e`` arrives as ``..`` and the dot-segment guard
+    catches it. A double-encoded ``%252e%252e`` arrives as ``%2e%2e`` (one decode
+    happened), which the guard misses because ``%2e%2e != ".."``; but yarl (used
+    by aiohttp below) then decodes ``%2e%2e`` to ``..`` and normalizes the path,
+    escaping the ``/dashboard/`` prefix altogether.
+
+    Decoding to a fixed point before the guard closes this bypass.
+    """
+    while True:
+        decoded = unquote(path)
+        if decoded == path:
+            return path
+        path = decoded
+
+
 def _has_dot_segment(path: str) -> bool:
     """Return True if ``path`` contains a ``.`` or ``..`` segment.
 
-    Starlette hands us the percent-DECODED path, so ``%2e%2e`` arrives here as
-    ``..``. yarl normalizes dot segments away when building the upstream URL,
-    which would escape the ``/dashboard/`` prefix entirely and let a request
-    reach unauthenticated sidecar routes such as ``POST /admin/refresh``.
-    Reject rather than normalize: the dashboard has no legitimate dot segments.
+    The caller must first call :func:`_decode_to_fixed_point` so that any
+    remaining percent-encoded dots (`%2e`, `%252e`, etc.) are resolved before
+    the segment check runs.  See its docstring for the double-encoding bypass
+    that makes this necessary.
     """
     return any(segment in (".", "..") for segment in path.replace("\\", "/").split("/"))
 
@@ -111,6 +130,7 @@ def create_dashboard_proxy_router() -> APIRouter:
                 media_type="text/plain; charset=utf-8",
             )
 
+        path = _decode_to_fixed_point(path)
         if _has_dot_segment(path):
             return Response(
                 content=b"Invalid dashboard path.",

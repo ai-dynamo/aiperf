@@ -313,14 +313,22 @@ kueue:
   # of applying it out-of-band (matches the dev/kube.py `install-kueue`
   # manifest). Off by default so charts render cleanly on clusters without
   # Kueue CRDs; also gated on the kueue.x-k8s.io/v1beta1 API being present.
+  #
+  # WARNING: the LocalQueue this renders lands in the chart's release
+  # namespace, NOT in the namespaces your benchmarks run in. Kueue only admits
+  # a workload whose queue-name label resolves to a LocalQueue in the
+  # workload's OWN namespace, so a benchmark elsewhere sits in Queued forever
+  # with no error. Create one LocalQueue per benchmark namespace pointing at
+  # kueue.clusterQueueName. See docs/kubernetes/kueue.md.
   createQueues: false
   # kueue.flavorName is the ResourceFlavor name when createQueues=true.
   flavorName: "default-flavor"
   # kueue.clusterQueueName is the ClusterQueue name when createQueues=true.
   clusterQueueName: "aiperf-cluster-queue"
-  # kueue.localQueueName is the LocalQueue name created in the benchmark
+  # kueue.localQueueName is the LocalQueue name created in the chart's release
   # namespace when createQueues=true; also used as defaultQueueName when that
-  # value is left empty.
+  # value is left empty. Every benchmark namespace needs its own LocalQueue
+  # with this name.
   localQueueName: "aiperf-local-queue"
   # kueue.resources sets the ClusterQueue nominalQuota per covered resource.
   # Defaults are generous so benchmark jobs admit without tuning on dev

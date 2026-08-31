@@ -476,7 +476,6 @@ async def fetch_results_with_retry(
         job_id,
         str(body_uid) if body_uid is not None else None,
     )
-    progress_client = await get_or_create_progress_client(key)
     cancellation_event = get_cancellation_event(key)
 
     if dest_dir is None:
@@ -496,6 +495,16 @@ async def fetch_results_with_retry(
     key_files = key_export_names_from_body(body).names
 
     async def _fetch_once() -> ControllerFetchResult:
+        # Re-resolve the client on every attempt instead of capturing it once.
+        # The cache is bounded, so a long fetch loop can have its client
+        # evicted by another job's tick; the evicted ProgressClient drops its
+        # session and raises RuntimeError forever after. The retry loop
+        # tolerates that error but would otherwise keep reusing the same dead
+        # client until the stagnation limit failed a run whose results are
+        # actually available. Re-resolving both revives an evicted entry and
+        # marks this one most-recently-used, so an in-flight fetch is no
+        # longer the first candidate for eviction.
+        progress_client = await get_or_create_progress_client(key)
         return await _fetch_once_into_state(
             key=key,
             controller_host=controller_host,

@@ -491,7 +491,7 @@ class TestEndpointUrlValidation:
             param(OSError("network unreachable"), id="network-unreachable"),
         ],
     )  # fmt: skip
-    async def test_check_endpoint_connectivity_service_lookup_error_fails_with_hint(
+    async def test_check_endpoint_connectivity_service_lookup_error_warns(
         self, exc: Exception
     ) -> None:
         core = MagicMock()
@@ -504,8 +504,5 @@ class TestEndpointUrlValidation:
                 Mock(), endpoint_url="http://llm-service.inference.svc:8000/v1"
             )
 
-        assert result.status == CheckStatus.FAIL
+        assert result.status == CheckStatus.WARN
         assert "llm-service.inference.svc" in result.message
-        assert result.hints == [
-            "Verify the service exists: kubectl get svc -A | grep llm-service"
-        ]

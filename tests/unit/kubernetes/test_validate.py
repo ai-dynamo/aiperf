@@ -13,15 +13,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pydantic
 import pytest
 import yaml
 from pytest import param
 
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 from aiperf.kubernetes.validate import (
     K8S_NAME_MAX_LENGTH,
     KNOWN_SPEC_FIELDS,
     ValidationResult,
+    safe_error_text,
     validate_file,
     validate_k8s_name,
     validate_manifest,
@@ -664,6 +667,106 @@ class TestCredentialRedactionInValidationErrors:
         assert "<redacted>" in joined
         # Diagnostics preserved: the user still learns which field is wrong.
         assert loc in joined
+
+    def test_safe_error_text_scrubs_credential_siblings_of_a_missing_field(
+        self,
+    ) -> None:
+        """A ``missing`` error carries the *entire parent mapping* as its input.
+
+        The error ``loc`` then names an ordinary field, so the loc-based check
+        cannot see the sibling credential sitting in that same mapping -- and
+        the whole dict, apiKey included, was rendered verbatim into
+        ``input_value``. The value must be scrubbed out of the input structure
+        itself.
+        """
+
+        class _Endpoint(pydantic.BaseModel):
+            urls: list[str]
+            type: str
+
+        with pytest.raises(pydantic.ValidationError) as excinfo:
+            _Endpoint.model_validate(
+                {"urls": ["http://svc:8000"], "apiKey": "sk-SUPERSECRETKEY"}
+            )
+
+        text = safe_error_text(excinfo.value)
+
+        assert "sk-SUPERSECRETKEY" not in text, f"credential leaked: {text}"
+        assert REDACTED_VALUE in text
+        # The error stays actionable: the user still learns which field is missing.
+        assert "type" in text
+        assert "Field required" in text
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            param("apiKey", id="api-key"),
+            param("api_key", id="snake-case"),
+            param("API-KEY", id="upper-hyphenated"),
+            param("headers", id="headers"),
+            param("extraHeaders", id="extra-headers"),
+            param("authorization", id="authorization"),
+            param("password", id="password"),
+            param("token", id="token"),
+            param("bearerToken", id="bearer-token"),
+            param("credentials", id="credentials"),
+        ],
+    )  # fmt: skip
+    def test_safe_error_text_scrubs_every_credential_key_spelling(
+        self, key: str
+    ) -> None:
+        """Key matching normalizes case and ``-``/``_`` so no spelling slips through."""
+
+        class _Endpoint(pydantic.BaseModel):
+            urls: list[str]
+            type: str
+
+        with pytest.raises(pydantic.ValidationError) as excinfo:
+            _Endpoint.model_validate({"urls": ["http://svc:8000"], key: "SUPERSECRET"})
+
+        text = safe_error_text(excinfo.value)
+        assert "SUPERSECRET" not in text, f"credential leaked via {key!r}: {text}"
+
+    def test_safe_error_text_scrubs_credentials_nested_below_the_error_loc(
+        self,
+    ) -> None:
+        """Scrubbing recurses through nested dicts and lists, not just the top level."""
+
+        class _Spec(pydantic.BaseModel):
+            name: str
+
+        with pytest.raises(pydantic.ValidationError) as excinfo:
+            _Spec.model_validate(
+                {
+                    "endpoints": [
+                        {"url": "http://a", "apiKey": "SUPERSECRETONE"},
+                        {"nested": {"headers": ["Bearer SUPERSECRETTWO"]}},
+                    ]
+                }
+            )
+
+        text = safe_error_text(excinfo.value)
+        assert "SUPERSECRETONE" not in text, f"credential leaked: {text}"
+        assert "SUPERSECRETTWO" not in text, f"credential leaked: {text}"
+
+    def test_safe_error_text_keeps_ordinary_sibling_values_of_a_missing_field(
+        self,
+    ) -> None:
+        """Scrubbing is scoped to credential-named keys; ordinary config siblings
+        keep their values so the user can see what they typed."""
+
+        class _Endpoint(pydantic.BaseModel):
+            urls: list[str]
+            type: str
+
+        with pytest.raises(pydantic.ValidationError) as excinfo:
+            _Endpoint.model_validate(
+                {"urls": ["http://svc:8000"], "outputTokensMean": 128}
+            )
+
+        text = safe_error_text(excinfo.value)
+        assert "outputTokensMean" in text
+        assert "128" in text
 
     def test_non_credential_input_values_are_preserved(self) -> None:
         """Redaction is scoped to credential fields; an ordinary bad value keeps

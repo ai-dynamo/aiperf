@@ -4,6 +4,21 @@
 
 from cyclopts import App
 
+from aiperf.common.event_loop import configure_event_loop_policy_for_platform
+
+# Must run before any subcommand's asyncio.run()/uvloop.run() call ever
+# constructs an event loop -- setting the policy later has no effect on a
+# loop that already exists. This is the single top-level entrypoint for the
+# `aiperf` console script (see pyproject.toml [project.scripts]) and
+# `python -m aiperf`, so every subcommand routed through `app` below
+# (including nested calls like `aiperf profile`'s preflight/multi-run/
+# single-run paths) is covered by this one call. See
+# aiperf.common.event_loop for the full rationale and the other process
+# entrypoints (aiperf.sweep_controller.main,
+# aiperf.orchestrator.subprocess_runner) that must call it independently
+# because they are launched via `python -m`, never through this module.
+configure_event_loop_policy_for_platform()
+
 
 def _get_help_text() -> str:
     """Generate help text with installed plugin information."""

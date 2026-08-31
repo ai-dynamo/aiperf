@@ -86,14 +86,35 @@ class TestWorkersEndpoint:
             if w["status"] in (WorkerStatus.HEALTHY, WorkerStatus.HIGH_LOAD)
         )
         assert active == expected_active
+        # "workers" is the stable flat contract: verify it stays in sync with
+        # the group topology rather than only exercising "worker_groups".
+        assert set(data["workers"].keys()) == set(children.keys())
+        for worker_id, worker in children.items():
+            assert data["workers"][worker_id]["status"] == worker.status
 
     def test_multiple_groups_render_separately(
         self, workers_client: TestClient, workers_router: WorkersRouter
     ) -> None:
         workers_router._worker_tracker._groups = {
-            "wgm-0": WorkerGroupStats(group_id="wgm-0", status=WorkerStatus.HEALTHY),
-            "wgm-1": WorkerGroupStats(group_id="wgm-1", status=WorkerStatus.HIGH_LOAD),
+            "wgm-0": WorkerGroupStats(
+                group_id="wgm-0",
+                status=WorkerStatus.HEALTHY,
+                workers={
+                    "w-0": WorkerStats(worker_id="w-0", status=WorkerStatus.HEALTHY)
+                },
+            ),
+            "wgm-1": WorkerGroupStats(
+                group_id="wgm-1",
+                status=WorkerStatus.HIGH_LOAD,
+                workers={
+                    "w-1": WorkerStats(worker_id="w-1", status=WorkerStatus.HIGH_LOAD)
+                },
+            ),
         }
         data = workers_client.get("/api/workers").json()
         assert set(data["worker_groups"].keys()) == {"wgm-0", "wgm-1"}
         assert data["worker_groups"]["wgm-1"]["status"] == WorkerStatus.HIGH_LOAD
+        # "workers" must flatten across every group, not just the last one.
+        assert set(data["workers"].keys()) == {"w-0", "w-1"}
+        assert data["workers"]["w-0"]["status"] == WorkerStatus.HEALTHY
+        assert data["workers"]["w-1"]["status"] == WorkerStatus.HIGH_LOAD

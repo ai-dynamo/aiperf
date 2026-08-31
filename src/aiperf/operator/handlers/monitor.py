@@ -1099,6 +1099,33 @@ async def _maybe_recover_exported_results_from_sidecar(
     dest_dir = run_dir(OperatorEnvironment.RESULTS.DIR, namespace, job_id, epoch)
     try:
         async with ProgressClient(port=K8sEnvironment.PORTS.RESULTS_SIDECAR) as sidecar:
+            # The listing is read-only, so completion evidence can be gathered
+            # before anything is written. Claim on that evidence and only then
+            # download: dest_dir is shared with every other completion path, so
+            # a losing racer must never stream a result set into it. After an
+            # operator restart the in-process _shutdown_sent set is empty even
+            # when a durable claim annotation already exists on the CR.
+            available = await sidecar.get_results_list(host) or []
+            exported = {
+                str(entry.get("name"))
+                for entry in available
+                if isinstance(entry, dict) and entry.get("name")
+            }
+            if not (key_export_names_from_body(body).names & exported):
+                return False
+
+            if is_cancellation_requested(key):
+                logger.debug(
+                    "Cancellation requested for %s/%s during sidecar export "
+                    "recovery; skipping completion side effects",
+                    namespace,
+                    name,
+                )
+                return True
+
+            if not await try_claim_completion(namespace, name, body):
+                return False
+
             downloaded = await sidecar.download_all_results(host, dest_dir)
     except (TimeoutError, aiohttp.ClientError, OSError) as e:
         logger.debug(
@@ -1112,21 +1139,6 @@ async def _maybe_recover_exported_results_from_sidecar(
         return False
 
     final_files, checkpoint_files = _split_downloaded_results(downloaded)
-    if not (key_export_names_from_body(body).names & set(final_files)):
-        return False
-
-    if is_cancellation_requested(key):
-        logger.debug(
-            "Cancellation requested for %s/%s during sidecar export recovery; "
-            "skipping completion side effects",
-            namespace,
-            name,
-        )
-        return True
-
-    if not await try_claim_completion(namespace, name, body):
-        return False
-
     await handle_completion(
         body,
         namespace,
@@ -2332,14 +2344,11 @@ async def monitor_progress(
                 key=key,
                 sb=sb,
             )
-        # If _monitor_tick wrote a terminal phase via any completion or salvage
-        # path, the fence RV is now stale: try_claim_completion already bumped it
-        # when it wrote the completion-claimed annotation.  Leaving a stale RV
-        # causes kopf's MERGE PATCH to 409-conflict and silently drop the phase
-        # transition.  Clear it unconditionally when a phase was written; the
-        # completion-claimed annotation + UID fence carry the stale-write safety.
-        if sb.get_phase() is not None:
-            clear_patch_fence(sb)
+        # The tick's API work can make the resource-version fence stale even when
+        # no terminal status is written. A stale fence makes kopf's merge patch
+        # 409-conflict and permanently stops the timer, so only the explicit
+        # JSON-patch paths retain optimistic-concurrency preconditions.
+        clear_patch_fence(sb)
         # observedGeneration is a success-path-only stamp: a tick that
         # terminally FAILED/CANCELLED the job must not signal spec acceptance.
         # sb.get_phase() returns the phase the failure helpers just wrote (None
@@ -2357,8 +2366,19 @@ async def monitor_progress(
                 sb.set_observed_generation(int(generation))
     except StaleAIPerfJobCallback as e:
         logger.info("Skipping stale monitor callback: %s", e)
+        # Same rationale as the transient-error branch below: the fence RV
+        # stamped by fence_status_patch (plus any partial _monitor_tick writes)
+        # must not reach patch_and_check, or a 409 escapes kopf's _timer and
+        # permanently stops this handler.
+        patch.clear()
         return
     except kopf.TemporaryError:
+        # A TemporaryError is a normal retry signal (recovery paths raise it by
+        # design), but kopf still applies the accumulated patch.  The fence RV
+        # is stale by then, so the merge patch 409s, APIConflictError escapes
+        # _timer, and the monitor timer is added to memory.forever_stopped --
+        # killing the watchdog, timeout enforcement and orphan recovery.
+        patch.clear()
         raise
     except (ApiException, aiohttp.ClientError, ConnectionError, TimeoutError) as e:
         logger.warning(f"Transient error monitoring {namespace}/{name}: {e}")

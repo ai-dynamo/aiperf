@@ -543,3 +543,103 @@ async def test_main_marks_cancelled_when_cancel_requested(
         assert "aggregated_results" not in calls
     if initial_cancel:
         assert calls["cr_reads"] == 1
+
+
+@pytest.mark.asyncio
+async def test_main_marks_sweep_failed_when_child_execution_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A child-execution exception must terminally fail the parent sweep."""
+    import contextlib
+    import importlib
+
+    monkeypatch.setenv("AIPERF_SWEEP_NAME", "s")
+    monkeypatch.setenv("AIPERF_SWEEP_NAMESPACE", "ns")
+    monkeypatch.setenv("AIPERF_SWEEP_EPOCH", "1714069323")
+    main_mod = importlib.import_module("aiperf.sweep_controller.main")
+    monkeypatch.setattr(main_mod, "RESULTS_DIR", tmp_path)
+
+    @contextlib.asynccontextmanager
+    async def _fake_k8s_client():
+        yield MagicMock()
+
+    monkeypatch.setattr("aiperf.kubernetes.client.k8s_client", _fake_k8s_client)
+    sweep_cr = {
+        "metadata": {"name": "s", "namespace": "ns", "uid": "uid"},
+        "spec": {
+            "image": "x:latest",
+            "sweep": {
+                "type": "grid",
+                "parameters": {"phases.profiling.concurrency": [1]},
+            },
+            "benchmark": {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 1,
+                        "concurrency": 1,
+                    }
+                ],
+            },
+            "multiRun": {"numRuns": 1},
+        },
+    }
+    custom = MagicMock()
+    custom.get_namespaced_custom_object = AsyncMock(return_value=sweep_cr)
+    monkeypatch.setattr(
+        "kubernetes_asyncio.client.CustomObjectsApi", lambda _api: custom
+    )
+
+    plan = MagicMock()
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.plan_builder.build_plan_from_sweep", lambda _cr: plan
+    )
+    monkeypatch.setattr(
+        "aiperf.orchestrator.search_planner.build_search_planner", lambda _plan: None
+    )
+
+    captured: dict[str, object] = {}
+
+    class _StatusWriter:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def parent_running(self) -> None:
+            pass
+
+        async def aggregation_failed(self, **kwargs: object) -> None:
+            captured["error"] = kwargs["error"]
+
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.status_writer.SweepStatusWriter", _StatusWriter
+    )
+
+    class _Executor:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.K8sChildJobExecutor", _Executor
+    )
+    monkeypatch.setattr(
+        "aiperf.sweep_controller.k8s_executor.needs_trial_suffix",
+        lambda **kwargs: False,
+    )
+
+    class _Orchestrator:
+        def __init__(self, base_dir: object) -> None:
+            pass
+
+        async def execute(self, *args: object, **kwargs: object) -> list[object]:
+            raise RuntimeError("child execution failed")
+
+    monkeypatch.setattr(
+        "aiperf.orchestrator.orchestrator.MultiRunOrchestrator", _Orchestrator
+    )
+
+    assert await main_mod.main() == 1
+    assert captured["error"] == "child execution failed"

@@ -636,7 +636,12 @@ def _materialize_sweep_child_lineage(
                 f"child entry has no name in sweep manifest: {children_path}"
             )
         child_namespace = child.get("namespace") or namespace
-        variation_index = int(child["variation_index"])
+        variation_value = child.get("variation_index")
+        if variation_value is None:
+            raise ValueError(
+                f"child entry has no variation_index in sweep manifest: {children_path}"
+            )
+        variation_index = int(variation_value)
         trial_value = child.get("trial_index")
         trial_index = int(trial_value) if trial_value is not None else None
         write_child_sweep_marker(
@@ -819,7 +824,8 @@ async def _recover_pre_sentinel_sweep_archive(
 ) -> None:
     """Finalize an archive written before harvest sentinels were introduced."""
     try:
-        _finalize_sweep_archive(
+        await asyncio.to_thread(
+            _finalize_sweep_archive,
             base_dir=base_dir,
             namespace=namespace,
             name=name,
@@ -830,7 +836,8 @@ async def _recover_pre_sentinel_sweep_archive(
                 "resultsAvailable": True,
             },
         )
-        _write_sweep_harvest_sentinel(
+        await asyncio.to_thread(
+            _write_sweep_harvest_sentinel,
             aggregate_marker,
             downloaded=0,
             listed=0,
@@ -1097,7 +1104,8 @@ async def on_aiperfsweep_aggregation_complete(
     # sentinel. A failure retains the JobSet so the next reconcile can retry
     # while the controller's emptyDir still exists.
     try:
-        _finalize_sweep_archive(
+        await asyncio.to_thread(
+            _finalize_sweep_archive,
             base_dir=base_dir,
             namespace=namespace,
             name=name,
@@ -1108,8 +1116,11 @@ async def on_aiperfsweep_aggregation_complete(
                 "resultsAvailable": True,
             },
         )
-        _write_sweep_harvest_sentinel(
-            aggregate_marker, downloaded=fetched.downloaded, listed=fetched.listed
+        await asyncio.to_thread(
+            _write_sweep_harvest_sentinel,
+            aggregate_marker,
+            downloaded=fetched.downloaded,
+            listed=fetched.listed,
         )
     except (OSError, orjson.JSONDecodeError, TypeError, ValueError) as exc:
         raise kopf.TemporaryError(
@@ -1466,6 +1477,8 @@ async def claim_watched_namespaces(**_: Any) -> None:
     """
     global _CLAIMS
     _CLAIMS = NamespaceClaim()
+    from kubernetes_asyncio.client import ApiException
+
     namespaces = watched_namespaces_from_argv(sys.argv)
     if _CLAIMS.identity and not namespaces:
         raise kopf.PermanentError(
@@ -1477,6 +1490,14 @@ async def claim_watched_namespaces(**_: Any) -> None:
         await _CLAIMS.start(namespaces)
     except NamespaceClaimConflict as exc:
         raise kopf.PermanentError(str(exc)) from exc
+    except ApiException as exc:
+        # An apiserver error at startup is transient by default (RBAC not yet
+        # propagated, apiserver restarting). A bare raise would let kopf retry
+        # forever with the operator reporting Running while watching nothing;
+        # a TemporaryError retries with a visible reason.
+        raise kopf.TemporaryError(
+            f"Could not claim watch namespaces: {exc}", delay=30
+        ) from exc
     if _CLAIMS.identity:
         logger.info(
             "Operator %r claimed namespaces %s",

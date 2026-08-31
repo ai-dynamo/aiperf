@@ -35,26 +35,21 @@ class TestCompletedRequestCountMetric:
         value = CompletedRequestCountMetric().derive_value(results)
         assert value == 50
 
-    def test_completed_count_missing_request_count_raises(self):
-        """RequestCountMetric is required — derive raises when absent."""
+    def test_completed_count_derives_from_error_only_run(self):
+        """All-error runs have no RequestCountMetric to contribute."""
         results = MetricResultsDict()
         results[ErrorRequestCountMetric.tag] = 5
+        assert CompletedRequestCountMetric().derive_value(results) == 5
+
+    def test_completed_count_missing_both_counts_raises(self):
         with pytest.raises(NoMetricValue):
-            CompletedRequestCountMetric().derive_value(results)
+            CompletedRequestCountMetric().derive_value(MetricResultsDict())
 
     def test_completed_count_dependencies_declared(self):
-        """Both dependencies order the metric; only one is a precondition.
-
-        ErrorRequestCountMetric is ERROR_ONLY, so on a clean run its tag never
-        enters the results dict. Declaring it *required* made _check_metrics
-        raise NoMetricValue before _derive_value ran, dropping this metric
-        from every export of every zero-error benchmark.
-        """
-        assert CompletedRequestCountMetric.required_metrics == frozenset(
-            {RequestCountMetric.tag}
-        )
+        """Either counter can be absent but both retain dependency ordering."""
+        assert CompletedRequestCountMetric.required_metrics is None
         assert CompletedRequestCountMetric.optional_metrics == frozenset(
-            {ErrorRequestCountMetric.tag}
+            {RequestCountMetric.tag, ErrorRequestCountMetric.tag}
         )
 
     def test_completed_count_derives_on_a_zero_error_run(self):

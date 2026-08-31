@@ -73,7 +73,10 @@ def _prepare_direct_deploy(
     Returns ``(config, deploy_config, num_pods)`` where ``config`` is a
     re-validated :class:`AIPerfConfig` with K8s-specific fields applied.
     """
-    from aiperf.cli_commands.kube._kube_common import resolve_total_workers
+    from aiperf.cli_commands.kube._kube_common import (
+        pin_default_direct_image,
+        resolve_total_workers,
+    )
     from aiperf.config import AIPerfConfig
     from aiperf.kubernetes.environment import K8sEnvironment
     from aiperf.kubernetes.spec_converter import (
@@ -99,6 +102,7 @@ def _prepare_direct_deploy(
         from aiperf.kubernetes.spec_converter import extract_deployment_config
 
         deploy_config = extract_deployment_config(deployment_spec)
+    pin_default_direct_image(deploy_config)
     from aiperf.common.endpoint_credentials import (
         validate_kubernetes_credential_transport,
     )
@@ -171,9 +175,6 @@ async def _apply_all_manifests(
                     default_namespace=effective_ns,
                 )
             except ApiException as exc:
-                if exc.status == 409 and kind == "Namespace":
-                    kube_console.print_info(f"{kind}/{res_name} already exists")
-                    continue
                 if exc.status == 409:
                     resource_namespace = (
                         manifest["metadata"].get("namespace") or effective_ns

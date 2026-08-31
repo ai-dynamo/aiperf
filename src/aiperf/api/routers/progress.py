@@ -819,7 +819,8 @@ async def _write_status_patch(
     }
     observed_phase = existing_status.get("phase")
 
-    if not isinstance(observed_phase, str) or not observed_phase:
+    has_observed_phase = isinstance(observed_phase, str) and bool(observed_phase)
+    if not has_observed_phase and "serverMetrics" not in status_patch:
         await custom_api.patch_namespaced_custom_object_status(
             **ref,
             body={"status": status_patch},
@@ -827,7 +828,7 @@ async def _write_status_patch(
         )
         return
 
-    if as_phase(observed_phase).is_terminal:
+    if has_observed_phase and as_phase(observed_phase).is_terminal:
         logger.debug(
             "Skipping status push for %s/%s: CR is already terminal (%s)",
             namespace,
@@ -836,9 +837,11 @@ async def _write_status_patch(
         )
         return
 
-    patch_ops: list[dict[str, Any]] = [
-        {"op": "test", "path": "/status/phase", "value": observed_phase}
-    ]
+    patch_ops: list[dict[str, Any]] = []
+    if has_observed_phase:
+        patch_ops.append(
+            {"op": "test", "path": "/status/phase", "value": observed_phase}
+        )
     patch_ops.extend(
         {
             "op": "add",

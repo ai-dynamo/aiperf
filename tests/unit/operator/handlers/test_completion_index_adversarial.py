@@ -761,6 +761,70 @@ class TestCompletionIndexSweepMetadata:
 
 
 # =============================================================================
+# Failed runs that still published results
+# =============================================================================
+
+
+class TestCompletionIndexFailedRunMetrics:
+    """A failed run with published results must still be indexed with them."""
+
+    @pytest.mark.asyncio
+    async def test_update_job_index_safe_failed_phase_indexes_metrics_before_error(
+        self,
+    ) -> None:
+        """upsert_run_failed writes only phase/error/end_time, so a Failed run
+        seeded with it alone loses its summary blob, narrow metric columns, and
+        file inventory -- and set_latest then promotes that metric-less row."""
+        patch = _patch_obj()
+        sb = _status_builder(patch)
+        calls: list[str] = []
+
+        async def _completed(*_a: Any, **kwargs: Any) -> None:
+            calls.append("completed")
+            assert kwargs["metrics"] == {"request_throughput": {"avg": 12.5}}
+            assert kwargs["files"] == ["profile_export_aiperf.json"]
+            assert kwargs["summary_blob"] == b"summary"
+            assert kwargs["phase"] == "Failed"
+
+        async def _failed(*_a: Any, **kwargs: Any) -> None:
+            calls.append("failed")
+            assert kwargs["error"] == "benchmark reported 42 request errors"
+
+        with (
+            mock_patch.object(
+                completion.runs_index, "upsert_run_completed", new=_completed
+            ),
+            mock_patch.object(completion.runs_index, "upsert_run_failed", new=_failed),
+            mock_patch.object(
+                completion.runs_index, "set_latest", new_callable=AsyncMock
+            ) as set_latest,
+            mock_patch.object(completion, "_key_files_materialized", return_value=True),
+            mock_patch.object(
+                completion, "resolve_latest", return_value=_FIXTURE_EPOCH
+            ),
+        ):
+            updated = await completion._update_job_index_safe(
+                namespace=_FIXTURE_NAMESPACE,
+                job_id=_FIXTURE_JOB_ID,
+                epoch=_FIXTURE_EPOCH,
+                body=_body_with_claim(),
+                sb=sb,
+                phase="Failed",
+                summary_blob=b"summary",
+                metrics={"request_throughput": {"avg": 12.5}},
+                downloaded_files=["profile_export_aiperf.json"],
+                error="benchmark reported 42 request errors",
+                mtime_epoch=0,
+                end_time=None,
+                total_size_bytes=1,
+            )
+
+        assert updated is True
+        assert calls == ["completed", "failed"]
+        set_latest.assert_awaited_once()
+
+
+# =============================================================================
 # Exactly-once claim boundaries
 # =============================================================================
 

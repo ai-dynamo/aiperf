@@ -9,6 +9,7 @@ and made available to test functions in the same directory and subdirectories.
 
 import asyncio
 import os
+import time
 import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -58,6 +59,69 @@ DEFAULT_INPUT_TOKENS = 5
 DEFAULT_OUTPUT_TOKENS = 2
 
 _REAL_SLEEP = asyncio.sleep
+
+# Pristine stdlib clock functions, captured at import time before any test can
+# patch them. Used by the leaked-clock-patch guard below.
+_PRISTINE_CLOCK: dict[str, object] = {
+    name: getattr(time, name)
+    for name in (
+        "time",
+        "time_ns",
+        "monotonic",
+        "monotonic_ns",
+        "perf_counter",
+        "perf_counter_ns",
+    )
+}
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Fail the test that leaks a patch of a stdlib ``time.*`` clock function.
+
+    A leaked global clock patch is close to undebuggable without this guard:
+    ``asyncio.BaseEventLoop.time()`` calls ``time.monotonic()``, so once that
+    slot is left pointing at a stale fake, every event loop created afterwards
+    runs on a frozen clock, its timers never fire, and some unrelated test far
+    down the run hangs in ``epoll.poll()`` with nothing naming the culprit.
+
+    That is not hypothetical. ``TimeTraveler.start_traveling`` patches the
+    stdlib slots globally, so a *fixture* that also patches the same slot --
+    e.g. ``monkeypatch.setattr(some_module.time, "monotonic", ...)``, which
+    reaches the stdlib module rather than a module-local binding -- unwinds
+    against TimeTraveler's independent save/restore stack out of order:
+    ``monkeypatch`` is created early (as a dependency of the autouse
+    ``no_sleep``) so it undoes *after* TimeTraveler has already restored the
+    real function, re-installing a dead TimeTraveler bound method for the rest
+    of the process.
+
+    Patch a module-local binding instead: have the source do
+    ``from time import monotonic`` and patch ``some_module.monotonic``.
+
+    This is a teardown hookwrapper rather than an autouse fixture on purpose --
+    it must observe the slot after *all* fixture finalization, including
+    ``monkeypatch``, and no fixture can reliably order itself outside a builtin
+    that other autouse fixtures depend on.
+
+    The guard restores the pristine functions as well as failing, so one
+    offending test cannot cascade into the rest of the run.
+    """
+    result = yield
+    leaked = {
+        name: getattr(time, name)
+        for name, real in _PRISTINE_CLOCK.items()
+        if getattr(time, name) is not real
+    }
+    if leaked:
+        for name, real in _PRISTINE_CLOCK.items():
+            setattr(time, name, real)
+        raise RuntimeError(
+            f"{item.nodeid} leaked a patch of stdlib time functions: "
+            + ", ".join(f"time.{n} is {v!r}" for n, v in leaked.items())
+            + ". Patch a module-local binding (from time import monotonic ->"
+            " patch <module>.monotonic) instead of the stdlib time module."
+        )
+    return result
 
 
 @pytest.fixture(scope="session", autouse=True)

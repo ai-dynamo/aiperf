@@ -301,6 +301,57 @@ def _loc_is_credential(loc: tuple[Any, ...]) -> bool:
     )
 
 
+# Mapping keys whose *values* are credentials, normalized by lowercasing and
+# dropping ``-``/``_``. Matched whole rather than as substrings so ordinary
+# config fields (``outputTokensMean``, ``tokenizer``, ``sessionConcurrency``)
+# keep reporting their real values.
+_CREDENTIAL_INPUT_KEYS: frozenset[str] = frozenset(
+    {
+        "apikey",
+        "headers",
+        "extraheaders",
+        "url",
+        "urls",
+        "authorization",
+        "proxyauthorization",
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "accesstoken",
+        "authtoken",
+        "bearertoken",
+        "credential",
+        "credentials",
+    }
+)
+
+
+def _scrub_sensitive_from_input(obj: Any) -> Any:
+    """Recursively replace credential-named mapping values with ``<redacted>``.
+
+    A pydantic ``missing``/``extra_forbidden`` error carries the *entire parent
+    mapping* as its ``input``, so a non-credential ``loc`` such as
+    ``benchmark.datasets`` still embeds the sibling ``endpoint.apiKey`` verbatim.
+    ``_loc_is_credential`` inspects only the ``loc`` and cannot see that, so the
+    value must be scrubbed out of the input structure itself before rendering.
+    """
+    if isinstance(obj, dict):
+        return {
+            key: (
+                REDACTED_VALUE
+                if isinstance(key, str)
+                and key.lower().replace("-", "").replace("_", "")
+                in _CREDENTIAL_INPUT_KEYS
+                else _scrub_sensitive_from_input(value)
+            )
+            for key, value in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return [_scrub_sensitive_from_input(item) for item in obj]
+    return obj
+
+
 def safe_error_text(exc: Exception) -> str:
     """Render ``exc`` for a ValidationResult without echoing credential values.
 
@@ -320,7 +371,9 @@ def safe_error_text(exc: Exception) -> str:
         if _loc_is_credential(err["loc"]):
             shown = REDACTED_VALUE
         else:
-            shown = redact_url(redact_string(repr(err.get("input"))))
+            shown = redact_url(
+                redact_string(repr(_scrub_sensitive_from_input(err.get("input"))))
+            )
         lines.append(loc)
         lines.append(
             f"  {err['msg']} [type={err['type']}, input_value={shown}, "
@@ -415,7 +468,7 @@ def validate_worker_count(
         TypeError,
         KeyError,
     ) as e:
-        result.errors.append(f"Worker calculation failed: {e}")
+        result.errors.append(f"Worker calculation failed: {safe_error_text(e)}")
 
 
 def validate_kind_sweep_cardinality(

@@ -50,6 +50,7 @@ from aiperf.kubernetes.constants import Annotations
 from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
 from aiperf.kubernetes.phase import Phase
 from aiperf.operator.client_cache import _reset_for_testing, request_cancellation
+from aiperf.operator.handlers._job_identity import StaleAIPerfJobCallback
 from aiperf.operator.handlers.monitor import (
     _check_job_timeout,
     _claim_trust_window_sec,
@@ -956,6 +957,131 @@ class TestMonitorProgressTopLevel:
         )
 
     @pytest.mark.asyncio
+    async def test_stale_callback_patch_cleared_when_fence_wrote_resource_version(
+        self,
+    ) -> None:
+        """The StaleAIPerfJobCallback early return must drop the fenced patch.
+
+        fence_status_patch() stamps metadata.resourceVersion before the tick.
+        A delayed callback for a replaced parent then returns normally, so kopf
+        still issues a merge patch carrying an already-stale resourceVersion.
+        The apiserver answers 409; kopf's patching client handles 404/422 but
+        not 409, so APIConflictError escapes _timer and the handler lands in
+        memory.forever_stopped -- permanently killing the monitor timer for this
+        job, and with it the watchdog, timeout enforcement and orphan recovery.
+        """
+        from kopf._cogs.structs.patches import Patch as _Patch
+
+        real_patch = _Patch()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value="rv-42"),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._monitor_tick",
+                new=AsyncMock(side_effect=StaleAIPerfJobCallback("replacement parent")),
+            ),
+        ):
+            # The stale branch returns normally -- it is not an error path.
+            await monitor_progress(
+                body={"metadata": {"name": "job", "uid": "abc-123"}},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "js",
+                    "jobId": "job-1",
+                },
+                spec={},
+                name="job",
+                namespace="ns",
+                patch=real_patch,
+            )
+
+        assert not bool(real_patch), (
+            f"patch must be empty after a stale callback, got {real_patch!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stale_callback_calls_patch_clear(self) -> None:
+        """The stale early return calls patch.clear(), matching its siblings."""
+        kopf_patch = MagicMock()
+        kopf_patch.status = {}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._monitor_tick",
+                new=AsyncMock(side_effect=StaleAIPerfJobCallback("replacement parent")),
+            ),
+        ):
+            await monitor_progress(
+                body=_FIXTURE_BODY,
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "js",
+                    "jobId": "job-1",
+                },
+                spec={},
+                name="job",
+                namespace="ns",
+                patch=kopf_patch,
+            )
+
+        kopf_patch.clear.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_temporary_error_raised_by_the_tick_clears_the_fenced_patch(
+        self,
+    ) -> None:
+        """A TemporaryError raised *by* the tick (the recovery paths raise it by
+        design) must also drop the fence, not just one converted from ApiException."""
+        from kopf._cogs.structs.patches import Patch as _Patch
+
+        real_patch = _Patch()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value="rv-42"),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._monitor_tick",
+                new=AsyncMock(
+                    side_effect=kopf.TemporaryError("orphan recovery", delay=5)
+                ),
+            ),
+            pytest.raises(kopf.TemporaryError),
+        ):
+            await monitor_progress(
+                body={"metadata": {"name": "job", "uid": "abc-123"}},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "js",
+                    "jobId": "job-1",
+                },
+                spec={},
+                name="job",
+                namespace="ns",
+                patch=real_patch,
+            )
+
+        assert not bool(real_patch), (
+            f"patch must be empty after TemporaryError, got {real_patch!r}"
+        )
+
+    @pytest.mark.asyncio
     async def test_unexpected_exception_propagates_for_kopf_retry(self) -> None:
         """Non-transient exceptions must propagate so kopf retries the tick.
 
@@ -1052,6 +1178,44 @@ class TestMonitorProgressTopLevel:
             f"terminal phase; got patch={patch_dict!r}"
         )
         assert patch_dict.get("status", {}).get("phase") == str(Phase.FAILED)
+
+    @pytest.mark.asyncio
+    async def test_fence_rv_cleared_after_non_terminal_successful_tick(
+        self,
+    ) -> None:
+        """A successful non-terminal tick must not return a stale merge-patch fence."""
+        from kopf._cogs.structs.patches import Patch as _Patch
+
+        real_patch = _Patch()
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.monitor.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value="rv-stale"),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor.k8s_client",
+                return_value=_fake_k8s_client(MagicMock()),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.monitor._monitor_tick",
+                new=AsyncMock(),
+            ),
+        ):
+            await monitor_progress(
+                body={"metadata": {"name": "job", "uid": "abc-123"}},
+                status={
+                    "phase": Phase.RUNNING,
+                    "jobSetName": "js",
+                    "jobId": "job-1",
+                },
+                spec={},
+                name="job",
+                namespace="ns",
+                patch=real_patch,
+            )
+
+        assert "resourceVersion" not in (dict(real_patch).get("metadata") or {})
 
     @pytest.mark.asyncio
     async def test_bootstrap_first_observation_pending_phase_runs_tick(

@@ -396,6 +396,41 @@ class TestDashboardProxyUrlAndMounting:
         assert response.status_code == 400
         assert captured.url is None
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            param("/dashboard/%252e%252e/admin/refresh", id="double-encoded-dotdot"),
+            param("/dashboard/%252E%252E/admin/refresh", id="double-encoded-upper"),
+            param("/dashboard/%25252e%25252e/admin/refresh", id="triple-encoded-dotdot"),
+            param("/dashboard/%252e/admin/refresh", id="double-encoded-single-dot"),
+        ],
+    )  # fmt: skip
+    def test_proxy_rejects_multiply_encoded_dot_segments(
+        self, monkeypatch: pytest.MonkeyPatch, path: str
+    ) -> None:
+        """[F4] Multiply-encoded dot segments must 400, same as single-encoded ones.
+
+        Starlette percent-decodes the request path exactly once before the route
+        handler sees it, so ``%252e%252e`` arrives as the literal ``%2e%2e``.
+        The pre-fix guard compared segments against ``".."`` directly, so that
+        literal slipped through -- and yarl then decoded it a second time while
+        building the upstream URL, normalizing the ``..`` away and escaping the
+        ``/dashboard/`` prefix onto unauthenticated sidecar routes such as
+        ``POST /admin/refresh``. Decoding to a fixed point before the check
+        closes the bypass at any encoding depth.
+        """
+        app = _make_dashboard_proxy_app(monkeypatch)
+        captured = _install_fake_upstream(
+            monkeypatch,
+            response=_FakeUpstreamResponse(chunks=[b"proxied-dashboard-path"]),
+        )
+
+        with TestClient(app) as client:
+            response = client.get(path)
+
+        assert response.status_code == 400
+        assert captured.url is None
+
     def test_proxy_allows_dots_inside_a_segment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

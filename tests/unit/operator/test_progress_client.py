@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for aiperf.operator.progress_client module."""
 
+import contextlib
 import gzip
 from pathlib import Path
 from typing import Any
@@ -1857,3 +1858,83 @@ class TestDownloadAllResults:
             # Only the successful download should be in the list
             assert "good.json" in downloaded
             assert "bad.json" not in downloaded
+
+
+class TestDownloadAllResultsNestedPaths:
+    """`collect_result_files()` emits nested names by design, so the traversal
+    guard must reject only absolute paths and dot segments -- not every name
+    containing a separator."""
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _stubbed(available: list[dict[str, Any]]):
+        """Stub discovery and per-file download so only the path gate is exercised.
+
+        ProgressClient defines __slots__, so the patches must target the class.
+        """
+        download = AsyncMock(return_value=True)
+        with (
+            patch.object(
+                ProgressClient,
+                "get_results_list",
+                new=AsyncMock(return_value=available),
+            ),
+            patch.object(ProgressClient, "download_result_file", new=download),
+        ):
+            yield ProgressClient(), download
+
+    @pytest.mark.asyncio
+    async def test_download_all_results_keeps_nested_relative_filenames(
+        self, tmp_path: Path
+    ) -> None:
+        """A nested name must be downloaded, not skipped as unsafe.
+
+        The guard previously rejected any name containing a separator, so every
+        file under a subdirectory was silently dropped from the harvest.
+        """
+        dest_dir = tmp_path / "results"
+        available = [
+            {"name": "checkpoints/run0.parquet", "size": 1},
+            {"name": "metrics.json", "size": 2},
+        ]
+        with self._stubbed(available) as (client, _download):
+            downloaded = await client.download_all_results("controller.host", dest_dir)
+
+        assert sorted(downloaded) == ["checkpoints/run0.parquet", "metrics.json"]
+
+    @pytest.mark.asyncio
+    async def test_download_all_results_nested_name_preserves_directory_layout(
+        self, tmp_path: Path
+    ) -> None:
+        """The server-side relative path is rebuilt beneath dest_dir."""
+        dest_dir = tmp_path / "results"
+        available = [{"name": "checkpoints/nested/run0.parquet", "size": 1}]
+        with self._stubbed(available) as (client, download):
+            await client.download_all_results("controller.host", dest_dir)
+
+        dest_path = download.await_args.args[-1]
+        assert dest_path == dest_dir / "checkpoints" / "nested" / "run0.parquet"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            param("/etc/passwd", id="absolute"),
+            param("../escape.json", id="parent-dot-segment"),
+            param("checkpoints/../../escape.json", id="embedded-parent-segment"),
+            param("./metrics.json", id="current-dir-segment"),
+            param("..\\escape.json", id="windows-parent-segment"),
+            param("", id="empty"),
+            param("/", id="root-only"),
+        ],
+    )  # fmt: skip
+    async def test_download_all_results_skips_unsafe_filenames(
+        self, tmp_path: Path, filename: str
+    ) -> None:
+        """Absolute paths and dot segments stay rejected."""
+        dest_dir = tmp_path / "results"
+        with self._stubbed([{"name": filename, "size": 1}]) as (client, download):
+            downloaded = await client.download_all_results("controller.host", dest_dir)
+
+        assert downloaded == []
+        download.assert_not_awaited()

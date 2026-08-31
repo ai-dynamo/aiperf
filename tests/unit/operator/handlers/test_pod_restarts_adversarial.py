@@ -620,3 +620,99 @@ class TestPodRestartDedupAndEventShape:
         lookup.assert_not_awaited()
         event.assert_not_called()
         assert _warned_pod_restarts == {}
+
+
+# =============================================================================
+# Dedup-state cardinality bounds
+# =============================================================================
+
+
+_REAL_KEY = "bench-prod/aiperf-bench-7f2a@job-aiperf-bench-7f2a"
+
+
+async def _drive_one_restart(name: str = "llama3-controller-0") -> MagicMock:
+    """Run one above-threshold restart event through the handler."""
+    meta = _pod_meta()
+    event = MagicMock()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            pod_restarts,
+            "_lookup_aiperfjob_body",
+            AsyncMock(return_value=_aiperfjob_body()),
+        )
+        monkeypatch.setattr(pod_restarts.events, "pod_restarts", event)
+        await pod_restarts.handle_pod_restart(
+            old=[],
+            new=[_container_status(restart_count=7)],
+            body=_pod_body(meta=meta),
+            meta=meta,
+            namespace="bench-prod",
+            name=name,
+            threshold=3,
+        )
+    return event
+
+
+class TestWarnedRestartsAreBounded:
+    """[F28] ``_warned_pod_restarts`` must not grow without bound.
+
+    The dict is process-global and only ever grew: the per-job set gained an
+    entry for every distinct (pod, restart-count) pair, and the outer dict kept
+    a key per job whenever the ``client_cache`` cleanup pop was skipped (sweep
+    -owned JobSets, operator restarts mid-run). A long-lived operator watching
+    crash-looping jobs therefore leaked memory until it was OOM-killed --
+    taking every in-flight benchmark with it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_oversized_per_job_set_is_cleared_before_the_next_claim(
+        self,
+    ) -> None:
+        """The per-job set is reset once it passes its cap."""
+        _warned_pod_restarts[_REAL_KEY] = {(f"pod-{i}", i) for i in range(5001)}
+
+        event = await _drive_one_restart()
+
+        # Cleared, then re-seeded with only the pair this event claimed.
+        assert _warned_pod_restarts[_REAL_KEY] == {("llama3-controller-0", 7)}
+        # Clearing costs at most a one-time duplicate warning, never silence.
+        event.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_under_cap_per_job_set_is_preserved(self) -> None:
+        """Below the cap nothing is discarded: dedup history must survive."""
+        existing = {(f"pod-{i}", i) for i in range(10)}
+        _warned_pod_restarts[_REAL_KEY] = set(existing)
+
+        await _drive_one_restart()
+
+        assert existing <= _warned_pod_restarts[_REAL_KEY]
+        assert ("llama3-controller-0", 7) in _warned_pod_restarts[_REAL_KEY]
+
+    @pytest.mark.asyncio
+    async def test_oversized_outer_dict_is_trimmed_oldest_first(self) -> None:
+        """Stale job keys are evicted in insertion order, never the live one."""
+        for i in range(2001):
+            _warned_pod_restarts[f"stale-ns/stale-job-{i}"] = {("pod", 1)}
+
+        await _drive_one_restart()
+
+        # 2001 stale + 1 live = 2002, trimmed back down to the 2000 cap.
+        assert len(_warned_pod_restarts) == 2000
+        # The job this event belongs to is the newest key and must survive.
+        assert _REAL_KEY in _warned_pod_restarts
+        # The two oldest stale keys went first.
+        assert "stale-ns/stale-job-0" not in _warned_pod_restarts
+        assert "stale-ns/stale-job-1" not in _warned_pod_restarts
+        assert "stale-ns/stale-job-2" in _warned_pod_restarts
+
+    @pytest.mark.asyncio
+    async def test_under_cap_outer_dict_is_untouched(self) -> None:
+        """Below the cap every job's dedup state is retained."""
+        for i in range(5):
+            _warned_pod_restarts[f"stale-ns/stale-job-{i}"] = {("pod", 1)}
+
+        await _drive_one_restart()
+
+        assert len(_warned_pod_restarts) == 6
+        assert "stale-ns/stale-job-0" in _warned_pod_restarts

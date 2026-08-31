@@ -67,7 +67,7 @@ CLI commands defined in `src/aiperf/cli_commands/kube/`:
 
 ## 2. Deployment Generation
 
-The deployment logic in `src/aiperf/cli_commands/kube/profile.py` auto-detects whether the AIPerfJob CRD is installed. If the operator is present, `deploy_via_operator()` (in `profile_deploy.py`) submits an `AIPerfJob` custom resource and the operator reconciles it; otherwise `deploy_direct()` (in `profile_deploy_direct.py`) creates the manifests (ConfigMap, Role, RoleBinding, JobSet) directly. `--operator` forces operator mode without the cluster-scoped CRD probe; `--no-operator` forces direct mode. The operator path creates the default CLI-owned namespace when no namespace flag is supplied, but treats an explicit `--namespace` as pre-provisioned and performs only namespaced custom-resource operations.
+The deployment logic in `src/aiperf/cli_commands/kube/profile.py` auto-detects whether the AIPerfJob CRD is installed. If the operator is present, `deploy_via_operator()` (in `profile_deploy.py`) submits an `AIPerfJob` custom resource and the operator reconciles it; otherwise `deploy_direct()` (in `profile_deploy_direct.py`) creates the manifests (ConfigMap, Role, RoleBinding, JobSet) directly. `--operator` forces operator mode without the cluster-scoped CRD probe; `--no-operator` forces direct mode. Both paths require the target namespace to exist — neither creates one. Pass `--namespace` explicitly or set a default in your kubeconfig context.
 
 ```mermaid
 flowchart TD

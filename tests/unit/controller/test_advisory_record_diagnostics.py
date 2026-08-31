@@ -151,6 +151,50 @@ async def test_fatal_result_errors_withhold_the_export_announcement(
     assert [e.operation for e in controller._exit_errors] == ["process_records"]
 
 
+def _explicitly_non_fatal_message() -> ProcessRecordsResultMessage:
+    """The GPU-telemetry drain timeout: producer marked it explicitly non-fatal."""
+    return ProcessRecordsResultMessage.model_construct(
+        service_id="records_manager",
+        results=ProcessRecordsResult.model_construct(
+            results=None,
+            errors=[
+                ErrorDetails(
+                    type="TimeoutError",
+                    message="GPU telemetry drain did not complete",
+                    details={ERROR_FATAL_DETAIL_KEY: False},
+                )
+            ],
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_kubernetes_explicitly_non_fatal_errors_do_not_set_exit_errors(
+    benchmark_run: BenchmarkRun,
+) -> None:
+    """Under K8s the operator reads the exit code to mark the CR.
+
+    An error the producer explicitly marked non-fatal (the GPU-telemetry drain
+    timeout) must not push a complete, correctly-exported run to exit 1 and be
+    stamped Failed. Errors that say nothing about fatality still report.
+    """
+    controller = _build_controller(benchmark_run, ServiceRunType.KUBERNETES)
+    controller._exit_errors = []
+    controller._export_failed = False
+    controller._merge_server_metric_phase_results = MagicMock()
+    controller._result_join_coordinator = MagicMock()
+    controller._check_and_trigger_shutdown = AsyncMock()
+    controller.error = MagicMock()
+
+    await controller._on_process_records_result_message(_explicitly_non_fatal_message())
+
+    assert controller._exit_errors == []
+    assert controller._export_failed is False
+    assert any(
+        "GPU telemetry drain" in str(call) for call in controller.error.call_args_list
+    )
+
+
 @pytest.mark.asyncio
 async def test_advisory_errors_leave_the_export_announcement_alone(
     benchmark_run: BenchmarkRun,

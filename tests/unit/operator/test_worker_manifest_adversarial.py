@@ -329,7 +329,7 @@ class TestWorkerManifestResourcesAndLatency:
         monkeypatch.setattr(
             K8sEnvironment,
             "WORKER_POD",
-            ResourceSettings(CPU="1000m", MEMORY="1000Mi"),
+            ResourceSettings(CPU="1000m", MEMORY="1200Mi"),
         )
         spec = _benchmark_with(
             podTemplate={

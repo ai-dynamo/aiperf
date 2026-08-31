@@ -93,6 +93,8 @@ class RaggedSeries:
             return np.zeros(0, dtype=np.float64)
         values_data = self._values.data[:n_items]  # cap to consistent length
         n_mask = len(record_mask)
+        if n_mask == 0:
+            return np.zeros(0, dtype=np.float64)
         in_bounds = rec_idx < n_mask
         # Use 0 as a safe placeholder for out-of-bounds indices so the array
         # lookup is always valid; AND with in_bounds to exclude those entries.

@@ -15,6 +15,7 @@ from pydantic import Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import AIPerfError
+from aiperf.common.redact import redact_url
 from aiperf.config.base import BaseConfig
 
 if TYPE_CHECKING:
@@ -178,7 +179,7 @@ def build_user_file_context(
         "job_name": run_meta.job_name,
         "namespace": run_meta.namespace,
         "model": models[0] if models else "",
-        "endpoint_url": endpoint_urls[0] if endpoint_urls else "",
+        "endpoint_url": redact_url(endpoint_urls[0]) if endpoint_urls else "",
         "artifact_dir": str(run_dir),
     }
     for name in injected:

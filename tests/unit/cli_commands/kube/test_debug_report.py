@@ -257,6 +257,40 @@ class TestPrintProblems:
             assert any("raise mem" in m for m in info_messages)
             assert any("killed" in m for m in info_messages)
 
+    def test_problem_header_escapes_markup_in_pod_name(self) -> None:
+        """[F22] Pod names reach a Rich console and must be markup-escaped.
+
+        The header interpolates the pod name into ``f"[{pod_name}] ..."``. A
+        name containing brackets made Rich read the result as markup: a
+        recognized-looking span was silently swallowed (the operator lost the
+        pod's identity from the report) and an unbalanced one raised
+        MarkupError, aborting the whole debug command.
+        """
+        from rich.markup import escape
+
+        pod_name = "aiperf-[bold]-worker-0"
+        infos = [
+            _pod_info(
+                name=pod_name,
+                problems=[_problem(severity="CRITICAL", state="OOMKilled")],
+            )
+        ]
+
+        with (
+            patch("aiperf.kubernetes.console.print_error") as mock_error,
+            patch("aiperf.kubernetes.console.print_warning"),
+            patch("aiperf.kubernetes.console.print_info"),
+            patch("aiperf.kubernetes.console.print_header"),
+            patch("aiperf.kubernetes.console.print_success"),
+        ):
+            _print_problems(infos)
+
+        error_text = mock_error.call_args.args[0]
+        assert f"[{escape(pod_name)}]" in error_text
+        # The literal name survives escaping; Rich renders it verbatim.
+        assert "bold" in error_text
+        assert error_text.startswith("[aiperf-\\[bold]-worker-0]")
+
     def test_warning_problem_uses_print_warning(self) -> None:
         infos = [
             _pod_info(
@@ -478,6 +512,32 @@ class TestPrintPodLogs:
             assert "--- pod-a/main ---" in separators
             assert "--- pod-a/side ---" in separators
             assert "--- pod-b/main ---" in separators
+
+    def test_log_text_is_markup_escaped_and_soft_wrapped(self) -> None:
+        """[F22] Log bodies are arbitrary text and must never be parsed as markup.
+
+        The pre-fix call was ``console.print(f"[dim]{log_text}[/dim]")``, which
+        made Rich interpret whatever the container happened to log. A traceback
+        containing ``[/dim]`` or a bracketed token silently lost that span, and
+        an unbalanced tag raised MarkupError out of the debug command entirely.
+        """
+        from rich.markup import escape
+
+        log_text = "ERROR [notatag] boom [/dim] trailing"
+        with (
+            patch("aiperf.kubernetes.console.print_header"),
+            patch("aiperf.kubernetes.console.console") as mock_console,
+            patch("aiperf.kubernetes.console.print_info"),
+        ):
+            _print_pod_logs({"pod-a": {"main": log_text}})
+
+        printed = mock_console.print.call_args.args[0]
+        assert printed == escape(log_text)
+        # The whole body survives; pre-fix "[notatag]" was swallowed by Rich.
+        assert "[notatag]" in printed
+        assert "[/dim]" in printed
+        assert not printed.startswith("[dim]")
+        assert mock_console.print.call_args.kwargs["soft_wrap"] is True
 
 
 # ============================================================

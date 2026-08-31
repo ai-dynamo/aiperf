@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # WS close codes (RFC 6455). 4xxx range is application-defined private use.
 _CLOSE_NO_API = 4503
 _CLOSE_NO_JOBSET = 4404
+_CLOSE_BAD_JOBSET = 4422
 _CLOSE_UPSTREAM_FAILED = 4502
 _CLOSE_NORMAL = 1000
 
@@ -113,6 +114,11 @@ async def _resolve_controller_ws_url(
     Returns None when the CR has no ``status.jobSetName`` yet (operator
     hasn't created the JobSet), in which case the caller should refuse the
     WebSocket with :data:`_CLOSE_NO_JOBSET`.
+
+    Raises:
+        ValueError: ``status.jobSetName`` is not a valid Kubernetes object
+            name, so it cannot be trusted to build an upstream URL. The
+            caller refuses the WebSocket with :data:`_CLOSE_BAD_JOBSET`.
     """
     status = await get_raw_aiperfjob_status(api, name, namespace)
     jobset_name = (status or {}).get("jobSetName")
@@ -201,7 +207,16 @@ def create_jobs_ws_router(
             )
             return
 
-        ws_url = await _resolve_controller_ws_url(api, namespace, name)
+        try:
+            ws_url = await _resolve_controller_ws_url(api, namespace, name)
+        except ValueError as e:
+            logger.warning(f"Refusing WS proxy for {namespace}/{name}: {e}")
+            await _close_ws(
+                websocket,
+                code=_CLOSE_BAD_JOBSET,
+                reason=f"Job {namespace}/{name} has an invalid JobSet reference",
+            )
+            return
         if ws_url is None:
             await _close_ws(
                 websocket,

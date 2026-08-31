@@ -192,13 +192,13 @@ def _record_from_archive(
     agg_path = sweep_dir / _AGGREGATE_FILE
     if not agg_path.is_file():
         return None
+    try:
+        mtime = datetime.fromtimestamp(agg_path.stat().st_mtime, tz=UTC)
+    except OSError:
+        mtime = None
     doc = _read_aggregate_doc(agg_path)
     if doc is None:
         # Surface as Unknown so corrupt sweeps still appear and operators see them.
-        try:
-            mtime = datetime.fromtimestamp(agg_path.stat().st_mtime, tz=UTC)
-        except OSError:
-            mtime = None
         return SweepRecord(
             namespace=namespace,
             name=name,

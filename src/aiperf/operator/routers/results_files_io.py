@@ -722,4 +722,9 @@ def _serve_job_file(
         if stored_path is None:
             raise HTTPException(404, f"File not found: {filename}")
         return _serve_sanitized_job_spec(request, stored_path)
-    return _serve_artifact_file(request, job_dir, filename)
+    return _serve_artifact_file(
+        request,
+        job_dir,
+        filename,
+        allowed_relative_dirs=(CHECKPOINTS_DIR_NAME,),
+    )

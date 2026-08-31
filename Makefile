@@ -26,6 +26,7 @@
 		kubernetes-chaos-tests-ci test-kubernetes-chaos-ci \
 		kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
+		ui-e2e-tests test-ui-e2e \
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
@@ -34,7 +35,8 @@
 		helm-lint helm-template helm-package \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
-		check-agent-files-sync
+		check-agent-files-sync \
+		check-vendor-ui-deps update-vendor-ui-deps
 
 
 # Include user-defined environment variables
@@ -122,13 +124,13 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest-xdist.
-	$(activate_venv) && pytest tests/unit -n auto --dist=worksteal -m 'not integration and not performance and not component_integration and not slow' $(args)
+	$(activate_venv) && pytest tests/unit tests/ui -n auto --dist=worksteal -m 'not integration and not performance and not component_integration and not slow' $(args)
 
 test-zmq: #? run the real-socket zmq transport tests (real libzmq, no looptime).
 	$(activate_venv) && pytest tests/zmq --no-looptime $(args)
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
-	$(activate_venv) && pytest tests/unit -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance and not component_integration and not slow'
+	$(activate_venv) && pytest tests/unit tests/ui -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance and not component_integration and not slow'
 
 test-imports: #? verify all modules (src and tests) can be imported.
 	$(activate_venv) && pytest tests/unit/test_imports.py -q $(args)
@@ -155,7 +157,7 @@ check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instruct
 	$(activate_venv) && python tools/check_agent_files_sync.py
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest tests/unit -n auto --dist=worksteal --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
+	$(activate_venv) && pytest tests/unit tests/ui -n auto --dist=worksteal --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
 
 install: install-app install-mock-server install-mock-amdsmi #? install the project, mock server, and fake amdsmi bindings in editable mode.
 
@@ -266,7 +268,7 @@ test-ci: #? run the tests using pytest-xdist for CI.
 	@printf "$(bold)$(blue)Running unit and component integration tests (CI mode)...$(reset)\n"
 	@# Run unit tests first, optionally with coverage
 	@printf "$(bold)$(blue)Running unit tests...$(reset)\n"
-	@$(activate_venv) && pytest tests/unit -n auto --dist=worksteal \
+	@$(activate_venv) && pytest tests/unit tests/ui -n auto --dist=worksteal \
 	  $$([ "$(COV)" = "1" ] && echo "--cov=src/aiperf --cov-branch --cov-report=" || true) \
 	  -m 'not performance and not stress and not slow' --tb=short $(args) || exit_code=$$?; \
 	# Run real-socket zmq transport tests (real time + real sockets, no looptime) regardless of unit result \
@@ -321,6 +323,11 @@ integration-tests-slow test-integration-slow: #? run only the slow-marked integr
 	@printf "$(bold)$(blue)Running slow integration tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and slow and not performance and not ffmpeg and not stress' -n auto -v --tb=long --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server slow integration tests passed!$(reset)\n"
+
+ui-e2e-tests test-ui-e2e: #? run browser-based UI e2e tests (requires playwright chromium; opt-in, deselected by default).
+	@printf "$(bold)$(blue)Running UI browser e2e tests...$(reset)\n"
+	$(activate_venv) && pytest tests/ui_e2e/ -m ui_e2e -n 0 -v --tb=long $(args)
+	@printf "$(bold)$(green)UI browser e2e tests passed!$(reset)\n"
 
 kubernetes-tests-ci test-kubernetes-ci: #? run the serial Kubernetes PR gate on an isolated Kind cluster.
 	$(activate_venv) && pytest tests/kubernetes/ \
@@ -410,13 +417,19 @@ generate-all-plugin-files: #? generate all plugin files (enums, overloads, schem
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py
 
 generate-crd: #? generate Kubernetes CRD YAML from the AIPerfJob/AIPerfSweep spec models.
-	$(activate_venv) && python -m tools.generate_crd $(args)
+	uv run python -m tools.generate_crd $(args)
 
 check-crd: #? check if the generated CRD YAML is up-to-date.
-	$(activate_venv) && python -m tools.generate_crd --check $(args)
+	uv run python -m tools.generate_crd --check $(args)
 
 check-chart-consistency: #? assert operator code-side defaults match the Helm chart's values.yaml.
-	$(activate_venv) && python tools/check_chart_consistency.py
+	uv run python tools/check_chart_consistency.py
+
+check-vendor-ui-deps: #? verify vendored dashboard JS/CSS assets match tools/vendor_ui_deps.py's MANIFEST.
+	uv run python tools/vendor_ui_deps.py --check
+
+update-vendor-ui-deps: #? re-fetch and re-pin every vendored dashboard JS/CSS asset.
+	uv run python tools/vendor_ui_deps.py --update
 
 HELM_DIST_DIR ?= dist
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -361,6 +362,27 @@ async def _list_jobs_impl(api: ApiClient, results_dir: Path) -> ActiveJobListRes
     return ActiveJobListResponse(jobs=[j.model_dump(by_alias=True) for j in jobs])
 
 
+def _read_archived_job_status(
+    run_path: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
+    """Read persisted summary and conditions for an archived job."""
+    summary_file = _summary_path(run_path)
+    summary = (_read_summary(summary_file) or {}) if summary_file else {}
+    conditions: list[dict[str, Any]] | None = None
+    conditions_path = run_path / "conditions.json"
+    if conditions_path.is_file():
+        try:
+            raw = orjson.loads(conditions_path.read_bytes())
+        except (OSError, orjson.JSONDecodeError) as e:
+            logger.warning(f"Failed to read archived conditions {conditions_path}: {e}")
+        else:
+            if isinstance(raw, list):
+                conditions = raw
+            elif isinstance(raw, dict) and isinstance(raw.get("conditions"), list):
+                conditions = raw["conditions"]
+    return summary, conditions
+
+
 async def _get_job_impl(
     api: ApiClient,
     results_dir: Path,
@@ -414,22 +436,9 @@ async def _get_job_impl(
         # in the codebase (results_db.py:76, runs_index.py:907) — without it
         # archived-job detail pages on a deployment with the default
         # AIPERF_RESULTS_COMPRESS_ON_DISK=true silently render empty Final KPIs.
-        summary_file = _summary_path(run_path)
-        summary = (_read_summary(summary_file) or {}) if summary_file else {}
-        conditions: list[dict[str, Any]] | None = None
-        conditions_path = run_path / "conditions.json"
-        if conditions_path.is_file():
-            try:
-                raw = orjson.loads(conditions_path.read_bytes())
-            except (OSError, orjson.JSONDecodeError) as e:
-                logger.warning(
-                    f"Failed to read archived conditions {conditions_path}: {e}"
-                )
-            else:
-                if isinstance(raw, list):
-                    conditions = raw
-                elif isinstance(raw, dict) and isinstance(raw.get("conditions"), list):
-                    conditions = raw["conditions"]
+        summary, conditions = await asyncio.to_thread(
+            _read_archived_job_status, run_path
+        )
         return JobDetailResponse(
             job=job.model_dump(by_alias=True),
             status=synthesize_status_from_summary(

@@ -3,15 +3,21 @@
 
 """Tests for the WebSocket router and WebSocketManager."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import WebSocketDisconnect
 from pytest import param
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketState
 
 from aiperf.api.api_service import FastAPIService
-from aiperf.api.routers.websocket import WebSocketManager, WebSocketRouter
+from aiperf.api.routers.websocket import (
+    WebSocketManager,
+    WebSocketRouter,
+    websocket_endpoint,
+)
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.messages import HeartbeatMessage, RealtimeMetricsMessage
@@ -494,3 +500,70 @@ class TestWebSocketEndpointExceptionHandler:
 
         ws_router.exception.assert_called_once()
         assert "boom" in ws_router.exception.call_args[0][0]
+
+
+def make_racing_mock_websocket(
+    release_event: asyncio.Event, ready_counter: list[int]
+) -> AsyncMock:
+    """Mock WebSocket whose accept() yields control, mimicking a real network accept,
+    and whose receive_text() blocks so the connection stays "live" until released.
+    Increments ready_counter[0] once it reaches the (blocked) receive_text call so
+    the test can deterministically wait for every task to become "live"."""
+    ws = AsyncMock()
+    ws.client = MagicMock(host="127.0.0.1")
+
+    async def accept() -> None:
+        await asyncio.sleep(0)
+
+    async def receive_text() -> str:
+        ready_counter[0] += 1
+        await release_event.wait()
+        raise WebSocketDisconnect()
+
+    ws.accept = accept
+    ws.receive_text = receive_text
+    return ws
+
+
+class TestWebSocketMaxConnectionsRace:
+    """Test that concurrent connection attempts never exceed max_connections."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_connects_never_exceed_max_connections(self) -> None:
+        """N concurrent websocket_endpoint calls near the cap must never let the
+        manager's client_count exceed max_connections, even though each call's
+        capacity check and its client registration are separated by an
+        `await websocket.accept()`."""
+        manager = WebSocketManager(max_connections=2)
+        component = MagicMock()
+        component.ws_manager = manager
+        component.info = MagicMock()
+        component.exception = MagicMock()
+
+        num_clients = 5
+        release_event = asyncio.Event()
+        ready_counter = [0]
+        sockets = [
+            make_racing_mock_websocket(release_event, ready_counter)
+            for _ in range(num_clients)
+        ]
+        tasks = [
+            asyncio.create_task(websocket_endpoint(ws, component)) for ws in sockets
+        ]
+
+        # Deterministically wait for every task to either reach the (blocked)
+        # receive loop or be rejected outright, instead of a fixed sleep --
+        # ready_counter only counts tasks that got past accept().
+        for _ in range(1000):
+            if ready_counter[0] + sum(t.done() for t in tasks) >= num_clients:
+                break
+            await asyncio.sleep(0)
+        peak_client_count = manager.client_count
+
+        release_event.set()
+        await asyncio.gather(*tasks)
+
+        assert peak_client_count <= manager.max_connections, (
+            f"client_count peaked at {peak_client_count} while connections were "
+            f"live, exceeding max_connections={manager.max_connections}"
+        )

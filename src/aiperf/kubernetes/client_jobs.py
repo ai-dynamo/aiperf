@@ -41,7 +41,7 @@ async def list_aiperf_jobs(
     Args:
         api: Open ``ApiClient`` from :func:`k8s_client`. Callers own its lifecycle.
         namespace: Namespace to list in. Ignored when ``all_namespaces=True``.
-            ``None`` resolves to ``"default"``.
+            Required (non-``None``) otherwise.
         all_namespaces: If ``True``, lists across the cluster instead of a
             single namespace. Requires cluster-wide list permission on
             ``aiperfjobs.aiperf.nvidia.com``.
@@ -54,6 +54,7 @@ async def list_aiperf_jobs(
         suppressed so fresh clusters look empty, not broken).
 
     Raises:
+        ValueError: If ``all_namespaces`` is ``False`` and ``namespace`` is ``None``.
         kubernetes_asyncio.client.exceptions.ApiException: On any non-404 API
             failure (403 forbidden, 500, transport error, etc.).
 
@@ -71,12 +72,18 @@ async def list_aiperf_jobs(
                 plural=AIPERF_JOB_PLURAL,
             )
         else:
-            ns = namespace or "default"
+            if namespace is None:
+                raise ValueError(
+                    "list_aiperf_jobs requires an explicit namespace when "
+                    "all_namespaces=False; resolve one with "
+                    "aiperf.kubernetes.cli_helpers.resolve_benchmark_namespace "
+                    "rather than assuming 'default'."
+                )
             result = await custom.list_namespaced_custom_object(
                 group=AIPERF_JOB_GROUP,
                 version=AIPERF_JOB_VERSION,
                 plural=AIPERF_JOB_PLURAL,
-                namespace=ns,
+                namespace=namespace,
             )
     except ApiException as e:
         if e.status == 404:

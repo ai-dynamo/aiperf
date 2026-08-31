@@ -214,7 +214,11 @@ async def handle(
     base_url = OperatorEnvironment.SERVICE.BASE_URL.rstrip("/")
     patch.status["apiUrl"] = f"{base_url}/api/v1/sweeps/{namespace}/{name}"
 
-    await _provision_rbac(name=name, namespace=namespace, sweep_uid=sweep_uid)
+    try:
+        await _provision_rbac(name=name, namespace=namespace, sweep_uid=sweep_uid)
+    except kopf.PermanentError as e:
+        _record_permanent_rejection(body, patch, e)
+        raise
     try:
         await _create_sweep_controller_jobset(
             name=name,

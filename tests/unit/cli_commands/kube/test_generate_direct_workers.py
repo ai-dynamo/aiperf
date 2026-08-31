@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytest import param
 
+from aiperf.cli_commands.kube import generate as generate_cmd
 from aiperf.cli_commands.kube.generate import (
     _dump_raw_manifests,
     _reject_orchestrated_direct_workload,
@@ -80,6 +81,83 @@ def test_dump_raw_manifests_resolves_direct_worker_count(
         )
 
     apply_workers.assert_called_once_with(resolved_config, expected_workers)
+
+
+def test_generate_memory_estimate_delegates_to_shared_helper() -> None:
+    config = MagicMock()
+    phase = MagicMock()
+    phase.concurrency = 1
+    config.benchmark.phases = [phase]
+    config.benchmark.runtime.workers = None
+    config.benchmark.runtime.workers_per_pod = None
+    kube_options = KubeOptions()
+    spec = {"connectionsPerWorker": 17}
+
+    with (
+        patch(
+            "aiperf.cli_commands.kube._kube_common.print_memory_estimate"
+        ) as print_memory_estimate,
+        patch("aiperf.kubernetes.memory_estimator.estimate_memory"),
+        patch("aiperf.kubernetes.memory_estimator.format_estimate", return_value=""),
+    ):
+        generate_cmd._print_memory_estimate(config, kube_options, spec)
+
+    print_memory_estimate.assert_called_once_with(config, kube_options, spec)
+
+
+def test_default_direct_manifests_pin_image_and_pull_policy(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import ruamel.yaml
+
+    from aiperf import __version__
+    from aiperf.config import AIPerfConfig
+
+    config = AIPerfConfig.model_validate(
+        {
+            "benchmark": {
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://svc:8000"]},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 4,
+                    }
+                ],
+            }
+        }
+    )
+
+    _dump_raw_manifests(
+        config=config,
+        kube_options=KubeOptions(),
+        name="bench",
+        namespace="ns",
+        yaml=ruamel.yaml.YAML(),
+    )
+
+    parser = ruamel.yaml.YAML(typ="safe")
+    jobset = next(
+        manifest
+        for manifest in parser.load_all(capsys.readouterr().out)
+        if manifest["kind"] == "JobSet"
+    )
+    containers = [
+        container
+        for replicated_job in jobset["spec"]["replicatedJobs"]
+        for container in replicated_job["template"]["spec"]["template"]["spec"][
+            "containers"
+        ]
+    ]
+    assert {container["image"] for container in containers} == {
+        f"nvcr.io/nvidia/aiperf:{__version__}"
+    }
+    assert {container["imagePullPolicy"] for container in containers} == {
+        "IfNotPresent"
+    }
 
 
 def test_direct_generation_rejects_sweep_or_multi_run_workload() -> None:

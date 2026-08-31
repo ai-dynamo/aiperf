@@ -238,6 +238,8 @@ async def _resolve_target_namespaces(
     namespace: str | None,
     job_id: str | None,
     all_namespaces: bool,
+    kubeconfig: str | None = None,
+    context: str | None = None,
 ) -> _DebugTarget | None:
     """Resolve the namespaces to inspect for `debug`, plus the AIPerfJob found.
 
@@ -288,13 +290,35 @@ async def _resolve_target_namespaces(
     if namespace:
         return _DebugTarget([namespace], None, None)
 
+    return _target_from_kubeconfig(kubeconfig, context)
+
+
+def _target_from_kubeconfig(
+    kubeconfig: str | None, context: str | None
+) -> _DebugTarget | None:
+    """Fall back to the last benchmark's namespace, or the kubeconfig context's.
+
+    There is deliberately no ``default`` fallback: guessing a namespace sends
+    the diagnosis at a namespace the user never named and reports "no pods"
+    for a benchmark that is running fine somewhere else.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
     from aiperf.kubernetes.cli_helpers import resolve_job_id_and_namespace
 
-    resolved = resolve_job_id_and_namespace(None, None)
+    resolved = resolve_job_id_and_namespace(
+        None, None, kubeconfig=kubeconfig, context=context
+    )
     if not resolved:
         return None
     _, ns = resolved
-    return _DebugTarget([ns or "default"], None, None)
+    if not ns:
+        raise ConfigurationError(
+            "No Kubernetes namespace found and the active kubeconfig context "
+            "does not set one. Pass --namespace <ns>, or set a default for "
+            "your context:\n"
+            "  kubectl config set-context --current --namespace=<ns>"
+        )
+    return _DebugTarget([ns], None, None)
 
 
 @app.default
@@ -349,14 +373,12 @@ async def debug(
         aiperf kube debug --job-id my-sweep --variation 5 -t 0
     """
     from aiperf import cli_utils
-    from aiperf.cli_commands.kube._kube_common import resolve_child_name
+    from aiperf.cli_commands.kube._kube_common import resolve_child_target
 
     manage_options = manage_options or KubeManageOptions()
-
-    if job_id is not None:
-        child = resolve_child_name(job_id, variation=variation, trial=trial)
-        if child is not None:
-            job_id = child
+    job_id = resolve_child_target(
+        job_id, variation=variation, trial=trial, command="kube debug --job-id"
+    )
 
     with cli_utils.exit_on_error(title="Error Running Diagnostics"):
         from aiperf.kubernetes import client as kube_client_mod
@@ -370,6 +392,8 @@ async def debug(
                 namespace=manage_options.namespace,
                 job_id=job_id,
                 all_namespaces=all_namespaces,
+                kubeconfig=manage_options.kubeconfig,
+                context=manage_options.kube_context,
             )
             if resolved_target is None:
                 return

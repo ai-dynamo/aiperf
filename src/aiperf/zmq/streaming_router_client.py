@@ -170,7 +170,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     async def _clear_receiver(self) -> None:
         """Clear receiver handler, pending requests, and callbacks on stop."""
         if self._fd_reader is not None:
-            self._fd_reader.stop()
+            await self._fd_reader.stop()
             self._fd_reader = None
         self._receiver_handler = None
         # Cancel rather than leave awaiters hanging on a socket that is going away.

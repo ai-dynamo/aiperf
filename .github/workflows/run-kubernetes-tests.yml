@@ -53,8 +53,8 @@ jobs:
           uv run playwright install --with-deps chromium
           uv run python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); browser = p.chromium.launch(headless=True); browser.close(); p.stop()"
 
-      - name: Run operator UI browser E2E
-        run: uv run pytest -m e2e tests/unit/operator/ui_e2e/ -n 0 -v --tb=long
+      - name: Run UI browser E2E
+        run: uv run pytest -m ui_e2e tests/ui_e2e/ -n 0 -v --tb=long
 
   kubernetes-tests:
     runs-on: ubuntu-latest

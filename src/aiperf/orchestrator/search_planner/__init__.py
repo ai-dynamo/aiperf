@@ -11,6 +11,11 @@ evaluate rather than walking a pre-enumerated variation list.
 from aiperf.orchestrator.search_planner.base import SearchIteration, SearchPlanner
 from aiperf.orchestrator.search_planner.factory import build_search_planner
 from aiperf.orchestrator.search_planner.monotonic import MonotonicSLASearchPlanner
+from aiperf.orchestrator.search_planner.recovery import (
+    read_search_checkpoint,
+    restore_planner_history,
+    write_search_checkpoint,
+)
 
 __all__ = [
     "BayesianSearchPlanner",
@@ -22,6 +27,9 @@ __all__ = [
     "SmoothIsotonicSLAPlanner",
     "build_search_planner",
     "evaluate_tiers_on_grid",
+    "read_search_checkpoint",
+    "restore_planner_history",
+    "write_search_checkpoint",
 ]
 
 

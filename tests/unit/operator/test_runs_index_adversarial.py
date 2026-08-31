@@ -550,3 +550,157 @@ async def test_bootstrap_sweep_duplicate_child_refs_drop_ambiguous_child_link(
     assert rows[0].variation_idx == 0
     assert rows[0].child_job_id is None
     assert rows[0].child_epoch is None
+
+
+# ============================================================================
+# Lazy-backfill concurrency and event-loop hygiene
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_lazy_backfill_run_concurrent_calls_index_the_run_once(
+    tmp_path: Path,
+    opened_index: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[F21] Two in-flight backfills for the same run must collapse into one.
+
+    ``lazy_backfill_run`` is fired and forgotten from the read-path fallback,
+    so a burst of requests for a run that just missed the index used to launch
+    a duplicate backfill per request. Each one re-read the summary, re-
+    compressed the blob, and re-upserted the same row -- multiplying disk and
+    CPU work by the request rate exactly when the operator was already behind.
+    """
+    base = tmp_path / "results"
+    _write_run_artifact(base, "bench-prod", "llama-dup-7f2a", "1716060001")
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[tuple[str, str, str]] = []
+
+    async def _slow_index(
+        base_: Path, namespace: str, job_id: str, epoch: str, *, is_latest: bool
+    ) -> bool:
+        calls.append((namespace, job_id, epoch))
+        started.set()
+        await release.wait()
+        return False
+
+    monkeypatch.setattr(runs_index, "_index_run_from_disk", _slow_index)
+
+    first = asyncio.create_task(
+        runs_index.lazy_backfill_run(base, "bench-prod", "llama-dup-7f2a", "1716060001")
+    )
+    await started.wait()
+
+    # The second request arrives while the first backfill is still running.
+    second = asyncio.create_task(
+        runs_index.lazy_backfill_run(base, "bench-prod", "llama-dup-7f2a", "1716060001")
+    )
+    await second
+
+    release.set()
+    await first
+
+    # Pre-fix this was 2: nothing suppressed the duplicate.
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_lazy_backfill_run_distinct_runs_are_not_suppressed(
+    tmp_path: Path,
+    opened_index: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The in-flight guard is keyed per run: a different run still backfills."""
+    base = tmp_path / "results"
+    _write_run_artifact(base, "bench-prod", "llama-a", "1716060001")
+    _write_run_artifact(base, "bench-prod", "llama-b", "1716060002")
+
+    release = asyncio.Event()
+    calls: list[str] = []
+
+    async def _slow_index(
+        base_: Path, namespace: str, job_id: str, epoch: str, *, is_latest: bool
+    ) -> bool:
+        calls.append(job_id)
+        await release.wait()
+        return False
+
+    monkeypatch.setattr(runs_index, "_index_run_from_disk", _slow_index)
+
+    first = asyncio.create_task(
+        runs_index.lazy_backfill_run(base, "bench-prod", "llama-a", "1716060001")
+    )
+    second = asyncio.create_task(
+        runs_index.lazy_backfill_run(base, "bench-prod", "llama-b", "1716060002")
+    )
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert sorted(calls) == ["llama-a", "llama-b"]
+
+
+@pytest.mark.asyncio
+async def test_lazy_backfill_run_releases_the_key_after_completion(
+    tmp_path: Path,
+    opened_index: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dedup is in-flight only: a later re-index of the same run must still run."""
+    base = tmp_path / "results"
+    _write_run_artifact(base, "bench-prod", "llama-seq", "1716060001")
+
+    calls: list[str] = []
+
+    async def _fast_index(
+        base_: Path, namespace: str, job_id: str, epoch: str, *, is_latest: bool
+    ) -> bool:
+        calls.append(job_id)
+        return False
+
+    monkeypatch.setattr(runs_index, "_index_run_from_disk", _fast_index)
+
+    await runs_index.lazy_backfill_run(base, "bench-prod", "llama-seq", "1716060001")
+    await runs_index.lazy_backfill_run(base, "bench-prod", "llama-seq", "1716060001")
+
+    assert len(calls) == 2, "the in-flight key was never released"
+
+
+@pytest.mark.asyncio
+async def test_index_run_from_disk_reads_the_filesystem_off_the_event_loop(
+    tmp_path: Path,
+    opened_index: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """[F27] Blocking FS work must run in a worker thread, not on the kopf loop.
+
+    ``_collect_run_files`` stats every file in the run dir and decompresses the
+    summary. Inline on the event loop, a large run directory or a slow NFS
+    mount stalled every other operator handler -- heartbeats included -- for
+    the duration.
+    """
+    import threading
+
+    base = tmp_path / "results"
+    _write_run_artifact(base, "bench-prod", "llama-thread", "1716060001")
+
+    loop_thread = threading.get_ident()
+    observed: list[int] = []
+    real_collect = runs_index._collect_run_files
+
+    def _recording_collect(run_path: Path):
+        observed.append(threading.get_ident())
+        return real_collect(run_path)
+
+    monkeypatch.setattr(runs_index, "_collect_run_files", _recording_collect)
+
+    await runs_index._index_run_from_disk(
+        base, "bench-prod", "llama-thread", "1716060001", is_latest=True
+    )
+
+    assert observed, "_collect_run_files was never called"
+    assert loop_thread not in observed, (
+        "blocking filesystem reads ran on the event loop thread"
+    )

@@ -198,9 +198,12 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             )
 
     def _cleanup_ipc_file(self) -> None:
-        """Remove the IPC socket file if this client bound to one."""
-        if self.bind and self.address.startswith("ipc://"):
-            Path(self.address.removeprefix("ipc://")).unlink(missing_ok=True)
+        """Remove the IPC socket files this client bound to, including a dual-bind secondary."""
+        if not self.bind:
+            return
+        for addr in (self.address, self.additional_bind_address):
+            if addr and addr.startswith("ipc://"):
+                Path(addr.removeprefix("ipc://")).unlink(missing_ok=True)
 
     @on_stop
     async def _shutdown_socket(self) -> None:

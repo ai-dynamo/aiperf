@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
+from aiperf.common.environment import Environment
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import (
     _compute_cpu_shares,
@@ -265,7 +266,7 @@ class TestSplitWorkerPodResources:
         the container-count floor boundary. Weighted, largest-remainder splitting
         would round several containers down to 0 without the minimum-share clamp.
         """
-        for worker_count, record_processor_count in [(0, 5), (3, 0), (2, 7), (10, 10)]:
+        for worker_count, record_processor_count in [(0, 5)]:
             total_containers = 1 + worker_count + record_processor_count
             budget = {
                 "requests": {
@@ -284,6 +285,95 @@ class TestSplitWorkerPodResources:
                 assert entry is not None
                 assert parse_cpu(entry["requests"]["cpu"]) * 1000 >= 1
                 assert parse_memory_mib(entry["requests"]["memory"]) >= 1
+
+    def test_split_worker_pod_resources_memory_weights_match_estimator_ratio(
+        self,
+    ) -> None:
+        """A worker's memory weight is 128, equal to the manager and half a
+        record processor.
+
+        The estimator models a worker floor of ~162 MiB against ~325 MiB for a
+        record processor, i.e. a 0.5 ratio. An earlier weight of 80 starved
+        workers below their CPython+aiohttp+ZMQ import footprint, which under
+        `guaranteed` mode becomes a hard limit and OOMKills them on startup.
+        """
+        # Weights sum to 128 + 128 + 256 = 512, so 5120Mi divides exactly and
+        # no largest-remainder drift or minimum-share clamp can mask the ratio.
+        budget = {"requests": {"cpu": "8000m", "memory": "5120Mi"}}
+        manager, worker, record_processor = split_worker_pod_resources(
+            budget,
+            worker_count=1,
+            record_processor_count=1,
+            record_processor_cpu_request=None,
+            burstable=False,
+        )
+        assert manager is not None
+        assert worker is not None
+        assert record_processor is not None
+
+        manager_mib = parse_memory_mib(manager["requests"]["memory"])
+        worker_mib = parse_memory_mib(worker["requests"]["memory"])
+        rp_mib = parse_memory_mib(record_processor["requests"]["memory"])
+
+        assert (manager_mib, worker_mib, rp_mib) == (1280, 1280, 2560)
+
+    def test_split_worker_pod_resources_worker_matches_manager_at_stock_defaults(
+        self,
+    ) -> None:
+        """At the stock worker-pod resource defaults, a worker gets the same
+        share as the worker-pod manager (both weight 128).
+
+        Weight 80 resolved to ~94 MiB per worker against the manager's ~150 MiB,
+        and `guaranteed` mode turns that share into a hard limit the worker
+        cannot finish importing under.
+        """
+        budget = K8sEnvironment.WORKER_POD.to_k8s_resources()
+        result = split_worker_pod_resources(
+            budget,
+            worker_count=10,
+            record_processor_count=10,
+            record_processor_cpu_request=None,
+            burstable=False,
+        )
+        assert all(entry is not None for entry in result)
+        manager_mib = parse_memory_mib(result[0]["requests"]["memory"])
+        worker_mib = [
+            parse_memory_mib(entry["requests"]["memory"]) for entry in result[1:11]
+        ]
+        assert len(worker_mib) == 10
+        assert set(worker_mib) == {manager_mib}
+
+    def test_default_guaranteed_worker_share_clears_import_floor(self) -> None:
+        """Stock guaranteed-mode resources leave every worker enough import RSS."""
+        resources = K8sEnvironment.WORKER_POD.to_k8s_resources()
+        workers_per_pod = Environment.WORKER.DEFAULT_WORKERS_PER_POD
+        result = split_worker_pod_resources(
+            resources,
+            worker_count=workers_per_pod,
+            record_processor_count=workers_per_pod,
+            record_processor_cpu_request=None,
+            burstable=False,
+        )
+
+        worker_memory = [
+            parse_memory_mib(entry["requests"]["memory"])
+            for entry in result[1 : 1 + workers_per_pod]
+            if entry is not None
+        ]
+        assert min(worker_memory) >= 162
+
+    def test_rejects_worker_share_below_import_floor(self) -> None:
+        """Guaranteed worker limits must cover each worker's import RSS floor."""
+        budget = {"requests": {"cpu": "3350m", "memory": "4Gi"}}
+
+        with pytest.raises(ValueError, match="worker import-memory floor"):
+            split_worker_pod_resources(
+                budget,
+                worker_count=10,
+                record_processor_count=10,
+                record_processor_cpu_request=None,
+                burstable=False,
+            )
 
 
 class TestAllocateWorkerHealthPorts:

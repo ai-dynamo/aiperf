@@ -29,7 +29,7 @@ from aiperf.common.messages import (
 )
 from aiperf.common.models import DatasetMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter
-from aiperf.plugin.enums import ServiceType
+from aiperf.plugin.enums import ServiceRunType, ServiceType
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
@@ -363,8 +363,27 @@ class TimingManager(BaseComponentService):
         matter how healthy the rest of the fleet is. A floor-fraction check
         would be meaningless here: even one such loss is unrecoverable, so it
         is always terminal regardless of how many workers remain alive.
+
+        This unconditional path is gated on ``ServiceRunType.KUBERNETES``
+        because pod loss there is confirmed by the apiserver, not merely
+        inferred from a stale heartbeat. In local (multiprocessing) mode, the
+        stale-heartbeat eviction sweep in ``StickyCreditRouter`` has no
+        equivalent ground truth: a worker whose event loop is starved under
+        high local concurrency (a documented failure mode - see
+        ``base_service_manager._judge_stale_service``, which consults real
+        ``Process.is_alive()`` before reaping) looks identical to a dead one.
+        Killing the whole run on that heuristic alone is a false-positive
+        risk, so local mode defers to the worker-count-changed callback,
+        which already fires from the same unregister path and applies the
+        ``MIN_ALIVE_FRACTION`` floor with its ``STALE_TIME`` grace period.
         """
         if not self._profiling_active or self._worker_floor_abort_started:
+            return
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            self.warning(
+                f"Worker lost outside Kubernetes ({reason}); deferring to the "
+                f"worker-floor grace period instead of an immediate abort"
+            )
             return
         self._worker_floor_abort_started = True
         self._cancel_worker_floor_abort_task()

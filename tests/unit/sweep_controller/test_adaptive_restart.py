@@ -80,6 +80,8 @@ def _result_for(values: dict[str, object]) -> list[RunResult]:
 
 def test_restarted_planner_replays_terminal_history_before_same_next_proposal():
     """Terminal child results reconstruct planner state before new child creation."""
+    from aiperf.orchestrator.search_planner import restore_planner_history
+
     original_plan = build_plan_from_sweep(_adaptive_sweep_cr())
     assert original_plan.sweep is not None
     original = OptunaSearchPlanner(original_plan.configs[0], original_plan.sweep)
@@ -99,13 +101,27 @@ def test_restarted_planner_replays_terminal_history_before_same_next_proposal():
     restarted_plan = build_plan_from_sweep(_adaptive_sweep_cr())
     assert restarted_plan.sweep is not None
     restarted = OptunaSearchPlanner(restarted_plan.configs[0], restarted_plan.sweep)
-    for expected_values, results in terminal_history:
-        replayed = restarted.ask()
-        assert replayed is not None
-        _, variation = replayed
-        assert variation.values == expected_values
-        restarted.tell(variation, results)
+    restore_planner_history(restarted, terminal_history)
 
     actual_next = restarted.ask()
     assert actual_next is not None
     assert actual_next[1].values == expected_next[1].values
+
+
+def test_search_checkpoint_round_trips_terminal_results(tmp_path):
+    """A container restart can rebuild planner inputs without re-fetching children."""
+    from aiperf.orchestrator.search_planner import (
+        read_search_checkpoint,
+        write_search_checkpoint,
+    )
+
+    terminal_history = [
+        (
+            {"phases.profiling.concurrency": 7},
+            _result_for({"phases.profiling.concurrency": 7}),
+        )
+    ]
+
+    write_search_checkpoint(tmp_path, terminal_history)
+
+    assert read_search_checkpoint(tmp_path) == terminal_history

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -62,13 +63,12 @@ async def results(
         aiperf kube results my-sweep -v 5 -t 0 # specific trial
     """
     from aiperf import cli_utils
-    from aiperf.cli_commands.kube._kube_common import resolve_child_name
+    from aiperf.cli_commands.kube._kube_common import resolve_child_target
 
     manage_options = manage_options or KubeManageOptions()
-    if job_id is not None:
-        child = resolve_child_name(job_id, variation=variation, trial=trial)
-        if child is not None:
-            job_id = child
+    job_id = resolve_child_target(
+        job_id, variation=variation, trial=trial, command="kube results"
+    )
     with cli_utils.exit_on_error(title="Error Retrieving Results"):
         success = await _run_results(
             job_id=job_id,
@@ -438,13 +438,12 @@ async def list_runs(
         aiperf kube results list-runs my-sweep -v 7   # specific sweep child
     """
     from aiperf import cli_utils
-    from aiperf.cli_commands.kube._kube_common import resolve_child_name
+    from aiperf.cli_commands.kube._kube_common import resolve_child_target
 
     manage_options = manage_options or KubeManageOptions()
-    if job_id is not None:
-        child = resolve_child_name(job_id, variation=variation, trial=trial)
-        if child is not None:
-            job_id = child
+    job_id = resolve_child_target(
+        job_id, variation=variation, trial=trial, command="kube results list-runs"
+    )
     with cli_utils.exit_on_error(title="Error Listing Runs"):
         success = await _run_list_runs(
             job_id=job_id,
@@ -577,63 +576,61 @@ async def _run_list_runs(
     operator_namespace: str | None,
 ) -> bool:
     """Fetch and render historical runs, returning False if no job resolves."""
-    import logging
-
     from aiperf.kubernetes import cli_helpers
+    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.client import find_operator_pod
     from aiperf.kubernetes.port_forward import port_forward_with_status
     from aiperf.kubernetes.results_operator import RESULTS_SERVER_PORT
 
-    kube_logger = logging.getLogger("aiperf.kube")
-    original_level = kube_logger.level
-    if output == "json":
-        kube_logger.setLevel(logging.WARNING)
-
     resolved = None
     try:
-        resolved = await cli_helpers.resolve_job(
-            job_id,
-            manage_options.namespace,
-            kubeconfig=manage_options.kubeconfig,
-            kube_context=manage_options.kube_context,
-            quiet=output == "json",
-        )
-        if not resolved:
-            return False
-
-        job_id = resolved.job_id
-        namespace = resolved.namespace
-        api = resolved.api
-
-        op_ns = await _resolve_op_ns(
-            api, explicit=operator_namespace, quiet=output == "json"
-        )
-
-        pod_info = await find_operator_pod(api, namespace=op_ns)
-        if not pod_info:
-            raise RuntimeError(
-                f"Operator pod not found in namespace '{op_ns}'. "
-                "Is the aiperf-operator deployed?"
+        with (
+            kube_console.machine_readable_stdout()
+            if output == "json"
+            else nullcontext()
+        ):
+            resolved = await cli_helpers.resolve_job(
+                job_id,
+                manage_options.namespace,
+                kubeconfig=manage_options.kubeconfig,
+                kube_context=manage_options.kube_context,
+                quiet=output == "json",
             )
-        pod_name, _phase = pod_info
+            if not resolved:
+                return False
 
-        async with port_forward_with_status(
-            op_ns,
-            pod_name,
-            0,
-            remote_port=RESULTS_SERVER_PORT,
-            verify_api=False,
-            kubeconfig=manage_options.kubeconfig,
-            kube_context=manage_options.kube_context,
-        ) as port:
-            payload, retention = await _fetch_runs_and_retention(
-                base_url=f"http://localhost:{port}",
-                namespace=namespace,
-                job_id=job_id,
-                preview=preview,
+            job_id = resolved.job_id
+            namespace = resolved.namespace
+            api = resolved.api
+
+            op_ns = await _resolve_op_ns(
+                api, explicit=operator_namespace, quiet=output == "json"
             )
+
+            pod_info = await find_operator_pod(api, namespace=op_ns)
+            if not pod_info:
+                raise RuntimeError(
+                    f"Operator pod not found in namespace '{op_ns}'. "
+                    "Is the aiperf-operator deployed?"
+                )
+            pod_name, _phase = pod_info
+
+            async with port_forward_with_status(
+                op_ns,
+                pod_name,
+                0,
+                remote_port=RESULTS_SERVER_PORT,
+                verify_api=False,
+                kubeconfig=manage_options.kubeconfig,
+                kube_context=manage_options.kube_context,
+            ) as port:
+                payload, retention = await _fetch_runs_and_retention(
+                    base_url=f"http://localhost:{port}",
+                    namespace=namespace,
+                    job_id=job_id,
+                    preview=preview,
+                )
     finally:
-        kube_logger.setLevel(original_level)
         if resolved is not None:
             await resolved.aclose()
 

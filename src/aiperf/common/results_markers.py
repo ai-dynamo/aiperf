@@ -100,27 +100,62 @@ def write_ready_marker(
     was_cancelled: bool = False,
     terminal_phase: str | None = None,
     terminal_error: str | None = None,
+    partial: bool = False,
+    failed_exporters: list[str] | None = None,
 ) -> Path:
-    """Durably publish readiness after every result artifact is stable."""
+    """Durably publish readiness after every result artifact is stable.
+
+    ``partial``/``failed_exporters`` let the controller publish readiness even
+    when one exporter failed while a sibling exporter's artifact is already
+    stable on disk: consumers can still serve the successful files instead of
+    the whole run reading as unavailable.
+    """
     import orjson
 
     marker = ready_marker_path(base_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
     try:
-        payload: dict[str, bool | str] = {
+        payload: dict[str, bool | str | list[str]] = {
             "ready": True,
             "was_cancelled": was_cancelled,
+            "partial": partial,
         }
         if terminal_phase is not None:
             payload["terminal_phase"] = terminal_phase
         if terminal_error is not None:
             payload["terminal_error"] = terminal_error
+        if failed_exporters:
+            payload["failed_exporters"] = list(failed_exporters)
         _atomic_write_marker(marker, orjson.dumps(payload))
         clear_processing_marker(base_dir)
     except BaseException:
         _rollback_failed_ready_commit(base_dir)
         raise
     return marker
+
+
+def read_ready_marker_info(base_dir: Path) -> tuple[bool, list[str]]:
+    """Return ``(partial, failed_exporters)`` recorded on the ready marker.
+
+    Best-effort: a missing, unreadable, or malformed marker reports a clean
+    (non-partial) result rather than raising, since the marker's mere
+    existence -- not its optional fields -- is what gates readiness.
+    """
+    import orjson
+
+    if not _is_ready(base_dir):
+        return False, []
+    try:
+        payload = orjson.loads(ready_marker_path(base_dir).read_bytes())
+    except (OSError, orjson.JSONDecodeError):
+        return False, []
+    if not isinstance(payload, dict):
+        return False, []
+    partial = bool(payload.get("partial", False))
+    failed_exporters = payload.get("failed_exporters") or []
+    if not isinstance(failed_exporters, list):
+        return partial, []
+    return partial, [str(item) for item in failed_exporters]
 
 
 def _atomic_write_marker(path: Path, payload: bytes) -> None:

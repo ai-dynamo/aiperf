@@ -54,6 +54,25 @@ async def preflight(
             help="Planned number of worker pods (for resource projection).",
         ),
     ] = 1,
+    node_selector: Annotated[
+        list[str] | None,
+        Parameter(
+            name="--node-selector",
+            negative=(),
+            accepts_keys=False,
+            n_tokens=-1,
+            help="Node selector labels as JSON or repeated key=value values.",
+        ),
+    ] = None,
+    tolerations: Annotated[
+        list[str] | None,
+        Parameter(
+            name="--tolerations",
+            negative=(),
+            n_tokens=-1,
+            help="Pod tolerations as JSON objects or arrays.",
+        ),
+    ] = None,
     output: Annotated[
         Literal["text", "json"],
         Parameter(
@@ -91,6 +110,8 @@ async def preflight(
             secrets=secrets,
             endpoint_url=endpoint_url,
             workers=workers,
+            node_selector=node_selector,
+            tolerations=tolerations,
             output=output,
         )
 
@@ -103,12 +124,15 @@ async def _run_preflight(
     secrets: list[str] | None,
     endpoint_url: str | None,
     workers: int,
+    node_selector: dict[str, str] | list[str] | None,
+    tolerations: list[dict[str, object]] | list[str] | None,
     output: Literal["text", "json"],
 ) -> None:
     from contextlib import nullcontext
 
     import orjson
 
+    from aiperf.config.kube import _coerce_tolerations, _merge_node_selector_entries
     from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
     from aiperf.kubernetes.preflight import CLIPreflightChecker
@@ -134,6 +158,8 @@ async def _run_preflight(
             secrets=secrets,
             endpoint_url=endpoint_url,
             workers=workers,
+            node_selector=_merge_node_selector_entries(node_selector),
+            tolerations=_coerce_tolerations(tolerations),
         )
 
         results = await checker.run_all_checks()

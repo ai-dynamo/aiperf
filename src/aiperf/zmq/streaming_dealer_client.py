@@ -154,7 +154,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         way.
         """
         if self._fd_reader is not None:
-            self._fd_reader.stop()
+            await self._fd_reader.stop()
             self._fd_reader = None
         self._receiver_handler = None
         for future in self._pending_requests.values():

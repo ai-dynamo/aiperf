@@ -257,12 +257,19 @@ class KubectlClient:
 
         return result
 
-    async def apply(self, manifest: str, namespace: str | None = None) -> str:
+    async def apply(
+        self,
+        manifest: str,
+        namespace: str | None = None,
+        timeout: int = 120,
+    ) -> str:
         """Apply a YAML manifest.
 
         Args:
             manifest: YAML manifest content.
             namespace: Target namespace.
+            timeout: Timeout in seconds (prevents hangs on finalizers/blocked
+                admission webhooks).
 
         Returns:
             Command output.
@@ -276,7 +283,15 @@ class KubectlClient:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await proc.communicate(input=manifest.encode())
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=manifest.encode()), timeout=timeout
+            )
+        except TimeoutError:
+            await _terminate_process(proc)
+            logger.warning(f"kubectl apply timed out after {timeout}s: {' '.join(cmd)}")
+            raise TimeoutError(
+                f"kubectl apply timed out after {timeout}s: {' '.join(cmd)}"
+            ) from None
         except asyncio.CancelledError:
             await _terminate_process(proc)
             raise

@@ -40,7 +40,7 @@ class TestResourceSettingsToK8sResources:
             param("GPU_TELEMETRY_MANAGER", "25m", "192Mi", id="gpu_telemetry"),
             param("SERVER_METRICS_MANAGER", "25m", "192Mi", id="server_metrics"),
             param("RESULTS_SIDECAR", "25m", "192Mi", id="results_sidecar"),
-            param("WORKER_POD", "150m", "4Gi", id="worker_pod"),
+            param("WORKER_POD", "3350m", "6Gi", id="worker_pod"),
         ],
     )  # fmt: skip
     def test_to_k8s_resources_returns_correct_structure(
@@ -105,8 +105,8 @@ class TestK8sEnvironmentWorkerPod:
 
     def test_worker_pod_default_values(self) -> None:
         pod = K8sEnvironment.WORKER_POD
-        assert pod.CPU == "150m"
-        assert pod.MEMORY == "4Gi"
+        assert pod.CPU == "3350m"
+        assert pod.MEMORY == "6Gi"
 
     def test_worker_pod_guaranteed_qos(self) -> None:
         resources = K8sEnvironment.WORKER_POD.to_k8s_resources()
@@ -114,10 +114,10 @@ class TestK8sEnvironmentWorkerPod:
 
     def test_worker_pod_to_k8s_resources(self) -> None:
         resources = K8sEnvironment.WORKER_POD.to_k8s_resources()
-        assert resources["requests"]["cpu"] == "150m"
-        assert resources["limits"]["cpu"] == "150m"
-        assert resources["requests"]["memory"] == "4Gi"
-        assert resources["limits"]["memory"] == "4Gi"
+        assert resources["requests"]["cpu"] == "3350m"
+        assert resources["limits"]["cpu"] == "3350m"
+        assert resources["requests"]["memory"] == "6Gi"
+        assert resources["limits"]["memory"] == "6Gi"
 
     def test_k8s_record_processor_scale_factor_default(self) -> None:
         assert K8sEnvironment.RECORD_PROCESSOR_SCALE_FACTOR == 1
@@ -448,6 +448,74 @@ class TestK8sEnvironmentRootSettings:
             _K8sEnvironment().APISERVER_TLS_SERVER_NAME_OVERRIDE
             == "kubernetes.default.svc"
         )
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param("500m", id="millicores"),
+            param("2", id="whole-cores"),
+            param("1.5", id="fractional-cores"),
+            param("250u", id="microcores"),
+            param("100n", id="nanocores"),
+        ],
+    )  # fmt: skip
+    def test_record_processor_cpu_request_accepts_valid_quantities(
+        self, value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[F14] Every legal Kubernetes CPU quantity spelling must survive."""
+        from aiperf.kubernetes.environment import _K8sEnvironment
+
+        monkeypatch.setenv("AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST", value)
+        assert value == _K8sEnvironment().RECORD_PROCESSOR_CPU_REQUEST
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param("small", id="named-shorthand"),
+            param("2 cores", id="unit-word"),
+            param("500mi", id="memory-suffix"),
+            param("-1", id="negative"),
+            param("1e3", id="scientific-notation"),
+            param("500M", id="uppercase-suffix"),
+        ],
+    )  # fmt: skip
+    def test_record_processor_cpu_request_rejects_non_quantities(
+        self, value: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[F14] A non-quantity must fail fast at settings load, not at the apiserver.
+
+        The field is interpolated straight into the pod spec's
+        ``resources.requests.cpu``. Unvalidated, a typo like "small" or "500mi"
+        produced a JobSet the apiserver rejected on creation -- surfacing as an
+        opaque admission error at benchmark launch rather than as a settings
+        problem naming the offending variable.
+        """
+        from aiperf.kubernetes.environment import _K8sEnvironment
+
+        monkeypatch.setenv("AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST", value)
+        with pytest.raises(
+            ValidationError, match="not a valid Kubernetes CPU quantity"
+        ):
+            _K8sEnvironment()
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param(None, id="unset"),
+            param("", id="empty-string"),
+        ],
+    )  # fmt: skip
+    def test_record_processor_cpu_request_allows_absent_value(
+        self, value: str | None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The override is optional; absence must stay a legal configuration."""
+        from aiperf.kubernetes.environment import _K8sEnvironment
+
+        if value is None:
+            monkeypatch.delenv("AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST", raising=False)
+        else:
+            monkeypatch.setenv("AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST", value)
+        assert _K8sEnvironment().RECORD_PROCESSOR_CPU_REQUEST in (None, "")
 
 
 class TestK8sEnvironmentAllSettings:

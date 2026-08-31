@@ -24,7 +24,7 @@ from aiperf.config.deployment import (
     PodTemplateConfig,
     SchedulingConfig,
 )
-from aiperf.kubernetes.preflight import CheckStatus
+from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 from aiperf.kubernetes.resources import KubernetesDeployment
 from aiperf.operator.preflight import (
     OperatorPreflightChecker,
@@ -611,7 +611,7 @@ class TestCheckResourceQuotas:
         with _patch_core_v1(mock_core):
             result = await checker._check_resource_quotas()
         assert result.status == CheckStatus.FAIL
-        assert "CPU quota" in result.message
+        assert "CPU requests quota" in result.message
 
     @pytest.mark.asyncio
     async def test_memory_quota_overcommit_fails(self) -> None:
@@ -627,7 +627,103 @@ class TestCheckResourceQuotas:
         with _patch_core_v1(mock_core):
             result = await checker._check_resource_quotas()
         assert result.status == CheckStatus.FAIL
-        assert "memory quota" in result.message
+        assert "memory requests quota" in result.message
+
+    @pytest.mark.asyncio
+    async def test_cpu_limits_quota_overcommit_fails(self) -> None:
+        """[F18] A limits.cpu quota is enforced, not just requests.cpu.
+
+        The pre-fix check read only ``cpu``/``requests.cpu``, so a namespace
+        capped purely on ``limits.cpu`` passed preflight and the benchmark was
+        then rejected by the apiserver at JobSet creation -- the exact failure
+        preflight exists to predict.
+        """
+        checker = _make_checker(num_pods=10)
+        quota = MagicMock()
+        quota.spec = MagicMock()
+        quota.spec.hard = {"limits.cpu": "1"}
+        quota.status = MagicMock()
+        quota.status.used = {"limits.cpu": "0"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.FAIL
+        assert "CPU limits quota" in result.message
+
+    @pytest.mark.asyncio
+    async def test_memory_limits_quota_overcommit_fails(self) -> None:
+        """[F18] A limits.memory quota is enforced, not just requests.memory."""
+        checker = _make_checker()
+        quota = MagicMock()
+        quota.spec = MagicMock()
+        quota.spec.hard = {"limits.memory": "256Mi"}
+        quota.status = MagicMock()
+        quota.status.used = {"limits.memory": "0"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.FAIL
+        assert "memory limits quota" in result.message
+
+    @pytest.mark.asyncio
+    async def test_pod_count_quota_overcommit_fails(self) -> None:
+        """[F18] The pods quota counts the worker pods plus the controller.
+
+        A namespace with room for CPU and memory but not for the pod objects
+        themselves was previously waved through entirely: the pods quota was
+        never read.
+        """
+        checker = _make_checker(num_pods=10)
+        quota = MagicMock()
+        quota.spec = MagicMock()
+        quota.spec.hard = {"pods": "4"}
+        quota.status = MagicMock()
+        quota.status.used = {"pods": "0"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.FAIL
+        assert "pods quota" in result.message
+        # 10 worker pods + 1 controller pod.
+        assert "11 total vs 4 limit" in result.message
+
+    @pytest.mark.asyncio
+    async def test_pod_count_quota_with_headroom_passes(self) -> None:
+        """Headroom for every pod, including the controller, still passes."""
+        checker = _make_checker(num_pods=2)
+        quota = MagicMock()
+        quota.spec = MagicMock()
+        quota.spec.hard = {"pods": "10"}
+        quota.status = MagicMock()
+        quota.status.used = {"pods": "1"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
+    async def test_unparseable_pods_quota_is_ignored_not_fatal(self) -> None:
+        """A malformed pods quantity must not crash the check."""
+        checker = _make_checker(num_pods=1)
+        quota = MagicMock()
+        quota.spec = MagicMock()
+        quota.spec.hard = {"pods": "not-a-number"}
+        quota.status = MagicMock()
+        quota.status.used = {"pods": "0"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.PASS
 
 
 # =============================================================================
@@ -1147,8 +1243,8 @@ class TestRunAll:
         assert "JobSet Controller" not in names
 
     @pytest.mark.asyncio
-    async def test_timeout(self) -> None:
-        """When a blocking check never returns, Preflight Timeout is reported."""
+    async def test_blocking_timeout_fails_preflight(self) -> None:
+        """A timeout before blocking checks finish must reject job creation."""
         checker = _make_checker()
 
         # Use an asyncio.Event that is never set so the check blocks forever.
@@ -1171,11 +1267,88 @@ class TestRunAll:
 
         timeout_check = [c for c in results.checks if c.name == "Preflight Timeout"]
         assert len(timeout_check) == 1
-        # WARN, not FAIL: _is_transient_error treats every per-check
-        # TimeoutError as transient and retryable, so the aggregate deadline
-        # firing must not permanently fail the job on a merely slow apiserver.
+        assert timeout_check[0].status is CheckStatus.FAIL
+        assert not results.passed
+
+    @pytest.mark.asyncio
+    async def test_run_all_keeps_completed_concurrent_results_on_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[F2] A timeout must not discard the concurrent checks that already finished.
+
+        The tier 3+ fan-out used ``asyncio.gather``, whose CancelledError
+        propagates out of the await before the collection loop runs -- so one
+        slow check threw away all fifteen completed results and the operator
+        reported a bare timeout with no diagnostic value. ``asyncio.wait``
+        hands back ``done`` and ``pending`` separately, so finished work
+        survives and only the stragglers are cancelled.
+        """
+        import asyncio
+
+        checker = _make_checker()
+
+        def _instant(name: str):
+            async def _check() -> CheckResult:
+                return CheckResult(
+                    name=name, status=CheckStatus.PASS, message=f"{name} ok"
+                )
+
+            return _check
+
+        # Pin tiers 1 and 2 so the run reaches the concurrent fan-out
+        # deterministically, without depending on apiserver mock shapes.
+        for attr, label in (
+            ("_check_kubernetes_version", "Kubernetes Version"),
+            ("_check_jobset_crd", "JobSet CRD"),
+            ("_check_rbac_permissions", "RBAC Permissions"),
+        ):
+            monkeypatch.setattr(checker, attr, _instant(label))
+
+        concurrent_attrs = [
+            "_check_jobset_controller",
+            "_check_service_account",
+            "_check_node_resources",
+            "_check_node_selector_match",
+            "_check_per_node_schedulability",
+            "_check_resource_quotas",
+            "_check_memory_estimation",
+            "_check_secrets",
+            "_check_image_reference",
+            "_check_network_policies",
+            "_check_kueue_queue",
+            "_check_configmap_size",
+            "_check_dry_run",
+            "_check_pod_security_admission",
+            "_check_tolerations",
+        ]
+        for attr in concurrent_attrs:
+            monkeypatch.setattr(checker, attr, _instant(attr))
+
+        # One straggler that never returns; the aggregate deadline must fire on
+        # it alone. The autouse fake-sleep fixture makes asyncio.sleep instant,
+        # so block on an event nothing sets.
+        never = asyncio.Event()
+
+        async def _blocked_dns() -> CheckResult:
+            await never.wait()
+            return CheckResult(name="DNS", status=CheckStatus.PASS, message="unreached")
+
+        monkeypatch.setattr(checker, "_check_dns", _blocked_dns)
+
+        results = await checker.run_all(timeout=0.5)
+
+        names = [c.name for c in results.checks]
+
+        # Pre-fix these fifteen were all discarded by gather's cancellation.
+        for attr in concurrent_attrs:
+            assert attr in names, f"completed check {attr} was discarded on timeout"
+
+        # The straggler is reported as incomplete rather than silently missing.
+        assert "DNS" not in names
+        timeout_check = [c for c in results.checks if c.name == "Preflight Timeout"]
+        assert len(timeout_check) == 1
         assert timeout_check[0].status is CheckStatus.WARN
-        assert results.passed
+        assert "1 check(s) did not complete" in timeout_check[0].message
 
 
 # =============================================================================
@@ -1407,3 +1580,53 @@ class TestDryRunTransientClassification:
         ):
             result = await checker._run_check(checker._check_dry_run)
         assert result.status is expected
+
+
+# ---------------------------------------------------------------------------
+# Quota read uses spec.hard, not status.hard (157ce3d2e7)
+# ---------------------------------------------------------------------------
+
+
+class TestQuotaSpecHardFallback:
+    """_check_resource_quotas must read spec.hard, not status.hard.
+
+    status.hard is populated lazily by the quota controller and may be empty
+    immediately after namespace creation.  Before 157ce3d2e7, the preflight
+    check read status.hard and silently passed when the controller had not yet
+    reconciled, letting the benchmark proceed and fail at JobSet submission.
+    """
+
+    @pytest.mark.asyncio
+    async def test_spec_hard_enforced_when_status_hard_is_empty(self) -> None:
+        """CPU overcommit must be detected even when status.hard is not yet populated."""
+        checker = _make_checker(num_pods=10)
+        quota = MagicMock()
+        quota.spec = MagicMock()
+        quota.spec.hard = {"requests.cpu": "1"}  # tight limit set at creation
+        quota.status = MagicMock()
+        quota.status.hard = {}  # quota controller has NOT yet reconciled
+        quota.status.used = {"requests.cpu": "0"}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.FAIL, (
+            "CPU overcommit must be caught from spec.hard even when status.hard is empty"
+        )
+        assert "CPU requests quota" in result.message
+
+    @pytest.mark.asyncio
+    async def test_spec_hard_none_does_not_raise(self) -> None:
+        """A quota with spec=None must not raise; the checker skips it."""
+        checker = _make_checker(num_pods=2)
+        quota = MagicMock()
+        quota.spec = None
+        quota.status = MagicMock()
+        quota.status.used = {}
+        mock_core = MagicMock(
+            list_namespaced_resource_quota=AsyncMock(return_value=_list([quota]))
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_resource_quotas()
+        assert result.status == CheckStatus.PASS

@@ -516,9 +516,9 @@ Quick-export alias for that run's summary JSON, so a caller does not need to kno
 
 All analytics endpoints return `503` with message `"Analytics engine not initialized"` if the results-server lifespan hook has not yet populated the DB handle. The exception is `/analytics/scatter`, which checks `runs_index.is_open()` itself and returns an empty `entries` list rather than an error, so a cold dashboard renders an empty chart instead of a failure banner.
 
-An unknown `metric` or `stat` raises `ValueError` inside the query layer; the app-level exception handler in `results_server.py` converts that into a `422`.
+Analytics leaderboard and history queries support the six indexed comparison metrics (`request_throughput`, `request_latency`, `time_to_first_token`, `output_token_throughput`, `output_token_throughput_per_user`, and `inter_token_latency`) and `avg`, `p50`, or `p99` statistics. Unsupported metric/stat combinations return an empty response without scanning artifact summaries.
 
-`/analytics/leaderboard`, `/history`, `/compare`, and `/summary` are backed by the `runs_index` SQLite store (`operator/runs_index.py`, exposed through the thin `ResultsDB` facade in `operator/results_db.py`) — flat-column SELECTs against indexed rows, with a zstd-compressed `metrics_json` blob for full-summary access. The earlier JSON-glob read path has been removed. The cold-start cost (one PVC walk) moves to the operator's startup bootstrap; subsequent queries are O(1) regardless of run count, with disk fallback + lazy backfill when the index is stale.
+`/analytics/leaderboard`, `/history`, `/compare`, and `/summary` are backed by the `runs_index` SQLite store (`operator/runs_index.py`, exposed through the thin `ResultsDB` facade in `operator/results_db.py`) — flat-column SELECTs against indexed rows, with a zstd-compressed `metrics_json` blob for full-summary access. The cold-start cost (one PVC walk) moves to the operator's startup bootstrap; subsequent supported queries use the index and retain disk fallback + lazy backfill when the index is stale.
 
 ### `GET /api/v1/analytics/leaderboard`
 
@@ -529,7 +529,7 @@ Rank every run by a metric.
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `metric` | string | `request_throughput` | Metric to rank by (e.g. `request_throughput`, `request_latency`) |
-| `stat` | string | `avg` | Statistic (`avg`, `p50`, `p99`, `min`, `max`) |
+| `stat` | string | `avg` | Statistic: `avg`, `p50`, or `p99` |
 | `order` | string | `desc` | Sort order (`asc` or `desc`) |
 | `limit` | int | `20` | Max results, `[1, 1000]` |
 | `epoch` | string? | `None` | Restrict to one run epoch; `None` = latest per `(namespace, job)` |
@@ -570,7 +570,7 @@ Return metric values over time, optionally filtered by model or endpoint.
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `metric` | string | `request_throughput` | Metric to track |
-| `stat` | string | `avg` | Statistic |
+| `stat` | string | `avg` | Statistic: `avg`, `p50`, or `p99` |
 | `model` | string? | `None` | Filter by model name (substring match) |
 | `endpoint` | string? | `None` | Filter by endpoint URL (substring match) |
 | `namespace` | string? | `None` | Filter by Kubernetes namespace |

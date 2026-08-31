@@ -153,8 +153,11 @@ class TestDelete:
     @pytest.mark.asyncio
     async def test_unknown_name_deletes_nothing(self) -> None:
         custom = _custom(get=[ApiException(status=404), ApiException(status=404)])
-        with _patched(custom):
+        with _patched(custom), pytest.raises(SystemExit) as exc_info:
             await delete("job-1", force=True)
+        # [F26] The exit code is the contract, not merely "something was raised":
+        # this path used to return, exiting 0 on a delete that never happened.
+        assert exc_info.value.code == 1
         custom.delete_namespaced_custom_object.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -174,9 +177,14 @@ class TestDelete:
             ]
         )
 
-        with _patched(custom, job_id="collision"):
+        with (
+            _patched(custom, job_id="collision"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
             await delete("collision", force=True)
 
+        # [F26] An ambiguous target must exit nonzero, not return 0.
+        assert exc_info.value.code == 1
         custom.delete_namespaced_custom_object.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -194,7 +202,7 @@ class TestDelete:
     async def test_wrong_explicit_kind_deletes_nothing(self) -> None:
         custom = _custom(get=[ApiException(status=404)])
 
-        with _patched(custom):
+        with _patched(custom), pytest.raises(SystemExit):
             await delete("job-1", force=True, kind="sweep")
 
         custom.delete_namespaced_custom_object.assert_not_awaited()
@@ -306,3 +314,50 @@ class TestShutdown:
 
         assert session.post_timeout is not None
         assert session.post_timeout.total == 35.0
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_job_exits_nonzero(self) -> None:
+        """[F26] A job that resolves to nothing must fail the process, not return 0.
+
+        These paths printed an error and returned, so the CLI exited 0. Any
+        wrapping script or CI job read that as success and carried on -- the
+        shutdown silently never happened.
+        """
+        session = _ShutdownSession()
+
+        with (
+            patch("aiperf.kubernetes.client.k8s_client", _fake_client),
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=None,
+            ),
+            patch("aiohttp.ClientSession", return_value=session),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await shutdown("job-1")
+
+        assert exc_info.value.code == 1
+        assert session.post_timeout is None, "shutdown was posted despite the failure"
+
+    @pytest.mark.asyncio
+    async def test_missing_controller_pod_exits_nonzero(self) -> None:
+        """[F26] No controller pod to shut down is a failure, not a silent no-op."""
+        session = _ShutdownSession()
+
+        with (
+            patch("aiperf.kubernetes.client.k8s_client", _fake_client),
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=("job-1", "bench"),
+            ),
+            patch(
+                "aiperf.kubernetes.client_pods.find_controller_pod",
+                AsyncMock(return_value=None),
+            ),
+            patch("aiohttp.ClientSession", return_value=session),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await shutdown("job-1")
+
+        assert exc_info.value.code == 1
+        assert session.post_timeout is None

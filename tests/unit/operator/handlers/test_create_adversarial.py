@@ -571,3 +571,64 @@ class TestCreateCancellationBoundaries:
         harness.save_spec.assert_not_awaited()
         harness.upsert_index.assert_not_awaited()
         harness.jobset.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_on_create_cancellation_during_jobset_create_reaps_the_jobset(
+        self,
+    ) -> None:
+        """A cancel landing while the JobSet is being created must not orphan it.
+
+        ``on_cancel`` reaps via ``status.jobSetName``, which is only stamped
+        after ``_create_jobset`` returns. A cancel inside that window finds no
+        name, skips its delete, and stamps Cancelled -- and nothing else ever
+        reaps the JobSet, because the CR is not deleted (no ownerReference GC),
+        the sticky flag short-circuits monitor ticks, and the ``spec.cancel``
+        watcher will not re-fire for an unchanged value.
+        """
+        key = job_key("production", "aiperf-bench-7f2a", "uid-aiperf-bench-7f2a")
+
+        def cancel_during_jobset(*_args: object, **_kwargs: object) -> None:
+            request_cancellation(key)
+
+        delete_jobset = AsyncMock(return_value=True)
+
+        async with _patched_create_dependencies(
+            jobset_side_effect=cancel_during_jobset,
+        ) as harness:
+            with mock_patch(
+                "aiperf.operator.handlers.create.delete_owned_aiperfjob_jobset",
+                new=delete_jobset,
+            ):
+                result, patch = await _call_on_create()
+
+        assert result == {}
+        harness.jobset.assert_awaited_once()
+        delete_jobset.assert_awaited_once()
+        assert delete_jobset.await_args.args[0] == "production"
+        assert delete_jobset.await_args.args[1] == patch.status["jobSetName"]
+        assert delete_jobset.await_args.kwargs["parent_uid"] == "uid-aiperf-bench-7f2a"
+        assert "ResourcesCreated" not in _conditions_by_type(patch)
+
+    @pytest.mark.asyncio
+    async def test_on_create_cancelled_jobset_reap_failure_is_retryable(
+        self,
+    ) -> None:
+        """A failed reap must retry, and still stamp the identity to retry with."""
+        key = job_key("production", "aiperf-bench-7f2a", "uid-aiperf-bench-7f2a")
+
+        def cancel_during_jobset(*_args: object, **_kwargs: object) -> None:
+            request_cancellation(key)
+
+        patch = _patch_obj()
+        async with _patched_create_dependencies(
+            jobset_side_effect=cancel_during_jobset,
+        ):
+            with mock_patch(
+                "aiperf.operator.handlers.create.delete_owned_aiperfjob_jobset",
+                new=AsyncMock(side_effect=kopf.TemporaryError("apiserver down")),
+            ):
+                with pytest.raises(kopf.TemporaryError, match="apiserver down"):
+                    await _call_on_create(patch=patch)
+
+        assert patch.status["jobSetName"]
+        assert patch.status["jobId"] == "aiperf-bench-7f2a"

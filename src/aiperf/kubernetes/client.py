@@ -242,15 +242,19 @@ async def k8s_client(
     """Load k8s config and yield an ``ApiClient``.
 
     Tries ``load_incluster_config()`` first (pod-mounted service account), then
-    falls back to ``load_kube_config()`` on the given ``kubeconfig``/``context``.
+    falls back to ``load_kube_config()``. An explicit ``kubeconfig`` or
+    ``context`` skips the in-cluster attempt entirely, so a caller naming a
+    cluster is never silently rebound to the pod's own apiserver.
     The ``ApiClient`` is guaranteed to be closed on scope exit.
 
     Args:
         kubeconfig: Path to a kubeconfig file. ``None`` means use the default
-            resolution (``$KUBECONFIG`` or ``~/.kube/config``). Only consulted
-            when the in-cluster load fails.
+            resolution (``$KUBECONFIG`` or ``~/.kube/config``) if the
+            in-cluster load fails; a non-``None`` value skips the in-cluster
+            load.
         context: Kubeconfig context name to activate. ``None`` means use the
-            current-context from the kubeconfig.
+            current-context from the kubeconfig; a non-``None`` value skips the
+            in-cluster load.
         wait_for_credentials: Wait and retry when kubeconfig authentication is
             rejected. ``None`` enables this only for an interactive terminal.
             In-cluster clients never wait.
@@ -267,13 +271,18 @@ async def k8s_client(
         ...         print(job.name, job.phase)
     """
     suppress_noisy_http_loggers()
-    using_kubeconfig = False
+    # An explicit kubeconfig/context is an override, not a fallback: a pod with
+    # a mounted service account would otherwise silently bind to its own
+    # apiserver and ignore the cluster the caller named.
+    using_kubeconfig = kubeconfig is not None or context is not None
     should_wait = False
-    try:
-        config.load_incluster_config()
-        _apply_apiserver_tls_server_name_override()
-    except config.ConfigException:
-        using_kubeconfig = True
+    if not using_kubeconfig:
+        try:
+            config.load_incluster_config()
+            _apply_apiserver_tls_server_name_override()
+        except config.ConfigException:
+            using_kubeconfig = True
+    if using_kubeconfig:
         should_wait = (
             interactive_credential_wait_enabled()
             if wait_for_credentials is None

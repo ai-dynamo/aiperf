@@ -13,9 +13,11 @@ a unit test without a socket.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import TYPE_CHECKING
 
+import zmq
 from msgspec import Struct
 
 from aiperf.common.control_structs import (
@@ -30,6 +32,7 @@ from aiperf.common.control_structs import (
     Heartbeat,
     Registration,
     RegistrationAck,
+    ReRegisterRequest,
     StatusUpdate,
 )
 from aiperf.common.enums import (
@@ -37,6 +40,7 @@ from aiperf.common.enums import (
     SystemState,
     parse_result_producer_capability,
 )
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.plugin.enums import ServiceType
 
@@ -187,12 +191,14 @@ class SystemControllerDispatchMixin:
             self.warning(
                 f"Received heartbeat from unknown service: '{message.sid}' ('{message.stype}')"
             )
+            self.execute_async(self._request_reregistration(message.sid))
             return
         ServiceRegistry.update_service(
             message.sid,
-            ServiceType(message.stype),
-            time.time_ns(),
-            LifecycleState(message.state),
+            service_type=ServiceType(message.stype),
+            last_seen_ns=time.time_ns(),
+            state=LifecycleState(message.state),
+            seq=message.seq,
         )
 
     def _on_status_update(self, message: StatusUpdate) -> None:
@@ -206,10 +212,24 @@ class SystemControllerDispatchMixin:
             self.debug(
                 lambda: f"Received status update from un-registered service: {message.sid} ({message.stype})"
             )
+            self.execute_async(self._request_reregistration(message.sid))
             return
         ServiceRegistry.update_service(
             message.sid,
-            ServiceType(message.stype),
-            time.time_ns(),
-            LifecycleState(message.state),
+            service_type=ServiceType(message.stype),
+            last_seen_ns=time.time_ns(),
+            state=LifecycleState(message.state),
+            seq=message.seq,
         )
+
+    async def _request_reregistration(self, sid: str) -> None:
+        """Nudge a service the registry does not recognize to re-register.
+
+        Fires when the controller's ``ServiceRegistry``/``service_id_map``
+        come up empty while a service survives -- e.g. the controller process
+        restarted. Without this nudge the service would keep heartbeating
+        into a controller that never re-adds it, wedging the run at whatever
+        barrier counts registered services.
+        """
+        with contextlib.suppress(zmq.ZMQError, NotInitializedError):
+            await self.control_router.send_to(sid, ReRegisterRequest(sid=sid))

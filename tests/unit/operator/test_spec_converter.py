@@ -415,6 +415,41 @@ class TestCalculateWorkers:
         # max(10, 200) / 100 = 2
         assert workers == 2
 
+    def test_calculate_workers_warmup_profiling_shorthand_derives_from_concurrency(
+        self,
+    ) -> None:
+        """[F1] Named phase shorthands must be normalized before concurrency is read.
+
+        ``warmup:``/``profiling:`` are top-level siblings of ``phases:`` that the
+        AIPerfConfig before-validator folds into a ``phases`` list. The raw spec
+        dict therefore has no ``phases`` key at all. The old implementation read
+        that raw dict, saw an empty phase list, fell back to concurrency=1 and
+        silently provisioned a single worker for any load. Reading the validated
+        config instead makes the shorthand resolve.
+        """
+        spec = {
+            "connectionsPerWorker": 100,
+            "benchmark": {
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "warmup": {"type": "concurrency", "requests": 10, "concurrency": 10},
+                "profiling": {
+                    "type": "concurrency",
+                    "requests": 100,
+                    "concurrency": 1000,
+                },
+            },
+        }
+        converter = AIPerfJobSpecConverter(spec, "test-job", "default")
+
+        # The shorthand keys mean the raw dict genuinely has no "phases" entry,
+        # which is exactly what made the old raw-dict read collapse to 1.
+        assert converter._get_config_dict().get("phases") is None
+
+        # max(10, 1000) / 100 = 10, not the pre-fix fallback of 1.
+        assert converter.calculate_workers() == 10
+
 
 class TestWorkersForConcurrency:
     """The divisor neutralizer shared by every worker-count call site.

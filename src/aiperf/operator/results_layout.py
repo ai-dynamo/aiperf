@@ -38,6 +38,33 @@ from aiperf.common.results_markers import EPOCH_RE, READY_MARKER_NAME
 
 logger = logging.getLogger(__name__)
 
+
+class _BackgroundTaskRetainer:
+    """Keeps a strong reference to fire-and-forget tasks until they finish.
+
+    asyncio holds only a weak reference to a task, so an unretained
+    fire-and-forget task can be garbage-collected mid-await; retaining it here
+    (cleared via add_done_callback once the task finishes) prevents the
+    lazy-backfill/index-drop tasks below from disappearing before they
+    complete. See namespace_claim.py's ``_schedule_refresh`` and
+    dashboard_server.py for the same pattern.
+    """
+
+    def __init__(self) -> None:
+        self._tasks: set[asyncio.Task] = set()
+
+    def retain(self, task: asyncio.Task) -> None:
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+
+_background_task_retainer = _BackgroundTaskRetainer()
+
+
+def _retain_task(task: asyncio.Task) -> None:
+    _background_task_retainer.retain(task)
+
+
 LATEST_POINTER = "latest.txt"
 # Six digits keeps the whole-second key the same 16-digit width as the
 # fractional-second key (``f"{seconds}{microsecond:06d}"``), so every emitted
@@ -738,8 +765,10 @@ def _schedule_lazy_backfill_runs(
         return
     for entry in runs:
         try:
-            loop.create_task(
-                _runs_index.lazy_backfill_run(base, namespace, name, entry.epoch)
+            _retain_task(
+                loop.create_task(
+                    _runs_index.lazy_backfill_run(base, namespace, name, entry.epoch)
+                )
             )
         except Exception as exc:  # noqa: BLE001 - index path must never break reads
             logger.warning(
@@ -793,7 +822,7 @@ def _schedule_index_drop(namespace: str, name: str, epoch: str) -> None:
     if not _runs_index.is_open() or _runs_index.is_readonly():
         return
     try:
-        loop.create_task(_runs_index.delete_run(namespace, name, epoch))
+        _retain_task(loop.create_task(_runs_index.delete_run(namespace, name, epoch)))
     except Exception as exc:  # noqa: BLE001 - index path must never break retention
         logger.warning(
             "runs_index.delete_run task failed during retention for %s/%s/%s: %s",

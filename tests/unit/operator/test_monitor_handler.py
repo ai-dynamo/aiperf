@@ -1286,6 +1286,61 @@ class TestCleanupDeleteFailures:
         custom.delete_namespaced_custom_object.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_sidecar_export_recovery_claims_before_downloading(self) -> None:
+        """A lost completion claim must gate the download, not follow it.
+
+        The destination directory is shared with every other completion path,
+        so a losing racer must never stream a result set into it. After an
+        operator restart the in-process _shutdown_sent set is empty even when
+        a durable claim annotation already exists on the CR.
+        """
+        sb, _patch = _make_status_builder()
+        sidecar_client = AsyncMock()
+        sidecar_client.__aenter__.return_value = sidecar_client
+        sidecar_client.__aexit__.return_value = None
+        sidecar_client.get_results_list.return_value = [
+            {"name": "profile_export_aiperf.json", "size": 10},
+            {"name": "profile_export_aiperf.csv", "size": 10},
+        ]
+        sidecar_client.download_all_results.return_value = []
+
+        with (
+            patch(
+                "aiperf.operator.handlers.monitor.ProgressClient",
+                return_value=sidecar_client,
+            ),
+            patch(
+                "aiperf.operator.handlers.monitor.try_claim_completion",
+                new=AsyncMock(return_value=False),
+            ) as claim,
+            patch(
+                "aiperf.operator.handlers.monitor.handle_completion",
+                new=AsyncMock(),
+            ) as completion,
+        ):
+            recovered = await _maybe_recover_exported_results_from_sidecar(
+                body={
+                    "kind": "AIPerfJob",
+                    "metadata": {
+                        "name": "job",
+                        "creationTimestamp": "2026-05-19T08:00:00Z",
+                    },
+                },
+                namespace="ns",
+                name="job",
+                jobset_name="aiperf-job",
+                job_id="job",
+                status={"phase": "Running"},
+                sb=sb,
+                key="ns/job",
+            )
+
+        assert recovered is False
+        claim.assert_awaited_once()
+        sidecar_client.download_all_results.assert_not_awaited()
+        completion.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_sidecar_export_recovery_completes_without_controller_exit(
         self,
     ) -> None:
@@ -1294,6 +1349,10 @@ class TestCleanupDeleteFailures:
         sidecar_client = AsyncMock()
         sidecar_client.__aenter__.return_value = sidecar_client
         sidecar_client.__aexit__.return_value = None
+        sidecar_client.get_results_list.return_value = [
+            {"name": "profile_export_aiperf.json", "size": 10},
+            {"name": "profile_export_aiperf.csv", "size": 10},
+        ]
         sidecar_client.download_all_results.return_value = [
             "profile_export_aiperf.json",
             "profile_export_aiperf.csv",

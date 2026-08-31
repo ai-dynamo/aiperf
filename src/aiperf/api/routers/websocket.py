@@ -125,11 +125,16 @@ async def _dispatch_ws_message(
 @ws_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, component: WebSocketDep) -> None:
     """WebSocket endpoint for real-time message streaming."""
-    if component.ws_manager.client_count >= component.ws_manager.max_connections:
+    if not await component.ws_manager.try_reserve():
         await websocket.close(code=1013, reason="Max connections reached")
         return
 
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except Exception:
+        component.ws_manager.release_reservation()
+        raise
+
     client_host = (
         getattr(websocket.client, "host", "unknown") if websocket.client else "unknown"
     )
@@ -163,6 +168,8 @@ class WebSocketManager(AIPerfLoggerMixin):
         self._clients: dict[str, WebSocket] = {}
         self._subscriptions: dict[str, set[str]] = {}
         self._snapshot: tuple[tuple[str, WebSocket], ...] = ()
+        self._reservation_lock = asyncio.Lock()
+        self._reserved = 0
 
     def _update_snapshot(self) -> None:
         self._snapshot = tuple(self._clients.items())
@@ -171,7 +178,27 @@ class WebSocketManager(AIPerfLoggerMixin):
     def client_count(self) -> int:
         return len(self._snapshot)
 
+    async def try_reserve(self) -> bool:
+        """Atomically claim a connection slot against the capacity limit.
+
+        Must be called (and, on failure to complete the connection, released via
+        `release_reservation`) before `websocket.accept()` so that concurrent
+        connection attempts near the cap cannot all pass the capacity check
+        before any of them registers -- the check and the increment happen
+        under the same lock with no `await` between them.
+        """
+        async with self._reservation_lock:
+            if len(self._clients) + self._reserved >= self.max_connections:
+                return False
+            self._reserved += 1
+            return True
+
+    def release_reservation(self) -> None:
+        """Release a slot reserved via `try_reserve` that was never `add`-ed."""
+        self._reserved = max(0, self._reserved - 1)
+
     def add(self, client_id: str, ws: WebSocket) -> None:
+        self.release_reservation()
         self._clients[client_id] = ws
         self._subscriptions[client_id] = set()
         self._update_snapshot()

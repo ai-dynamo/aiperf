@@ -8,7 +8,8 @@ SPDX-License-Identifier: Apache-2.0
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AIPerf API</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1/themes/prism-tomorrow.min.css">
+    <!-- PrismJS 1.30.0 (MIT), vendored via tools/vendor_ui_deps.py -->
+    <link rel="stylesheet" href="/static-vendor/prism-tomorrow.css">
     <style>
         :root {
             --nvidia-green: #76B900;
@@ -322,9 +323,9 @@ asyncio.run(stream_metrics())</code></pre>
             </div>
         </div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/prism.min.js" data-manual></script>
-    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-python.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
+    <script src="/static-vendor/prism-core.js" data-manual></script>
+    <script src="/static-vendor/prism-python.js"></script>
+    <script src="/static-vendor/prism-bash.js"></script>
     <script>
         const base = `${location.protocol}//${location.host}`;
         const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`;

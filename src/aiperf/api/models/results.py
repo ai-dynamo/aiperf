@@ -41,6 +41,17 @@ class ResultsListResponse(AIPerfBaseModel):
         default=False,
         description="Whether the controller has marked result export as in progress.",
     )
+    partial: bool = Field(
+        default=False,
+        description=(
+            "Whether one or more exporters failed while others still wrote "
+            "usable artifacts; `files` may be an incomplete set."
+        ),
+    )
+    failed_exporters: list[str] = Field(
+        default_factory=list,
+        description="Names of exporters that failed during this run's export, if any.",
+    )
 
 
 class BenchmarkStatus(CaseInsensitiveStrEnum):

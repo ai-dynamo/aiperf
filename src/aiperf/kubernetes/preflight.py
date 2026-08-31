@@ -194,6 +194,9 @@ class CLIPreflightChecker:
         secrets: list[str] | None = None,
         endpoint_url: str | None = None,
         workers: int = 1,
+        node_selector: dict[str, str] | None = None,
+        tolerations: list[dict[str, object]] | None = None,
+        use_operator: bool = True,
     ):
         """Initialize the preflight checker.
 
@@ -206,6 +209,9 @@ class CLIPreflightChecker:
             secrets: Secret names to verify.
             endpoint_url: LLM endpoint URL to test connectivity.
             workers: Number of worker pods planned for deployment.
+            node_selector: Node labels the planned pods must match.
+            tolerations: Tolerations the planned pods carry.
+            use_operator: Whether the benchmark will be submitted through the operator.
         """
         self.namespace = namespace
         self.kubeconfig = kubeconfig
@@ -215,6 +221,9 @@ class CLIPreflightChecker:
         self.secrets = secrets or []
         self.endpoint_url = endpoint_url
         self.workers = workers
+        self.node_selector = node_selector or {}
+        self.tolerations = tolerations or []
+        self.use_operator = use_operator
 
         self._api: ApiClient | None = None
 
@@ -380,7 +389,7 @@ class CLIPreflightChecker:
     async def _check_rbac_permissions(self) -> CheckResult:
         """Check required RBAC permissions."""
         return await preflight_checks.check_rbac_permissions(
-            self._api, namespace=self.namespace
+            self._api, namespace=self.namespace, use_operator=self.use_operator
         )
 
     async def _check_aiperf_operator(self) -> CheckResult:
@@ -404,7 +413,10 @@ class CLIPreflightChecker:
     async def _check_node_resources(self) -> CheckResult:
         """Check if cluster has sufficient node resources."""
         return await preflight_checks.check_node_resources(
-            self._api, workers=self.workers
+            self._api,
+            workers=self.workers,
+            node_selector=self.node_selector,
+            tolerations=self.tolerations,
         )
 
     async def _check_secrets(self) -> CheckResult:

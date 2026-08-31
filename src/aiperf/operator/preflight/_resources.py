@@ -9,6 +9,7 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
+from aiperf.kubernetes.resource_quota import quota_violation
 from aiperf.kubernetes.utils import (
     format_cpu,
     format_memory,
@@ -295,6 +296,8 @@ class _ResourceChecksMixin:
         ctrl_cpu, ctrl_mem = controller_resource_requirements()
         worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
         worker_mem = parse_memory_gib(K8sEnvironment.WORKER_POD.MEMORY)
+        # +1 for the controller pod itself
+        required_pods = self.num_pods + 1
         required_cpu = ctrl_cpu + (worker_cpu * self.num_pods)
         required_mem = ctrl_mem + (worker_mem * self.num_pods)
 
@@ -303,36 +306,22 @@ class _ResourceChecksMixin:
             # (which may be empty until the quota controller first reconciles).
             hard = (quota.spec.hard or {}) if quota.spec else {}
             used = (quota.status.used or {}) if quota.status else {}
-
-            hard_cpu = hard.get("cpu") or hard.get("requests.cpu")
-            hard_mem = hard.get("memory") or hard.get("requests.memory")
-            used_cpu = used.get("cpu") or used.get("requests.cpu")
-            used_mem = used.get("memory") or used.get("requests.memory")
-
-            if hard_cpu:
-                total_needed = required_cpu + parse_cpu(used_cpu or "0")
-                if total_needed > parse_cpu(hard_cpu):
-                    return CheckResult(
-                        name="Resource Quotas",
-                        status=CheckStatus.FAIL,
-                        message=(
-                            f"Benchmark would exceed CPU quota: "
-                            f"{format_cpu(total_needed)} needed vs {hard_cpu} limit. "
-                            f"Request a quota increase or reduce worker count."
-                        ),
-                    )
-            if hard_mem:
-                total_needed = required_mem + parse_memory_gib(used_mem or "0")
-                if total_needed > parse_memory_gib(hard_mem):
-                    return CheckResult(
-                        name="Resource Quotas",
-                        status=CheckStatus.FAIL,
-                        message=(
-                            f"Benchmark would exceed memory quota: "
-                            f"{format_memory(total_needed)} needed vs {hard_mem} limit. "
-                            f"Request a quota increase or reduce worker count."
-                        ),
-                    )
+            violation = quota_violation(
+                hard,
+                used,
+                required_cpu=required_cpu,
+                required_mem=required_mem,
+                required_pods=required_pods,
+            )
+            if violation:
+                return CheckResult(
+                    name="Resource Quotas",
+                    status=CheckStatus.FAIL,
+                    message=(
+                        f"Benchmark would exceed {violation}. "
+                        f"Request a quota increase or reduce worker count."
+                    ),
+                )
 
         return CheckResult(
             name="Resource Quotas",

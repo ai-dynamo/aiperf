@@ -1219,7 +1219,7 @@ class StickyCreditRouter(CommunicationMixin):
             worker_load.in_flight_credits += 1
             # Composite key: (phase, phase_index, credit_id) to avoid collisions
             # during seamless phase overlap
-            composite_key = (credit.phase.value, credit.phase_index, credit.id)
+            composite_key = (credit.phase, credit.phase_index, credit.id)
             worker_load.active_credit_ids.add(composite_key)
             worker_load.last_sent_at_ns = time.perf_counter_ns()
 
@@ -1241,7 +1241,7 @@ class StickyCreditRouter(CommunicationMixin):
     ) -> None:
         """Update worker load: decrement in_flight_credits. Lock-free."""
         if worker_load := self._workers.get(worker_id):
-            composite_key = (credit.phase.value, credit.phase_index, credit.id)
+            composite_key = (credit.phase, credit.phase_index, credit.id)
             worker_load.active_credit_ids.discard(composite_key)
 
             if cancelled:

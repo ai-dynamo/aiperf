@@ -943,12 +943,10 @@ async def _purge_reused_cluster_resources(
                 check=False,
             )
 
-    # Purge shared namespaces and this session's own namespaces.
-    for ns in (
-        "default",
-        benchmark_namespace,
-        operator_job_namespace,
-    ):
+    # Purge only this session's own namespaces. Never touch "default" or any
+    # other shared namespace — other concurrently-running pytest sessions may
+    # own resources there (see docstring).
+    for ns in (benchmark_namespace, operator_job_namespace):
         await _purge_ns(ns)
 
     # Also clean up operator namespaces from dead pytest sessions

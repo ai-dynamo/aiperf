@@ -28,7 +28,7 @@ const METRIC_DISPLAY = {
  * The raw key (`request_throughput`) is an internal metric tag, and a bare
  * number with no unit cannot be compared against anything else on the page.
  *
- * Not exported: `tests/unit/ui/test_operator_tables_adversarial.py` loads this
+ * Not exported: `tests/ui/test_operator_tables_adversarial.py` loads this
  * module through `eval`, which rejects any surviving `export` statement.
  */
 function metricHeading(metric, stat) {

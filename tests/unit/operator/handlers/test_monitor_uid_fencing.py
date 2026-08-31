@@ -123,8 +123,8 @@ async def test_stale_monitor_callback_has_no_status_or_event_side_effects() -> N
 
 
 @pytest.mark.asyncio
-async def test_monitor_status_patch_is_resource_version_fenced() -> None:
-    """A live callback pins Kopf's eventual merge patch to its parent version."""
+async def test_monitor_status_patch_clears_resource_version_after_tick() -> None:
+    """A successful monitor tick must not return a stale merge-patch fence."""
     _, result = _status_builder()
     with (
         patch.object(
@@ -148,7 +148,7 @@ async def test_monitor_status_patch_is_resource_version_fenced() -> None:
             result,
         )
 
-    assert result.metadata == {"resourceVersion": "73"}
+    assert result.metadata == {}
 
 
 @pytest.mark.asyncio

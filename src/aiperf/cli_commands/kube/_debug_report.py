@@ -88,8 +88,10 @@ def _print_problems(pod_infos: list[dict[str, Any]]) -> None:
 
     print_header("Problems Found", style="bold red")
     for pod_name, problem in all_problems:
+        from rich.markup import escape
+
         severity = problem["severity"]
-        header = f"[{pod_name}] {problem['state']} (container: {problem['container']})"
+        header = f"[{escape(pod_name)}] {problem['state']} (container: {problem['container']})"
         if severity == "CRITICAL":
             print_error(header)
         else:
@@ -212,8 +214,10 @@ def _print_pod_logs(pod_logs: dict[str, dict[str, str]]) -> None:
     print_header("Problem Pod Logs", style="bold yellow")
     for pod_name, containers in pod_logs.items():
         for container_name, log_text in containers.items():
+            from rich.markup import escape
+
             print_info(f"--- {pod_name}/{container_name} ---")
-            console.print(f"[dim]{log_text}[/dim]")
+            console.print(escape(log_text), soft_wrap=True)
 
 
 def _print_summary(

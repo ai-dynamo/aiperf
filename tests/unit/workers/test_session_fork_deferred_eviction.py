@@ -94,6 +94,35 @@ class TestExpectedForkChildrenStamping:
         session.conversation.branches = []
         assert session.expected_fork_children == 3
 
+    def test_undeclared_fork_branch_does_not_pin_parent_forever(
+        self, session_manager: UserSessionManager
+    ) -> None:
+        reachable = ConversationBranchInfo(
+            branch_id="root:0",
+            mode=ConversationBranchMode.FORK,
+            child_conversation_ids=["reachable-child"],
+        )
+        unreachable = ConversationBranchInfo(
+            branch_id="root:never",
+            mode=ConversationBranchMode.FORK,
+            child_conversation_ids=["unreachable-child-1", "unreachable-child-2"],
+        )
+        conversation = Conversation(
+            session_id="root",
+            turns=[Turn(branch_ids=[reachable.branch_id])],
+            branches=[reachable, unreachable],
+        )
+        session = session_manager.create_and_store(
+            x_correlation_id="parent", conversation=conversation, num_turns=1
+        )
+        session.pending_fork_eviction = True
+        session_manager.evict_if_unpinned("parent")
+
+        session_manager.pin_for_fork_child("parent")
+        session_manager.release_fork_child("parent")
+
+        assert session_manager.get("parent") is None
+
 
 class TestDeferredEvictionSurvivesSerialChildArrival:
     def test_first_child_join_does_not_strand_later_siblings(
@@ -237,3 +266,65 @@ class TestStaleDeferredParentsAreReclaimed:
         assert mgr.stale_fork_evictions == 46
         # Least-recently-used stale parents went first.
         assert set(mgr._cache) == {f"parent-{i}" for i in range(46, 50)}
+
+
+def _sticky_missed_parent(x_correlation_id: str) -> UserSession:
+    """A deferred parent whose declared FORK children never reached this worker.
+
+    ``expected_fork_children`` was stamped at creation but ``release_fork_child``
+    never ran here, so ``joined_fork_children`` is stuck at 0 and
+    ``fork_children_outstanding`` reports True forever.
+    """
+    return UserSession(
+        x_correlation_id=x_correlation_id,
+        num_turns=1,
+        conversation=Conversation(session_id=x_correlation_id, turns=[Turn()]),
+        is_fork_parent=True,
+        pending_fork_eviction=True,
+        expected_fork_children=2,
+        joined_fork_children=0,
+    )
+
+
+class TestStickyMissedForkParentsAreReclaimed:
+    """[F33] Unpinned parents are reclaimable even while children look outstanding."""
+
+    def test_sticky_missed_parent_reports_children_outstanding(self) -> None:
+        """Guard the premise: this shape is exactly what the old skip matched."""
+        parent = _sticky_missed_parent("parent")
+
+        assert parent.fork_refcount == 0
+        assert parent.fork_children_outstanding is True
+
+    def test_sticky_missed_parents_do_not_defeat_the_cap(self) -> None:
+        """The pre-fix second pass skipped ``fork_children_outstanding`` sessions.
+
+        Children that sticky-missed onto another worker never call
+        ``release_fork_child`` here, so ``joined_fork_children`` never catches
+        up to ``expected_fork_children`` and the flag never clears. Skipping on
+        it made these entries immortal: a fork-heavy run grew the cache without
+        bound and OOM'd the container, the exact failure the cap exists to
+        prevent. Only ``fork_refcount > 0`` -- a child actively dispatching on
+        this worker -- is a real pin.
+        """
+        mgr = UserSessionManager(max_sessions=4)
+        for i in range(50):
+            mgr.store(f"missed-{i}", _sticky_missed_parent(f"missed-{i}"))
+
+        assert len(mgr._cache) == 4, (
+            "sticky-missed deferred parents grew the cache without bound"
+        )
+        assert mgr.stale_fork_evictions == 46
+        # Least-recently-used stale parents went first.
+        assert set(mgr._cache) == {f"missed-{i}" for i in range(46, 50)}
+
+    def test_sticky_missed_parent_with_live_pin_is_never_reclaimed(self) -> None:
+        """``fork_refcount`` remains the hard pin after the outstanding check went."""
+        mgr = UserSessionManager(max_sessions=1)
+        mgr.store("pinned", _sticky_missed_parent("pinned"))
+        mgr.pin_for_fork_child("pinned")
+
+        for i in range(10):
+            mgr.store(f"missed-{i}", _sticky_missed_parent(f"missed-{i}"))
+
+        assert "pinned" in mgr._cache

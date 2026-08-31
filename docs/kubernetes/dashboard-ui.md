@@ -416,7 +416,7 @@ charts. Worse, it was not inert — every visitor whose OS preferred light got
 neutralized only part of the light palette, so 13 of its 73 custom properties
 leaked into the dark UI (including a low-contrast muted accent and an inverted
 table-row hover). `style.css` now contains no `[data-theme]` selector at all,
-which `tests/unit/ui/test_operator_css_static_edges.py` enforces.
+which `tests/ui/test_operator_css_static_edges.py` enforces.
 
 Reviving light mode would mean making `lib/theme.js` read CSS custom properties
 and re-theming every chart, not re-adding a toggle.

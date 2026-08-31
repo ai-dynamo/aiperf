@@ -567,6 +567,99 @@ async def test_sweep_archive_commit_orders_metadata_sentinel_latest_index_delete
 
 
 @pytest.mark.asyncio
+async def test_sweep_aggregation_complete_offloads_archive_io_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mock_sweep_runs_index: AsyncMock,
+) -> None:
+    """The full-success archive commit must not block the kopf event loop.
+
+    `_finalize_sweep_archive` and `_write_sweep_harvest_sentinel` do
+    synchronous PVC I/O (read_bytes/write_bytes/os.replace); both must be
+    dispatched via `asyncio.to_thread`, matching the pattern used everywhere
+    else in the operator (e.g. `handlers/cleanup.py`).
+    """
+    from aiperf.operator import main as operator_main
+    from aiperf.operator.handlers.sweep import _aggregate_fetch
+    from aiperf.operator.handlers.sweep._aggregate_fetch import (
+        SweepAggregateFetchResult,
+    )
+
+    epoch = "1714064523"
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / epoch
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(
+        orjson.dumps({"phase": "Succeeded", "totalVariations": 1})
+    )
+    (epoch_dir / "children.json").write_bytes(orjson.dumps({"children": []}))
+
+    fetch = AsyncMock(return_value=SweepAggregateFetchResult(downloaded=1, listed=1))
+    monkeypatch.setattr(_aggregate_fetch, "fetch_sweep_aggregate_to_disk", fetch)
+    monkeypatch.setattr(operator_main, "_delete_sweep_jobset", AsyncMock())
+    monkeypatch.setattr(OperatorEnvironment.RESULTS, "DIR", tmp_path)
+
+    offloaded: list[Any] = []
+
+    async def track_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(operator_main.asyncio, "to_thread", track_to_thread)
+
+    await operator_main.on_aiperfsweep_aggregation_complete(
+        body=_FIXTURE_BODY,
+        status={"runEpoch": epoch, "aggregation": {"phase": "Complete"}},
+        name="latency-sweep",
+        namespace="benchmarks",
+    )
+
+    assert operator_main._finalize_sweep_archive in offloaded
+    assert operator_main._write_sweep_harvest_sentinel in offloaded
+
+
+@pytest.mark.asyncio
+async def test_recover_pre_sentinel_sweep_archive_offloads_archive_io_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The pre-sentinel recovery path must offload its blocking I/O too."""
+    from aiperf.operator import main as operator_main
+
+    epoch = "1714064523"
+    epoch_dir = tmp_path / "benchmarks" / "sweeps" / "latency-sweep" / epoch
+    epoch_dir.mkdir(parents=True)
+    (epoch_dir / "aggregate.json").write_bytes(
+        orjson.dumps({"phase": "Succeeded", "totalVariations": 1})
+    )
+    (epoch_dir / "children.json").write_bytes(orjson.dumps({"children": []}))
+
+    monkeypatch.setattr(operator_main, "_commit_existing_sweep_archive", AsyncMock())
+
+    offloaded: list[Any] = []
+
+    async def track_to_thread(func: Any, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(operator_main.asyncio, "to_thread", track_to_thread)
+
+    await operator_main._recover_pre_sentinel_sweep_archive(
+        base_dir=tmp_path,
+        namespace="benchmarks",
+        name="latency-sweep",
+        epoch=epoch,
+        status={},
+        durable_ref={"url": "http://operator/aggregate.json"},
+        aggregate_marker=epoch_dir / "aggregate.json",
+        jobset_name="aiperf-latency-sweep",
+        sweep_uid="sweep-uid",
+    )
+
+    assert operator_main._finalize_sweep_archive in offloaded
+    assert operator_main._write_sweep_harvest_sentinel in offloaded
+
+
+@pytest.mark.asyncio
 async def test_commit_sweep_archive_materializes_child_lineage_on_operator_pvc(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -4752,3 +4845,31 @@ class TestOpenRunsIndexSelfHeal:
             await asyncio.sleep(0)
 
         assert reconciled.is_set()
+
+
+class TestMaterializeSweepChildLineageMalformedManifest:
+    """Malformed manifest entries must surface as ValueError, not KeyError.
+
+    ``_commit_sweep_archive`` only converts ``(OSError, JSONDecodeError,
+    TypeError, ValueError)`` into a ``kopf.TemporaryError``; anything else
+    escapes the kopf handler and is retried forever with no diagnosis.
+    """
+
+    def _write_manifest(self, base_dir: Path, child: dict[str, Any]) -> None:
+        epoch_dir = base_dir / "benchmarks" / "sweeps" / "latency-sweep" / "123"
+        epoch_dir.mkdir(parents=True, exist_ok=True)
+        (epoch_dir / "children.json").write_bytes(orjson.dumps({"children": [child]}))
+
+    def test_missing_variation_index_raises_value_error(self, tmp_path: Path) -> None:
+        """A child entry with no ``variation_index`` is a manifest shape error."""
+        from aiperf.operator import main as operator_main
+
+        self._write_manifest(tmp_path, {"name": "child-a", "trial_index": 0})
+
+        with pytest.raises(ValueError, match="variation_index"):
+            operator_main._materialize_sweep_child_lineage(
+                base_dir=tmp_path,
+                namespace="benchmarks",
+                name="latency-sweep",
+                epoch="123",
+            )

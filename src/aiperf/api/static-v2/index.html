@@ -12,19 +12,23 @@ SPDX-License-Identifier: Apache-2.0
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./style.css">
+
+  <!-- Import map: resolve browser runtime modules from the dashboard origin.
+       Vendored via tools/vendor_ui_deps.py -- see MANIFEST there for pinned
+       versions/hashes. Mirrors operator/ui/index.html's import map. -->
   <script type="importmap">
   {
     "imports": {
-      "preact": "https://esm.sh/preact@10",
-      "preact/hooks": "https://esm.sh/preact@10/hooks",
-      "htm/preact": "https://esm.sh/htm@3/preact",
-      "@preact/signals": "https://esm.sh/@preact/signals@1?deps=preact@10"
+      "preact": "./vendor/preact.mjs",
+      "preact/hooks": "./vendor/preact-hooks.mjs",
+      "htm/preact": "./vendor/htm-preact.mjs",
+      "@preact/signals": "./vendor/signals.mjs"
     }
   }
   </script>
   <!-- Chart.js for the live throughput/latency chart. Loaded before the app
        module so window.Chart is available by the time the component mounts. -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="./vendor/chart.umd.min.js"></script>
 </head>
 <body>
   <div id="app"></div>

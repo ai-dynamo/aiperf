@@ -670,7 +670,28 @@ class TestProfileCancelRelay:
 
         controller._send_control_command_to_all.assert_not_awaited()
         controller.execute_async.assert_called_once()
-        controller._relay_profile_cancel.assert_called_once_with("records-1", payload)
+        controller._relay_profile_cancel_guarded.assert_called_once_with(
+            "records-1", payload
+        )
+
+    @pytest.mark.asyncio
+    async def test_relay_guard_logs_instead_of_escaping_the_detached_task(self) -> None:
+        """The relay runs detached, so a raise would only surface at GC time.
+
+        ``execute_async`` never retrieves the result, so an escaping exception
+        becomes an "exception was never retrieved" warning long after the abort
+        it belonged to -- with no controller-side error line at all.
+        """
+        controller = _controller({"sm-1": ServiceType.SERVER_METRICS_MANAGER})
+        controller._relay_profile_cancel = AsyncMock(
+            side_effect=RuntimeError("relay exploded")
+        )
+
+        await SystemController._relay_profile_cancel_guarded(controller, "", b"")
+
+        assert any(
+            "relay exploded" in str(call) for call in controller.error.call_args_list
+        )
 
 
 @pytest.mark.asyncio

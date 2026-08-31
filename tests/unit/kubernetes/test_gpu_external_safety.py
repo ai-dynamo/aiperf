@@ -37,6 +37,7 @@ def _set_safe_external_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Configure every mutable GPU test namespace for the external-cluster guard."""
     monkeypatch.setenv("GPU_TEST_CONTEXT", "external")
     monkeypatch.setenv("GPU_TEST_EXTERNAL_EXISTING_OPERATOR", "1")
+    monkeypatch.setenv("GPU_TEST_NAMESPACE_PREFIX", "user-scope-")
     for suffix in (
         "BENCHMARK_NAMESPACE",
         "VLLM_NAMESPACE",
@@ -44,17 +45,29 @@ def _set_safe_external_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "SGLANG_NAMESPACE",
         "DYNAMO_NAMESPACE",
     ):
-        monkeypatch.setenv(f"GPU_TEST_{suffix}", "acasagrande-gpu-e2e")
+        monkeypatch.setenv(f"GPU_TEST_{suffix}", "user-scope-gpu-e2e")
+
+
+def test_resolve_settings_external_cluster_requires_namespace_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """External execution must reject a run with no configured namespace prefix."""
+    monkeypatch.setenv("GPU_TEST_CONTEXT", "external")
+    monkeypatch.setenv("GPU_TEST_EXTERNAL_EXISTING_OPERATOR", "1")
+
+    with pytest.raises(pytest.UsageError, match="--gpu-namespace-prefix"):
+        _resolve_settings(_config())
 
 
 def test_resolve_settings_external_cluster_requires_user_namespaces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """External execution must reject the historic shared GPU namespaces."""
+    """External execution must reject namespaces outside the configured prefix."""
     monkeypatch.setenv("GPU_TEST_CONTEXT", "external")
     monkeypatch.setenv("GPU_TEST_EXTERNAL_EXISTING_OPERATOR", "1")
+    monkeypatch.setenv("GPU_TEST_NAMESPACE_PREFIX", "user-scope-")
 
-    with pytest.raises(pytest.UsageError, match="acasagrande-"):
+    with pytest.raises(pytest.UsageError, match="user-scope-"):
         _resolve_settings(_config())
 
 
@@ -66,9 +79,9 @@ def test_resolve_settings_external_cluster_accepts_explicit_user_scope(
 
     settings = _resolve_settings(_config())
 
-    assert settings.benchmark_namespace == "acasagrande-gpu-e2e"
-    assert settings.vllm_namespace == "acasagrande-gpu-e2e"
-    assert settings.dynamo_namespace == "acasagrande-gpu-e2e"
+    assert settings.benchmark_namespace == "user-scope-gpu-e2e"
+    assert settings.vllm_namespace == "user-scope-gpu-e2e"
+    assert settings.dynamo_namespace == "user-scope-gpu-e2e"
     assert settings.external_existing_operator is True
 
 
@@ -95,7 +108,7 @@ async def test_release_gpu_external_cluster_never_lists_or_deletes_namespaces() 
         async def delete_namespace(self, *args: str, **kwargs: object) -> None:
             raise AssertionError(f"unexpected namespace deletion: {args}, {kwargs}")
 
-    await _release_gpu(ExternalKubectl(), "acasagrande-gpu-e2e")
+    await _release_gpu(ExternalKubectl(), "user-scope-gpu-e2e")
 
 
 def test_gpu_option_surface_contains_all_external_namespace_controls() -> None:
@@ -128,7 +141,7 @@ async def test_pull_secret_copy_uses_only_explicit_source_namespace() -> None:
                 "secret",
                 "nvcr-pull",
                 "-n",
-                "acasagrande-aiperf-bench",
+                "user-scope-aiperf-bench",
                 "-o",
                 "yaml",
             )
@@ -143,7 +156,7 @@ async def test_pull_secret_copy_uses_only_explicit_source_namespace() -> None:
     deployer = BenchmarkDeployer(
         kubectl=Kubectl(),  # type: ignore[arg-type]
         project_root=Path.cwd(),
-        default_image_pull_secret_source_namespace="acasagrande-aiperf-bench",
+        default_image_pull_secret_source_namespace="user-scope-aiperf-bench",
     )
 
     await deployer._ensure_pull_secrets_in_namespace("target", ["nvcr-pull"])

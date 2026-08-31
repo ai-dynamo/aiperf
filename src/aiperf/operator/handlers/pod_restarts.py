@@ -270,6 +270,20 @@ async def handle_pod_restart(
         str(parent_uid) if parent_uid is not None else None,
     )
     pre_warned = _warned_pod_restarts.setdefault(real_key, set())
+    # Cap the per-job set so a job with many pod restarts doesn't grow
+    # this indefinitely.  Clearing resets dedup state for very old entries,
+    # at worst causing a one-time duplicate warning per pod/count pair.
+    _MAX_WARNED_PER_JOB = 5000
+    if len(pre_warned) > _MAX_WARNED_PER_JOB:
+        pre_warned.clear()
+    # Cap the outer dict: if cleanup (job_key pop in client_cache._close_unlocked)
+    # was skipped for some jobs, prevent unbounded accumulation.
+    _MAX_WARNED_JOBS = 2000
+    if len(_warned_pod_restarts) > _MAX_WARNED_JOBS:
+        for stale_key in list(_warned_pod_restarts)[
+            : len(_warned_pod_restarts) - _MAX_WARNED_JOBS
+        ]:
+            _warned_pod_restarts.pop(stale_key, None)
     candidates = _claim_dedup_candidates(
         new, name=name, threshold=threshold, pre_warned=pre_warned
     )

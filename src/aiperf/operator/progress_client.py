@@ -790,7 +790,26 @@ class ProgressClient:
 
         async def _download_one(file_info: dict[str, Any]) -> str | None:
             filename = file_info["name"]
-            dest_path = dest_dir / filename
+            # Reject absolute paths and dot-segment traversals.  Path("/a") /
+            # "/etc/passwd" silently discards the base and writes to /etc/passwd;
+            # a resolved path that escapes dest_dir is equally dangerous.
+            # Nested names ("checkpoints/run0.parquet") are produced by design by
+            # collect_result_files(), so only absolute paths and dot segments are
+            # unsafe here; the resolved-containment check below is the real guard.
+            parts = [p for p in filename.replace("\\", "/").split("/") if p]
+            if (
+                not parts
+                or filename.startswith("/")
+                or any(p in (".", "..") for p in parts)
+            ):
+                logger.warning("Skipping unsafe result filename: %r", filename)
+                return None
+            dest_path = dest_dir.joinpath(*parts)
+            if not dest_path.resolve().is_relative_to(dest_dir.resolve()):
+                logger.warning(
+                    "Skipping result filename that escapes dest dir: %r", filename
+                )
+                return None
             async with semaphore:
                 if await self.download_result_file(
                     controller_host, filename, dest_path

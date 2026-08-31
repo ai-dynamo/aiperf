@@ -203,6 +203,29 @@ def test_project_server_metrics_for_cr_drops_over_series_cap_metric_whole(
     assert "sglang:num_queue_reqs" in result["metrics"]
 
 
+def test_project_server_metrics_for_cr_clears_snapshot_when_every_metric_exceeds_label_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A filtered scrape must replace rather than retain a prior CR snapshot."""
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.SERVER_METRICS, "CR_PROJECTION_MAX_LABELS", 2)
+
+    result = project_server_metrics_for_cr(
+        _summary(
+            {
+                "trtllm:request_success": _gauge(
+                    {"labels": {"a": "1", "b": "2", "c": "3"}, "stats": {"rate": 1.0}}
+                )
+            }
+        )
+    )
+
+    assert result is not None
+    assert result["metrics"] == {}
+    assert result["summary"]["endpoints_configured"] == ["http://e1:8000/metrics"]
+
+
 def test_project_server_metrics_for_cr_drops_over_label_cap_metric_whole(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -380,3 +403,43 @@ def test_default_series_cap_clears_a_large_per_worker_deployment() -> None:
     from aiperf.common.environment import Environment
 
     assert Environment.SERVER_METRICS.CR_PROJECTION_MAX_SERIES >= 256
+
+
+def test_project_server_metrics_for_cr_redacts_endpoint_credentials() -> None:
+    """[F13] Endpoint credentials must never reach ``status.serverMetrics``.
+
+    The CR status is world-readable to anyone with get access on AIPerfJob, and
+    endpoint URLs routinely carry userinfo (``user:pass@host``) or a credential
+    query parameter. The pre-fix projection copied ``endpoint_url`` through
+    verbatim into both the per-series identity and
+    ``summary.endpoints_configured``, persisting the secret in plaintext.
+    """
+    payload = {
+        "endpoint_summaries": {
+            "http://admin:s3cret@e1:8000/metrics": {
+                "endpoint_url": "http://admin:s3cret@e1:8000/metrics",
+                "metrics": {
+                    "vllm:generation_tokens": _gauge(
+                        {
+                            "endpoint_url": "http://e2:8000/metrics?api_key=sk-live-abc123",
+                            "stats": {"rate": 1.0},
+                        }
+                    )
+                },
+            }
+        }
+    }
+
+    result = project_server_metrics_for_cr(payload)
+
+    assert result is not None
+    series = result["metrics"]["vllm:generation_tokens"]["series"][0]
+    assert series["endpoint_url"] == "http://e2:8000/metrics?api_key=<redacted>"
+    assert result["summary"]["endpoints_configured"] == [
+        "http://<redacted>@e1:8000/metrics"
+    ]
+
+    # Belt and braces: no secret literal survives anywhere in the projection.
+    rendered = orjson.dumps(result).decode()
+    assert "s3cret" not in rendered
+    assert "sk-live-abc123" not in rendered

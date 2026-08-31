@@ -61,6 +61,40 @@ def _is_cancelled_result(result: Any) -> bool:
     return not result.success and bool(getattr(result, "was_cancelled", False))
 
 
+async def _record_child_execution_failure(
+    status_writer: SweepStatusWriter, exc: Exception
+) -> None:
+    """Persist a terminal parent failure before the controller restarts."""
+    logger.exception("sweep child execution failed")
+    await status_writer.aggregation_failed(
+        error=str(redact_sweep_public_data(str(exc)))
+    )
+
+
+def _log_active_adaptive_search(plan: BenchmarkPlan) -> None:
+    """Log the active adaptive sweep without adding controller complexity."""
+    from aiperf.config.sweep import AdaptiveSearchSweep
+
+    if not isinstance(plan.sweep, AdaptiveSearchSweep):
+        return
+    logger.info(
+        "Cluster-side adaptive search active: "
+        f"{_adaptive_search_log_summary(plan.sweep)}"
+    )
+
+
+async def _restore_adaptive_checkpoint(planner: Any) -> None:
+    """Replay the last complete planner checkpoint after a container restart."""
+    from aiperf.orchestrator.search_planner import (
+        read_search_checkpoint,
+        restore_planner_history,
+    )
+
+    checkpoint = await asyncio.to_thread(read_search_checkpoint, RESULTS_DIR)
+    if checkpoint:
+        restore_planner_history(planner, checkpoint)
+
+
 # K8s rejects CR patches > ~1 MiB with HTTP 413; the inline aggregate budget
 # lives on K8sEnvironment.JOBSET.SWEEP_AGGREGATE_INLINE_MAX_BYTES. Bound once
 # at module scope so every fit decision in a run uses the same cap.
@@ -932,16 +966,8 @@ async def main() -> int:
             orchestrator = MultiRunOrchestrator(base_dir=RESULTS_DIR)
             search_planner = build_search_planner(plan)
             if search_planner is not None:
-                from aiperf.config.sweep import AdaptiveSearchSweep
-
-                adaptive = (
-                    plan.sweep if isinstance(plan.sweep, AdaptiveSearchSweep) else None
-                )
-                if adaptive is not None:
-                    logger.info(
-                        "Cluster-side adaptive search active: "
-                        f"{_adaptive_search_log_summary(adaptive)}"
-                    )
+                _log_active_adaptive_search(plan)
+                await _restore_adaptive_checkpoint(search_planner)
             all_results = await orchestrator.execute(
                 plan,
                 executor,
@@ -982,6 +1008,9 @@ async def main() -> int:
                     "QMC sweep completed without sampling_design.json; refusing "
                     "to publish an incomplete sweep aggregate"
                 )
+        except Exception as exc:  # noqa: BLE001 - terminal status must record all execution failures
+            await _record_child_execution_failure(status_writer, exc)
+            return 1
         finally:
             cancel_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1098,5 +1127,21 @@ async def main() -> int:
     return 0
 
 
+def _script_entrypoint() -> int:
+    """Real ``python -m aiperf.sweep_controller.main`` entrypoint.
+
+    The Windows event-loop policy switch must be applied before
+    ``asyncio.run()`` constructs the loop for ``main()`` -- setting the
+    policy from inside the (already async, already-running-in-a-loop)
+    ``main()`` itself would be too late. Split out from the
+    ``if __name__ == "__main__":`` guard so it's directly unit-testable
+    (module-level guards never execute under import/pytest).
+    """
+    from aiperf.common.event_loop import configure_event_loop_policy_for_platform
+
+    configure_event_loop_policy_for_platform()
+    return asyncio.run(main())
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(_script_entrypoint())

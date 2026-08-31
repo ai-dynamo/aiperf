@@ -8,6 +8,8 @@ so only BoTorch-specific cases skip when that stack is unavailable.
 
 from __future__ import annotations
 
+import numpy as np
+import orjson
 import pytest
 from pytest import param
 
@@ -126,6 +128,41 @@ def _make_result(
     )
 
 
+class _NumpyScalarSampler(optuna.samplers.RandomSampler):
+    """Sampler that returns ``numpy.float64`` from float suggestions.
+
+    Stands in for BoTorchSampler without pulling in the torch/botorch stack.
+    Optuna's ``IntDistribution.to_external_repr`` coerces to native ``int``,
+    but ``FloatDistribution`` has no such coercion, so whatever scalar type
+    the sampler produces reaches the caller of ``suggest_float`` unchanged.
+    """
+
+    def sample_independent(self, study, trial, param_name, param_distribution):
+        value = super().sample_independent(study, trial, param_name, param_distribution)
+        if isinstance(param_distribution, optuna.distributions.FloatDistribution):
+            return np.float64(value)
+        return value
+
+
+@pytest.fixture
+def numpy_scalar_sampler(monkeypatch):
+    """Force the planner to build a sampler that emits numpy scalars."""
+    monkeypatch.setattr(
+        "aiperf.orchestrator.search_planner.optuna_planner.build_sampler",
+        lambda cfg: _NumpyScalarSampler(seed=42),
+    )
+
+
+def _real_dim_cfg() -> AdaptiveSearchSweep:
+    # endpoint.timeout is the float-typed path used by the other real-kind
+    # tests; phases.profiling.concurrency is int-typed in BenchmarkConfig.
+    return _cfg(
+        search_space=[
+            SearchSpaceDimension(path="endpoint.timeout", lo=1.0, hi=100.0, kind="real")
+        ]
+    )
+
+
 # ----------------------------------------------------------------------------
 # 1. Construction.
 # ----------------------------------------------------------------------------
@@ -210,6 +247,36 @@ def test_ask_float_dim_returns_float():
     proposed = variation.values["endpoint.timeout"]
     assert isinstance(proposed, float)
     assert 1.0 <= proposed <= 100.0
+
+
+def test_ask_real_dim_returns_native_float_when_sampler_emits_numpy(
+    numpy_scalar_sampler,
+) -> None:
+    """A numpy-emitting sampler must not leak numpy.float64 into variation values.
+
+    ``isinstance(np.float64(1.0), float)`` is True, so only an exact type check
+    catches this; orjson rejects the subclass even though isinstance passes.
+    """
+    planner = OptunaSearchPlanner(_base_config(), _real_dim_cfg())
+    proposal = planner.ask()
+    assert proposal is not None
+    _, variation = proposal
+    assert type(variation.values["endpoint.timeout"]) is float
+
+
+def test_history_variation_values_are_orjson_serializable_with_numpy_sampler(
+    numpy_scalar_sampler,
+) -> None:
+    """History must serialize with orjson so write_search_history() can export it."""
+    planner = OptunaSearchPlanner(_base_config(), _real_dim_cfg())
+    _, variation = planner.ask()
+    planner.tell(variation, [_make_result(variation, throughput=10.0, ttft_p95=50.0)])
+
+    encoded = orjson.dumps([h.variation_values for h in planner.history()])
+
+    assert orjson.loads(encoded)[0]["endpoint.timeout"] == pytest.approx(
+        variation.values["endpoint.timeout"]
+    )
 
 
 # ----------------------------------------------------------------------------

@@ -1299,3 +1299,32 @@ async def test_failed_run_end_time_is_offset_aware_iso(index_path) -> None:
     assert "T" in end_time
     parsed = datetime.fromisoformat(end_time)
     assert parsed.tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_open_readonly_concurrent_callers_share_one_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent sidecar requests must not create leaked SQLite connections."""
+    path = tmp_path / ".aiperf_index.sqlite"
+    await runs_index.open(path)
+    await runs_index.close()
+
+    real_connect = runs_index.aiosqlite.connect
+    connect_calls = 0
+
+    def counted_connect(*args, **kwargs):
+        nonlocal connect_calls
+        connect_calls += 1
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(runs_index.aiosqlite, "connect", counted_connect)
+
+    await asyncio.gather(
+        runs_index.open_readonly(path),
+        runs_index.open_readonly(path),
+    )
+    try:
+        assert connect_calls == 1
+    finally:
+        await runs_index.close()

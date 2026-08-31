@@ -103,6 +103,24 @@ class TestEnvelopeKeyExtraction:
 
         assert converter.calculate_workers() == 3
 
+    def test_calculate_workers_workers_min_above_derived_floors_at_workers_min(
+        self,
+    ) -> None:
+        """The operator writes this total back into ``runtime.workers``.
+
+        Ignoring ``workers_min`` produced ``workers < workers_min``, which the
+        RuntimeConfig validator rejects -- crash-looping every pod.
+        """
+        benchmark = dict(_BENCHMARK)
+        benchmark["runtime"] = {"workersMin": 16}
+        converter = AIPerfJobSpecConverter(
+            spec={"benchmark": benchmark},
+            name="job",
+            namespace="ns",
+        )
+
+        assert converter.calculate_workers() == 20
+
     def test_conversion_does_not_mutate_the_caller_spec(self) -> None:
         """The spec dict belongs to kopf; popping from it corrupts the CR body."""
         spec = {"randomSeed": 42, "benchmark": dict(_BENCHMARK)}

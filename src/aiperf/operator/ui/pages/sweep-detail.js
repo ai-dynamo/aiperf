@@ -997,7 +997,7 @@ export function SweepDetail({ namespace, name, epoch }) {
 //
 // Pure presentation helpers, dependency-free BY CONTRACT: nothing in this block
 // may reference an import, a constant declared elsewhere in this module, or an
-// `html` template. `tests/unit/ui/test_operator_sweep_detail_presentation.py`
+// `html` template. `tests/ui/test_operator_sweep_detail_presentation.py`
 // slices the block out by these sentinel comments and evaluates it in bare
 // node, which is the only way to get behavioural (not source-grep) coverage of
 // page-level logic -- the page itself imports browser import-map specifiers
@@ -1005,7 +1005,7 @@ export function SweepDetail({ namespace, name, epoch }) {
 //
 // The block sits at the END of the module (function declarations hoist, so the
 // component above can still call these) because
-// `tests/unit/ui/test_operator_performance_static.py` pins an allowlisted
+// `tests/ui/test_operator_performance_static.py` pins an allowlisted
 // JSON.stringify by LINE NUMBER at `pages/sweep-detail.js:329`; inserting
 // helpers above the component would shift that line and break an unrelated
 // baseline.

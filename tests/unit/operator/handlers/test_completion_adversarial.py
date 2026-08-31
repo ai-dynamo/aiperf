@@ -827,3 +827,67 @@ class TestCompletionNonFiniteMetricBoundary:
             )
 
         assert _non_finite_paths(patch.status) == []
+
+
+# ---------------------------------------------------------------------------
+# _metric_file_candidates excludes large archives (ca086167f9)
+# ---------------------------------------------------------------------------
+
+
+class TestMetricFileCandidatesExclusion:
+    """_metric_file_candidates must exclude large binary/JSONL archives."""
+
+    def test_jsonl_zst_excluded_from_candidates(self, tmp_path: Path) -> None:
+        """profile_export.jsonl.zst must never appear in the candidate list.
+
+        Before ca086167f9, _metric_file_candidates passed the full ``downloaded``
+        list to the candidate set, so _load_metrics_payload fully decompressed
+        every .zst (including 50-100 MB JSONL archives) before the JSON-parse
+        attempt, causing OOMKill under operator memory limits.
+
+        After the fix, only .json and .json.zst files from ``downloaded`` are
+        admitted; JSONL/.parquet archives are silently dropped.
+        """
+        from aiperf.operator.handlers.completion import _metric_file_candidates
+
+        (tmp_path / "profile_export.jsonl.zst").write_bytes(b"fake")
+        (tmp_path / "profile_export_aiperf.json").write_bytes(b"{}")
+
+        candidates = _metric_file_candidates(
+            tmp_path,
+            downloaded=["profile_export.jsonl.zst", "profile_export_aiperf.json"],
+        )
+        candidate_names = [p.name for p in candidates]
+        assert "profile_export.jsonl.zst" not in candidate_names
+        assert "profile_export_aiperf.json" in candidate_names
+
+    def test_parquet_zst_excluded_from_candidates(self, tmp_path: Path) -> None:
+        """server_metrics_export.parquet.zst is excluded; json is retained."""
+        from aiperf.operator.handlers.completion import _metric_file_candidates
+
+        (tmp_path / "server_metrics_export.parquet.zst").write_bytes(b"PAR1")
+        (tmp_path / "profile_export_aiperf.json").write_bytes(b"{}")
+
+        candidates = _metric_file_candidates(
+            tmp_path,
+            downloaded=[
+                "server_metrics_export.parquet.zst",
+                "profile_export_aiperf.json",
+            ],
+        )
+        candidate_names = [p.name for p in candidates]
+        assert "server_metrics_export.parquet.zst" not in candidate_names
+        assert "profile_export_aiperf.json" in candidate_names
+
+    def test_json_zst_is_admitted(self, tmp_path: Path) -> None:
+        """A .json.zst (the compressed key-export file) must be admitted."""
+        from aiperf.operator.handlers.completion import (
+            DEFAULT_KEY_EXPORT_NAMES,
+            _metric_file_candidates,
+        )
+
+        zst_name = f"{DEFAULT_KEY_EXPORT_NAMES.json_name}.zst"
+        (tmp_path / zst_name).write_bytes(b"fake-zst")
+
+        candidates = _metric_file_candidates(tmp_path, downloaded=[zst_name])
+        assert any(p.name == zst_name for p in candidates)

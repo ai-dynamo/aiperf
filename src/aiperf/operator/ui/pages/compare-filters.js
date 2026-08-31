@@ -3,13 +3,13 @@
 
 // Pure helpers for the Compare page job-picker filter chips. Kept in a
 // sibling module (no preact/htm imports) so they can be unit-tested via
-// raw Node — see tests/unit/ui/test_operator_compare_filters.py.
+// raw Node — see tests/ui/test_operator_compare_filters.py.
 
 // Sentinel key for the "(none)" facet bucket — null model/endpoint values
 // land here so users can still filter to/from missing-metadata jobs.
 export const FILTER_NONE = '__none__';
 
-// Pure filter — exported for unit tests at tests/unit/ui/test_operator_compare_filters.py.
+// Pure filter — exported for unit tests at tests/ui/test_operator_compare_filters.py.
 // AND across (nsFilter, modelFilter, endpointFilter, search); OR within each Set.
 // Empty Set on a dimension means "no filter on this dimension".
 export function applyJobFilters(jobs, { nsFilter, modelFilter, endpointFilter, search }) {

@@ -1472,6 +1472,28 @@ class TestFastAPIServiceStartStop:
             await mock_fastapi_service._server_task
 
     @pytest.mark.asyncio
+    async def test_start_local_api_does_not_prewarm_tokenizers(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """Local API clients do not consume tokenizer bundles from this server."""
+        mock_server = MagicMock()
+        mock_server.serve = AsyncMock()
+        mock_fastapi_service._prewarm_tokenizers = AsyncMock()
+
+        with (
+            patch("aiperf.api.api_service.socket.socket", _FakeProbeSocket),
+            patch("aiperf.api.api_service.uvicorn.Config"),
+            patch("aiperf.api.api_service.uvicorn.Server", return_value=mock_server),
+        ):
+            await mock_fastapi_service._start_api_server()
+
+        mock_fastapi_service._prewarm_tokenizers.assert_not_awaited()
+        assert mock_fastapi_service._server_task is not None
+        mock_fastapi_service._server_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await mock_fastapi_service._server_task
+
+    @pytest.mark.asyncio
     async def test_stop_sets_should_exit_and_waits(
         self, mock_fastapi_service: FastAPIService
     ) -> None:

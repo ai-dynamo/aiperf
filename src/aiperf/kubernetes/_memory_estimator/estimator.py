@@ -55,6 +55,15 @@ def _get_worker_pod_limit_mib() -> float:
     )
 
 
+def _get_records_manager_limit_mib() -> float:
+    """Get the RecordsManager container memory limit from K8sEnvironment."""
+    return float(
+        parse_memory_mib(
+            _memory_from_resources(K8sEnvironment.RECORDS_MANAGER.to_k8s_resources())
+        )
+    )
+
+
 def _ceil_div(numerator: int, denominator: int) -> int:
     """Return the maximum whole-number share across ``denominator`` members."""
     return max(1, (numerator + max(denominator, 1) - 1) // max(denominator, 1))
@@ -261,14 +270,15 @@ def _warn_records_manager(
     rm = next(
         (c for c in est.controller.components if c.name == "RecordsManager"), None
     )
-    if rm is None or est.controller.current_limit_mib <= 0:
+    records_manager_limit_mib = _get_records_manager_limit_mib()
+    if rm is None or records_manager_limit_mib <= 0:
         return []
-    rm_pct = rm.steady_state_mib / est.controller.current_limit_mib * 100
+    rm_pct = rm.steady_state_mib / records_manager_limit_mib * 100
     if rm_pct <= _RECORDS_MANAGER_WARN_PCT:
         return []
     return [
-        f"RecordsManager uses {rm_pct:.0f}% of controller limit "
-        f"({rm.steady_state_mib:.0f}/{est.controller.current_limit_mib:.0f} MiB). "
+        f"RecordsManager uses {rm_pct:.0f}% of its container limit "
+        f"({rm.steady_state_mib:.0f}/{records_manager_limit_mib:.0f} MiB). "
         f"Driven by {p.total_requests:,} total requests."
     ]
 

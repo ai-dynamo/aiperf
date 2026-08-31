@@ -22,9 +22,18 @@ object is rejected:
 
 from __future__ import annotations
 
-import re
-
 from fastapi import HTTPException
+
+from aiperf.kubernetes.constants import (
+    DNS_LABEL_MAX as _DNS_LABEL_MAX,
+)
+from aiperf.kubernetes.constants import (
+    DNS_LABEL_RE,
+    DNS_SUBDOMAIN_RE,
+)
+from aiperf.kubernetes.constants import (
+    DNS_SUBDOMAIN_MAX as _DNS_SUBDOMAIN_MAX,
+)
 
 __all__ = [
     "DNS_LABEL_RE",
@@ -33,18 +42,6 @@ __all__ = [
     "validate_namespace_param",
     "validate_results_path_params",
 ]
-
-# RFC 1123 DNS label — the shape Kubernetes requires for Namespace names.
-DNS_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
-_DNS_LABEL_MAX = 63
-
-# RFC 1123 DNS subdomain — the shape Kubernetes requires for object
-# metadata.name (AIPerfJob, AIPerfSweep). Each dot-separated label is
-# non-empty and alphanumeric-bounded, so traversal segments cannot match.
-DNS_SUBDOMAIN_RE = re.compile(
-    r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
-)
-_DNS_SUBDOMAIN_MAX = 253
 
 
 def validate_namespace_param(namespace: str) -> str:

@@ -228,6 +228,14 @@ class GPUTestSettings:
     local_keygen: bool = False
     """Create MPI SSH secret locally instead of via Helm hook."""
 
+    namespace_prefix: str | None = None
+    """Required prefix for every mutable namespace on an external cluster run.
+
+    Defense-in-depth against touching another user's shared namespaces: every
+    namespace the harness creates, deletes, or copies a secret into/from must
+    start with this prefix. Required whenever ``--gpu-context`` is set.
+    """
+
     @property
     def use_external_cluster(self) -> bool:
         return self.context is not None
@@ -305,6 +313,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--gpu-dynamo-deploy-timeout", "GPU_TEST_DYNAMO_DEPLOY_TIMEOUT", "1200", "int", "Dynamo deploy timeout (seconds); a DGD is 3 pods, so it needs longer than a single-pod engine"),
     ("--gpu-dynamo-version", "GPU_TEST_DYNAMO_VERSION", DYNAMO_VERSION, "str", "Dynamo operator Helm chart version"),
     ("--gpu-local-keygen", "GPU_TEST_LOCAL_KEYGEN", None, "bool", "Create MPI SSH secret locally instead of via Helm hook (use behind proxies)"),
+    ("--gpu-namespace-prefix", "GPU_TEST_NAMESPACE_PREFIX", None, "str", "Required prefix for every mutable namespace on an external cluster run"),
 ]  # fmt: skip
 
 
@@ -384,6 +393,13 @@ def _resolve_settings(config: pytest.Config) -> GPUTestSettings:
 
     settings = GPUTestSettings(**resolved)
     if settings.context:
+        if not settings.namespace_prefix:
+            raise pytest.UsageError(
+                "External GPU runs require --gpu-namespace-prefix (or "
+                "GPU_TEST_NAMESPACE_PREFIX) so every mutable namespace can be "
+                "checked against your own user-owned prefix."
+            )
+        prefix = settings.namespace_prefix
         namespaces = {
             "benchmark": settings.benchmark_namespace,
             "vLLM": settings.vllm_namespace,
@@ -394,12 +410,12 @@ def _resolve_settings(config: pytest.Config) -> GPUTestSettings:
         invalid = [
             f"{label}={namespace!r}"
             for label, namespace in namespaces.items()
-            if not namespace or not namespace.startswith("acasagrande-")
+            if not namespace or not namespace.startswith(prefix)
         ]
         if invalid:
             raise pytest.UsageError(
                 "External GPU runs require every mutable namespace to start with "
-                f"'acasagrande-': {', '.join(invalid)}"
+                f"{prefix!r}: {', '.join(invalid)}"
             )
         if not settings.external_existing_operator:
             raise pytest.UsageError(
@@ -420,13 +436,11 @@ def _resolve_settings(config: pytest.Config) -> GPUTestSettings:
             )
         if settings.image_pull_secret and (
             not settings.image_pull_secret_source_namespace
-            or not settings.image_pull_secret_source_namespace.startswith(
-                "acasagrande-"
-            )
+            or not settings.image_pull_secret_source_namespace.startswith(prefix)
         ):
             raise pytest.UsageError(
-                "External GPU runs that copy an image pull secret require an "
-                "acasagrande-* --gpu-image-pull-secret-source-namespace."
+                "External GPU runs that copy an image pull secret require a "
+                f"{prefix}* --gpu-image-pull-secret-source-namespace."
             )
     return settings
 
@@ -674,11 +688,13 @@ async def _ensure_user_pull_secrets(
     if source is None:
         raise RuntimeError("A pull-secret source namespace is required")
     if kubectl.context and (
-        not namespace.startswith("acasagrande-")
-        or not source.startswith("acasagrande-")
+        not settings.namespace_prefix
+        or not namespace.startswith(settings.namespace_prefix)
+        or not source.startswith(settings.namespace_prefix)
     ):
         raise RuntimeError(
-            "External GPU pull-secret copies require acasagrande-* namespaces"
+            "External GPU pull-secret copies require "
+            f"{settings.namespace_prefix or '<prefix>'}* namespaces"
         )
     await kubectl.create_namespace(namespace)
     existing = await kubectl.run(

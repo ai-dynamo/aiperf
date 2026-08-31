@@ -330,6 +330,46 @@ class TestBuildEnvVars:
         assert by_name["AIPERF_JOB_ID"]["value"] == "job-xyz"
         assert by_name["AIPERF_NAMESPACE"]["value"] == "ns-7"
 
+    def test_config_mount_path_is_propagated_to_the_container_env(self) -> None:
+        """[F19] The operator's config-mount path must reach every container.
+
+        ``serialized_run.py`` resolves the ConfigMap symlink from
+        ``AIPERF_K8S_JOBSET_CONFIG_MOUNT_PATH``. The operator honoured a custom
+        mount path when building the volumeMount but never exported it, so each
+        container fell back to the compiled-in default and looked for the run
+        config at a path nothing had mounted -- every service failed to start.
+        """
+        from aiperf.kubernetes.environment import K8sEnvironment
+
+        env = build_env_vars(
+            job_id="job-xyz", namespace="ns-7", pod_template=PodTemplateConfig()
+        )
+
+        by_name = {item["name"]: item for item in env}
+        assert (
+            by_name["AIPERF_K8S_JOBSET_CONFIG_MOUNT_PATH"]["value"]
+            == K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH
+        )
+
+    def test_config_mount_path_env_follows_a_non_default_setting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """[F19] A non-default mount path is what made the omission fatal."""
+        import aiperf.kubernetes.jobset_helpers as helpers
+
+        monkeypatch.setattr(
+            helpers.K8sEnvironment.JOBSET, "CONFIG_MOUNT_PATH", "/custom/config"
+        )
+
+        env = build_env_vars(
+            job_id="job-xyz", namespace="ns-7", pod_template=PodTemplateConfig()
+        )
+
+        by_name = {item["name"]: item for item in env}
+        assert (
+            by_name["AIPERF_K8S_JOBSET_CONFIG_MOUNT_PATH"]["value"] == "/custom/config"
+        )
+
     def test_controller_heartbeat_interval_is_injected_only_into_controller_pod_services(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -389,6 +389,51 @@ class TestCompletionClaimJsonPatchAtomicity:
         assert result is False
         custom.get_namespaced_custom_object.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_try_claim_completion_indeterminate_live_read_fails_closed(
+        self,
+    ) -> None:
+        """[F5] A None live-claim read is indeterminate and must lose the race.
+
+        ``_read_live_completion_claimed`` returns None when it cannot decide
+        (apiserver error, missing CR, decode failure) -- only an explicit False
+        proves the claim is absent. The pre-fix guard was ``if live_claimed is
+        True``, so an indeterminate None fell through to the claim patch and let
+        the caller re-run the non-idempotent ``handle_completion``: results
+        re-fetched, events re-emitted, the JobSet re-deleted. Fail closed.
+        """
+        body = _body_with_annotations(
+            annotations={Annotations.COMPLETION_CLAIMED: "2026-01-01T00:00:00Z"}
+        )
+        custom = MagicMock()
+        custom.patch_namespaced_custom_object = AsyncMock()
+
+        with (
+            mock_patch(
+                "aiperf.operator.client_cache._read_live_completion_claimed",
+                AsyncMock(return_value=None),
+            ),
+            mock_patch(
+                "aiperf.operator.client_cache.k8s_client",
+                side_effect=lambda: _fake_k8s_client(MagicMock()),
+            ),
+            mock_patch(
+                "kubernetes_asyncio.client.CustomObjectsApi",
+                return_value=custom,
+            ),
+        ):
+            result = await try_claim_completion(
+                _FIXTURE_NAMESPACE,
+                _FIXTURE_JOB,
+                body,
+            )
+
+        assert result is False
+        # No claim patch may be submitted on an indeterminate read.
+        custom.patch_namespaced_custom_object.assert_not_awaited()
+        # The lost race is cached so later ticks skip the apiserver entirely.
+        assert _FIXTURE_KEY in _shutdown_sent
+
 
 # =============================================================================
 # Conflict re-read behavior

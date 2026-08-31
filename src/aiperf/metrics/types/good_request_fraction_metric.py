@@ -41,6 +41,13 @@ class GoodRequestFractionMetric(BaseDerivedMetric[float]):
     flags = MetricFlags.GOODPUT | MetricFlags.LARGER_IS_BETTER
     console_group = MetricConsoleGroup.NONE
     required_metrics = None
+    optional_metrics = frozenset(
+        {
+            GoodRequestCountMetric.tag,
+            RequestCountMetric.tag,
+            ErrorRequestCountMetric.tag,
+        }
+    )
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
         good = int(metric_results.get(GoodRequestCountMetric.tag, 0) or 0)

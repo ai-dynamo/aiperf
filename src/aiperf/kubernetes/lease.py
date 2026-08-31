@@ -29,6 +29,11 @@ def lease_holder_if_live(lease: V1Lease, *, default_duration: int) -> str | None
     stamp = spec.renew_time or spec.acquire_time
     if stamp is None:
         return spec.holder_identity
+    if stamp.tzinfo is None:
+        # A naive timestamp cannot be compared against an aware "now". The
+        # apiserver always serializes RFC3339 UTC, so assuming UTC is correct
+        # and keeps a hot kopf ``when=`` filter from raising TypeError.
+        stamp = stamp.replace(tzinfo=UTC)
     duration = spec.lease_duration_seconds or default_duration
     if stamp + timedelta(seconds=duration) < datetime.now(UTC):
         return None

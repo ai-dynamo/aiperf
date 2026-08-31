@@ -8,6 +8,7 @@ import asyncio
 import gc
 import tracemalloc
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import orjson
 import pytest
@@ -24,7 +25,10 @@ from aiperf.common.models.record_models import (
     SSEMessage,
     TextResponse,
 )
-from aiperf.kubernetes._memory_estimator.components import _per_request_bytes
+from aiperf.kubernetes._memory_estimator.components import (
+    _per_request_bytes,
+    _rp_buffer_mib,
+)
 from aiperf.kubernetes._memory_estimator.constants import (
     _CATEGORICAL_INTERN_BYTES_PER_REQUEST,
     _COLUMN_STORE_INITIAL_CAPACITY,
@@ -443,6 +447,13 @@ class TestRecordProcessorEstimate:
         # Should be roughly 4x the tokenizer portion
         assert four.variable_mib > one.variable_mib * 3.5
 
+    def test_streaming_raw_buffer_uses_shared_sse_chunk_cost(self) -> None:
+        from aiperf.kubernetes._memory_estimator.constants import _SSE_BYTES_PER_CHUNK
+
+        raw_buffer_mib, _ = _rp_buffer_mib(100, streaming=True)
+
+        assert raw_buffer_mib == _mib(10 * (1500 + 100 * _SSE_BYTES_PER_CHUNK))
+
 
 class TestGpuTelemetryEstimate:
     def test_disabled(self) -> None:
@@ -799,6 +810,7 @@ class TestFromConfig:
                         "type": "synthetic",
                         "entries": 500,
                         "prompts": {"isl": 256, "osl": 64},
+                        "turns": {"mean": 10},
                     }
                 ],
                 "phases": [
@@ -816,6 +828,7 @@ class TestFromConfig:
         assert params.total_requests == 5000
         assert params.avg_isl_tokens == 256
         assert params.avg_osl_tokens == 64
+        assert params.max_turns == 10
         assert params.dataset_count == 500
         assert params.num_models == 1
         assert params.gpu_telemetry_enabled
@@ -1088,6 +1101,11 @@ class TestConfigurationDefaults:
 
 class TestScalingScenarios:
     """Test that the estimator produces reasonable results at various scales."""
+
+    def test_records_manager_warning_uses_its_container_limit(self) -> None:
+        estimate = MemoryEstimator(_make_params()).estimate()
+
+        assert any("RecordsManager uses" in warning for warning in estimate.warnings)
 
     def test_100k_concurrency_flags_controller_ragged_icl_risk(self) -> None:
         """Worker pods fit, but 400K streaming records need a larger controller."""
@@ -1863,6 +1881,14 @@ class TestPhaseRequestRateTracksAvgSecPerRequest:
             duration * concurrency / _PHASE_AVG_SEC_PER_REQUEST
         )
 
+    def test_estimate_phase_requests_rejects_infinite_duration(self) -> None:
+        from aiperf.kubernetes._memory_estimator.params import _estimate_phase_requests
+
+        phase = self._concurrency_phase(float("inf"), 1)
+
+        with pytest.raises(ValueError, match="infinite phase duration"):
+            _estimate_phase_requests(phase, 1)
+
     @pytest.mark.parametrize(
         "avg_sec_per_request,expected_requests",
         [
@@ -1886,6 +1912,26 @@ class TestPhaseRequestRateTracksAvgSecPerRequest:
         )
         phase = self._concurrency_phase(60.0, 32)
         assert params_module._estimate_phase_requests(phase, 32) == expected_requests
+
+    def test_derive_http_trace_uses_artifacts_trace_flag(self) -> None:
+        from aiperf.kubernetes._memory_estimator.params import _derive_http_trace
+
+        config = SimpleNamespace(artifacts=SimpleNamespace(trace=True))
+
+        assert _derive_http_trace(config) is True
+
+    def test_estimate_phase_duration_accounts_for_sessions(self) -> None:
+        from aiperf.kubernetes._memory_estimator.constants import (
+            _PHASE_AVG_SEC_PER_REQUEST,
+        )
+        from aiperf.kubernetes._memory_estimator.params import _estimate_phase_duration
+
+        phase = SimpleNamespace(duration=None, requests=None, rate=None, sessions=10)
+
+        assert (
+            _estimate_phase_duration(phase, 5)
+            == 10 * 3 * _PHASE_AVG_SEC_PER_REQUEST / 5
+        )
 
     @pytest.mark.parametrize(
         "requests,concurrency",

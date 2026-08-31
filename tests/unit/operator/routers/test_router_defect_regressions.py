@@ -34,6 +34,7 @@ import zstandard
 from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
+from aiperf.common.results_markers import ready_marker_path
 from aiperf.operator.results_layout import run_dir
 from aiperf.operator.routers.dashboard_proxy import (
     _FORWARD_REQUEST_HEADER_DROP,
@@ -44,6 +45,7 @@ from aiperf.operator.routers.jobs_models import EventEntry
 from aiperf.operator.routers.results_analytics import _config_from_job_spec_file
 from aiperf.operator.routers.results_files_io import (
     _serve_artifact_file,
+    _serve_job_file,
     _stream_artifact_bundle,
 )
 from aiperf.operator.routers.sweeps import (
@@ -346,6 +348,19 @@ class TestNestedArtifactAllowlist:
                 "private/deep/secret.json",
                 allowed_relative_dirs=("checkpoints",),
             )
+
+        assert excinfo.value.status_code == 404
+
+    def test_job_file_route_hides_nested_unlisted_artifact(
+        self, tmp_path: Path
+    ) -> None:
+        private_dir = tmp_path / "private" / "deep"
+        private_dir.mkdir(parents=True)
+        (private_dir / "secret.json").write_bytes(b"secret")
+        ready_marker_path(tmp_path).touch()
+
+        with pytest.raises(HTTPException) as excinfo:
+            _serve_job_file(_get_request(), tmp_path, "private/deep/secret.json")
 
         assert excinfo.value.status_code == 404
 

@@ -224,6 +224,38 @@ async def test_measure_baseline_rtt_uses_minimum_round_trip():
 
 
 @pytest.mark.asyncio
+async def test_measure_baseline_rtt_ignores_stale_pong_from_a_prior_round():
+    """A late TimePong from a timed-out round-1 probe must not resolve round 2.
+
+    Regression: sequence numbers used to reset to 0 at the start of every
+    round, so a round-1 probe (seq=0) that timed out could still deliver its
+    TimePong after round 2 also assigned seq=0 to its own probe. Under the bug
+    that stale reply resolves round 2's pending future with round 1's
+    (unrelated) arrival time, producing a bogus RTT.
+    """
+    tracker = ClockOffsetTracker()
+    stale_pong: TimePong | None = None
+
+    async def send_ping_round_one(ping: TimePing) -> None:
+        nonlocal stale_pong
+        # Round 1's probe never replies in time -- capture its pong so it can
+        # be delivered late, during round 2.
+        stale_pong = TimePong(sequence=ping.sequence, sent_at_ns=ping.sent_at_ns)
+
+    await tracker.measure_baseline_rtt(send_ping_round_one, probe_count=1, timeout=0.01)
+    assert tracker.baseline_rtt_ns is None
+    assert stale_pong is not None
+
+    async def send_ping_round_two(ping: TimePing) -> None:
+        # Deliver round 1's stale pong before round 2's own pong ever arrives.
+        tracker.handle_pong(stale_pong)
+
+    await tracker.measure_baseline_rtt(send_ping_round_two, probe_count=1, timeout=0.01)
+
+    assert tracker.baseline_rtt_ns is None
+
+
+@pytest.mark.asyncio
 async def test_measure_baseline_rtt_leaves_baseline_unset_when_probes_time_out():
     tracker = ClockOffsetTracker()
 

@@ -472,6 +472,9 @@ class TestCrAnnotationReservedNames:
         submit_claim = AsyncMock(return_value=True)
         monkeypatch.setattr(client_cache, "_submit_claim_patch", submit_claim)
         monkeypatch.setattr(client_cache, "_post_dashboard_refresh", AsyncMock())
+        monkeypatch.setattr(
+            client_cache, "_read_live_completion_claimed", AsyncMock(return_value=False)
+        )
         body = {
             "metadata": {
                 "name": "reserved-names-bench-7f2a",

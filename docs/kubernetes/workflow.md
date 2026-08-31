@@ -138,16 +138,14 @@ operator mode without that cluster-scoped discovery request, or
   and `RoleBinding`. When the run reaches a terminal phase the operator's
   completion handler copies the results onto a shared operator PVC; on a
   failure it instead salvages whatever partial checkpoint files the controller
-  had written. Nothing is harvested incrementally mid-run. When `--namespace`
-  is explicit, `profile` treats that
-  namespace as pre-provisioned and does not issue a Namespace-create request.
-  This lets namespace-scoped tenants submit AIPerfJobs without cluster-wide
-  CRD-read or Namespace-create permission by combining `--operator` with
-  `--namespace`.
+  had written. Nothing is harvested incrementally mid-run. `profile` never
+  creates a namespace: the target namespace must already exist. This lets
+  namespace-scoped tenants submit AIPerfJobs without cluster-wide CRD-read or
+  Namespace-create permission by combining `--operator` with `--namespace`.
 
 - **Direct mode (CRD absent, or forced with `--no-operator`).** `profile`
-  skips the operator and creates the `Namespace`, `ConfigMap`, `Role`,
-  `RoleBinding`, and `JobSet` itself. There is no CR and no operator-managed
+  skips the operator and creates the `ConfigMap`, `Role`, `RoleBinding`, and
+  `JobSet` itself, in a namespace that must already exist. There is no CR and no operator-managed
   PVC; results stay on the pod filesystem until you pull them with `aiperf
   kube results --from-pods`. See [direct-mode.md](./direct-mode.md). The
   JobSet TTL defaults to 8 hours in direct mode (vs. 5 minutes in operator

@@ -232,6 +232,7 @@ def build_env_vars(
             default to False and inherit offline mode.
     """
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
+    config_mount_path = K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH
     # Give the controller enough registration headroom for workers to
     # complete their PUB/SUB connection probes plus one restart cycle if
     # the first-attempt probe fails (Kubernetes restarts on exit).
@@ -243,6 +244,10 @@ def build_env_vars(
         # Shared dataset path: dataset-manager writes mmap files here,
         # API service serves them to workers via HTTP
         {"name": "AIPERF_DATASET_MMAP_BASE_PATH", "value": datasets_path},
+        # Propagate the operator's config-mount path so serialized_run.py
+        # resolves the ConfigMap symlink correctly even when a non-default
+        # path is set via AIPERF_K8S_JOBSET_CONFIG_MOUNT_PATH.
+        {"name": "AIPERF_K8S_JOBSET_CONFIG_MOUNT_PATH", "value": config_mount_path},
         # Job ID and namespace for the benchmark
         {"name": "AIPERF_JOB_ID", "value": job_id},
         {"name": "AIPERF_NAMESPACE", "value": namespace},

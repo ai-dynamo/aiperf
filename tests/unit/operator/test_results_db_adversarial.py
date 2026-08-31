@@ -17,6 +17,7 @@ Out of scope (covered elsewhere):
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import NoReturn
@@ -31,7 +32,7 @@ from aiperf.common.results_markers import (
     write_processing_marker,
     write_ready_marker,
 )
-from aiperf.operator import results_layout, runs_index
+from aiperf.operator import results_db, results_layout, runs_index
 from aiperf.operator.results_db import DEFAULT_COMPARE_METRICS, ResultsDB
 
 # ============================================================================
@@ -376,6 +377,48 @@ class TestResultsDBReadonlyAndCorruptIndex:
         assert rows[0][expected_key] == expected_value
 
     @pytest.mark.asyncio
+    async def test_index_metadata_validation_runs_off_event_loop(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Indexed analytics must batch filesystem validation in a worker thread."""
+        base = tmp_path / "results"
+        db_path = base / ".aiperf_index.sqlite"
+        base.mkdir()
+        _write_run_artifact(
+            base,
+            "bench-prod",
+            "llama-index-metadata-bench-7f2a",
+            _EPOCH_NEW,
+            summary=_summary(throughput=231.5),
+        )
+        await _open_writable_index(db_path)
+        await _write_index_run(
+            "bench-prod",
+            "llama-index-metadata-bench-7f2a",
+            _EPOCH_NEW,
+            summary=_summary(throughput=231.5),
+        )
+        runs_index.mark_catalog_complete(base)
+
+        calls: list[object] = []
+        real_to_thread = asyncio.to_thread
+
+        async def tracking_to_thread(func, *args, **kwargs):
+            calls.append(func)
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", tracking_to_thread)
+
+        rows = await ResultsDB(base).leaderboard(
+            metric="request_throughput", stat="avg"
+        )
+
+        assert rows[0]["job_id"] == "llama-index-metadata-bench-7f2a"
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "method_name,kwargs",
         [
@@ -467,11 +510,12 @@ class TestResultsDBReadonlyAndCorruptIndex:
         assert rows == []
 
     @pytest.mark.asyncio
-    async def test_unsupported_index_metric_still_uses_disk_summary(
+    async def test_unsupported_index_metric_does_not_scan_disk_summaries(
         self,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """An empty SQLite result for a non-indexed metric is not authoritative."""
+        """Analytics only exposes metrics that the bounded index can serve."""
         base = tmp_path / "results"
         summary = _summary()
         summary["custom_quality"] = _metric_payload(0.91, unit="score")
@@ -491,9 +535,14 @@ class TestResultsDBReadonlyAndCorruptIndex:
         )
         runs_index.mark_catalog_complete(base)
 
+        def fail_disk_walk(self: ResultsDB, epoch: str | None) -> NoReturn:
+            raise AssertionError(f"unexpected disk summary walk for epoch={epoch}")
+
+        monkeypatch.setattr(ResultsDB, "_iter_disk_summaries", fail_disk_walk)
+
         rows = await ResultsDB(base).leaderboard(metric="custom_quality", stat="avg")
 
-        assert rows[0]["value"] == 0.91
+        assert rows == []
 
 
 # ============================================================================
@@ -539,6 +588,42 @@ class TestResultsDBSummaryFallbacks:
 
         assert summary is not None
         assert summary["request_throughput"]["avg"] == 184.0
+
+    @pytest.mark.asyncio
+    async def test_summary_disk_fallback_offloads_file_reads(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Compressed artifact reads must not block the operator API event loop."""
+        base = tmp_path / "results"
+        _write_run_artifact(
+            base,
+            "bench-prod",
+            "llama-summary-offload-4b1c",
+            _EPOCH_NEW,
+            summary=_summary(throughput=184.0),
+            compressed=True,
+        )
+        calls: list[object] = []
+
+        async def track_to_thread(
+            func: object, *args: object, **kwargs: object
+        ) -> object:
+            calls.append(func)
+            return func(*args, **kwargs)  # type: ignore[operator]
+
+        monkeypatch.setattr(results_db.asyncio, "to_thread", track_to_thread)
+
+        summary = await ResultsDB(base).summary(
+            "bench-prod", "llama-summary-offload-4b1c"
+        )
+
+        assert summary is not None
+        assert any(
+            getattr(call, "__func__", call) is ResultsDB._read_summary_file
+            for call in calls
+        )
 
     @pytest.mark.asyncio
     async def test_summary_fallback_resolves_custom_artifact_prefix(

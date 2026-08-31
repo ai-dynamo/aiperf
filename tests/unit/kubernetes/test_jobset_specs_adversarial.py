@@ -191,6 +191,76 @@ class TestJobSetSpecNamesAndTopology:
     ) -> None:
         assert controller_dns_name(jobset_name, namespace) == expected
 
+    @pytest.mark.parametrize(
+        "jobset_name",
+        [
+            param("evil.com:8080/", id="scheme-relative-host-port-path"),
+            param("user:pw@evil.com", id="url-userinfo-credential"),
+            param("http://evil.com", id="explicit-scheme"),
+            param("../../etc/passwd", id="dot-segment-traversal"),
+            param("bench..evil", id="empty-dot-label"),
+            param(".leading-dot", id="leading-dot"),
+            param("trailing-dot.", id="trailing-dot"),
+            param("-leading-hyphen", id="leading-hyphen"),
+            param("UPPERCASE", id="uppercase"),
+            param("bench name", id="embedded-space"),
+            param("bench\nhost: evil", id="embedded-newline"),
+            param("bench#frag", id="fragment"),
+            param("", id="empty"),
+            param("a" * 254, id="over-subdomain-length"),
+        ],
+    )  # fmt: skip
+    def test_controller_dns_name_rejects_non_rfc1123_jobset_name(
+        self, jobset_name: str
+    ) -> None:
+        """`status.jobSetName` is writable by any principal holding `patch` on
+        `aiperfjobs/status`, and the result is dialed directly over HTTP/WS.
+
+        Anything that is not a DNS-1123 subdomain must raise rather than be
+        interpolated into the operator's upstream URL, or a status write becomes
+        SSRF.
+        """
+        with pytest.raises(ValueError, match="Invalid JobSet name"):
+            controller_dns_name(jobset_name, "aiperf-benchmarks")
+
+    @pytest.mark.parametrize(
+        "namespace",
+        [
+            param("evil.com:8080/", id="host-port-path"),
+            param("has.dots", id="dots-are-not-labels"),
+            param("-leading-hyphen", id="leading-hyphen"),
+            param("UPPER", id="uppercase"),
+            param("", id="empty"),
+            param("n" * 64, id="over-label-length"),
+        ],
+    )  # fmt: skip
+    def test_controller_dns_name_rejects_non_rfc1123_namespace(
+        self, namespace: str
+    ) -> None:
+        """Namespaces are DNS-1123 labels, so a dot is enough to re-root the host."""
+        with pytest.raises(ValueError, match="Invalid namespace"):
+            controller_dns_name("aiperf-bench-7f2a", namespace)
+
+    @pytest.mark.parametrize(
+        "jobset_name",
+        [
+            param("a", id="single-char"),
+            param("bench-7f2a", id="hyphenated"),
+            param("bench.sub.domain", id="multi-label-subdomain"),
+            param("0-starts-with-digit", id="leading-digit"),
+            param("a" * 253, id="at-subdomain-length-limit"),
+        ],
+    )  # fmt: skip
+    def test_controller_dns_name_accepts_valid_kubernetes_names(
+        self, jobset_name: str
+    ) -> None:
+        """The validation must not reject names Kubernetes itself accepts."""
+        host = controller_dns_name(jobset_name, "aiperf-benchmarks")
+        assert host == (
+            f"{jobset_name}-controller-0-0.{jobset_name}"
+            ".aiperf-benchmarks.svc.cluster.local"
+        )
+
     def test_worker_controller_host_env_matches_jobset_dns_contract(self) -> None:
         manifest = _manifest(name="aiperf-llama3-8b", namespace="perf-canary")
         worker_manager = _container(

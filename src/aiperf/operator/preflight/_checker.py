@@ -98,8 +98,14 @@ class OperatorPreflightChecker(
             PreflightResults with all check outcomes.
         """
         results = PreflightResults()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+
+        def _remaining_budget() -> float:
+            return max(0.0, deadline - loop.time())
+
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(_remaining_budget()):
                 # Tier 1: Cluster compatibility (sequential, short-circuit)
                 for check in [
                     self._check_kubernetes_version,
@@ -116,51 +122,67 @@ class OperatorPreflightChecker(
                 if result.status == CheckStatus.FAIL:
                     return results
 
-                # Tier 3+: Concurrent checks
-                remaining = [
-                    self._check_jobset_controller,
-                    self._check_service_account,
-                    self._check_node_resources,
-                    self._check_node_selector_match,
-                    self._check_per_node_schedulability,
-                    self._check_resource_quotas,
-                    self._check_memory_estimation,
-                    self._check_secrets,
-                    self._check_image_reference,
-                    self._check_dns,
-                    self._check_network_policies,
-                    self._check_kueue_queue,
-                    self._check_configmap_size,
-                    self._check_dry_run,
-                    self._check_pod_security_admission,
-                    self._check_tolerations,
-                ]
-                concurrent = await asyncio.gather(
-                    *(self._run_check(c) for c in remaining),
-                    return_exceptions=True,
-                )
-                for r in concurrent:
-                    if isinstance(r, BaseException):
-                        results.add(
-                            CheckResult(
-                                name="Unknown",
-                                status=CheckStatus.FAIL,
-                                message=f"Check raised exception: {r}",
-                            )
-                        )
-                    else:
-                        results.add(r)
-
         except TimeoutError:
             results.add(
                 CheckResult(
-                    # WARN, not FAIL: _is_transient_error classifies every
-                    # per-check TimeoutError as transient, so a merely slow
-                    # apiserver must not permanently fail the job just because
-                    # the aggregate deadline is the one that fired.
+                    name="Preflight Timeout",
+                    status=CheckStatus.FAIL,
+                    message=f"Pre-flight checks timed out after {timeout:.0f}s",
+                    hints=[
+                        "Increase AIPERF_PREFLIGHT_TIMEOUT or check cluster responsiveness"
+                    ],
+                )
+            )
+            return results
+
+        # Tier 3+: Concurrent checks.  Use asyncio.wait so that results from
+        # tasks that already completed are collected even when the budget is
+        # exhausted mid-flight.  asyncio.gather would discard them on timeout
+        # because the CancelledError propagates before the collection loop runs.
+        concurrent_checks = [
+            self._check_jobset_controller,
+            self._check_service_account,
+            self._check_node_resources,
+            self._check_node_selector_match,
+            self._check_per_node_schedulability,
+            self._check_resource_quotas,
+            self._check_memory_estimation,
+            self._check_secrets,
+            self._check_image_reference,
+            self._check_dns,
+            self._check_network_policies,
+            self._check_kueue_queue,
+            self._check_configmap_size,
+            self._check_dry_run,
+            self._check_pod_security_admission,
+            self._check_tolerations,
+        ]
+        tasks = [asyncio.ensure_future(self._run_check(c)) for c in concurrent_checks]
+        done, pending = await asyncio.wait(tasks, timeout=_remaining_budget())
+
+        for t in pending:
+            t.cancel()
+
+        for t in done:
+            exc = t.exception()
+            if exc is not None:
+                results.add(
+                    CheckResult(
+                        name="Unknown",
+                        status=CheckStatus.FAIL,
+                        message=f"Check raised exception: {exc}",
+                    )
+                )
+            else:
+                results.add(t.result())
+
+        if pending:
+            results.add(
+                CheckResult(
                     name="Preflight Timeout",
                     status=CheckStatus.WARN,
-                    message=f"Pre-flight checks timed out after {timeout:.0f}s",
+                    message=f"Pre-flight checks timed out after {timeout:.0f}s; "
+                    f"{len(pending)} check(s) did not complete",
                     hints=[
                         "Increase AIPERF_PREFLIGHT_TIMEOUT or check cluster responsiveness"
                     ],

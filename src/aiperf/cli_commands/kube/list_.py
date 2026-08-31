@@ -90,13 +90,14 @@ async def list_jobs(
     search_all = all_namespaces and manage_options.namespace is None
 
     with cli_utils.exit_on_error(title="Error Listing Kubernetes Jobs"):
+        namespace = _resolve_list_namespace(manage_options, search_all=search_all)
         async with kube_client_mod.k8s_client(
             kubeconfig=manage_options.kubeconfig,
             context=manage_options.kube_context,
         ) as api:
             await _run_list_loop(
                 api,
-                manage_options=manage_options,
+                namespace=namespace,
                 search_all=search_all,
                 status_filter=status_filter,
                 job_id=job_id,
@@ -104,6 +105,28 @@ async def list_jobs(
                 watch=watch,
                 interval=interval,
             )
+
+
+def _resolve_list_namespace(
+    manage_options: KubeManageOptions, *, search_all: bool
+) -> str | None:
+    """Namespace for a scoped list, or ``None`` for a cluster-wide list.
+
+    A scoped list never falls back to ``default``: an unset ``--namespace``
+    resolves through the same ``resolve_benchmark_namespace`` contract the rest
+    of the kube CLI uses, which reads the active context and errors rather than
+    guessing a namespace the user is not watching.
+    """
+    if search_all:
+        return None
+
+    from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
+
+    return resolve_benchmark_namespace(
+        manage_options.namespace,
+        manage_options.kubeconfig,
+        manage_options.kube_context,
+    )
 
 
 def _resolve_status_filter(
@@ -128,7 +151,7 @@ def _resolve_status_filter(
 async def _run_list_loop(
     api: object,
     *,
-    manage_options: KubeManageOptions,
+    namespace: str | None,
     search_all: bool,
     status_filter: str | None,
     job_id: str | None,
@@ -143,7 +166,7 @@ async def _run_list_loop(
     while True:
         jobs = await _fetch_jobs(
             api,
-            manage_options=manage_options,
+            namespace=namespace,
             search_all=search_all,
             status_filter=status_filter,
             job_id=job_id,
@@ -176,12 +199,19 @@ async def _read_namespace_owner(
 ) -> str:
     """Return the OWNER cell for a single namespace via a namespaced GET."""
 
+    from kubernetes_asyncio.client.exceptions import ApiException
+
     from aiperf.kubernetes.lease import lease_holder_if_live
 
     try:
         lease = await coord_api.read_namespaced_lease(lease_name, ns)
         holder = lease_holder_if_live(lease, default_duration=duration)
         return holder if holder else "-"
+    except ApiException as exc:
+        # 404 is "no Lease in this namespace", i.e. no scoped operator claimed
+        # it, which is exactly what "-" means. Only an unreadable claim (403,
+        # or anything else) is genuinely unknown.
+        return "-" if exc.status == 404 else "?"
     except Exception:
         return "?"
 
@@ -238,7 +268,7 @@ async def _namespace_owners(api: object, jobs: list[AIPerfJobInfo]) -> dict[str,
 async def _fetch_jobs(
     api: object,
     *,
-    manage_options: KubeManageOptions,
+    namespace: str | None,
     search_all: bool,
     status_filter: str | None,
     job_id: str | None,
@@ -251,12 +281,12 @@ async def _fetch_jobs(
     )
 
     if job_id:
-        job_info = await find_aiperf_job(api, job_id, manage_options.namespace)
+        job_info = await find_aiperf_job(api, job_id, namespace)
         return [job_info] if job_info else []
 
     jobs = await list_aiperf_jobs(
         api,
-        namespace=manage_options.namespace,
+        namespace=namespace,
         all_namespaces=search_all,
         status_filter=status_filter,
     )
@@ -266,7 +296,7 @@ async def _fetch_jobs(
 
         jobsets = await list_jobsets(
             api,
-            namespace=manage_options.namespace,
+            namespace=namespace,
             all_namespaces=search_all,
             job_id=job_id,
             status_filter=status_filter,

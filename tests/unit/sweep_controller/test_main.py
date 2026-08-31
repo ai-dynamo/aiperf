@@ -93,6 +93,7 @@ def test_aggregate_marker_atomic_rename(tmp_path: Path):
     assert orjson.loads(marker.read_bytes()) == {
         "ready": True,
         "was_cancelled": False,
+        "partial": False,
     }
     assert not list(base.glob(f".{AGGREGATE_READY_MARKER}.*.tmp"))
 

@@ -38,10 +38,6 @@ class ProgressResponse(AIPerfBaseModel):
         default_factory=AggregateWorkerStatus,
         description="Controller-authored aggregate worker-pod status.",
     )
-    workers: AggregateWorkerStatus = Field(
-        default_factory=AggregateWorkerStatus,
-        description="Controller-authored aggregate worker-pod status.",
-    )
     results_exported: bool = Field(
         default=False,
         description=(

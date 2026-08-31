@@ -11,12 +11,22 @@ each socket on its own schedule -- so a DEALER that has handshaked proves
 nothing about the PUSH side. A worker that announces ``WorkerDispatchable`` off
 DEALER liveness alone can therefore be routed credits it has no way to return.
 
-``IMMEDIATE=1`` (set for every socket in :class:`BaseZMQClient`) is what makes
-the probe meaningful: libzmq refuses a send with ``zmq.Again`` while no peer
-pipe exists, and accepts it the moment one does. So a single NOBLOCK send is a
-direct test of "is there a live connection to the PULL fan-in", with no reply
-needed from the router -- which matters because PUSH/PULL is unidirectional and
-the router has no way to answer.
+``IMMEDIATE=1`` is what makes the probe meaningful: libzmq refuses a send with
+``zmq.Again`` while no peer pipe exists, and accepts it the moment one does. So
+a single NOBLOCK send is a direct test of "is there a live connection to the
+PULL fan-in", with no reply needed from the router -- which matters because
+PUSH/PULL is unidirectional and the router has no way to answer.
+
+:class:`BaseZMQClient` sets IMMEDIATE globally, but deliberately *after*
+connect() where it is a documented no-op for ordinary clients (see
+``zmq_base_client.py``); only the credit-return PUSH client gets it pre-connect,
+and only because its one caller (:mod:`aiperf.workers.worker`) passes
+``socket_ops={zmq.IMMEDIATE: 1}`` explicitly at construction. This probe
+therefore verifies IMMEDIATE is actually 1 on the socket before relying on it --
+a caller that forgets that override would otherwise get a probe that always
+reports success on the first attempt (the connect-time pipe buffers the frame
+regardless of a live peer), silently defeating the exact stall it exists to
+catch.
 
 The probe frame is a real ``WorkerConnected``: the router already handles it on
 the PULL path (idempotently, as set insertion), and sending it here is what
@@ -30,6 +40,7 @@ import math
 import msgspec
 import zmq
 
+from aiperf.common.exceptions import ConfigurationError
 from aiperf.common.models.base_models import msgspec_enc_hook
 from aiperf.common.protocols import StreamingPushClientProtocol
 from aiperf.credit.messages import WorkerConnected
@@ -63,10 +74,31 @@ async def probe_return_channel(
         True if the channel accepted the probe (or there is nothing to probe -- a
         non-ZMQ transport has no separate return socket to fail). False if the
         budget was exhausted or the socket errored.
+
+    Raises:
+        ConfigurationError: The socket does not have ``IMMEDIATE=1`` set, which
+            means the NOBLOCK send below cannot distinguish a live peer from a
+            not-yet-connected one -- the probe would silently report success on
+            the first attempt regardless of the peer's actual state. This is a
+            caller construction bug, not a runtime condition to retry through.
     """
+    # getattr, not a Protocol member: the only production implementation
+    # (ZMQStreamingPushClient) always has .socket, so this fallback is only ever
+    # exercised by test doubles standing in for a hypothetical non-ZMQ transport.
     socket = getattr(push_client, "socket", None)
     if budget <= 0 or socket is None:
         return True
+
+    if socket.getsockopt(zmq.IMMEDIATE) != 1:
+        raise ConfigurationError(
+            f"Credit-return PUSH socket for worker {worker_id!r} does not have "
+            "IMMEDIATE=1 set. This probe relies on IMMEDIATE to turn a NOBLOCK "
+            "send into a genuine liveness test (zmq.Again with no peer, success "
+            "once one connects); without it, the send always succeeds even with "
+            "no live peer, and the probe would silently lie. Construct the "
+            "credit-return PUSH client with socket_ops={zmq.IMMEDIATE: 1}, as "
+            "aiperf.workers.worker.Worker does."
+        )
 
     data = _encoder.encode(WorkerConnected(worker_id=worker_id))
     attempts = max(1, math.ceil(budget / retry_delay))

@@ -147,13 +147,13 @@ class TestFailureShutdownTimeoutOverride:
 
     @pytest.mark.asyncio
     async def test_override_value_is_honored_as_the_wait_for_timeout(self) -> None:
-        """A subclass returning a custom float is used as the wait_for bound."""
+        """A subclass returning a custom float is used as the shutdown bound."""
         seen_timeouts: list[float | None] = []
-        real_wait_for = asyncio.wait_for
+        real_wait = asyncio.wait
 
-        async def _spy_wait_for(aw, timeout):
+        async def _spy_wait(aws, *, timeout=None):
             seen_timeouts.append(timeout)
-            return await real_wait_for(aw, timeout=timeout)
+            return await real_wait(aws, timeout=timeout)
 
         class _CustomTimeoutStopper(AIPerfLifecycleMixin):
             @property
@@ -169,7 +169,7 @@ class TestFailureShutdownTimeoutOverride:
             pytest.MonkeyPatch.context() as mp,
             pytest.raises(asyncio.CancelledError),
         ):
-            mp.setattr(asyncio, "wait_for", _spy_wait_for)
+            mp.setattr(asyncio, "wait", _spy_wait)
             await component.initialize()
         assert seen_timeouts == [123.0]
 
@@ -270,3 +270,52 @@ class TestFailureShutdownTimeoutOverride:
         with pytest.raises(asyncio.CancelledError):
             await _Wedged("kubernetes").initialize()
         assert exits == [1]
+
+
+class TestFailureShutdownTimeoutVisibility:
+    """A wedged failure-shutdown must name the specific stop hook that did
+    not finish, not just report a generic timeout.
+
+    Without this, the only signal an operator gets when a legitimate
+    teardown step (flushing a buffered writer, draining an in-flight queue)
+    is truncated by the failure_shutdown_timeout bound is a message that
+    says nothing about *what* got skipped.
+    """
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_names_the_in_flight_stop_hook(
+        self, monkeypatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.SERVICE, "FAILURE_SHUTDOWN_TIMEOUT", 0.05)
+        monkeypatch.delenv("AIPERF_OPERATOR_MANAGED", raising=False)
+
+        class _Wedged(AIPerfLifecycleMixin):
+            @on_init
+            async def _boom(self) -> None:
+                raise RuntimeError("init failed")
+
+            @on_stop
+            async def _flush_buffered_writer(self) -> None:
+                await asyncio.Event().wait()
+
+        component = _Wedged()
+        errors: list[str] = []
+        monkeypatch.setattr(
+            component,
+            "error",
+            lambda message, *a, **k: errors.append(
+                message if isinstance(message, str) else message()
+            ),
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await component.initialize()
+
+        timeout_messages = [m for m in errors if "did not complete" in m]
+        assert timeout_messages, "expected a shutdown-timeout error message"
+        assert "_flush_buffered_writer" in timeout_messages[0], (
+            "timeout message did not name the in-flight stop hook that was "
+            f"truncated: {timeout_messages[0]!r}"
+        )

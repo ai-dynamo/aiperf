@@ -15,8 +15,13 @@ from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.deployment import PodTemplateConfig, SchedulingConfig
 from aiperf.kubernetes.constants import (
+    DNS_LABEL_MAX,
+    DNS_LABEL_RE,
+    DNS_SUBDOMAIN_MAX,
+    DNS_SUBDOMAIN_RE,
     MIN_CONTAINER_CPU_MCPU,
     MIN_CONTAINER_MEMORY_MIB,
+    WORKER_IMPORT_MEMORY_FLOOR_MIB,
     AIPerfLabels,
     Containers,
     KueueLabels,
@@ -55,13 +60,45 @@ def controller_dns_name(jobset_name: str, namespace: str) -> str:
 
     Since we have exactly 1 controller replica with 1 pod, indices are always 0-0.
 
+    Both inputs are validated against the RFC 1123 shapes Kubernetes itself
+    enforces. The returned host is fed straight into HTTP and WebSocket URLs,
+    and ``jobset_name`` reaches this function from ``status.jobSetName`` on the
+    AIPerfJob CR -- a field any principal holding ``patch`` on
+    ``aiperfjobs/status`` can write. Without this check a status write could
+    embed a scheme, port, or credential and redirect the operator's own
+    connections to an attacker-controlled host.
+
     Args:
         jobset_name: The JobSet resource name.
         namespace: Kubernetes namespace.
 
     Returns:
         Fully qualified DNS hostname for the controller pod.
+
+    Raises:
+        ValueError: ``jobset_name`` is not a DNS-1123 subdomain, or
+            ``namespace`` is not a DNS-1123 label.
     """
+    if not jobset_name or len(jobset_name) > DNS_SUBDOMAIN_MAX:
+        raise ValueError(
+            f"Invalid JobSet name {jobset_name!r}: Kubernetes object names are "
+            f"DNS-1123 subdomains of 1-{DNS_SUBDOMAIN_MAX} characters"
+        )
+    if not DNS_SUBDOMAIN_RE.match(jobset_name):
+        raise ValueError(
+            f"Invalid JobSet name {jobset_name!r}: Kubernetes object names are "
+            "DNS-1123 subdomains (lowercase alphanumeric, '-' or '.')"
+        )
+    if not namespace or len(namespace) > DNS_LABEL_MAX:
+        raise ValueError(
+            f"Invalid namespace {namespace!r}: Kubernetes namespaces are "
+            f"DNS-1123 labels of 1-{DNS_LABEL_MAX} characters"
+        )
+    if not DNS_LABEL_RE.match(namespace):
+        raise ValueError(
+            f"Invalid namespace {namespace!r}: Kubernetes namespaces are "
+            "DNS-1123 labels (lowercase alphanumeric or '-')"
+        )
     return f"{jobset_name}-controller-0-0.{jobset_name}.{namespace}.svc.cluster.local"
 
 
@@ -202,7 +239,15 @@ def split_worker_pod_resources(
     # These weights reflect the measured relative cost noted in the K8s
     # environment comments: workers are lighter than record processors,
     # while the worker-pod-manager remains a small but non-zero share.
-    memory_weights = [128] + ([80] * worker_count) + ([256] * record_processor_count)
+    #
+    # The worker share tracks the memory estimator, which models a worker's
+    # floor at ~162 MiB (_PYTHON_CHILD_SUBPROCESS_BASE_MIB + the "worker"
+    # service base) against ~325 MiB for a record processor -- a ~0.5 ratio,
+    # i.e. 128 against the record processor's 256. A lower weight starves
+    # workers below their CPython+aiohttp+ZMQ import footprint and OOMKills
+    # them outright under `guaranteed` mode, where the share becomes a hard
+    # limit.
+    memory_weights = [128] + ([128] * worker_count) + ([256] * record_processor_count)
 
     cpu_shares = _compute_cpu_shares(
         total_mcpu,
@@ -213,6 +258,17 @@ def split_worker_pod_resources(
     memory_shares = _apply_minimum_share(
         split_weighted_total(total_mib, memory_weights), MIN_CONTAINER_MEMORY_MIB
     )
+    worker_memory_shares = memory_shares[1 : 1 + worker_count]
+    if (
+        worker_memory_shares
+        and min(worker_memory_shares) < WORKER_IMPORT_MEMORY_FLOOR_MIB
+    ):
+        raise ValueError(
+            f"WORKER_POD memory budget ({total_mib}Mi) leaves worker containers below "
+            f"the {WORKER_IMPORT_MEMORY_FLOOR_MIB}Mi worker import-memory floor. "
+            "Increase AIPERF_K8S_WORKER_POD_MEMORY or reduce "
+            "--workers-per-pod / --record-processors-per-pod."
+        )
 
     resources: list[dict[str, dict[str, str]]] = []
     for mcpu, mib in zip(cpu_shares, memory_shares, strict=True):

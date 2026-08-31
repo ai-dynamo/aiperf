@@ -175,10 +175,13 @@ class TestRecordProcessorArtifactBarrier:
             Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
         )
 
-        assert [e.operation for e in local_controller._exit_errors] == [
-            "finalize_artifacts"
-        ]
-        assert local_controller._exit_errors[0].error_details.message == "disk full"
+        assert local_controller._exit_errors == []
+        local_controller.error.assert_called_once_with("disk full")
+        local_controller.warning.assert_called_once_with(
+            "Continuing export after 1 record processor(s) "
+            "failed to acknowledge artifact finalization; their writers were "
+            "already flushed by PROFILE_COMPLETE"
+        )
 
     @pytest.mark.asyncio
     async def test_no_live_record_processors_degrades_without_raising(
@@ -197,6 +200,7 @@ class TestRecordProcessorArtifactBarrier:
         )
 
         local_controller._send_control_command_to_all.assert_not_awaited()
-        assert [e.operation for e in local_controller._exit_errors] == [
-            "finalize_artifacts"
-        ]
+        assert local_controller._exit_errors == []
+        local_controller.error.assert_called_once_with(
+            "Cannot finalize record artifacts: no live record processors are registered"
+        )

@@ -32,6 +32,7 @@ from aiperf.common.results_markers import (
     _is_ready,
     collect_ready_artifacts,
     content_type_for,
+    read_ready_marker_info,
     resolve_result_file,
 )
 
@@ -44,10 +45,15 @@ async def list_result_files(base_dir: Path, *, recursive: bool) -> ResultsListRe
     entries = await asyncio.to_thread(
         collect_ready_artifacts, base_dir, recursive=recursive
     )
+    partial, failed_exporters = await asyncio.to_thread(
+        read_ready_marker_info, base_dir
+    )
     return ResultsListResponse(
         files=[ResultFileInfo(name=name, size=size) for name, size in entries],
         ready=_is_ready(base_dir),
         processing=_is_processing(base_dir),
+        partial=partial,
+        failed_exporters=failed_exporters,
     )
 
 

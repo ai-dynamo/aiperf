@@ -77,7 +77,7 @@ async def delete(
             context=manage_options.kube_context,
         )
         if not resolved:
-            return
+            raise SystemExit(1)
         job_id, namespace = resolved
         requested_kind = workload_kind_from_cli(kind)
         if requested_kind is None and use_last_benchmark:
@@ -98,13 +98,13 @@ async def delete(
                 )
             except AmbiguousAIPerfTargetError as error:
                 kube_console.print_error(str(error))
-                return
+                raise SystemExit(1) from None
             if found is None:
                 expected = requested_kind or "AIPerfJob or AIPerfSweep"
                 kube_console.print_error(
                     f"No {expected} named {job_id!r} in namespace {namespace}"
                 )
-                return
+                raise SystemExit(1)
             plural, cr = found
             found_kind = kind_for_plural(plural)
 

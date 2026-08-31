@@ -120,6 +120,8 @@ class _CapturedCheckerInit:
     secrets: list[str] | None
     endpoint_url: str | None
     workers: int
+    node_selector: dict[str, str]
+    tolerations: list[dict[str, object]]
 
 
 @dataclass(slots=True)
@@ -228,6 +230,8 @@ class TestPreflightCliTrustBoundary:
                 secrets: list[str] | None = None,
                 endpoint_url: str | None = None,
                 workers: int = 1,
+                node_selector: dict[str, str] | None = None,
+                tolerations: list[dict[str, object]] | None = None,
             ) -> None:
                 captured.append(
                     _CapturedCheckerInit(
@@ -239,6 +243,8 @@ class TestPreflightCliTrustBoundary:
                         secrets=secrets,
                         endpoint_url=endpoint_url,
                         workers=workers,
+                        node_selector=node_selector or {},
+                        tolerations=tolerations or [],
                     )
                 )
 
@@ -266,6 +272,8 @@ class TestPreflightCliTrustBoundary:
                 secrets=["endpoint-api-key", "dataset-token"],
                 endpoint_url="http://llama.default.svc.cluster.local:8000/v1",
                 workers=7,
+                node_selector={"nvidia.com/gpu.product": "H100"},
+                tolerations=[{"key": "nvidia.com/gpu", "operator": "Exists"}],
                 output="json",
             )
 
@@ -282,6 +290,8 @@ class TestPreflightCliTrustBoundary:
                 secrets=["endpoint-api-key", "dataset-token"],
                 endpoint_url="http://llama.default.svc.cluster.local:8000/v1",
                 workers=7,
+                node_selector={"nvidia.com/gpu.product": "H100"},
+                tolerations=[{"key": "nvidia.com/gpu", "operator": "Exists"}],
             )
         ]
         assert kube_logger.level == original_level
@@ -305,6 +315,8 @@ class TestPreflightCliTrustBoundary:
                 secrets: list[str] | None = None,
                 endpoint_url: str | None = None,
                 workers: int = 1,
+                node_selector: dict[str, str] | None = None,
+                tolerations: list[dict[str, object]] | None = None,
             ) -> None:
                 captured_namespaces.append(namespace)
 
@@ -327,6 +339,8 @@ class TestPreflightCliTrustBoundary:
                 secrets=None,
                 endpoint_url=None,
                 workers=1,
+                node_selector=None,
+                tolerations=None,
                 output="json",
             )
 
@@ -352,6 +366,8 @@ class TestPreflightCliTrustBoundary:
                 secrets: list[str] | None = None,
                 endpoint_url: str | None = None,
                 workers: int = 1,
+                node_selector: dict[str, str] | None = None,
+                tolerations: list[dict[str, object]] | None = None,
             ) -> None:
                 captured_namespaces.append(namespace)
 
@@ -372,6 +388,8 @@ class TestPreflightCliTrustBoundary:
                 secrets=None,
                 endpoint_url=None,
                 workers=1,
+                node_selector=None,
+                tolerations=None,
                 output="json",
             )
 

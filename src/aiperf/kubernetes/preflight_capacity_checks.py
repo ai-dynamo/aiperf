@@ -24,6 +24,7 @@ from aiperf.kubernetes.environment import (
 from aiperf.kubernetes.preflight_utils import (
     parse_image_ref as _shared_parse_image_ref,
 )
+from aiperf.kubernetes.resource_quota import quota_violation
 from aiperf.kubernetes.utils import (
     format_cpu,
     format_memory,
@@ -70,47 +71,49 @@ class _QuotaEvaluation:
     """Outcome of evaluating resource quotas against a deployment's needs."""
 
     details: list[str]
-    would_exceed: bool
+    violations: list[str]
+
+    @property
+    def would_exceed(self) -> bool:
+        """Return whether any quota rejects the planned workload."""
+        return bool(self.violations)
 
 
 def _evaluate_quotas(
-    quotas: list, *, required_cpu: float, required_mem: float
+    quotas: list,
+    *,
+    required_cpu: float,
+    required_mem: float,
+    required_pods: int = 0,
 ) -> _QuotaEvaluation:
-    """Build detail lines and flag whether any quota would be exceeded."""
+    """Build quota detail lines and collect admission violations."""
     details: list[str] = []
-    would_exceed = False
+    violations: list[str] = []
     for quota in quotas:
         name = quota.metadata.name if quota.metadata else ""
         details.append(f"ResourceQuota '{name}':")
-        hard = (quota.status.hard or {}) if quota.status else {}
+        spec = getattr(quota, "spec", None)
+        hard = (
+            (spec.hard or {})
+            if spec
+            else (quota.status.hard or {})
+            if quota.status
+            else {}
+        )
         used = (quota.status.used or {}) if quota.status else {}
         for resource, limit in hard.items():
             details.append(f"    {resource}: {used.get(resource, '0')} / {limit}")
 
-        hard_cpu = hard.get("cpu") or hard.get("requests.cpu")
-        hard_mem = hard.get("memory") or hard.get("requests.memory")
-        used_cpu = used.get("cpu") or used.get("requests.cpu")
-        used_mem = used.get("memory") or used.get("requests.memory")
-
-        if hard_cpu:
-            total_needed = required_cpu + parse_cpu(used_cpu or "0")
-            if total_needed > parse_cpu(hard_cpu):
-                would_exceed = True
-                details.append(
-                    f"    -> CPU would exceed quota: "
-                    f"{format_cpu(total_needed)} needed vs "
-                    f"{hard_cpu} limit"
-                )
-        if hard_mem:
-            total_needed = required_mem + parse_memory_gib(used_mem or "0")
-            if total_needed > parse_memory_gib(hard_mem):
-                would_exceed = True
-                details.append(
-                    f"    -> Memory would exceed quota: "
-                    f"{format_memory(total_needed)} needed vs "
-                    f"{hard_mem} limit"
-                )
-    return _QuotaEvaluation(details=details, would_exceed=would_exceed)
+        if violation := quota_violation(
+            hard,
+            used,
+            required_cpu=required_cpu,
+            required_mem=required_mem,
+            required_pods=required_pods,
+        ):
+            violations.append(violation)
+            details.append(f"    -> {violation}")
+    return _QuotaEvaluation(details=details, violations=violations)
 
 
 async def check_resource_quotas(
@@ -138,23 +141,23 @@ async def check_resource_quotas(
         required_mem = ctrl_mem + (worker_mem * workers)
 
         evaluation = _evaluate_quotas(
-            quotas, required_cpu=required_cpu, required_mem=required_mem
+            quotas,
+            required_cpu=required_cpu,
+            required_mem=required_mem,
+            required_pods=workers + 1,
         )
 
         if evaluation.would_exceed:
             evaluation.details.append(
                 f"Benchmark needs: {format_cpu(required_cpu)} CPU, "
-                f"{format_memory(required_mem)} memory ({workers} workers)"
+                f"{format_memory(required_mem)} memory ({workers + 1} pods)"
             )
             return CheckResult(
                 name="Resource Quotas",
-                status=CheckStatus.WARN,
-                message="Benchmark may exceed resource quota(s)",
+                status=CheckStatus.FAIL,
+                message=f"Benchmark would exceed {evaluation.violations[0]}",
                 details=evaluation.details,
-                hints=[
-                    "Request a quota increase or reduce worker count",
-                    "Quota may not apply if benchmark creates its own namespace",
-                ],
+                hints=["Request a quota increase or reduce worker count"],
             )
 
         return CheckResult(
@@ -191,34 +194,186 @@ def _node_is_ready(node) -> bool:
     return any(c.type == "Ready" and c.status == "True" for c in conditions)
 
 
-def _aggregate_ready_nodes(nodes: list) -> tuple[int, float, float]:
-    """Return (ready_count, total_cpu_cores, total_memory_gib) across ready nodes."""
+def _node_is_schedulable(node) -> bool:
+    """Return True if the node is Ready and not cordoned.
+
+    A cordoned node (``spec.unschedulable``) still reports Ready and still
+    advertises its allocatable capacity, so counting it makes a drained
+    cluster look like it has room the scheduler will never hand out.
+    """
+    spec = getattr(node, "spec", None)
+    if spec is not None and getattr(spec, "unschedulable", False):
+        return False
+    return _node_is_ready(node)
+
+
+def _toleration_matches_taint(
+    toleration: dict[str, object], taint_key: str, taint_effect: str
+) -> bool:
+    """Return whether a toleration admits a NoSchedule or NoExecute taint."""
+    operator = toleration.get("operator") or "Equal"
+    toleration_key = toleration.get("key") or ""
+    toleration_effect = toleration.get("effect") or ""
+    if operator == "Exists" and not toleration_key:
+        return not toleration_effect or toleration_effect == taint_effect
+    if toleration_key != taint_key:
+        return False
+    return not toleration_effect or toleration_effect == taint_effect
+
+
+def _node_matches_placement(
+    node,
+    *,
+    node_selector: dict[str, str],
+    tolerations: list[dict[str, object]],
+) -> bool:
+    """Return whether a schedulable node matches the requested placement."""
+    if not _node_is_schedulable(node):
+        return False
+    metadata = getattr(node, "metadata", None)
+    labels = getattr(metadata, "labels", None) or {}
+    if not all(labels.get(key) == value for key, value in node_selector.items()):
+        return False
+    spec = getattr(node, "spec", None)
+    for taint in (getattr(spec, "taints", None) or []) if spec else []:
+        effect = getattr(taint, "effect", None) or ""
+        if effect not in ("NoSchedule", "NoExecute"):
+            continue
+        key = getattr(taint, "key", None) or ""
+        if not any(
+            _toleration_matches_taint(toleration, key, effect)
+            for toleration in tolerations
+        ):
+            return False
+    return True
+
+
+def _pod_requests(pod) -> tuple[float, float]:
+    """Return (cpu cores, memory GiB) requested by a pod's regular containers.
+
+    Init containers are excluded: they have completed by the time the pod is
+    Running, so their requests are not part of its steady-state footprint.
+    """
+    spec = getattr(pod, "spec", None)
+    cpu = 0.0
+    memory = 0.0
+    for container in (getattr(spec, "containers", None) or []) if spec else []:
+        resources = getattr(container, "resources", None)
+        requests = getattr(resources, "requests", None) or {}
+        try:
+            cpu += parse_cpu(requests.get("cpu", "0"))
+            memory += parse_memory_gib(requests.get("memory", "0"))
+        except (ValueError, AttributeError):
+            # A malformed quantity is one pod's problem, not a reason to
+            # abandon the whole capacity estimate.
+            continue
+    return cpu, memory
+
+
+async def _requested_by_node(api: ApiClient) -> dict[str, tuple[float, float]] | None:
+    """Sum running-pod requests per node name.
+
+    Returns ``None`` when the pod list is unavailable (commonly a CLI user
+    without cluster-wide pod read), so the caller can fall back to raw
+    allocatable and say so rather than silently claiming free capacity.
+    """
+    try:
+        pod_list = await client.CoreV1Api(api).list_pod_for_all_namespaces(
+            field_selector="status.phase=Running"
+        )
+        pods = getattr(pod_list, "items", None)
+    except (*_CLUSTER_API_ERRORS, TypeError, AttributeError):
+        # Free-capacity data is an improvement on allocatable, never a reason
+        # to abort preflight: any client that cannot answer degrades to the
+        # allocatable-only estimate, which the caller labels as such.
+        return None
+    if not isinstance(pods, list):
+        return None
+
+    requested: dict[str, tuple[float, float]] = {}
+    for pod in pods:
+        node_name = getattr(getattr(pod, "spec", None), "node_name", None)
+        if not node_name:
+            continue
+        cpu, memory = _pod_requests(pod)
+        prev_cpu, prev_memory = requested.get(node_name, (0.0, 0.0))
+        requested[node_name] = (prev_cpu + cpu, prev_memory + memory)
+    return requested
+
+
+def _node_free(
+    node, requested: dict[str, tuple[float, float]] | None
+) -> tuple[float, float]:
+    """Return the node's allocatable capacity minus what running pods requested."""
+    allocatable = (node.status.allocatable or {}) if node.status else {}
+    cpu = parse_cpu(allocatable.get("cpu", "0"))
+    memory = parse_memory_gib(allocatable.get("memory", "0"))
+    if requested is None:
+        return cpu, memory
+    used_cpu, used_memory = requested.get(
+        getattr(getattr(node, "metadata", None), "name", "") or "", (0.0, 0.0)
+    )
+    return max(cpu - used_cpu, 0.0), max(memory - used_memory, 0.0)
+
+
+def _aggregate_ready_nodes(
+    nodes: list,
+    requested: dict[str, tuple[float, float]] | None = None,
+    *,
+    node_selector: dict[str, str] | None = None,
+    tolerations: list[dict[str, object]] | None = None,
+) -> tuple[int, float, float]:
+    """Return (ready_count, free_cpu_cores, free_memory_gib) across usable nodes."""
     ready_nodes = 0
     total_cpu = 0.0
     total_memory = 0.0
     for node in nodes:
         allocatable = (node.status.allocatable or {}) if node.status else {}
-        if _node_is_ready(node) and allocatable:
+        if (
+            _node_matches_placement(
+                node,
+                node_selector=node_selector or {},
+                tolerations=tolerations or [],
+            )
+            and allocatable
+        ):
             ready_nodes += 1
-            total_cpu += parse_cpu(allocatable.get("cpu", "0"))
-            total_memory += parse_memory_gib(allocatable.get("memory", "0"))
+            cpu, memory = _node_free(node, requested)
+            total_cpu += cpu
+            total_memory += memory
     return ready_nodes, total_cpu, total_memory
 
 
-def _any_node_fits(nodes: list, *, max_pod_cpu: float, max_pod_mem: float) -> bool:
-    """Return True if at least one ready node can fit a pod of the given size."""
+def _any_node_fits(
+    nodes: list,
+    *,
+    max_pod_cpu: float,
+    max_pod_mem: float,
+    requested: dict[str, tuple[float, float]] | None = None,
+    node_selector: dict[str, str] | None = None,
+    tolerations: list[dict[str, object]] | None = None,
+) -> bool:
+    """Return True if at least one usable node can fit a pod of the given size."""
     for node in nodes:
-        if not _node_is_ready(node):
+        if not _node_matches_placement(
+            node,
+            node_selector=node_selector or {},
+            tolerations=tolerations or [],
+        ):
             continue
-        allocatable = (node.status.allocatable or {}) if node.status else {}
-        node_cpu = parse_cpu(allocatable.get("cpu", "0"))
-        node_mem = parse_memory_gib(allocatable.get("memory", "0"))
+        node_cpu, node_mem = _node_free(node, requested)
         if node_cpu >= max_pod_cpu and node_mem >= max_pod_mem:
             return True
     return False
 
 
-async def check_node_resources(api: ApiClient, *, workers: int) -> CheckResult:
+async def check_node_resources(
+    api: ApiClient,
+    *,
+    workers: int,
+    node_selector: dict[str, str] | None = None,
+    tolerations: list[dict[str, object]] | None = None,
+) -> CheckResult:
     """Check if cluster has sufficient node resources."""
     from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 
@@ -232,7 +387,16 @@ async def check_node_resources(api: ApiClient, *, workers: int) -> CheckResult:
                 message="No nodes found in cluster",
             )
 
-        ready_nodes, total_cpu, total_memory = _aggregate_ready_nodes(nodes)
+        # Allocatable is total capacity, not remaining: without subtracting
+        # what running pods already requested, a 95%-booked cluster passes.
+        requested = await _requested_by_node(api)
+
+        ready_nodes, total_cpu, total_memory = _aggregate_ready_nodes(
+            nodes,
+            requested,
+            node_selector=node_selector,
+            tolerations=tolerations,
+        )
 
         ctrl_cpu, ctrl_mem = _controller_resource_requirements()
         worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
@@ -241,25 +405,40 @@ async def check_node_resources(api: ApiClient, *, workers: int) -> CheckResult:
         required_cpu = ctrl_cpu + (worker_cpu * workers)
         required_mem = ctrl_mem + (worker_mem * workers)
 
+        capacity_label = "free" if requested is not None else "allocatable"
         details = [
-            f"Cluster: {ready_nodes} ready nodes, "
-            f"{format_cpu(total_cpu)} CPU, {format_memory(total_memory)} memory",
+            f"Cluster: {ready_nodes} schedulable nodes, "
+            f"{format_cpu(total_cpu)} {capacity_label} CPU, "
+            f"{format_memory(total_memory)} {capacity_label} memory",
             f"Deployment estimate: {format_cpu(required_cpu)} CPU, "
             f"{format_memory(required_mem)} memory ({workers} workers)",
         ]
+        if requested is None:
+            details.append(
+                "Could not list running pods: capacity shown is total allocatable, "
+                "not what is actually free"
+            )
 
         if required_cpu > total_cpu or required_mem > total_memory:
             return CheckResult(
                 name="Node Resources",
-                status=CheckStatus.WARN,
-                message="Cluster may not have enough resources",
+                status=CheckStatus.FAIL,
+                message="Cluster does not have enough resources",
                 details=details,
                 hints=["Consider reducing worker count or adding cluster capacity"],
             )
 
         max_pod_cpu = max(ctrl_cpu, worker_cpu)
         max_pod_mem = max(ctrl_mem, worker_mem)
-        if not _any_node_fits(nodes, max_pod_cpu=max_pod_cpu, max_pod_mem=max_pod_mem):
+        # Judged on raw allocatable: a node too small to ever hold one pod is
+        # a structural misconfiguration, not a transient booking.
+        if not _any_node_fits(
+            nodes,
+            max_pod_cpu=max_pod_cpu,
+            max_pod_mem=max_pod_mem,
+            node_selector=node_selector,
+            tolerations=tolerations,
+        ):
             details.append(
                 f"Largest single-pod requirement: "
                 f"{format_cpu(max_pod_cpu)} CPU, {format_memory(max_pod_mem)} memory"
@@ -273,6 +452,31 @@ async def check_node_resources(api: ApiClient, *, workers: int) -> CheckResult:
                     "Each node must have enough allocatable resources for at least one pod",
                     f"Minimum per-node: {format_cpu(max_pod_cpu)} CPU, "
                     f"{format_memory(max_pod_mem)} memory",
+                ],
+            )
+
+        # Fragmentation: every node is big enough in principle, but running
+        # pods have booked all of them past the largest pod we need to place.
+        if requested is not None and not _any_node_fits(
+            nodes,
+            max_pod_cpu=max_pod_cpu,
+            max_pod_mem=max_pod_mem,
+            requested=requested,
+            node_selector=node_selector,
+            tolerations=tolerations,
+        ):
+            details.append(
+                f"Largest single-pod requirement: "
+                f"{format_cpu(max_pod_cpu)} CPU, {format_memory(max_pod_mem)} memory"
+            )
+            return CheckResult(
+                name="Node Resources",
+                status=CheckStatus.WARN,
+                message="No node currently has enough free capacity for one pod",
+                details=details,
+                hints=[
+                    "Pods will stay Pending until running workloads release capacity",
+                    "Reduce worker count, free capacity, or add nodes",
                 ],
             )
 

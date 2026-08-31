@@ -621,11 +621,14 @@ def _load_corpus() -> tuple[str, ...] | None:
                     tokenizer=tokenizer,
                 )
 
-            # Decode through the public wrapper so both Hugging Face and the
-            # built-in tiktoken adapter produce the text fragments streamed by
-            # the mock server.
+            # Decode through the public wrapper's batched call so both Hugging
+            # Face and the built-in tiktoken adapter produce the text
+            # fragments streamed by the mock server, without paying decode()
+            # overhead once per token.
             tokens = tuple(
-                tokenizer.decode([token_id]) for token_id in generator._tokenized_corpus
+                tokenizer.decode_batch(
+                    [[token_id] for token_id in generator._tokenized_corpus]
+                )
             )
         except TypeError:
             raise

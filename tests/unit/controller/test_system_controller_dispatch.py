@@ -21,6 +21,7 @@ from aiperf.common.control_structs import (
     Heartbeat,
     Registration,
     RegistrationAck,
+    ReRegisterRequest,
     StatusUpdate,
 )
 from aiperf.common.enums import (
@@ -290,6 +291,49 @@ async def test_heartbeat_from_unknown_service_is_ignored(
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_from_unknown_service_nudges_it_to_reregister(
+    controller: SystemController,
+) -> None:
+    """Bug A: a controller ROUTER restart empties the ServiceRegistry while a
+    surviving service keeps heartbeating. Without a nudge back to the sender,
+    the service is orphaned forever -- it never learns it must re-register.
+    """
+    await controller._handle_control_message(
+        "ghost",
+        Heartbeat(
+            sid="ghost",
+            stype=str(ServiceType.WORKER),
+            state=str(LifecycleState.RUNNING),
+        ),
+    )
+    await asyncio.sleep(0)
+    controller.control_router.send_to.assert_awaited()
+    identity, struct = controller.control_router.send_to.call_args.args
+    assert identity == "ghost"
+    assert isinstance(struct, ReRegisterRequest)
+    assert struct.sid == "ghost"
+
+
+@pytest.mark.asyncio
+async def test_status_update_from_unknown_service_nudges_it_to_reregister(
+    controller: SystemController,
+) -> None:
+    await controller._handle_control_message(
+        "ghost",
+        StatusUpdate(
+            sid="ghost",
+            stype=str(ServiceType.WORKER),
+            state=str(LifecycleState.RUNNING),
+        ),
+    )
+    await asyncio.sleep(0)
+    controller.control_router.send_to.assert_awaited()
+    identity, struct = controller.control_router.send_to.call_args.args
+    assert identity == "ghost"
+    assert isinstance(struct, ReRegisterRequest)
+
+
+@pytest.mark.asyncio
 async def test_status_update_records_new_state(controller: SystemController) -> None:
     await controller._handle_control_message("svc-1", _registration())
     result = await controller._handle_control_message(
@@ -328,9 +372,15 @@ async def test_status_update_does_not_write_through_service_id_map(
     )
     newest_ns = info.last_seen_ns
 
-    # An update the transport delivered late must be dropped whole.
+    # An update the transport delivered late must be dropped whole: its seq
+    # (0, the StatusUpdate default) is not strictly greater than the seq
+    # already applied above.
     ServiceRegistry.update_service(
-        "svc-1", ServiceType.WORKER, newest_ns - 1, LifecycleState.RUNNING
+        "svc-1",
+        service_type=ServiceType.WORKER,
+        last_seen_ns=newest_ns - 1,
+        state=LifecycleState.RUNNING,
+        seq=0,
     )
     assert info.state == LifecycleState.STOPPING
     assert info.last_seen_ns == newest_ns
@@ -495,9 +545,8 @@ async def test_dispatch_control_command_raising_hook_returns_command_err(
 
 
 @pytest.mark.asyncio
-async def test_finalize_artifacts_treats_unhandled_as_failure(controller) -> None:
-    """Invariant I7 at the consumer: a record processor with no FINALIZE_ARTIFACTS
-    handler must be recorded as a failure, never silently accepted."""
+async def test_finalize_artifacts_logs_unhandled_local_processor(controller) -> None:
+    """Local artifact ACK failures do not discard already-flushed results."""
     controller.service_manager.service_id_map = {
         "rp-1": ServiceRunInfo(
             service_id="rp-1",
@@ -517,16 +566,14 @@ async def test_finalize_artifacts_treats_unhandled_as_failure(controller) -> Non
     await controller._handle_finalize_artifacts_command(
         Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
     )
-    assert len(controller._exit_errors) == 1
-    assert "does not handle" in controller._exit_errors[0].error_details.message
+    assert controller._exit_errors == []
 
 
 @pytest.mark.asyncio
-async def test_finalize_artifacts_rejects_response_with_unpopulated_cmd(
+async def test_finalize_artifacts_logs_unpopulated_command_locally(
     controller,
 ) -> None:
-    """``cmd`` defaults to "" on every response struct, so a responder that
-    forgets to set it must be named, not silently treated as a mismatch."""
+    """A malformed local ACK is logged without failing already-flushed results."""
     controller.service_manager.service_id_map = {
         "rp-1": ServiceRunInfo(
             service_id="rp-1",
@@ -546,8 +593,7 @@ async def test_finalize_artifacts_rejects_response_with_unpopulated_cmd(
     await controller._handle_finalize_artifacts_command(
         Command(cid="c-1", cmd=CommandType.FINALIZE_ARTIFACTS)
     )
-    assert len(controller._exit_errors) == 1
-    assert "no 'cmd' field" in controller._exit_errors[0].error_details.message
+    assert controller._exit_errors == []
 
 
 @pytest.mark.asyncio

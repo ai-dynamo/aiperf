@@ -271,7 +271,7 @@ _EXPORT_BYTES_PER_RECORD = 1100
 
 def _rp_buffer_mib(avg_osl: int, *, streaming: bool) -> tuple[float, float]:
     """(raw_buffer_mib, export_buffer_mib) for a single record processor."""
-    per_raw_record_bytes = 1500 + avg_osl * (80 if streaming else 4)
+    per_raw_record_bytes = 1500 + avg_osl * (_SSE_BYTES_PER_CHUNK if streaming else 4)
     raw_buffer_mib = _mib(_RAW_BATCH_SIZE * per_raw_record_bytes)
     export_buffer_mib = _mib(_EXPORT_BATCH_SIZE * _EXPORT_BYTES_PER_RECORD)
     return raw_buffer_mib, export_buffer_mib

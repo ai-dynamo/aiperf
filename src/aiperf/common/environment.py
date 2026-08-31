@@ -1516,6 +1516,32 @@ class _PodSettings(BaseSettings):
     )
 
 
+class _ServiceHealthFields:
+    """Health server settings for Kubernetes probes."""
+
+    HEALTH_ENABLED: bool = Field(
+        default=False,
+        description="Enable the lightweight health server for Kubernetes liveness/readiness probes. "
+        "When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints.",
+    )
+    HEALTH_HOST: str = Field(
+        default="127.0.0.1",
+        description="Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments.",
+    )
+    HEALTH_PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=8080,
+        description="Port for the health server HTTP endpoints (/healthz, /readyz).",
+    )
+    HEALTH_REQUEST_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=5.0,
+        description="Timeout in seconds for reading health check HTTP requests.",
+    )
+
+
 class _ServiceCommunicationFields:
     """Service command and connection-probing configuration."""
 
@@ -1545,7 +1571,7 @@ class _ServiceCommunicationFields:
     )
 
 
-class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
+class _ServiceSettings(_ServiceCommunicationFields, _ServiceHealthFields, BaseSettings):
     """Service lifecycle and inter-service communication configuration.
 
     Controls timeouts for service registration, startup, shutdown, command handling,
@@ -1586,6 +1612,12 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         description="Consecutive heartbeat intervals a registered service may "
         "miss before the watchdog suspects it. Failure then requires "
         "HEARTBEAT_STALE_CONFIRMATION_TICKS consecutive stale watchdog ticks.",
+    )
+    CONTROLLER_FAILURE_SHUTDOWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=600.0,
+        description="Wall-clock cap for SystemController failure-path teardown, including child reaping and result export.",
     )
     FAILURE_SHUTDOWN_TIMEOUT: float = Field(
         ge=1.0,
@@ -1715,28 +1747,6 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         default=25.0,
         description="Warning threshold in milliseconds for event loop latency (default: 25ms). "
         "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
-    )
-    # Health server settings for Kubernetes probes
-    HEALTH_ENABLED: bool = Field(
-        default=False,
-        description="Enable the lightweight health server for Kubernetes liveness/readiness probes. "
-        "When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints.",
-    )
-    HEALTH_HOST: str = Field(
-        default="127.0.0.1",
-        description="Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments.",
-    )
-    HEALTH_PORT: int = Field(
-        ge=1,
-        le=65535,
-        default=8080,
-        description="Port for the health server HTTP endpoints (/healthz, /readyz).",
-    )
-    HEALTH_REQUEST_TIMEOUT: float = Field(
-        ge=0.1,
-        le=60.0,
-        default=5.0,
-        description="Timeout in seconds for reading health check HTTP requests.",
     )
     # Windows-only: TCP-loopback fallback for ZMQ IPC sockets (pyzmq on
     # Windows does not support ipc://). Per-endpoint ports are derived
@@ -2052,12 +2062,14 @@ class _WorkerSettings(BaseSettings):
     CLOCK_PROBE_MAX_RTT_SEC: float = Field(
         ge=0.0,
         le=100000.0,
-        default=1.0,
+        default=0.05,
         description="Plausibility bound in seconds on a single TimePing/TimePong "
         "round trip. A probe slower than this is discarded rather than used as the "
         "baseline RTT, because a probe queued behind real credits or delayed by a "
         "GC pause would otherwise halve into a wildly overstated one-way transit "
-        "estimate. Set to 0 to disable the bound. Kubernetes mode only.",
+        "estimate. Set to 0 to disable the bound. Must be strictly less than "
+        "AIPERF_WORKER_CLOCK_PROBE_TIMEOUT when non-zero (a probe already timed "
+        "out before the bound check can fire). Kubernetes mode only.",
     )
     CLOCK_REMEASURE_INTERVAL: float = Field(
         ge=1.0,
@@ -2214,6 +2226,28 @@ class _WorkerSettings(BaseSettings):
         "unpinned sessions are evicted",
     )
 
+    @model_validator(mode="after")
+    def validate_clock_probe_rtt_bound(self) -> Self:
+        """Validate that CLOCK_PROBE_MAX_RTT_SEC is less than CLOCK_PROBE_TIMEOUT.
+
+        A probe that exceeds the timeout is never observed by the RTT guard --
+        asyncio.wait_for raises TimeoutError first.  Setting the bound at or above
+        the timeout makes the guard dead code and allows a near-timeout slow probe
+        (0.9s with defaults) to be accepted and its one-way estimate (450ms) to
+        be used for every subsequent timestamp correction.
+        """
+        if (
+            self.CLOCK_PROBE_MAX_RTT_SEC > 0
+            and self.CLOCK_PROBE_MAX_RTT_SEC >= self.CLOCK_PROBE_TIMEOUT
+        ):
+            raise ValueError(
+                f"AIPERF_WORKER_CLOCK_PROBE_MAX_RTT_SEC ({self.CLOCK_PROBE_MAX_RTT_SEC}s) "
+                f"must be strictly less than AIPERF_WORKER_CLOCK_PROBE_TIMEOUT "
+                f"({self.CLOCK_PROBE_TIMEOUT}s); a probe that already timed out can "
+                f"never trigger the RTT bound check."
+            )
+        return self
+
 
 class _ZMQSettings(BaseSettings):
     """ZMQ socket and communication configuration.
@@ -2287,6 +2321,15 @@ class _ZMQSettings(BaseSettings):
         description="Seconds to wait for in-flight PUSH tasks to complete during socket shutdown before cancelling them. "
         "Prevents record loss when a worker process exits while push tasks are still queued.",
     )
+    PROXY_TERMINATE_TIMEOUT: float = Field(
+        ge=0.01,
+        le=60.0,
+        default=5.0,
+        description="Seconds to wait for a `zmq.proxy_steerable` background thread to exit after sending it a "
+        "TERMINATE control command during proxy shutdown. The frontend/backend sockets it reads from must not be "
+        "closed until this thread has actually exited, since libzmq sockets are not safe to close while another "
+        "thread is blocked inside them.",
+    )
     PUSH_MAX_RETRIES: int = Field(
         ge=1,
         le=100,
@@ -2334,18 +2377,6 @@ class _ZMQSettings(BaseSettings):
         le=100000,
         default=10,
         description="Interval in seconds between TCP keepalive probes for ZMQ connections",
-    )
-    RECONNECT_IVL: int = Field(
-        ge=1,
-        le=100000,
-        default=100,
-        description="Delay in milliseconds before the first ZMQ reconnect attempt",
-    )
-    RECONNECT_IVL_MAX: int = Field(
-        ge=1,
-        le=100000,
-        default=5000,
-        description="Ceiling in milliseconds on the exponential ZMQ reconnect backoff",
     )
     EVENT_BUS_PROXY_FRONTEND_PORT: int = Field(
         ge=1,
@@ -2538,31 +2569,30 @@ class _Environment(BaseSettings):
         """Validate the router's stale-worker cutoff outlives the heartbeat cadence.
 
         ``StickyCreditRouter.evict_stale_workers`` computes its cutoff as
-        ``WORKER.STALE_TIME * 3`` against ``last_heartbeat_ns``, which is fed
-        solely by ``TimingManager``'s ``HeartbeatMessage`` handler. Workers
-        emit those on their own ``SERVICE.HEARTBEAT_INTERVAL`` timer, so the
-        expected gap between two heartbeats from a healthy worker is one
-        interval -- ``SERVICE.HEARTBEAT_MISSED_THRESHOLD`` is the *controller
-        watchdog's* tolerance for missed beats and never reaches this path.
-        Validating against ``INTERVAL * THRESHOLD`` therefore rejected safe
-        configurations (raising from an import-time singleton, which makes the
-        package unimportable): with the defaults, merely raising the watchdog
-        threshold to 6 was enough to trip it.
+        ``WORKER.STALE_TIME * WORKER.ROUTER_STALE_EVICTION_MULTIPLIER`` against
+        ``last_heartbeat_ns``, which is fed solely by ``TimingManager``'s
+        ``HeartbeatMessage`` handler. Workers emit those on their own
+        ``SERVICE.HEARTBEAT_INTERVAL`` timer, so the expected gap between two
+        heartbeats from a healthy worker is one interval. Validating against
+        ``INTERVAL * THRESHOLD`` was wrong: ``SERVICE.HEARTBEAT_MISSED_THRESHOLD``
+        is the *controller watchdog's* tolerance and never reaches this path.
 
         The cutoff must still outlive the emission cadence with room for
         scheduling jitter, or every worker looks stale on the very first sweep
         and gets evicted -- terminal when it owns in-flight credits or sticky
         sessions, regardless of ``WORKER.MIN_ALIVE_FRACTION``.
         """
-        stale_cutoff = self.WORKER.STALE_TIME * 3
+        stale_cutoff = (
+            self.WORKER.STALE_TIME * self.WORKER.ROUTER_STALE_EVICTION_MULTIPLIER
+        )
         if stale_cutoff <= self.SERVICE.HEARTBEAT_INTERVAL:
             raise ValueError(
                 f"AIPERF_WORKER_STALE_TIME: {self.WORKER.STALE_TIME} "
-                f"(eviction cutoff = STALE_TIME * 3 = {stale_cutoff}) must satisfy "
-                f"STALE_TIME * 3 > AIPERF_SERVICE_HEARTBEAT_INTERVAL "
-                f"({self.SERVICE.HEARTBEAT_INTERVAL}), otherwise workers appear "
-                "stale to the router before their heartbeat cadence could "
-                "plausibly reach it."
+                f"(eviction cutoff = STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER "
+                f"= {stale_cutoff}) must satisfy cutoff > "
+                f"AIPERF_SERVICE_HEARTBEAT_INTERVAL ({self.SERVICE.HEARTBEAT_INTERVAL}), "
+                "otherwise workers appear stale to the router before their heartbeat "
+                "cadence could plausibly reach it."
             )
         return self
 

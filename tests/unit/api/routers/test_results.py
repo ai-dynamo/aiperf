@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -286,9 +285,7 @@ class TestResultsUploadEndpoint:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
         content = b'{"record": 1}\n{"record": 2}\n'
 
         response = results_client.post(
@@ -314,9 +311,7 @@ class TestResultsListEndpoint:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path / "nonexistent"
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path / "nonexistent"
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -333,9 +328,7 @@ class TestResultsListEndpoint:
         (tmp_path / "records.jsonl").write_text('{"id": 1}')
         write_ready_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -360,9 +353,7 @@ class TestResultsListEndpoint:
         (tmp_path / "profile_export_aiperf.json").write_text("{}")
         (tmp_path / "profile_export_aiperf.csv").write_text("a,b\n")
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -386,9 +377,7 @@ class TestResultsListEndpoint:
         (cp_dir / "cp1.json").write_text("{}")
         write_processing_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/list")
         payload = response.json()
@@ -409,14 +398,44 @@ class TestResultsListEndpoint:
         (cp_dir / "cp0.json").write_text("{}")
         write_ready_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/list")
         names = {f["name"] for f in response.json()["files"]}
         assert names == {"profile_export_aiperf.json", "checkpoints/cp0.json"}
         assert READY_MARKER_NAME not in names
+
+    def test_list_surfaces_successful_files_after_partial_export_failure(
+        self,
+        results_client: TestClient,
+        results_router: ResultsRouter,
+        tmp_path,
+    ) -> None:
+        """One failed exporter must not black-hole a sibling exporter's file.
+
+        The JSON exporter wrote its artifact successfully; the CSV exporter
+        failed (e.g. disk full). The ready marker is written as partial with
+        the failed exporter named, and the JSON file must still be listed --
+        not withheld as if the whole export never happened.
+        """
+        (tmp_path / "profile_export_aiperf.json").write_text('{"ok": true}')
+        write_ready_marker(
+            tmp_path,
+            partial=True,
+            failed_exporters=["MetricsCsvExporter"],
+        )
+
+        results_router.run.cfg.artifacts.dir = tmp_path
+
+        response = results_client.get("/api/results/list")
+        assert response.status_code == 200
+        data = response.json()
+
+        file_names = [f["name"] for f in data["files"]]
+        assert "profile_export_aiperf.json" in file_names
+        assert data["ready"] is True
+        assert data["partial"] is True
+        assert data["failed_exporters"] == ["MetricsCsvExporter"]
 
 
 class TestResultsFileEndpoints:
@@ -429,9 +448,7 @@ class TestResultsFileEndpoints:
         tmp_path,
     ) -> None:
         write_ready_marker(tmp_path)
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/files/nonexistent.json")
         assert response.status_code == 404
@@ -450,9 +467,7 @@ class TestResultsFileEndpoints:
         (tmp_path / "profile_export_aiperf.json").write_text("{}")
         write_processing_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/files/profile_export_aiperf.json")
         assert response.status_code == 404
@@ -470,9 +485,7 @@ class TestResultsFileEndpoints:
         content = b'{"cp": true}'
         (cp_dir / "cp0.json").write_bytes(content)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             "/api/results/files/checkpoints/cp0.json",
@@ -491,9 +504,7 @@ class TestResultsFileEndpoints:
         test_file.write_text('{"metrics": {"latency": 100}}')
         write_ready_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             "/api/results/files/profile_export.json",
@@ -510,9 +521,7 @@ class TestResultsFileEndpoints:
         tmp_path,
     ) -> None:
         write_ready_marker(tmp_path)
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get("/api/results/files/../../../etc/passwd")
         assert response.status_code in (400, 404)
@@ -527,9 +536,7 @@ class TestResultsFileEndpoints:
         test_file.write_text('{"metrics": {"latency": 100}}')
         write_ready_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             "/api/results/files/metrics.json",
@@ -565,9 +572,7 @@ class TestResultsFileContentType:
         test_file.write_text("test content")
         write_ready_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             f"/api/results/files/{filename}",
@@ -586,9 +591,7 @@ class TestResultsFileContentType:
         test_file.write_text('{"key": "value"}')
         write_ready_marker(tmp_path)
 
-        mock_output = MagicMock()
-        mock_output.artifact_directory = tmp_path
-        results_router.run.cfg.artifacts = mock_output
+        results_router.run.cfg.artifacts.dir = tmp_path
 
         response = results_client.get(
             "/api/results/files/data.json",

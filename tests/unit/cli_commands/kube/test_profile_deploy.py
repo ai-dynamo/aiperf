@@ -737,6 +737,90 @@ class TestDeployViaOperatorPersistence:
             kube_context=options.kube_context,
         )
 
+    async def _run_deploy_with_watch_result(self, cr_status: Any) -> None:
+        """Drive deploy_via_operator to the watch step with a canned terminal status."""
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _fake_client(**_: Any):
+            yield MagicMock()
+
+        validated = MagicMock(image="registry.example/aiperf:latest")
+        validated.model_dump.return_value = {"image": validated.image}
+        config = MagicMock()
+        config.benchmark.endpoint.urls = []
+        config.benchmark.get_model_names.return_value = ["model-a"]
+        options = KubeOptions(image=validated.image)
+
+        with (
+            patch(
+                "aiperf.kubernetes.spec_converter.validate_job_spec",
+                return_value=validated,
+            ),
+            patch("aiperf.kubernetes.client.k8s_client", _fake_client),
+            patch(
+                "aiperf.cli_commands.kube.profile_deploy._submit_cr",
+                new=AsyncMock(return_value={"spec": {"image": validated.image}}),
+            ),
+            patch("aiperf.kubernetes.console.print_cr_submission_summary"),
+            patch("aiperf.kubernetes.console.save_last_benchmark"),
+            patch(
+                "aiperf.cli_commands.kube.profile_deploy.should_detach_from_operator_job",
+                return_value=False,
+            ),
+            patch(
+                "aiperf.kubernetes.attach.watch_job",
+                new=AsyncMock(return_value=cr_status),
+            ),
+        ):
+            await deploy_via_operator(
+                {"image": validated.image},
+                options,
+                config,
+                "job-a",
+                "tenant-a",
+                dry_run=False,
+                detach=False,
+                no_wait=False,
+                attach_port=0,
+            )
+
+    @pytest.mark.parametrize(
+        "phase",
+        [
+            param("Failed", id="failed"),
+            param("Cancelled", id="cancelled"),
+        ],
+    )  # fmt: skip
+    async def test_deploy_via_operator_terminal_failure_exits_nonzero(
+        self, phase: str
+    ) -> None:
+        """A benchmark that ends Failed/Cancelled must not exit 0.
+
+        watch_job's terminal status used to be discarded, so `aiperf kube
+        profile` returned success and a CI step or a shell `&&` chain that only
+        inspects the exit code treated a failed benchmark as a passing one.
+        """
+        with pytest.raises(SystemExit) as excinfo:
+            await self._run_deploy_with_watch_result({"phase": phase})
+
+        assert excinfo.value.code == 1
+
+    @pytest.mark.parametrize(
+        "cr_status",
+        [
+            param({"phase": "Succeeded"}, id="succeeded"),
+            param({"phase": "Completed"}, id="completed"),
+            param({}, id="no-phase-key"),
+            param(None, id="watch-returned-none"),
+        ],
+    )  # fmt: skip
+    async def test_deploy_via_operator_non_terminal_failure_exits_zero(
+        self, cr_status: Any
+    ) -> None:
+        """Only Failed/Cancelled fail the command; a missing status must not."""
+        await self._run_deploy_with_watch_result(cr_status)
+
 
 # =============================================================================
 # operator_available

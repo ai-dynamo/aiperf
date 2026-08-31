@@ -207,6 +207,45 @@ class TestOnCancel:
         assert patch.status.get("phase") != Phase.CANCELLED
         assert is_cancellation_requested(_JOB_KEY) is True
 
+    @pytest.mark.asyncio
+    async def test_identity_fenced_delete_revokes_the_sticky_cancel_flag(
+        self, mock_events: None
+    ) -> None:
+        """A fenced-off delete must not leave the CR wedged by the cancel flag.
+
+        ``delete_owned_aiperfjob_jobset`` returning False is a permanent
+        abandon: no status patch is written and no error is raised, so kopf
+        records success and never re-dispatches (``spec.cancel`` is unchanged).
+        If the sticky flag survived, every later monitor tick would
+        short-circuit and the CR would sit in its pre-cancel phase forever.
+        """
+        from aiperf.operator.handlers.lifecycle import on_cancel
+
+        patch = MagicMock()
+        patch.status = {}
+
+        with (
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.current_aiperfjob_resource_version",
+                new=AsyncMock(return_value="11"),
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.delete_owned_aiperfjob_jobset",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            await on_cancel(
+                body=_job_body(),
+                spec={"cancel": True},
+                status={"phase": Phase.RUNNING, "jobId": "j1", "jobSetName": "js1"},
+                name="j1",
+                namespace="ns",
+                patch=patch,
+            )
+
+        assert patch.status.get("phase") != Phase.CANCELLED
+        assert is_cancellation_requested(_JOB_KEY) is False
+
 
 class TestOnBenchmarkComplete:
     """Tests for on_benchmark_complete handler."""

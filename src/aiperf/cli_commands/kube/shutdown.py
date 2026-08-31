@@ -68,7 +68,7 @@ async def shutdown(
             context=manage_options.kube_context,
         )
         if not resolved:
-            return
+            raise SystemExit(1)
         job_id, namespace = resolved
 
         async with k8s_client(
@@ -81,7 +81,7 @@ async def shutdown(
                     f"No controller pod found for {job_id} in namespace {namespace}. "
                     f"It may already have exited."
                 )
-                return
+                raise SystemExit(1)
             pod_name, _phase = pod
 
         async with (

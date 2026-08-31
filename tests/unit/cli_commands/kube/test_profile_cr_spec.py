@@ -189,6 +189,33 @@ class TestCrCliOverlayParity:
         assert spec["benchmark"]["runtime"]["workers"] == 6
 
 
+class TestCrCredentialTransportValidation:
+    """A raw CR file must not bypass the flag-format credential-transport gate."""
+
+    def test_literal_api_key_without_secret_env_raises(self) -> None:
+        with pytest.raises(ValueError, match="Secret-backed pod"):
+            _build_cr_spec_and_config(
+                _raw_cr(),
+                KubeOptions(image="nvcr.io/nvidia/aiperf:latest"),
+                cli_config=CLIConfig(api_key="literal-secret-value"),
+            )
+
+    def test_literal_api_key_with_secret_env_succeeds(self) -> None:
+        spec, config = _build_cr_spec_and_config(
+            _raw_cr(),
+            KubeOptions(
+                image="nvcr.io/nvidia/aiperf:latest",
+                env_from_secrets={"AIPERF_INJECTED_API_KEY": "api-key-secret/key"},
+            ),
+            cli_config=CLIConfig(api_key="literal-secret-value"),
+        )
+        assert config.benchmark.endpoint.api_key == "literal-secret-value"
+        assert spec["podTemplate"]["env"][0]["valueFrom"]["secretKeyRef"] == {
+            "name": "api-key-secret",
+            "key": "key",
+        }
+
+
 def test_memory_estimate_uses_stderr_not_manifest_stdout() -> None:
     spec, config = _build_cr_spec_and_config(
         _raw_cr(),

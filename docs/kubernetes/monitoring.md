@@ -45,14 +45,16 @@ aiperf kube list
 ```
 
 ```
-NAME               NAMESPACE          PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
-qwen3-benchmark    my-benchmarks      Running      10/10       67%    142.3 rps  318.7 ms  3m
-llama-throughput   my-benchmarks      Completed    10/10      100%    137.9 rps  330.1 ms  15m
-mistral-test       my-benchmarks      Failed         0/4         -            -         -  20m
+NAME               NAMESPACE          OWNER  PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
+qwen3-benchmark    my-benchmarks      -      Running      10/10       67%    142.3 rps  318.7 ms  3m
+llama-throughput   my-benchmarks      -      Completed    10/10      100%    137.9 rps  330.1 ms  15m
+mistral-test       my-benchmarks      -      Failed         0/4         -            -         -  20m
 ```
 
 `WORKERS` is `ready/total`, `THROUGHPUT` is requests per second, and `LATENCY`
 is the p99 request latency. A dash means the CR has not published that value.
+`OWNER` names the scoped operator holding that namespace's claim; `-` means the
+cluster-wide operator reconciles it and `?` means the claim was unreadable.
 
 ### Filter by Status
 
@@ -216,7 +218,7 @@ It runs these checks in order, and stops early only if cluster connectivity
 fails:
 
 - Cluster connectivity and Kubernetes version
-- Namespace exists (or can be created)
+- Namespace exists (AIPerf never creates it)
 - RBAC permissions in the target namespace
 - JobSet CRD installed and JobSet controller running
 - Resource quotas and node resources

@@ -1498,3 +1498,33 @@ def test_reject_unstorable_epoch_gate_matches_the_layout_regex() -> None:
         assert epoch.isdigit() or epoch.startswith("-") or epoch.endswith("\n")
         with pytest.raises(kopf.PermanentError, match="unstorable run epoch"):
             sweep_create._reject_unstorable_epoch("s", "ns", body, epoch)
+
+
+@pytest.mark.asyncio
+async def test_handle_rbac_permanent_failure_records_rejection(monkeypatch):
+    """An RBAC PermanentError must not leave the CR stuck at phase=Pending.
+
+    kopf applies the already-staged ``phase=Pending`` patch before the error
+    propagates, so without ``_record_permanent_rejection`` the sweep sits
+    Pending forever with no Failed condition and no error message.
+    """
+    body = _valid_body()
+    patch = kopf.Patch()
+    monkeypatch.setattr(
+        sweep_create,
+        "_provision_rbac",
+        AsyncMock(side_effect=kopf.PermanentError("RBAC owned by another sweep")),
+    )
+    create_jobset = AsyncMock()
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", create_jobset)
+
+    with pytest.raises(kopf.PermanentError, match="RBAC owned by another sweep"):
+        await sweep_create.handle(
+            body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+        )
+
+    create_jobset.assert_not_awaited()
+    assert patch.status["phase"] == "Failed"
+    assert "RBAC owned by another sweep" in patch.status["error"]
+    conditions = {item["type"]: item for item in patch.status["conditions"]}
+    assert conditions["Failed"]["status"] == "True"

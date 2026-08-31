@@ -181,6 +181,8 @@ class TestPreflightJsonOutput:
                 secrets=None,
                 endpoint_url=None,
                 workers=1,
+                node_selector=None,
+                tolerations=None,
                 output="json",
             )
 
@@ -213,6 +215,8 @@ class TestPreflightJsonOutput:
                 secrets=None,
                 endpoint_url=None,
                 workers=1,
+                node_selector=None,
+                tolerations=None,
                 output="text",
             )
 

@@ -85,11 +85,15 @@ async def test_out_of_order_heartbeat_does_not_move_state_backwards(
     newest_ns = ServiceRegistry.get_service(SERVICE_ID).last_seen_ns
 
     # Delivered late by the transport, carrying an older view of the service.
+    # ``seq=0`` is not strictly greater than the seq the heartbeat above
+    # already applied, so this must be dropped whole regardless of the
+    # (also stale) timestamp it carries.
     ServiceRegistry.update_service(
         SERVICE_ID,
-        ServiceType.WORKER_MANAGER,
-        newest_ns - 1,
-        LifecycleState.RUNNING,
+        service_type=ServiceType.WORKER_MANAGER,
+        last_seen_ns=newest_ns - 1,
+        state=LifecycleState.RUNNING,
+        seq=0,
     )
 
     info = ServiceRegistry.get_service(SERVICE_ID)
@@ -106,7 +110,9 @@ async def test_same_tick_update_still_applies_the_newer_state(
     Both callers stamp ``last_seen_ns`` on receipt from the controller's own
     clock, so equal timestamps mean two messages landed within one tick --
     ``time.time_ns()`` is ~15.6ms granular on Windows, coarser than a startup
-    state sequence. Rejecting those would silently drop the newer state.
+    state sequence. Ordering is decided by the sender-stamped ``seq``, not by
+    this (possibly tied) timestamp, so a strictly newer ``seq`` at an
+    identical tick must still be applied.
     """
     await _register(system_controller)
 
@@ -117,9 +123,10 @@ async def test_same_tick_update_still_applies_the_newer_state(
 
     ServiceRegistry.update_service(
         SERVICE_ID,
-        ServiceType.WORKER_MANAGER,
-        tick_ns,
-        LifecycleState.RUNNING,
+        service_type=ServiceType.WORKER_MANAGER,
+        last_seen_ns=tick_ns,
+        state=LifecycleState.RUNNING,
+        seq=2,
     )
 
     info = ServiceRegistry.get_service(SERVICE_ID)

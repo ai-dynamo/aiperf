@@ -24,7 +24,11 @@ def _reset_corpus_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_load_corpus_uses_configured_tokenizer_and_prompt_generator_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tokenizer = SimpleNamespace(decode=lambda token_ids: f" token-{token_ids[0]}")
+    tokenizer = SimpleNamespace(
+        decode_batch=lambda token_id_lists: [
+            f" token-{ids[0]}" for ids in token_id_lists
+        ]
+    )
     from_pretrained = Mock(return_value=tokenizer)
     prompt_generator = Mock(return_value=SimpleNamespace(_tokenized_corpus=[7, 11]))
     server_config = MockServerConfig(
@@ -49,6 +53,27 @@ def test_load_corpus_uses_configured_tokenizer_and_prompt_generator_api(
     assert call_kwargs["prefix_prompts"] is None
     assert call_kwargs["tokenizer"] is tokenizer
     assert "config" not in call_kwargs
+
+
+def test_load_corpus_batches_token_decoding_into_a_single_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Corpus loading must decode all tokens with one batched call, not one
+    tokenizer.decode() call per token (that per-token loop dominates mock-server
+    cold start on large corpora)."""
+    tokenizer = Mock()
+    tokenizer.decode_batch.return_value = [" token-7", " token-11", " token-13"]
+    from_pretrained = Mock(return_value=tokenizer)
+    prompt_generator = Mock(return_value=SimpleNamespace(_tokenized_corpus=[7, 11, 13]))
+    server_config = MockServerConfig(tokenizer="/models/local-tokenizer")
+
+    monkeypatch.setattr(config, "server_config", server_config)
+    monkeypatch.setattr(Tokenizer, "from_pretrained", from_pretrained)
+    monkeypatch.setattr(prompt_module, "PromptGenerator", prompt_generator)
+
+    assert tokens._load_corpus() == (" token-7", " token-11", " token-13")
+    tokenizer.decode_batch.assert_called_once_with([[7], [11], [13]])
+    tokenizer.decode.assert_not_called()
 
 
 def test_load_corpus_does_not_hide_prompt_generator_api_errors(

@@ -378,10 +378,16 @@ async def deploy_via_operator(
 
     from aiperf.kubernetes.attach import watch_job
 
-    await watch_job(
+    cr_status = await watch_job(
         namespace=namespace,
         job_id=name,
         timeout=K8sEnvironment.WATCH.DEFAULT_TIMEOUT_SECONDS,
         kubeconfig=kube_options.kubeconfig,
         kube_context=kube_options.kube_context,
     )
+
+    # A benchmark that ended Failed/Cancelled must not look like success to a
+    # CI step or a shell `&&` chain that only inspects the exit code.
+    phase = (cr_status or {}).get("phase")
+    if phase in ("Failed", "Cancelled"):
+        raise SystemExit(1)

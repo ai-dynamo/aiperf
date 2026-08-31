@@ -121,9 +121,15 @@ class TestDashboardCommand:
         """Test dashboard exits gracefully when operator pod not found."""
         patched_k8s.return_value = None
 
-        with patch("webbrowser.open") as mock_browser:
+        with (
+            patch("webbrowser.open") as mock_browser,
+            pytest.raises(SystemExit) as exc_info,
+        ):
             await dashboard(manage_options=manage_options)
 
+        # [F26] A missing operator used to return, exiting 0 and leaving the
+        # caller to believe a dashboard had been opened.
+        assert exc_info.value.code == 1
         mock_browser.assert_not_called()
 
     async def test_dashboard_custom_port(

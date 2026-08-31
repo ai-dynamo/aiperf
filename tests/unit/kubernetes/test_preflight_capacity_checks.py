@@ -24,15 +24,22 @@ import pytest
 from kubernetes_asyncio.client import ApiClient, CoreV1Api
 from kubernetes_asyncio.client.exceptions import ApiException
 from kubernetes_asyncio.client.models import (
+    V1Container,
     V1Node,
     V1NodeCondition,
     V1NodeList,
+    V1NodeSpec,
     V1NodeStatus,
     V1ObjectMeta,
+    V1Pod,
+    V1PodList,
+    V1PodSpec,
     V1ResourceQuota,
     V1ResourceQuotaList,
     V1ResourceQuotaStatus,
+    V1ResourceRequirements,
     V1Secret,
+    V1Taint,
 )
 from pytest import param
 
@@ -73,15 +80,41 @@ def _build_node(
     ready: bool = True,
     has_status: bool = True,
     has_allocatable: bool = True,
+    unschedulable: bool = False,
+    labels: dict[str, str] | None = None,
+    taints: list[V1Taint] | None = None,
 ) -> V1Node:
     """Build a V1Node with controllable status/allocatable presence."""
+    spec = V1NodeSpec(unschedulable=unschedulable, taints=taints)
     if not has_status:
-        return V1Node(metadata=V1ObjectMeta(name=name), status=None)
+        return V1Node(
+            metadata=V1ObjectMeta(name=name, labels=labels), spec=spec, status=None
+        )
     status = V1NodeStatus(
         conditions=[V1NodeCondition(type="Ready", status="True" if ready else "False")],
         allocatable={"cpu": cpu, "memory": memory} if has_allocatable else None,
     )
-    return V1Node(metadata=V1ObjectMeta(name=name), status=status)
+    return V1Node(
+        metadata=V1ObjectMeta(name=name, labels=labels), spec=spec, status=status
+    )
+
+
+def _build_running_pod(name: str, node_name: str, *, cpu: str, memory: str) -> V1Pod:
+    """Build a Running pod whose single container requests the given resources."""
+    return V1Pod(
+        metadata=V1ObjectMeta(name=name, namespace="other"),
+        spec=V1PodSpec(
+            node_name=node_name,
+            containers=[
+                V1Container(
+                    name="app",
+                    resources=V1ResourceRequirements(
+                        requests={"cpu": cpu, "memory": memory}
+                    ),
+                )
+            ],
+        ),
+    )
 
 
 def _build_quota(
@@ -142,7 +175,7 @@ class TestEvaluateQuotas:
         )
         evaluation = _evaluate_quotas([quota], required_cpu=50.0, required_mem=8.0)
         assert evaluation.would_exceed is True
-        assert any("CPU would exceed" in d for d in evaluation.details)
+        assert any("CPU requests quota" in d for d in evaluation.details)
 
     def test_exceeds_memory_on_requests_key(self) -> None:
         """requests.cpu / requests.memory are accepted as fallback keys."""
@@ -153,7 +186,7 @@ class TestEvaluateQuotas:
         )
         evaluation = _evaluate_quotas([quota], required_cpu=1.0, required_mem=50.0)
         assert evaluation.would_exceed is True
-        assert any("Memory would exceed" in d for d in evaluation.details)
+        assert any("memory requests quota" in d for d in evaluation.details)
 
     def test_missing_status_is_safe(self) -> None:
         """A quota with no status should not crash and produces no exceed."""
@@ -231,8 +264,8 @@ class TestCheckResourceQuotasFreeFn:
     """Exercise branches the class-based suite under-covers."""
 
     @pytest.mark.asyncio
-    async def test_quota_would_be_exceeded_returns_warn(self) -> None:
-        """When required + used exceeds hard cpu, status is WARN with hints."""
+    async def test_quota_would_be_exceeded_returns_fail(self) -> None:
+        """When required + used exceeds hard cpu, admission fails with hints."""
         quota = _build_quota(
             "tight", hard={"cpu": "2", "memory": "4Gi"}, used={"cpu": "0"}
         )
@@ -246,10 +279,58 @@ class TestCheckResourceQuotasFreeFn:
                 _mock_api(), namespace="test-ns", workers=50
             )
 
-        assert result.status == CheckStatus.WARN
+        assert result.status == CheckStatus.FAIL
         assert "exceed" in result.message
         assert result.hints
         assert any("Benchmark needs" in d for d in result.details)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "hard,used,expected",
+        [
+            param({"limits.cpu": "2"}, {"limits.cpu": "0"}, "CPU limits quota", id="cpu-limit"),
+            param(
+                {"limits.memory": "2Gi"},
+                {"limits.memory": "0"},
+                "memory limits quota",
+                id="memory-limit",
+            ),
+            param({"pods": "2"}, {"pods": "0"}, "pods quota", id="pod-count"),
+        ],
+    )  # fmt: skip
+    async def test_spec_hard_quota_violation_fails(
+        self, hard: dict[str, str], used: dict[str, str], expected: str
+    ) -> None:
+        """CLI admission must evaluate limits and pod quotas from spec.hard."""
+        quota = MagicMock()
+        quota.metadata.name = "tight"
+        quota.spec.hard = hard
+        quota.status.hard = {}
+        quota.status.used = used
+        core = MagicMock(spec=CoreV1Api)
+        core.list_namespaced_resource_quota = AsyncMock(
+            return_value=V1ResourceQuotaList(items=[quota])
+        )
+
+        with (
+            _patch_core(core),
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks."
+                "_controller_resource_requirements",
+                return_value=(1.0, 1.0),
+            ),
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks.K8sEnvironment"
+            ) as mock_env,
+        ):
+            mock_env.WORKER_POD.CPU = "1"
+            mock_env.WORKER_POD.MEMORY = "1Gi"
+            result = await check_resource_quotas(
+                _mock_api(), namespace="test-ns", workers=2
+            )
+
+        assert result.status == CheckStatus.FAIL
+        assert expected in result.message
 
     @pytest.mark.asyncio
     async def test_quota_api_exception_returns_warn_with_status(self) -> None:
@@ -303,6 +384,143 @@ class TestCheckNodeResourcesFreeFn:
         assert result.status == CheckStatus.FAIL
         assert "No single node" in result.message
         assert result.hints
+
+    @pytest.mark.asyncio
+    async def test_proven_booked_cluster_shortfall_fails(self) -> None:
+        """Allocatable is total capacity, not free capacity.
+
+        A node whose running pods have already requested nearly everything must
+        not report PASS just because its allocatable line is large.
+        """
+        node = _build_node("n1", "16", "64Gi", ready=True)
+
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[node]))
+        core.list_pod_for_all_namespaces = AsyncMock(
+            return_value=V1PodList(
+                items=[_build_running_pod("busy", "n1", cpu="15", memory="60Gi")]
+            )
+        )
+
+        with (
+            _patch_core(core),
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks.K8sEnvironment"
+            ) as mock_env,
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks."
+                "_controller_resource_requirements",
+                return_value=(1.0, 2.0),
+            ),
+        ):
+            mock_env.WORKER_POD.CPU = "2"
+            mock_env.WORKER_POD.MEMORY = "4Gi"
+            result = await check_node_resources(_mock_api(), workers=2)
+
+        assert result.status == CheckStatus.FAIL
+        core.list_pod_for_all_namespaces.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_idle_cluster_still_passes_with_free_capacity_wording(self) -> None:
+        """Subtracting an empty pod list must not perturb a healthy PASS."""
+        node = _build_node("n1", "16", "64Gi", ready=True)
+
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[node]))
+        core.list_pod_for_all_namespaces = AsyncMock(return_value=V1PodList(items=[]))
+
+        with (
+            _patch_core(core),
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks.K8sEnvironment"
+            ) as mock_env,
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks."
+                "_controller_resource_requirements",
+                return_value=(1.0, 2.0),
+            ),
+        ):
+            mock_env.WORKER_POD.CPU = "2"
+            mock_env.WORKER_POD.MEMORY = "4Gi"
+            result = await check_node_resources(_mock_api(), workers=2)
+
+        assert result.status == CheckStatus.PASS
+        assert any("free CPU" in detail for detail in result.details)
+
+    @pytest.mark.asyncio
+    async def test_pod_list_denied_falls_back_to_allocatable_and_says_so(self) -> None:
+        """Without cluster-wide pod read the check degrades loudly, not silently."""
+        node = _build_node("n1", "16", "64Gi", ready=True)
+
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[node]))
+        core.list_pod_for_all_namespaces = AsyncMock(
+            side_effect=ApiException(status=403)
+        )
+
+        with (
+            _patch_core(core),
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks.K8sEnvironment"
+            ) as mock_env,
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks."
+                "_controller_resource_requirements",
+                return_value=(1.0, 2.0),
+            ),
+        ):
+            mock_env.WORKER_POD.CPU = "2"
+            mock_env.WORKER_POD.MEMORY = "4Gi"
+            result = await check_node_resources(_mock_api(), workers=2)
+
+        assert result.status == CheckStatus.PASS
+        assert any("Could not list running pods" in d for d in result.details)
+
+    @pytest.mark.asyncio
+    async def test_cordoned_node_capacity_is_not_counted(self) -> None:
+        """A cordoned node advertises capacity the scheduler will never hand out."""
+        node = _build_node("n1", "16", "64Gi", ready=True, unschedulable=True)
+
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[node]))
+        core.list_pod_for_all_namespaces = AsyncMock(return_value=V1PodList(items=[]))
+
+        with (
+            _patch_core(core),
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks.K8sEnvironment"
+            ) as mock_env,
+            patch(
+                "aiperf.kubernetes.preflight_capacity_checks."
+                "_controller_resource_requirements",
+                return_value=(1.0, 2.0),
+            ),
+        ):
+            mock_env.WORKER_POD.CPU = "2"
+            mock_env.WORKER_POD.MEMORY = "4Gi"
+            result = await check_node_resources(_mock_api(), workers=2)
+
+        assert result.status == CheckStatus.FAIL
+        assert "Cluster: 0 schedulable nodes" in result.details[0]
+
+    @pytest.mark.asyncio
+    async def test_node_selector_excludes_nonmatching_capacity(self) -> None:
+        """Capacity on nodes outside the requested placement cannot admit pods."""
+        node = _build_node("cpu-node", "16", "64Gi", labels={"gpu": "false"})
+        core = MagicMock(spec=CoreV1Api)
+        core.list_node = AsyncMock(return_value=V1NodeList(items=[node]))
+        core.list_pod_for_all_namespaces = AsyncMock(return_value=V1PodList(items=[]))
+
+        with _patch_core(core):
+            result = await check_node_resources(
+                _mock_api(),
+                workers=1,
+                node_selector={"gpu": "true"},
+                tolerations=[],
+            )
+
+        assert result.status == CheckStatus.FAIL
+        assert "0 schedulable nodes" in result.details[0]
 
 
 # =============================================================================

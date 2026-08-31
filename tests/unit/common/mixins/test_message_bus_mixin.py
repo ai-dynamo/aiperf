@@ -9,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import ShutdownError
 from aiperf.common.messages.service_messages import ConnectionProbeMessage
+from aiperf.common.mixins import message_bus_mixin
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 
 SERVICE_ID = "test-service-1"
@@ -65,7 +67,39 @@ def _make_responder(
 
 
 @pytest.fixture
-def mixin(mock_pub_client):
+def steady_wall_clock(monkeypatch):
+    """Advance the mixin's real wall clock by CONNECTION_PROBE_INTERVAL per call.
+
+    `_wait_for_successful_probe` now calls `monotonic()` once before the
+    retry loop and once per failed attempt (see BUG A fix). Stepping the fake
+    clock by exactly `probe_interval` on every call reproduces the steady-state
+    assumption the old `attempt_count * probe_interval` formula made (each
+    failed attempt costs about one probe_interval of real time), so existing
+    attempt-count-based assertions keep working unchanged. Tests that want to
+    exercise real/virtual clock divergence (event-loop starvation) install
+    their own `message_bus_mixin.monotonic` override on top of this.
+
+    NOTE: patch `message_bus_mixin.monotonic` (the module-local binding), never
+    `message_bus_mixin.time.monotonic` -- the latter *is* the stdlib `time`
+    module attribute. `TimeTraveler.start_traveling` also patches that same
+    global slot, and the two patchers unwind in an order that leaves
+    `time.monotonic` permanently bound to a dead TimeTraveler for the rest of
+    the pytest process. `asyncio.BaseEventLoop.time()` calls `time.monotonic()`,
+    so every later event loop then gets a frozen clock and hangs.
+    """
+    clock = {"now": 0.0}
+
+    def _monotonic() -> float:
+        value = clock["now"]
+        clock["now"] += Environment.SERVICE.CONNECTION_PROBE_INTERVAL
+        return value
+
+    monkeypatch.setattr(message_bus_mixin, "monotonic", _monotonic)
+    return clock
+
+
+@pytest.fixture
+def mixin(mock_pub_client, steady_wall_clock):
     """Minimal mock of MessageBusClientMixin with real probe methods bound."""
     mock = MagicMock(spec=MessageBusClientMixin)
     mock.id = SERVICE_ID
@@ -237,20 +271,73 @@ class TestProbeLoopWarnings:
 
 
 @pytest.mark.usefixtures("time_traveler")
+class TestProbeLoopWallClock:
+    """Tests for BUG A: the timeout deadline must be based on the real wall
+    clock, not on a virtual `attempt_count * probe_interval` estimate."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.looptime
+    async def test_event_loop_starvation_triggers_timeout_promptly(
+        self, mixin, monkeypatch
+    ) -> None:
+        """An event loop stalled for real wall-clock time between probe attempts
+        (e.g. RecordsManager CPU starvation) must count toward the deadline even
+        though `attempt_count` barely moves.
+
+        With `probe_interval=1.0` and `overall_timeout=90.0`, the virtual
+        `attempt_count * probe_interval` formula only reaches 90s after 90
+        attempts. A real wall clock that jumps 50s per attempt (simulating a
+        starved event loop) has already blown the 90s budget after 2 attempts,
+        and a correct implementation must time out then -- not 88 attempts later.
+        """
+        monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", 1.0)
+        monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_TIMEOUT", 90.0)
+        # publish is AsyncMock -- never sets the event, so every attempt times out.
+
+        clock = {"now": 0.0}
+
+        def _stalled_monotonic() -> float:
+            value = clock["now"]
+            clock["now"] += 50.0
+            return value
+
+        monkeypatch.setattr(message_bus_mixin, "monotonic", _stalled_monotonic)
+
+        with pytest.raises(TimeoutError):
+            await mixin._wait_for_successful_probe()
+
+        # Correct (wall-clock) behavior times out after 2 attempts (100s real
+        # elapsed >= 90s budget). The virtual-clock formula would instead need
+        # 90 attempts, so a generous upper bound still distinguishes the bug.
+        assert mixin.publish.call_count <= 3, (
+            f"expected the wall-clock deadline to fire within a few attempts, "
+            f"but {mixin.publish.call_count} attempts were made -- the virtual "
+            f"attempt_count * probe_interval formula is still being used"
+        )
+
+
+@pytest.mark.usefixtures("time_traveler")
 class TestProbeLoopStopRequested:
     """Tests for early exit via stop_requested."""
 
     @pytest.mark.asyncio
     @pytest.mark.looptime
-    async def test_exits_cleanly_on_stop(
+    async def test_raises_when_stop_requested_mid_loop(
         self, mixin, mock_pub_client, monkeypatch
     ) -> None:
-        """Probe loop exits without error when stop_requested is set."""
+        """BUG B: the probe loop must raise, not return silently, when
+        stop_requested flips mid-retry.
+
+        `run_hooks` treats a hook that returns without raising as PASSED, so a
+        silent return here lets a service whose bus connectivity was never
+        confirmed proceed straight into control-channel registration.
+        """
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_INTERVAL", 1.0)
         monkeypatch.setattr(Environment.SERVICE, "CONNECTION_PROBE_TIMEOUT", 90.0)
         _make_responder(mixin, mock_pub_client, respond_after=None, stop_after=2)
 
-        await mixin._wait_for_successful_probe()
+        with pytest.raises(ShutdownError):
+            await mixin._wait_for_successful_probe()
 
         # No success info because we didn't get a probe response
         mixin.info.assert_not_called()

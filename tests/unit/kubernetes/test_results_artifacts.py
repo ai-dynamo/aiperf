@@ -34,6 +34,17 @@ from aiperf.kubernetes.results_artifacts import (
 # ============================================================
 
 
+class FakeContent:
+    """Async chunk iterator matching aiohttp's response content stream."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def iter_chunked(self, chunk_size: int):
+        for start in range(0, len(self._body), chunk_size):
+            yield self._body[start : start + chunk_size]
+
+
 class FakeResponse:
     """Minimal fake aiohttp response with async context-manager support."""
 
@@ -48,6 +59,8 @@ class FakeResponse:
     ) -> None:
         self.status = status
         self._body = body
+        self.content = FakeContent(body)
+        self.read_calls = 0
         self.headers = headers or {}
         self._json_data = json_data
         self._content_length = content_length
@@ -57,6 +70,7 @@ class FakeResponse:
         return self._content_length
 
     async def read(self) -> bytes:
+        self.read_calls += 1
         return self._body
 
     async def json(self, *, loads=orjson.loads) -> dict:
@@ -118,7 +132,7 @@ class TestDownloadArtifactUnsafeFilename:
             param("/", id="slash-only"),
         ],
     )  # fmt: skip
-    async def test_unsafe_names_return_none_without_network(
+    async def test_unsafe_names_are_refused_without_network(
         self, tmp_path: Path, filename: str
     ) -> None:
         session = FakeSession({})
@@ -128,7 +142,9 @@ class TestDownloadArtifactUnsafeFilename:
             filename,
             tmp_path,
         )
-        assert result is None
+        # "refused", not None: declining a name by policy is a skip, while
+        # None means an advertised file could not be retrieved.
+        assert result == "refused"
         assert session.get_calls == []  # no HTTP attempt
 
     @pytest.mark.asyncio
@@ -148,7 +164,7 @@ class TestDownloadArtifactUnsafeFilename:
             "../../etc/passwd",
             tmp_path,
         )
-        assert result is None
+        assert result == "refused"
         assert session.get_calls == []  # no HTTP attempt
         assert not (tmp_path / "passwd").exists()
 
@@ -178,6 +194,26 @@ class TestDownloadArtifactUnsafeFilename:
         assert (
             tmp_path / "aggregate" / "profile_export_aiperf_aggregate.json"
         ).read_bytes() == b"{}"
+
+    @pytest.mark.asyncio
+    async def test_download_streams_body_without_full_response_buffer(
+        self, tmp_path: Path
+    ) -> None:
+        """Large artifacts must consume chunks without calling response.read()."""
+        body = b"chunked-artifact" * 1024
+        response = FakeResponse(body=body, content_length=len(body))
+        session = FakeSession({"http://localhost/api/large.bin": [response]})
+
+        result = await _download_artifact(
+            session,  # type: ignore[arg-type]
+            "http://localhost/api",
+            "large.bin",
+            tmp_path,
+        )
+
+        assert result == ("large.bin", len(body))
+        assert response.read_calls == 0
+        assert (tmp_path / "large.bin").read_bytes() == body
 
 
 # ============================================================

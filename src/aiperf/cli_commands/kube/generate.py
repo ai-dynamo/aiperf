@@ -139,7 +139,10 @@ def _resolve_spec_and_name(
         spec, config = _build_cr_spec_and_config(
             cr_raw, kube_options, cli_config=cli_config
         )
-        _ensure_sweep_block(spec, config)
+        from aiperf.kubernetes.sweep_routing import requires_sweep_controller
+
+        if requires_sweep_controller(config):
+            _ensure_sweep_block(spec, config)
         cr_name = cr_raw.get("metadata", {}).get("name")
         name = kube_options.name or cr_name or generate_benchmark_name(config)
     else:
@@ -164,7 +167,10 @@ def _dump_raw_manifests(
     deployment_spec: dict[str, Any] | None = None,
 ):
     """Apply k8s runtime config and write raw manifests (RBAC, ConfigMap, JobSet)."""
-    from aiperf.cli_commands.kube._kube_common import resolve_total_workers
+    from aiperf.cli_commands.kube._kube_common import (
+        pin_default_direct_image,
+        resolve_total_workers,
+    )
     from aiperf.config import AIPerfConfig
     from aiperf.kubernetes.environment import K8sEnvironment
     from aiperf.kubernetes.resources import KubernetesDeployment
@@ -190,6 +196,7 @@ def _dump_raw_manifests(
         from aiperf.kubernetes.spec_converter import extract_deployment_config
 
         deploy_config = extract_deployment_config(deployment_spec)
+    pin_default_direct_image(deploy_config)
     # Longer TTL without operator — pods must stay alive for manual
     # results retrieval via `aiperf kube results`.
     ttl_authored_in_spec = deployment_spec is not None and any(
@@ -238,34 +245,10 @@ def _dump_raw_manifests(
 
 
 def _print_memory_estimate(config, kube_options: KubeOptions, spec) -> None:
-    from aiperf.cli_commands.kube._kube_common import resolve_total_workers
-    from aiperf.kubernetes import console as kube_console
-    from aiperf.kubernetes.memory_estimator import estimate_memory, format_estimate
-    from aiperf.kubernetes.spec_converter import DEFAULT_CONNECTIONS_PER_WORKER
+    """Display the shared memory estimate without contaminating YAML stdout."""
+    from aiperf.cli_commands.kube._kube_common import print_memory_estimate
 
-    concurrency = max(
-        (getattr(phase, "concurrency", 1) or 1 for phase in config.benchmark.phases),
-        default=1,
-    )
-    connections_per_worker = spec.get(
-        "connectionsPerWorker", DEFAULT_CONNECTIONS_PER_WORKER
-    )
-    total_workers = resolve_total_workers(
-        kube_options,
-        concurrency=concurrency,
-        connections_per_worker=connections_per_worker,
-        configured_workers=config.benchmark.runtime.workers,
-        workers_per_pod=config.benchmark.runtime.workers_per_pod,
-    )
-    mem_est = estimate_memory(
-        config,
-        total_workers=total_workers,
-        workers_per_pod=config.benchmark.runtime.workers_per_pod,
-        connections_per_worker=connections_per_worker,
-    )
-    # Banner is informational; route through stderr_console so the YAML on
-    # stdout stays a clean kubectl-pipeable stream.
-    kube_console.stderr_console.print(f"\n{format_estimate(mem_est)}", highlight=False)
+    print_memory_estimate(config, kube_options, spec)
 
 
 @app.default

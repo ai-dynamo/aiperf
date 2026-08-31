@@ -594,3 +594,26 @@ class TestReloadIsolationGuard:
         monkeypatch.setattr(live.OperatorEnvironment, "MUTATING_ROUTES_ENABLED", True)
 
         assert mutating_auth._mutating_routes_enabled() is True
+
+
+class TestOperatorServiceBaseUrlDefault:
+    """The operator API base URL default must derive from the shared constant."""
+
+    def test_default_uses_default_operator_namespace_constant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Changing ``DEFAULT_OPERATOR_NAMESPACE`` must change the default."""
+        import importlib
+
+        from aiperf.kubernetes import constants as k8s_constants
+        from aiperf.operator import environment as env_mod
+
+        monkeypatch.setattr(
+            k8s_constants, "DEFAULT_OPERATOR_NAMESPACE", "custom-operator-ns"
+        )
+        reloaded = importlib.reload(env_mod)
+
+        assert (
+            reloaded.OperatorEnvironment.SERVICE.BASE_URL
+            == "http://aiperf-operator.custom-operator-ns:8081"
+        )

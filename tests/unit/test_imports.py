@@ -30,9 +30,9 @@ TESTS_DIR = REPO_ROOT / "tests"
 # branch below.
 _MARKER_GATED_DEPS = {"datasets", "pyarrow"}
 
-# Opt-in test-only extras. ``playwright`` backs the browser-driven dashboard
-# e2e suite (``tests/unit/api/dashboard_v2_e2e``), which is marked ``e2e`` and
-# deselected by default; install it with
+# Opt-in test-only extras. ``playwright`` backs the browser-driven UI e2e
+# suites (``tests/ui_e2e``), which are marked ``e2e`` and deselected by
+# default; install it with
 # ``uv pip install playwright && uv run playwright install chromium``.
 _OPTIONAL_TEST_DEPS = {"playwright"}
 
@@ -161,7 +161,7 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
     # on import unless AIPERF_MOCK_AMDSMI is set (the dormancy gate), so it is
     # intentionally non-importable here. It has dedicated coverage in
     # tests/unit/gpu_telemetry/test_fake_amdsmi_module.py.
-    exclude_dirs={"ci", "aiperf_mock_amdsmi"},
+    exclude_dirs={".venv", "ci", "aiperf_mock_amdsmi"},
 )
 
 AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
@@ -273,3 +273,7 @@ class TestImportOrder:
         for modules in [_AIPERF_MODULES_WITH_DEPTH, _TEST_MODULES_WITH_DEPTH]:
             for module, _ in modules:
                 assert "__pycache__" not in module, f"Found pycache in: {module}"
+
+    def test_no_virtualenv_modules(self) -> None:
+        """Virtual environments nested in tests are never import targets."""
+        assert not any(".venv" in module.split(".") for module in TEST_MODULES)

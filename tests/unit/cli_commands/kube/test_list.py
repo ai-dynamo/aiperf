@@ -495,3 +495,114 @@ class TestListWatchMode:
         mock_table.assert_called()
         # Watch path clears the screen before render
         mock_console.clear.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# _namespace_owners — 403 per-namespace fallback (6686417b68)
+# ---------------------------------------------------------------------------
+
+
+class TestNamespaceOwners:
+    """_namespace_owners falls back to per-namespace reads on 403."""
+
+    @pytest.mark.asyncio
+    async def test_403_on_cluster_list_falls_back_to_per_namespace_reads(self) -> None:
+        """A 403 on list_lease_for_all_namespaces must trigger per-namespace reads.
+
+        Before 6686417b68, the 403 branch was absent: any ApiException from the
+        cluster-wide list returned ``"?"`` for every namespace.  A namespace-scoped
+        user therefore always saw ``"?"`` in the OWNER column, even when they had
+        read access to the individual Lease.
+
+        After the fix, a 403 causes _namespace_owners to call
+        read_namespaced_lease for each namespace and return the real holder.
+        """
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        from aiperf.cli_commands.kube.list_ import _namespace_owners
+
+        job1 = _make_job_info(namespace="ns-a")
+        job2 = _make_job_info(namespace="ns-b")
+
+        # Cluster-wide list raises 403.
+        # Per-namespace read for ns-a returns a live Lease; ns-b has no Lease (404).
+        lease_mock = MagicMock()
+        lease_mock.spec = MagicMock()
+        lease_mock.spec.holder_identity = "scoped-op-1"
+        lease_mock.spec.renew_time = None
+        lease_mock.spec.acquire_time = None  # both None → lease treated as live
+        lease_mock.spec.lease_duration_seconds = 30
+        lease_mock.metadata = MagicMock()
+        lease_mock.metadata.creation_timestamp = None
+
+        async def _read_namespaced_lease(name, ns):
+            if ns == "ns-a":
+                return lease_mock
+            raise ApiException(status=404)
+
+        coord_api = MagicMock()
+        coord_api.list_lease_for_all_namespaces = AsyncMock(
+            side_effect=ApiException(status=403, reason="Forbidden")
+        )
+        coord_api.read_namespaced_lease = AsyncMock(side_effect=_read_namespaced_lease)
+
+        with patch(
+            "kubernetes_asyncio.client.CoordinationV1Api", return_value=coord_api
+        ):
+            result = await _namespace_owners(object(), [job1, job2])
+
+        # ns-a has a live claim; ns-b has no Lease (404 → "-").
+        assert result["ns-a"] != "?", "403 fallback must resolve ns-a to a real owner"
+        assert result["ns-b"] == "-", "404 on read must return '-' (no claim)"
+
+    @pytest.mark.asyncio
+    async def test_non_403_api_exception_returns_question_marks(self) -> None:
+        """A non-403 ApiException (e.g. 500) returns '?' for all namespaces."""
+        from kubernetes_asyncio.client.exceptions import ApiException
+
+        from aiperf.cli_commands.kube.list_ import _namespace_owners
+
+        coord_api = MagicMock()
+        coord_api.list_lease_for_all_namespaces = AsyncMock(
+            side_effect=ApiException(status=500, reason="Internal Server Error")
+        )
+
+        with patch(
+            "kubernetes_asyncio.client.CoordinationV1Api", return_value=coord_api
+        ):
+            result = await _namespace_owners(
+                object(), [_make_job_info(namespace="ns-x")]
+            )
+
+        assert result == {"ns-x": "?"}
+
+
+class TestScopedListNamespaceResolution:
+    """A namespace-scoped list must resolve a namespace, never assume 'default'."""
+
+    @pytest.mark.asyncio
+    async def test_no_namespace_with_scoped_list_resolves_via_helper(self) -> None:
+        """--no-all-namespaces without --namespace uses resolve_benchmark_namespace."""
+        from aiperf.cli_commands.kube.list_ import list_jobs
+
+        with (
+            patch("aiperf.kubernetes.client.k8s_client", new=_fake_k8s_client),
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_benchmark_namespace",
+                return_value="ctx-ns",
+            ) as mock_resolve,
+            patch(
+                "aiperf.kubernetes.client.list_aiperf_jobs",
+                new=AsyncMock(return_value=[]),
+            ) as mock_list,
+            patch(
+                "aiperf.kubernetes.client.list_jobsets",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch("aiperf.kubernetes.console.print_info"),
+        ):
+            await list_jobs(all_namespaces=False)
+
+        mock_resolve.assert_called_once()
+        assert mock_list.await_args.kwargs.get("namespace") == "ctx-ns"
+        assert mock_list.await_args.kwargs.get("all_namespaces") is False

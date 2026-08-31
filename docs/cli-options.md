@@ -3620,8 +3620,7 @@ Minimum runs before convergence is checked (default 3).
 
 #### `--max-runs` `<int>`
 
-Hard cap on runs even if not converged (default 10).
-<br/>_Default: `10`_
+Hard cap on runs even if not converged. Defaults to --trials when given, else the YAML multiRun.numRuns, else 10.
 
 #### `-d`, `--detach`, `--no-detach`
 
@@ -5651,6 +5650,14 @@ LLM endpoint URL to test connectivity.
 
 Planned number of worker pods (for resource projection).
 <br/>_Default: `1`_
+
+#### `--node-selector` `<list>`
+
+Node selector labels as JSON or repeated key=value values.
+
+#### `--tolerations` `<list>`
+
+Pod tolerations as JSON objects or arrays.
 
 #### `-o`, `--output` `<str>`
 

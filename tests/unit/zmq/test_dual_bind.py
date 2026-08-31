@@ -615,6 +615,23 @@ class TestBaseCommunicationDualBind:
         assert first is second
         assert first not in comm._children
 
+    def test_create_reply_client_passes_additional_bind(self) -> None:
+        comm = ZMQDualBindCommunication()
+        client = comm.create_reply_client(
+            "ipc:///tmp/test-dual-bind-primary",
+            bind=True,
+            additional_bind_address="ipc:///tmp/test-dual-bind-secondary",
+        )
+        assert client.additional_bind_address == "ipc:///tmp/test-dual-bind-secondary"
+
+    def test_create_reply_client_without_additional_bind(self) -> None:
+        comm = ZMQDualBindCommunication()
+        client = comm.create_reply_client(
+            "ipc:///tmp/test-dual-bind-plain",
+            bind=True,
+        )
+        assert client.additional_bind_address is None
+
     def test_create_pull_client_without_additional_bind(self) -> None:
         comm = ZMQDualBindCommunication()
         client = comm.create_pull_client(

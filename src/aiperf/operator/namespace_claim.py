@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 ApiFactory = Callable[[], contextlib.AbstractAsyncContextManager[Any]]
 
+_GLOB_CHARS = ("*", "?", "[", "{")
+
 
 class NamespaceClaimConflict(RuntimeError):
     """Raised when another operator already holds a live claim on a namespace."""
@@ -82,7 +84,17 @@ def watched_namespaces_from_argv(argv: Sequence[str]) -> list[str]:
             namespaces.append(arg.split("=", 1)[1])
         elif arg in ("--namespace", "-n"):
             expecting = True
-    return [ns for ns in namespaces if ns and not ns.startswith("-")]
+    resolved = [ns for ns in namespaces if ns and not ns.startswith("-")]
+    for ns in resolved:
+        if any(char in ns for char in _GLOB_CHARS):
+            logger.warning(
+                "Watch namespace %r looks like a kopf namespace pattern. kopf "
+                "expands globs, but the namespace claim treats the value as a "
+                "literal name, so no Lease will be written for the namespaces "
+                "it matches. List the namespaces explicitly instead.",
+                ns,
+            )
+    return resolved
 
 
 @contextlib.asynccontextmanager
@@ -110,6 +122,7 @@ class NamespaceClaim:
         self._holders: dict[str, str | None] = {}
         self._ownership: dict[str, bool] = {}
         self._claimed: set[str] = set()
+        self._pending: set[str] = set()
         self._refreshing: set[str] = set()
         self._tasks: set[asyncio.Task[None]] = set()
         self._renew_task: asyncio.Task[None] | None = None
@@ -135,6 +148,15 @@ class NamespaceClaim:
         self._schedule_refresh(namespace)
         return self.is_global
 
+    def holder_of(self, namespace: str) -> str | None:
+        """Return the last-known claim holder for ``namespace``, or ``None`` if unknown.
+
+        Reads the in-memory cache only, so it is safe on hot paths. ``None``
+        covers both "no live claim" and "never resolved"; use :meth:`holder`
+        for an authoritative answer.
+        """
+        return self._holders.get(namespace)
+
     async def acquire(self, namespace: str) -> None:
         """Claim ``namespace`` for this operator.
 
@@ -154,6 +176,20 @@ class NamespaceClaim:
                         namespace=namespace, body=self._lease_body(namespace)
                     )
                 except ApiException as exc:
+                    if exc.status == 404:
+                        # The namespace does not exist yet. Nothing creates it
+                        # on our behalf, so this is a normal wait state rather
+                        # than a startup failure: the renew loop re-acquires
+                        # once the namespace appears. Raising here would make
+                        # kopf retry startup forever with the operator alive
+                        # but watching nothing.
+                        logger.warning(
+                            "Cannot claim namespace %s: it does not exist yet; "
+                            "will retry on the next renewal",
+                            namespace,
+                        )
+                        self._pending.add(namespace)
+                        return
                     if exc.status != 409:
                         raise
                     try:
@@ -186,6 +222,7 @@ class NamespaceClaim:
                         ),
                     )
                 self._claimed.add(namespace)
+                self._pending.discard(namespace)
                 self._record(namespace, self.identity)
                 return
 
@@ -229,66 +266,87 @@ class NamespaceClaim:
 
         reacquire: list[str] = []
         async with self._api_factory() as api:
-            for namespace in sorted(self._claimed):
-                try:
-                    current = await api.read_namespaced_lease(
-                        name=LEASE_NAME, namespace=namespace
-                    )
-                except ApiException as exc:
-                    if exc.status == 404:
-                        reacquire.append(namespace)
-                    else:
-                        logger.warning(
-                            "Failed to read namespace claim on %s: %s", namespace, exc
-                        )
-                    continue
-
-                current_holder = (current.spec or V1LeaseSpec()).holder_identity
-                if current_holder and current_holder != self.identity:
-                    live_holder = lease_holder_if_live(
-                        current, default_duration=self.lease_seconds
-                    )
-                    if live_holder is None:
-                        logger.warning(
-                            "Namespace claim on %s was taken over by operator %r "
-                            "whose own lease has since expired; re-acquiring it",
-                            namespace,
-                            current_holder,
-                        )
-                        reacquire.append(namespace)
-                        continue
-                    logger.warning(
-                        "Namespace claim on %s was taken over by operator %r "
-                        "while this operator's renewal lapsed; releasing it",
-                        namespace,
-                        live_holder,
-                    )
-                    self._claimed.discard(namespace)
-                    self._record(namespace, live_holder)
-                    continue
-
-                try:
-                    await api.patch_namespaced_lease(
-                        name=LEASE_NAME,
-                        namespace=namespace,
-                        body={
-                            "spec": {
-                                "holderIdentity": self.identity,
-                                "leaseDurationSeconds": self.lease_seconds,
-                                "renewTime": _rfc3339_now(),
-                            }
-                        },
-                    )
-                except ApiException as exc:
-                    if exc.status == 404:
-                        reacquire.append(namespace)
-                    else:
-                        logger.warning(
-                            "Failed to renew namespace claim on %s: %s", namespace, exc
-                        )
+            for namespace in sorted(self._claimed | self._pending):
+                if await self._renew_one(api, namespace):
+                    reacquire.append(namespace)
         for namespace in reacquire:
             with contextlib.suppress(NamespaceClaimConflict, ApiException):
                 await self.acquire(namespace)
+
+    async def _renew_one(self, api: Any, namespace: str) -> bool:
+        """Renew this operator's claim on one namespace.
+
+        Returns ``True`` when the namespace should be re-acquired from scratch,
+        i.e. the Lease is gone or the rival that took it has itself expired.
+        """
+        try:
+            current = await api.read_namespaced_lease(
+                name=LEASE_NAME, namespace=namespace
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                return True
+            logger.warning("Failed to read namespace claim on %s: %s", namespace, exc)
+            return False
+
+        current_holder = (current.spec or V1LeaseSpec()).holder_identity
+        if current_holder and current_holder != self.identity:
+            live_holder = lease_holder_if_live(
+                current, default_duration=self.lease_seconds
+            )
+            if live_holder is None:
+                logger.warning(
+                    "Namespace claim on %s was taken over by operator %r "
+                    "whose own lease has since expired; re-acquiring it",
+                    namespace,
+                    current_holder,
+                )
+                return True
+            logger.warning(
+                "Namespace claim on %s was taken over by operator %r "
+                "while this operator's renewal lapsed; releasing it",
+                namespace,
+                live_holder,
+            )
+            self._claimed.discard(namespace)
+            self._record(namespace, live_holder)
+            return False
+
+        try:
+            await api.patch_namespaced_lease(
+                name=LEASE_NAME,
+                namespace=namespace,
+                body={
+                    # resourceVersion makes the write conditional on the read
+                    # above. Without it a rival that acquires in the
+                    # read-then-write window is silently overwritten and both
+                    # operators reconcile the namespace.
+                    "metadata": {
+                        "resourceVersion": (
+                            current.metadata or V1ObjectMeta()
+                        ).resource_version
+                    },
+                    "spec": {
+                        "holderIdentity": self.identity,
+                        "leaseDurationSeconds": self.lease_seconds,
+                        "renewTime": _rfc3339_now(),
+                    },
+                },
+            )
+        except ApiException as exc:
+            if exc.status == 404:
+                return True
+            if exc.status == 409:
+                logger.warning(
+                    "Namespace claim on %s changed underneath this renewal; "
+                    "releasing it",
+                    namespace,
+                )
+                self._claimed.discard(namespace)
+                self._record(namespace, None)
+                return False
+            logger.warning("Failed to renew namespace claim on %s: %s", namespace, exc)
+        return False
 
     async def refresh_all(self) -> None:
         """Re-read every ``aiperf-operator`` Lease in the cluster."""
@@ -298,7 +356,12 @@ class NamespaceClaim:
                     field_selector=f"metadata.name={LEASE_NAME}"
                 )
             except ApiException as exc:
-                logger.warning("Failed to list operator namespace claims: %s", exc)
+                logger.error(
+                    "Failed to list operator namespace claims: %s. This global "
+                    "operator will claim all namespaces, including any held by "
+                    "a scoped operator, until the next successful refresh.",
+                    exc,
+                )
                 return
         live: dict[str, str] = {}
         for lease in listing.items or []:

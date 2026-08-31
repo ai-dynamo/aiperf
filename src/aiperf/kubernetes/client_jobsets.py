@@ -68,7 +68,7 @@ async def list_jobsets(
     Args:
         api: Open ``ApiClient`` from :func:`k8s_client`.
         namespace: Namespace to list in. Ignored when ``all_namespaces=True``.
-            ``None`` resolves to ``"default"``.
+            Required (non-``None``) otherwise.
         all_namespaces: If ``True``, lists cluster-wide.
         job_id: If set, AND the selector with ``aiperf.nvidia.com/job-id=<job_id>``.
         status_filter: If set, keep only JobSets whose ``status`` equals this
@@ -79,14 +79,23 @@ async def list_jobsets(
         on 404 (JobSet CRD not installed).
 
     Raises:
+        ValueError: If ``all_namespaces`` is ``False`` and ``namespace`` is ``None``.
         kubernetes_asyncio.client.exceptions.ApiException: On any non-404 API
             failure.
     """
+    if not all_namespaces and namespace is None:
+        raise ValueError(
+            "list_jobsets requires an explicit namespace when "
+            "all_namespaces=False; resolve one with "
+            "aiperf.kubernetes.cli_helpers.resolve_benchmark_namespace "
+            "rather than assuming 'default'."
+        )
+
     label_selector = AIPerfLabels.SELECTOR
     if job_id:
         label_selector += f",{AIPerfLabels.JOB_ID}={job_id}"
 
-    ns = None if all_namespaces else (namespace or "default")
+    ns = None if all_namespaces else namespace
     try:
         raws = await _list_jobsets_raw(api, label_selector, ns)
     except ApiException as e:

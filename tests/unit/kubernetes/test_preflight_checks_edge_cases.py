@@ -137,37 +137,37 @@ class TestCheckNamespace:
         assert "permission denied" in result.message
 
     @pytest.mark.asyncio
-    async def test_namespace_404_with_create_permission_passes(self) -> None:
-        """Missing namespace + create RBAC -> PASS ('will be created')."""
+    async def test_namespace_404_fails_even_with_create_permission(self) -> None:
+        """Nothing creates namespaces, so create RBAC cannot rescue a 404."""
         core = MagicMock(spec=CoreV1Api)
         core.read_namespace = AsyncMock(side_effect=ApiException(status=404))
         with _patch_core(core), _patch_rbac_access(return_value=True):
             result = await check_namespace(_mock_api(), namespace="new-ns")
-        assert result.status == CheckStatus.PASS
-        assert "will be created" in result.message
+        assert result.status == CheckStatus.FAIL
+        assert "does not exist" in result.message
 
     @pytest.mark.asyncio
-    async def test_namespace_404_without_create_permission_fails(self) -> None:
+    async def test_namespace_404_fails_with_a_create_hint(self) -> None:
         core = MagicMock(spec=CoreV1Api)
         core.read_namespace = AsyncMock(side_effect=ApiException(status=404))
         with _patch_core(core), _patch_rbac_access(return_value=False):
             result = await check_namespace(_mock_api(), namespace="new-ns")
         assert result.status == CheckStatus.FAIL
         assert "does not exist" in result.message
-        assert any("Ask an admin" in h for h in result.hints)
+        assert any("kubectl create namespace new-ns" in h for h in result.hints)
 
     @pytest.mark.asyncio
-    async def test_namespace_404_rbac_check_raises_returns_warn(self) -> None:
-        """RBAC probe failure (e.g. transient apiserver) downgrades to WARN."""
+    async def test_namespace_404_never_probes_create_rbac(self) -> None:
+        """A broken SelfSubjectAccessReview can no longer soften the verdict."""
         core = MagicMock(spec=CoreV1Api)
         core.read_namespace = AsyncMock(side_effect=ApiException(status=404))
         with (
             _patch_core(core),
-            _patch_rbac_access(side_effect=ApiException(status=500)),
+            _patch_rbac_access(side_effect=ApiException(status=500)) as rbac,
         ):
             result = await check_namespace(_mock_api(), namespace="new-ns")
-        assert result.status == CheckStatus.WARN
-        assert "cannot verify create permission" in result.message
+        assert result.status == CheckStatus.FAIL
+        rbac.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_namespace_other_api_error_fails(self) -> None:
@@ -195,6 +195,24 @@ class TestCheckRbacPermissions:
         assert result.status == CheckStatus.PASS
         assert result.details
         assert all(d.strip().startswith(("✓", "passed")) for d in result.details)
+
+    @pytest.mark.asyncio
+    async def test_operator_mode_checks_only_aiperfjob_creation(self) -> None:
+        """Operator submission creates an AIPerfJob, not direct-mode resources."""
+        with _patch_rbac_access(return_value=True) as rbac:
+            result = await check_rbac_permissions(
+                _mock_api(), namespace="ns", use_operator=True
+            )
+
+        assert result.status == CheckStatus.PASS
+        assert [call.kwargs for call in rbac.await_args_list] == [
+            {
+                "verb": "create",
+                "resource": "aiperfjobs",
+                "group": "aiperf.nvidia.com",
+                "namespace": "ns",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_missing_some_fails_with_count(self) -> None:

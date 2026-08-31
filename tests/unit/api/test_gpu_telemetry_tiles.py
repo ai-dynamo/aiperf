@@ -32,7 +32,7 @@ from aiperf.gpu_telemetry.constants import (
     GPU_TELEMETRY_METRICS_CONFIG,
     NVIDIA_GPU_TELEMETRY_PLATFORM,
 )
-from tests.unit.api.test_dashboard_js import (
+from tests.ui.test_dashboard_js import (
     _NODE_REASON,
     _node_binary,
     _run_v2_node_script,

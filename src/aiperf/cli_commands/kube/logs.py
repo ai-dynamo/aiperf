@@ -351,13 +351,12 @@ async def logs(
         aiperf kube logs abc123 --ignore-not-found
     """
     from aiperf import cli_utils
-    from aiperf.cli_commands.kube._kube_common import resolve_child_name
+    from aiperf.cli_commands.kube._kube_common import resolve_child_target
 
     manage_options = manage_options or KubeManageOptions()
-    if job_id is not None:
-        child = resolve_child_name(job_id, variation=variation, trial=trial)
-        if child is not None:
-            job_id = child
+    job_id = resolve_child_target(
+        job_id, variation=variation, trial=trial, command="kube logs"
+    )
 
     with cli_utils.exit_on_error(title="Error Getting Logs"):
         from aiperf.kubernetes import cli_helpers

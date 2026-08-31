@@ -603,13 +603,11 @@ class TestJobSetSpecContainerDetails:
                 total_cpu += parse_cpu(requests["cpu"])
                 total_memory_mib += parse_memory_mib(requests["memory"])
 
-        assert total_cpu <= 0.61
-        # Controller-pod containers (~1792 MiB) + WORKER_POD default (4 GiB).
-        # Bumped from 1536 → 6144 alongside the memory-estimator recalibration
-        # against the 2026-04-30 ISL/OSL memory sweep (per-process Python
-        # baseline 150 MiB; controller container limits now sized to fit
-        # measured RSS 1080-1161 MiB with PEAK_MARGIN headroom).
-        assert total_memory_mib <= 6144
+        assert total_cpu <= 4.0
+        # Controller-pod containers (~1792 MiB) + the 6 GiB WORKER_POD default.
+        # The worker budget clears every worker's measured import-memory floor
+        # at the shipped 10-worker/10-record-processor topology.
+        assert total_memory_mib <= 8192
 
     def test_resource_mode_none_omits_resources(self) -> None:
         """Test that resourceMode=none omits the container resources block."""

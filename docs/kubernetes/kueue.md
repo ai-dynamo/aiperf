@@ -223,10 +223,39 @@ renders a `ResourceFlavor`, `ClusterQueue`, and `LocalQueue` from
 `kueue.resources` quota map (`cpu`, `memory`, and an optional `gpu` entry that
 is skipped when empty). It is off by default so the chart renders on clusters
 without Kueue CRDs, and even when enabled the template is additionally gated
-on the `kueue.x-k8s.io/v1beta1` API being present. The `LocalQueue` is created
-in the chart's release namespace. When `defaultQueueName` is left empty and
-`createQueues=true`, the operator's default queue falls back to
+on the `kueue.x-k8s.io/v1beta1` API being present. When `defaultQueueName` is
+left empty and `createQueues=true`, the operator's default queue falls back to
 `kueue.localQueueName`.
+
+> **WARNING:** `kueue.createQueues=true` creates the `LocalQueue` in the
+> chart's release namespace (`aiperf-system` by default), *not* in the
+> namespaces your benchmarks run in. A `LocalQueue` is namespace-scoped and
+> Kueue only admits a workload whose `kueue.x-k8s.io/queue-name` label
+> resolves to a `LocalQueue` **in the workload's own namespace**. A benchmark
+> submitted into `my-benchmarks` with the chart's queue name therefore sits in
+> `Queued` forever with no error: the JobSet stays suspended and no pod is
+> ever created.
+>
+> Create one `LocalQueue` per benchmark namespace, pointing at the shared
+> `ClusterQueue` the chart made:
+>
+> ```bash
+> kubectl create -n my-benchmarks -f - <<'EOF'
+> apiVersion: kueue.x-k8s.io/v1beta1
+> kind: LocalQueue
+> metadata:
+>   name: aiperf-queue
+>   namespace: my-benchmarks
+> spec:
+>   clusterQueue: aiperf-cluster-queue
+> EOF
+> ```
+>
+> The `ClusterQueue` and `ResourceFlavor` are cluster-scoped, so those the
+> chart really can own for you; only the `LocalQueue` handle has to be
+> repeated per namespace. A missing `LocalQueue` does not surface as a CLI
+> error — the JobSet simply stays suspended indefinitely — so create the
+> per-namespace `LocalQueue` before submitting your first benchmark.
 
 ---
 
@@ -282,7 +311,7 @@ not admitted it. Check in order:
 2. `kubectl get clusterqueue aiperf-cluster-queue -o yaml` — compare
    `spec.resourceGroups.*.nominalQuota` to what the JobSet requests. Each
    worker pod requests the `AIPERF_K8S_WORKER_POD_CPU` /
-   `AIPERF_K8S_WORKER_POD_MEMORY` budget (default `150m` / `4Gi`), split
+   `AIPERF_K8S_WORKER_POD_MEMORY` budget (default `3350m` / `6Gi`), split
    across its containers, and `spec.resourceMode` decides whether limits are
    emitted alongside requests; see
    [`configuration.md`](configuration.md) for defaults.

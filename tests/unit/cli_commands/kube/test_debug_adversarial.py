@@ -203,7 +203,9 @@ class TestDebugMissingTargets:
         ):
             await debug(manage_options=KubeManageOptions())
 
-        mock_resolve_last.assert_called_once_with(None, None)
+        mock_resolve_last.assert_called_once_with(
+            None, None, kubeconfig=None, context=None
+        )
         mock_nodes.assert_not_called()
         mock_pods.assert_not_called()
         mock_report.assert_not_called()

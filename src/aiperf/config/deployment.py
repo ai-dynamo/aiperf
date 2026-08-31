@@ -64,8 +64,12 @@ def privilege_escalating_keys(value: dict[str, Any]) -> list[str]:
             continue
         actual = value[key]
         # Guard against bool/int conflation: False == 0 and True == 1 in Python.
+        # For bool-forbidden keys, compare truthiness (not identity) so a
+        # YAML/JSON int like `privileged: 1` is still caught, while non-bool,
+        # non-int types (e.g. strings) are left to the K8s API server's own
+        # type validation rather than guessed at here.
         matches = (
-            actual is forbidden
+            isinstance(actual, (bool, int)) and bool(actual) == forbidden
             if isinstance(forbidden, bool)
             else not isinstance(actual, bool) and actual == forbidden
         )

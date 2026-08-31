@@ -41,6 +41,7 @@ from aiperf.kubernetes.spec_converter import (
 )
 from aiperf.operator import events, runs_index
 from aiperf.operator.environment import OperatorEnvironment
+from aiperf.operator.handlers._job_identity import delete_owned_aiperfjob_jobset
 from aiperf.operator.handlers.lifecycle import on_cancel as handle_cancel
 from aiperf.operator.health import check_endpoint_health
 from aiperf.operator.job_spec_file import save_job_spec_file
@@ -398,24 +399,48 @@ async def _create_jobset(
     return jobset_name
 
 
-def _finalize_cancelled_creation(
+async def _finalize_cancelled_creation(
     *,
     patch: kopf.Patch,
     status: StatusBuilder,
     job_id: str,
     jobset_name: str,
+    namespace: str,
+    name: str,
+    uid: str,
 ) -> dict[str, Any]:
-    """Record what was already created before a cancellation bail-out.
+    """Reap the JobSet created moments before a cancellation was observed.
 
-    ``on_cancel`` deletes the backing JobSet by reading ``status.jobSetName``.
-    Returning from ``_create_resources`` without stamping it leaves a JobSet
-    running that nothing reaps: the CR itself is not deleted on a
-    ``spec.cancel`` request, so ownerReference GC never fires and the cancel
-    handler has no name to delete. Persist the identity of whatever was
-    created so the cancel path can clean up after us.
+    ``on_cancel`` deletes the backing JobSet by reading ``status.jobSetName``,
+    so a cancel that lands while ``_create_jobset`` is in flight finds no name,
+    skips the delete, and stamps ``Cancelled``. Nothing reaps the JobSet
+    afterwards: the CR is not deleted on a ``spec.cancel`` request, so
+    ownerReference GC never fires, the sticky cancel flag short-circuits every
+    later monitor tick, and the ``spec.cancel`` watcher will not re-fire for an
+    unchanged value. Delete it here rather than assume a second cancel pass.
+
+    The name is still stamped first so that a failed delete leaves the cancel
+    path an identity to retry against.
     """
     patch.status["jobId"] = job_id
     patch.status["jobSetName"] = jobset_name
+    try:
+        if await delete_owned_aiperfjob_jobset(
+            namespace,
+            jobset_name,
+            parent_name=name,
+            parent_uid=uid,
+            context="cancelled-creation",
+        ):
+            logger.info(f"Deleted JobSet {jobset_name} created during cancellation")
+    except Exception as e:
+        # Retry rather than log-and-forget: nothing else reaps this JobSet, and
+        # _create_jobset plus its RBAC/ConfigMap prerequisites are idempotent,
+        # so re-entering create on the kopf retry is safe.
+        raise kopf.TemporaryError(
+            f"Could not reap JobSet {jobset_name} after cancellation: {e}",
+            delay=OperatorEnvironment.RECONCILE.CREATE_HARVEST_RETRY_DELAY_SECONDS,
+        ) from e
     status.finalize()
     return {}
 
@@ -516,12 +541,16 @@ async def _create_resources(
             return {}
         jobset_name = await _create_jobset(api, deployment, namespace, owner_ref_dict)
         if is_cancelled():
-            # The JobSet is live now: stamp its name so on_cancel can delete it.
-            return _finalize_cancelled_creation(
+            # The JobSet is live now: delete it, since a cancel that landed
+            # while it was being created saw no status.jobSetName to reap.
+            return await _finalize_cancelled_creation(
                 patch=patch,
                 status=status,
                 job_id=job_id,
                 jobset_name=jobset_name,
+                namespace=namespace,
+                name=name,
+                uid=uid,
             )
 
         return _finalize_success(

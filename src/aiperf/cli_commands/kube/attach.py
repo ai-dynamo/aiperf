@@ -85,17 +85,16 @@ async def attach(
         aiperf kube attach abc123 --ignore-not-found
     """
     from aiperf import cli_utils
-    from aiperf.cli_commands.kube._kube_common import resolve_child_name
+    from aiperf.cli_commands.kube._kube_common import resolve_child_target
     from aiperf.kubernetes import attach as kube_attach
     from aiperf.kubernetes import cli_helpers
 
     manage_options = manage_options or KubeManageOptions()
 
     with cli_utils.exit_on_error(title="Error Attaching to Benchmark"):
-        if job_id is not None:
-            child = resolve_child_name(job_id, variation=variation, trial=trial)
-            if child is not None:
-                job_id = child
+        job_id = resolve_child_target(
+            job_id, variation=variation, trial=trial, command="kube attach"
+        )
 
         resolved = await cli_helpers.resolve_job(
             job_id,

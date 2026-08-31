@@ -65,14 +65,13 @@ async def cancel(
         aiperf kube cancel my-sweep -v 7
     """
     from aiperf import cli_utils
-    from aiperf.cli_commands.kube._kube_common import resolve_child_name
+    from aiperf.cli_commands.kube._kube_common import resolve_child_target
 
     manage_options = manage_options or KubeManageOptions()
     use_last_benchmark = job_id is None
-    if job_id is not None:
-        child = resolve_child_name(job_id, variation=variation, trial=trial)
-        if child is not None:
-            job_id = child
+    job_id = resolve_child_target(
+        job_id, variation=variation, trial=trial, command="kube cancel"
+    )
 
     with cli_utils.exit_on_error(title="Error Cancelling Benchmark"):
         from kubernetes_asyncio import client as k8s_client_mod
@@ -97,7 +96,7 @@ async def cancel(
             context=manage_options.kube_context,
         )
         if not resolved:
-            return
+            raise SystemExit(1)
         job_id, namespace = resolved
         requested_kind = workload_kind_from_cli(kind)
         if requested_kind is None and use_last_benchmark:
@@ -118,13 +117,13 @@ async def cancel(
                 )
             except AmbiguousAIPerfTargetError as error:
                 kube_console.print_error(str(error))
-                return
+                raise SystemExit(1) from None
             if found is None:
                 expected = requested_kind or "AIPerfJob or AIPerfSweep"
                 kube_console.print_error(
                     f"No {expected} named {job_id!r} in namespace {namespace}"
                 )
-                return
+                raise SystemExit(1)
 
             plural, cr = found
             phase = (cr.get("status") or {}).get("phase")

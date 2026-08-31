@@ -64,7 +64,7 @@ async def dashboard(
     with cli_utils.exit_on_error(title="Error Opening Dashboard"):
         resolved = await _resolve_operator(manage_options, operator_namespace)
         if resolved is None:
-            return
+            raise SystemExit(1)
         ns, pod_name = resolved
         await _serve_dashboard(
             manage_options,

@@ -45,8 +45,6 @@ class TestGoodRequestFractionMetric:
     def test_all_errors_zero_fraction(self):
         metric = GoodRequestFractionMetric()
         results = MetricResultsDict()
-        results[GoodRequestCountMetric.tag] = 0
-        results[RequestCountMetric.tag] = 0
         results[ErrorRequestCountMetric.tag] = 10
         assert metric.derive_value(results) == approx(0.0)
 
@@ -69,5 +67,22 @@ class TestGoodRequestFractionMetric:
         cls = MetricRegistry.get_class("good_request_fraction")
         assert cls is GoodRequestFractionMetric
 
-    def test_has_no_hard_required_counter(self):
+    def test_counter_dependencies_are_optional(self):
         assert GoodRequestFractionMetric.required_metrics is None
+        assert GoodRequestFractionMetric.optional_metrics == frozenset(
+            {
+                GoodRequestCountMetric.tag,
+                RequestCountMetric.tag,
+                ErrorRequestCountMetric.tag,
+            }
+        )
+
+    def test_registry_orders_optional_counters_before_fraction(self):
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        order = MetricRegistry.create_dependency_order_for(
+            [GoodRequestFractionMetric.tag]
+        )
+        fraction_index = order.index(GoodRequestFractionMetric.tag)
+        for tag in GoodRequestFractionMetric.optional_metrics:
+            assert order.index(tag) < fraction_index

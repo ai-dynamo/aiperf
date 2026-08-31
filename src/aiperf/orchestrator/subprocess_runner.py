@@ -112,7 +112,24 @@ def main() -> None:
         sys.exit(1)
 
 
-if __name__ == "__main__":
+def _script_entrypoint() -> None:
+    """Real ``python -m aiperf.orchestrator.subprocess_runner`` entrypoint.
+
+    Applies process-wide startup fixups that must happen before anything
+    else in this process: the Windows event-loop policy switch must run
+    before the first ``asyncio.run()`` this process makes (deep inside
+    ``main()`` -> ``_run_single_benchmark`` -> ``bootstrap_and_run_service``),
+    and pipe release must happen before ``main()`` does any real work.
+
+    Split out from the ``if __name__ == "__main__":`` guard so it's directly
+    unit-testable (module-level guards never execute under import/pytest).
+    """
+    from aiperf.common.event_loop import configure_event_loop_policy_for_platform
+
+    # Must run before any asyncio.run()/uvloop.run() call in this process --
+    # see aiperf.common.event_loop for the full rationale.
+    configure_event_loop_policy_for_platform()
+
     # Release inherited pipe handles only when actually run as a subprocess
     # (`python -m aiperf.orchestrator.subprocess_runner ...`). Calling
     # ``main()`` from unit tests must NOT redirect stderr — pytest's capsys
@@ -121,3 +138,7 @@ if __name__ == "__main__":
     # itself is also gated on IS_WINDOWS so this is belt-and-suspenders.
     _release_inherited_pipes_on_windows()
     main()
+
+
+if __name__ == "__main__":
+    _script_entrypoint()

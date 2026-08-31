@@ -645,7 +645,7 @@ Every control-plane container, the event-bus proxy sidecar, the results sidecar,
 | `AIPERF_K8S_SERVER_METRICS_MANAGER_CPU` / `_MEMORY` | `25m` / `192Mi` | Server-metrics container |
 | `AIPERF_K8S_RESULTS_SIDECAR_CPU` / `_MEMORY` | `25m` / `192Mi` | Results sidecar (fallback retrieval path) |
 | `AIPERF_K8S_EVENT_BUS_PROXY_CPU` / `_MEMORY` | `50m` / `64Mi` | Event-bus XPUB/XSUB proxy sidecar |
-| `AIPERF_K8S_WORKER_POD_CPU` / `_MEMORY` | `150m` / `4Gi` | Worker pod (workers + record processors + WPM) |
+| `AIPERF_K8S_WORKER_POD_CPU` / `_MEMORY` | `3350m` / `6Gi` | Worker pod (workers + record processors + WPM) |
 
 ### Architecture toggles
 

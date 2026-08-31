@@ -170,24 +170,6 @@ class ConfigMapSpec(AIPerfBaseModel):
         return spec
 
 
-class NamespaceSpec(AIPerfBaseModel):
-    """Specification for a Kubernetes Namespace."""
-
-    name: str = Field(description="Namespace name")
-    labels: dict[str, str] = Field(default_factory=dict, description="AIPerfLabels")
-
-    def to_k8s_manifest(self) -> dict[str, Any]:
-        """Generate the Namespace Kubernetes manifest."""
-        return {
-            "apiVersion": "v1",
-            "kind": "Namespace",
-            "metadata": {
-                "name": self.name,
-                "labels": self.labels,
-            },
-        }
-
-
 class RBACSpec(AIPerfBaseModel):
     """Specification for RBAC resources (Role + RoleBinding)."""
 

@@ -874,6 +874,25 @@ async def test_realtime_server_metrics_caches_payload_without_pushing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_push_aiperfjob_status_replaces_server_metrics_before_phase_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A snapshot must not merge stale metric keys before the first phase write."""
+    stale = {"metrics": {"sglang:token_usage": {"series": []}}}
+    custom = _install_fake_k8s(monkeypatch, _cr({"serverMetrics": stale}))
+
+    await _push(server_metrics=_server_metrics_payload())
+
+    call = custom.patch_namespaced_custom_object_status.await_args.kwargs
+    assert call["_content_type"] == "application/json-patch+json"
+    assert {
+        "op": "add",
+        "path": "/status/serverMetrics",
+        "value": _status_body(custom)["serverMetrics"],
+    } in call["body"]
+
+
+@pytest.mark.asyncio
 async def test_push_aiperfjob_status_replaces_server_metrics_instead_of_merging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

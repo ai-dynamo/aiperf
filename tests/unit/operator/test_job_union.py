@@ -346,6 +346,29 @@ async def test_find_any_job_falls_back_to_pvc(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_find_any_job_offloads_archived_pvc_lookup(tmp_path, monkeypatch):
+    from aiperf.operator import job_union
+
+    async def fake_find(api, name, namespace):
+        return None
+
+    calls = []
+
+    async def track_to_thread(func, *args, **kwargs):
+        calls.append(func)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(job_union, "find_aiperf_job", fake_find)
+    monkeypatch.setattr(job_union.asyncio, "to_thread", track_to_thread)
+    _write_summary(tmp_path, "ns", "j1")
+
+    info = await job_union.find_any_job(None, tmp_path, "ns", "j1")
+
+    assert info is not None
+    assert job_union._find_archived_job in calls
+
+
+@pytest.mark.asyncio
 async def test_find_any_job_returns_none_when_neither(tmp_path, monkeypatch):
     from aiperf.operator import job_union
 

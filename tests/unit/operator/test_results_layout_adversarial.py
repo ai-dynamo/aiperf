@@ -18,7 +18,9 @@ Out of scope (covered elsewhere):
 from __future__ import annotations
 
 import asyncio
+import gc
 import sqlite3
+import weakref
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -292,6 +294,67 @@ async def test_list_runs_async_incomplete_index_preserves_and_backfills_disk_epo
 
     assert {run.epoch for run in runs} == {_EPOCH_OLD, _EPOCH_NEW}
     assert _EPOCH_OLD in backfilled_epochs
+
+
+@pytest.mark.asyncio
+async def test_schedule_lazy_backfill_runs_gc_mid_await_does_not_collect_task(
+    tmp_path: Path,
+    opened_index: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unretained lazy-backfill task must survive a GC pass mid-await.
+
+    ``_schedule_lazy_backfill_runs`` fires ``loop.create_task(...)`` and
+    discards the return value. asyncio only holds a *weak* reference to a
+    task, so if nothing else retains it, a garbage-collection pass while the
+    task is suspended on an ``await`` can collect it before it resumes -
+    silently dropping the index backfill with no exception or log.
+
+    This reproduces the collectible window by suspending the backfill on a
+    bare, unreferenced ``asyncio.Future`` (unlike ``asyncio.sleep``, nothing
+    registers it with any loop-internal timer/IO structure, so the task and
+    its coroutine frame form a self-contained reference cycle with no path
+    back to a GC root unless the scheduler itself retains the task). A
+    ``weakref`` to the running task -- taken from inside the coroutine, so
+    the test itself never holds a strong reference -- must still resolve
+    after ``gc.collect()``.
+    """
+    base = tmp_path / "results"
+    _make_run_dir(base, epoch=_EPOCH_OLD)
+    task_ref_box: list[weakref.ReferenceType] = []
+
+    async def slow_backfill(
+        base: Path, namespace: str, job_id: str, epoch: str
+    ) -> bool:
+        task_ref_box.append(weakref.ref(asyncio.current_task()))
+        await asyncio.get_running_loop().create_future()
+        return True  # pragma: no cover - future never resolves in this test
+
+    monkeypatch.setattr(runs_index, "lazy_backfill_run", slow_backfill)
+
+    entry = RunEntry(
+        epoch=_EPOCH_OLD,
+        mtime_epoch=int(_EPOCH_OLD),
+        file_count=1,
+        total_size_bytes=2,
+        is_latest=False,
+    )
+    results_layout._schedule_lazy_backfill_runs(
+        base, "bench-prod", "llama-results-7f2a", [entry]
+    )
+
+    # Let the task start and suspend on the never-resolving future, then
+    # force a collection pass while the only references left are internal
+    # to the task/coroutine/future cycle.
+    await asyncio.sleep(0)
+    gc.collect()
+
+    assert task_ref_box, "lazy-backfill coroutine never started"
+    assert task_ref_box[0]() is not None, (
+        "lazy-backfill task was garbage-collected mid-await because "
+        "_schedule_lazy_backfill_runs discards the task without retaining "
+        "a strong reference; the runs_index update would be silently dropped"
+    )
 
 
 # ============================================================================

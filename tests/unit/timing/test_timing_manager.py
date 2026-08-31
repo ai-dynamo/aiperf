@@ -366,11 +366,15 @@ class TestTimingManagerWorkerFloor:
         assert events == ["failure", "kill"]
 
     @pytest.mark.asyncio
-    async def test_worker_loss_callback_aborts_profiling_immediately(
+    async def test_worker_loss_callback_aborts_profiling_immediately_on_kubernetes(
         self, configured_manager
     ) -> None:
-        """A lost sticky worker makes the active benchmark terminal."""
+        """A lost sticky worker makes the active benchmark terminal on Kubernetes,
+        where pod loss is confirmed by the apiserver."""
+        from aiperf.plugin.enums import ServiceRunType
+
         manager = configured_manager
+        manager.run.cfg.runtime.service_run_type = ServiceRunType.KUBERNETES
         manager._profiling_active = True
         manager._phase_orchestrator.cancel = AsyncMock()
         manager.phase_publisher.request_profile_cancel = AsyncMock()
@@ -384,3 +388,33 @@ class TestTimingManagerWorkerFloor:
         manager._phase_orchestrator.cancel.assert_awaited_once()
         manager._publish_phase_failure_and_wait.assert_awaited_once()
         manager._kill.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_worker_loss_callback_defers_to_floor_grace_in_local_mode(
+        self, configured_manager
+    ) -> None:
+        """A stale-heartbeat worker loss must not instantly kill a local
+        (multiprocessing) run, since the router has no ground truth to
+        distinguish a dead worker from one merely starved by the event loop.
+        The loss should instead be left to the worker-floor grace period
+        (``_on_dispatchable_worker_count_changed`` / ``MIN_ALIVE_FRACTION``).
+        """
+        from aiperf.plugin.enums import ServiceRunType
+
+        manager = configured_manager
+        assert (
+            manager.run.cfg.runtime.service_run_type == ServiceRunType.MULTIPROCESSING
+        )
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
+        manager._publish_phase_failure_and_wait = AsyncMock()
+        manager._kill = AsyncMock()
+
+        manager.sticky_router._on_worker_lost("worker_unavailable: worker stopped")
+        assert manager._worker_loss_abort_task is None
+
+        manager.phase_publisher.request_profile_cancel.assert_not_awaited()
+        manager._phase_orchestrator.cancel.assert_not_awaited()
+        manager._publish_phase_failure_and_wait.assert_not_awaited()
+        manager._kill.assert_not_awaited()

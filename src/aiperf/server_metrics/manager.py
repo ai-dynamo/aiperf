@@ -718,6 +718,21 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 self.warning(
                     f"Server Metrics: Failed to capture final state from {endpoint_url}: {exc}"
                 )
+                # A warning log alone is invisible to the user: this is the final
+                # scrape that captures accurate end-of-run counter/histogram
+                # deltas, so its failure must reach the CLI error summary
+                # (`error_summary` -> ConsoleErrorExporter), not just the log.
+                self._error_state.record(
+                    ErrorDetails(
+                        type=exc.__class__.__name__,
+                        message=(
+                            "Server metrics: final (PROFILE_COMPLETE) scrape of "
+                            f"{redact_url(endpoint_url)} failed: {exc}. Final "
+                            "server-metrics counters/histograms may be "
+                            "undercounted for this run."
+                        ),
+                    )
+                )
 
     def _should_capture_profile_complete_scrape(self) -> bool:
         """Return whether a late scrape can still belong to the last profile.

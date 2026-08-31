@@ -505,7 +505,13 @@ class TestCheckNamespace:
         assert "exists" in result.message
 
     @pytest.mark.asyncio
-    async def test_namespace_not_found_but_can_create(self) -> None:
+    async def test_namespace_not_found_fails_even_with_create_permission(self) -> None:
+        """Create permission is irrelevant: nothing creates namespaces.
+
+        This used to PASS with "will be created", which sent the user into a
+        run that failed much later, at pod-create time, against a namespace
+        that never existed.
+        """
         checker = _make_checker(namespace="new-ns")
         checker._api = _mock_api()
         core = MagicMock(spec=CoreV1Api)
@@ -514,8 +520,8 @@ class TestCheckNamespace:
         with _patch_core(core), _patch_authz(_mock_rbac_allowed(True)):
             result = await checker._check_namespace()
 
-        assert result.status == CheckStatus.PASS
-        assert "will be created" in result.message
+        assert result.status == CheckStatus.FAIL
+        assert "does not exist" in result.message
 
     @pytest.mark.asyncio
     async def test_namespace_not_found_cannot_create(self) -> None:
@@ -531,7 +537,8 @@ class TestCheckNamespace:
         assert len(result.hints) >= 1
 
     @pytest.mark.asyncio
-    async def test_namespace_not_found_permission_check_fails(self) -> None:
+    async def test_namespace_not_found_does_not_probe_rbac(self) -> None:
+        """The missing-namespace verdict issues no SelfSubjectAccessReview."""
         checker = _make_checker(namespace="broken")
         checker._api = _mock_api()
         core = MagicMock(spec=CoreV1Api)
@@ -544,7 +551,8 @@ class TestCheckNamespace:
         with _patch_core(core), _patch_authz(authz):
             result = await checker._check_namespace()
 
-        assert result.status == CheckStatus.WARN
+        assert result.status == CheckStatus.FAIL
+        authz.create_self_subject_access_review.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_namespace_server_error(self) -> None:
@@ -891,8 +899,8 @@ class TestCheckNodeResources:
         with _patch_core(core):
             result = await checker._check_node_resources()
 
-        assert result.status == CheckStatus.WARN
-        assert "not have enough" in result.message
+        assert result.status == CheckStatus.FAIL
+        assert "does not have enough" in result.message
 
     @pytest.mark.asyncio
     async def test_not_ready_nodes_excluded(self) -> None:
@@ -907,7 +915,7 @@ class TestCheckNodeResources:
         with _patch_core(core):
             result = await checker._check_node_resources()
 
-        assert "1 ready nodes" in result.details[0] or "1 nodes" in result.details[0]
+        assert "1 schedulable nodes" in result.details[0]
 
     @pytest.mark.asyncio
     async def test_node_api_error_returns_warn(self) -> None:
@@ -1218,6 +1226,33 @@ class TestCheckEndpointConnectivity:
             result = await checker._check_endpoint_connectivity()
 
         assert result.status == CheckStatus.FAIL
+
+    @pytest.mark.asyncio
+    async def test_cluster_service_lookup_timeout_warns(self) -> None:
+        """An unavailable apiserver cannot prove a cluster service is missing."""
+        checker = _make_checker(
+            endpoint_url="http://gone.default.svc.cluster.local:8080"
+        )
+        checker._api = _mock_api()
+        core = MagicMock(spec=CoreV1Api)
+        core.read_namespaced_service = AsyncMock(side_effect=TimeoutError("slow"))
+
+        with _patch_core(core):
+            result = await checker._check_endpoint_connectivity()
+
+        assert result.status == CheckStatus.WARN
+        assert "could not verify" in result.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_external_svc_subdomain_is_not_a_cluster_service(self) -> None:
+        """Only Kubernetes service suffixes trigger cluster-service lookup."""
+        checker = _make_checker(endpoint_url="https://api.svc.example.com/v1")
+        checker._api = _mock_api()
+
+        result = await checker._check_endpoint_connectivity()
+
+        assert result.status == CheckStatus.INFO
+        assert "External endpoint" in result.message
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1624,16 +1659,12 @@ class TestCheckAIPerfOperator:
         assert "aiperf-system" in result.message
 
     @pytest.mark.asyncio
-    async def test_forbidden_pod_list_passes_rather_than_warning(self) -> None:
-        """A namespaced-only user is the audience for preflight, not a failure.
-
-        Cluster-wide `list pods` is commonly denied; reporting "no operator pod
-        found" against a healthy operator would be actively misleading.
-        """
+    async def test_forbidden_pod_list_warns_that_operator_is_unverified(self) -> None:
+        """A forbidden cluster-wide pod list leaves operator health unknown."""
         api, ext, core = self._api(pod_error=ApiException(status=403))
         result = await self._run(api, ext, core)
 
-        assert result.status == CheckStatus.PASS
+        assert result.status == CheckStatus.WARN
         assert "not verified" in result.message
 
     @pytest.mark.asyncio

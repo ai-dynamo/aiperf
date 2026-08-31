@@ -166,6 +166,30 @@ class TestK8sClient:
             mock_kube.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_explicit_kubeconfig_skips_incluster_load(self) -> None:
+        """An explicit kubeconfig/context must win over a mounted service account."""
+        fake_api = MagicMock()
+        fake_api.close = AsyncMock()
+        with (
+            patch("aiperf.kubernetes.client.suppress_noisy_http_loggers"),
+            patch(
+                "aiperf.kubernetes.client.config.load_incluster_config"
+            ) as mock_incluster,
+            patch(
+                "aiperf.kubernetes.client.config.load_kube_config",
+                new_callable=AsyncMock,
+            ) as mock_kube,
+            patch("aiperf.kubernetes.client.ApiClient", return_value=fake_api),
+        ):
+            async with k8s_client(kubeconfig="/cfg", context="ctx"):
+                pass
+
+        mock_incluster.assert_not_called()
+        mock_kube.assert_awaited_once_with(
+            config_file="/cfg", context="ctx", persist_config=False
+        )
+
+    @pytest.mark.asyncio
     async def test_k8s_client_falls_back_to_kubeconfig(self) -> None:
         """When load_incluster_config raises ConfigException, load_kube_config is called."""
         from kubernetes_asyncio import config as k8s_config

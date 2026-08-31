@@ -235,7 +235,7 @@ class TestNamedPhaseProducer:
         )
 
     @pytest.mark.asyncio
-    async def test_terminal_records_report_publishes_each_named_warmup_phase(
+    async def test_terminal_records_report_publishes_warmup_once(
         self,
     ) -> None:
         records_tracker = RecordsTracker()
@@ -279,7 +279,7 @@ class TestNamedPhaseProducer:
             call.args[0].phase_name: call.args[0]
             for call in manager._publish_processing_stats.await_args_list
         }
-        assert set(latest_stats) == {"cache_prime", "cooldown"}
+        assert set(latest_stats) == {"cache_prime"}
         assert all(stats.is_records_complete for stats in latest_stats.values())
         manager._handle_all_records_received.assert_awaited_once_with(
             CreditPhase.WARMUP

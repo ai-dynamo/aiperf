@@ -134,10 +134,17 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> ReplyClientProtocol:
         return cast(
             ReplyClientProtocol,
-            self.create_client(CommClientType.REPLY, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.REPLY,
+                address,
+                bind,
+                socket_ops,
+                additional_bind_address=additional_bind_address,
+            ),
         )
 
     def create_streaming_router_client(

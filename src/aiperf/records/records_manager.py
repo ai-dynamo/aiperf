@@ -23,7 +23,13 @@ from aiperf.common.accumulator_protocols import (
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.control_structs import Command, CommandAck, CommandErr
+from aiperf.common.control_structs import (
+    Command,
+    CommandAck,
+    CommandErr,
+    CommandOk,
+    CommandUnhandled,
+)
 from aiperf.common.enums import (
     CommAddress,
     CommandType,
@@ -537,6 +543,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """True when this process runs under the Kubernetes service manager."""
         return str(self.run.cfg.runtime.service_run_type).lower() == "kubernetes"
 
+    def _realtime_metrics_publish_enabled(self) -> bool:
+        """True when a live consumer justifies publishing ``RealtimeMetricsMessage``.
+
+        ``--ui dashboard`` always publishes. Otherwise, a headless run still
+        needs the stream when something else is serving the web dashboard
+        over the same WebSocket: a local API server (``--api-port``) or a
+        Kubernetes-managed run. ``AIPERF_UI_REALTIME_METRICS_ENABLED`` is the
+        explicit escape hatch for any other case.
+        """
+        return (
+            self.run.cfg.ui_type == UIType.DASHBOARD
+            or self.run.cfg.runtime.api_port is not None
+            or self._is_kubernetes_run()
+            or Environment.UI.REALTIME_METRICS_ENABLED
+        )
+
     @background_task(
         interval=lambda self: Environment.RECORD.COMPLETION_STALL_CHECK_INTERVAL,
         immediate=False,
@@ -557,7 +579,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         time, so slow aggregation is never cut short) and finalize loudly.
         """
         timeout = Environment.RECORD.COMPLETION_STALL_TIMEOUT
-        if timeout <= 0 or not self._credits_complete_received:
+        if (
+            not self._is_kubernetes_run()
+            or timeout <= 0
+            or not self._credits_complete_received
+        ):
             return
         if CreditPhase.PROFILING in self._all_records_received_phases:
             return
@@ -1144,15 +1170,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
 
     async def _handle_all_records_received_once(self, phase: CreditPhase) -> None:
         """Publish terminal progress and finalize one phase kind once."""
-        overall_worker_stats = self._records_tracker.create_overall_worker_stats()
-        for stats in self._records_tracker.create_progress_stats_for_phase(phase):
-            await self._publish_processing_stats(stats, overall_worker_stats)
-
         handled = getattr(self, "_all_records_received_phases", set())
         if phase in handled:
             return
         handled.add(phase)
         self._all_records_received_phases = handled
+
+        overall_worker_stats = self._records_tracker.create_overall_worker_stats()
+        for stats in self._records_tracker.create_progress_stats_for_phase(phase):
+            await self._publish_processing_stats(stats, overall_worker_stats)
         await self._handle_all_records_received(phase)
 
     async def _handle_all_records_received(self, phase: CreditPhase) -> None:
@@ -1303,8 +1329,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         else:
             if isinstance(response, CommandErr):
                 self.warning(f"Server metrics final scrape failed: {response.error}")
-            else:
+            elif isinstance(response, CommandUnhandled):
+                self.warning(
+                    "Server metrics final scrape was unhandled: the controller "
+                    f"has no {CommandType.PROFILE_COMPLETE} handler"
+                )
+            elif isinstance(response, CommandAck | CommandOk):
                 self.debug("Server metrics final scrape completed")
+            else:
+                self.warning(
+                    "Server metrics final scrape returned an unexpected "
+                    f"response: {response!r}"
+                )
 
         self.debug("Server metrics completion command returned, processing now...")
         await self._process_results(phase=phase, cancelled=cancelled)
@@ -1536,6 +1572,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         subscribers at the per-UI default cadence (the value
         ``realtime_metrics_interval`` returns when unset), so a
         ``--ui dashboard --stats-interval 0`` run still drives the live panel.
+
+        The publish gate below also opens for ``--ui-type none`` runs that
+        still have a live dashboard consumer: a local API server
+        (``--api-port``) or a Kubernetes-managed run, both of which serve the
+        web dashboard over the same WebSocket even though no terminal UI is
+        attached. Otherwise a headless ``--api-port`` run would silently show
+        "waiting for data" in the Real-Time Metrics panel forever.
         """
         configured_interval = self.run.cfg.runtime.realtime_metrics_interval(
             self.run.cfg.ui_type
@@ -1551,10 +1594,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         while not self.stop_requested:
             await asyncio.sleep(interval)
 
-            if (
-                self.run.cfg.ui_type != UIType.DASHBOARD
-                and not Environment.UI.REALTIME_METRICS_ENABLED
-            ):
+            if not self._realtime_metrics_publish_enabled():
                 continue
 
             phase_stats = self._records_tracker.create_stats_for_phase(
@@ -2315,7 +2355,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self.debug(lambda: f"Processing records (cancelled: {cancelled})")
         self.info("Processing records results...")
 
-        await self._finalize_record_processor_artifacts()
+        artifact_finalize_errors: list[ErrorDetails] = []
+        try:
+            await self._finalize_record_processor_artifacts()
+        except Exception as e:
+            if self._is_kubernetes_run():
+                raise
+            error = ErrorDetails.from_exception(
+                e,
+                stage="record_processor_artifact_finalize",
+                **{ERROR_FATAL_DETAIL_KEY: False},
+            )
+            self.error(
+                "Non-fatal record-processor artifact finalization failure: "
+                f"{error.message}"
+            )
+            artifact_finalize_errors.append(error)
         telemetry_drain_errors = await self._await_telemetry_ingest_complete()
 
         # Deliver the run-level mean network RTT before summarize() so
@@ -2328,6 +2383,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             error_results,
             summary_ctx,
         ) = await self._summarize_metric_record_accumulators(phase, cancelled)
+        error_results.extend(artifact_finalize_errors)
         error_results.extend(telemetry_drain_errors)
 
         warmup_records_results = await self._summarize_warmup_metric_records()

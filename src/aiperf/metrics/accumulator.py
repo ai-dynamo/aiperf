@@ -711,10 +711,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
-        # CPU-bound numpy work over the full record set; run in a thread so the
-        # event loop stays responsive. Safe here (unlike the realtime summarize)
-        # because the final export runs after ingestion has stopped, so nothing
-        # mutates the column store concurrently.
+        # Ctrl+C finalizes before late record processors necessarily stop
+        # publishing. Keep that path on the event loop so column-store mutation
+        # cannot race a worker thread traversing its arrays.
+        if ctx.cancelled:
+            return self._summarize_for_export_context(ctx)
         return await asyncio.to_thread(self._summarize_for_export_context, ctx)
 
     def _inject_sweep_metrics(

@@ -296,7 +296,7 @@ for c in pod['status'].get('containerStatuses', []):
 
 2. **Increase workers, reduce per-pod** -- Use more pods with fewer workers each. Lower `spec.benchmark.runtime.workersPerPod` in the CR (the cluster-wide worker total stays `--total-workers`; this knob only controls how that total is fanned across pods).
 
-3. **Raise the worker-pod memory budget** -- `AIPERF_K8S_WORKER_POD_MEMORY` (default `4Gi`) is read by the process that renders the JobSet, so it must be set on the operator container. Putting it in `spec.podTemplate.env` has no effect on container resources:
+3. **Raise the worker-pod memory budget** -- `AIPERF_K8S_WORKER_POD_MEMORY` (default `6Gi`) is read by the process that renders the JobSet, so it must be set on the operator container. Putting it in `spec.podTemplate.env` has no effect on container resources:
    ```bash
    kubectl set env -n aiperf-system deploy/aiperf-operator \
      AIPERF_K8S_WORKER_POD_MEMORY=8Gi

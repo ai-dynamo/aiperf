@@ -10,7 +10,7 @@ Focuses on:
 - conditions surfaced through the job-detail diagnostics payload
 
 Out of scope: browser rendering of diagnostics tabs, covered by
-``tests/unit/ui/test_operator_logs_events_edges.py`` and conditions UI tests.
+``tests/ui/test_operator_logs_events_edges.py`` and conditions UI tests.
 """
 
 from __future__ import annotations

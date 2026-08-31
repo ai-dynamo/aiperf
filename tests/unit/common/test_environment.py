@@ -308,6 +308,11 @@ class TestRuntimeSettings:
         with pytest.raises(ValueError):
             _ServerMetricsSettings(REALTIME_PUBLISH_INTERVAL_SECONDS=0.5e-9)
 
+    def test_zmq_reconnect_max_interval_accepts_zero_for_unbounded_retry(self) -> None:
+        settings = _ZMQSettings(RECONNECT_IVL_MAX=0)
+
+        assert settings.RECONNECT_IVL_MAX == 0
+
 
 class TestServiceSettingsUvloopWindows:
     """Test suite for automatic uvloop disabling on Windows."""
@@ -424,11 +429,11 @@ class TestWorkerStaleTimeVsHeartbeat:
     SERVICE.HEARTBEAT_INTERVAL.
 
     StickyCreditRouter.evict_stale_workers() computes its eviction cutoff as
-    STALE_TIME * 3, fed only by the generic HeartbeatMessage cadence. Without
-    this validator, a legal but too-small STALE_TIME (e.g. 0.1s with the
-    default 5s HEARTBEAT_INTERVAL) makes the cutoff shorter than a single
-    real heartbeat interval, so every worker looks stale on the very first
-    sweep.
+    STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER, fed only by the generic
+    HeartbeatMessage cadence. Without this validator, a legal but too-small
+    STALE_TIME (e.g. 0.1s with the default 5s HEARTBEAT_INTERVAL) makes the
+    cutoff shorter than a single real heartbeat interval, so every worker
+    looks stale on the very first sweep.
 
     HEARTBEAT_MISSED_THRESHOLD is deliberately NOT part of this invariant: it
     is the controller watchdog's tolerance for missed beats and never reaches
@@ -474,6 +479,56 @@ class TestWorkerStaleTimeVsHeartbeat:
             assert stale_time == env.WORKER.STALE_TIME
             assert heartbeat_interval == env.SERVICE.HEARTBEAT_INTERVAL
             assert heartbeat_missed_threshold == env.SERVICE.HEARTBEAT_MISSED_THRESHOLD
+
+    @pytest.mark.parametrize(
+        "stale_time,heartbeat_interval,multiplier,should_raise",
+        [
+            # Old hardcoded 3 gave 4*3=12 > 5 and passed; the configured 1.0
+            # gives 4*1=4 <= 5, which must now be rejected.
+            param(4.0, 5.0, 1.0, True, id="lowered_multiplier_now_rejected"),
+            # Old hardcoded 3 gave 1*3=3 <= 5 and wrongly raised at import time;
+            # the configured 10.0 gives 1*10=10 > 5, which must be accepted.
+            param(1.0, 5.0, 10.0, False, id="raised_multiplier_now_accepted"),
+            param(2.0, 5.0, 1.0, True, id="lowered_multiplier_equal_boundary"),
+            param(0.6, 5.0, 10.0, False, id="raised_multiplier_clears_boundary"),
+        ],
+    )  # fmt: skip
+    def test_validate_worker_stale_time_uses_the_configured_multiplier(
+        self,
+        stale_time: float,
+        heartbeat_interval: float,
+        multiplier: float,
+        should_raise: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """[F32] The cutoff must track ROUTER_STALE_EVICTION_MULTIPLIER, not a literal 3.
+
+        ``StickyCreditRouter.evict_stale_workers`` derives its cutoff from the
+        configured multiplier, so a validator hardcoding 3 disagreed with the
+        code it was guarding in both directions: it waved through a config the
+        router would treat as instantly stale (evicting every worker on the
+        first sweep), and it rejected a safe config outright -- from an
+        import-time singleton, which makes the package unimportable.
+        """
+        monkeypatch.setenv("AIPERF_WORKER_STALE_TIME", str(stale_time))
+        monkeypatch.setenv("AIPERF_SERVICE_HEARTBEAT_INTERVAL", str(heartbeat_interval))
+        monkeypatch.setenv(
+            "AIPERF_WORKER_ROUTER_STALE_EVICTION_MULTIPLIER", str(multiplier)
+        )
+
+        if should_raise:
+            with pytest.raises(
+                ValueError,
+                match=r"ROUTER_STALE_EVICTION_MULTIPLIER",
+            ):
+                _Environment()
+        else:
+            env = _Environment()
+            assert multiplier == env.WORKER.ROUTER_STALE_EVICTION_MULTIPLIER
+            assert (
+                env.WORKER.STALE_TIME * env.WORKER.ROUTER_STALE_EVICTION_MULTIPLIER
+                > env.SERVICE.HEARTBEAT_INTERVAL
+            )
 
 
 class TestAPIServerSettings:

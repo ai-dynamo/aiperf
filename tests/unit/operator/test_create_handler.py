@@ -351,3 +351,37 @@ async def test_preflight_warning_message_truncated_when_too_long() -> None:
     # The truncated summary portion is exactly 512 chars (509 + "...")
     summary = msg.split("produced warnings: ", 1)[1]
     assert len(summary) == 512
+
+
+@pytest.mark.asyncio
+async def test_cancelled_creation_delete_failure_raises_temporary_error():
+    """A failed cancelled-creation JobSet reap must be retried, not swallowed.
+
+    Nothing else reaps that JobSet: the CR survives a ``spec.cancel``, so
+    ownerReference GC never fires, the sticky cancel flag short-circuits later
+    monitor ticks, and the ``spec.cancel`` watcher will not re-fire for an
+    unchanged value.
+    """
+    from aiperf.operator.handlers.create import _finalize_cancelled_creation
+
+    patch = _status_patch()
+    status = MagicMock()
+
+    with (
+        mock_patch(
+            "aiperf.operator.handlers.create.delete_owned_aiperfjob_jobset",
+            new=AsyncMock(side_effect=RuntimeError("apiserver unavailable")),
+        ),
+        pytest.raises(kopf.TemporaryError, match="apiserver unavailable"),
+    ):
+        await _finalize_cancelled_creation(
+            patch=patch,
+            status=status,
+            job_id="job-1",
+            jobset_name="aiperf-job-1",
+            namespace="ns",
+            name="job-1",
+            uid="uid-1",
+        )
+
+    assert patch.status["jobSetName"] == "aiperf-job-1"

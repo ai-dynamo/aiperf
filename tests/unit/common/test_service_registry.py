@@ -147,16 +147,89 @@ def test_update_service_ignores_unknown_and_stale_updates(
 ) -> None:
     registry.expect_services({ServiceType.WORKER: 1})
     _register(registry, "worker-0", seen_ns=10)
-    registry.update_service("ghost", ServiceType.WORKER, 50, LifecycleState.RUNNING)
+    registry.update_service(
+        "ghost",
+        service_type=ServiceType.WORKER,
+        last_seen_ns=50,
+        state=LifecycleState.RUNNING,
+        seq=1,
+    )
     assert registry.get_service("ghost") is None
 
-    registry.update_service("worker-0", ServiceType.WORKER, 5, LifecycleState.STOPPING)
-    assert registry.get_service("worker-0").last_seen_ns == 10
+    registry.update_service(
+        "worker-0",
+        service_type=ServiceType.WORKER,
+        last_seen_ns=5,
+        state=LifecycleState.STOPPING,
+        seq=5,
+    )
+    info = registry.get_service("worker-0")
+    assert info.last_seen_ns == 5
+    assert info.state == LifecycleState.STOPPING
 
-    registry.update_service("worker-0", ServiceType.WORKER, 50, LifecycleState.STOPPING)
+    # A seq that is not strictly greater than the last-applied one is dropped
+    # whole, even though its last_seen_ns is larger.
+    registry.update_service(
+        "worker-0",
+        service_type=ServiceType.WORKER,
+        last_seen_ns=50,
+        state=LifecycleState.RUNNING,
+        seq=3,
+    )
+    info = registry.get_service("worker-0")
+    assert info.last_seen_ns == 5
+    assert info.state == LifecycleState.STOPPING
+
+    registry.update_service(
+        "worker-0",
+        service_type=ServiceType.WORKER,
+        last_seen_ns=50,
+        state=LifecycleState.RUNNING,
+        seq=6,
+    )
     info = registry.get_service("worker-0")
     assert info.last_seen_ns == 50
-    assert info.state == LifecycleState.STOPPING
+    assert info.state == LifecycleState.RUNNING
+
+
+def test_update_service_wallclock_ordering_lets_late_stale_update_regress_state(
+    registry: _ServiceRegistry,
+) -> None:
+    """Bug (fixed): ``last_seen_ns`` is stamped by the controller at receipt
+    time, so it is monotone by construction and can never catch a message
+    that is logically stale but arrives (and gets stamped) after a logically
+    newer one -- e.g. a Heartbeat sent before a StatusUpdate gets stuck
+    behind an HWM backlog and is delivered to the controller after the
+    StatusUpdate. Ordering must be decided by the sender-stamped ``seq``,
+    not by the receipt-time ``last_seen_ns``.
+    """
+    registry.expect_services({ServiceType.WORKER: 1})
+    _register(registry, "worker-0", seen_ns=1)
+
+    # The StatusUpdate (logically the newest signal, seq=5) reaches the
+    # controller first and is stamped with the controller's receipt clock.
+    registry.update_service(
+        "worker-0",
+        service_type=ServiceType.WORKER,
+        last_seen_ns=200,
+        state=LifecycleState.STOPPING,
+        seq=5,
+    )
+    # A Heartbeat that was actually SENT before the StatusUpdate (seq=4)
+    # arrives late, but still receives a *later* wall-clock stamp because
+    # time only moves forward at the controller.
+    registry.update_service(
+        "worker-0",
+        service_type=ServiceType.WORKER,
+        last_seen_ns=300,
+        state=LifecycleState.RUNNING,
+        seq=4,
+    )
+
+    info = registry.get_service("worker-0")
+    assert info.state == LifecycleState.STOPPING, (
+        "a wall-clock-stamped-but-logically-stale update must not regress state"
+    )
 
 
 def test_unregister_keeps_the_entry_but_clears_registration(
@@ -310,3 +383,18 @@ def test_get_all_registered_ids_returns_only_registered_services() -> None:
         state=LifecycleState.RUNNING,
     )
     assert ServiceRegistry.get_all_registered_ids() == {"live-1"}
+
+
+def test_register_type_mismatch_correction_preserves_total_expected(
+    registry: _ServiceRegistry,
+) -> None:
+    """A pre-expected service that registers under a different type must not
+    drop _total_expected -- only expected_by_type should shift between types."""
+    registry.expect_service("worker-0", ServiceType.WORKER)
+    registry.expect_services({ServiceType.RECORD_PROCESSOR: 1})
+    assert registry._total_expected == 2
+
+    _register(registry, "worker-0", service_type=ServiceType.RECORD_PROCESSOR)
+
+    assert registry._total_expected == 2
+    assert sum(registry.expected_by_type.values()) == registry._total_expected

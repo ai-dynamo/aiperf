@@ -243,7 +243,7 @@ class TestOperatorDownloadPathTraversal:
             output_dir,
         )
 
-        assert result is None
+        assert result == "refused"
         assert (output_dir / READY_MARKER_NAME).exists() is False
 
 

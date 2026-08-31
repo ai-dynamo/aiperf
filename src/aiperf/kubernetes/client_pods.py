@@ -148,9 +148,9 @@ async def find_controller_pod(
 ) -> tuple[str, PodPhase] | None:
     """Find the controller pod for a job; returns (name, phase) or None.
 
-    Uses :func:`controller_selector` to filter for the single pod from the
-    ``controller`` replicated-job in the JobSet. If the JobSet spec ever
-    scales the controller beyond one replica, this returns the first one.
+    Uses :func:`controller_selector` to filter for controller pods from the
+    JobSet. Prefers non-deleting pods, then the newest creation timestamp;
+    ties and missing timestamps retain the API list order.
 
     Args:
         api: Open ``ApiClient`` from :func:`k8s_client`.
@@ -172,7 +172,14 @@ async def find_controller_pod(
     )
     if not pod_list.items:
         return None
-    pod = pod_list.items[0]
+    pod = max(
+        pod_list.items,
+        key=lambda candidate: (
+            candidate.metadata.deletion_timestamp is None,
+            candidate.metadata.creation_timestamp is not None,
+            candidate.metadata.creation_timestamp,
+        ),
+    )
     raw_phase = pod.status.phase if pod.status and pod.status.phase else "Unknown"
     return (pod.metadata.name, PodPhase(raw_phase))
 

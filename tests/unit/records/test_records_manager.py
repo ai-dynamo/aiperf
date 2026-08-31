@@ -1092,6 +1092,25 @@ def _metric_records_message(
 
 class TestRecordsManagerTimingDispatch:
     @pytest.mark.asyncio
+    async def test_all_records_received_publishes_terminal_progress_once(self) -> None:
+        """A duplicate completion signal must not republish terminal progress."""
+        manager = _create_manager_for_timing_dispatch()
+        progress = MagicMock()
+        overall = MagicMock()
+        manager._records_tracker.create_overall_worker_stats.return_value = overall
+        manager._records_tracker.create_progress_stats_for_phase.return_value = [
+            progress
+        ]
+
+        await manager._handle_all_records_received_once(CreditPhase.PROFILING)
+        await manager._handle_all_records_received_once(CreditPhase.PROFILING)
+
+        manager._publish_processing_stats.assert_awaited_once_with(progress, overall)
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
+    @pytest.mark.asyncio
     async def test_on_credit_phase_start_dispatches_timing_snapshot(self) -> None:
         manager = _create_manager_for_timing_dispatch()
         stats = _create_credit_phase_stats()
@@ -1708,6 +1727,9 @@ class TestRecordsManagerArtifactFinalization:
         manager.debug = MagicMock()
         manager.info = MagicMock()
         manager._records_tracker = MagicMock()
+        manager.run = SimpleNamespace(
+            cfg=SimpleNamespace(runtime=SimpleNamespace(service_run_type="kubernetes"))
+        )
         manager._process_results_lock = asyncio.Lock()
         manager._processed_results = {}
         manager._finalize_record_processor_artifacts = AsyncMock(

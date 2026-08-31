@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -276,12 +277,7 @@ def _derive_server_metrics(config: BenchmarkConfig) -> int:
 
 
 def _derive_http_trace(config: BenchmarkConfig) -> bool:
-    if not hasattr(config.artifacts, "formats"):
-        return False
-    return "http_trace" in {
-        fmt.value if hasattr(fmt, "value") else str(fmt)
-        for fmt in config.artifacts.formats
-    }
+    return bool(getattr(config.artifacts, "trace", False))
 
 
 def _estimate_phase_requests(phase: BasePhaseConfig, concurrency: int) -> int:
@@ -289,6 +285,10 @@ def _estimate_phase_requests(phase: BasePhaseConfig, concurrency: int) -> int:
     if phase.requests is not None:
         return phase.requests
     if phase.duration is not None:
+        if not isfinite(phase.duration):
+            raise ValueError(
+                "memory estimation does not support infinite phase duration"
+            )
         rate = getattr(phase, "rate", None)
         if rate is not None:
             return int(phase.duration * rate)
@@ -304,7 +304,11 @@ def _estimate_phase_duration(phase: BasePhaseConfig, concurrency: int) -> float:
     """Estimate phase duration in seconds."""
     if phase.duration is not None:
         return phase.duration
-    requests = phase.requests or _DEFAULT_PHASE_REQUEST_COUNT
+    requests = phase.requests
+    if requests is None and phase.sessions is not None:
+        requests = phase.sessions * 3
+    if requests is None:
+        requests = _DEFAULT_PHASE_REQUEST_COUNT
     rate = getattr(phase, "rate", None)
     if rate is not None:
         return requests / rate
@@ -361,8 +365,12 @@ def _extract_entry_count(ds: object) -> int:
 
 
 def _extract_max_turns(ds: object) -> int:
-    if not hasattr(ds, "format"):
+    """Return configured turns for synthetic datasets or file-format defaults."""
+    turns = getattr(ds, "turns", None)
+    if turns is not None:
+        return max(1, int(getattr(turns, "mean", turns)))
+    fmt = getattr(ds, "format", None)
+    if fmt is None:
         return 1
-    fmt = ds.format
     fmt_str = fmt.value if hasattr(fmt, "value") else str(fmt)
     return 5 if "multi_turn" in fmt_str else 1

@@ -64,6 +64,8 @@ class ResultsDB:
     async def leaderboard(self, *args, **kwargs) -> list[dict[str, Any]]:
         index_rows: list[dict[str, Any]] = []
         query_supported = self._metric_query_supported(args, kwargs)
+        if not query_supported:
+            return []
         if await self._ensure_readonly_index():
             try:
                 index_rows = await runs_index.leaderboard(*args, **kwargs)
@@ -73,7 +75,7 @@ class ResultsDB:
                 # disk scan's empty result, not surface as a 500.
                 logger.debug("runs_index leaderboard unavailable: %s", exc)
             else:
-                current_rows = self._filter_current_index_dicts(
+                current_rows = await self._filter_current_index_dicts(
                     index_rows, kwargs.get("epoch")
                 )
                 if (
@@ -87,7 +89,7 @@ class ResultsDB:
             self._leaderboard_from_disk, *args, **kwargs
         )
         rows = self._merge_latest_rows(
-            self._filter_current_index_dicts(index_rows, kwargs.get("epoch")),
+            await self._filter_current_index_dicts(index_rows, kwargs.get("epoch")),
             disk_rows,
             kwargs.get("epoch"),
         )
@@ -99,6 +101,8 @@ class ResultsDB:
     async def history(self, *args, **kwargs) -> list[dict[str, Any]]:
         index_rows: list[dict[str, Any]] = []
         query_supported = self._metric_query_supported(args, kwargs)
+        if not query_supported:
+            return []
         if await self._ensure_readonly_index():
             try:
                 index_rows = await runs_index.history(*args, **kwargs)
@@ -108,7 +112,7 @@ class ResultsDB:
                 # disk scan's empty result, not surface as a 500.
                 logger.debug("runs_index history unavailable: %s", exc)
             else:
-                current_rows = self._filter_current_index_dicts(
+                current_rows = await self._filter_current_index_dicts(
                     index_rows, kwargs.get("epoch")
                 )
                 if (
@@ -120,7 +124,7 @@ class ResultsDB:
 
         disk_rows = await asyncio.to_thread(self._history_from_disk, *args, **kwargs)
         rows = self._merge_latest_rows(
-            self._filter_current_index_dicts(index_rows, kwargs.get("epoch")),
+            await self._filter_current_index_dicts(index_rows, kwargs.get("epoch")),
             disk_rows,
             kwargs.get("epoch"),
         )
@@ -140,7 +144,7 @@ class ResultsDB:
             except (RuntimeError, ValueError, sqlite3.Error) as exc:
                 logger.debug("runs_index compare unavailable: %s", exc)
             else:
-                current_rows = self._filter_current_index_dicts(
+                current_rows = await self._filter_current_index_dicts(
                     index_rows, kwargs.get("epoch")
                 )
                 if (
@@ -152,7 +156,7 @@ class ResultsDB:
 
         disk_rows = await asyncio.to_thread(self._compare_from_disk, *args, **kwargs)
         return self._merge_latest_rows(
-            self._filter_current_index_dicts(index_rows, kwargs.get("epoch")),
+            await self._filter_current_index_dicts(index_rows, kwargs.get("epoch")),
             disk_rows,
             kwargs.get("epoch"),
         )
@@ -170,12 +174,14 @@ class ResultsDB:
 
         if epoch is None:
             row = await runs_index.get_latest_run(namespace, job_id)
-            if row is None or not self._index_run_exists(
-                row.namespace, row.job_id, row.epoch
+            if row is None or not await asyncio.to_thread(
+                self._index_run_exists, row.namespace, row.job_id, row.epoch
             ):
                 return await self._summary_from_disk(namespace, job_id, None)
             epoch = row.epoch
-        elif not self._index_run_exists(namespace, job_id, epoch):
+        elif not await asyncio.to_thread(
+            self._index_run_exists, namespace, job_id, epoch
+        ):
             return await self._summary_from_disk(namespace, job_id, epoch)
 
         blob = await runs_index.get_summary_blob(namespace, job_id, epoch)
@@ -203,6 +209,9 @@ class ResultsDB:
             else:
                 query_succeeded = True
 
+        current_index_rows = await asyncio.to_thread(
+            self._filter_current_index_rows, index_rows
+        )
         keyed = {
             (row.namespace, row.job_id): {
                 "namespace": row.namespace,
@@ -216,8 +225,7 @@ class ResultsDB:
                 "error": row.error,
                 "file_count": row.file_count,
             }
-            for row in index_rows
-            if self._index_run_current(row.namespace, row.job_id, row.epoch, None)
+            for row in current_index_rows
         }
         if (
             query_succeeded
@@ -256,7 +264,16 @@ class ResultsDB:
             metric in DEFAULT_COMPARE_METRICS for metric in metrics
         )
 
-    def _filter_current_index_dicts(
+    async def _filter_current_index_dicts(
+        self,
+        index_rows: list[dict[str, Any]],
+        requested_epoch: str | None,
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._filter_current_index_dicts_sync, index_rows, requested_epoch
+        )
+
+    def _filter_current_index_dicts_sync(
         self,
         index_rows: list[dict[str, Any]],
         requested_epoch: str | None,
@@ -267,6 +284,14 @@ class ResultsDB:
             if self._index_run_current(
                 row["namespace"], row["job_id"], row["epoch"], requested_epoch
             )
+        ]
+
+    def _filter_current_index_rows(self, index_rows: list[Any]) -> list[Any]:
+        """Keep indexed rows whose persisted run is still current."""
+        return [
+            row
+            for row in index_rows
+            if self._index_run_current(row.namespace, row.job_id, row.epoch, None)
         ]
 
     def _index_run_current(
@@ -569,4 +594,4 @@ class ResultsDB:
         run_dir = resolve_run_dir(self._results_dir, namespace, job_id, epoch)
         if run_dir is None:
             return None
-        return self._read_summary_file(run_dir)
+        return await asyncio.to_thread(self._read_summary_file, run_dir)

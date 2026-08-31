@@ -500,11 +500,15 @@ class TestReservedFilenamesAndIdempotence:
         )
 
         with patch("aiohttp.ClientSession", return_value=session) as client_session:
-            downloaded = await _download_all_artifacts(
+            outcome = await _download_all_artifacts(
                 "http://localhost:19090", "llama3-latency", tmp_path
             )
 
-        assert downloaded == [("metrics.json", 12)]
+        assert outcome is not None
+        assert outcome.downloaded == [("metrics.json", 12)]
+        # The ready marker is refused by policy, not a failed download.
+        assert outcome.failed == []
+        assert outcome.complete is True
         assert client_session.call_args.kwargs["timeout"].total == 302.0
         assert session.get_kwargs[0]["timeout"].total == 32.0
         assert "timeout" not in session.get_kwargs[1]
@@ -514,6 +518,42 @@ class TestReservedFilenamesAndIdempotence:
             "http://localhost:19090/api/results/files/.aiperf_results_ready.json"
             not in session.get_calls
         )
+
+    @pytest.mark.asyncio
+    async def test_download_all_artifacts_reports_advertised_but_undelivered_file(
+        self, tmp_path: Path
+    ) -> None:
+        """A 404 on an advertised file is a failure, not a silent skip."""
+        session = _QueuedSession(
+            {
+                "http://localhost:19090/api/results/list": [
+                    _Response(
+                        json_data={
+                            "files": [
+                                {"name": "metrics.json"},
+                                {"name": "profile_export.jsonl"},
+                            ]
+                        }
+                    )
+                ],
+                "http://localhost:19090/api/results/files/metrics.json": [
+                    _Response(body=b'{"ok": true}')
+                ],
+                "http://localhost:19090/api/results/files/profile_export.jsonl": [
+                    _Response(status=404)
+                ],
+            }
+        )
+
+        with patch("aiohttp.ClientSession", return_value=session):
+            outcome = await _download_all_artifacts(
+                "http://localhost:19090", "llama3-latency", tmp_path
+            )
+
+        assert outcome is not None
+        assert outcome.downloaded == [("metrics.json", 12)]
+        assert outcome.failed == ["profile_export.jsonl"]
+        assert outcome.complete is False
 
     @pytest.mark.asyncio
     async def test_download_all_sweep_files_uses_request_and_download_timeouts(

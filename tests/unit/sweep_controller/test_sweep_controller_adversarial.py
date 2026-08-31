@@ -398,8 +398,7 @@ async def test_main_adaptive_planner_failure_cancels_poll_task_before_exit(
     main_mod = captured["module"]
 
     try:
-        with pytest.raises(RuntimeError, match="bayesian planner cold-start failed"):
-            await main_mod.main()
+        assert await main_mod.main() == 1
         cancel_task = captured.get("cancel_task")
         assert isinstance(cancel_task, asyncio.Task)
         assert cancel_task.done(), "planner failure leaked the cancel-poll task"

@@ -12,7 +12,23 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from aiperf.config.deployment import DeploymentConfig
     from aiperf.config.kube import KubeOptions
+
+
+def pin_default_direct_image(deployment: DeploymentConfig) -> None:
+    """Replace the operator-less image defaults with immutable release values."""
+    from aiperf import __version__
+    from aiperf.config.deployment import DeploymentConfig
+    from aiperf.kubernetes.enums import ImagePullPolicy
+
+    default_image = DeploymentConfig.model_fields["image"].default
+    if "image" in deployment.model_fields_set or deployment.image != default_image:
+        return
+
+    deployment.image = f"nvcr.io/nvidia/aiperf:{__version__}"
+    if deployment.image_pull_policy is None:
+        deployment.image_pull_policy = ImagePullPolicy.IF_NOT_PRESENT
 
 
 def resolve_child_name(
@@ -67,6 +83,48 @@ def resolve_child_name(
         )
     suffix = f"-t{trial:01d}" if trial is not None else ""
     return f"{parent}-v{variation:02d}{suffix}"
+
+
+def resolve_child_target(
+    job_id: str | None,
+    *,
+    variation: int | None = None,
+    trial: int | None = None,
+    command: str,
+) -> str | None:
+    """Apply sweep child selectors to ``job_id``, refusing an implicit parent.
+
+    ``--variation`` / ``--trial`` only mean something relative to a named
+    AIPerfSweep. When ``job_id`` is ``None`` the caller falls back to the
+    last-deployed benchmark, and silently dropping the selectors would target
+    the parent sweep instead of the requested child - which for ``kube cancel``
+    means cancelling every variation. Hard-fail instead of guessing.
+
+    Args:
+        job_id: Explicit AIPerfJob/AIPerfSweep name, or ``None`` to use the
+            last deployed benchmark.
+        variation: Variation index selector (0..199).
+        trial: Trial index selector (0..9); requires ``variation``.
+        command: Command path used in the error message (e.g. ``"kube cancel"``).
+
+    Returns:
+        The child name when a selector applies, otherwise ``job_id`` unchanged.
+
+    Raises:
+        ValueError: If a selector is passed without an explicit ``job_id``, or
+            if the selector is out of range.
+    """
+    if job_id is None:
+        if variation is None and trial is None:
+            return None
+        raise ValueError(
+            "--variation/--trial require an explicit job_id: "
+            f"use `aiperf {command} <sweep-name> -v N`. Without a name the "
+            "last deployed benchmark is used, which would target the parent "
+            "sweep instead of the child variation."
+        )
+    child = resolve_child_name(job_id, variation=variation, trial=trial)
+    return child if child is not None else job_id
 
 
 def generate_benchmark_name(config: Any, *, suffix: str = "") -> str:
@@ -167,12 +225,18 @@ def print_memory_estimate(
         configured_workers=config.benchmark.runtime.workers,
         workers_per_pod=config.benchmark.runtime.workers_per_pod,
     )
-    mem_est = estimate_memory(
-        config,
-        total_workers=total_workers,
-        workers_per_pod=config.benchmark.runtime.workers_per_pod,
-        connections_per_worker=spec.get("connectionsPerWorker", 100),
-    )
+    try:
+        mem_est = estimate_memory(
+            config,
+            total_workers=total_workers,
+            workers_per_pod=config.benchmark.runtime.workers_per_pod,
+            connections_per_worker=spec.get("connectionsPerWorker", 100),
+        )
+    except ValueError as exc:
+        kube_console.stderr_console.print(
+            f"Memory estimation skipped: {exc}", highlight=False
+        )
+        return
     rendered = format_estimate(mem_est)
     if label_prefix:
         kube_console.stderr_console.print(f"{label_prefix}", highlight=False)

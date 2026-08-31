@@ -982,6 +982,18 @@ async def _apply_completion_results(
     else:
         index_metrics = result.metrics
     phase = "Succeeded" if flags.success else "Failed"
+    # Re-derive alongside the recomputed phase: the verification pass above can
+    # flip ``flags.success`` after the first computation, so reusing the older
+    # value would index a failed run with ``error=None`` -> "unknown".
+    terminal_error = (
+        None
+        if flags.success
+        else (
+            flags.benchmark_failure
+            or result.error
+            or "Failed to fetch complete result files from controller"
+        )
+    )
     index_updated = await _update_job_index_safe(
         namespace=namespace,
         job_id=job_id,
@@ -992,7 +1004,7 @@ async def _apply_completion_results(
         summary_blob=summary_blob,
         metrics=scrub_non_finite(index_metrics),
         downloaded_files=result.downloaded,
-        error=result.error or None,
+        error=terminal_error,
         mtime_epoch=mtime_epoch,
         end_time=end_time,
         total_size_bytes=total_size_bytes,
@@ -1851,6 +1863,26 @@ async def _update_job_index_safe(
                 phase=phase,
             )
         else:
+            # A failed run can still have published metrics and files (a
+            # benchmark that ran to completion but reported request errors).
+            # ``upsert_run_failed`` writes only phase/error/end_time, so
+            # calling it alone would drop the summary blob, narrow metric
+            # columns, and file inventory — and ``set_latest`` below would then
+            # promote that metric-less row as the discoverable latest run.
+            # Seed the row with the results first, then stamp the terminal
+            # error (same two-step the checkpoint-salvage path uses).
+            await runs_index.upsert_run_completed(
+                namespace,
+                job_id,
+                epoch,
+                summary_blob=summary_blob if summary_blob is not None else b"",
+                metrics=metrics or {},
+                files=downloaded_files,
+                mtime_epoch=mtime_epoch,
+                end_time=end_time,
+                total_size_bytes=total_size_bytes,
+                phase=phase,
+            )
             await runs_index.upsert_run_failed(
                 namespace,
                 job_id,

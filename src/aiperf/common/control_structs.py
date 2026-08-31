@@ -18,7 +18,8 @@ Bidirectional (both unions):
     CommandUnhandled ("cu") - no handler matched the command
 
 Controller -> Service (ServiceBoundMessage):
-    RegistrationAck ("ack") - response to Registration
+    RegistrationAck ("ack")     - response to Registration
+    ReRegisterRequest ("rereg") - controller lost this sid; re-register from scratch
 """
 
 from typing import Any, TypeAlias
@@ -77,6 +78,16 @@ class Heartbeat(Struct, frozen=True, kw_only=True, tag_field="t", tag="hb"):
     state: str
     """Current lifecycle state of the heartbeat sender."""
 
+    seq: int = 0
+    """Per-service monotonic counter stamped by the SENDER, shared with StatusUpdate.
+
+    The controller's own receipt-time stamp is monotone by construction (it is
+    ``time.time_ns()`` at the controller), so it can never detect real
+    out-of-order delivery caused by HWM backlog or reconnect-flush reordering.
+    Only a sender-stamped sequence number can; ``ServiceRegistry.update_service``
+    uses this field, not wall-clock time, to reject stale updates.
+    """
+
 
 class StatusUpdate(Struct, frozen=True, kw_only=True, tag_field="t", tag="su"):
     """State change notification (fire-and-forget)."""
@@ -89,6 +100,12 @@ class StatusUpdate(Struct, frozen=True, kw_only=True, tag_field="t", tag="su"):
 
     state: str
     """New lifecycle state being reported."""
+
+    seq: int = 0
+    """Per-service monotonic counter stamped by the SENDER, shared with Heartbeat.
+
+    See :attr:`Heartbeat.seq` for why this replaces wall-clock ordering.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +207,21 @@ class RegistrationAck(Struct, frozen=True, kw_only=True, tag_field="t", tag="ack
     """Request identifier copied from the triggering Registration."""
 
 
+class ReRegisterRequest(Struct, frozen=True, kw_only=True, tag_field="t", tag="rereg"):
+    """Nudge a service to re-run its registration handshake from scratch.
+
+    Sent when the controller receives a Heartbeat or StatusUpdate from a
+    ``sid`` it does not recognize -- e.g. the controller process restarted
+    and its in-process ServiceRegistry came back up empty while the service
+    itself survived and kept heartbeating. Without this nudge the service
+    would heartbeat into a controller that never re-adds it, wedging the run
+    at whatever barrier counts registered services.
+    """
+
+    sid: str
+    """Service identifier the controller does not recognize, for logging."""
+
+
 # ---------------------------------------------------------------------------
 # Union types for polymorphic decoding
 # ---------------------------------------------------------------------------
@@ -206,7 +238,13 @@ ControllerBoundMessage: TypeAlias = (
 )
 
 ServiceBoundMessage: TypeAlias = (
-    RegistrationAck | Command | CommandAck | CommandOk | CommandErr | CommandUnhandled
+    RegistrationAck
+    | ReRegisterRequest
+    | Command
+    | CommandAck
+    | CommandOk
+    | CommandErr
+    | CommandUnhandled
 )
 
 

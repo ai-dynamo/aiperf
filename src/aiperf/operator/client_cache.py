@@ -132,6 +132,24 @@ def request_cancellation(key: str) -> None:
     event.set()
 
 
+def revoke_cancellation(key: str) -> None:
+    """Undo a ``request_cancellation`` for a job that is not being cancelled.
+
+    ``on_cancel`` arms the flag *before* deleting the JobSet so an in-flight
+    completion cannot overwrite Cancelled while the delete is in progress. When
+    that delete is abandoned on an identity fence (a foreign same-name JobSet,
+    or a 409 on the UID precondition), the handler returns without cancelling
+    anything and without a status patch. The flag would otherwise stay armed for
+    the process lifetime -- the ``spec.cancel`` field watcher does not re-fire
+    for an unchanged value -- so every later monitor tick would short-circuit
+    and strand the CR in its pre-cancel phase.
+
+    Only call this from a path that is definitively NOT cancelling: a transient
+    delete failure re-raises for a kopf retry and must keep the flag armed.
+    """
+    _cancellation_events.pop(key, None)
+
+
 def is_cancellation_requested(key: str) -> bool:
     """Return True if cancellation was requested for this job key."""
     event = _cancellation_events.get(key)
@@ -368,7 +386,7 @@ async def try_claim_completion(
             name,
             expected_uid=str(expected_uid) if expected_uid is not None else None,
         )
-        if live_claimed is True:
+        if live_claimed is not False:
             _shutdown_sent.add(key)
             from aiperf.operator.metrics import COMPLETION_CLAIM_RACES
 

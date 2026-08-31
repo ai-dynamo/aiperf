@@ -15,6 +15,7 @@ Focuses on:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -441,21 +442,26 @@ class TestFindControllerPodErrorPath:
         assert "aiperf.nvidia.com/job-id=j-1" in selector
 
     @pytest.mark.asyncio
-    async def test_picks_first_pod_when_multiple(self) -> None:
-        """Returns the first pod when the selector matches several."""
+    async def test_prefers_newer_non_deleting_replacement(self) -> None:
+        """Skips a deleting failed pod in favor of its Running replacement."""
         api = MagicMock(spec=ApiClient)
-        pods = [
-            _make_v1pod(name="first", phase="Running"),
-            _make_v1pod(name="second", phase="Running"),
-        ]
+        failed_pod = _make_v1pod(name="failed", phase="Failed")
+        failed_pod.metadata.creation_timestamp = datetime(2026, 8, 31, tzinfo=UTC)
+        failed_pod.metadata.deletion_timestamp = datetime(2026, 8, 31, 0, 1, tzinfo=UTC)
+        replacement_pod = _make_v1pod(name="replacement", phase="Running")
+        replacement_pod.metadata.creation_timestamp = datetime(
+            2026, 8, 31, 0, 2, tzinfo=UTC
+        )
         mock_core = MagicMock()
-        mock_core.list_namespaced_pod = AsyncMock(return_value=_pod_list(pods))
+        mock_core.list_namespaced_pod = AsyncMock(
+            return_value=_pod_list([failed_pod, replacement_pod])
+        )
         with patch(
             "aiperf.kubernetes.client_pods.client.CoreV1Api",
             return_value=mock_core,
         ):
             result = await find_controller_pod(api, "ns", "j-1")
-        assert result == ("first", PodPhase.RUNNING)
+        assert result == ("replacement", PodPhase.RUNNING)
 
 
 class TestFindRetrievablePodNoPod:
