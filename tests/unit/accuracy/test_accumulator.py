@@ -192,6 +192,21 @@ class TestAccuracyAccumulator:
         assert physics.unparsed == 0
         assert physics.accuracy_rate == 0.0
 
+    async def test_configured_tasks_with_zero_records_still_produce_a_summary(
+        self,
+    ) -> None:
+        acc = _make_accumulator()
+        _configure_dataset(acc, ["math", "physics"])
+
+        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+
+        assert summary is not None
+        assert summary.total_evaluated == 0
+        assert summary.grader_name is None
+        assert set(summary.per_task) == {"math", "physics"}
+        assert summary.per_task["math"].total == 0
+        assert summary.per_task["physics"].total == 0
+
     async def test_no_dataset_configured_notification_means_no_zero_fill(self) -> None:
         acc = _make_accumulator()
         await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])

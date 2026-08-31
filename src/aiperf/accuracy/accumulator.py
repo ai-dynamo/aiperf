@@ -76,11 +76,12 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         return [r for r in self._records if start_ns <= r.timestamp_ns < end_ns]
 
     def _build_summary(self, phase: CreditPhase | None) -> AccuracySummary | None:
-        """Roll scoped records into an ``AccuracySummary`` (None when empty).
+        """Roll scoped records into an ``AccuracySummary``.
 
         ``phase`` selects one phase; ``None`` is phase-agnostic (all records).
         Records with ``task is None`` count toward the overall totals but are
-        absent from ``per_task``.
+        absent from ``per_task``. Returns ``None`` only when there are no
+        records in scope and no configured tasks to zero-fill.
 
         Every task in ``_configured_tasks`` gets a ``per_task`` entry even with
         zero dispatched requests (e.g. ``--num-requests`` was too small to reach
@@ -91,7 +92,7 @@ class AccuracyAccumulator(BaseMetricsProcessor):
             if phase is None
             else [r for r in self._records if r.benchmark_phase == phase]
         )
-        if not scoped:
+        if not scoped and not self._configured_tasks:
             return None
 
         total_evaluated = len(scoped)
@@ -136,7 +137,7 @@ class AccuracyAccumulator(BaseMetricsProcessor):
             total_passed=total_passed,
             accuracy_rate=accuracy_rate,
             overall_unparsed=overall_unparsed,
-            grader_name=scoped[0].grader_name,
+            grader_name=scoped[0].grader_name if scoped else None,
             per_task=per_task,
         )
 
