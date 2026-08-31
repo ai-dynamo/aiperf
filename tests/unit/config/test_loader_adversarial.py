@@ -19,7 +19,11 @@ import textwrap
 import pytest
 from pydantic import ValidationError
 
-from aiperf.config.loader.core import _MAX_CONFIG_NESTING_DEPTH, load_config_from_string
+from aiperf.config.loader.core import (
+    _MAX_CONFIG_NESTING_DEPTH,
+    load_config_from_mapping,
+    load_config_from_string,
+)
 from aiperf.config.loader.errors import ConfigurationError
 
 _VALID_BENCHMARK = textwrap.dedent("""\
@@ -95,6 +99,15 @@ def test_yaml_cycle_raises_configuration_error() -> None:
         load_config_from_string(yaml_str)
     msg = str(exc_info.value)
     assert "Cyclic YAML aliases" in msg or "recursion" in msg.lower()
+
+
+def test_self_referential_mapping_raises_configuration_error() -> None:
+    """An in-memory cycle must raise ConfigurationError, not RecursionError."""
+    data: dict[str, object] = {"benchmark": {}}
+    data["benchmark"] = data
+
+    with pytest.raises(ConfigurationError, match="Cyclic"):
+        load_config_from_mapping(data)
 
 
 def test_yaml_deep_nesting_raises_configuration_error() -> None:

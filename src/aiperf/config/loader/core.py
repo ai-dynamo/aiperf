@@ -468,6 +468,7 @@ def load_config_from_mapping(
         )
 
     copied = copy.deepcopy(data)
+    _detect_cycles_or_depth(copied, file_path)
     try:
         _assert_string_keys(copied)
     except ConfigurationError as e:
