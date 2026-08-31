@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+pytestmark = pytest.mark.integration
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATES_DIR = REPO_ROOT / "deploy" / "helm" / "aiperf-operator" / "templates"
 JOB_CRD = TEMPLATES_DIR / "crd-aiperfjob.yaml"
 SWEEP_CRD = TEMPLATES_DIR / "crd-aiperfsweep.yaml"

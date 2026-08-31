@@ -14,7 +14,7 @@ from aiperf.accuracy.graders._codegen_worker_client import (
     CodegenWorkerError,
 )
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
 def _write_worker(tmp_path: Path, body: str) -> list[str]:

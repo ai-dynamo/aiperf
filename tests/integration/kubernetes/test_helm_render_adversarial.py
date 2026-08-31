@@ -31,6 +31,8 @@ from pytest import param
 
 from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
 
+pytestmark = pytest.mark.integration
+
 CHART_PATH = Path(__file__).parents[3] / "deploy" / "helm" / "aiperf-operator"
 PROJECT_ROOT = Path(__file__).parents[3]
 

@@ -30,6 +30,8 @@ from aiperf.kubernetes.subproc import (
     terminate_process,
 )
 
+pytestmark = pytest.mark.integration
+
 # ============================================================================
 # Helpers
 # ============================================================================

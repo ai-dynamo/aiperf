@@ -117,19 +117,17 @@ jobs:
     # ``always() && runner.os == 'Windows'`` guard on the second step,
     # GitHub Actions' implicit ``success()`` short-circuits the
     # component-integration step on any unit-test failure.
-    - name: Run unit tests (Windows)
-      # The ZMQ directories install a session-scoped SelectorEventLoopPolicy
-      # on Windows because their FD driver needs add_reader(). Selector loops
-      # cannot spawn subprocesses, which made unrelated unit tests fail.
-      # Keep them in a separate pytest process so the normal unit suite uses
-      # Windows' default ProactorEventLoopPolicy.
+    - name: Run unit and zmq tests (Windows)
+      # Merged into one invocation to pay collection overhead once instead of
+      # twice. tests/unit/conftest.py's no_sleep patch applies only to
+      # tests/unit/**; tests/zmq/** uses real asyncio.sleep as before.
+      # --no-looptime is omitted: looptime is opt-in per test via marker/
+      # fixture and zmq tests use neither, so they run with a real-time loop.
+      # --continue-on-collection-errors preserves the previous two-step
+      # behaviour where a unit collection error did not block the zmq suite.
       if: runner.os == 'Windows'
       run: |
-        uv run pytest tests/unit --ignore=tests/unit/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
-    - name: Run zmq tests (Windows)
-      if: ${{ !cancelled() && runner.os == 'Windows' }}
-      run: |
-        uv run pytest tests/unit/zmq tests/zmq -n auto --dist=worksteal --tb=short -m 'not performance and not stress and not slow'
+        uv run pytest tests/unit tests/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
       # ``!cancelled()`` overrides the implicit ``success()`` so component
       # integration still runs even if the unit-test step failed — matching
