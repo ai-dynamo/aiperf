@@ -129,6 +129,9 @@ class UserSession(AIPerfBaseModel):
             )
 
         turn = self.conversation.turns[turn_index]
+        # A context reset must always break the server-side chain: chaining onto a
+        # previous_response_id would retain history the reset is meant to discard.
+        # Clearing is the safe direction (falls back to sending full history).
         if turn.reset_context:
             self.previous_response_id = None
 

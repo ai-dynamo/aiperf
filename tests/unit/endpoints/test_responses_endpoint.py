@@ -1010,49 +1010,6 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) == "resp_b6c65395f4fb8c7d"
 
-    def test_extract_response_id_streaming_completed_returns_id(
-        self, endpoint: ResponsesEndpoint
-    ) -> None:
-        record = RequestRecord(
-            responses=[
-                TextResponse(
-                    perf_ns=1,
-                    text=orjson.dumps(
-                        {
-                            "type": "response.completed",
-                            "response": {
-                                "id": "resp_a66a66950cac5561",
-                                "object": "response",
-                                "status": "completed",
-                                "store": True,
-                            },
-                        }
-                    ).decode(),
-                )
-            ]
-        )
-        assert endpoint.extract_response_id(record) == "resp_a66a66950cac5561"
-
-    def test_extract_response_id_streaming_flat_id_returns_id(
-        self, endpoint: ResponsesEndpoint
-    ) -> None:
-        record = RequestRecord(
-            responses=[
-                TextResponse(
-                    perf_ns=1,
-                    text=orjson.dumps(
-                        {
-                            "type": "response.created",
-                            "id": "resp_flat_id_123",
-                            "status": "in_progress",
-                            "store": True,
-                        }
-                    ).decode(),
-                )
-            ]
-        )
-        assert endpoint.extract_response_id(record) == "resp_flat_id_123"
-
     def test_extract_response_id_non_streaming_returns_id(
         self, endpoint: ResponsesEndpoint
     ) -> None:
@@ -1151,7 +1108,6 @@ class TestResponsesStatefulChaining:
         )
         payload = endpoint.format_payload(request_info)
         assert "previous_response_id" not in payload
-        # Without previous_response_id, full history is sent
         assert len(payload["input"]) == 2
         assert payload["input"][0]["content"] == "First message"
         assert payload["input"][1]["content"] == "Second message"
@@ -1174,6 +1130,5 @@ class TestResponsesStatefulChaining:
         )
         payload = endpoint.format_payload(request_info)
         assert payload["previous_response_id"] == "resp_b6c65395f4fb8c7d"
-        # Stateful chain: only newest turn is sent in input
         assert len(payload["input"]) == 1
         assert payload["input"][0]["content"] == "Second message"

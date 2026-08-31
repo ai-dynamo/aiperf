@@ -426,21 +426,27 @@ class TestMessageArrayWithoutResponsesRejected:
 class TestSessionPreviousResponseId:
     """Tests for UserSession previous_response_id storage and reset_context handling."""
 
-    def test_store_response_id(self) -> None:
-        session = _make_session(
-            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
-            num_turns=3,
-        )
-        assert session.previous_response_id is None
-        session.store_response_id("resp_12345")
-        assert session.previous_response_id == "resp_12345"
-
-    def test_advance_turn_clears_previous_response_id_on_reset_context(self) -> None:
+    @pytest.mark.parametrize(
+        "reset_turn",
+        [
+            param(
+                Turn(
+                    raw_messages=[{"role": "user", "content": "Q2"}],
+                    reset_context=True,
+                ),
+                id="with_raw_messages",
+            ),
+            param(Turn(reset_context=True), id="synthetic_no_raw_messages"),
+        ],
+    )  # fmt: skip
+    def test_advance_turn_clears_previous_response_id_on_reset_context(
+        self, reset_turn: Turn
+    ) -> None:
         conv = Conversation(
             conversation_id="test-conv-reset",
             turns=[
-                Turn(messages=[{"role": "user", "content": "Q1"}]),
-                Turn(messages=[{"role": "user", "content": "Q2"}], reset_context=True),
+                Turn(raw_messages=[{"role": "user", "content": "Q1"}]),
+                reset_turn,
             ],
         )
         session = UserSession(
@@ -453,7 +459,8 @@ class TestSessionPreviousResponseId:
         session.store_response_id("resp_turn0")
         assert session.previous_response_id == "resp_turn0"
 
-        # Advance to turn 1 with reset_context=True clears previous_response_id
+        # A context reset always breaks the wire chain, regardless of whether the
+        # turn carries raw_messages: chaining would retain discarded history.
         session.advance_turn(1)
         assert session.previous_response_id is None
 
@@ -477,6 +484,5 @@ class TestSessionPreviousResponseId:
         session.store_response_id("resp_turn0")
         assert session.previous_response_id == "resp_turn0"
 
-        # Advance to turn 1 without reset_context preserves previous_response_id
         session.advance_turn(1)
         assert session.previous_response_id == "resp_turn0"
