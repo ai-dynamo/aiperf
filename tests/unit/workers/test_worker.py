@@ -1006,9 +1006,12 @@ class TestFinalizeSessionResponseChaining:
             context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
         )
 
-    async def test_error_record_keeps_last_good_response_id(
-        self, mock_worker, sample_credit_context, monkeypatch
-    ):
+    async def test_finalize_session_response_error_keeps_last_good_id(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """A failed turn may emit a partial ``response.created`` id; chaining onto
         it would corrupt server context, so the last good id must be preserved."""
         monkeypatch.setattr(
@@ -1028,9 +1031,12 @@ class TestFinalizeSessionResponseChaining:
         assert session.previous_response_id == "resp_prev_good"
         extract.assert_not_called()
 
-    async def test_success_record_stores_new_response_id(
-        self, mock_worker, sample_credit_context, monkeypatch
-    ):
+    async def test_finalize_session_response_success_stores_new_id(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setattr(
             mock_worker, "_process_responses_for_record", Mock(return_value=([], None))
         )
