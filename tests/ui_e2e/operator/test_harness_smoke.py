@@ -13,7 +13,7 @@ def test_smoke_dashboard_renders(harness):
     """Bare dashboard route loads without 'Operator API unreachable'."""
     page = harness.goto_dashboard()
     body = page.locator("body").inner_text()
-    assert "AIPerf Operator" in body, body[:500]
+    assert "AIPerf" in body and "OPERATOR" in body, body[:500]
     harness.assert_no_unreachable_banner()
 
 

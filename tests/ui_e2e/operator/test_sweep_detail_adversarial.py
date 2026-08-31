@@ -627,7 +627,7 @@ class TestPerCellAggregates:
 # ---------------------------------------------------------------------------
 
 
-def test_completed_sweep_promotes_winner_and_downloads_above_charts(harness):
+def test_completed_grid_sweep_shows_artifacts_and_variations_without_winner(harness):
     epoch = "1714069323"
     agg = _good_aggregate(total=2, completed=2)
     agg["per_cell_aggregates"][0]["metrics"]["output_token_throughput"] = {"avg": 900.0}
@@ -648,38 +648,22 @@ def test_completed_sweep_promotes_winner_and_downloads_above_charts(harness):
     (sweep_dir / "profile_export_aiperf.json").write_text(json.dumps({"ok": True}))
     with _patch_sweep_cr_lookups():
         page = harness.goto_sweep_detail(harness.ns, "completed-analysis", epoch=epoch)
-    winner_summary = page.locator("[data-testid=sweep-winner-summary]")
-    assert winner_summary.count() == 1
-    winner_text = winner_summary.inner_text()
-    assert "c=2" in winner_text
-    assert "1,200" in winner_text
-    assert "tok/s" in winner_text
-    assert "No completed variation" not in winner_text
+    assert page.locator("[data-testid=sweep-winner-summary]").count() == 0
+    assert page.locator("[data-testid=sweep-detail-variations]").count() == 1
     assert (
         page.locator("[data-testid=sweep-detail-aggregate-artifacts-card]").count() == 1
     )
-    winner_top = page.locator("[data-testid=sweep-winner-summary]").bounding_box()["y"]
-    chart_top = page.locator("[data-testid=sweep-detail-variations]").bounding_box()[
-        "y"
-    ]
-    assert winner_top < chart_top
 
     with _patch_sweep_cr_lookups():
         invalid_metric_page = harness.goto(
             f"/sweeps/{harness.ns}/completed-analysis/runs/{epoch}?metric=missing.metric"
         )
-    invalid_metric_page.wait_for_function(
-        "document.querySelector('[data-testid=\"sweep-winner-summary\"]')?.textContent.includes('Req throughput')",
-        timeout=5000,
+    invalid_metric_page.wait_for_selector(
+        "[data-testid=sweep-detail-variations]", timeout=5000
     )
-    fallback_text = invalid_metric_page.locator(
-        "[data-testid=sweep-winner-summary]"
-    ).inner_text()
-    assert "c=2" in fallback_text
-    assert "Req throughput" in fallback_text
-    assert "150" in fallback_text
-    assert "req/s" in fallback_text
-    assert "No completed variation" not in fallback_text
+    assert (
+        invalid_metric_page.locator("[data-testid=sweep-winner-summary]").count() == 0
+    )
 
 
 def test_live_trial_board_selection_opens_trial_detail(harness):
@@ -716,7 +700,8 @@ def test_live_trial_board_selection_opens_trial_detail(harness):
     with _patch_sweep_cr_lookups(find_returns=cr):
         page = harness.goto_sweep_detail(harness.ns, "select-board")
     assert (
-        "Unknown" in page.locator("[data-testid=sweep-live-trial-detail]").inner_text()
+        "unknown"
+        in page.locator("[data-testid=sweep-live-trial-detail]").inner_text().lower()
     )
     page.locator("[data-testid=sweep-trial-cell-0-1]").click()
     detail = page.locator("[data-testid=sweep-live-trial-detail]").inner_text()

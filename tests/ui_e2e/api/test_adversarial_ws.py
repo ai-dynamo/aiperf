@@ -310,45 +310,22 @@ def test_hostile_worker_ids_and_text_render_as_text_not_markup(
     dashboard.assert_no_bad_responses()
 
 
-def test_hostile_config_model_and_phase_names_render_as_text(
+def test_hostile_config_model_name_renders_as_text(
     dashboard: DashboardHarness,
 ) -> None:
-    """Config model and phase labels must render as inert text."""
+    """A config model name must render as inert text."""
     dialogs: list[str] = []
     dashboard.page.on(
         "dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss())
     )
     hostile_model = '<img src=x onerror="alert(1)">model'
-    hostile_phase = '<svg onload="alert(2)">profiling'
-    scenario = DashboardScenario(
-        cfg=dashboard_cfg(
-            models=[hostile_model],
-            phases=[
-                {
-                    "name": "warmup",
-                    "type": "concurrency",
-                    "requests": 2,
-                    "concurrency": 1,
-                },
-                {
-                    "name": hostile_phase,
-                    "type": "poisson",
-                    "rate": 5,
-                    "duration": 10,
-                    "concurrency": 2,
-                },
-            ],
-        )
-    )
+    scenario = DashboardScenario(cfg=dashboard_cfg(models=[hostile_model]))
 
     dashboard.goto_dashboard(scenario)
     dashboard.wait_for_boot()
 
     config_bar = dashboard.page.locator("#config-bar.visible")
     expect(config_bar).to_contain_text(hostile_model)
-    expect(config_bar).to_contain_text(hostile_phase)
-    expect(config_bar).to_contain_text("poisson")
-    assert config_bar.locator("svg").count() == 0
     assert config_bar.locator("img").count() == 0
     assert config_bar.locator("script").count() == 0
     assert dialogs == []

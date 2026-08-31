@@ -1354,7 +1354,7 @@ class TestDashboardV2GpuTelemetry:
                 load = 0.85 if (endpoint == "node1:9401" and gi == 0) else 0.60
                 metrics += [
                     gpu(
-                        "gpu_power_usage",
+                        "nvidia_power_usage",
                         "GPU Power Usage",
                         endpoint,
                         gi,
@@ -1364,7 +1364,7 @@ class TestDashboardV2GpuTelemetry:
                         avg=round(380 * load, 0),
                     ),
                     gpu(
-                        "gpu_utilization",
+                        "nvidia_gpu_utilization",
                         "GPU Utilization",
                         endpoint,
                         gi,
@@ -1374,7 +1374,7 @@ class TestDashboardV2GpuTelemetry:
                         avg=round(95 * load, 1),
                     ),
                     gpu(
-                        "gpu_temperature",
+                        "nvidia_temperature",
                         "GPU Temperature",
                         endpoint,
                         gi,
@@ -1384,7 +1384,7 @@ class TestDashboardV2GpuTelemetry:
                         avg=58 + round(17 * load),
                     ),
                     gpu(
-                        "gpu_memory_used",
+                        "nvidia_memory_used",
                         "GPU Memory Used",
                         endpoint,
                         gi,

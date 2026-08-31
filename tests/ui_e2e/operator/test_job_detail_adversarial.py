@@ -63,8 +63,8 @@ def _safe_seed_name(prefix: str, token: object) -> str:
 
 def test_pinned_historical_epoch_with_summary_renders_archived_phase(harness):
     """When `?epoch=<historical>` is supplied and the dir has a summary, the
-    page must paint that run's `status` (Succeeded) as the displayed phase,
-    NOT fall through to a live CR. ``job_union.find_any_job`` is the contract."""
+    page must render as Archived, NOT fall through to a live CR.
+    ``job_union.find_any_job`` is the contract."""
     harness.seed_run(
         name="hist-job",
         epoch=_EPOCH_A,
@@ -73,7 +73,7 @@ def test_pinned_historical_epoch_with_summary_renders_archived_phase(harness):
     )
     page = harness.goto_job_detail(harness.ns, "hist-job", epoch=_EPOCH_A)
     body = page.locator("[data-testid=page-job-detail]").inner_text(timeout=10_000)
-    assert "Succeeded" in body, body[:500]
+    assert "Archived" in body, body[:500]
     assert "hist-job" in body
     harness.assert_no_unreachable_banner()
 
@@ -98,11 +98,8 @@ def test_pinned_epoch_without_summary_renders_unknown_stub(harness):
         param("Failed", id="phase-failed"),
     ],
 )  # fmt: skip
-def test_pinned_epoch_terminal_failure_phase_paints_phase_text(harness, phase_str):
-    """Pinned epoch whose summary carries a terminal-but-not-Succeeded phase
-    must render that phase in the page — `archived` interpretation kicks in
-    via deriveJobRunState only for `Archived`, so Cancelled/Failed should
-    still be shown verbatim."""
+def test_pinned_epoch_terminal_failure_renders_archived_phase(harness, phase_str):
+    """Pinned epochs always render as Archived, regardless of terminal status."""
     summary = good_summary()
     summary["status"] = phase_str
     harness.seed_run(
@@ -112,7 +109,7 @@ def test_pinned_epoch_terminal_failure_phase_paints_phase_text(harness, phase_st
         harness.ns, f"fail-job-{phase_str.lower()}", epoch=_EPOCH_A
     )
     body = page.locator("[data-testid=page-job-detail]").inner_text(timeout=10_000)
-    assert phase_str in body, body[:500]
+    assert "Archived" in body, body[:500]
     harness.assert_no_unreachable_banner()
 
 
@@ -222,7 +219,7 @@ def test_latest_pointer_with_leading_zeros_is_treated_as_string(harness):
 
 def test_latest_pointer_at_only_run_renders_once(harness):
     """latest.txt pointing at the same epoch as the only seeded run — the
-    page should render Succeeded without choking on "self-redirects". The
+    page should render Archived without choking on "self-redirects". The
     epoch-sync effect in job-detail.js must not loop."""
     harness.seed_run(
         name="single-run", epoch=_EPOCH_A, summary=good_summary(), is_latest=True
@@ -230,7 +227,7 @@ def test_latest_pointer_at_only_run_renders_once(harness):
     page = harness.goto_job_detail(harness.ns, "single-run", epoch=_EPOCH_A)
     body = page.locator("[data-testid=page-job-detail]").inner_text(timeout=10_000)
     assert "single-run" in body
-    assert "Succeeded" in body, body[:500]
+    assert "Archived" in body, body[:500]
     harness.assert_no_unreachable_banner()
 
 
@@ -430,8 +427,7 @@ def test_sweep_marker_orphan_link_no_parent_sweep_dir(harness):
 def test_pinned_historical_epoch_ignores_live_cr_phase(harness):
     """``job_union.find_any_job`` hard-drops the live CR when an
     explicit historical epoch is passed. A registered Running CR must NOT
-    leak its phase onto a pinned past run. The visible phase is the
-    archived summary's `status`."""
+    leak its phase onto a pinned past run. The visible phase is Archived."""
     harness.register_cr(
         FakeLiveCR(
             name="merge-job",
@@ -444,7 +440,7 @@ def test_pinned_historical_epoch_ignores_live_cr_phase(harness):
     harness.seed_run(name="merge-job", epoch=_EPOCH_A, summary=good_summary())
     page = harness.goto_job_detail(harness.ns, "merge-job", epoch=_EPOCH_A)
     body = page.locator("[data-testid=page-job-detail]").inner_text(timeout=10_000)
-    assert "Succeeded" in body, body[:500]
+    assert "Archived" in body, body[:500]
     # The page must show the archived "Archived" indicator, not "Live".
     # Bug-magnet area: if leak happens, "Live" with the green pulse appears.
     assert "Running" not in body or "Archived" in body, body[:500]

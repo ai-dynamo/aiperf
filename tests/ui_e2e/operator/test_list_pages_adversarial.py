@@ -75,12 +75,7 @@ def _good_with(**overrides) -> dict:
 def _seed_phase_run(
     harness, *, name: str, phase: str, epoch: str = EPOCH_OLDER
 ) -> None:
-    """Seed an archived run that will surface under the requested phase.
-
-    The archived ``AIPerfJobInfo.phase`` is taken verbatim from the summary's
-    ``status`` field, so this is the simplest path to "an archived run with
-    phase=Failed" without standing up a live CR.
-    """
+    """Seed an archived run whose persisted status is ``phase``."""
     summary = good_summary()
     summary["status"] = phase
     harness.seed_run(name=name, epoch=epoch, summary=summary, is_latest=True)
@@ -321,19 +316,8 @@ def test_jobs_detail_overlap_marks_source_both_with_cr_phase_winning(harness) ->
 # ----------------------------------------------------------------------------
 
 
-def test_dashboard_mixed_phases_classifies_into_running_and_completed(harness) -> None:
-    """Five archived runs across five phases — counters must classify per
-    ``Dashboard``'s running/completed predicates.
-
-    Running predicate: phase in {running, initializing, pending}.
-    Completed predicate: phase in {completed, succeeded}.
-    Failed/Cancelled phases are neither and must not be double-counted.
-
-    Scope note: archived runs (status=<phase>) are used for every phase
-    instead of live CRs. The archived rows still flow through the same
-    Dashboard ``running`` filter — that filter keys on ``phase``, not on
-    ``source``.
-    """
+def test_dashboard_archived_runs_do_not_count_as_active(harness) -> None:
+    """Persisted runs are Archived and excluded from active-job counters."""
     # ``results_dir`` is session-scoped, so earlier tests can leak rows into
     # the Dashboard's recent-list/KPI tiles. Wipe before seeding so the
     # classification counters are deterministic.
@@ -357,18 +341,20 @@ def test_dashboard_mixed_phases_classifies_into_running_and_completed(harness) -
     payload = json.loads(raw)
     in_ns = [j for j in payload["jobs"] if j["namespace"] == harness.ns]
     phases = {j["name"]: j["phase"] for j in in_ns}
-    assert phases.get("pending-bench") == "Pending", phases
-    assert phases.get("running-bench") == "Running", phases
-    assert phases.get("completed-bench") == "Completed", phases
-    assert phases.get("succeeded-bench") == "Succeeded", phases
-    assert phases.get("failed-bench") == "Failed", phases
-    assert phases.get("cancelled-bench") == "Cancelled", phases
+    assert set(phases) == {
+        "pending-bench",
+        "running-bench",
+        "completed-bench",
+        "succeeded-bench",
+        "failed-bench",
+        "cancelled-bench",
+    }, phases
+    assert set(phases.values()) == {"Archived"}, phases
 
     harness.goto_dashboard()
     _wait_for_dashboard_settled(harness)
     body = harness.page.locator("body").inner_text()
-    assert "Running" in body
-    assert "Completed" in body
+    assert "No active jobs" in body
 
 
 # ----------------------------------------------------------------------------
@@ -425,7 +411,7 @@ def test_dashboard_kpi_tiles_handle_zero_throughput(harness) -> None:
     harness.goto_dashboard()
     _wait_for_dashboard_settled(harness)
     body = harness.page.locator("body").inner_text()
-    assert "zero-tput-bench" in body
+    assert "No active jobs" in body
     harness.assert_no_unreachable_banner()
 
 
@@ -609,12 +595,13 @@ def test_leaderboard_ranks_seeded_jobs_by_throughput(harness) -> None:
         name = "high-tput-bench" if tps == 500 else f"bench-{i:02d}"
         summary = good_summary(throughput_rps=float(tps), model=f"model-{i % 2}")
         summary["status"] = "Completed"
-        harness.seed_run(
+        run = harness.seed_run(
             name=name,
             epoch=str(1_714_069_000 + i),
             summary=summary,
             is_latest=True,
         )
+        harness.seed_results_ready(run)
 
     # Hit the API directly first — keeps the assertion deterministic.
     status, raw = harness.api_get(
@@ -745,7 +732,14 @@ def test_history_page_renders_30_seeded_runs(harness) -> None:
 
 def test_jobs_list_filter_by_namespace_query_param(harness) -> None:
     """``?ns=<ns>`` filters the Jobs table to that namespace and shows the ns chip."""
-    _seed_phase_run(harness, name="filtered-bench", phase="Running")
+    harness.register_cr(
+        FakeLiveCR(
+            name="filtered-bench",
+            namespace=harness.ns,
+            phase="Running",
+            created="2026-05-19T00:00:00Z",
+        )
+    )
     harness.goto(f"/jobs?ns={harness.ns}&phase=running")
     _wait_for_jobs_list_settled(harness)
     chip = harness.page.locator("[data-testid=ns-filter-chip]")
@@ -945,7 +939,7 @@ def test_jobs_list_handles_summary_with_only_status_field(harness) -> None:
     in_ns = [j for j in payload["jobs"] if j["namespace"] == harness.ns]
     assert any(j["name"] == "status-only-bench" for j in in_ns), in_ns
     entry = next(j for j in in_ns if j["name"] == "status-only-bench")
-    assert entry["phase"] == "Cancelled"
+    assert entry["phase"] == "Archived"
 
 
 def test_compare_page_with_no_results_shows_empty_state(harness) -> None:
@@ -975,16 +969,14 @@ def test_history_filter_by_namespace_via_url_param(harness) -> None:
     assert chip.count() >= 1
 
 
-def test_dashboard_renders_with_running_archived_job(harness) -> None:
-    """An archived run with status=Running surfaces on the Dashboard's
-    Active Jobs section. This guards against the previously-shipped bug
-    where archived rows with a "Running" phase fell through every section.
-    """
+def test_dashboard_excludes_archived_run_with_running_summary_status(harness) -> None:
+    """Persisted runs remain archived even if their historical summary says Running."""
     _seed_phase_run(harness, name="archived-running-bench", phase="Running")
     harness.goto_dashboard()
     _wait_for_dashboard_settled(harness)
     body = harness.page.locator("body").inner_text()
-    assert "archived-running-bench" in body
+    assert "No active jobs" in body
+    assert "archived-running-bench" not in body
 
 
 def test_jobs_list_clear_filters_button_removes_url_chips(harness) -> None:
