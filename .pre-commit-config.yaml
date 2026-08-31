@@ -12,6 +12,9 @@ ci:
     - check-agent-files-sync
     - check-ergonomics
     - check-ruff-baselined
+    - generate-crd
+    - check-chart-consistency
+    - check-vendor-ui-deps
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version
