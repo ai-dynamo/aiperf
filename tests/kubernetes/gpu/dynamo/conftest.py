@@ -39,6 +39,24 @@ from tests.kubernetes.helpers.kubectl import KubectlClient
 logger = AIPerfLogger(__name__)
 
 
+def _dynamo_helm_sets(local_keygen: bool) -> list[str]:
+    """Return Dynamo platform chart values compatible with Dynamo 1.x."""
+    helm_sets = [
+        "--set",
+        "grove.enabled=false",
+        "--set",
+        "kai-scheduler.enabled=false",
+        "--set",
+        "dynamo-operator.controllerManager.kubeRbacProxy.image.repository=registry.k8s.io/kubebuilder/kube-rbac-proxy",
+    ]
+    if local_keygen:
+        helm_sets += [
+            "--set",
+            "dynamo-operator.dynamo.mpiRun.sshKeygen.enabled=false",
+        ]
+    return helm_sets
+
+
 # ============================================================================
 # Dynamo operator helpers
 # ============================================================================
@@ -224,7 +242,7 @@ async def dynamo_operator(
         logger.info("Dynamo operator already installed and running")
         return
 
-    if kubectl.context:
+    if gpu_settings.use_external_cluster:
         raise RuntimeError(
             "External GPU runs require a healthy pre-existing Dynamo operator; "
             "refusing to repair or install shared Dynamo releases."
@@ -319,16 +337,7 @@ async def dynamo_operator(
         ["helm", "fetch", f"{ngc_base}/{platform_tgz}"],
         "Failed to fetch Dynamo platform chart",
     )
-    helm_sets = [
-        "--set", "dynamo-operator.webhook.enabled=false",
-        "--set", "grove.enabled=false",
-        "--set", "kai-scheduler.enabled=false",
-        # gcr.io/kubebuilder/kube-rbac-proxy:v0.15.0 was removed;
-        # use the registry.k8s.io mirror instead.
-        "--set", "dynamo-operator.controllerManager.kubeRbacProxy.image.repository=registry.k8s.io/kubebuilder/kube-rbac-proxy",
-    ]  # fmt: skip
-    if local_keygen:
-        helm_sets += ["--set", "dynamo-operator.dynamo.mpiRun.sshKeygen.enabled=false"]
+    helm_sets = _dynamo_helm_sets(local_keygen)
     try:
         await _run_streaming(
             [

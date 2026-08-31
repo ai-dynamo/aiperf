@@ -344,3 +344,63 @@ async def test_collect_from_cr_waits_for_results_after_completed_phase(
         "results": {"request_count": {"avg": 4}},
     }
     assert kubectl.get_json.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_collect_from_cr_waits_for_results_after_synthesized_completion(
+    tmp_path: Path,
+) -> None:
+    """A completion annotation must not discard metrics still being published."""
+    kubectl = MagicMock()
+    kubectl.get_json = AsyncMock(
+        side_effect=[
+            {
+                "metadata": {
+                    "name": "bench",
+                    "namespace": "bench-ns",
+                    "annotations": {
+                        "aiperf.nvidia.com/benchmark-complete": "true",
+                    },
+                },
+                "status": {
+                    "phase": "Running",
+                    "requestsCompleted": 4,
+                    "requestsTotal": 4,
+                },
+            },
+            {
+                "metadata": {"name": "bench", "namespace": "bench-ns"},
+                "status": {
+                    "phase": "Completed",
+                    "results": {
+                        "request_count": {"avg": 4},
+                        "request_throughput": {"avg": 1.5},
+                    },
+                },
+            },
+        ]
+    )
+    deployer = BenchmarkDeployer(kubectl, tmp_path)
+    result = BenchmarkResult(
+        namespace="bench-ns",
+        jobset_name="aiperf-bench",
+        job_id="bench",
+        config=BenchmarkConfig(),
+    )
+
+    outcome = await deployer._collect_from_cr(
+        result,
+        timeout=10,
+        results_poll_interval=0,
+    )
+
+    assert outcome is not None
+    assert outcome.success
+    assert outcome.api_results == {
+        "status": "complete",
+        "results": {
+            "request_count": {"avg": 4},
+            "request_throughput": {"avg": 1.5},
+        },
+    }
+    assert kubectl.get_json.await_count == 2

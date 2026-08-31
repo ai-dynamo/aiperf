@@ -1273,6 +1273,38 @@ class BenchmarkDeployer:
                         f"(phase={cr_status.phase})"
                     )
                     cr_results = cr_status.results or cr_status.live_metrics
+                    if not cr_results:
+                        results_deadline = min(deadline, loop.time() + results_grace)
+                        while loop.time() < results_deadline:
+                            await asyncio.sleep(
+                                min(
+                                    results_poll_interval,
+                                    max(0, results_deadline - loop.time()),
+                                )
+                            )
+                            try:
+                                data = await self.kubectl.get_json(
+                                    "aiperfjob",
+                                    result.job_id,
+                                    namespace=result.namespace,
+                                )
+                                refreshed_status = AIPerfJobStatus.from_json(data)
+                            except RuntimeError:
+                                continue
+                            if (
+                                refreshed_status.is_failed
+                                or refreshed_status.is_cancelled
+                            ):
+                                cr_status = refreshed_status
+                                break
+                            cr_results = (
+                                refreshed_status.results
+                                or refreshed_status.live_metrics
+                            )
+                            if cr_results:
+                                break
+                        if cr_status.is_failed or cr_status.is_cancelled:
+                            continue
                     return _CollectionOutcome(
                         source="CR",
                         api_results={

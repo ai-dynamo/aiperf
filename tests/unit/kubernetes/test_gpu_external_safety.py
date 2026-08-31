@@ -6,10 +6,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.kubernetes.gpu.conftest import _OPTIONS, _release_gpu, _resolve_settings
+from tests.kubernetes.gpu.conftest import (
+    _OPTIONS,
+    GPUTestSettings,
+    _release_gpu,
+    _resolve_settings,
+    jobset_controller,
+)
+from tests.kubernetes.gpu.dynamo import conftest as dynamo_conftest
 from tests.kubernetes.helpers.benchmark import BenchmarkDeployer
 
 
@@ -85,6 +93,13 @@ def test_resolve_settings_external_cluster_accepts_explicit_user_scope(
     assert settings.external_existing_operator is True
 
 
+def test_resolve_settings_local_cluster_uses_dedicated_benchmark_namespace() -> None:
+    """Local GPU benchmarks must generate manifests with an explicit namespace."""
+    settings = _resolve_settings(_config())
+
+    assert settings.benchmark_namespace == "aiperf-gpu-benchmark"
+
+
 def test_resolve_settings_external_cluster_rejects_parallel_xdist_workers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -123,6 +138,71 @@ def test_gpu_option_surface_contains_all_external_namespace_controls() -> None:
         "--gpu-dynamo-namespace",
         "--gpu-external-existing-operator",
     } <= flags
+
+
+@pytest.mark.asyncio
+async def test_jobset_controller_installs_for_local_kind_context_when_missing() -> None:
+    """A local Kind context must not be treated as an external cluster."""
+
+    class LocalKindKubectl:
+        context = "kind-aiperf-gpu"
+
+        def __init__(self) -> None:
+            self.applied_url = ""
+            self.waited_for = False
+
+        async def run(self, *args: str, **kwargs: object) -> SimpleNamespace:
+            assert args == ("get", "crd", "jobsets.jobset.x-k8s.io")
+            return SimpleNamespace(returncode=1)
+
+        async def apply_server_side(self, url: str) -> None:
+            self.applied_url = url
+
+        async def wait_for_condition(self, *args: str, **kwargs: object) -> None:
+            self.waited_for = True
+
+    kubectl = LocalKindKubectl()
+
+    await jobset_controller.__wrapped__(kubectl, GPUTestSettings())
+
+    assert kubectl.applied_url
+    assert kubectl.waited_for
+
+
+@pytest.mark.asyncio
+async def test_dynamo_operator_installs_for_local_kind_context_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local Kind context must not disable Dynamo operator installation."""
+
+    class LocalKindKubectl:
+        context = "kind-aiperf-gpu"
+
+        async def run(self, *args: str, **kwargs: object) -> SimpleNamespace:
+            assert args == ("get", "crd", "dynamographdeployments.nvidia.com")
+            return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(
+        dynamo_conftest, "_dynamo_operator_is_running", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        dynamo_conftest,
+        "_remove_stale_dynamo_crds_release",
+        AsyncMock(side_effect=RuntimeError("installer reached")),
+    )
+
+    with pytest.raises(RuntimeError, match="installer reached"):
+        await dynamo_conftest.dynamo_operator.__wrapped__(
+            LocalKindKubectl(), GPUTestSettings()
+        )
+
+
+def test_dynamo_helm_sets_omit_removed_webhook_setting() -> None:
+    """Dynamo 1.x chart values must not disable an always-on webhook."""
+    helm_sets = dynamo_conftest._dynamo_helm_sets(local_keygen=True)
+
+    assert "dynamo-operator.webhook.enabled=false" not in helm_sets
+    assert "dynamo-operator.dynamo.mpiRun.sshKeygen.enabled=false" in helm_sets
 
 
 @pytest.mark.asyncio

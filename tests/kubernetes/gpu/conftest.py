@@ -113,7 +113,7 @@ class GPUTestSettings:
     vllm_endpoint: str | None = None
     """Pre-existing vLLM endpoint URL, or None to deploy."""
 
-    benchmark_namespace: str | None = None
+    benchmark_namespace: str | None = "aiperf-gpu-benchmark"
     """Dedicated namespace for generated AIPerf benchmark workloads."""
 
     vllm_namespace: str = "vllm-server"
@@ -276,7 +276,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--gpu-max-model-len", "GPU_TEST_MAX_MODEL_LEN", "4096", "int", "Max model context length"),
     ("--gpu-mem-util", "GPU_TEST_GPU_MEM_UTIL", "0.3", "float", "GPU memory utilization (0.0-1.0)"),
     ("--gpu-vllm-endpoint", "GPU_TEST_VLLM_ENDPOINT", None, "str", "Skip vLLM deploy, use existing endpoint"),
-    ("--gpu-benchmark-namespace", "GPU_TEST_BENCHMARK_NAMESPACE", None, "str", "Dedicated namespace for AIPerf benchmark workloads"),
+    ("--gpu-benchmark-namespace", "GPU_TEST_BENCHMARK_NAMESPACE", "aiperf-gpu-benchmark", "str", "Dedicated namespace for AIPerf benchmark workloads"),
     ("--gpu-vllm-namespace", "GPU_TEST_VLLM_NAMESPACE", "vllm-server", "str", "Namespace for a test-deployed vLLM server"),
     ("--gpu-aiperf-image", "GPU_TEST_AIPERF_IMAGE", "aiperf:local", "str", "AIPerf container image"),
     ("--gpu-benchmark-timeout", "GPU_TEST_BENCHMARK_TIMEOUT", "600", "int", "Benchmark timeout (seconds)"),
@@ -1204,14 +1204,17 @@ def kubectl(
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
-async def jobset_controller(kubectl: KubectlClient) -> None:
+async def jobset_controller(
+    kubectl: KubectlClient,
+    gpu_settings: GPUTestSettings,
+) -> None:
     """Ensure JobSet CRD is available on the cluster."""
     result = await kubectl.run("get", "crd", "jobsets.jobset.x-k8s.io", check=False)
     if result.returncode == 0:
         logger.info("JobSet CRD already installed")
         return
 
-    if kubectl.context:
+    if gpu_settings.use_external_cluster:
         raise RuntimeError(
             "External GPU runs require the JobSet CRD to be installed; refusing "
             "to install a cluster-scoped controller."

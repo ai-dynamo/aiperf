@@ -207,7 +207,7 @@ can be set via CLI or env var; CLI wins.
 | `--gpu-stream-logs` | `GPU_TEST_STREAM_LOGS` | Stream pod logs in real time | `false` |
 | `--gpu-aiperf-image` | `GPU_TEST_AIPERF_IMAGE` | AIPerf image | `aiperf:local` |
 | `--gpu-benchmark-timeout` | `GPU_TEST_BENCHMARK_TIMEOUT` | Benchmark timeout (seconds) | `600` |
-| `--gpu-benchmark-namespace` | `GPU_TEST_BENCHMARK_NAMESPACE` | Namespace for AIPerf benchmark workloads | (deployer default) |
+| `--gpu-benchmark-namespace` | `GPU_TEST_BENCHMARK_NAMESPACE` | Namespace for AIPerf benchmark workloads | `aiperf-gpu-benchmark` |
 | `--gpu-external-existing-operator` | `GPU_TEST_EXTERNAL_EXISTING_OPERATOR` | Forbid controller install/repair on an external cluster | `false` |
 
 **vLLM / model:**

@@ -29,6 +29,7 @@ _NO_NODES_AVAILABLE_RE = re.compile(r"0/(\d+) nodes are available")
 _FATAL_WAITING_REASONS = frozenset(
     {
         "CreateContainerConfigError",
+        "CrashLoopBackOff",
         "ErrImagePull",
         "ImagePullBackOff",
         "InvalidImageName",
@@ -106,6 +107,16 @@ def _describe_image_error(
     )
 
 
+def _describe_crash_loop(pod: str, container: str, message: str, namespace: str) -> str:
+    """Explain a container that repeatedly exits before becoming ready."""
+    return (
+        f"Pod {pod!r} (container {container!r}) is in CrashLoopBackOff in "
+        f"namespace {namespace!r}: {message.strip()!r}. The container repeatedly "
+        "exits before it can serve traffic; inspect its previous logs and fix the "
+        "startup error before re-running."
+    )
+
+
 def detect_fatal_image_conditions(pods: list[PodStatus], namespace: str) -> str | None:
     """Return a message for image/secret failures that never self-heal.
 
@@ -121,6 +132,8 @@ def detect_fatal_image_conditions(pods: list[PodStatus], namespace: str) -> str 
             continue
         if reason == "CreateContainerConfigError":
             return _describe_config_error(pod, container, message, namespace)
+        if reason == "CrashLoopBackOff":
+            return _describe_crash_loop(pod, container, message, namespace)
         return _describe_image_error(pod, container, reason, message, namespace)
     return None
 

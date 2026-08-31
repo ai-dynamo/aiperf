@@ -371,6 +371,8 @@ async def _generate_kueue_manifest(
         "aiperf",
         "kube",
         "generate",
+        "--namespace",
+        "aiperf-test",
         "--model",
         "mock-model",
         "--url",
