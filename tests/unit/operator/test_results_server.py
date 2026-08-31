@@ -16,6 +16,8 @@ Focuses on:
 from __future__ import annotations
 
 import asyncio
+import os
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -1116,6 +1118,34 @@ def test_list_runs_returns_epochs_newest_first(tmp_path: Path) -> None:
         for run in body["runs"]:
             assert run["file_count"] == 1
             assert run["total_size_bytes"] > 0
+
+
+def test_list_runs_breaks_equal_mtime_ties_by_epoch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from aiperf.operator.results_layout import job_dir
+    from aiperf.operator.results_server import create_app
+
+    old_run = _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_OLD, "a.json")
+    new_run = _seed_epoch_run(tmp_path, "ns", "job", _EPOCH_NEW, "b.json")
+    for run in (old_run, new_run):
+        os.utime(run, (1_714_150_923,) * 2)
+    root = job_dir(tmp_path, "ns", "job")
+    original_iterdir = Path.iterdir
+
+    def old_epoch_first(path: Path) -> Iterator[Path]:
+        if path == root:
+            return iter((old_run, new_run, root / "latest.txt"))
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", old_epoch_first)
+
+    with TestClient(create_app(results_dir=tmp_path)) as client:
+        body = client.get("/api/v1/results/ns/job/runs").json()
+
+    assert [run["epoch"] for run in body["runs"]] == [_EPOCH_NEW, _EPOCH_OLD]
 
 
 def test_list_runs_404_when_no_runs(tmp_path: Path) -> None:

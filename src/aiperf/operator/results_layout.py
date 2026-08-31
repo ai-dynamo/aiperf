@@ -241,7 +241,7 @@ def _walk_runs(base: Path, namespace: str, name: str) -> list[RunEntry]:
                 is_latest=(p.name == latest),
             )
         )
-    runs.sort(key=lambda r: r.mtime_epoch, reverse=True)
+    runs.sort(key=lambda r: (r.mtime_epoch, r.epoch), reverse=True)
     return runs
 
 
@@ -311,7 +311,9 @@ async def list_runs_async(base: Path, namespace: str, name: str) -> list[RunEntr
         )
     for entry in disk_runs:
         combined[entry.epoch] = entry
-    return sorted(combined.values(), key=lambda r: r.mtime_epoch, reverse=True)
+    return sorted(
+        combined.values(), key=lambda r: (r.mtime_epoch, r.epoch), reverse=True
+    )
 
 
 def job_dir(base: Path, namespace: str, name: str) -> Path:
