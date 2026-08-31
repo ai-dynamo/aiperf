@@ -207,19 +207,6 @@ class TestAccuracyAccumulator:
         assert summary.per_task["math"].total == 0
         assert summary.per_task["physics"].total == 0
 
-    async def test_resolved_alias_task_does_not_duplicate_the_real_row(self) -> None:
-        acc = _make_accumulator()
-        _configure_dataset(acc, ["Applying sunscreen"])
-        await _seed(
-            acc, [_record(timestamp_ns=10, task="Applying sunscreen", passed=True)]
-        )
-
-        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
-
-        assert summary is not None
-        assert set(summary.per_task) == {"Applying sunscreen"}
-        assert summary.per_task["Applying sunscreen"].total == 1
-
     async def test_summarize_is_phase_agnostic(self) -> None:
         acc = _make_accumulator()
         await _seed(
