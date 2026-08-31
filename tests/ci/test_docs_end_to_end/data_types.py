@@ -34,3 +34,13 @@ class Server:
     setup_command: Command | None
     health_check_command: Command | None
     aiperf_commands: list[Command]
+
+
+@dataclass
+class E2ETestConfig:
+    """Resolved docs E2E test configuration (CLI > env > default)."""
+
+    use_local_aiperf: bool = False  # Use pip-installed aiperf instead of container
+    skip_server_setup: bool = False  # Don't spin up servers (use already-running)
+    skip_health_check: bool = False  # Don't run health checks
+    server_filter: str | None = None  # Only test specific server by name

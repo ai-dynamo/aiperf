@@ -13,9 +13,9 @@ from pathlib import Path
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent.parent.parent
-sys.path.insert(0, str(THIS_DIR))
+sys.path.insert(0, str(REPO_ROOT))
 
-from parser import MarkdownParser  # noqa: E402
+from tests.ci.test_docs_end_to_end.parser import MarkdownParser  # noqa: E402
 
 servers = MarkdownParser().parse_directory(str(REPO_ROOT))
 # Include `weight` in each aiperf_command entry so weight-only changes

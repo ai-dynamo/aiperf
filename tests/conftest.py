@@ -224,3 +224,9 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int | None:
         _detect_pytest_cpu_capacity(),
         _get_pytest_auto_worker_cpu_fraction(),
     )
+
+
+# Prevent default collection from recursing into the CI runner package.
+# Docs E2E tests are only collected when explicitly targeted:
+#   uv run pytest tests/ci/test_docs_end_to_end/ -m docs_e2e --docs-e2e-*
+collect_ignore = ["ci"]
