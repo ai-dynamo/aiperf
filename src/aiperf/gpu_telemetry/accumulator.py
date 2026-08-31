@@ -473,7 +473,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
                 continue
             if result.avg is None:
                 self.debug(
-                    lambda uuid=gpu_uuid: (f"GPU {uuid[:12]} energy result has no avg")
+                    lambda uuid=gpu_uuid: f"GPU {uuid[:12]} energy result has no avg"
                 )
                 continue
             energy_j = result.avg * EnergyMetricUnit.MEGAJOULE.joules

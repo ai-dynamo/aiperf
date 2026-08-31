@@ -239,8 +239,8 @@ class TestFixedScheduleCreditReturn:
         meta.turns[1].has_forks = True
 
         captured: list = []
-        strategy._credit_issuer.issue_credit = (
-            lambda turn: captured.append(turn) or True
+        strategy._credit_issuer.issue_credit = lambda turn: (
+            captured.append(turn) or True
         )
         credit = Credit(
             id=1,

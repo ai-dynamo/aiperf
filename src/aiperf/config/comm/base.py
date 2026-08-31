@@ -121,25 +121,25 @@ class BaseZMQCommunicationConfig(BaseModel, ABC):
 # CommAddress to a resolver callable keeps BaseZMQCommunicationConfig.get_address
 # flat (no match ladder) and makes the mapping easy to extend.
 _ADDRESS_RESOLVERS: dict[CommAddress, Callable[[BaseZMQCommunicationConfig], str]] = {
-    CommAddress.EVENT_BUS_PROXY_FRONTEND: lambda c: c.event_bus_proxy_config.resolve_frontend(
-        c._remote_host
+    CommAddress.EVENT_BUS_PROXY_FRONTEND: lambda c: (
+        c.event_bus_proxy_config.resolve_frontend(c._remote_host)
     ),
-    CommAddress.EVENT_BUS_PROXY_BACKEND: lambda c: c.event_bus_proxy_config.resolve_backend(
-        c._remote_host
+    CommAddress.EVENT_BUS_PROXY_BACKEND: lambda c: (
+        c.event_bus_proxy_config.resolve_backend(c._remote_host)
     ),
-    CommAddress.DATASET_MANAGER_PROXY_FRONTEND: lambda c: c.dataset_manager_proxy_config.resolve_frontend(
-        c._remote_host
+    CommAddress.DATASET_MANAGER_PROXY_FRONTEND: lambda c: (
+        c.dataset_manager_proxy_config.resolve_frontend(c._remote_host)
     ),
-    CommAddress.DATASET_MANAGER_PROXY_BACKEND: lambda c: c.dataset_manager_proxy_config.resolve_backend(
-        c._remote_host
+    CommAddress.DATASET_MANAGER_PROXY_BACKEND: lambda c: (
+        c.dataset_manager_proxy_config.resolve_backend(c._remote_host)
     ),
     # Raw inference proxy is always local (within-pod IPC). Workers and record
     # processors are co-located in the same pod, so remote_host is ignored.
-    CommAddress.RAW_INFERENCE_PROXY_FRONTEND: lambda c: c.raw_inference_proxy_config.resolve_frontend(
-        None
+    CommAddress.RAW_INFERENCE_PROXY_FRONTEND: lambda c: (
+        c.raw_inference_proxy_config.resolve_frontend(None)
     ),
-    CommAddress.RAW_INFERENCE_PROXY_BACKEND: lambda c: c.raw_inference_proxy_config.resolve_backend(
-        None
+    CommAddress.RAW_INFERENCE_PROXY_BACKEND: lambda c: (
+        c.raw_inference_proxy_config.resolve_backend(None)
     ),
     CommAddress.CREDIT_ROUTER: lambda c: c.credit_router_address,
     CommAddress.CREDIT_RETURN_ROUTER: lambda c: c.credit_return_router_address,

@@ -151,11 +151,13 @@ class FastAPIService(BaseComponentService):
 
         self.info(f"AIPerf FastAPI started at {self._base_url}/")
         self.info(
-            lambda: "  Routes: "
-            + " | ".join(
-                r.path
-                for r in self.app.routes
-                if hasattr(r, "methods") and r.path not in ("/openapi.json",)
+            lambda: (
+                "  Routes: "
+                + " | ".join(
+                    r.path
+                    for r in self.app.routes
+                    if hasattr(r, "methods") and r.path not in ("/openapi.json",)
+                )
             )
         )
 

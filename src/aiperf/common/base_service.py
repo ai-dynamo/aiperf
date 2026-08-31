@@ -181,7 +181,9 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             )
         except Exception as publish_error:
             self.debug(
-                lambda e=publish_error: f"Failed to publish BaseServiceErrorMessage during _kill (comms may already be down): {e!r}"
+                lambda e=publish_error: (
+                    f"Failed to publish BaseServiceErrorMessage during _kill (comms may already be down): {e!r}"
+                )
             )
         self.stop_requested = True
         self.stopped_event.set()
