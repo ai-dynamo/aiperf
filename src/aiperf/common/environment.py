@@ -303,6 +303,16 @@ class _DatasetSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
+    CATCH_UP_REQUEST_TIMEOUT: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=10.0,
+        description="Timeout in seconds for the one-shot DatasetConfigStatusRequest "
+        "a RecordProcessor/RecordsManager sends to DatasetManager when it hasn't yet "
+        "received DatasetConfiguredNotification. Recovers a subscriber that finished "
+        "subscribing after DatasetManager already published the one-shot notification, "
+        "instead of blocking for the full CONFIGURATION_TIMEOUT.",
+    )
     BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
         Field(
             default="provided_session_id",
@@ -331,6 +341,16 @@ class _DatasetSettings(BaseSettings):
         "~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains "
         "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
         "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
+    )
+    MMAP_PREFAULT: bool = Field(
+        default=True,
+        description="If True, each memory-mapped dataset client walks every page of the "
+        "data file at open time (after madvise(MADV_WILLNEED)) to force-populate the OS "
+        "page cache. Reads afterwards are served warm, so no request pays a major page "
+        "fault mid-benchmark -- which would otherwise land in the measured latency. "
+        "Workers share the kernel page cache, so the disk read happens once regardless of "
+        "worker count. Costs a one-time startup pass proportional to dataset size; set to "
+        "False to trade predictable tail latency for faster startup on very large datasets.",
     )
     PREFORMAT_PAYLOADS: bool = Field(
         default=False,

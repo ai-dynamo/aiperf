@@ -41,6 +41,7 @@ def _orchestrator(*, with_profiler_hooks: bool) -> PhaseOrchestrator:
             profiler_start_urls=["http://a:8000/start_profile"],
             profiler_stop_urls=["http://a:8000/stop_profile"],
             profiler_timeout_s=1.0,
+            reset_max_retry_seconds=1.0,
         )
         if with_profiler_hooks
         else None
