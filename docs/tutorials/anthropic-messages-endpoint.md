@@ -31,6 +31,24 @@ It supports streaming and non-streaming responses, text content, extended thinki
 
 ---
 
+## Prerequisites
+
+<!-- setup-anthropic-messages-endpoint-server -->
+```bash
+test -n "$ANTHROPIC_API_KEY" || { echo "ANTHROPIC_API_KEY is not set"; exit 1; }
+```
+<!-- /setup-anthropic-messages-endpoint-server -->
+
+<!-- health-check-anthropic-messages-endpoint-server -->
+```bash
+curl -sf "https://api.anthropic.com/v1/models" \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2023-06-01" > /dev/null || { echo "Anthropic API not reachable or key invalid"; exit 1; }
+```
+<!-- /health-check-anthropic-messages-endpoint-server -->
+
+---
+
 ## Basic Usage
 
 ### Non-Streaming

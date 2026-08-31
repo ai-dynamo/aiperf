@@ -4,6 +4,31 @@
 sidebar-title: SGLang Image Generation
 ---
 
+<!-- setup-sglang-image-generation-endpoint-server -->
+```bash
+docker run --gpus all --rm \
+  --name sglang-image-generation \
+  -p 30000:30000 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  --env HF_TOKEN \
+  lmsysorg/sglang:dev \
+  bash -c "pip install -q yunchang remote_pdb imageio diffusers diffusion && \
+    python -m sglang.launch_server \
+      --model-path black-forest-labs/FLUX.1-schnell \
+      --text-encoder-cpu-offload \
+      --pin-cpu-memory \
+      --num-gpus 1 \
+      --port 30000 \
+      --host 0.0.0.0"
+```
+<!-- /setup-sglang-image-generation-endpoint-server -->
+
+<!-- health-check-sglang-image-generation-endpoint-server -->
+```bash
+timeout 900 bash -c 'while ! curl -sf http://localhost:30000/v1/models 2>/dev/null | grep -q "id"; do sleep 5; done' || { echo "SGLang image server not ready after 15min"; exit 1; }
+```
+<!-- /health-check-sglang-image-generation-endpoint-server -->
+
 # Profile Image Generation Models with AIPerf
 
 ## Overview
@@ -76,6 +101,7 @@ Uvicorn running on http://0.0.0.0:30000 (Press CTRL+C to quit)
 ### Text-to-Image Generation Using Input File
 **Create an input file:**
 
+<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > image_prompts.jsonl << 'EOF'
 {"text": "A serene mountain landscape at sunset"}
@@ -116,6 +142,7 @@ aiperf profile \
 
 
 ### Text-to-Image Generation Using Synthetic Inputs
+<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 aiperf profile \
   --model black-forest-labs/FLUX.1-dev \
@@ -163,6 +190,7 @@ Image generation endpoints report a focused set of metrics. Unlike LLM text endp
 ## Running the benchmark (advanced usage)
 
 **Create an input file:**
+<!-- aiperf-run-sglang-image-generation-endpoint-server -->
 ```bash
 cat > image_prompts.jsonl << 'EOF'
 {"text": "A serene mountain landscape at sunset"}

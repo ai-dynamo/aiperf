@@ -50,6 +50,7 @@ The synthetic video feature provides:
 
 Generate videos at 640x480 with default temporal settings (4 fps, 5 seconds):
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -111,6 +112,7 @@ aiperf profile \
 
 Adjust temporal properties:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -135,6 +137,7 @@ AIPerf supports three built-in video patterns:
 
 Generates videos with animated geometric shapes moving across the screen:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -156,6 +159,7 @@ Features:
 
 Generates videos with a grid pattern and clock-like animation:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -177,6 +181,7 @@ Features:
 
 Generates videos with random noise pixels in each frame:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -211,6 +216,7 @@ Choose encoding codec based on your hardware and requirements.
 
 #### CPU Encoding (Default)
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -252,6 +258,7 @@ aiperf profile \
 
 Control the number of videos per request:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -273,6 +280,7 @@ Audio embedding is disabled by default to maintain backward compatibility and mi
 
 Set `--video-audio-num-channels` to 1 (mono) or 2 (stereo) to embed an audio track:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -313,6 +321,7 @@ When `--video-audio-codec` is not specified, the codec is automatically selected
 
 You can override the auto-selection with an explicit codec:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -328,6 +337,7 @@ aiperf profile \
 
 #### Stereo Audio with Custom Sample Rate
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -366,6 +376,7 @@ For most benchmarking scenarios, the audio track adds minimal overhead compared 
 
 Benchmark with small, low-framerate videos:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -386,6 +397,7 @@ aiperf profile \
 
 Test with high-resolution, longer videos:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -406,6 +418,7 @@ aiperf profile \
 
 Combine video with text prompts for multimodal testing:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -428,6 +441,7 @@ aiperf profile \
 
 Benchmark models that process both video and audio streams:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -449,6 +463,7 @@ aiperf profile \
 
 Test with MP4 format and stereo audio for maximum compatibility:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -472,6 +487,7 @@ aiperf profile \
 
 Test with many short video clips:
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -508,6 +524,7 @@ aiperf profile \
 ```
 
 **MP4 format:**
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \

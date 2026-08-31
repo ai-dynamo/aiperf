@@ -56,6 +56,7 @@ curl -s http://localhost:8000/v1/responses \
 
 Run AIPerf against the Responses API endpoint using synthetic inputs:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -124,6 +125,7 @@ aiperf profile \
 
 In the Responses API, system instructions use a top-level `instructions` field rather than a system role message. AIPerf handles this mapping automatically when you use `--shared-system-prompt-length` to generate a synthetic system prompt:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -210,6 +212,7 @@ aiperf profile \
 
 Control load generation the same way as other endpoint types:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 # Concurrency-based
 aiperf profile \
@@ -238,6 +241,7 @@ aiperf profile \
 
 Benchmark multi-turn conversations using the Responses API:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -259,6 +263,7 @@ See the [Multi-Turn Conversations](multi-turn.md) tutorial for details on conver
 
 Use server-reported token counts instead of client-side tokenization:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -278,6 +283,7 @@ When `--use-server-token-count` is enabled with streaming, AIPerf automatically 
 
 Pass additional API parameters using `--extra-inputs`:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \

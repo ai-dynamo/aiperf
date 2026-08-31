@@ -155,6 +155,12 @@ Image edit shares its metric set with image generation; both endpoints report im
 Use `--export-level raw` to capture the raw input/output payloads, which lets you extract the edited images afterwards.
 
 ```bash
+cat > edit_prompts.jsonl << 'EOF'
+{"text": "Convert this scene to a watercolor painting", "image": "/path/to/ref1.png"}
+{"text": "Make the background a sunset", "image": "/path/to/ref2.png"}
+{"text": "Add snow to the trees", "image": "https://example.com/ref3.png"}
+EOF
+
 aiperf profile \
   --model black-forest-labs/FLUX.2-klein-4B \
   --tokenizer builtin \

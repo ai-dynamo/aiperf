@@ -21,19 +21,23 @@ TGI exposes two standard HTTP endpoints for text generation:
 
 To launch a Hugging Face TGI server, use the official `ghcr.io` image:
 
+<!-- setup-tgi-default-endpoint-server -->
 ```bash
-docker run --gpus all --rm -it \
+docker run --gpus all --rm \
   -p 8080:80 \
   -e MODEL_ID=TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
   ghcr.io/huggingface/text-generation-inference:latest
 ```
+<!-- /setup-tgi-default-endpoint-server -->
 
+<!-- health-check-tgi-default-endpoint-server -->
 ```bash
 # Verify the server is running
 curl -s http://localhost:8080/generate \
   -H "Content-Type: application/json" \
   -d '{"inputs":"Hello world"}' | jq
 ```
+<!-- /health-check-tgi-default-endpoint-server -->
 
 ## Profile with AIPerf
 
@@ -44,6 +48,7 @@ and with either synthetic inputs or a custom input file.
 
 #### Profile with synthetic inputs
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
@@ -81,6 +86,7 @@ You can also provide your own text prompts using the
 --input-file option.
 The file should be in JSONL format and contain text entries.
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 cat > inputs.jsonl <<'EOF'
 {"text": "Hello TinyLlama!"}
@@ -105,6 +111,7 @@ When the `--streaming` flag is enabled, AIPerf automatically sends requests to t
 
 #### Profile with synthetic inputs
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
@@ -143,6 +150,7 @@ JSON Export: artifacts/TinyLlama_TinyLlama-1.1B-Chat-v1.0-generate-concurrency1/
 
 Create your own prompt file in JSONL format:
 
+<!-- aiperf-run-tgi-default-endpoint-server -->
 ```bash
 cat > inputs.jsonl <<'EOF'
 {"text": "Explain quantum computing in simple terms."}

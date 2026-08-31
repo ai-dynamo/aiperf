@@ -4,6 +4,33 @@
 sidebar-title: SGLang Video Generation
 ---
 
+<!-- setup-sglang-video-generation-endpoint-server -->
+```bash
+docker run --gpus all --rm \
+  --name sglang-video-generation \
+  --shm-size 32g \
+  -p 30010:30010 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  --env HF_TOKEN \
+  --ipc=host \
+  lmsysorg/sglang:dev \
+  bash -c "uv pip install 'sglang[diffusion]' --prerelease=allow --system && \
+    sglang serve \
+      --model-path Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
+      --text-encoder-cpu-offload \
+      --pin-cpu-memory \
+      --num-gpus 1 \
+      --port 30010 \
+      --host 0.0.0.0"
+```
+<!-- /setup-sglang-video-generation-endpoint-server -->
+
+<!-- health-check-sglang-video-generation-endpoint-server -->
+```bash
+timeout 900 bash -c 'while ! curl -sf http://localhost:30010/health > /dev/null 2>&1; do sleep 5; done' || { echo "SGLang video server not ready after 15min"; exit 1; }
+```
+<!-- /health-check-sglang-video-generation-endpoint-server -->
+
 # SGLang Video Generation
 
 ## Overview
@@ -135,6 +162,7 @@ sglang serve \
 ### Basic Usage: Text-to-Video with Input File
 
 **Create an input file with video prompts:**
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 cat > video_prompts.jsonl << 'EOF'
 {"text": "A serene lake at sunset with mountains in the background"}
@@ -177,6 +205,7 @@ aiperf profile \
 
 Generate videos using synthetic prompts with configurable token lengths:
 
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
@@ -210,6 +239,7 @@ Control video generation through `--extra-inputs`:
 
 Use `--download-video-content` to include video content download in the benchmark timing. When enabled, request latency includes the time to download the generated video from the server. By default, only generation time is measured.
 
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
@@ -226,6 +256,7 @@ aiperf profile \
 ```
 
 **Example with advanced parameters:**
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
@@ -253,6 +284,7 @@ AIPerf automatically handles polling for video generation. Configure polling beh
 | `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | Seconds between status checks (0.1-60) | `0.1` |
 
 **Example with custom timeout and polling interval:**
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 # Set slower polling (0.5s) with 20 minute timeout
 AIPERF_HTTP_VIDEO_POLL_INTERVAL=0.5 aiperf profile \
@@ -274,6 +306,7 @@ AIPERF_HTTP_VIDEO_POLL_INTERVAL=0.5 aiperf profile \
 To extract and save the generated videos, use `--export-level raw` to capture the full response payloads.
 
 **Run the benchmark with raw export:**
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
@@ -363,6 +396,7 @@ Videos saved to: /path/to/downloaded_videos
 
 Test maximum throughput with multiple concurrent requests:
 
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 aiperf profile \
     --model Wan-AI/Wan2.1-T2V-1.3B-Diffusers \
@@ -380,6 +414,7 @@ aiperf profile \
 
 Test single-request latency for different video sizes:
 
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 # Short 4-second video
 aiperf profile \
@@ -410,6 +445,7 @@ aiperf profile \
 
 Compare generation quality at different inference step counts:
 
+<!-- aiperf-run-sglang-video-generation-endpoint-server weight=300 -->
 ```bash
 # Fast generation (fewer steps)
 aiperf profile \

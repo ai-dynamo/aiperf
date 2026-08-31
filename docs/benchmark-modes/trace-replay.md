@@ -97,7 +97,14 @@ A few formats carry timing somewhere other than a top-level `timestamp` and are 
 
 To override the auto-promotion — for example, to replay the same trace under a fresh `--concurrency` or `--request-rate` setting and ignore the captured timestamps — pass `--no-fixed-schedule`:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
+cat > custom_trace.jsonl << 'EOF'
+{"timestamp": 0, "input_length": 1200, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 105, "input_length": 1800, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
+EOF
+
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \

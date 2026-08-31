@@ -18,24 +18,29 @@ These models take a query and one or more passages, returning a similarity or re
 
 Launch a Hugging Face Text Embeddings Inference (TEI) container in re-ranker mode:
 
+<!-- setup-tei-rerank-endpoint-server -->
 ```bash
-docker run --gpus all --rm -it \
+docker run --gpus all --rm \
   -p 8080:80 \
   -e MODEL_ID=BAAI/bge-reranker-base \
   ghcr.io/huggingface/text-embeddings-inference:latest \
   --model-id BAAI/bge-reranker-base --port 80
 ```
+<!-- /setup-tei-rerank-endpoint-server -->
 
+<!-- health-check-tei-rerank-endpoint-server -->
 ```bash
 # Verify server is running
 curl -s http://localhost:8080/rerank \
   -H "Content-Type: application/json" \
   -d '{"query":"What is AI?", "texts":["AI is artificial intelligence.","Bananas are yellow."]}' | jq
 ```
+<!-- /health-check-tei-rerank-endpoint-server -->
 
 ### Profile using Synthetic Inputs
 
 Run AIPerf using the following command:
+<!-- aiperf-run-tei-rerank-endpoint-server -->
 ```bash
 aiperf profile \
     -m BAAI/bge-reranker-base \
@@ -78,6 +83,7 @@ JSON Export: artifacts/BAAI_bge-reranker-base-rankings/profile_export_aiperf.jso
 
 Create a file named rankings.jsonl where each line represents a ranking request with a query and one or more passages.
 
+<!-- aiperf-run-tei-rerank-endpoint-server -->
 ```bash
 cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 0?"]},{"name":"passages","contents":["AI passage 0"]}]}
@@ -105,24 +111,29 @@ aiperf profile \
 
 Run vLLM with the `--runner` pooling flag to enable reranking behavior:
 
+<!-- setup-cohere-rerank-endpoint-server -->
 ```bash
 docker run --gpus all -p 8080:8000 \
-  -e HF_TOKEN=<HF_TOKEN> \
+  -e HF_TOKEN \
   vllm/vllm-openai:latest \
   --model BAAI/bge-reranker-v2-m3 \
   --runner pooling
 ```
+<!-- /setup-cohere-rerank-endpoint-server -->
 
+<!-- health-check-cohere-rerank-endpoint-server -->
 ```bash
 # Verify the server
 curl -s http://localhost:8080/v1/rerank \
   -H "Content-Type: application/json" \
   -d '{"query":"What is AI?","documents":["Artificial intelligence overview","Bananas are yellow"]}' | jq
 ```
+<!-- /health-check-cohere-rerank-endpoint-server -->
 
 ### Profile using Synthetic Inputs
 Run AIPerf using the following command:
 
+<!-- aiperf-run-cohere-rerank-endpoint-server -->
 ```bash
 aiperf profile \
     -m BAAI/bge-reranker-v2-m3 \
@@ -145,7 +156,7 @@ EOF
 ```
 
 Run AIPerf:
-
+<!-- aiperf-run-cohere-rerank-endpoint-server -->
 ```bash
 aiperf profile \
     -m BAAI/bge-reranker-v2-m3 \

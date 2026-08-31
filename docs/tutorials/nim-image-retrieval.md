@@ -30,6 +30,7 @@ echo "$NGC_API_KEY" | docker login nvcr.io --username '$oauthtoken' --password-s
 
 Launch the NIM for Object Detection (page elements):
 
+<!-- setup-nim-image-retrieval-endpoint-server -->
 ```bash
 export NIM_MODEL_NAME=nvidia/nemoretriever-page-elements-v3
 export CONTAINER_NAME=$(basename $NIM_MODEL_NAME)
@@ -37,7 +38,7 @@ export IMG_NAME="nvcr.io/nim/nvidia/$CONTAINER_NAME:1.7.0"
 export LOCAL_NIM_CACHE=~/.cache/nim
 mkdir -p "$LOCAL_NIM_CACHE"
 
-docker run -it --rm --name=$CONTAINER_NAME \
+docker run --rm --name=$CONTAINER_NAME \
   --runtime=nvidia \
   --gpus all \
   --shm-size=16GB \
@@ -47,12 +48,15 @@ docker run -it --rm --name=$CONTAINER_NAME \
   -p 8000:8000 \
   $IMG_NAME
 ```
+<!-- /setup-nim-image-retrieval-endpoint-server -->
 
 Wait for the server to start, then verify it is ready:
 
+<!-- health-check-nim-image-retrieval-endpoint-server -->
 ```bash
 curl -s http://localhost:8000/v1/health/ready
 ```
+<!-- /health-check-nim-image-retrieval-endpoint-server -->
 
 ### Verify with a Test Request
 
@@ -104,16 +108,7 @@ cat <<EOF > inputs.jsonl
 {"image": "/path/to/local/document_page.png"}
 {"image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..."}
 EOF
-```
 
-Each line should contain an `image` field with either:
-- A URL to a remote image
-- A local file path (automatically encoded to base64)
-- A base64 data URL (passed through as-is)
-
-Run AIPerf against the image retrieval endpoint:
-
-```bash
 aiperf profile \
     --endpoint-type image_retrieval \
     --model nvidia/nemoretriever-page-elements-v3 \
@@ -123,6 +118,11 @@ aiperf profile \
     --request-count 20 \
     --concurrency 4
 ```
+
+Each line should contain an `image` field with either:
+- A URL to a remote image
+- A local file path (automatically encoded to base64)
+- A base64 data URL (passed through as-is)
 
 **Sample Output:**
 ```
@@ -158,9 +158,7 @@ cat <<EOF > multi_image_inputs.jsonl
 {"images": ["https://example.com/page1.png", "https://example.com/page2.png"]}
 {"images": ["/path/to/chart1.jpg", "/path/to/chart2.jpg", "/path/to/chart3.jpg"]}
 EOF
-```
 
-```bash
 aiperf profile \
     --endpoint-type image_retrieval \
     --model nvidia/nemoretriever-page-elements-v3 \
