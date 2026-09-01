@@ -120,7 +120,12 @@ class CreditCallbackHandler:
                 abort via the strategy's ``report_warmup_failures`` only.
         """
         self._concurrency_manager = concurrency_manager
+        # Keep the constructor-supplied orchestrator as a legacy fallback for
+        # direct users of the callback handler. PhaseRunner registers its
+        # orchestrators by runtime phase key below so overlapping seamless
+        # phases cannot replace each other's routing state.
         self._branch_orchestrator = branch_orchestrator
+        self._branch_orchestrators: dict[PhaseRuntimeKey, BranchOrchestrator] = {}
         self._session_tree_registry = session_tree_registry
         self._on_warmup_abort = on_warmup_abort
         self._warmup_abort_triggered = False
@@ -151,7 +156,13 @@ class CreditCallbackHandler:
             )
         )
 
-    def set_branch_orchestrator(self, orchestrator: BranchOrchestrator | None) -> None:
+    def set_branch_orchestrator(
+        self,
+        orchestrator: BranchOrchestrator | None,
+        *,
+        phase: CreditPhase | None = None,
+        phase_index: int | None = None,
+    ) -> None:
         """Inject the subagent orchestrator post-construction.
 
         Also registers a drain observer on the orchestrator so the deferred
@@ -162,29 +173,52 @@ class CreditCallbackHandler:
         check). Without this hook the phase runner relies on the pre-wait
         short-circuit + drain-timeout backstop; the drain timeout cost is
         avoided here.
+
+        When ``phase`` is supplied, the orchestrator is scoped to that phase's
+        runtime key. This lets a seamless phase continue draining after a later
+        phase with the same ``CreditPhase`` starts. Omitting ``phase`` retains
+        the legacy single-orchestrator behavior for direct callers.
         """
-        if (
-            self._branch_orchestrator is not None
-            and self._branch_orchestrator is not orchestrator
-        ):
-            self._branch_orchestrator.set_drain_observer(None)
-        self._branch_orchestrator = orchestrator
+        if phase is None:
+            previous = self._branch_orchestrator
+            if previous is not None and previous is not orchestrator:
+                previous.set_drain_observer(None)
+            self._branch_orchestrator = orchestrator
+        else:
+            key = self._phase_key(phase, phase_index)
+            previous = self._branch_orchestrators.get(key)
+            if previous is not None and previous is not orchestrator:
+                previous.set_drain_observer(None)
+            if orchestrator is None:
+                self._branch_orchestrators.pop(key, None)
+            else:
+                self._branch_orchestrators[key] = orchestrator
         if orchestrator is not None:
             orchestrator.set_drain_observer(self._on_orchestrator_drain)
+
+    def _orchestrator_for(
+        self, key: PhaseRuntimeKey, phase: CreditPhase | None = None
+    ) -> BranchOrchestrator | None:
+        """Resolve the DAG orchestrator for one concrete phase instance."""
+        orchestrator = self._branch_orchestrators.get(key)
+        if orchestrator is None and phase is not None and phase != key:
+            orchestrator = self._branch_orchestrators.get(phase)
+        return orchestrator or self._branch_orchestrator
 
     def _on_orchestrator_drain(self) -> None:
         """Re-evaluate the deferred all-credits-returned check across every
         active phase handler. Idempotent: per-handler check no-ops if the
         event is already set or the predicate disagrees.
         """
-        for handler in self._phase_handlers.values():
+        for key, handler in self._phase_handlers.items():
             if handler.lifecycle.is_complete:
                 continue
+            orchestrator = self._orchestrator_for(key)
             if (
-                self._branch_orchestrator is not None
+                orchestrator is not None
                 and not handler.progress.all_credits_returned_event.is_set()
                 and handler.progress.check_all_returned_or_cancelled()
-                and not self._branch_orchestrator.has_pending_branch_work()
+                and not orchestrator.has_pending_branch_work()
             ):
                 handler.progress.all_credits_returned_event.set()
 
@@ -202,12 +236,15 @@ class CreditCallbackHandler:
         exception from that walk degrades to False so the credit-return
         callback keeps running for every credit.
         """
-        if self._branch_orchestrator is None:
+        orchestrator = self._orchestrator_for(
+            self._phase_key(credit.phase, credit.phase_index), credit.phase
+        )
+        if orchestrator is None:
             return False
-        if self._branch_orchestrator.has_pending_branch_work():
+        if orchestrator.has_pending_branch_work():
             return True
         try:
-            if self._branch_orchestrator.get_branch_ids(credit):
+            if orchestrator.get_branch_ids(credit):
                 return True
         except Exception:
             return False
@@ -349,6 +386,7 @@ class CreditCallbackHandler:
                 f"credit_id={credit.id}, worker={worker_id}"
             )
             return
+        orchestrator = self._orchestrator_for(key, phase)
 
         # Late arrivals after phase complete are logged but don't affect counts
         if handler.lifecycle.is_complete:
@@ -382,7 +420,12 @@ class CreditCallbackHandler:
 
         # 3. Release concurrency slots
         self._release_slots_for_return(
-            key, credit, credit_return, is_final_returned, handler
+            key,
+            credit,
+            credit_return,
+            is_final_returned,
+            credit.is_final_turn,
+            handler,
         )
 
         # 4. Signal completion if this was the final return. Deferred for
@@ -407,20 +450,12 @@ class CreditCallbackHandler:
         # worker's transport/server error path. We treat any non-None value as
         # an error signal; cancellation is tracked separately via
         # credit_return.cancelled and is NOT treated as a child error.
-        if (
-            credit.is_final_turn
-            and credit.agent_depth > 0
-            and self._branch_orchestrator is not None
-        ):
+        if credit.is_final_turn and credit.agent_depth > 0 and orchestrator is not None:
             try:
                 if credit_return.error is not None:
-                    await self._branch_orchestrator.on_child_errored(
-                        credit.x_correlation_id
-                    )
+                    await orchestrator.on_child_errored(credit.x_correlation_id)
                 else:
-                    await self._branch_orchestrator.on_child_leaf_reached(
-                        credit.x_correlation_id
-                    )
+                    await orchestrator.on_child_leaf_reached(credit.x_correlation_id)
             except Exception as exc:
                 _logger.warning(
                     lambda exc=exc: f"BranchOrchestrator child-completion "
@@ -462,11 +497,11 @@ class CreditCallbackHandler:
         # dispatch, but WARMUP failure accounting must still run: accelerated
         # cache-pressure warmup enables DAG intercept, and a non-overflow
         # error on a gated root would otherwise skip ``record_warmup_failure``.
-        if self._branch_orchestrator is not None and not overflow_terminal:
-            intercepted = await self._branch_orchestrator.intercept(credit)
+        if orchestrator is not None and not overflow_terminal:
+            intercepted = await orchestrator.intercept(credit)
             if intercepted:
                 await self._handle_warmup_failure(credit, credit_return, handler, phase)
-                self._finish_return_processing(handler)
+                self._finish_return_processing(key, handler, phase)
                 return
 
         # Per-tree slot release: a root's terminal return marks its tree's root
@@ -517,11 +552,9 @@ class CreditCallbackHandler:
             await handler.strategy.handle_credit_return(
                 credit, error=credit_return.error
             )
-        elif self._branch_orchestrator is not None:
+        elif orchestrator is not None:
             try:
-                await self._branch_orchestrator.on_child_stopped(
-                    credit.x_correlation_id
-                )
+                await orchestrator.on_child_stopped(credit.x_correlation_id)
             except Exception as exc:
                 _logger.warning(
                     lambda exc=exc: f"BranchOrchestrator on_child_stopped "
@@ -540,11 +573,16 @@ class CreditCallbackHandler:
         # child's evict-and-drain cascade is what clears
         # ``has_pending_branch_work``, at which point this check on the
         # child's own return path fires the event.
-        self._finish_return_processing(handler)
+        self._finish_return_processing(key, handler, phase)
 
-    def _finish_return_processing(self, handler: PhaseCallbackContext) -> None:
+    def _finish_return_processing(
+        self,
+        key: PhaseRuntimeKey,
+        handler: PhaseCallbackContext,
+        phase: CreditPhase | None = None,
+    ) -> None:
         """Run completion and global-idle checks after return-driven dispatch."""
-        self._signal_all_credits_returned_if_ready(handler)
+        self._signal_all_credits_returned_if_ready(key, handler, phase)
         enforce_system_idle_cap = getattr(
             handler.strategy, "enforce_system_idle_cap", None
         )
@@ -552,7 +590,10 @@ class CreditCallbackHandler:
             enforce_system_idle_cap(handler.progress.in_flight)
 
     def _signal_all_credits_returned_if_ready(
-        self, handler: PhaseCallbackContext
+        self,
+        key: PhaseRuntimeKey,
+        handler: PhaseCallbackContext,
+        phase: CreditPhase | None = None,
     ) -> None:
         """Complete a drained phase, preserving paused warmup DAG state.
 
@@ -561,6 +602,9 @@ class CreditCallbackHandler:
         ``in_flight == 0`` alone -- without waiting for the orchestrator's
         pending branch work to drain (that work IS the handoff payload).
         """
+        orchestrator = self._orchestrator_for(key, phase)
+        if orchestrator is None:
+            return
         allows_pending_branch_handoff = (
             getattr(
                 handler.strategy,
@@ -576,12 +620,11 @@ class CreditCallbackHandler:
             else handler.progress.check_all_returned_or_cancelled()
         )
         if (
-            self._branch_orchestrator is not None
-            and not handler.progress.all_credits_returned_event.is_set()
+            not handler.progress.all_credits_returned_event.is_set()
             and all_wire_requests_returned
             and (
                 allows_pending_branch_handoff
-                or not self._branch_orchestrator.has_pending_branch_work()
+                or not orchestrator.has_pending_branch_work()
             )
         ):
             handler.progress.all_credits_returned_event.set()
@@ -592,6 +635,7 @@ class CreditCallbackHandler:
         credit: Credit,
         credit_return: CreditReturn,
         is_final_returned: bool,
+        session_ended: bool,
         handler: PhaseCallbackContext,
     ) -> None:
         """Release slots based on credit state.
@@ -606,6 +650,7 @@ class CreditCallbackHandler:
             credit: The returned credit.
             credit_return: Return details.
             is_final_returned: True if this is the last credit of the phase.
+            session_ended: Whether this return terminates the root session.
             handler: Phase callback context.
         """
         concurrency = handler.concurrency_manager
@@ -622,7 +667,7 @@ class CreditCallbackHandler:
         # is deferred to ``registry.on_root_terminal`` (called after intercept,
         # so children spawned on the final turn are counted first), which frees
         # the slot only once every descendant has also drained.
-        if credit.is_final_turn and credit.agent_depth == 0:
+        if session_ended and credit.agent_depth == 0:
             root_corr = credit.effective_root_correlation_id
             if not (tree_engaged and self._session_tree_registry.has_tree(root_corr)):
                 concurrency.release_session_slot(phase)

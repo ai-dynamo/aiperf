@@ -62,7 +62,10 @@ from aiperf.common.models.network_latency_models import (
     NetworkLatencyTargetSummary,
 )
 from aiperf.common.models.prerequisites import TurnPrerequisite
-from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
+from aiperf.common.models.progress_models import (
+    WorkerProcessingStats,
+    WorkerStats,
+)
 from aiperf.common.models.record_models import (
     BaseResponseData,
     BinaryResponse,

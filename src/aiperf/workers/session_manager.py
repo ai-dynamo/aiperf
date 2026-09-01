@@ -3,11 +3,16 @@
 
 """User session management for multi-turn conversation optimization."""
 
+from collections import OrderedDict
+
 from pydantic import Field
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
+
+_logger = AIPerfLogger(__name__)
 
 
 def _compute_is_fork_parent(conversation: Conversation) -> bool:
@@ -178,15 +183,32 @@ class UserSession(AIPerfBaseModel):
         self.previous_response_id = response_id
 
 
+DEFAULT_MAX_SESSIONS = 100_000
+"""Default per-worker cap on cached multi-turn sessions.
+
+Sessions are normally evicted on the final turn or on cancellation. Abandoned
+ones never are -- a non-final ``CreditReturn`` reclaimed sticky-router side on
+worker reconnect or detach, or a session migrated to another worker leaving the
+original entry stranded, receives no final-turn credit here. Unbounded, those
+accrue for the process lifetime until the container is OOMKilled. The bound is
+high enough that legitimate concurrent multi-turn sessions stay resident.
+"""
+
+
 class UserSessionManager:
     """User session manager for multi-turn processing.
 
     Manages user sessions for multi-turn processing.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[str, UserSession] = {}
+    def __init__(self, max_sessions: int = DEFAULT_MAX_SESSIONS) -> None:
+        if max_sessions < 1:
+            raise ValueError(f"max_sessions ({max_sessions}) must be >= 1")
+        self._max_sessions = max_sessions
+        self._cache: OrderedDict[str, UserSession] = OrderedDict()
         self._default_context_mode: ConversationContextMode | None = None
+        self._cap_warning_shown: bool = False
+        self._pinned_overflow_warning_shown: bool = False
 
     @property
     def default_context_mode(self) -> ConversationContextMode | None:
@@ -293,6 +315,54 @@ class UserSessionManager:
             user_session: User session
         """
         self._cache[x_correlation_id] = user_session
+        self._cache.move_to_end(x_correlation_id)
+        if len(self._cache) > self._max_sessions:
+            self._evict_lru_overflow()
+
+    def _evict_lru_overflow(self) -> None:
+        """Trim the cache back to ``max_sessions``, least-recently-used first.
+
+        Only reached once the cap is exceeded, which does not happen for
+        realistic session counts (see DEFAULT_MAX_SESSIONS), so the scan cost
+        here never touches the ``store`` hot path.
+
+        Pinned sessions are skipped. A FORK parent still holding
+        ``fork_refcount`` references, or one waiting on
+        ``pending_fork_eviction``, is the exact context its children are about
+        to seed from; dropping it would silently hand those children an empty
+        history. Any other session is fair game, but eviction is still pure LRU
+        and *can* drop a conversation that is merely in flight -- the worker
+        would rebuild it from the dataset without its captured assistant
+        responses -- so the one-shot warning names the cap: the run is either
+        leaking abandoned sessions or genuinely running more concurrent
+        conversations than the bound allows, and both want the operator's
+        attention rather than silent turn failures.
+        """
+        if not self._cap_warning_shown:
+            self._cap_warning_shown = True
+            _logger.warning(
+                f"Session cache hit its {self._max_sessions}-entry cap; evicting "
+                "least-recently-used sessions. In-flight multi-turn "
+                "conversations may lose their history."
+            )
+        # list() so the cache can be mutated while walking it, oldest first.
+        for x_correlation_id in list(self._cache):
+            if len(self._cache) <= self._max_sessions:
+                return
+            session = self._cache[x_correlation_id]
+            if session.fork_refcount > 0 or session.pending_fork_eviction:
+                continue
+            del self._cache[x_correlation_id]
+        if len(self._cache) > self._max_sessions and (
+            not self._pinned_overflow_warning_shown
+        ):
+            self._pinned_overflow_warning_shown = True
+            _logger.warning(
+                f"Session cache is over its {self._max_sessions}-entry cap with "
+                f"{len(self._cache)} entries and every remaining session pinned by "
+                "a pending FORK child; keeping them resident rather than breaking "
+                "those children's context."
+            )
 
     def get(self, x_correlation_id: str) -> UserSession | None:
         """
@@ -301,7 +371,10 @@ class UserSessionManager:
         Args:
             x_correlation_id: X-Correlation-ID header value
         """
-        return self._cache.get(x_correlation_id)
+        session = self._cache.get(x_correlation_id)
+        if session is not None:
+            self._cache.move_to_end(x_correlation_id)
+        return session
 
     def evict(self, x_correlation_id: str) -> None:
         """

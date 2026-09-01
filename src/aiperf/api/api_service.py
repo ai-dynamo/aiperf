@@ -10,19 +10,21 @@ for real-time ZMQ message forwarding.
 from __future__ import annotations
 
 import asyncio
+import socket
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import HTTPConnection
 from starlette_compress import CompressMiddleware
 
 from aiperf import __version__ as aiperf_version
+from aiperf.api.depends import ServiceDep, get_service
 from aiperf.api.routers.base_router import BaseRouter
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_start, on_stop
 from aiperf.plugin import plugins
@@ -31,18 +33,12 @@ from aiperf.plugin.enums import PluginType, ServiceType
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.config import BenchmarkRun
 
 
-def get_service(conn: HTTPConnection) -> FastAPIService:
-    """Get FastAPIService from app state. Works for both HTTP and WebSocket."""
-    service = getattr(conn.app.state, "service", None)
-    if service is None:
-        raise RuntimeError("Service not initialized in app.state")
-    return service
-
-
-ServiceDep = Annotated["FastAPIService", Depends(get_service)]
+# Re-exported from `aiperf.api.depends` so existing imports of
+# `get_service` / `ServiceDep` from `aiperf.api.api_service` keep working.
+__all__ = ["FastAPIService", "ServiceDep", "get_service", "main"]
 
 
 class FastAPIService(BaseComponentService):
@@ -65,7 +61,9 @@ class FastAPIService(BaseComponentService):
         )
 
         self.api_host = run.cfg.runtime.api_host or Environment.API_SERVER.HOST
-        self.api_port = run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        self.api_port = (
+            self._api_port or run.cfg.runtime.api_port or Environment.API_SERVER.PORT
+        )
         self.cors_origins = Environment.API_SERVER.CORS_ORIGINS
 
         self._server: uvicorn.Server | None = None
@@ -86,9 +84,24 @@ class FastAPIService(BaseComponentService):
             self.attach_child_lifecycle(router)
 
     @property
+    def _url_host(self) -> str:
+        """Host formatted for embedding in a URL authority.
+
+        RFC 3986 requires IPv6 literals to be bracketed, otherwise the colons in
+        the address are indistinguishable from the port separator and
+        ``http://::1:8080`` is not a parseable URL. Detecting a literal by the
+        presence of a colon is sufficient here because registered hostnames and
+        IPv4 literals can never contain one.
+        """
+        host = self.api_host
+        if ":" in host and not host.startswith("["):
+            return f"[{host}]"
+        return host
+
+    @property
     def _base_url(self) -> str:
         """Get the base URL for the API server."""
-        return f"http://{self.api_host}:{self.api_port}"
+        return f"http://{self._url_host}:{self.api_port}"
 
     def _create_app(self) -> FastAPI:
         """Create the FastAPI application with all routes."""
@@ -138,6 +151,49 @@ class FastAPIService(BaseComponentService):
             raise ValueError(
                 "API port is not configured. Set --api-port or AIPERF_API_SERVER_PORT."
             )
+        # Pre-bind probe: catch port conflicts BEFORE uvicorn schedules the
+        # async serve() task. Without this, bind failure surfaces inside an
+        # asyncio task done-callback after credits have already drained, and
+        # the run silently "succeeds" with no API. There is a TOCTOU race
+        # vs uvicorn's actual bind, but it's tight enough that "port already
+        # bound" failures are caught reliably for the user-explicit case.
+        explicit_port = (
+            self._api_port is not None or self.run.cfg.runtime.api_port is not None
+        )
+        try:
+            # Resolve the family from the host so IPv6 literals (--api-host ::1)
+            # and dual-stack hostnames probe with the right socket family
+            # instead of failing spuriously under a hardcoded AF_INET.
+            # socket.gaierror subclasses OSError, so an unresolvable host lands
+            # in the same handling as a bind failure.
+            family, _, _, _, sockaddr = socket.getaddrinfo(
+                self.api_host,
+                self.api_port,
+                type=socket.SOCK_STREAM,
+                flags=socket.AI_PASSIVE,
+            )[0]
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                # Match uvicorn's bind semantics exactly. Its host/port path
+                # goes through `loop.create_server(host=, port=)`, whose
+                # `reuse_address` defaults to True on POSIX and False
+                # elsewhere. Without SO_REUSEADDR the probe is strictly
+                # stricter than the bind it predicts, and a port left in
+                # TIME_WAIT by a previous run -- which uvicorn would bind
+                # fine -- aborts the benchmark below. Setting it on Windows
+                # would make the probe strictly looser instead (there
+                # SO_REUSEADDR permits stealing a live listener), so the
+                # branch mirrors asyncio rather than always enabling it.
+                if not IS_WINDOWS:
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(sockaddr)
+        except OSError as e:
+            msg = f"API server cannot bind {self._url_host}:{self.api_port}: {e}"
+            if explicit_port:
+                # User-explicit --api-port: fail the service start so the run
+                # aborts instead of proceeding with no reachable API.
+                raise RuntimeError(msg) from e
+            self.warning(f"{msg}; continuing without API server.")
+            return
         config = uvicorn.Config(
             self.app,
             host=self.api_host,

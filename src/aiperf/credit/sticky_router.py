@@ -22,7 +22,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from aiperf.common.enums import CommAddress
+from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.enums import CommAddress, CreditPhase
+from aiperf.common.environment import Environment
+from aiperf.common.hooks import background_task
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.protocols import (
     StreamingPullClientProtocol,
@@ -33,7 +36,8 @@ from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
-    WorkerReady,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerShutdown,
     WorkerToRouterMessage,
 )
@@ -61,6 +65,27 @@ class _StickyEntry:
     worker_id: str
     ref_count: int = 1
     parent_final_seen: bool = False
+    root_key: str = ""
+    """The correlation id this entry is filed under in ``_sticky_sessions``.
+
+    Eviction is driven by whichever key the caller happened to hold, and for a
+    DAG descendant that key is an *alias*. Popping by it alone left the root
+    key pointing at a dead entry and left the root id in the owning worker's
+    ``active_session_ids``, so ``active_sessions`` and that set drifted apart
+    for the rest of the run. Recording the root at creation lets eviction
+    remove the entry by its real key no matter which alias found it.
+    """
+    aliases: set[str] = field(default_factory=set)
+    """Extra keys resolving to this entry (descendant correlation ids).
+
+    A DAG credit looks its entry up by ``parent_correlation_id``, but only the
+    session root ever owns an entry: a depth-1 child shares the root's. So a
+    depth-2 grandchild, whose parent id is that depth-1 child, found nothing
+    and fell through to least-loaded routing -- losing exactly the
+    prefix-cache locality the refcount machinery exists to preserve. Aliasing
+    each registered child's own id onto its ancestor's entry makes the lookup
+    resolve at any depth; the aliases are dropped with the entry.
+    """
 
 
 @dataclass(slots=True)
@@ -88,6 +113,16 @@ class WorkerLoad:
     total_cancelled_credits: int = 0
     total_errors_reported: int = 0
     in_flight_credits: int = 0
+    last_heartbeat_ns: int = 0
+    """Wall-clock of the last service heartbeat observed for this worker.
+
+    Seeded to registration time by ``_register_worker`` so the staleness clock
+    starts running immediately: heartbeats are published on a timer that fires
+    seconds after the worker announces itself dispatchable, and a 0 here reads
+    as "never seen" and disables eviction for that worker entirely. Published
+    on its own timer by the worker service independently of request work, so it
+    is the only signal here that separates a dead worker from a slow one.
+    Drives ``evict_stale_workers``."""
     active_credit_ids: set[int] = field(default_factory=set)
     active_sessions: int = 0  # Sticky sessions assigned to this worker
     active_session_ids: set[str] = field(default_factory=set)
@@ -133,6 +168,14 @@ class CreditRouterProtocol(Protocol):
 
         Used during phase timeout or system shutdown.
         """
+        ...
+
+    def begin_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
+        """Reset cancellation state before this phase starts issuing."""
+        ...
+
+    def end_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
+        """Release any per-phase router state once this phase fully drains."""
         ...
 
     def mark_credits_complete(self) -> None:
@@ -282,6 +325,8 @@ class StickyCreditRouter(CommunicationMixin):
             Callable[[FirstToken], Awaitable[None]] | None
         ) = None
         self._on_fatal_error: Callable[[BaseException], None] | None = None
+        self._on_worker_count_changed: Callable[[int], None] | None = None
+        self._on_worker_lost: Callable[[str], None] | None = None
 
         # Sticky sessions: routing_key -> _StickyEntry
         # Routes all turns of a conversation (and DAG children pinned to it) to the
@@ -289,6 +334,21 @@ class StickyCreditRouter(CommunicationMixin):
         # x_correlation_id. The routing key is ``parent_correlation_id or
         # x_correlation_id`` so FORK-mode children co-locate with their parent.
         self._sticky_sessions: dict[str, _StickyEntry] = {}
+        self._terminally_lost_workers: set[str] = set()
+        self._gracefully_shutdown_workers: set[str] = set()
+
+        # Two-strike bookkeeping for evict_stale_workers()'s periodic sweep:
+        # a worker must be observed past the cutoff on two consecutive sweeps
+        # (spaced STALE_TIME apart) before it is actually evicted. Mirrors the
+        # two-strike verification in BaseServiceManager._judge_stale_service,
+        # which additionally has process ground truth to clear a strike
+        # outright. This router has no such ground truth (it runs in a
+        # different process than the service watchdog), so persistence across
+        # two independent sweeps is the closest in-process approximation:
+        # a worker whose event loop stalls and then recovers gets a second
+        # chance instead of being evicted on the same sweep the watchdog
+        # would have protected it on.
+        self._stale_worker_strikes: dict[str, int] = {}
 
         self._cancellation_pending: bool = False
         self._credits_complete: bool = False
@@ -297,6 +357,14 @@ class StickyCreditRouter(CommunicationMixin):
         # Rebuilt on worker add/remove (rare) to keep routing fast (common).
         self._workers_cache: list[WorkerLoad] = []
         self._workers: dict[str, WorkerLoad] = {}
+        self._peak_worker_count: int = 0
+
+        # Workers whose return path is up but which are not necessarily
+        # dispatchable yet. Strict superset of ``_workers``: a worker appears
+        # here on WorkerConnected and only enters ``_workers`` (the routing
+        # pool) on WorkerDispatchable. Tracked so "connected but not
+        # dispatchable" is observable rather than looking like an absent pod.
+        self._connected_workers: set[str] = set()
 
         # Map load level -> set of worker_ids at that load (O(1) add/remove)
         self._workers_by_load: dict[int, set[str]] = defaultdict(set)
@@ -328,6 +396,22 @@ class StickyCreditRouter(CommunicationMixin):
         """
         self._on_fatal_error = callback
 
+    def set_worker_count_changed_callback(
+        self, callback: Callable[[int], None]
+    ) -> None:
+        """Register a cold-path observer for dispatchable-worker membership."""
+        self._on_worker_count_changed = callback
+
+    def set_worker_lost_callback(self, callback: Callable[[str], None]) -> None:
+        """Register the terminal sink for losing a registered worker.
+
+        A worker that disappears mid-run takes its cached per-session state with
+        it, so the sessions it owned cannot be continued anywhere else. Rather
+        than quietly truncating them, the router reports the loss once and lets
+        the run fail fast with a reason a user can act on.
+        """
+        self._on_worker_lost = callback
+
     def set_first_token_callback(
         self, callback: Callable[[FirstToken], Awaitable[None]]
     ) -> None:
@@ -336,8 +420,8 @@ class StickyCreditRouter(CommunicationMixin):
 
     async def wait_for_workers(self, timeout: float) -> None:
         """Close the startup race where a phase issues its first credit before
-        any worker has sent ``WorkerReady`` (which makes ``send_credit`` raise
-        on empty workers). Called once per phase before the first credit.
+        any worker has sent ``WorkerDispatchable`` (which makes ``send_credit``
+        raise on empty workers). Called once per phase before the first credit.
 
         Best-effort startup gate, not an absolute postcondition: the last worker
         can unregister between this returning and the first ``send_credit``, so
@@ -360,7 +444,7 @@ class StickyCreditRouter(CommunicationMixin):
             ) from exc
 
     async def _fire_virtual_return(self, credit_return: CreditReturn) -> None:
-        """Deliver a synthesized no_request CreditReturn to the return consumer.
+        """Deliver a synthesized CreditReturn to the return consumer.
 
         Runs as a detached task (scheduled via ``execute_async``). On failure the
         error is logged AND forwarded to the fatal-error sink so it surfaces to
@@ -373,7 +457,7 @@ class StickyCreditRouter(CommunicationMixin):
             await self._on_return_callback("", credit_return)
         except Exception as e:
             self.exception(
-                lambda: f"virtual no_request return callback failed for credit "
+                lambda: f"synthetic return callback failed for credit "
                 f"{credit_return.credit.id} (x_correlation_id="
                 f"{credit_return.credit.x_correlation_id})"
             )
@@ -416,13 +500,14 @@ class StickyCreditRouter(CommunicationMixin):
             self.execute_async(self._fire_virtual_return(credit_return))
             return
 
-        if not self._workers:
-            raise RuntimeError("No workers available for routing")
-
         # DAG children pin to their parent's worker; otherwise pin to self.
         routing_key = credit.parent_correlation_id or credit.x_correlation_id
+        is_dag_child = credit.parent_correlation_id is not None
         sticky_entry = self._sticky_sessions.get(routing_key)
         sticky_worker_id = sticky_entry.worker_id if sticky_entry is not None else None
+
+        if not self._workers:
+            raise RuntimeError("No workers available for routing")
 
         # Use existing sticky session if worker still valid
         if sticky_worker_id and sticky_worker_id in self._workers:
@@ -477,10 +562,12 @@ class StickyCreditRouter(CommunicationMixin):
             # SPAWN differs only in refcount: the orchestrator does not call
             # register_child_routing for SPAWN. When the parent entry is gone,
             # children fall through to least-loaded without minting a leak.
-            is_dag_child = credit.parent_correlation_id is not None
             if not credit.is_final_turn or credit.has_forks:
                 if sticky_entry is None and not is_dag_child:
-                    sticky_entry = _StickyEntry(worker_id=worker_id)
+                    sticky_entry = _StickyEntry(
+                        worker_id=worker_id,
+                        root_key=routing_key,
+                    )
                     self._sticky_sessions[routing_key] = sticky_entry
                     load = self._workers[worker_id]
                     load.active_sessions += 1
@@ -492,7 +579,10 @@ class StickyCreditRouter(CommunicationMixin):
                     sticky_entry.worker_id = worker_id
                     load = self._workers[worker_id]
                     load.active_sessions += 1
-                    load.active_session_ids.add(routing_key)
+                    # Re-file under the root: routing_key is an alias when a
+                    # DAG descendant is what triggered the rebind, and the
+                    # eviction paths only ever discard the root.
+                    load.active_session_ids.add(sticky_entry.root_key or routing_key)
 
         # Owning session's final turn: mark parent_final_seen and decrement the
         # reservation. DAG children never touch the parent entry (managed via
@@ -504,10 +594,17 @@ class StickyCreditRouter(CommunicationMixin):
                 entry.parent_final_seen = True
                 entry.ref_count -= 1
                 if entry.ref_count <= 0 and not credit.has_forks:
-                    self._sticky_sessions.pop(routing_key, None)
-                    load = self._workers[worker_id]
-                    load.active_sessions -= 1
-                    load.active_session_ids.discard(routing_key)
+                    self._pop_entry(routing_key, entry)
+                    # Give the session back to the worker it was counted
+                    # against, not to whoever this turn happened to route to.
+                    # When the pinned worker died the two differ, and
+                    # decrementing the new worker drives it to -1 -- and
+                    # active_sessions leads the tie-break key, so that worker
+                    # then wins every tie for the rest of the run.
+                    load = self._workers.get(entry.worker_id)
+                    if load is not None:
+                        load.active_sessions -= 1
+                        load.active_session_ids.discard(entry.root_key or routing_key)
 
         self._track_credit_sent(worker_id, credit.id)
 
@@ -554,7 +651,25 @@ class StickyCreditRouter(CommunicationMixin):
         """Mark credits complete - suppresses orphan warnings during shutdown."""
         self._credits_complete = True
 
-    def register_child_routing(self, parent_correlation_id: str) -> None:
+    def begin_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
+        """Reset cancellation state without disturbing another draining phase.
+
+        Seamless phases overlap: the next phase starts issuing while the prior
+        phase may still dispatch DAG descendants, so this must touch nothing
+        the still-draining phase is using.
+        """
+        self._cancellation_pending = False
+
+    def end_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
+        """Phase-drain hook: the router holds no per-phase state to release.
+
+        Kept because the runner sequences it against the return-drain wait, and
+        the ordering guarantee is what any future per-phase state would need.
+        """
+
+    def register_child_routing(
+        self, parent_correlation_id: str, child_correlation_id: str | None = None
+    ) -> None:
         """Increment the sticky-routing refcount for a parent's entry.
 
         Called by ``BranchOrchestrator`` before dispatching each DAG child so
@@ -568,6 +683,13 @@ class StickyCreditRouter(CommunicationMixin):
         entry = self._sticky_sessions.get(parent_correlation_id)
         if entry is not None:
             entry.ref_count += 1
+            if child_correlation_id and child_correlation_id not in (
+                self._sticky_sessions
+            ):
+                # Alias so this child's own descendants resolve to the same
+                # entry instead of missing at depth >= 2.
+                entry.aliases.add(child_correlation_id)
+                self._sticky_sessions[child_correlation_id] = entry
         else:
             self.warning(
                 lambda: f"register_child_routing: parent "
@@ -588,11 +710,12 @@ class StickyCreditRouter(CommunicationMixin):
         entry.ref_count -= 1
         if entry.ref_count <= 0 and entry.parent_final_seen:
             worker_id = entry.worker_id
-            self._sticky_sessions.pop(parent_correlation_id, None)
+            root_key = entry.root_key or parent_correlation_id
+            self._pop_entry(parent_correlation_id, entry)
             load = self._workers.get(worker_id)
             if load is not None:
                 load.active_sessions -= 1
-                load.active_session_ids.discard(parent_correlation_id)
+                load.active_session_ids.discard(root_key)
 
     def evict_unclaimed_sticky(self, parent_correlation_id: str) -> None:
         """Force-pop a sticky entry retained for FORK children that never registered.
@@ -609,11 +732,27 @@ class StickyCreditRouter(CommunicationMixin):
         if entry is None or not entry.parent_final_seen or entry.ref_count > 0:
             return
         worker_id = entry.worker_id
-        self._sticky_sessions.pop(parent_correlation_id, None)
+        root_key = entry.root_key or parent_correlation_id
+        self._pop_entry(parent_correlation_id, entry)
         load = self._workers.get(worker_id)
         if load is not None:
             load.active_sessions -= 1
-            load.active_session_ids.discard(parent_correlation_id)
+            load.active_session_ids.discard(root_key)
+
+    def _pop_entry(self, key: str, entry: _StickyEntry) -> None:
+        """Drop an entry along with its root key and every alias pointing at it.
+
+        Popping only the key the caller held would leave the other names for
+        this entry behind, routing later credits to a worker that no longer
+        owns the session and growing the dict for the life of the run. ``key``
+        is often an alias: DAG eviction paths are handed a descendant's
+        correlation id.
+        """
+        self._sticky_sessions.pop(key, None)
+        for alias in (entry.root_key, *entry.aliases):
+            if alias and self._sticky_sessions.get(alias) is entry:
+                self._sticky_sessions.pop(alias, None)
+        entry.aliases.clear()
 
     # =============================================================================
     # Private Methods
@@ -627,7 +766,7 @@ class StickyCreditRouter(CommunicationMixin):
         delegate to the common handler.
 
         Ordering note: CreditReturn/FirstToken now arrive on this PULL channel while
-        WorkerReady/WorkerShutdown stay on the DEALER, so a worker's returns and its
+        WorkerDispatchable/WorkerShutdown stay on the DEALER, so a worker's returns and its
         lifecycle messages are no longer mutually ordered (on the single bidirectional
         DEALER they were). That is safe because a worker only emits WorkerShutdown
         after all its returns have been sent, and the timing manager's phase /
@@ -642,7 +781,7 @@ class StickyCreditRouter(CommunicationMixin):
     async def _handle_router_message(
         self, worker_id: str, message: WorkerToRouterMessage
     ) -> None:
-        """Handle CreditReturn, FirstToken, WorkerReady, WorkerShutdown from workers."""
+        """Handle CreditReturn, FirstToken, WorkerDispatchable, WorkerShutdown from workers."""
         match message:
             case CreditReturn():
                 self._track_credit_returned(
@@ -659,10 +798,28 @@ class StickyCreditRouter(CommunicationMixin):
                 if self._on_first_token_callback:
                     # Forward TTFT to orchestrator so it can release the prefill slot.
                     await self._on_first_token_callback(message)
-            case WorkerReady():
+            case WorkerConnected():
+                # Connectivity is NOT dispatchability. The worker's return path
+                # is up, but its dataset may not be open yet; registering here
+                # would route credits to a worker that fails every one of them.
+                # Wait for WorkerDispatchable.
+                self._connected_workers.add(worker_id)
+            case WorkerDispatchable():
+                self._connected_workers.add(worker_id)
                 self._register_worker(worker_id)
+                self._note_peak_workers()
             case WorkerShutdown():
-                self._unregister_worker(worker_id)
+                self._connected_workers.discard(worker_id)
+                # WorkerShutdown is sent only after the worker has emitted all
+                # returns, but the return PULL and lifecycle DEALER channels are
+                # unordered. Keep draining single-turn returns that were already
+                # sent; active sticky sessions remain an immediate terminal loss.
+                self._gracefully_shutdown_workers.add(worker_id)
+                self._unregister_worker(
+                    worker_id,
+                    reason="worker shut down",
+                    in_flight_credits_are_lost=False,
+                )
             case _:
                 self.warning(f"Unknown message type: {type(message).__name__}")
 
@@ -672,8 +829,21 @@ class StickyCreditRouter(CommunicationMixin):
         Late-joining workers initialize:
         - virtual_sent_credits to average (prevents thundering herd on credits)
         - last_sent_at_ns to current time (prevents winning all timestamp tie-breaks)
+        - last_heartbeat_ns to current time, so the staleness clock starts at
+          registration. A worker is dispatchable and accepting credits from the
+          moment it announces itself, but its first heartbeat only lands one
+          heartbeat interval later; leaving the field at 0 made
+          ``evict_stale_workers`` read "never heartbeated" as "immortal", so a
+          worker that died inside that window was never evicted and the run hung
+          waiting for returns that could not arrive.
         """
+        if worker_id in self._terminally_lost_workers:
+            self.warning(
+                f"Ignoring dispatchable announcement from terminally lost worker {worker_id}"
+            )
+            return
         if worker_id not in self._workers:
+            self._gracefully_shutdown_workers.discard(worker_id)
             # Initialize to averages to prevent thundering herd
             avg_virtual = 0
             if self._workers_cache:
@@ -685,6 +855,7 @@ class StickyCreditRouter(CommunicationMixin):
                 worker_id=worker_id,
                 virtual_sent_credits=avg_virtual,
                 last_sent_at_ns=time.perf_counter_ns(),
+                last_heartbeat_ns=time.time_ns(),
             )
             if self.is_trace_enabled:
                 self.trace(
@@ -697,10 +868,187 @@ class StickyCreditRouter(CommunicationMixin):
             self._min_load = 0
             self._workers_by_load[0].add(worker_id)
             self._worker_available_event.set()
+            self._notify_worker_count_changed()
 
-    def _unregister_worker(self, worker_id: str) -> None:
-        """Unregister worker. Sticky sessions are cleared and reassigned on next access."""
-        if worker_load := self._workers.pop(worker_id, None):
+    @background_task(
+        interval=lambda self: Environment.WORKER.STALE_TIME,
+        immediate=False,
+    )
+    async def _evict_stale_workers_task(self) -> None:
+        """Periodically drop workers whose heartbeats have stopped.
+
+        Sweeps every ``STALE_TIME`` but evicts only workers silent for
+        ``STALE_TIME * 3`` on two consecutive sweeps, so a dead worker leaves
+        routing within roughly four to five sweeps. The margin keeps a worker
+        that misses one or two heartbeats under load in the pool. Suppressed
+        once credits are complete or a cancellation is in flight: workers
+        legitimately stop talking then, and evicting during teardown would
+        log noise about a normal shutdown.
+
+        Two-strike gate: a worker past the cutoff on its first sweep is only
+        "suspected" (see ``_stale_worker_strikes``) and is evicted only if it
+        is still past the cutoff on the following sweep. A worker whose
+        heartbeat resumes before that second sweep loses its strike and stays
+        in the pool. This does not require process ground truth (the router
+        has none -- see the class docstring), but it does mean a single
+        transient stall can no longer be evicted on the same sweep where a
+        process-aware watchdog would have protected it.
+        """
+        if self._credits_complete or self._cancellation_pending:
+            return
+        stale_after_s = Environment.WORKER.STALE_TIME * 3
+        candidates = set(self._stale_worker_candidates(stale_after_s))
+
+        # Workers that heartbeated since the last sweep are no longer
+        # suspected; drop their strike so a later stall starts fresh.
+        for worker_id in list(self._stale_worker_strikes):
+            if worker_id not in candidates:
+                del self._stale_worker_strikes[worker_id]
+
+        confirmed: list[str] = []
+        for worker_id in candidates:
+            strikes = self._stale_worker_strikes.get(worker_id, 0) + 1
+            if strikes < 2:
+                self._stale_worker_strikes[worker_id] = strikes
+                continue
+            self._stale_worker_strikes.pop(worker_id, None)
+            confirmed.append(worker_id)
+
+        if confirmed:
+            self._evict_worker_ids(confirmed, stale_after_s)
+
+    def _note_peak_workers(self) -> None:
+        """Track the high-water mark of registered workers.
+
+        The floor is measured against the peak rather than the configured
+        count because workers register over time; comparing against the
+        request would trip during a normal ramp-up.
+        """
+        self._peak_worker_count = max(self._peak_worker_count, len(self._workers))
+
+    def check_worker_floor(self, min_fraction: float) -> str | None:
+        """Return a reason string when too few workers remain, else None."""
+        if min_fraction <= 0:
+            return None
+        peak = self._peak_worker_count
+        if peak <= 0:
+            return None
+        alive = len(self._workers)
+        floor = peak * min_fraction
+        if alive >= floor:
+            return None
+        return (
+            f"only {alive} of {peak} worker(s) remain dispatchable "
+            f"({alive / peak:.0%} < {min_fraction:.0%} floor)"
+        )
+
+    def note_worker_heartbeat(self, worker_id: str) -> None:
+        """Record a service heartbeat from a dispatchable worker.
+
+        Once a stale worker is removed, its sticky aliases have been discarded
+        and its loss has been reported as terminal. A late heartbeat cannot
+        safely restore the worker to routing.
+        """
+        if load := self._workers.get(worker_id):
+            load.last_heartbeat_ns = time.time_ns()
+
+    def evict_stale_workers(self, stale_after_s: float) -> list[str]:
+        """Drop workers whose heartbeats have stopped, and stop routing to them.
+
+        A dead worker cannot announce its own death, so nothing else can do
+        this. Until it is dropped it keeps winning selections and every credit
+        sent to it is never returned, which starves the concurrency limiter --
+        throughput degrades with nothing naming the cause.
+
+        Staleness is measured against ``last_heartbeat_ns``, NOT credit-channel
+        traffic. Workers emit nothing on the credit channel while a request is
+        in flight, so keying off that evicted healthy workers running long
+        requests: a reasoning model with a one-second TTFT and a minute of
+        decode looks exactly as silent as a crashed pod, and with concurrency
+        spread across the pool every busy worker was evicted in turn until
+        routing had none left and the run hard-failed. Heartbeats are published
+        on the worker's own timer regardless of request duration, so a slow
+        worker keeps its clock fresh.
+
+        Removing a worker that owns an in-flight credit or sticky session is
+        terminal: the worker-local state cannot be restored by a late heartbeat.
+        Idle-worker removal remains non-terminal because no active work is lost.
+
+        Returns the evicted worker ids. ``stale_after_s <= 0`` disables the
+        check. ``last_heartbeat_ns`` is seeded at registration, so a worker that
+        dies before its first heartbeat still ages out; a 0 here means the load
+        entry was built outside ``_register_worker`` and is skipped, so a
+        missing liveness feed degrades to no eviction rather than to evicting
+        everybody.
+        """
+        stale = self._stale_worker_candidates(stale_after_s)
+        if stale:
+            self._evict_worker_ids(stale, stale_after_s)
+        return stale
+
+    def _stale_worker_candidates(self, stale_after_s: float) -> list[str]:
+        """Return worker ids whose heartbeat is older than ``stale_after_s``.
+
+        Read-only: does not evict anything. Split out of
+        ``evict_stale_workers`` so the periodic sweep task can peek at who
+        would be evicted and apply its own two-strike confirmation before
+        actually removing anyone -- see ``_evict_stale_workers_task``.
+
+        ``stale_after_s <= 0`` disables the check.
+        """
+        if stale_after_s <= 0:
+            return []
+        cutoff_ns = time.time_ns() - int(stale_after_s * NANOS_PER_SECOND)
+        return [
+            wid
+            for wid, load in self._workers.items()
+            if load.last_heartbeat_ns and load.last_heartbeat_ns < cutoff_ns
+        ]
+
+    def _evict_worker_ids(self, worker_ids: list[str], stale_after_s: float) -> None:
+        """Unregister the given worker ids as stale and report any real loss.
+
+        Shared tail of ``evict_stale_workers`` (immediate, single-sweep
+        eviction) and ``_evict_stale_workers_task`` (two-strike confirmed
+        eviction). ``stale_after_s`` is used only for the log message.
+        """
+        lost_active_work = False
+        for worker_id in worker_ids:
+            load = self._workers[worker_id]
+            in_flight = load.in_flight_credits
+            self.warning(
+                f"Worker {worker_id} has not heartbeat for over {stale_after_s:.0f}s "
+                f"with {in_flight} credit(s) in flight; dropping it from routing"
+            )
+            self._connected_workers.discard(worker_id)
+            lost_active_work = (
+                self._unregister_worker(
+                    worker_id,
+                    reason="worker stopped responding",
+                    notify_loss=False,
+                )
+                or lost_active_work
+            )
+        if lost_active_work:
+            self._notify_worker_lost("worker_unavailable: worker stopped responding")
+
+    def _unregister_worker(
+        self,
+        worker_id: str,
+        *,
+        reason: str = "",
+        notify_loss: bool = True,
+        in_flight_credits_are_lost: bool = True,
+    ) -> bool:
+        """Remove a worker from routing and report a real loss exactly once.
+
+        ``reason`` names why the worker went away; it is reported through the
+        worker-lost callback only when a registered worker is removed while the
+        run is still live. Teardown removals (cancellation in flight, or all
+        credits already returned) are expected and stay silent.
+        """
+        worker_load = self._workers.pop(worker_id, None)
+        if worker_load:
             if worker_load.in_flight_credits > 0 and not self._cancellation_pending:
                 self.warning(
                     f"Worker {worker_id} unregistered with {worker_load.in_flight_credits} in-flight credits"
@@ -713,18 +1061,8 @@ class StickyCreditRouter(CommunicationMixin):
             if not self._workers:
                 self._worker_available_event.clear()
 
-            # Remove all orphaned sticky sessions now and warn once up front
-            orphaned_session_ids = worker_load.active_session_ids
-            if orphaned_session_ids and not (
-                self._cancellation_pending or self._credits_complete
-            ):
-                self.warning(
-                    f"Worker {worker_id} unregistered with {len(orphaned_session_ids)} active sessions, will reassign"
-                )
-            for x_correlation_id in orphaned_session_ids:
-                self._sticky_sessions.pop(x_correlation_id, None)
-
-        if not worker_load:
+            self._drop_orphaned_sessions(worker_id, worker_load.active_session_ids)
+        else:
             # Warn but continue - may happen if shutdown message arrives before ready message.
             self.warning(
                 f"Worker {worker_id} not found when unregistering. This should not happen."
@@ -741,6 +1079,58 @@ class StickyCreditRouter(CommunicationMixin):
                 self._min_load = min(w.in_flight_credits for w in self._workers_cache)
             else:
                 self._min_load = 0
+        self._notify_worker_count_changed()
+
+        lost_active_work = (
+            worker_load is not None
+            and (
+                (in_flight_credits_are_lost and worker_load.in_flight_credits > 0)
+                or bool(worker_load.active_session_ids)
+            )
+            and not self._cancellation_pending
+            and not self._credits_complete
+        )
+        if lost_active_work:
+            self._terminally_lost_workers.add(worker_id)
+            if notify_loss:
+                self._notify_worker_lost(f"worker_unavailable: {reason}")
+        return lost_active_work
+
+    def _notify_worker_lost(self, reason: str) -> None:
+        """Report a terminal loss without interrupting router cleanup."""
+        callback = self._on_worker_lost
+        if callback is None:
+            return
+        try:
+            callback(reason)
+        except Exception:
+            self.error(lambda: f"Worker-loss callback failed: {reason}")
+
+    def _drop_orphaned_sessions(
+        self, worker_id: str, orphaned_session_ids: set[str]
+    ) -> None:
+        """Forget every sticky session a departing worker owned.
+
+        The per-session state those credits route to lived in that worker's
+        memory, so no other worker can continue them; leaving the entries
+        behind would route later turns at a worker that is already gone.
+        """
+        if orphaned_session_ids and not (
+            self._cancellation_pending or self._credits_complete
+        ):
+            self.warning(
+                f"Worker {worker_id} unregistered with "
+                f"{len(orphaned_session_ids)} active sessions"
+            )
+        for x_correlation_id in orphaned_session_ids:
+            orphaned = self._sticky_sessions.get(x_correlation_id)
+            if orphaned is not None:
+                self._pop_entry(x_correlation_id, orphaned)
+
+    def _notify_worker_count_changed(self) -> None:
+        """Tell TimingManager that the dispatchable-worker count changed."""
+        if callback := getattr(self, "_on_worker_count_changed", None):
+            callback(len(self._workers))
 
     def _track_credit_sent(self, worker_id: str, credit_id: int) -> None:
         """Update worker load: increment in_flight_credits. Lock-free."""
@@ -802,6 +1192,10 @@ class StickyCreditRouter(CommunicationMixin):
             # Even during cancellation, the workers should still be registered, but if they are not it won't cause any issues.
             self.warning(
                 f"Worker {worker_id} not found when tracking credit {credit_action} during cancellation."
+            )
+        elif worker_id in self._gracefully_shutdown_workers:
+            self.debug(
+                f"Worker {worker_id} {credit_action} credit after graceful shutdown"
             )
         else:
             self.error(

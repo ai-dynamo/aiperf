@@ -30,8 +30,6 @@ sidebar-title: Comprehensive LLM Benchmarking
     - [Automatic Plot Generation](#automatic-plot-generation)
     - [KV Cache Efficiency Testing](#kv-cache-efficiency-testing)
     - [User-Centric Timing Mode](#user-centric-timing-mode)
-11. [Coming Soon](#coming-soon)
-    - [Kubernetes-Native Benchmarking](#kubernetes-native-benchmarking)
 
 ---
 
@@ -1029,16 +1027,5 @@ aiperf profile \
 - **Shared system prompt**: Test prefix caching benefits with `--shared-system-prompt-length`
 - **Virtual history**: Immediate steady-state without cold-start transient
 - **Cache TTL testing**: Verify KV cache retention at specific time intervals
-
----
-
-## Coming Soon
-
-AIPerf is actively developing new capabilities:
-
-### Kubernetes-Native Benchmarking
-- **Distributed load generation**: Deploy multiple load-tester pods to simulate thousands of concurrent users
-- **Large-scale workloads**: Test production-scale traffic patterns without client-side bottlenecks
-- **Automated orchestration**: Kubernetes operators to manage benchmark lifecycles and resource allocation
 
 ---

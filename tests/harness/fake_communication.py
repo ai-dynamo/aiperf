@@ -13,6 +13,7 @@ address for fast, isolated testing without network or IPC overhead.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from collections import defaultdict
@@ -170,14 +171,51 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
         self.capture_sent_payload(message, receiver_identity=identity)
         for comm in self.bus.communications:
             if dealer_client := comm.dealer_clients.get(identity):
+                dealer_client.capture_received_payload(
+                    message, sender_identity=self.identity
+                )
+                # A reply carrying a pending rid/cid resolves that waiter
+                # instead of going to the streaming handler -- the same split
+                # ZMQStreamingDealerClient._dispatch_dealer makes.
+                if dealer_client.resolve_pending(message):
+                    return
                 if dealer_client.handler:
-                    dealer_client.capture_received_payload(
-                        message, sender_identity=self.identity
-                    )
                     await dealer_client.handler(message)
                 else:
                     self.warning(f"No handler registered for dealer client {identity}")
                 return
+
+    async def request_to(self, identity: str, message: Any, timeout: float) -> Any:  # noqa: ARG002
+        """Send to a dealer and return its handler's reply, correlated by ``cid``.
+
+        The real client correlates asynchronously through the ROUTER receive
+        loop; on the in-process bus the dealer handler's return value *is* the
+        reply, so the correlation check is applied to it directly. ``timeout`` is
+        accepted for signature parity and unused -- nothing blocks here.
+        """
+        cid = getattr(message, "cid", None)
+        if cid is None:
+            raise ValueError(
+                f"request_to() requires a struct with a 'cid'; "
+                f"{type(message).__name__} has none."
+            )
+        self.capture_sent_payload(message, receiver_identity=identity)
+        for comm in self.bus.communications:
+            if dealer_client := comm.dealer_clients.get(identity):
+                if not dealer_client.handler:
+                    raise TimeoutError(
+                        f"No handler registered for dealer client {identity}"
+                    )
+                dealer_client.capture_received_payload(
+                    message, sender_identity=self.identity
+                )
+                response = await dealer_client.handler(message)
+                if response is None or getattr(response, "cid", None) != cid:
+                    raise TimeoutError(
+                        f"Dealer {identity} did not reply to cid {cid!r}"
+                    )
+                return response
+        raise TimeoutError(f"No dealer client registered for identity {identity}")
 
 
 class FakeStreamingDealerClient(FakeCommunicationClient):
@@ -188,6 +226,7 @@ class FakeStreamingDealerClient(FakeCommunicationClient):
     def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
         super().__init__(address, identity, bus)
         self.handler: Callable[[Any], Awaitable[None]] | None = None
+        self._pending_requests: dict[str, asyncio.Future[Any]] = {}
 
     def register_receiver(
         self, handler: Callable[[Any], Coroutine[Any, Any, None]]
@@ -206,6 +245,49 @@ class FakeStreamingDealerClient(FakeCommunicationClient):
                         message, sender_identity=self.identity
                     )
                     await router_client.handler(self.identity, message)
+
+    def resolve_pending(self, message: Any) -> bool:
+        """Resolve a waiting ``request()`` if this message is its reply."""
+        key = getattr(message, "rid", None) or getattr(message, "cid", None)
+        if key is None:
+            return False
+        future = self._pending_requests.pop(key, None)
+        if future is None or future.done():
+            return False
+        future.set_result(message)
+        return True
+
+    async def request(self, message: Any, timeout: float = 30.0) -> Any:
+        """Send to the router and await the reply correlated by ``rid``/``cid``.
+
+        Mirrors ``ZMQStreamingDealerClient.request``: the reply is whatever the
+        router later sends back to this identity, NOT the router handler's
+        return value -- peer handshakes ack asynchronously through ``send_to``.
+        Treating the return value as the reply made every handshake raise
+        instantly, and the caller's retry loop then spun tens of millions of
+        times before its deadline.
+        """
+        key = getattr(message, "rid", None) or getattr(message, "cid", None)
+        if key is None:
+            raise ValueError(
+                f"request() requires a struct with an 'rid' or 'cid'; "
+                f"{type(message).__name__} has neither."
+            )
+        if not any(
+            comm.router_clients.get(self.address) for comm in self.bus.communications
+        ):
+            # No ROUTER is bound here at all -- in-process topologies have no
+            # WorkerGroupManager. Real ZMQ cannot tell this apart from a slow
+            # peer and surfaces a timeout, but the fake can, and reporting it
+            # as ConnectionError lets callers skip a doomed retry deadline.
+            raise ConnectionError(f"No ROUTER bound at {self.address}")
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._pending_requests[key] = future
+        try:
+            await self.send(message)
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._pending_requests.pop(key, None)
 
 
 class FakeStreamingPullClient(FakeCommunicationClient):

@@ -835,7 +835,7 @@ class TestDeriveRunMeta:
         """A local path like /tmp/bench/42 must NOT be misread as operator layout."""
         from aiperf.config.resolution.resolvers import _derive_run_meta
 
-        # 42 is too short to match EPOCH_RE (^\d{9,11}$|^legacy$).
+        # 42 is too short to match EPOCH_RE (^\d{9,10}(\d{6})?$) or "legacy".
         meta = _derive_run_meta(Path("/tmp/bench/42"))
         assert meta.job_name == "42"  # leaf used as job_name, NOT parent.
         # epoch is wall-clock seconds, not "42".

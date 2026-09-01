@@ -33,10 +33,12 @@ class RequestErrorRateMetric(BaseDerivedMetric[float]):
     unit = GenericMetricUnit.PERCENT
     display_order = 1080
     flags = MetricFlags.NO_INDIVIDUAL_RECORDS
-    required_metrics = frozenset({RequestCountMetric.tag})
+    # Either counter can legitimately be absent: successes on an all-error run,
+    # or errors on a clean run.
+    required_metrics = None
 
     def _derive_value(self, metric_results: MetricResultsDict) -> float:
-        successes = int(metric_results.get_or_raise(RequestCountMetric))
+        successes = int(metric_results.get(RequestCountMetric.tag, 0) or 0)
         errors = int(metric_results.get(ErrorRequestCountMetric.tag, 0) or 0)
         total = successes + errors
         if total <= 0:

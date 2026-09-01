@@ -44,6 +44,40 @@ def _materialize_plot_envelope(envelope: PlotEnvelopeConfig, dest: Path) -> None
     dest.write_text(buf.getvalue(), encoding="utf-8")
 
 
+def _run_auto_plot(
+    *,
+    artifact_dir: Path,
+    plot_envelope: PlotEnvelopeConfig | None,
+    input_paths: list[Path] | None = None,
+    output_dir: Path | None = None,
+) -> None:
+    """Materialize an optional envelope and synchronously render its plots."""
+    config_path: Path | None = None
+    if plot_envelope is not None:
+        config_path = artifact_dir / _MATERIALIZED_PLOT_CONFIG_NAME
+        _materialize_plot_envelope(plot_envelope, config_path)
+
+    paths = input_paths or [artifact_dir]
+    kwargs = {
+        "paths": [str(path) for path in paths],
+        "config": str(config_path) if config_path is not None else None,
+    }
+    if output_dir is not None:
+        kwargs["output"] = str(output_dir)
+    run_plot_controller(**kwargs)
+
+
+def _warn_auto_plot_failed(artifact_dir: Path, exc: Exception) -> None:
+    logger.warning(
+        "auto-plot failed (run artifacts intact at %s): %s; "
+        "see %s for details. Re-run `aiperf plot %s` manually if needed.",
+        artifact_dir,
+        exc,
+        artifact_dir / "plots" / "aiperf_plot.log",
+        artifact_dir,
+    )
+
+
 def build_auto_plot_callback(
     *,
     plot_required: bool,
@@ -63,26 +97,15 @@ def build_auto_plot_callback(
     """
 
     def _callback(run: CompletedRun) -> None:
-        config_path: Path | None = None
-        if plot_envelope is not None:
-            config_path = Path(run.artifact_dir) / _MATERIALIZED_PLOT_CONFIG_NAME
-            _materialize_plot_envelope(plot_envelope, config_path)
-
+        artifact_dir = Path(run.artifact_dir)
         try:
-            run_plot_controller(
-                paths=[str(run.artifact_dir)],
-                config=str(config_path) if config_path is not None else None,
+            _run_auto_plot(
+                artifact_dir=artifact_dir,
+                plot_envelope=plot_envelope,
             )
-        except Exception:
+        except Exception as exc:
             if plot_required:
                 raise
-            logger.warning(
-                "auto-plot failed (run artifacts intact at %s); "
-                "see %s for details. Re-run "
-                "`aiperf plot %s` manually if needed.",
-                run.artifact_dir,
-                Path(run.artifact_dir) / "plots" / "aiperf_plot.log",
-                run.artifact_dir,
-            )
+            _warn_auto_plot_failed(artifact_dir, exc)
 
     return _callback

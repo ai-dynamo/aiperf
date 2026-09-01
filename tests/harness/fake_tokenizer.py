@@ -51,6 +51,10 @@ class FakeTokenizer:
         """Decode token IDs to string."""
         return TOKEN * len(token_ids)
 
+    def num_prompt_special_tokens(self) -> int:
+        """No special tokens are prepended, matching this fake's encode()."""
+        return 0
+
     @property
     def bos_token_id(self) -> int:
         return 1
@@ -66,6 +70,3 @@ class FakeTokenizer:
     @property
     def block_separation_token_id(self) -> int:
         return 1
-
-    def num_prompt_special_tokens(self) -> int:
-        return 0

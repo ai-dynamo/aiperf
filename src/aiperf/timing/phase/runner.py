@@ -200,6 +200,7 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task: asyncio.Task | None = None
         self._progress_task: asyncio.Task | None = None
         self._return_wait_task: asyncio.Task | None = None
+        self._router_phase_started = False
         self._was_cancelled = False
         self._rampers: list[RateControllerProtocol] = []
         self._baseline_start_ns: int | None = None
@@ -442,6 +443,7 @@ class PhaseRunner(TaskManagerMixin):
         """
         if self._progress_task:
             self._progress_task.cancel()
+        self._release_router_phase_state()
 
         # Retrieve the detached task's own exception so it is not left as an
         # unretrieved-task-exception, and treat it as a phase failure.
@@ -559,7 +561,11 @@ class PhaseRunner(TaskManagerMixin):
             strategy=strategy,
         )
         if self._branch_orchestrator is not None:
-            self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
+            self._callback_handler.set_branch_orchestrator(
+                self._branch_orchestrator,
+                phase=self._config.phase,
+                phase_index=self._config.phase_index,
+            )
 
     def _detach_orchestrator_and_cleanup(self) -> None:
         """Final-pass orchestrator teardown for the phase.
@@ -572,9 +578,22 @@ class PhaseRunner(TaskManagerMixin):
         phase.
         """
         if self._branch_orchestrator is not None:
-            self._callback_handler.set_branch_orchestrator(None)
+            self._callback_handler.set_branch_orchestrator(
+                None,
+                phase=self._config.phase,
+                phase_index=self._config.phase_index,
+            )
             self._branch_orchestrator.cleanup()
         self._release_tree_slots()
+        if self._return_wait_task is None or self._return_wait_task.done():
+            self._release_router_phase_state()
+
+    def _release_router_phase_state(self) -> None:
+        """Release router state only after this phase's returns have drained."""
+        if not self._router_phase_started:
+            return
+        self._credit_router.end_phase(self._config.phase, self._config.phase_index)
+        self._router_phase_started = False
 
     def _release_tree_slots(self) -> None:
         """Release any still-open session-tree slots at phase teardown.
@@ -619,6 +638,9 @@ class PhaseRunner(TaskManagerMixin):
         )
 
         await strategy.setup_phase()
+
+        self._credit_router.begin_phase(self._config.phase, self._config.phase_index)
+        self._router_phase_started = True
 
         # Gate credit issuance on worker readiness: on fast startup the first
         # credit can otherwise be issued before any worker registers, which

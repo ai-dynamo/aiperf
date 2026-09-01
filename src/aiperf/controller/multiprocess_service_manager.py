@@ -231,6 +231,20 @@ class MultiProcessServiceManager(BaseServiceManager):
 
             raise AIPerfError("Some services failed to register within timeout") from e
 
+    def get_service_liveness(self, service_id: str) -> bool | None:
+        """Answer liveness from the real ``multiprocessing.Process`` handle.
+
+        Local runs have authoritative ground truth that the heartbeat watchdog
+        would otherwise only guess at. ``None`` is returned for services this
+        manager did not spawn (nothing to consult), and a missing process
+        handle counts as dead -- the spawn call failed before producing one,
+        matching ``_reap_dead_processes_during_registration``.
+        """
+        for info in self.multi_process_info:
+            if info.service_id == service_id:
+                return info.process is not None and info.process.is_alive()
+        return None
+
     def _reap_dead_processes_during_registration(
         self, required_counts: "Counter[ServiceTypeT]"
     ) -> None:

@@ -42,6 +42,7 @@ from aiperf.common.messages.dataset_messages import (
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
+    DatasetClientMetadata,
     ErrorDetails,
     MemoryMapClientMetadata,
     ModelEndpointInfo,
@@ -71,7 +72,8 @@ from aiperf.credit.messages import (
     CreditReturn,
     FirstToken,
     RouterToWorkerMessage,
-    WorkerReady,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
@@ -645,7 +647,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Dual-channel returns: CreditReturn/FirstToken go out a dedicated typed
         # PUSH -> router PULL fan-in instead of back on the bidirectional credit
         # DEALER, so the dispatch DEALER is receive-only (no shared-FD send/recv
-        # contention). WorkerReady/WorkerShutdown still go on the DEALER so the
+        # contention). WorkerConnected/Dispatchable/Shutdown still go on the DEALER so the
         # ROUTER registers/tracks identity. Returns carry worker_id in-message
         # since PUSH/PULL has no ZMQ envelope identity.
         self.credit_return_push_client: StreamingPushClientProtocol = (
@@ -663,6 +665,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+
+        # Dispatchability gate. Both announcements go out at @on_start; the
+        # event exists so the WorkerDispatchable transition is sent exactly
+        # once. Credits cannot arrive before the dataset is open because
+        # PROFILE_CONFIGURE blocks on _dataset_configured_event.
+        self._worker_ready_event = asyncio.Event()
+        self._worker_ready_lock = asyncio.Lock()
         # True when the mmap dataset ships pre-encoded per-turn payload bytes
         # (PAYLOAD_BYTES format); enables the verbatim-replay fast path.
         self._is_payload_bytes: bool = False
@@ -689,8 +698,32 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Send WorkerReady to announce presence."""
-        await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        """Announce connectivity, then immediately announce dispatchability.
+
+        WorkerConnected and WorkerDispatchable are separate messages so the
+        router can distinguish "identity registered" from "in the routing
+        pool", but both are sent here: the worker is dispatchable as soon as
+        its channels are up. The dataset is not a gate on this transition --
+        credits cannot reach a worker before PROFILE_CONFIGURE, which itself
+        blocks on ``_dataset_configured_event``.
+        """
+        await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
+
+        await self._mark_worker_ready()
+
+    async def _mark_worker_ready(self) -> None:
+        """Send the dispatchable transition exactly once."""
+        async with self._worker_ready_lock:
+            await self._mark_worker_ready_locked()
+
+    async def _mark_worker_ready_locked(self) -> None:
+        """Send the dispatchable transition exactly once, holding the ready lock."""
+        if self._worker_ready_event.is_set():
+            return
+        await self.credit_dealer_client.send(
+            WorkerDispatchable(worker_id=self.service_id)
+        )
+        self._worker_ready_event.set()
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -701,15 +734,25 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         the discriminated union pattern for type-safe routing. This allows new
         storage backends (S3, Redis, etc.) to work without modifying Worker code.
         """
-        ClientStoreClass = plugins.get_class(
-            PluginType.DATASET_CLIENT_STORE, msg.client_metadata.client_type
-        )
-        self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
-        await self._dataset_client.initialize()
         self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
-        if isinstance(msg.client_metadata, MemoryMapClientMetadata):
+        await self._open_dataset_client(msg.client_metadata)
+
+    async def _open_dataset_client(
+        self, client_metadata: DatasetClientMetadata
+    ) -> None:
+        """Build and initialize the dataset client store for the given metadata.
+
+        Args:
+            client_metadata: Storage-backend-specific metadata for the client.
+        """
+        ClientStoreClass = plugins.get_class(
+            PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
+        )
+        self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
+        await self._dataset_client.initialize()
+        if isinstance(client_metadata, MemoryMapClientMetadata):
             self._is_payload_bytes = (
-                msg.client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
+                client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
             )
             if (
                 self._is_payload_bytes
@@ -722,15 +765,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
         self._dataset_configured_event.set()
         self.debug(
-            lambda: (
-                f"Dataset client initialized: type={msg.client_metadata.client_type}"
-            )
+            lambda: f"Dataset client initialized: type={client_metadata.client_type}"
         )
 
     @on_stop
     async def _send_worker_shutdown_message(self) -> None:
         """Send WorkerShutdown to announce shutdown."""
         try:
+            # Both sends are inside the guard: by @on_stop the bus may already
+            # be torn down, and a failed shutdown announcement must not turn a
+            # clean stop into an exception.
             await self.credit_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
             )
@@ -1687,6 +1731,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         # All records will flow through here to be sent to the inference results push client.
         self.task_stats.task_finished(record.valid)
+
+        # Single egress point, so every record - success, error, and cancelled -
+        # carries the offset current at emit time once its minimum sample count
+        # establishes a reliable estimate. Do NOT rewrite timestamp_ns here: it
+        # anchors all exported timestamps and was set pre-request, so correcting
+        # it in place would also shift it by the request latency.
+        #
+        # Gated on the same flag that gates sampling in _schedule_credit_drop_task:
+        # with no samples the tracker is never calibrated, so outside Kubernetes
+        # this only ever wrote the field's own default of None. Skipping it keeps
+        # local records byte-identical while dropping a property call and an
+        # attribute store from the per-record egress path.
 
         msg = InferenceResultsMessage(
             service_id=self.service_id,

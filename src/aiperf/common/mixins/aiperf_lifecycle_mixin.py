@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     InvalidStateError,
     LifecycleOperationError,
@@ -94,6 +95,20 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         return self.state == LifecycleState.RUNNING
 
     @property
+    def failure_shutdown_timeout(self) -> float | None:
+        """Wall-clock cap applied to ``self.stop()`` when ``_fail`` tears down
+        after a failed on_init/on_start transition. Defaults to
+        ``Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT``.
+
+        Subclasses whose ``on_stop`` hooks legitimately need longer than the
+        global default (e.g. a terminal hook that exports results and calls
+        ``os._exit()`` itself, which the bound would otherwise cut off mid-export)
+        should override this to return a larger value, or ``None`` to disable
+        the bound entirely and rely on the subclass's own exit path.
+        """
+        return Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+
+    @property
     def stop_requested(self) -> bool:
         """Whether the lifecycle has been requested to stop."""
         return self._stop_requested_event.is_set()
@@ -123,8 +138,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self._set_state(transient_state)
         self.debug(lambda: f"{transient_state.title()} {self}")
+        # Startup transitions must fail-fast: continuing to run later hooks
+        # after an earlier one aborted produces a half-started service (e.g.
+        # background tasks spawned after a PUB/SUB probe already failed) that
+        # survives as a silent zombie container. Stop transitions stay
+        # best-effort so cleanup errors don't mask each other.
+        fail_fast = transient_state in (
+            LifecycleState.INITIALIZING,
+            LifecycleState.STARTING,
+        )
         try:
-            await self.run_hooks(hook_type, reverse=reverse)
+            await self.run_hooks(hook_type, reverse=reverse, fail_fast=fail_fast)
             await self._set_state(final_state)
             self.debug(lambda: f"{self} is now {final_state.title()}")
             event.set()
@@ -290,7 +314,25 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             )
         if self.state != LifecycleState.STOPPING:
             self.debug(f"Stopping {self} due to failure")
-            await self.stop()
+            # Bound the shutdown: a blocked on_stop hook (a cancelled ZMQ
+            # client stuck in a C-extension recv) otherwise turns a failed
+            # service into a silent zombie that keeps its container alive.
+            # We are already on the failure path, so losing cleanup state
+            # beats never exiting. Subclasses whose teardown legitimately runs
+            # long widen this bound via ``failure_shutdown_timeout``; None
+            # removes it entirely and is only correct for a lifecycle that
+            # cannot wedge.
+            timeout = self.failure_shutdown_timeout
+            if timeout is None:
+                await self.stop()
+            else:
+                try:
+                    await asyncio.wait_for(self.stop(), timeout=timeout)
+                except TimeoutError:
+                    self.error(
+                        f"Shutdown after failure did not complete in {timeout}s; "
+                        f"continuing teardown and reporting the failure"
+                    )
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 

@@ -12,7 +12,6 @@ from aiperf.common.messages import (
     ProfileConfigureCommand,
     ProfileStartCommand,
 )
-from aiperf.common.messages.server_metrics_messages import ServerMetricsRecordMessage
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
 from aiperf.config.flags.cli_config import CLIConfig
@@ -21,7 +20,10 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
 )
 from aiperf.plugin.enums import EndpointType, TimingMode
-from aiperf.server_metrics.manager import ServerMetricsManager
+from aiperf.server_metrics.manager import (
+    ServerMetricsManager,
+    _ServerMetricsPhaseIdentity,
+)
 from aiperf.timing.config import CreditPhaseConfig
 from tests.unit.conftest import make_run_from_cli
 
@@ -336,17 +338,19 @@ class TestManagerCallbackFunctionality:
     """Test callback handling for records and errors."""
 
     @pytest.mark.asyncio
-    async def test_record_callback_sends_message(
+    async def test_record_callback_processes_locally(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that record callback sends ServerMetricsRecordMessage."""
+        """Raw records stay local to the manager-owned processors."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
 
-        manager.records_push_client.push = AsyncMock()
+        processor = AsyncMock()
+        manager._processors = [processor]
+        manager.publish = AsyncMock()
 
         test_record = ServerMetricsRecord(
             endpoint_url="http://localhost:8081/metrics",
@@ -357,10 +361,8 @@ class TestManagerCallbackFunctionality:
 
         await manager._on_server_metrics_records([test_record], "test_collector")
 
-        manager.records_push_client.push.assert_called_once()
-        call_args = manager.records_push_client.push.call_args[0][0]
-        assert isinstance(call_args, ServerMetricsRecordMessage)
-        assert call_args.record == test_record
+        processor.process_record.assert_awaited_once_with(test_record)
+        manager.publish.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_record_callback_tags_active_phase(
@@ -371,8 +373,13 @@ class TestManagerCallbackFunctionality:
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-        manager._active_phase = CreditPhase.WARMUP
-        manager.records_push_client.push = AsyncMock()
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP,
+            phase_name="cache-prime",
+            phase_kind="warmup",
+        )
+        processor = AsyncMock()
+        manager._processors = [processor]
 
         test_record = ServerMetricsRecord(
             endpoint_url="http://localhost:8081/metrics",
@@ -383,9 +390,9 @@ class TestManagerCallbackFunctionality:
 
         await manager._on_server_metrics_records([test_record], "test_collector")
 
-        call_args = manager.records_push_client.push.call_args[0][0]
-        assert call_args.record is not None
-        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
+        processed = processor.process_record.await_args.args[0]
+        assert processed.benchmark_phase == CreditPhase.WARMUP
+        assert processed.phase_name == "cache-prime"
 
     @pytest.mark.asyncio
     async def test_scoped_collect_tags_records_with_captured_phase(
@@ -395,8 +402,13 @@ class TestManagerCallbackFunctionality:
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-        manager._active_phase = CreditPhase.PROFILING
-        manager.records_push_client.push = AsyncMock()
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.PROFILING,
+            phase_name="main",
+            phase_kind="profiling",
+        )
+        processor = AsyncMock()
+        manager._processors = [processor]
 
         test_record = ServerMetricsRecord(
             endpoint_url="http://localhost:8081/metrics",
@@ -412,13 +424,19 @@ class TestManagerCallbackFunctionality:
                 )
 
         await manager._collect_and_process_metrics_for_phase(
-            _Collector(), CreditPhase.WARMUP
+            _Collector(),
+            _ServerMetricsPhaseIdentity(
+                phase=CreditPhase.WARMUP,
+                phase_name="cache-prime",
+                phase_kind="warmup",
+            ),
         )
 
-        call_args = manager.records_push_client.push.call_args[0][0]
-        assert call_args.record is not None
-        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
-        assert manager._active_phase == CreditPhase.PROFILING
+        processed = processor.process_record.await_args.args[0]
+        assert processed.benchmark_phase == CreditPhase.WARMUP
+        assert processed.phase_name == "cache-prime"
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.PROFILING
 
     @pytest.mark.asyncio
     async def test_collect_snapshot_tags_records_with_start_phase_after_phase_flip(
@@ -428,8 +446,13 @@ class TestManagerCallbackFunctionality:
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-        manager._active_phase = CreditPhase.WARMUP
-        manager.records_push_client.push = AsyncMock()
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP,
+            phase_name="cache-prime",
+            phase_kind="warmup",
+        )
+        processor = AsyncMock()
+        manager._processors = [processor]
 
         test_record = ServerMetricsRecord(
             endpoint_url="http://localhost:8081/metrics",
@@ -440,7 +463,11 @@ class TestManagerCallbackFunctionality:
 
         class _Collector:
             async def collect_and_process_metrics(self):
-                manager._active_phase = CreditPhase.PROFILING
+                manager._active_phase = _ServerMetricsPhaseIdentity(
+                    phase=CreditPhase.PROFILING,
+                    phase_name="main",
+                    phase_kind="profiling",
+                )
                 await manager._on_server_metrics_records(
                     [test_record], "test_collector"
                 )
@@ -450,10 +477,11 @@ class TestManagerCallbackFunctionality:
 
         await collector.collect_and_process_metrics()
 
-        call_args = manager.records_push_client.push.call_args[0][0]
-        assert call_args.record is not None
-        assert call_args.record.benchmark_phase == CreditPhase.WARMUP
-        assert manager._active_phase == CreditPhase.PROFILING
+        processed = processor.process_record.await_args.args[0]
+        assert processed.benchmark_phase == CreditPhase.WARMUP
+        assert processed.phase_name == "cache-prime"
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.PROFILING
 
     @pytest.mark.asyncio
     async def test_error_callback_logs_error(
@@ -471,19 +499,19 @@ class TestManagerCallbackFunctionality:
         await manager._on_server_metrics_error(test_error, "test_collector")
 
     @pytest.mark.asyncio
-    async def test_record_callback_handles_send_failure(
+    async def test_record_callback_tracks_processor_failure(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that record callback handles message send failures gracefully."""
+        """One local processor failure is counted without escaping callback."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
 
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
-        )
+        processor = AsyncMock()
+        processor.process_record.side_effect = Exception("process failed")
+        manager._processors = [processor]
 
         test_records = [
             ServerMetricsRecord(
@@ -495,6 +523,7 @@ class TestManagerCallbackFunctionality:
         ]
 
         await manager._on_server_metrics_records(test_records, "test_collector")
+        assert sum(manager._error_state.error_counts.values()) == 1
 
 
 class TestPhaseTransitionRace:
@@ -510,7 +539,9 @@ class TestPhaseTransitionRace:
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-        manager._active_phase = CreditPhase.WARMUP
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
+        )
 
         scrape_started = asyncio.Event()
         release_scrape = asyncio.Event()
@@ -546,7 +577,8 @@ class TestPhaseTransitionRace:
         release_scrape.set()
         await complete_task
 
-        assert manager._active_phase == CreditPhase.PROFILING
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.PROFILING
 
     @pytest.mark.asyncio
     async def test_warmup_complete_without_race_clears_phase(
@@ -556,7 +588,9 @@ class TestPhaseTransitionRace:
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-        manager._active_phase = CreditPhase.WARMUP
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
+        )
         manager._collectors = {"http://localhost:8000/metrics": AsyncMock()}
 
         await manager._on_credit_phase_complete(
@@ -615,7 +649,8 @@ class TestPhaseTransitionRace:
         release_scrape.set()
         await baseline_task
 
-        assert manager._active_phase == CreditPhase.PROFILING
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.PROFILING
 
     @pytest.mark.asyncio
     async def test_warmup_start_during_start_baseline_scrape_survives_kind_change(
@@ -625,7 +660,11 @@ class TestPhaseTransitionRace:
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
-        manager._active_phase = CreditPhase.PROFILING
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.PROFILING,
+            phase_name="profiling",
+            phase_kind="profiling",
+        )
 
         scrape_started = asyncio.Event()
         release_scrape = asyncio.Event()
@@ -665,7 +704,112 @@ class TestPhaseTransitionRace:
         release_scrape.set()
         await baseline_task
 
-        assert manager._active_phase == CreditPhase.WARMUP
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.WARMUP
+
+
+class TestRealtimePublication:
+    """Test realtime summaries use the active profiling window."""
+
+    @pytest.mark.asyncio
+    async def test_realtime_publication_excludes_preprofiling_samples(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = MagicMock()
+        accumulator.compute_endpoint_summaries.return_value = {}
+        accumulator.realtime_snapshot.return_value = {"num_running": 1.0}
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+        profiling_start_ns = 10_000_000_000
+        now_ns = 12_000_000_000
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.PROFILING,
+                    start_ns=profiling_start_ns,
+                ),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        with patch("aiperf.server_metrics.manager.time.time_ns", return_value=now_ns):
+            await manager._publish_realtime_server_metrics()
+
+        accumulator.compute_endpoint_summaries.assert_called_once_with(
+            profiling_start_ns, now_ns
+        )
+        accumulator.realtime_snapshot.assert_called_once_with(
+            start_ns=profiling_start_ns
+        )
+        manager.publish.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_realtime_publication_before_profiling_remains_suppressed(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = MagicMock()
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+
+        await manager._publish_realtime_server_metrics()
+
+        accumulator.compute_endpoint_summaries.assert_not_called()
+        accumulator.realtime_snapshot.assert_not_called()
+        manager.publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_realtime_publication_suppressed_during_later_warmup(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = MagicMock()
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.PROFILING,
+                    start_ns=10_000_000_000,
+                ),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        profiling_identity = manager._last_profiling_phase
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.WARMUP,
+                    start_ns=20_000_000_000,
+                ),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        await manager._publish_realtime_server_metrics()
+
+        assert manager._profiling_started is False
+        assert manager._profiling_start_ns is None
+        assert manager._last_profiling_phase == profiling_identity
+        accumulator.compute_endpoint_summaries.assert_not_called()
+        accumulator.realtime_snapshot.assert_not_called()
+        manager.publish.assert_not_awaited()
 
 
 class TestDisabledServerMetrics:
@@ -824,6 +968,7 @@ class TestProfileCompleteAndCancel:
 
         mock_collector = AsyncMock()
         manager._collectors = {"endpoint1": mock_collector}
+        manager.publish = AsyncMock()
 
         await manager._handle_profile_complete_command(
             ProfileCompleteCommand(
@@ -835,6 +980,54 @@ class TestProfileCompleteAndCancel:
         mock_collector.collect_and_process_metrics.assert_called_once()
         # Should stop collector after final scrape
         mock_collector.stop.assert_called_once()
+        published = manager.publish.await_args.args[0]
+        assert published.message_type == "process_server_metrics_result"
+        assert manager._result_published is True
+
+        await manager._handle_profile_complete_command(
+            ProfileCompleteCommand(
+                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
+            )
+        )
+        manager.publish.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_skips_scrape_after_trailing_warmup_phase(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A cooldown must not be reattributed to the preceding named profile."""
+        from aiperf.common.messages import ProfileCompleteCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        profiling = manager.run.cfg.phases[0].model_copy(
+            update={"name": "profile-a", "kind": "profiling"}
+        )
+        cooldown = profiling.model_copy(update={"name": "cooldown", "kind": "warmup"})
+        manager.run.cfg.phases = [profiling, cooldown]
+        manager._last_profiling_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="profile-a",
+            phase_kind="profiling",
+        )
+
+        collector = AsyncMock()
+        manager._collectors = {"endpoint1": collector}
+        manager.publish = AsyncMock()
+
+        await manager._handle_profile_complete_command(
+            ProfileCompleteCommand(
+                service_id=manager.id,
+                command=CommandType.PROFILE_COMPLETE,
+                end_ns=1,
+            )
+        )
+
+        collector.collect_and_process_metrics.assert_not_awaited()
+        collector.stop.assert_awaited_once()
+        manager.publish.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_profile_complete_handles_final_scrape_failure(
@@ -887,6 +1080,41 @@ class TestProfileCompleteAndCancel:
         )
 
     @pytest.mark.asyncio
+    async def test_profile_complete_flushes_local_jsonl_before_export(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """The final result is the barrier for manager-owned raw artifacts."""
+        from aiperf.common.messages import ProfileCompleteCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        exporter = AsyncMock()
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._stream_exporters = [exporter]
+        manager._accumulator = accumulator
+        manager._collectors = {}
+        manager.publish = AsyncMock()
+
+        await manager._handle_profile_complete_command(
+            ProfileCompleteCommand(
+                service_id=manager.id,
+                start_ns=100,
+                end_ns=200,
+                warmup_start_ns=10,
+                warmup_end_ns=90,
+            )
+        )
+
+        exporter.finalize.assert_awaited_once_with()
+        context = accumulator.export_results.await_args.args[0]
+        assert context.start_ns == 100
+        assert context.end_ns == 200
+        assert context.warmup_start_ns == 10
+        assert context.warmup_end_ns == 90
+        manager.publish.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_profile_cancel(
         self,
         cli_config: CLIConfig,
@@ -901,6 +1129,7 @@ class TestProfileCompleteAndCancel:
 
         mock_collector = AsyncMock()
         manager._collectors = {"endpoint1": mock_collector}
+        manager.publish = AsyncMock()
 
         await manager._handle_profile_cancel_command(
             ProfileCancelCommand(
@@ -909,6 +1138,165 @@ class TestProfileCompleteAndCancel:
         )
 
         mock_collector.stop.assert_called_once()
+        assert manager._result_published is True
+
+    @pytest.mark.asyncio
+    async def test_profile_cancel_uses_recorded_profiling_window(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """The cancel path must exclude warmup like the non-cancel path does.
+
+        ProfileCancelCommand carries no window, and a null window collapses to
+        ``start_ns=0`` in the accumulator, which excludes no sample at all.
+        """
+        from aiperf.common.messages import ProfileCancelCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager._collectors = {}
+        manager.publish = AsyncMock()
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP, start_ns=1_000),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP, timing_mode=TimingMode.REQUEST_RATE
+                ),
+            )
+        )
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.WARMUP, start_ns=1_000, requests_end_ns=2_000
+                ),
+            )
+        )
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING, start_ns=3_000),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING, timing_mode=TimingMode.REQUEST_RATE
+                ),
+            )
+        )
+
+        await manager._handle_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id=manager.id, command=CommandType.PROFILE_CANCEL
+            )
+        )
+
+        context = accumulator.export_results.await_args.args[0]
+        assert context.start_ns == 3_000
+        assert context.end_ns >= 3_000
+        assert context.warmup_start_ns == 1_000
+        assert context.warmup_end_ns == 2_000
+
+    @pytest.mark.asyncio
+    async def test_profile_cancel_during_warmup_anchors_window_past_warmup(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """Cancelled before profiling began: the profiling window must be empty."""
+        from aiperf.common.messages import ProfileCancelCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager._collectors = {}
+        manager.publish = AsyncMock()
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP, start_ns=1_000),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP, timing_mode=TimingMode.REQUEST_RATE
+                ),
+            )
+        )
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.WARMUP, start_ns=1_000, requests_end_ns=2_000
+                ),
+            )
+        )
+
+        await manager._handle_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id=manager.id, command=CommandType.PROFILE_CANCEL
+            )
+        )
+
+        context = accumulator.export_results.await_args.args[0]
+        assert context.start_ns == 2_000
+        assert context.warmup_start_ns == 1_000
+        assert context.warmup_end_ns == 2_000
+
+    @pytest.mark.asyncio
+    async def test_profile_cancel_after_profiling_excludes_a_later_warmup(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A phase that starts after profiling ended must stay out of the window.
+
+        Ending at the cancel timestamp would fold the later warmup's traffic
+        into the reported profiling deltas.
+        """
+        from aiperf.common.messages import ProfileCancelCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager._collectors = {}
+        manager.publish = AsyncMock()
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.PROFILING, start_ns=1_000),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING, timing_mode=TimingMode.REQUEST_RATE
+                ),
+            )
+        )
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.PROFILING, start_ns=1_000, requests_end_ns=2_000
+                ),
+            )
+        )
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP, start_ns=3_000),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP, timing_mode=TimingMode.REQUEST_RATE
+                ),
+            )
+        )
+
+        await manager._handle_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id=manager.id, command=CommandType.PROFILE_CANCEL
+            )
+        )
+
+        context = accumulator.export_results.await_args.args[0]
+        assert context.start_ns == 1_000
+        assert context.end_ns == 2_000, "the later warmup leaked into profiling"
 
 
 class TestLifecycleHooks:
@@ -1035,32 +1423,28 @@ class TestCallbackEdgeCases:
             run=make_run_from_cli(cfg_with_endpoint),
         )
 
-        manager.records_push_client.push = AsyncMock()
+        processor = AsyncMock()
+        manager._processors = [processor]
 
         await manager._on_server_metrics_records([], "test_collector")
 
-        # Should not push anything for empty list
-        manager.records_push_client.push.assert_not_called()
+        processor.process_record.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_error_callback_handles_send_failure(
+    async def test_error_callback_records_error_locally(
         self,
         cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
     ):
-        """Test that error callback handles message send failures gracefully."""
+        """Collector failures are retained for the final local export."""
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
 
-        manager.records_push_client.push = AsyncMock(
-            side_effect=Exception("Send failed")
-        )
-
         test_error = ErrorDetails.from_exception(ValueError("Test error"))
 
-        # Should not raise exception
         await manager._on_server_metrics_error(test_error, "test_collector")
+        assert manager._error_state.error_counts[test_error] == 1
 
     @pytest.mark.asyncio
     async def test_status_send_failure(
@@ -1112,7 +1496,9 @@ class TestWarmupPhaseCompleteScrape:
             "http://a:8081/metrics": collector_a,
             "http://b:8081/metrics": collector_b,
         }
-        manager._active_phase = CreditPhase.WARMUP
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
+        )
 
         await manager._on_credit_phase_complete(
             self._phase_complete(CreditPhase.WARMUP)
@@ -1158,7 +1544,9 @@ class TestWarmupPhaseCompleteScrape:
         """No collectors -> no scrape attempt, phase still retired."""
         manager = self._make_manager(cfg_with_endpoint)
         manager._collectors = {}
-        manager._active_phase = CreditPhase.WARMUP
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
+        )
 
         await manager._on_credit_phase_complete(
             self._phase_complete(CreditPhase.WARMUP)
@@ -1175,35 +1563,382 @@ class TestWarmupPhaseCompleteScrape:
         """PROFILE_COMPLETE owns the final profiling scrape; phase is kept."""
         manager = self._make_manager(cfg_with_endpoint)
         manager._collectors = {}
-        manager._active_phase = CreditPhase.PROFILING
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.PROFILING,
+            phase_name="profiling",
+            phase_kind="profiling",
+        )
 
         await manager._on_credit_phase_complete(
             self._phase_complete(CreditPhase.PROFILING)
         )
 
-        assert manager._active_phase is CreditPhase.PROFILING
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.PROFILING
+
+
+class TestScrapeHangContainment:
+    """Manager-initiated scrapes must never block the terminal result."""
+
+    def _phase_start(
+        self, phase: CreditPhase, start_ns: int
+    ) -> CreditPhaseStartMessage:
+        return CreditPhaseStartMessage(
+            service_id="timing-manager",
+            stats=CreditPhaseStats(phase=phase, start_ns=start_ns),
+            config=CreditPhaseConfig(phase=phase, timing_mode=TimingMode.REQUEST_RATE),
+        )
+
+    def _phase_complete(
+        self, phase: CreditPhase, start_ns: int, end_ns: int
+    ) -> CreditPhaseCompleteMessage:
+        return CreditPhaseCompleteMessage(
+            service_id="timing-manager",
+            stats=CreditPhaseStats(
+                phase=phase, start_ns=start_ns, requests_end_ns=end_ns
+            ),
+        )
 
     @pytest.mark.asyncio
-    async def test_phase_start_tracks_active_phase(
+    async def test_profile_cancel_after_second_profiling_uses_active_window(
         self,
-        cli_config: CLIConfig,
         cfg_with_endpoint: CLIConfig,
-    ):
-        """CREDIT_PHASE_START updates the phase used to tag scrapes."""
-        manager = self._make_manager(cfg_with_endpoint)
-        assert manager._active_phase is None
+    ) -> None:
+        """profiling -> warmup -> profiling -> cancel must not reuse the first end."""
+        from aiperf.common.messages import ProfileCancelCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager._collectors = {}
+        manager.publish = AsyncMock()
+
+        await manager._on_credit_phase_start(
+            self._phase_start(CreditPhase.PROFILING, 1_000)
+        )
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.PROFILING, 1_000, 2_000)
+        )
+        await manager._on_credit_phase_start(
+            self._phase_start(CreditPhase.WARMUP, 3_000)
+        )
+        await manager._on_credit_phase_complete(
+            self._phase_complete(CreditPhase.WARMUP, 3_000, 4_000)
+        )
+        await manager._on_credit_phase_start(
+            self._phase_start(CreditPhase.PROFILING, 5_000)
+        )
+
+        await manager._handle_profile_cancel_command(
+            ProfileCancelCommand(
+                service_id=manager.id, command=CommandType.PROFILE_CANCEL
+            )
+        )
+
+        context = accumulator.export_results.await_args.args[0]
+        assert context.start_ns == 1_000
+        assert context.end_ns >= 5_000, (
+            "the active profiling phase was truncated to the previous window end"
+        )
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_publishes_when_final_scrape_hangs(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A headers-then-stall endpoint must not block the terminal result."""
+        from aiperf.common.messages import ProfileCompleteCommand
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._scrape_timeout = 0.05
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+        hanging.stop = AsyncMock()
+        manager._collectors = {"http://stalled:8081/metrics": hanging}
+
+        await asyncio.wait_for(
+            manager._handle_profile_complete_command(
+                ProfileCompleteCommand(
+                    service_id=manager.id,
+                    command=CommandType.PROFILE_COMPLETE,
+                    end_ns=1,
+                )
+            ),
+            timeout=2.0,
+        )
+
+        manager.publish.assert_awaited_once()
+        assert manager._result_published is True
+
+    @pytest.mark.asyncio
+    async def test_warmup_complete_scrape_is_bounded(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A stalled warmup boundary scrape must not stall the phase handler."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._scrape_timeout = 0.05
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+        healthy = MagicMock()
+        healthy.collect_and_process_metrics = AsyncMock()
+        manager._collectors = {
+            "http://stalled:8081/metrics": hanging,
+            "http://good:8081/metrics": healthy,
+        }
+
+        await asyncio.wait_for(
+            manager._on_credit_phase_complete(
+                self._phase_complete(CreditPhase.WARMUP, 1_000, 2_000)
+            ),
+            timeout=2.0,
+        )
+
+        healthy.collect_and_process_metrics.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_baseline_scrape_is_bounded(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """A stalled baseline scrape must surface as an error, not a hang."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._scrape_timeout = 0.05
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+        manager._collectors = {"http://stalled:8081/metrics": hanging}
+
+        with pytest.raises(RuntimeError):
+            await asyncio.wait_for(
+                manager.collect_baseline(
+                    PhaseBaselineRequestMessage(
+                        service_id="records-manager",
+                        phase_id="phase-0",
+                        phase_kind="warmup",
+                        phase_index=0,
+                        phase_name="warmup",
+                        kind=BaselineKind.START,
+                    )
+                ),
+                timeout=2.0,
+            )
+
+    @pytest.mark.asyncio
+    async def test_init_time_baseline_scrape_is_bounded(
+        self,
+        cfg_with_server_metrics_urls: CLIConfig,
+    ) -> None:
+        """The configure-time baseline capture must not hang service startup.
+
+        This is a separate call site from ``collect_baseline``: it runs inside
+        ``_profile_configure_command`` before any phase exists. ``sock_read``
+        bounds the gap between response chunks but not the whole scrape, so an
+        endpoint dribbling bytes under that gap would stall startup forever.
+        """
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_server_metrics_urls)
+        )
+        manager._scrape_timeout = 0.05
+        manager._send_server_metrics_status = AsyncMock()
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.is_url_reachable = AsyncMock(return_value=True)
+        hanging.initialize = AsyncMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+
+        with patch(
+            "aiperf.server_metrics.manager.ServerMetricsDataCollector",
+            return_value=hanging,
+        ):
+            await asyncio.wait_for(
+                manager._profile_configure_command(
+                    ProfileConfigureCommand(service_id="system_controller")
+                ),
+                timeout=2.0,
+            )
+
+        # The stall is swallowed as a per-endpoint warning, so configuration
+        # still completes and reports the endpoint as reachable.
+        manager._send_server_metrics_status.assert_awaited_once()
+        assert manager._send_server_metrics_status.await_args.kwargs["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_scrape_session_has_socket_read_timeout(self) -> None:
+        """The scrape session must bound stalled reads, not just connects."""
+        from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics"
+        )
+        with patch(
+            "aiperf.common.mixins.base_metrics_collector_mixin.create_tcp_connector",
+            MagicMock(),
+        ):
+            await collector._initialize_http_client()
+        try:
+            assert collector._session is not None
+            assert collector._session.timeout.sock_read is not None
+        finally:
+            await collector._session.close()
+
+
+class TestPhaseOccurrenceIdReachesEveryScrape:
+    """Every scrape identity must carry the occurrence id, not just the first.
+
+    Only `_on_credit_phase_start` mints occurrence ids, but the end-of-warmup
+    capture and the phase-boundary baseline each rebuild an identity from their
+    own message. Leaving those unstamped drops them back onto the accumulator's
+    arrival-contiguity fallback -- the heuristic the stamping exists to retire
+    -- and the end-of-warmup scrape is precisely the one that tends to land
+    after an intervening phase's records, splitting one warmup occurrence into
+    two `phase_index=None` results.
+    """
+
+    @pytest.mark.asyncio
+    async def test_end_of_warmup_scrape_carries_the_active_occurrence_id(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._collectors = {"http://server:8000/metrics": MagicMock()}
+        captured: list[_ServerMetricsPhaseIdentity] = []
+
+        async def _capture(collector, identity):
+            captured.append(identity)
+
+        manager._collect_and_process_metrics_for_phase = _capture  # type: ignore[assignment]
 
         await manager._on_credit_phase_start(
             CreditPhaseStartMessage(
                 service_id="timing-manager",
-                stats=CreditPhaseStats(
-                    phase=CreditPhase.PROFILING, start_ns=1_000_000_000
-                ),
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
                 config=CreditPhaseConfig(
-                    phase=CreditPhase.PROFILING,
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        minted = manager._active_phase.instance_id
+        assert minted is not None, "phase start must mint an occurrence id"
+
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+            )
+        )
+
+        assert captured, "end-of-warmup scrape must have been taken"
+        assert captured[0].instance_id == minted, (
+            "the final warmup scrape belongs to the warmup occurrence that just "
+            "ended; unstamped it falls back to arrival-contiguity and splits the "
+            "occupancy in two"
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase_boundary_baseline_carries_the_active_occurrence_id(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._collectors = {"http://server:8000/metrics": MagicMock()}
+        captured: list[_ServerMetricsPhaseIdentity] = []
+
+        async def _capture(collector, identity):
+            captured.append(identity)
+
+        manager._collect_and_process_metrics_for_phase = _capture  # type: ignore[assignment]
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP, phase_index=0),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                    phase_index=0,
+                ),
+            )
+        )
+        minted = manager._active_phase.instance_id
+        # The two publishers disagree on the display name for this very phase:
+        # the start path falls back to str(phase) -> "warmup", the baseline
+        # path to f"{phase.value}_{phase_index}" -> "warmup_0". Matching on
+        # the label would silently skip stamping here.
+        assert manager._active_phase.phase_name == "warmup"
+
+        await manager.collect_baseline(
+            PhaseBaselineRequestMessage(
+                service_id="timing-manager",
+                phase_id="warmup-0",
+                kind=BaselineKind.START,
+                phase_kind="warmup",
+                phase_index=0,
+                profiling_index=None,
+                phase_name=f"{CreditPhase.WARMUP.value}_0",
+            )
+        )
+
+        assert captured, "baseline scrape must have been taken"
+        assert captured[0].instance_id == minted
+        assert captured[0].phase_name == "warmup", (
+            "the occurrence id alone is not enough: ServerMetricsAccumulator "
+            "keys its export captures on (sample_phase_index, phase_name), so a "
+            "baseline scrape keeping its divergent label exports this one warmup "
+            "twice -- see "
+            "test_named_phase_results.test_divergent_phase_labels_split_one_occurrence"
+        )
+
+    @pytest.mark.asyncio
+    async def test_identity_for_a_different_phase_is_not_stamped(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """The id must travel only to the phase that owns it."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
                     timing_mode=TimingMode.REQUEST_RATE,
                 ),
             )
         )
 
-        assert manager._active_phase is CreditPhase.PROFILING
+        foreign = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.PROFILING,
+            phase_name="profiling",
+            phase_kind="profiling",
+        )
+        assert manager._stamped_like_active(foreign).instance_id is None

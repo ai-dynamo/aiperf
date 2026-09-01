@@ -28,6 +28,7 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        args: ['--allow-multiple-documents']
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]

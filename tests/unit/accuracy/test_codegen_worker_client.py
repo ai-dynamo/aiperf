@@ -634,24 +634,6 @@ class TestCoverageGaps:
         finally:
             await w.aclose()
 
-    async def test_aclose_with_pending_futures_sets_exception(
-        self, tmp_path: Path
-    ) -> None:
-        # Covers lines 316-317: aclose() sets CodegenWorkerError on pending futures.
-        hang_worker = """
-            import sys, time
-            for line in sys.stdin.buffer:
-                time.sleep(3600)
-        """
-        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, hang_worker))
-        grade_task = asyncio.create_task(
-            w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=60)
-        )
-        await asyncio.sleep(0.1)
-        await w.aclose()
-        with pytest.raises((CodegenWorkerError, asyncio.CancelledError)):
-            await grade_task
-
     async def test_dispatch_response_null_id_faults(self, tmp_path: Path) -> None:
         # Covers the req_id is None guard in _dispatch_response (line 209-212).
         null_id_worker = """

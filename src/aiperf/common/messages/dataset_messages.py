@@ -77,6 +77,18 @@ class DatasetConfiguredNotification(BaseServiceMessage):
         ...,
         description="Client access metadata (e.g., mmap file paths) for workers to read dataset.",
     )
+    benchmark_generation: str | None = Field(
+        default=None,
+        description="Identity of the benchmark this dataset was built for. Worker pods "
+        "and the API dataset router tag their state with it so a stale pod can be "
+        "told apart from one serving the current benchmark.",
+    )
+    dataset_generation: str | None = Field(
+        default=None,
+        description="Identity of the dataset itself. Changes whenever the dataset is "
+        "rebuilt, so a pod can tell whether the files it already downloaded are the "
+        "ones this notification describes.",
+    )
 
     @field_validator("client_metadata", mode="before")
     @classmethod

@@ -7,80 +7,22 @@ It's used by MultiRunOrchestrator to execute each run in complete isolation,
 allowing the SystemController to call os._exit() without affecting the orchestrator.
 """
 
-import os
 import sys
 from pathlib import Path
 
 import orjson
 
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.endpoint_credentials import (
+    apply_endpoint_credentials,
+    consume_endpoint_credentials,
+)
 
-# Parent passes the api_key through this env var rather than writing it
-# into run_config.json (which is redacted by EndpointConfig's
-# field_serializer). We pop+restore in main() so neither child processes
-# nor any logging path inherits the plaintext value.
-_INJECTED_API_KEY_ENV = "AIPERF_INJECTED_API_KEY"
-
-# Sensitive entries from EndpointConfig.headers (Authorization, X-API-Key, etc.)
-# are forwarded via this env var for the same reason: the headers serializer
-# replaces those values with "<redacted>" on every JSON dump, so the on-disk
-# run_config.json is secret-free but the child needs the real values to talk
-# to the upstream. Non-sensitive headers round-trip through run_config.json
-# normally and are not duplicated here.
-_INJECTED_HEADERS_ENV = "AIPERF_INJECTED_HEADERS"
-
-# Endpoint URLs that carry userinfo (``user:pass@host``) are forwarded via
-# this env var. ``EndpointConfig.urls`` has an unconditional _redact_urls
-# serializer (no when_used="json" guard), so even non-JSON dumps strip
-# userinfo. The parent sets this only when at least one URL would be
-# redacted, so plain http(s)://host URLs never round-trip through env vars.
-_INJECTED_ENDPOINT_URLS_ENV = "AIPERF_INJECTED_ENDPOINT_URLS"
-
-
-def _parse_injected_dict(name: str, raw: str | None) -> dict[str, str] | None:
-    """Decode a JSON-object IPC env-var payload, validating shape.
-
-    Used for ``AIPERF_INJECTED_HEADERS``. Returns ``None`` when ``raw`` is
-    unset. Raises ``ValueError`` on malformed JSON or shape mismatch — a
-    non-object payload, or non-string values that would bypass the
-    ``EndpointConfig.headers`` ``dict[str, str]`` constraint once
-    ``.update()``-ed onto the loaded config (``.update`` mutates in place and
-    never re-runs field validation). Decode errors are re-raised as
-    ``ValueError`` so a bad env var surfaces via main()'s structured error
-    envelope with the env-var name, never misattributed to the config file.
-    """
-    if not raw:
-        return None
-    try:
-        decoded = orjson.loads(raw)
-    except orjson.JSONDecodeError as e:
-        raise ValueError(f"{name} contains invalid JSON: {e}") from e
-    if not isinstance(decoded, dict):
-        raise ValueError(
-            f"{name} must decode to a JSON object, got {type(decoded).__name__}"
-        )
-    if not all(isinstance(v, str) for v in decoded.values()):
-        raise ValueError(f"{name} must decode to a JSON object with string values")
-    return decoded
-
-
-def _parse_injected_str_list(name: str, raw: str | None) -> list[str] | None:
-    """Decode a JSON-list-of-strings IPC env-var payload, validating shape.
-
-    Used for ``AIPERF_INJECTED_ENDPOINT_URLS``. Returns ``None`` when
-    ``raw`` is unset. Raises ``ValueError`` on malformed JSON or shape
-    mismatch; decode errors are re-raised as ``ValueError`` so a bad env
-    var is never misattributed to the config file.
-    """
-    if not raw:
-        return None
-    try:
-        decoded = orjson.loads(raw)
-    except orjson.JSONDecodeError as e:
-        raise ValueError(f"{name} contains invalid JSON: {e}") from e
-    if not isinstance(decoded, list) or not all(isinstance(u, str) for u in decoded):
-        raise ValueError(f"{name} must decode to a JSON list of strings")
-    return decoded
+# Endpoint credentials (api_key, sensitive headers, userinfo-bearing URLs) are
+# redacted out of run_config.json by EndpointConfig's field serializers, so the
+# parent hands the real values to this child through environment variables
+# instead. aiperf.common.endpoint_credentials owns those variable names and the
+# pop-validate-apply sequence; see consume_endpoint_credentials there.
 
 
 def _release_inherited_pipes_on_windows() -> None:
@@ -131,35 +73,29 @@ def main() -> None:
         sys.exit(1)
 
     # Pop (don't just read) so child processes the benchmark spawns
-    # don't inherit the secret. Restore onto the loaded config below.
+    # don't inherit the secret -- this consumes OPENAI_API_KEY too, which the
+    # parent has already resolved into endpoint.api_key. Restore onto the
+    # loaded config below.
     # Parsing of the JSON-encoded vars is deferred into the try block so
     # malformed payloads surface via the structured error envelope rather
     # than an unguarded JSONDecodeError.
-    injected_api_key = os.environ.pop(_INJECTED_API_KEY_ENV, None)
-    injected_headers_raw = os.environ.pop(_INJECTED_HEADERS_ENV, None)
-    injected_urls_raw = os.environ.pop(_INJECTED_ENDPOINT_URLS_ENV, None)
-
     from aiperf.cli_runner import _run_single_benchmark
     from aiperf.config import BenchmarkRun
 
     try:
-        injected_headers = _parse_injected_dict(
-            _INJECTED_HEADERS_ENV, injected_headers_raw
-        )
-        injected_urls = _parse_injected_str_list(
-            _INJECTED_ENDPOINT_URLS_ENV, injected_urls_raw
-        )
+        credentials = consume_endpoint_credentials()
 
         with open(config_file, "rb") as f:
             data = orjson.loads(f.read())
 
         run = BenchmarkRun.model_validate(data)
-        if injected_api_key is not None:
-            run.cfg.endpoint.api_key = injected_api_key
-        if injected_headers:
-            run.cfg.endpoint.headers.update(injected_headers)
-        if injected_urls:
-            run.cfg.endpoint.urls = injected_urls
+        # require_resolved: a run_config.json replayed by hand (the documented
+        # `python -m aiperf.orchestrator.subprocess_runner <file>` usage) still
+        # carries the redaction placeholder in api_key / sensitive headers /
+        # userinfo URLs. Without this the child would send the literal
+        # "<redacted>" upstream and report an opaque 401 instead of the real
+        # cause -- the injection env vars were never supplied.
+        apply_endpoint_credentials(run, credentials, require_resolved=True)
         _run_single_benchmark(run)
 
     except KeyError as e:

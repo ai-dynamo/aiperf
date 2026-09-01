@@ -9,10 +9,12 @@ from aiperf.common.enums import (
     CommandType,
     LifecycleState,
     ServiceRegistrationStatus,
+    SystemState,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
 from aiperf.common.messages.command_messages import CommandErrorResponse
+from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import AccuracyBenchmarkType
@@ -74,6 +76,24 @@ class TestSystemController:
         assert mock_service_manager.wait_for_all_services_registration.called
         assert system_controller._start_profiling_all_services.called
         assert system_controller._profile_configure_all_services.called
+
+    @pytest.mark.asyncio
+    async def test_service_error_aborts_active_profiling(
+        self, system_controller: SystemController
+    ) -> None:
+        """A service-reported fatal error must cancel the whole active benchmark."""
+        system_controller._system_state = SystemState.PROFILING
+        system_controller._cancel_profiling = AsyncMock()
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+
+        await system_controller._process_service_error_message(
+            BaseServiceErrorMessage(
+                service_id="timing-manager",
+                error=ErrorDetails(message="worker floor breached"),
+            )
+        )
+
+        system_controller._cancel_profiling.assert_awaited_once()
 
 
 class TestSystemControllerExitScenarios:
@@ -142,6 +162,34 @@ class TestSystemControllerExitScenarios:
             "Start Profiling",
             error_responses[0].service_id,
         )
+
+    @pytest.mark.asyncio
+    async def test_parse_responses_for_errors_does_not_raise_on_clean_batch_with_stale_exit_errors(
+        self,
+        system_controller: SystemController,
+    ):
+        """A clean batch (no errors) must not raise just because ``_exit_errors``
+        already holds an unrelated entry from an earlier, optional-producer
+        failure. Regression test: the check used to test the accumulated
+        ``_exit_errors`` list instead of this batch's own errors, so a fully
+        successful "Start Profiling" call raised ``LifecycleOperationError``
+        whenever any earlier error (e.g. a reaped optional producer) had been
+        recorded.
+        """
+        system_controller._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(message="unrelated prior failure"),
+                operation="result_producer_reaped",
+                service_id="gpu_telemetry_manager",
+            )
+        )
+
+        # No exception should be raised for a batch containing zero errors.
+        system_controller._parse_responses_for_errors([], "Start Profiling")
+
+        # The pre-existing error must be untouched, and no new one added.
+        assert len(system_controller._exit_errors) == 1
+        assert system_controller._exit_errors[0].operation == "result_producer_reaped"
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_service_manager_initialize_error(
@@ -433,6 +481,51 @@ class TestStopHookHardening:
             # exit code reflects the recorded error
             assert mock_exit.call_args[0][0] == 1
 
+    @pytest.mark.asyncio
+    async def test_stop_hook_exports_before_message_bus_shutdown(
+        self,
+        system_controller: SystemController,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """ResultsExported must be publishable while the API subscriber is alive."""
+        order: list[str] = []
+        system_controller._exit_errors = []
+        system_controller._set_system_state = AsyncMock()
+        system_controller.ui = AsyncMock()
+        system_controller.service_manager = mock_service_manager
+        system_controller.proxy_manager = AsyncMock()
+        system_controller.comms = AsyncMock()
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock(
+            side_effect=lambda: order.append("export")
+        )
+        system_controller._announce_benchmark_complete = AsyncMock(
+            side_effect=lambda: order.append("benchmark_complete")
+        )
+        system_controller.publish = AsyncMock(
+            side_effect=lambda _message: order.append("shutdown_broadcast")
+        )
+        mock_service_manager.shutdown_all_services.side_effect = lambda: order.append(
+            "services_stopped"
+        )
+        system_controller.comms.stop.side_effect = lambda: order.append("comms_stopped")
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+            patch("aiperf.controller.system_controller.os._exit"),
+        ):
+            await system_controller._stop_system_controller()
+
+        assert order == [
+            "export",
+            "benchmark_complete",
+            "shutdown_broadcast",
+            "services_stopped",
+            "comms_stopped",
+        ]
+
 
 class TestAccuracyTemperatureWarning:
     """Tests for _should_warn_accuracy_temperature."""
@@ -703,3 +796,30 @@ class TestShutdownDeliveryGrace:
         monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
         sleeps = await self._drive_stop(system_controller, monkeypatch)
         assert sleeps[0] == 7.0
+
+
+class TestFailureShutdownTimeoutStaysFinite:
+    """The controller widens the failure-path bound; it must not remove it."""
+
+    def test_timeout_is_finite_and_wider_than_the_global_default(
+        self, system_controller: SystemController
+    ) -> None:
+        """``None`` here reinstates the hang the bound exists to prevent.
+
+        ``_stop_system_controller`` *is* the exit path: it exports artifacts,
+        broadcasts shutdown, reaps every child, and only then calls
+        ``os._exit()``. Every await before that is unbounded, starting with
+        ``ui.stop()``. With no wait_for around ``stop()``, one wedged await
+        means the controller never reaches ``_set_state(FAILED)`` nor the
+        ``os._exit()`` -- a zombie holding its container open indefinitely.
+
+        The bound must still be generous enough that a large export never
+        trips it, which is the reason the global per-service default is
+        overridden at all.
+        """
+        timeout = system_controller.failure_shutdown_timeout
+
+        assert timeout is not None, "an unbounded failure teardown is a zombie"
+        assert timeout > Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT, (
+            "the override exists to widen the global bound, not to match it"
+        )

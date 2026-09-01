@@ -11,8 +11,12 @@ from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.messages import (
+    CancelCredits,
     CreditReturn,
     FirstToken,
+    WorkerConnected,
+    WorkerDispatchable,
+    WorkerShutdown,
     WorkerToRouterMessage,
 )
 from aiperf.credit.structs import Credit, CreditContext
@@ -188,3 +192,25 @@ class TestCreditContextValidation:
         credit_context.returned = True
         assert credit_context.cancelled is True
         assert credit_context.returned is True
+
+
+# =============================================================================
+# Credit-Channel Wire Constants
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "cls,tag",
+    [
+        param(WorkerConnected, "wc", id="worker-connected"),
+        param(WorkerDispatchable, "wd", id="worker-dispatchable"),
+        param(WorkerShutdown, "ws", id="worker-shutdown"),
+        param(CreditReturn, "cr", id="credit-return"),
+        param(FirstToken, "ft", id="first-token"),
+        param(CancelCredits, "cc", id="cancel-credits"),
+    ],
+)  # fmt: skip
+def test_credit_tag_values_are_stable_wire_constants(cls: type, tag: str) -> None:
+    """Tags and the tag field are wire format: renaming one breaks running workers."""
+    assert cls.__struct_config__.tag == tag
+    assert cls.__struct_config__.tag_field == "t"

@@ -4,6 +4,7 @@
 
 import re
 from collections.abc import Sequence
+from urllib.parse import unquote_plus
 
 REDACTED_VALUE = "<redacted>"
 
@@ -170,6 +171,26 @@ _STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@
 # X-User-Email:alice@example.com`` or ``--mlflow-tag owner:alice@acme.com``.
 _STRAY_BARE_USERINFO_PATTERN = re.compile(r"(^|[\s'\"])([^\s:@'\"/?#]+:[^\s@'\"/?#]+)@")
 
+# Query parameters that conventionally carry credentials. The pattern matches a
+# complete parameter name (it is applied with ``fullmatch``) so ordinary values
+# such as ``token_count`` and ``monkey`` are preserved. ``[-_ ]?`` rather than
+# ``[-_]?`` because ``+`` in a query string decodes to a space, so ``api+key``
+# is the same parameter as ``api_key``.
+_SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN = re.compile(
+    r"(?:"
+    r"api[-_ ]?key|apikey|key|token|access[-_ ]?token|auth[-_ ]?token|"
+    r"bearer[-_ ]?token|id[-_ ]?token|refresh[-_ ]?token|secret|"
+    r"client[-_ ]?secret|password|passwd|credential|access[-_ ]?key[-_ ]?id|"
+    r"awsaccesskeyid|sig|signature|x-amz-signature|x-amz-security-token|"
+    r"x-amz-credential|x-goog-signature|x-goog-credential"
+    r")",
+    re.IGNORECASE,
+)
+
+# Splits a URL query string into (separator, raw name, raw value) triples. The
+# name/value spans stop at ``&`` and ``#`` so a fragment is never swallowed.
+_URL_QUERY_PARAMETER_PATTERN = re.compile(r"([?&])([^=&#]*)=([^&#]*)")
+
 # Flag tokens that open a ``consume_multiple=True`` URL-value window. Only
 # these flags have the multi-value leak — ``--otel-url`` / ``--mlflow-tracking-uri``
 # take a single value and are already covered by ``_URL_FLAG_PATTERN``.
@@ -321,8 +342,37 @@ def build_cli_command() -> str:
     return redact_cli_command(cmd)
 
 
+def _redact_sensitive_query_parameters(url: str) -> str:
+    """Replace the value of every credential-carrying query parameter.
+
+    Only the value span is rewritten; the separator and the parameter name are
+    re-emitted byte-for-byte. Rebuilding the URL through ``urlsplit``/
+    ``urlencode`` would additionally normalize escaping, parameter ordering and
+    path bytes, changing URLs that carry no credentials at all.
+
+    A server percent-decodes the parameter name before dispatching, so
+    ``api%5Fkey``, ``%61pi_key`` and ``api_key`` all name the same parameter.
+    Matching the raw text alone therefore lets any encoded spelling smuggle a
+    secret through unredacted, so the name is decoded before matching.
+    """
+
+    def _redact_parameter(match: re.Match[str]) -> str:
+        separator, name = match.group(1), match.group(2)
+        try:
+            decoded_name = unquote_plus(name, errors="strict")
+        except UnicodeDecodeError:
+            # Undecodable octets cannot name a sensitive parameter on the
+            # server either; fall back to the raw text rather than dropping it.
+            decoded_name = name
+        if not _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(decoded_name):
+            return match.group(0)
+        return f"{separator}{name}={REDACTED_VALUE}"
+
+    return _URL_QUERY_PARAMETER_PATTERN.sub(_redact_parameter, url)
+
+
 def redact_url(url: str) -> str:
-    """Strip userinfo (user:password@) from a URL to prevent credential leakage.
+    """Redact credentials in URL userinfo and sensitive query parameters.
 
     Handles URIs of any scheme (http, https, postgresql, mysql, sqlite, file,
     etc.) plus bare ``user:pass@host`` URLs. Returns the URL unchanged if no
@@ -340,10 +390,7 @@ def redact_url(url: str) -> str:
         r"\1" + REDACTED_VALUE + "@",
         url,
     )
-    # Once a scheme is present, do not fall through to the bare-userinfo regex:
-    # that regex matches on ``^[^@:]+:[^@]+@`` which would eat ``https://host/?a@b``
-    # starting from the ``https:`` prefix.
-    if result != url or "://" in url:
-        return result
-    # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
-    return re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", url)
+    if result == url and "://" not in url:
+        # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
+        result = re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", result)
+    return _redact_sensitive_query_parameters(result)

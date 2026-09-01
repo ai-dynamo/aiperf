@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -20,7 +21,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.growable_array import GrowableArray
-from aiperf.common.models import MetricResult
+from aiperf.common.models import ErrorDetailsCount, MetricResult
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
     GaugeMetricData,
@@ -33,6 +34,7 @@ from aiperf.common.models.server_metrics_models import (
     TimeRangeFilter,
     UnknownMetricData,
 )
+from aiperf.common.types import PhaseKind
 from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from aiperf.server_metrics.export_stats import compute_stats
@@ -57,6 +59,32 @@ _METRIC_DATA_CLASSES: dict[
     PrometheusMetricType.COUNTER: CounterMetricData,
     PrometheusMetricType.HISTOGRAM: HistogramMetricData,
 }
+
+
+@dataclass(slots=True)
+class _PhaseCapture:
+    """Identity and observed scrape window for one concrete phase.
+
+    ``phase_index`` is the *reported* value (``None`` for synthesized
+    AGENTIC_REPLAY warmup phases, per ``timing/config.py``'s
+    ``_build_agentic_warmup_config`` -- they are not entries in
+    ``cfg.phases``). ``sample_phase_index`` is the internal per-sample
+    key used to filter this instance's stored samples: for a reported
+    ``phase_index`` it is the same value, but for a synthesized warmup
+    (``phase_index is None``) it is a synthesized negative index unique
+    to this *instance* of the warmup, so multiple agentic-warmup
+    instances in one run don't pool their samples together (see
+    ``ServerMetricsAccumulator._resolve_sample_phase_index``).
+    """
+
+    phase: CreditPhase
+    phase_index: int | None
+    sample_phase_index: int
+    profiling_index: int | None
+    phase_name: str
+    phase_kind: PhaseKind | None
+    start_ns: int
+    end_ns: int
 
 
 class ServerMetricsAccumulator(BaseMetricsProcessor):
@@ -111,6 +139,15 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # strictly after warmup_end_ns and would otherwise be excluded from
         # warmup aggregation.
         self._last_warmup_record_ns: int | None = None
+        self._phase_captures: dict[tuple[int, str], _PhaseCapture] = {}
+        # Synthesized-instance tracking for phases with no reported
+        # phase_index (currently just AGENTIC_REPLAY's synthesized warmup,
+        # see _PhaseCapture and _resolve_sample_phase_index).
+        self._last_phase_signature: tuple[CreditPhase, int | None, str] | None = None
+        self._current_synthetic_phase_index: int | None = None
+        self._next_synthetic_phase_index = -2
+        # (phase_instance_id, phase_name) -> synthesized negative index.
+        self._synthetic_phase_indices: dict[tuple[int, str], int] = {}
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -130,11 +167,103 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
         self._timestamps_ns.append(record.timestamp_ns)
-        if record.benchmark_phase == CreditPhase.WARMUP:
+        if (
+            record.phase_kind == "warmup"
+            or record.benchmark_phase == CreditPhase.WARMUP
+        ):
             self._last_warmup_record_ns = max(
                 self._last_warmup_record_ns or 0, record.timestamp_ns
             )
-        self._server_metrics_hierarchy.add_record(record)
+        storage_phase_index = record.phase_index
+        if record.benchmark_phase is not None:
+            phase_name = record.phase_name or str(record.benchmark_phase)
+            sample_phase_index = self._resolve_sample_phase_index(
+                record.benchmark_phase,
+                record.phase_index,
+                phase_name,
+                record.phase_instance_id,
+            )
+            if record.phase_index is None:
+                # Storage keys samples by phase index for filtering. Keep this
+                # internal index separate from the model's public phase-index
+                # contract because synthesized warmup instances use negatives.
+                storage_phase_index = sample_phase_index
+            phase_key = (sample_phase_index, phase_name)
+            capture = self._phase_captures.get(phase_key)
+            if capture is None:
+                self._phase_captures[phase_key] = _PhaseCapture(
+                    phase=record.benchmark_phase,
+                    phase_index=record.phase_index,
+                    sample_phase_index=sample_phase_index,
+                    profiling_index=record.profiling_index,
+                    phase_name=phase_name,
+                    phase_kind=record.phase_kind,
+                    start_ns=record.timestamp_ns,
+                    end_ns=record.timestamp_ns,
+                )
+            else:
+                capture.start_ns = min(capture.start_ns, record.timestamp_ns)
+                capture.end_ns = max(capture.end_ns, record.timestamp_ns)
+        self._server_metrics_hierarchy.add_record(
+            record,
+            storage_phase_index=storage_phase_index,
+        )
+
+    def _resolve_sample_phase_index(
+        self,
+        benchmark_phase: CreditPhase,
+        phase_index: int | None,
+        phase_name: str,
+        phase_instance_id: int | None,
+    ) -> int:
+        """Return the per-sample filter index for a record's concrete phase.
+
+        Reported phase indices are returned unchanged. When ``phase_index`` is
+        ``None`` (synthesized AGENTIC_REPLAY warmup phases -- see
+        ``_PhaseCapture``), a synthesized negative index is assigned instead,
+        one per phase *occurrence*, so a later warmup instance with the same
+        name gets its own index rather than pooling with the first. Real
+        (non-negative) phase indices are never reused for this, so synthesized
+        and reported indices can't collide.
+
+        The occurrence is identified by ``phase_instance_id``, which the
+        manager mints once per CREDIT_PHASE_START and stamps onto every scrape
+        belonging to that phase. Arrival order cannot serve here: scrapes are
+        dispatched fire-and-forget and each holds the phase snapshot taken at
+        *its own* start, so when a scrape outlives the phase boundary its
+        records interleave with the next phase's. A previous
+        "new index whenever the signature changes from the last record"
+        heuristic therefore split one warmup instance across several indices.
+
+        Records predating the stamped id (or produced outside any phase) fall
+        back to that contiguity heuristic, which is still correct whenever
+        scrapes do not overlap.
+        """
+        previous_signature = self._last_phase_signature
+        if phase_index is not None:
+            self._last_phase_signature = (benchmark_phase, phase_index, phase_name)
+            return phase_index
+
+        signature = (benchmark_phase, phase_index, phase_name)
+        self._last_phase_signature = signature
+
+        if phase_instance_id is not None:
+            key = (phase_instance_id, phase_name)
+            synthetic = self._synthetic_phase_indices.get(key)
+            if synthetic is None:
+                synthetic = self._next_synthetic_phase_index
+                self._next_synthetic_phase_index -= 1
+                self._synthetic_phase_indices[key] = synthetic
+            self._current_synthetic_phase_index = synthetic
+            return synthetic
+
+        if (
+            signature != previous_signature
+            or self._current_synthetic_phase_index is None
+        ):
+            self._current_synthetic_phase_index = self._next_synthetic_phase_index
+            self._next_synthetic_phase_index -= 1
+        return self._current_synthetic_phase_index
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
         """``AccumulatorProtocol``-compatible alias for ``process_server_metrics_record``."""
@@ -229,6 +358,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 )
 
         endpoint_list = list(self._server_metrics_hierarchy.endpoints.keys())
+        phase_results = self._build_concrete_phase_results(
+            endpoint_list=endpoint_list,
+            error_summary=error_summary or [],
+        )
         results = ServerMetricsResults(
             benchmark_id=self.run.benchmark_id,
             endpoint_summaries=endpoint_summaries,
@@ -240,6 +373,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             error_summary=error_summary or [],
             warmup_start_ns=warmup_start_ns,
             warmup_end_ns=warmup_summary_end_ns,
+            phase_results=phase_results,
         )
 
         # Export Parquet file directly from accumulator if format is enabled.
@@ -251,16 +385,58 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         return results
 
+    def _build_concrete_phase_results(
+        self,
+        *,
+        endpoint_list: list[str],
+        error_summary: list[ErrorDetailsCount],
+    ) -> list[ServerMetricsResults]:
+        """Build an exact summary for every captured concrete named phase."""
+        results: list[ServerMetricsResults] = []
+        captures = sorted(
+            self._phase_captures.values(),
+            key=lambda capture: (
+                capture.phase_index is None,
+                capture.phase_index if capture.phase_index is not None else 0,
+                capture.phase_name,
+            ),
+        )
+        for capture in captures:
+            endpoint_summaries = self._compute_phase_endpoint_summaries(
+                capture.phase,
+                self._slice_duration,
+                include_final_collection=False,
+                phase_index=capture.sample_phase_index,
+            )
+            if not endpoint_summaries:
+                continue
+            results.append(
+                ServerMetricsResults(
+                    benchmark_id=self.run.benchmark_id,
+                    phase=capture.phase,
+                    phase_index=capture.phase_index,
+                    profiling_index=capture.profiling_index,
+                    phase_name=capture.phase_name,
+                    phase_kind=capture.phase_kind,
+                    endpoint_summaries=endpoint_summaries,
+                    start_ns=capture.start_ns,
+                    end_ns=capture.end_ns,
+                    endpoints_configured=list(endpoint_list),
+                    endpoints_successful=list(endpoint_list),
+                    error_summary=list(error_summary),
+                )
+            )
+        return results
+
     async def _export_parquet_widened(self, start_ns: int, end_ns: int) -> None:
         """Export the Parquet artifact over the collection-widened window.
 
         Widens the window to include the final per-endpoint collection, which
         may land after end_ns (e.g. a scrape completing post-benchmark). Skips
         degenerate windows: TimeRangeFilter rejects start >= end, and a raise
-        here propagates out of export_results and is swallowed into a None
-        result (records_manager _publish_server_metrics_results), losing ALL
-        server metrics. Mirrors the guards at the per-endpoint / warmup /
-        json_exporter sites.
+        here propagates out of export_results and would make the manager publish
+        a terminal empty result, losing all server metrics. Mirrors the guards at
+        the per-endpoint, warmup, and JSON-exporter sites.
         """
         export_end_ns = max(
             end_ns,
@@ -374,12 +550,33 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         return summaries
 
+    def compute_endpoint_summaries(
+        self,
+        profiling_start_ns: int,
+        profiling_end_ns: int,
+        slice_duration: float | None = None,
+        *,
+        include_final_collection: bool = True,
+    ) -> dict[str, ServerMetricsEndpointSummary]:
+        """Expose bounded summaries to the owning manager's realtime publisher."""
+        return self._compute_endpoint_summaries(
+            profiling_start_ns,
+            profiling_end_ns,
+            slice_duration,
+            include_final_collection=include_final_collection,
+        )
+
     def _build_phase_filtered_scalar_series(
         self,
         data: ScalarTimeSeries,
         phase: CreditPhase,
+        phase_index: int | None = None,
     ) -> tuple[ScalarTimeSeries, int, int] | None:
-        phase_indices = np.flatnonzero(data.get_phase_mask(phase))
+        phase_indices = np.flatnonzero(
+            data.get_phase_index_mask(phase_index)
+            if phase_index is not None
+            else data.get_phase_mask(phase)
+        )
         if len(phase_indices) == 0:
             return None
 
@@ -405,8 +602,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self,
         data: HistogramTimeSeries,
         phase: CreditPhase,
+        phase_index: int | None = None,
     ) -> tuple[HistogramTimeSeries, int, int] | None:
-        phase_indices = np.flatnonzero(data.get_phase_mask(phase))
+        phase_indices = np.flatnonzero(
+            data.get_phase_index_mask(phase_index)
+            if phase_index is not None
+            else data.get_phase_mask(phase)
+        )
         if len(phase_indices) == 0:
             return None
 
@@ -439,6 +641,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         slice_duration: float | None = None,
         *,
         include_final_collection: bool,
+        phase_index: int | None = None,
     ) -> dict[str, ServerMetricsEndpointSummary]:
         """Compute per-endpoint summaries from samples whose record phase matches ``phase``."""
         summaries: dict[str, ServerMetricsEndpointSummary] = {}
@@ -468,11 +671,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                     filtered_series = self._build_phase_filtered_scalar_series(
                         metric_entry.data,
                         phase,
+                        phase_index,
                     )
                 else:
                     filtered_series = self._build_phase_filtered_histogram_series(
                         metric_entry.data,
                         phase,
+                        phase_index,
                     )
                 if filtered_series is None:
                     continue

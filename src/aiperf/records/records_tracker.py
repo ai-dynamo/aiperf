@@ -243,6 +243,32 @@ class RecordsTracker:
             return phase_tracker.create_stats()
         return self._get_phase_tracker(phase, phase_index).create_stats()
 
+    def create_progress_stats_for_phase(
+        self, phase: CreditPhase
+    ) -> list[PhaseRecordsStats]:
+        """Create progress stats for each concrete instance of ``phase``.
+
+        Indexed phase trackers are authoritative when present. The unindexed
+        tracker is retained as a fallback for legacy runs whose messages do not
+        carry concrete phase identity.
+        """
+        concrete_trackers = sorted(
+            (
+                (phase_index, tracker)
+                for (
+                    tracker_phase,
+                    phase_index,
+                ), tracker in self._phase_trackers.items()
+                if tracker_phase == phase and phase_index is not None
+            ),
+            key=lambda item: item[0],
+        )
+        if concrete_trackers:
+            return [tracker.create_stats() for _, tracker in concrete_trackers]
+
+        orphan_tracker = self._phase_trackers.get((phase, None))
+        return [orphan_tracker.create_stats()] if orphan_tracker is not None else []
+
     def create_aggregate_stats_for_phase(self, phase: CreditPhase) -> PhaseRecordsStats:
         """Create stats spanning all concrete instances of ``phase``."""
         concrete_stats = [
@@ -307,18 +333,34 @@ class RecordsTracker:
             was_cancelled=any(s.was_cancelled for s in stats),
         )
 
-    def total_records_for_phase(self, phase: CreditPhase) -> int:
-        """Return the running total record count for the phase without building a stats model.
+    def total_records_for_phase(
+        self, phase: CreditPhase, phase_index: int | None = None
+    ) -> int:
+        """Return the running record count for a phase kind or concrete phase.
 
         Lightweight int accessor for hot per-record paths (e.g. the
         failed-request abort check) that only need the counter, avoiding a full
-        validated ``PhaseRecordsStats`` construction per record.
+        validated ``PhaseRecordsStats`` construction per record. Omitting
+        ``phase_index`` aggregates all existing instances without creating an
+        unindexed tracker.
         """
-        return self._get_phase_tracker(phase).total_records
+        return sum(
+            tracker.total_records
+            for (tracker_phase, tracker_index), tracker in self._phase_trackers.items()
+            if tracker_phase == phase
+            and (phase_index is None or tracker_index == phase_index)
+        )
 
-    def error_records_for_phase(self, phase: CreditPhase) -> int:
-        """Return the running error record count for the phase without building a stats model."""
-        return self._get_phase_tracker(phase)._error_records
+    def error_records_for_phase(
+        self, phase: CreditPhase, phase_index: int | None = None
+    ) -> int:
+        """Return the running error count for a phase kind or concrete phase."""
+        return sum(
+            tracker._error_records
+            for (tracker_phase, tracker_index), tracker in self._phase_trackers.items()
+            if tracker_phase == phase
+            and (phase_index is None or tracker_index == phase_index)
+        )
 
     def update_phase_info(self, credit_phase_stats: CreditPhaseStats) -> None:
         """Update the phase tracker."""

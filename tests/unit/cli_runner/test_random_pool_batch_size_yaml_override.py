@@ -218,6 +218,10 @@ def test_batch_size_on_yaml_with_omitted_format_reports_effective_default(
     FileDataset.format defaults to DatasetFormat.SINGLE_TURN -- "got format:
     None" reads like a parse failure rather than "you didn't set format, so
     it's using the default".
+
+    The message is now phrased in CLI-flag terms rather than YAML-key terms,
+    but the property under test is unchanged: it must name the effective
+    default, never None.
     """
     pool = tmp_path / "pool.jsonl"
     pool.touch()
@@ -238,8 +242,14 @@ benchmark:
     yaml_path = tmp_path / "no_format.yaml"
     yaml_path.write_text(yaml_content)
     cli = _cli(prompt_batch_size=4)
-    with pytest.raises(ValueError, match=re.escape("declares format: single_turn")):
+    with pytest.raises(
+        ValueError, match=re.escape("declares format: single_turn")
+    ) as excinfo:
         resolve_config(cli, yaml_path)
+
+    assert "None" not in str(excinfo.value), (
+        "the effective default must be named, never a bare None"
+    )
 
 
 # ---------------------------------------------------------------------------

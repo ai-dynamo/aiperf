@@ -618,6 +618,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 phase=ctx.phase,
                 phase_index=ctx.phase_index,
             )
+        # Deliberately NOT asyncio.to_thread: this is the realtime path, which
+        # runs while records are still being ingested. Off-loading it would let
+        # a worker thread read the column arrays while the event loop mutates
+        # (and reallocates on grow) them, with no lock between the two. The
+        # final export path can safely use a thread because ingestion has
+        # stopped by then; see export_results.
         return self._summarize_for_export_context(export_ctx)
 
     def _summarize_for_export_context(
@@ -698,6 +704,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
+        # Deliberately NOT asyncio.to_thread. Ingestion has not necessarily
+        # stopped by the time this runs: PROFILE_CANCEL (Ctrl+C) finalizes
+        # immediately while in-flight records are still being ingested on the
+        # event loop, so a worker thread would read the column arrays while
+        # they are being mutated and reallocated on grow -- surfacing as
+        # ``IndexError: index N is out of bounds for axis 0 with size N``,
+        # which aborts summarize and leaves the run with nothing to export.
         return self._summarize_for_export_context(ctx)
 
     def _inject_sweep_metrics(

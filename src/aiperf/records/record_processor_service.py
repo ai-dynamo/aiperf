@@ -13,7 +13,11 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.common.hooks import on_command, on_message, on_pull_message
+from aiperf.common.hooks import (
+    on_command,
+    on_message,
+    on_pull_message,
+)
 from aiperf.common.messages import (
     DatasetConfiguredNotification,
     InferenceResultsMessage,
@@ -187,27 +191,55 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         self,
         message: ProfileCompleteCommand,  # noqa: ARG002
     ) -> None:
-        """Flush child record processors (e.g. RawRecordWriterProcessor buffers).
+        """Finalize child record artifacts before result aggregation.
 
         RecordsManager sends PROFILE_COMPLETE after all records are processed
         but before exporting/aggregating results. Flushing children here ensures
         buffered writers drain to disk before the RawRecordAggregator reads them.
 
-        We flush rather than stop: stop() runs the @on_stop hook chain inside
-        the message-handler task, and when SystemController later broadcasts
-        SHUTDOWN it cancels the in-flight handler task, leaving the writer
-        wedged at STOPPING with the buffer un-flushed. flush_buffer() drains
-        the buffer without tearing down the file handle, and the writer's
-        normal _close_file hook handles teardown during service shutdown.
+        Writers without a dedicated artifact finalizer are flushed in place.
+        RawRecordWriterProcessor additionally closes its staging file so the
+        local RawRecordAggregator can read and remove it on Windows.
         """
+        await self._finalize_local_artifacts()
+
+    async def _finalize_local_artifacts(self) -> None:
+        """Finalize every child writer.
+
+        One
+        record whose ``orjson.dumps`` raises, or a single transient ENOSPC,
+        latches the writer's sticky ``_write_error``; propagating it here would
+        destroy ``profile_export.jsonl`` *and* the CSV/JSON/console exports and
+        exit 1, when the only thing actually lost is that one line. Degrade the
+        artifact, never the diagnostics -- every failure is still logged at
+        ERROR.
+        """
+        children = []
         for child in self._children:
-            flush = getattr(child, "flush_buffer", None)
-            if flush is None:
-                continue
-            try:
-                await flush()
-            except Exception as e:  # noqa: BLE001
-                self.error(f"Failed to flush child {child}: {e!r}")
+            finalizer = getattr(type(child), "finalize_artifact", None)
+            finalize = (
+                child.finalize_artifact
+                if callable(finalizer)
+                else getattr(child, "flush_buffer", None)
+            )
+            if finalize is not None:
+                children.append((child, finalize))
+        results = await asyncio.gather(
+            *(finalize() for _child, finalize in children), return_exceptions=True
+        )
+        failures: list[Exception] = []
+        cancellation: asyncio.CancelledError | None = None
+        for (child, _finalize), result in zip(children, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                cancellation = result
+            elif isinstance(result, Exception):
+                failures.append(
+                    RuntimeError(f"Failed to finalize child {child}: {result!r}")
+                )
+        for failure in failures:
+            self.error(str(failure))
+        if cancellation is not None:
+            raise cancellation
 
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model."""
@@ -231,6 +263,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
     ) -> MetricRecordMetadata:
         """Create a metric record metadata based on a parsed response record."""
 
+        # Controller frame: request_start/ack/end below are all derived from this
+        # anchor and are exported and compared against credit_issued_ns, which the
+        # controller stamped. Correcting once here converts the whole record's
+        # exported timeline; record.timestamp_ns stays raw for provenance.
         start_time_ns = record.timestamp_ns
         start_perf_ns = record.start_perf_ns
 

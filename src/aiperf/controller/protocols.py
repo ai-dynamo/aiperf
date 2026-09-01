@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from aiperf.common.models import ServiceRunInfo
     from aiperf.common.types import ServiceTypeT
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.controller.multiprocess_service_manager import MultiProcessRunInfo
 
 
 @runtime_checkable
@@ -60,3 +61,14 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
         stop_event: asyncio.Event,
         timeout_seconds: float = Environment.SERVICE.START_TIMEOUT,
     ) -> None: ...
+
+    def activate_heartbeat_monitoring(self) -> None:
+        """Begin failing services that stop heartbeating."""
+        ...
+
+
+@runtime_checkable
+class LocalProcessServiceManagerProtocol(ServiceManagerProtocol, Protocol):
+    """Capability exposed by managers that own local service processes."""
+
+    multi_process_info: list[MultiProcessRunInfo]

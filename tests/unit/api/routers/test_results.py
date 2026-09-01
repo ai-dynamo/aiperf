@@ -5,15 +5,19 @@
 
 from __future__ import annotations
 
+import time
+from unittest.mock import MagicMock
+
 import pytest
 from fastapi import FastAPI
 from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.routers.results import ResultsRouter
-from aiperf.common.messages import ProcessRecordsResultMessage
+from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
+from aiperf.config import BenchmarkRun
 from tests.unit.api.routers.conftest import make_latency_metric
 
 
@@ -65,8 +69,10 @@ def make_process_records_result(
 
 
 @pytest.fixture
-def results_router(mock_zmq, router_benchmark_run) -> ResultsRouter:
-    return ResultsRouter(run=router_benchmark_run)
+def results_router(mock_zmq, router_config: BenchmarkRun) -> ResultsRouter:
+    return ResultsRouter(
+        run=router_config,
+    )
 
 
 @pytest.fixture
@@ -84,6 +90,39 @@ class TestResultsEndpoint:
         self, results_client: TestClient, results_router: ResultsRouter
     ) -> None:
         results_router._final_results = None
+        results_router._benchmark_complete = False
+
+        response = results_client.get("/api/results")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "running"
+        assert data["results"] is None
+
+    @pytest.mark.parametrize(
+        "was_cancelled",
+        [
+            param(False, id="not-cancelled"),
+            param(True, id="cancelled"),
+        ],
+    )  # fmt: skip
+    def test_results_not_complete_before_benchmark_complete(
+        self,
+        results_client: TestClient,
+        results_router: ResultsRouter,
+        was_cancelled: bool,
+    ) -> None:
+        """Final results arriving first must not be reported as COMPLETE.
+
+        PROCESS_ALL_RESULTS (RecordsManager) and BENCHMARK_COMPLETE
+        (SystemController) are published by different services with no ordering
+        guarantee. BENCHMARK_COMPLETE is the export-safety gate: it is the only
+        signal that the controller has finished writing artifacts to disk.
+        Reporting COMPLETE off the results message alone tells a client to go
+        fetch files that may not exist yet.
+        """
+        results_router._final_results = make_process_records_result(
+            completed=100, was_cancelled=was_cancelled
+        )
         results_router._benchmark_complete = False
 
         response = results_client.get("/api/results")
@@ -173,6 +212,54 @@ class TestResultsEndpoint:
         assert records[0]["p99"] == 250.0
 
 
+class TestResultsCompleteWithoutFinalResults:
+    """Test /api/results when BENCHMARK_COMPLETE arrives but the unified
+    ProcessAllResultsMessage never does (e.g. RecordsManager died between its
+    per-stream publish and _publish_all_results()).
+    """
+
+    def test_still_running_within_grace_period(
+        self, results_client: TestClient, results_router: ResultsRouter
+    ) -> None:
+        results_router._final_results = None
+        results_router._benchmark_complete = True
+        results_router._benchmark_complete_was_cancelled = False
+        results_router._benchmark_complete_at = time.monotonic()
+
+        response = results_client.get("/api/results")
+        data = response.json()
+        assert data["status"] == "running"
+        assert data["results"] is None
+
+    @pytest.mark.parametrize(
+        "was_cancelled,expected_status",
+        [
+            param(False, "incomplete", id="not-cancelled"),
+            param(True, "cancelled", id="was-cancelled"),
+        ],
+    )  # fmt: skip
+    def test_reports_terminal_status_after_grace_period_expires(
+        self,
+        results_client: TestClient,
+        results_router: ResultsRouter,
+        was_cancelled: bool,
+        expected_status: str,
+    ) -> None:
+        results_router._final_results = None
+        results_router._benchmark_complete = True
+        results_router._benchmark_complete_was_cancelled = was_cancelled
+        # Simulate the grace period having long since elapsed without the
+        # unified results message ever arriving.
+        results_router._benchmark_complete_at = time.monotonic() - 3600
+
+        response = results_client.get("/api/results")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == expected_status
+        assert data["status"] != "running"
+        assert data["results"] is None
+
+
 class TestResultsListEndpoint:
     """Test the /api/results/list endpoint."""
 
@@ -182,7 +269,9 @@ class TestResultsListEndpoint:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        results_router.run.cfg.artifacts.dir = tmp_path / "nonexistent"
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path / "nonexistent"
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -198,7 +287,9 @@ class TestResultsListEndpoint:
         (tmp_path / "metrics.json").write_text('{"test": 1}')
         (tmp_path / "records.jsonl").write_text('{"id": 1}')
 
-        results_router.run.cfg.artifacts.dir = tmp_path
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/list")
         assert response.status_code == 200
@@ -221,7 +312,9 @@ class TestResultsFileEndpoints:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        results_router.run.cfg.artifacts.dir = tmp_path
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/files/nonexistent.json")
         assert response.status_code == 404
@@ -236,7 +329,9 @@ class TestResultsFileEndpoints:
         test_file = tmp_path / "profile_export.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
 
-        results_router.run.cfg.artifacts.dir = tmp_path
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/profile_export.json",
@@ -252,7 +347,9 @@ class TestResultsFileEndpoints:
         results_router: ResultsRouter,
         tmp_path,
     ) -> None:
-        results_router.run.cfg.artifacts.dir = tmp_path
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get("/api/results/files/../../../etc/passwd")
         assert response.status_code in (400, 404)
@@ -266,7 +363,9 @@ class TestResultsFileEndpoints:
         test_file = tmp_path / "metrics.json"
         test_file.write_text('{"metrics": {"latency": 100}}')
 
-        results_router.run.cfg.artifacts.dir = tmp_path
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/metrics.json",
@@ -301,7 +400,9 @@ class TestResultsFileContentType:
         test_file = tmp_path / filename
         test_file.write_text("test content")
 
-        results_router.run.cfg.artifacts.dir = tmp_path
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             f"/api/results/files/{filename}",
@@ -319,7 +420,9 @@ class TestResultsFileContentType:
         test_file = tmp_path / "data.json"
         test_file.write_text('{"key": "value"}')
 
-        results_router.run.cfg.artifacts.dir = tmp_path
+        mock_output = MagicMock()
+        mock_output.artifact_directory = tmp_path
+        results_router.run.cfg.artifacts = mock_output
 
         response = results_client.get(
             "/api/results/files/data.json",
@@ -330,7 +433,7 @@ class TestResultsFileContentType:
 
 
 class TestFinalResultsHandler:
-    """Test the @on_message handler from FinalResultsMixin."""
+    """Test the @on_message handler on ResultsRouter."""
 
     @pytest.mark.asyncio
     async def test_on_process_records_result_stores_results(
@@ -340,31 +443,29 @@ class TestFinalResultsHandler:
         assert results_router._benchmark_complete is False
 
         result = make_process_records_result(completed=200)
-        message = ProcessRecordsResultMessage(
-            service_id="records_manager", results=result
-        )
-        await results_router._on_process_records_result(message)
+        message = ProcessAllResultsMessage(service_id="records_manager", results=result)
+        await results_router._on_process_all_results(message)
 
         assert results_router._final_results is not None
         assert results_router._final_results.results.completed == 200
-        assert results_router._benchmark_complete is True
+        assert results_router._benchmark_complete is False
 
     @pytest.mark.asyncio
     async def test_on_process_records_result_replaces_previous(
         self, results_router: ResultsRouter
     ) -> None:
         first_result = make_process_records_result(completed=100)
-        message1 = ProcessRecordsResultMessage(
+        message1 = ProcessAllResultsMessage(
             service_id="records_manager", results=first_result
         )
-        await results_router._on_process_records_result(message1)
+        await results_router._on_process_all_results(message1)
         assert results_router._final_results.results.completed == 100
 
         second_result = make_process_records_result(completed=200)
-        message2 = ProcessRecordsResultMessage(
+        message2 = ProcessAllResultsMessage(
             service_id="records_manager", results=second_result
         )
-        await results_router._on_process_records_result(message2)
+        await results_router._on_process_all_results(message2)
         assert results_router._final_results.results.completed == 200
 
     @pytest.mark.parametrize(
@@ -386,11 +487,59 @@ class TestFinalResultsHandler:
         result = make_process_records_result(
             completed=completed, was_cancelled=was_cancelled
         )
-        message = ProcessRecordsResultMessage(
-            service_id="records_manager", results=result
-        )
-        await results_router._on_process_records_result(message)
+        message = ProcessAllResultsMessage(service_id="records_manager", results=result)
+        await results_router._on_process_all_results(message)
 
         assert results_router._final_results.results.completed == completed
         assert results_router._final_results.results.was_cancelled == was_cancelled
+        assert results_router._benchmark_complete is False
+
+    @pytest.mark.parametrize(
+        "was_cancelled",
+        [
+            param(False, id="not-cancelled"),
+            param(True, id="cancelled"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_on_benchmark_complete_records_cancellation_and_timestamp(
+        self, results_router: ResultsRouter, was_cancelled: bool
+    ) -> None:
+        assert results_router._benchmark_complete is False
+        assert results_router._benchmark_complete_at is None
+
+        before = time.monotonic()
+        message = BenchmarkCompleteMessage(
+            service_id="system_controller", was_cancelled=was_cancelled
+        )
+        await results_router._on_benchmark_complete(message)
+        after = time.monotonic()
+
         assert results_router._benchmark_complete is True
+        assert results_router._benchmark_complete_was_cancelled == was_cancelled
+        assert results_router._benchmark_complete_at is not None
+        assert before <= results_router._benchmark_complete_at <= after
+
+    @pytest.mark.asyncio
+    async def test_on_process_all_results_accepts_optional_summary_payloads(
+        self, results_router: ResultsRouter
+    ) -> None:
+        """ProcessAllResultsMessage carries telemetry/server/energy/exported_artifacts fields.
+
+        The router only stores ``results`` today, but the message contract must
+        accept the additional payloads so the unified path stays a single hop.
+        """
+        result = make_process_records_result(completed=42)
+        message = ProcessAllResultsMessage(
+            service_id="records_manager",
+            results=result,
+            telemetry_results=None,
+            server_metrics_results=None,
+            energy_efficiency_results=None,
+            exported_artifacts={},
+        )
+
+        await results_router._on_process_all_results(message)
+
+        assert results_router._final_results is not None
+        assert results_router._final_results.results.completed == 42

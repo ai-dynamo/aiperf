@@ -260,6 +260,12 @@ class SubClientProtocol(CommunicationClientProtocol, Protocol):
 class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for the base communication layer.
     see :class:`aiperf.common.comms.base_comms.BaseCommunication` for more details.
+
+    Breaking change note for out-of-tree implementers: ``create_streaming_router_client``,
+    ``create_streaming_dealer_client``, and ``create_pull_client`` take ``bind``,
+    ``identity``, ``socket_ops``, and related options as keyword-only arguments
+    (following the ``*,`` separator). Callers that previously passed these
+    positionally must switch to keyword arguments.
     """
 
     def get_address(self, address_type: CommAddressType) -> str: ...
@@ -346,23 +352,34 @@ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
     ) -> StreamingRouterClientProtocol:
         """Create a STREAMING_ROUTER client for the given address, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        ``decode_type`` selects the msgspec type (or tagged union) used to decode
+        incoming messages; None keeps the credit plane's ``WorkerToRouterMessage``."""
         ...
 
     def create_streaming_dealer_client(
         self,
         address: CommAddressType,
+        *,
         identity: str,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         """Create a STREAMING_DEALER client for the given address and identity, which will be automatically
-        started and stopped with the CommunicationProtocol instance."""
+        started and stopped with the CommunicationProtocol instance.
+
+        ``decode_type`` selects the msgspec type (or tagged union) used to decode
+        incoming messages; None keeps the default credit-channel union.
+        """
         ...
 
     def create_streaming_push_client(

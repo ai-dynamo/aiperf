@@ -31,6 +31,13 @@ make install          # Install project + mock server + fake amdsmi bindings
 pre-commit install    # Install pre-commit hooks
 ```
 
+> **Note:** if `pre-commit install` reports `Cowardly refusing to install hooks
+> with 'core.hooksPath' set`, that is intentional and nothing is broken. A
+> custom hooks directory is in use so that pre-commit does not stash unstaged
+> changes during a commit — its stash corrupts concurrent work when several
+> people or agents share one worktree. Run `pre-commit install-hooks` instead
+> to build the hook environments without replacing the hook script.
+
 ### Available Commands
 
 | Command | Description |

@@ -1417,3 +1417,137 @@ class TestVirtualReturnFatalError:
         assert len(captured) == 1
         assert isinstance(captured[0], RuntimeError)
         assert "intercept blew up" in str(captured[0])
+
+
+class TestStickyCreditRouterFinalTurnAccounting:
+    """Final-turn eviction must credit the worker that held the session."""
+
+    async def test_final_turn_decrements_the_pinned_worker_not_the_new_one(
+        self, benchmark_run
+    ) -> None:
+        """A re-routed final turn drove the *new* worker's counter negative.
+
+        The eviction block decremented ``self._workers[worker_id]`` -- the
+        freshly-selected worker -- rather than the worker the sticky entry was
+        actually counted against. active_sessions is the first element of the
+        tie-break key, so a worker pushed to -1 wins every subsequent tie for
+        the rest of the run.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+        router._register_worker("worker-2")
+
+        # The session is pinned to worker-1 and counted there. Routing keys are
+        # correlation ids, not conversation ids.
+        entry = _StickyEntry(worker_id="worker-1")
+        router._sticky_sessions["corr-9"] = entry
+        router._workers["worker-1"].active_sessions = 1
+        router._workers["worker-1"].active_session_ids.add("corr-9")
+
+        # worker-1 dies, so the final turn re-routes to worker-2.
+        router._unregister_worker("worker-1")
+        router._sticky_sessions["corr-9"] = entry
+
+        credit = make_credit(
+            id=9,
+            conv_id="session-1",
+            turn=2,
+            corr_id="corr-9",
+            num_turns=3,
+        )
+        await router.send_credit(credit)
+
+        assert router._router_client.send_to.call_args[0][0] == "worker-2"
+        assert router._workers["worker-2"].active_sessions == 0
+        assert "corr-9" not in router._sticky_sessions
+
+
+class TestStickyRoutingAtDagDepth:
+    """DAG grandchildren must co-locate with the session's worker.
+
+    A credit looks its entry up by parent_correlation_id, but only the
+    session root ever owns an entry -- a depth-1 child shares the root's. So a
+    depth-2 grandchild, whose parent id is that depth-1 child, found nothing,
+    logged a warning, and fell through to least-loaded routing, losing exactly
+    the prefix-cache locality the refcount machinery exists to preserve.
+    """
+
+    async def test_grandchild_routes_to_the_session_worker(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+        router._register_worker("worker-2")
+
+        # Root session pinned to worker-2 (the least loaded at the time).
+        router._sticky_sessions["root"] = _StickyEntry(worker_id="worker-2")
+        router._workers["worker-2"].active_sessions = 1
+        router._workers["worker-2"].active_session_ids.add("root")
+
+        # Depth-1 child registers against the root and aliases its own id.
+        router.register_child_routing("root", "child-1")
+
+        # Depth-2 grandchild's parent is child-1, not root.
+        credit = make_credit(
+            id=5,
+            conv_id="session-1",
+            turn=0,
+            corr_id="grandchild-1",
+            num_turns=1,
+            parent_correlation_id="child-1",
+        )
+        await router.send_credit(credit)
+
+        assert router._router_client.send_to.call_args[0][0] == "worker-2"
+
+    async def test_aliases_are_dropped_with_the_entry(self, benchmark_run) -> None:
+        """Leaving aliases behind would route to a worker that no longer owns
+        the session and grow the dict for the life of the run."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-1")
+
+        entry = _StickyEntry(worker_id="worker-1")
+        router._sticky_sessions["root"] = entry
+        router._workers["worker-1"].active_sessions = 1
+        router._workers["worker-1"].active_session_ids.add("root")
+
+        router.register_child_routing("root", "child-1")
+        assert router._sticky_sessions["child-1"] is entry
+
+        entry.parent_final_seen = True
+        entry.ref_count = 1
+        router.release_child_routing("root")
+
+        assert "root" not in router._sticky_sessions
+        assert "child-1" not in router._sticky_sessions
+
+    async def test_eviction_through_an_alias_still_frees_the_root(
+        self, benchmark_run
+    ) -> None:
+        """Eviction is driven by whichever key the caller holds.
+
+        For a DAG descendant that key is an alias, not the key the entry is
+        filed under. Popping the alias alone left the root name pointing at a
+        dead entry and left the root id in the worker's active_session_ids
+        while active_sessions was decremented -- a permanent desync biasing the
+        active_sessions-first tie-break for the rest of the run.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-1")
+
+        entry = _StickyEntry(worker_id="worker-1", root_key="root")
+        router._sticky_sessions["root"] = entry
+        router._workers["worker-1"].active_sessions = 1
+        router._workers["worker-1"].active_session_ids.add("root")
+
+        router.register_child_routing("root", "child-1")
+        entry.parent_final_seen = True
+        entry.ref_count = 1
+
+        # The caller holds the child's id, not the root's.
+        router.release_child_routing("child-1")
+
+        assert "root" not in router._sticky_sessions
+        assert "child-1" not in router._sticky_sessions
+        assert router._workers["worker-1"].active_sessions == 0
+        assert router._workers["worker-1"].active_session_ids == set()

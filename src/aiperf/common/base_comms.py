@@ -140,10 +140,17 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
     ) -> StreamingRouterClientProtocol:
+        # Forwarded only when set: an out-of-tree COMMUNICATION_CLIENT plugin
+        # need not accept a decode_type parameter to be constructible.
+        extra: dict[str, Any] = (
+            {} if decode_type is None else {"decode_type": decode_type}
+        )
         return cast(
             StreamingRouterClientProtocol,
             self.create_client(
@@ -152,17 +159,23 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 bind,
                 socket_ops,
                 additional_bind_address=additional_bind_address,
+                **extra,
             ),
         )
 
     def create_streaming_dealer_client(
         self,
         address: CommAddressType,
+        *,
         identity: str,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         # Identity must be passed through client_kwargs since it's specific to DEALER
+        extra: dict[str, Any] = (
+            {} if decode_type is None else {"decode_type": decode_type}
+        )
         return cast(
             StreamingDealerClientProtocol,
             self.create_client(
@@ -171,6 +184,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 bind,
                 socket_ops,
                 identity=identity,
+                **extra,
             ),
         )
 

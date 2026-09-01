@@ -48,6 +48,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.finite import FiniteFloat
 from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
@@ -72,7 +73,7 @@ class _AccuracySettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
 
-    CANCEL_RESULT_WAIT_SEC: float = Field(
+    CANCEL_RESULT_WAIT_SEC: FiniteFloat = Field(
         default=5.0,
         ge=0.0,
         description="Bounded time (seconds) the SystemController waits on the "
@@ -871,6 +872,14 @@ class _HTTPSettings(BaseSettings):
         "--router-session-affinity-ttl-secs, pinning every turn of a session to the "
         "replica holding its KV prefix.",
     )
+    METRICS_SCRAPE_READ_TIMEOUT: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Socket read timeout in seconds for metrics scrape sessions "
+        "(server metrics and GPU telemetry). Bounds an endpoint that sends response "
+        "headers and then stalls, which a connect-only timeout cannot detect.",
+    )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
         le=10.0,
@@ -1022,6 +1031,25 @@ class _RecordSettings(BaseSettings):
         default=100,
         description="Batch size for record export results processor",
     )
+    COMPLETION_STALL_TIMEOUT: float = Field(
+        ge=0.0,
+        le=86400.0,
+        default=300.0,
+        description="Seconds of ZERO record progress, after all credits are complete, "
+        "before the RecordsManager stops waiting and finalizes the run as degraded. "
+        "The completion barrier is event-driven: it needs one record per completed "
+        "request, so a request that completes without ever emitting a record leaves "
+        "the barrier permanently short and nothing re-triggers it. This bounds that "
+        "into a loud failure instead of an unbounded hang. The timer measures time "
+        "since the last record arrived, not total elapsed, so legitimately slow "
+        "aggregation is never cut short. Set 0 to disable.",
+    )
+    COMPLETION_STALL_CHECK_INTERVAL: float = Field(
+        gt=0.0,
+        le=3600.0,
+        default=10.0,
+        description="Seconds between record-progress stall checks after credits complete.",
+    )
     RAW_EXPORT_BATCH_SIZE: int = Field(
         ge=1,
         le=1000000,
@@ -1033,7 +1061,9 @@ class _RecordSettings(BaseSettings):
         le=100,
         default=4,
         description="Scale factor for number of record processors to spawn based on worker count. "
-        "Formula: 1 record processor for every X workers",
+        "Formula: 1 record processor for every X workers. The default of 4 is the ratio the "
+        "Kubernetes pod-sizing design was built around, alongside ~500 concurrent connections "
+        "per worker; see RuntimeConfig.record_processors_per_pod",
     )
     PROGRESS_REPORT_INTERVAL: float = Field(
         ge=0.1,
@@ -1152,11 +1182,38 @@ class _ServerMetricsSettings(BaseSettings):
         description="Time in seconds to continue collecting metrics after profiling completes, "
         "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
     )
+    PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=60.0,
+        description="Seconds RecordsManager waits for the final server-metrics scrape "
+        "command response. A timeout is non-fatal because the controller's result "
+        "join remains the authoritative completion barrier.",
+    )
+    CANCEL_RESULT_WAIT_SEC: FiniteFloat = Field(
+        default=5.0,
+        ge=0.0,
+        description="Bounded time (seconds) the SystemController waits on the "
+        "cancel (Ctrl+C) path for the ServerMetricsManager's result message "
+        "before proceeding to export. The normal completion path blocks on the "
+        "server-metrics shutdown gate indefinitely, but the cancel path must "
+        "not hang. Set to 0 to skip the wait entirely.",
+    )
     COLLECTION_INTERVAL: float = Field(
         ge=0.001,
         le=300.0,
         default=0.333,
         description="Server metrics collection interval in seconds (default: 333ms, ~3Hz)",
+    )
+    SCRAPE_TIMEOUT: float = Field(
+        ge=0.1,
+        le=600.0,
+        default=30.0,
+        description="Hard bound in seconds on a single manager-initiated scrape "
+        "(baseline, warmup boundary, and the final PROFILE_COMPLETE scrape). These "
+        "scrapes are awaited inline on the completion and cancel paths, so an "
+        "endpoint that stalls mid-response would otherwise block the terminal "
+        "server-metrics result forever.",
     )
     EXPORT_BATCH_SIZE: int = Field(
         ge=1,
@@ -1268,16 +1325,8 @@ class _TimingSettings(BaseSettings):
     )
 
 
-class _ServiceSettings(BaseSettings):
-    """Service lifecycle and inter-service communication configuration.
-
-    Controls timeouts for service registration, startup, shutdown, command handling,
-    connection probing, heartbeats, and profile operations.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="AIPERF_SERVICE_",
-    )
+class _ServiceCommunicationFields:
+    """Service command and connection-probing configuration."""
 
     COMMAND_RESPONSE_TIMEOUT: float = Field(
         ge=1.0,
@@ -1303,6 +1352,19 @@ class _ServiceSettings(BaseSettings):
         default=90.0,
         description="Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus",
     )
+
+
+class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
+    """Service lifecycle and inter-service communication configuration.
+
+    Controls timeouts for service registration, startup, shutdown, command handling,
+    connection probing, heartbeats, and profile operations.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_SERVICE_",
+    )
+
     CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
         ge=1,
         le=100000.0,
@@ -1325,6 +1387,26 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=5.0,
         description="Interval in seconds between heartbeat messages for component services",
+    )
+    HEARTBEAT_MISSED_THRESHOLD: int = Field(
+        ge=1,
+        le=100,
+        default=3,
+        description="Consecutive heartbeat intervals a registered service may "
+        "miss before the watchdog suspects it. A service is only failed after "
+        "appearing stale on two consecutive watchdog ticks, so worst-case "
+        "detection is HEARTBEAT_INTERVAL * (threshold + 1) seconds.",
+    )
+    FAILURE_SHUTDOWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=30.0,
+        description="Wall-clock cap on the shutdown path inside "
+        "AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task "
+        "cancellation) does not complete within this window after a failed "
+        "on_init/on_start transition, the wedged shutdown is logged and the "
+        "failure is reported normally, so the traceback and artifact export "
+        "are not discarded.",
     )
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
@@ -1361,6 +1443,13 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=30.0,
         description="Timeout in seconds for service registration",
+    )
+    REGISTRATION_PROGRESS_LOG_INTERVAL: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=5.0,
+        description="Interval in seconds between 'still waiting for services to "
+        "register' progress logs emitted by the service registry while blocked",
     )
     START_TIMEOUT: float = Field(
         ge=1.0,
@@ -1667,6 +1756,16 @@ class _WorkerSettings(BaseSettings):
         default=32,
         description="Absolute maximum number of workers to spawn, regardless of CPU count",
     )
+    MIN_ALIVE_FRACTION: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.0,
+        description="Fail the benchmark when the number of dispatchable workers "
+        "remains below this fraction of the peak ever registered for one worker "
+        "staleness interval. TimingManager evaluates the count after worker "
+        "deregistration, so Kubernetes replacement pods can become dispatchable "
+        "before a transient loss is fatal. 0 disables the check.",
+    )
     STALE_TIME: float = Field(
         ge=0.1,
         le=1000.0,
@@ -1678,6 +1777,13 @@ class _WorkerSettings(BaseSettings):
         le=1000.0,
         default=0.5,
         description="Interval in seconds between worker status summary messages",
+    )
+    RAW_RECORD_UPLOAD_TIMEOUT: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=60.0,
+        description="Timeout in seconds to wait for worker pods to upload raw record files "
+        "to the controller API after benchmark completion.",
     )
 
 
@@ -1781,6 +1887,18 @@ class _ZMQSettings(BaseSettings):
         le=100000,
         default=10,
         description="Interval in seconds between TCP keepalive probes for ZMQ connections",
+    )
+    RECONNECT_IVL: int = Field(
+        ge=1,
+        le=100000,
+        default=100,
+        description="Delay in milliseconds before the first ZMQ reconnect attempt",
+    )
+    RECONNECT_IVL_MAX: int = Field(
+        ge=1,
+        le=100000,
+        default=5000,
+        description="Ceiling in milliseconds on the exponential ZMQ reconnect backoff",
     )
     EVENT_BUS_PROXY_FRONTEND_PORT: int = Field(
         ge=1,
@@ -1957,6 +2075,39 @@ class _Environment(BaseSettings):
         if self.SERVICE.PROFILE_CONFIGURE_TIMEOUT < self.DATASET.CONFIGURATION_TIMEOUT:
             raise ValueError(
                 f"AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT: {self.SERVICE.PROFILE_CONFIGURE_TIMEOUT} must be greater than or equal to AIPERF_DATASET_CONFIGURATION_TIMEOUT: {self.DATASET.CONFIGURATION_TIMEOUT}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_worker_stale_time_vs_heartbeat(self) -> Self:
+        """Validate the router's stale-worker cutoff outlives the heartbeat cadence.
+
+        ``StickyCreditRouter.evict_stale_workers`` computes its cutoff as
+        ``WORKER.STALE_TIME * 3`` against ``last_heartbeat_ns``, which is fed
+        solely by ``TimingManager``'s ``HeartbeatMessage`` handler. Workers
+        emit those on their own ``SERVICE.HEARTBEAT_INTERVAL`` timer, so the
+        expected gap between two heartbeats from a healthy worker is one
+        interval -- ``SERVICE.HEARTBEAT_MISSED_THRESHOLD`` is the *controller
+        watchdog's* tolerance for missed beats and never reaches this path.
+        Validating against ``INTERVAL * THRESHOLD`` therefore rejected safe
+        configurations (raising from an import-time singleton, which makes the
+        package unimportable): with the defaults, merely raising the watchdog
+        threshold to 6 was enough to trip it.
+
+        The cutoff must still outlive the emission cadence with room for
+        scheduling jitter, or every worker looks stale on the very first sweep
+        and gets evicted -- terminal when it owns in-flight credits or sticky
+        sessions, regardless of ``WORKER.MIN_ALIVE_FRACTION``.
+        """
+        stale_cutoff = self.WORKER.STALE_TIME * 3
+        if stale_cutoff <= self.SERVICE.HEARTBEAT_INTERVAL:
+            raise ValueError(
+                f"AIPERF_WORKER_STALE_TIME: {self.WORKER.STALE_TIME} "
+                f"(eviction cutoff = STALE_TIME * 3 = {stale_cutoff}) must satisfy "
+                f"STALE_TIME * 3 > AIPERF_SERVICE_HEARTBEAT_INTERVAL "
+                f"({self.SERVICE.HEARTBEAT_INTERVAL}), otherwise workers appear "
+                "stale to the router before their heartbeat cadence could "
+                "plausibly reach it."
             )
         return self
 

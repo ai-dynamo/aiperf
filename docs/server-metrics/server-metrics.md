@@ -249,6 +249,7 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 |---------------------|---------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | 0.333s | Collection frequency (333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for final metrics after benchmark |
+| `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | 60s | Maximum wait for the manager-owned final scrape and artifact flush command |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | 10s | Timeout for endpoint reachability tests |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | 100 | Batch size for JSONL writer |
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | 5.0s | Shutdown delay for command response transmission |
@@ -659,4 +660,3 @@ with open('server_metrics_export.json') as f:
 latency = data['metrics']['vllm:e2e_request_latency_seconds']['series'][0]['stats']
 assert latency['p99_estimate'] < 5.0, f"P99 latency too high: {latency['p99_estimate']}"
 ```
-

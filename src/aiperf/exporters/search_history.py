@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from aiperf.common.finite import scrub_non_finite
+from aiperf.common.finite import is_finite_value, scrub_non_finite
 from aiperf.orchestrator.search_planner._sla_helpers import first_failing_filter
 
 if TYPE_CHECKING:
@@ -151,19 +151,42 @@ def _compute_best_trials(
     """
     from aiperf.common.enums import OptimizationDirection
 
-    scored = [h for h in history if h.objective_values]
+    def _primary(h: SearchIteration) -> float | None:
+        return h.objective_values[0] if h.objective_values else h.objective_value
+
+    # An iteration that reports only the scalar mirror is still scored: most
+    # planners populate objective_value and a length-1 vector, but the vector
+    # is Optional and filtering on it alone dropped those iterations entirely
+    # (best_trials came back null for a fully scored search).
+    #
+    # A trial carrying a non-finite value in ANY configured objective is
+    # dropped here, not just the primary. Filtering only the primary left a
+    # trial like [100.0, NaN] in the pool, where _dominates refuses to decide
+    # in either direction -- which does stop it dominating, but also makes it
+    # undominatable, so it was *guaranteed* a slot in the reported front and
+    # was serialized as [100.0, null]. Being incomparable is the safe answer
+    # for a pairwise question and the wrong answer for front membership; the
+    # pool is where that has to be settled. An absent or short vector is
+    # deliberately NOT filtered -- see _objective_is_poisoned.
+    n_obj = len(cfg.objectives)
+    scored = [
+        h
+        for h in history
+        if (h.objective_values or h.objective_value is not None)
+        and is_finite_value(_primary(h))
+        and not any(_objective_is_poisoned(h, index) for index in range(n_obj))
+    ]
     feasible = [h for h in scored if h.feasible]
     ranking_pool = feasible if feasible else scored
     if not ranking_pool:
         return None
 
-    n_obj = len(cfg.objectives)
     if n_obj == 1:
         direction = cfg.objectives[0].direction
         if direction == OptimizationDirection.MAXIMIZE:
-            best = max(ranking_pool, key=lambda h: h.objective_values[0])
+            best = max(ranking_pool, key=_primary)
         else:
-            best = min(ranking_pool, key=lambda h: h.objective_values[0])
+            best = min(ranking_pool, key=_primary)
         return [_serialize_trial(best, len(feasible), pareto_rank=0)]
 
     front = _pareto_front(ranking_pool, cfg.objectives)
@@ -183,38 +206,105 @@ def _serialize_trial(
     }
 
 
-def _pareto_front(
-    pool: list[SearchIteration], objectives: list
-) -> list[SearchIteration]:
-    """Non-dominated set under direction-aware comparison.
+def _objective_at(iteration: SearchIteration, index: int) -> float | None:
+    """Read one objective, tolerating a short or absent objective vector.
 
-    A point p dominates q iff for every objective i, p is no worse than q,
-    and for at least one objective p is strictly better. "Better" depends
-    on each objective's direction.
+    NaN/inf values are reported as unavailable: every comparison against NaN is
+    False, so letting one through would make a broken trial silently dominate or
+    be dominated depending on argument order. See ``docs/dev/patterns.md``
+    "NaN/Inf Discipline Pattern".
+    """
+    values = iteration.objective_values
+    if values is not None and index < len(values):
+        value = values[index]
+    elif index == 0:
+        value = iteration.objective_value
+    else:
+        return None
+    return value if is_finite_value(value) else None
+
+
+def _objective_is_poisoned(iteration: SearchIteration, index: int) -> bool:
+    """Whether this objective is *present but unusable* (NaN/inf).
+
+    Distinct from simply absent. A short or missing ``objective_values`` vector
+    is a benign, symmetric gap -- every trial in a run is described the same
+    way, so the objective carries no information for anyone and skipping it
+    compares the trials on the objectives that do exist. A non-finite value is
+    the opposite: this one trial reported garbage, and skipping it hands that
+    trial a free pass on an objective the others were actually scored against.
+    """
+    values = iteration.objective_values
+    if values is not None and index < len(values):
+        value = values[index]
+    elif index == 0:
+        value = iteration.objective_value
+    else:
+        return False
+    return value is not None and not is_finite_value(value)
+
+
+def _dominates(
+    candidate: SearchIteration,
+    other: SearchIteration,
+    objectives: list,
+) -> bool:
+    """Return whether ``candidate`` is no worse everywhere and better somewhere.
+
+    An objective that is merely *absent* on a side (short or missing vector)
+    is skipped: that gap is symmetric across the run, so the remaining
+    objectives still decide the comparison.
+
+    An objective that is present but *non-finite* instead makes the pair
+    incomparable, and no domination is claimed in either direction. Skipping
+    those let a trial win on the strength of its own broken value: with
+    objectives ``[throughput MAX, latency MIN]``, ``[100.0, NaN]`` compared
+    against ``[50.0, 8.0]`` won on throughput, had its NaN latency skipped,
+    and dominated a trial strictly better on the objective it silently
+    dropped -- then serialized as ``[100.0, null]``.
+
+    Refusing to decide is correct for this *pairwise* question but does not
+    settle front membership: an incomparable point is also undominatable, so
+    on its own this guard would guarantee the poisoned trial a slot in the
+    front. ``_compute_best_trials`` therefore drops poisoned trials from the
+    ranking pool upstream. This guard remains as the local invariant, so a
+    future caller that assembles its own pool cannot resurrect the bug.
     """
     from aiperf.common.enums import OptimizationDirection
 
-    def dominates(a: SearchIteration, b: SearchIteration) -> bool:
-        strictly_better_anywhere = False
-        for i, obj in enumerate(objectives):
-            av, bv = a.objective_values[i], b.objective_values[i]
-            if obj.direction == OptimizationDirection.MAXIMIZE:
-                if av < bv:
-                    return False
-                if av > bv:
-                    strictly_better_anywhere = True
-            else:
-                if av > bv:
-                    return False
-                if av < bv:
-                    strictly_better_anywhere = True
-        return strictly_better_anywhere
+    strictly_better = False
+    for index, objective in enumerate(objectives):
+        candidate_value = _objective_at(candidate, index)
+        other_value = _objective_at(other, index)
+        if _objective_is_poisoned(candidate, index) or _objective_is_poisoned(
+            other, index
+        ):
+            return False
+        if candidate_value is None or other_value is None:
+            continue
+        maximize = objective.direction == OptimizationDirection.MAXIMIZE
+        if (maximize and candidate_value < other_value) or (
+            not maximize and candidate_value > other_value
+        ):
+            return False
+        strictly_better |= candidate_value != other_value
+    return strictly_better
+
+
+def _pareto_front(
+    pool: list[SearchIteration], objectives: list
+) -> list[SearchIteration]:
+    """Return the direction-aware non-dominated set."""
 
     front: list[SearchIteration] = []
-    for p in pool:
-        if any(dominates(q, p) for q in pool if q is not p):
+    for point in pool:
+        if any(
+            _dominates(candidate, point, objectives)
+            for candidate in pool
+            if candidate is not point
+        ):
             continue
-        front.append(p)
+        front.append(point)
     return front
 
 
