@@ -44,6 +44,10 @@ from aiperf.common.finite import (
         param(np.float64(1.5), True, id="numpy_float64_finite"),
         param(np.int64(0), True, id="numpy_int64_zero"),
         param(np.int64(-100), True, id="numpy_int64_negative"),
+        # numpy.bool_ does not subclass Python bool, so it misses the
+        # isinstance(x, bool) rejection and would count as the value 1.0.
+        param(np.bool_(True), False, id="numpy_bool_true_rejected"),
+        param(np.bool_(False), False, id="numpy_bool_false_rejected"),
     ],
 )
 def test_is_finite_value(value: object, expected: bool) -> None:
@@ -145,8 +149,77 @@ def test_scrub_non_finite_numpy_scalars() -> None:
     assert out["f64_inf"] is None
     # finite numpy float coerced through the same path -> python float, finite
     assert out["f64_finite"] == pytest.approx(3.14)
+    assert type(out["f64_finite"]) is float
     # int passes through unchanged
     assert out["i64"] == np.int64(7)
+    assert type(out["i64"]) is int
+
+
+def test_scrub_non_finite_preserves_numpy_integer_as_int() -> None:
+    """numpy integers must stay integers, not widen to float.
+
+    ``numpy.int64`` neither subclasses ``int`` nor matches the ``float``
+    branch, so a bare ``float()`` coercion would write ``7.0`` to disk for a
+    value that is conceptually ``7``.
+    """
+    out = scrub_non_finite({"i64": np.int64(7), "i32": np.int32(-3), "u8": np.uint8(3)})
+    assert type(out["i64"]) is int
+    assert out["i64"] == 7
+    assert type(out["i32"]) is int
+    assert out["i32"] == -3
+    assert type(out["u8"]) is int
+    assert out["u8"] == 3
+
+
+def test_scrub_non_finite_preserves_numpy_bool_as_bool() -> None:
+    """numpy booleans must stay booleans.
+
+    The function documents "Booleans are passed through unchanged", but
+    ``numpy.bool_`` does not subclass Python ``bool``, so it missed that
+    branch and was coerced to ``1.0``.
+    """
+    out = scrub_non_finite({"t": np.bool_(True), "f": np.bool_(False)})
+    assert out["t"] is True
+    assert out["f"] is False
+
+
+def test_scrub_non_finite_numpy_int_and_bool_json_shape() -> None:
+    """On disk a numpy int must render as 7 and a numpy bool as true."""
+    import orjson
+
+    raw = orjson.dumps(
+        scrub_non_finite({"count": np.int64(7), "feasible": np.bool_(True)})
+    ).decode()
+
+    assert raw == '{"count":7,"feasible":true}'
+
+
+def test_scrub_non_finite_coerces_numpy_float64_to_native_float() -> None:
+    """numpy.float64 needs its own cast; every other numpy scalar takes .item().
+
+    numpy.float64 is the only numpy scalar type that subclasses Python
+    ``float``, so it matches the ``isinstance(obj, float)`` branch and would
+    otherwise be returned as-is rather than normalized like the rest.
+    """
+    out = scrub_non_finite({"v": np.float64(3.14)})
+    assert type(out["v"]) is float
+
+
+def test_scrub_non_finite_output_is_orjson_serializable_for_numpy_float64() -> None:
+    """scrub_non_finite is the pre-orjson guard, so its output must always dump.
+
+    orjson rejects numpy.float64 with "Type is not JSON serializable", which
+    aborts the exporter that called it (nvbugs 6683575).
+    """
+    import orjson
+
+    out = scrub_non_finite(
+        {"scalar": np.float64(3.14), "nested": [{"deep": np.float64(1.0)}]}
+    )
+    parsed = orjson.loads(orjson.dumps(out))
+
+    assert parsed["scalar"] == pytest.approx(3.14)
+    assert parsed["nested"][0]["deep"] == pytest.approx(1.0)
 
 
 def test_scrub_non_finite_does_not_recurse_into_str_bytes() -> None:
@@ -201,6 +274,17 @@ def test_nan_safe_mean_handles_numpy_inputs() -> None:
     """numpy arrays / scalars are filtered consistently with Python floats."""
     values = [np.float64(1.0), np.float64(np.nan), np.float64(3.0)]
     assert nan_safe_mean(values) == pytest.approx(2.0)
+
+
+def test_nan_safe_mean_excludes_numpy_bool_like_python_bool() -> None:
+    """A numpy bool must not be averaged in as 1.0.
+
+    Python ``True`` is already excluded as "not a metric value"; numpy's
+    bool has to behave identically or the same data yields a different
+    mean depending only on which bool type produced it.
+    """
+    assert nan_safe_mean([np.bool_(True), 3.0]) == nan_safe_mean([True, 3.0])
+    assert nan_safe_mean([np.bool_(True), 3.0]) == pytest.approx(3.0)
 
 
 def test_nan_safe_std_empty_returns_none() -> None:

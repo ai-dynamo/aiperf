@@ -4,6 +4,7 @@ import asyncio
 import multiprocessing
 import os
 import uuid
+from collections import Counter
 from multiprocessing import Process
 from multiprocessing.context import SpawnProcess
 
@@ -177,27 +178,35 @@ class MultiProcessServiceManager(BaseServiceManager):
         # ProfileConfigureCommand would broadcast before the optionals had
         # subscribed, leaving them un-configured and their data missing from
         # the final export.
-        required_types = set(
+        #
+        # Count replicas per type, not per-type presence: a replicated
+        # service (e.g. RECORD_PROCESSOR, scaled with worker count) has
+        # multiple multi_process_info entries sharing one service_type. A
+        # replica that registers after the first can otherwise miss
+        # DatasetManager's one-shot DatasetConfiguredNotification and hang
+        # until DATASET.CONFIGURATION_TIMEOUT.
+        required_counts: Counter[ServiceTypeT] = Counter(
             info.service_type for info in self.multi_process_info
-        ) or set(self.required_services.keys())
+        ) or Counter(self.required_services)
 
         # TODO: Can this be done better by using asyncio.Event()?
 
         async def _wait_for_registration():
             while not stop_event.is_set():
-                # Get all registered service types from the id map
-                registered_types = {
+                registered_counts = Counter(
                     service_info.service_type
                     for service_info in self.service_id_map.values()
                     if service_info.registration_status
                     == ServiceRegistrationStatus.REGISTERED
-                }
+                )
 
-                # Check if all required types are registered
-                if required_types.issubset(registered_types):
+                if all(
+                    registered_counts[service_type] >= count
+                    for service_type, count in required_counts.items()
+                ):
                     return
 
-                self._reap_dead_processes_during_registration(required_types)
+                self._reap_dead_processes_during_registration(required_counts)
 
                 # Wait a bit before checking again
                 await asyncio.sleep(0.5)
@@ -205,24 +214,25 @@ class MultiProcessServiceManager(BaseServiceManager):
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
         except TimeoutError as e:
-            # Log which services didn't register in time
-            registered_types_set = set(
+            registered_counts = Counter(
                 service_info.service_type
                 for service_info in self.service_id_map.values()
                 if service_info.registration_status
                 == ServiceRegistrationStatus.REGISTERED
             )
 
-            for service_type in required_types:
-                if service_type not in registered_types_set:
+            for service_type, count in required_counts.items():
+                registered = registered_counts[service_type]
+                if registered < count:
                     self.error(
-                        f"Service {service_type} failed to register within timeout"
+                        f"Service {service_type} failed to fully register within "
+                        f"timeout ({registered}/{count} replicas registered)"
                     )
 
             raise AIPerfError("Some services failed to register within timeout") from e
 
     def _reap_dead_processes_during_registration(
-        self, required_types: set[ServiceTypeT]
+        self, required_counts: "Counter[ServiceTypeT]"
     ) -> None:
         """Reap dead processes mid-registration: required dying is fatal,
         optional dying gets a warning and is dropped from the wait set.
@@ -232,9 +242,9 @@ class MultiProcessServiceManager(BaseServiceManager):
         entire benchmark. ``process is None`` is treated as dead — a None
         process means the spawn call failed before producing a handle.
 
-        Mutates ``required_types`` (discards optional dead types) and
-        ``self.multi_process_info`` (removes optional dead entries) so the
-        caller's wait loop can converge.
+        Mutates ``required_counts`` (decrements the expected replica count
+        for optional dead types) and ``self.multi_process_info`` (removes
+        optional dead entries) so the caller's wait loop can converge.
 
         Raises:
             AIPerfError: if any required service has died.
@@ -254,7 +264,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                 f"registering (exit code {exit_code}); continuing "
                 f"benchmark without it."
             )
-            required_types.discard(info.service_type)
+            required_counts[info.service_type] -= 1
             self.multi_process_info.remove(info)
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
