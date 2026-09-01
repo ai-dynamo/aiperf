@@ -201,6 +201,57 @@ navigation:
         path: ../pages-dev/tutorials/baseten-trace.md
       - page: Conversation DAG Benchmarks
         path: ../pages-dev/benchmark-modes/dag.md
+  - section: Kubernetes
+    collapsed: true
+    contents:
+      - page: Getting Started on Kubernetes
+        path: ../pages-dev/kubernetes/getting-started.md
+      - page: Deploy from Source Checkout
+        path: ../pages-dev/kubernetes/source-checkout-deploy.md
+      - page: End-to-End Workflow
+        path: ../pages-dev/kubernetes/workflow.md
+      - page: Config Init and Manifest Generation
+        path: ../pages-dev/kubernetes/init-and-generate.md
+      - page: Kubernetes Configuration Reference
+        path: ../pages-dev/kubernetes/configuration.md
+      - page: Production Deployment
+        path: ../pages-dev/kubernetes/production.md
+      - page: RBAC and Security
+        path: ../pages-dev/kubernetes/rbac-security.md
+      - page: Monitoring and Observability
+        path: ../pages-dev/kubernetes/monitoring.md
+      - page: Config Validation
+        path: ../pages-dev/kubernetes/validate.md
+      - page: CRD Validation Rules
+        path: ../pages-dev/kubernetes/crd-validation.md
+      - page: Preflight Checks
+        path: ../pages-dev/kubernetes/preflight.md
+      - page: Debug Command
+        path: ../pages-dev/kubernetes/debug-command.md
+      - page: Attach to a Running Benchmark
+        path: ../pages-dev/kubernetes/attach.md
+      - page: Logs
+        path: ../pages-dev/kubernetes/logs.md
+      - page: Results Server API Reference
+        path: ../pages-dev/kubernetes/results-api.md
+      - page: Web Dashboard
+        path: ../pages-dev/kubernetes/dashboard-ui.md
+      - page: Controller Pod Sidecars
+        path: ../pages-dev/kubernetes/sidecars.md
+      - page: Memory Estimator
+        path: ../pages-dev/kubernetes/memory-estimator.md
+      - page: Kueue Integration
+        path: ../pages-dev/kubernetes/kueue.md
+      - page: GPU Telemetry on Kubernetes
+        path: ../pages-dev/kubernetes/gpu-telemetry.md
+      - page: Direct Mode (no operator)
+        path: ../pages-dev/kubernetes/direct-mode.md
+      - page: Adaptive Search on Kubernetes
+        path: ../pages-dev/kubernetes/adaptive-search.md
+      - page: User-Defined Output Files
+        path: ../pages-dev/kubernetes/user-files.md
+      - page: AI-Assisted Debugging Guide
+        path: ../pages-dev/kubernetes/ai-debugging-guide.md
   - section: Accuracy
     collapsed: true
     contents:
@@ -293,6 +344,8 @@ navigation:
         path: ../pages-dev/dev/sweep-orchestrator.md
       - page: YAML Config Future Goals
         path: ../pages-dev/dev/yaml-config-future-goals.md
+      - page: Kubernetes Flow
+        path: ../pages-dev/dev/kubernetes-flow.md
   - section: Troubleshooting
     collapsed: true
     contents:

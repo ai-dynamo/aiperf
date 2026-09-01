@@ -160,7 +160,7 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 | Category | Enum | Description |
 |----------|------|-------------|
 | `service` | `ServiceType` | Core AIPerf services |
-| `service_manager` | `ServiceRunType` | Service orchestration for local multiprocessing deployments. |
+| `service_manager` | `ServiceRunType` | Service orchestration for local multiprocessing and distributed Kubernetes deployments. Built-in `multiprocessing` and `kubernetes` service-manager plugins are registered. |
 
 ### Visualization and Telemetry Categories
 
