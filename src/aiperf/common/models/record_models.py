@@ -1032,6 +1032,11 @@ class RequestInfo(RecordContext):
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
     )
+    previous_response_id: str | None = Field(
+        default=None,
+        description="Response ID from the previous turn (e.g. 'resp_<hash>') "
+        "used for stateful chaining in the Responses API.",
+    )
 
 
 class RequestRecord(AIPerfBaseModel):
