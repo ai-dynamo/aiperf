@@ -7,7 +7,7 @@
     "@preact/signals-core": "1.9.0",
     "@preact/signals": "2.2.0",
     "htm": "3.1.1",
-    "js-yaml": "4.1.1",
+    "js-yaml": "5.4.1",
     "chart.js": "4.5.1",
     "prismjs": "1.30.0"
   }
