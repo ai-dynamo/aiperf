@@ -247,12 +247,12 @@ class TestMultiProcessServiceManager:
         self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
     ):
         """Regression: optional services started via run_service() must also
-        be waited for before ProfileConfigureCommand is broadcast.
+        be waited for before PROFILE_CONFIGURE is fanned out.
 
         Failure mode: ServerMetricsManager (an optional service started via
         run_service, not part of required_services) registers ~1s later than
         the core services on slow Windows VDI. The SystemController previously
-        only waited for required_services; it broadcast ProfileConfigureCommand
+        only waited for required_services; it fanned out PROFILE_CONFIGURE
         before ServerMetricsManager had subscribed, leaving it un-configured
         and the JSON export file missing on disk.
 

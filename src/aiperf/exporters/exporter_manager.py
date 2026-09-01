@@ -43,7 +43,10 @@ class ExporterFailure:
     """Exception raised by the exporter."""
 
     is_deferred: bool
-    """Whether the failure came from an optional remote uploader."""
+    """Whether the failure came from a deferred remote uploader."""
+
+    is_exit_failure: bool = True
+    """Whether the failure must make the benchmark process exit unsuccessfully."""
 
 
 class ExporterManager(AIPerfLoggerMixin):
@@ -118,6 +121,7 @@ class ExporterManager(AIPerfLoggerMixin):
                         exporter=str(exporter_entry.name),
                         error=e,
                         is_deferred=is_deferred,
+                        is_exit_failure=not is_deferred,
                     )
                 )
                 self.error(f"Error creating data exporter {exporter_entry.name}: {e!r}")
@@ -144,6 +148,7 @@ class ExporterManager(AIPerfLoggerMixin):
                     exporter="PhaseMetricArtifacts",
                     error=exc,
                     is_deferred=False,
+                    is_exit_failure=False,
                 )
             )
             self.warning(f"Failed to export phase metric artifacts: {exc}")
@@ -196,6 +201,7 @@ class ExporterManager(AIPerfLoggerMixin):
                             f"Exporter {name} was cancelled before it finished exporting"
                         ),
                         is_deferred=is_deferred,
+                        is_exit_failure=not is_deferred,
                     )
                 )
                 continue
@@ -206,6 +212,7 @@ class ExporterManager(AIPerfLoggerMixin):
                         exporter=name,
                         error=error,
                         is_deferred=is_deferred,
+                        is_exit_failure=not is_deferred,
                     )
                 )
         return failures
@@ -243,6 +250,7 @@ class ExporterManager(AIPerfLoggerMixin):
                         exporter=f"PhaseMetricArtifacts:{phase_result.phase_name}",
                         error=exc,
                         is_deferred=False,
+                        is_exit_failure=False,
                     )
                 )
             # Even a partially written phase belongs in the manifest: its counts
@@ -257,6 +265,7 @@ class ExporterManager(AIPerfLoggerMixin):
                     exporter="PhaseMetricArtifacts",
                     error=exc,
                     is_deferred=False,
+                    is_exit_failure=False,
                 )
             )
         return failures
@@ -380,6 +389,7 @@ class ExporterManager(AIPerfLoggerMixin):
                         ),
                         error=exc,
                         is_deferred=False,
+                        is_exit_failure=False,
                     )
                 )
         return failures

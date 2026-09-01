@@ -1311,7 +1311,7 @@ class TestWarmupEarlyAbort:
     """Live early-abort: the first terminal WARMUP failure fires on_warmup_abort.
 
     A single terminal warmup failure means PROFILING must not start, so the
-    handler broadcasts ProfileCancelCommand (via the injected callback) on the
+    handler requests PROFILE_CANCEL (via the injected callback) on the
     FIRST failure rather than waiting for the full warmup drain + teardown
     ``report_warmup_failures`` raise. The callback fires at most once per run.
     """

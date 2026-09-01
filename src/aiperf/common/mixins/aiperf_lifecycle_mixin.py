@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import contextlib
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -298,6 +300,53 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self.cancel_all_tasks()
 
+    @property
+    def _hard_exit_on_wedged_shutdown(self) -> bool:
+        """Whether a wedged failure-shutdown should force-exit the process.
+
+        Only containerized (operator-managed) services get the hard kill. A
+        service whose ``on_stop`` never returns keeps its Pod alive as a silent
+        zombie, so losing cleanup state beats never exiting. A local
+        ``aiperf profile`` run is the opposite trade: ``_fail`` is reached by
+        every ``AIPerfLifecycleMixin`` in the CLI's own process, so
+        ``os._exit`` there would discard the traceback, the artifact export,
+        and every buffered writer in the process. Locally the failure is left
+        to surface through the normal ``CancelledError`` path below.
+
+        ``self.run`` only exists on ``BaseService`` subclasses, so the run-type
+        lookup is defensive and falls back to the ``AIPERF_OPERATOR_MANAGED``
+        marker the operator sets on every JobSet container.
+        """
+        runtime = getattr(getattr(self, "run", None), "cfg", None)
+        run_type = getattr(getattr(runtime, "runtime", None), "service_run_type", None)
+        if run_type is not None:
+            # Compared as a string rather than importing ServiceRunType: the
+            # plugin enums are generated at registry-load time and importing
+            # them from this core mixin would invert the dependency order.
+            return str(run_type).lower() == "kubernetes"
+        return os.environ.get("AIPERF_OPERATOR_MANAGED") == "1"
+
+    @staticmethod
+    def _describe_in_flight_stop(task: asyncio.Task) -> str:
+        """Describe where a wedged ``stop()`` task was suspended.
+
+        Walks the task's coroutine await chain (outermost to innermost) so
+        the reported description names the actual on_stop hook that was
+        still running when the failure_shutdown_timeout bound was hit,
+        rather than only the generic ``stop()``/``run_hooks()`` frames that
+        wrap it.
+        """
+        frames: list[str] = []
+        coro = task.get_coro()
+        while coro is not None:
+            frame = getattr(coro, "cr_frame", None)
+            if frame is not None:
+                code = frame.f_code
+                name = getattr(code, "co_qualname", code.co_name)
+                frames.append(f"{name}:{frame.f_lineno}")
+            coro = getattr(coro, "cr_await", None)
+        return " -> ".join(frames) if frames else "an unknown step"
+
     async def _fail(self, e: Exception) -> None:
         """Set the state to FAILED and raise an asyncio.CancelledError.
         This is used when the transition from one state to another fails.
@@ -321,18 +370,39 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             # beats never exiting. Subclasses whose teardown legitimately runs
             # long widen this bound via ``failure_shutdown_timeout``; None
             # removes it entirely and is only correct for a lifecycle that
-            # cannot wedge.
+            # cannot wedge. In containers, a wedged teardown hard-exits via
+            # ``_hard_exit_on_wedged_shutdown``.
             timeout = self.failure_shutdown_timeout
             if timeout is None:
                 await self.stop()
             else:
-                try:
-                    await asyncio.wait_for(self.stop(), timeout=timeout)
-                except TimeoutError:
-                    self.error(
-                        f"Shutdown after failure did not complete in {timeout}s; "
-                        f"continuing teardown and reporting the failure"
-                    )
+                stop_task = asyncio.ensure_future(self.stop())
+                done, pending = await asyncio.wait({stop_task}, timeout=timeout)
+                if stop_task in pending:
+                    # Report exactly which stop hook was suspended before
+                    # cutting it off: a bare "timed out" message gives an
+                    # operator nothing to act on when the truncated step was,
+                    # e.g., a buffered writer flush or an in-flight export.
+                    in_flight = self._describe_in_flight_stop(stop_task)
+                    stop_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await stop_task
+                    if self._hard_exit_on_wedged_shutdown:
+                        self.error(
+                            f"Shutdown after failure did not complete in {timeout}s "
+                            f"(stuck in: {in_flight}); force-exiting"
+                        )
+                        os._exit(1)
+                    else:
+                        self.error(
+                            f"Shutdown after failure did not complete in {timeout}s "
+                            f"(stuck in: {in_flight}); continuing teardown and "
+                            f"reporting the failure"
+                        )
+                else:
+                    # Propagate any exception raised by stop() itself, matching
+                    # the exception-propagation behavior of a plain await.
+                    stop_task.result()
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 

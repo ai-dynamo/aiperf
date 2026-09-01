@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from rich.console import Console
 
 from aiperf.common.enums import MetricConsoleGroup
 from aiperf.common.models import MetricResult, ProfileResults
@@ -23,6 +22,7 @@ from aiperf.metrics.types.power_efficiency_metrics import (
     NvidiaTotalGpuPowerMetric,
 )
 from aiperf.plugin.enums import EndpointType
+from tests.harness import fixed_console
 from tests.unit.exporters.conftest import make_exporter_config
 
 
@@ -100,7 +100,7 @@ class TestConsolePowerEfficiencyExporters:
     ) -> None:
         """Each vendor exporter prints its own titled, average-only table."""
         exporter = exporter_cls(_config(_records(prefix)))
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console(120))
         output = capsys.readouterr().out
 
         assert title in output
@@ -122,14 +122,14 @@ class TestConsolePowerEfficiencyExporters:
     ) -> None:
         """Without that vendor's metrics, nothing prints."""
         exporter = exporter_cls(_config(NON_EFFICIENCY_RECORDS))
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console(120))
         assert capsys.readouterr().out.strip() == ""
 
     @pytest.mark.asyncio
     async def test_nvidia_exporter_ignores_amd_metrics(self, capsys) -> None:
         """The NVIDIA exporter renders nothing for an AMD-only result set."""
         exporter = ConsoleNvidiaPowerEfficiencyExporter(_config(_records("amd")))
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console(120))
         assert "GPU Power Efficiency (NVIDIA)" not in capsys.readouterr().out
 
     def test_metrics_use_their_vendor_console_group(self) -> None:
@@ -156,7 +156,7 @@ class TestConsolePowerEfficiencyExporters:
     ) -> None:
         """The main metrics exporter must not render either vendor's efficiency totals."""
         exporter = ConsoleMetricsExporter(_config(_records("nvidia") + _records("amd")))
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console(120))
         output = capsys.readouterr().out
         assert "Total GPU Power" not in output
         assert "Total GPU Energy" not in output

@@ -27,6 +27,8 @@ class TestTokenizer:
         with pytest.raises(NotInitializedError):
             tokenizer.decode([1])
         with pytest.raises(NotInitializedError):
+            tokenizer.decode_batch([[1]])
+        with pytest.raises(NotInitializedError):
             _ = tokenizer.bos_token_id
 
 
@@ -55,6 +57,12 @@ class TestBuiltinTokenizer:
     def test_encode_decode_roundtrip(self, tokenizer: Tokenizer) -> None:
         text = "The quick brown fox jumps over the lazy dog."
         assert tokenizer.decode(tokenizer.encode(text)) == text
+
+    def test_decode_batch_matches_per_token_decode(self, tokenizer: Tokenizer) -> None:
+        token_ids = tokenizer.encode("The quick brown fox jumps.")
+        assert tokenizer.decode_batch([[t] for t in token_ids]) == [
+            tokenizer.decode([t]) for t in token_ids
+        ]
 
     def test_bos_token_id_is_none(self, tokenizer: Tokenizer) -> None:
         assert tokenizer.bos_token_id is None

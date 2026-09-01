@@ -34,6 +34,7 @@ def _router(alive: int, peak: int) -> StickyCreditRouter:
     r._credits_complete = False
     r._on_worker_lost = None
     r._stale_worker_strikes = {}
+    r._last_stale_sweep_ns = None
     r._worker_available_event = MagicMock()
     r.warning = MagicMock()
     r.trace = MagicMock()
@@ -84,7 +85,36 @@ class TestWorkerFloor:
 
 class TestRouterDoesNotDecideTheBreach:
     @pytest.mark.asyncio
-    async def test_evict_stale_workers_task_stale_heartbeat_evicts_via_warning_not_error(
+    async def test_eviction_uses_configured_stale_multiplier(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sweep cutoff is STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER.
+
+        Eviction is two-strike confirmed, so the cutoff reaches the candidate
+        scan on every sweep but only reaches ``_evict_worker_ids`` on the
+        second consecutive sweep that still finds the worker stale.
+        """
+        from aiperf.common.environment import Environment
+
+        router = _router(alive=1, peak=1)
+        router._stale_worker_candidates = MagicMock(return_value=["w-0"])
+        router._evict_worker_ids = MagicMock()
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 7.0)
+        monkeypatch.setattr(
+            Environment.WORKER, "ROUTER_STALE_EVICTION_MULTIPLIER", 4.25
+        )
+
+        await router._evict_stale_workers_task()
+
+        router._stale_worker_candidates.assert_called_once_with(29.75)
+        router._evict_worker_ids.assert_not_called()
+
+        await router._evict_stale_workers_task()
+
+        router._evict_worker_ids.assert_called_once_with(["w-0"], 29.75)
+
+    @pytest.mark.asyncio
+    async def test_breach_is_left_for_timing_manager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Eviction is reported at WARNING; the floor breach is left for TimingManager (never ERROR)."""
@@ -93,7 +123,7 @@ class TestRouterDoesNotDecideTheBreach:
         router = _router(alive=1, peak=10)
         monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.5)
         stale_after_s = Environment.WORKER.STALE_TIME * 3
-        router._workers["w-0"].last_heartbeat_ns = time.time_ns() - int(
+        router._workers["w-0"].last_heartbeat_ns = time.monotonic_ns() - int(
             (stale_after_s + 5) * NANOS_PER_SECOND
         )
 
@@ -121,7 +151,7 @@ class TestRouterDoesNotDecideTheBreach:
         router._credits_complete = True
         monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.5)
         stale_after_s = Environment.WORKER.STALE_TIME * 3
-        router._workers["w-0"].last_heartbeat_ns = time.time_ns() - int(
+        router._workers["w-0"].last_heartbeat_ns = time.monotonic_ns() - int(
             (stale_after_s + 5) * NANOS_PER_SECOND
         )
 

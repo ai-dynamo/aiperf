@@ -85,11 +85,6 @@ def test_omitted_cli_defaults_preserve_yaml(config_file: Path) -> None:
     [
         param(CLIConfig(random_seed=0), lambda c: c.random_seed == 0, id="random-seed-zero"),
         param(
-            CLIConfig(model_selection_strategy="random"),
-            lambda c: c.benchmark.models.strategy == "random",
-            id="model-strategy-without-model-names",
-        ),
-        param(
             CLIConfig(headers=[]),
             lambda c: c.benchmark.endpoint.headers == {},
             id="empty-headers-clear-yaml",
@@ -139,6 +134,34 @@ def test_explicit_cli_value_overrides_yaml(
     assert assertion(config)
 
 
+def test_model_strategy_overrides_yaml_models_without_cli_model_names(
+    config_file: Path,
+) -> None:
+    config = resolve_config(CLIConfig(model_selection_strategy="random"), config_file)
+
+    assert config.benchmark.models.strategy == "random"
+
+
+def test_per_chunk_usage_uses_yaml_endpoint_prerequisites(config_file: Path) -> None:
+    content = _BASE_YAML.replace(
+        "    urls: [http://localhost:8000]",
+        "    urls: [http://localhost:8000]\n    streaming: true\n"
+        "    useServerTokenCount: true",
+    )
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(per_chunk_usage=True), config_file)
+
+    assert config.benchmark.endpoint.per_chunk_usage
+
+
+def test_per_chunk_usage_without_endpoint_prerequisites_is_rejected(
+    config_file: Path,
+) -> None:
+    with pytest.raises(ValueError, match="per-chunk-usage"):
+        resolve_config(CLIConfig(per_chunk_usage=True), config_file)
+
+
 def test_dataset_modifiers_merge_without_cli_defaults(config_file: Path) -> None:
     config = resolve_config(
         CLIConfig(prompt_input_tokens_mean=256, prompt_output_tokens_mean=64),
@@ -154,18 +177,14 @@ def test_dataset_modifiers_merge_without_cli_defaults(config_file: Path) -> None
     assert dataset.prompts.batch_size == 4
 
 
-def test_dataset_source_flag_replaces_sole_yaml_dataset(
+def test_dataset_source_flag_does_not_replace_yaml_dataset_type(
     config_file: Path, tmp_path: Path
 ) -> None:
     input_path = tmp_path / "input.jsonl"
     input_path.write_text('{"text":"hello"}\n', encoding="utf-8")
 
-    config = resolve_config(CLIConfig(input_file=str(input_path)), config_file)
-
-    dataset = config.benchmark.datasets[0]
-    assert dataset.name == "workload"
-    assert dataset.type == "file"
-    assert dataset.path == input_path
+    with pytest.raises(ValueError, match="applies to a file dataset"):
+        resolve_config(CLIConfig(input_file=str(input_path)), config_file)
 
 
 def test_phase_shape_overrides_target_unique_profiling_phase(
@@ -231,6 +250,116 @@ def test_dataset_and_phase_overrides_update_raw_jinja_envelope(
     raw_benchmark = config._raw_envelope["benchmark"]
     assert raw_benchmark["datasets"][0]["prompts"]["isl"]["mean"] == 256
     assert raw_benchmark["phases"][0]["requests"] == 5
+
+
+def test_dataset_override_uses_rendered_type_and_replays_to_raw_envelope(
+    config_file: Path,
+) -> None:
+    content = _BASE_YAML.replace(
+        "randomSeed: 91",
+        "variables:\n  dataset_type: public\nrandomSeed: 91",
+    ).replace(
+        "      type: synthetic\n      entries: 77\n"
+        "      prompts:\n"
+        "        isl: {mean: 128, stddev: 7}\n"
+        "        osl: {mean: 32}\n"
+        "        batchSize: 4\n",
+        "      type: '{{ dataset_type }}'\n      dataset: sharegpt\n",
+    )
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(dataset_filters=["language=en"]), config_file)
+
+    assert config.benchmark.datasets[0].type == "public"
+    assert config.benchmark.datasets[0].filters == {"language": "en"}
+    assert config._raw_envelope is not None
+    assert config._raw_envelope["benchmark"]["datasets"][0]["type"] == (
+        "{{ dataset_type }}"
+    )
+    assert config._raw_envelope["benchmark"]["datasets"][0]["filters"] == {
+        "language": "en"
+    }
+
+
+def test_warmup_override_uses_rendered_phase_name_and_replays_to_raw_envelope(
+    config_file: Path,
+) -> None:
+    """A Jinja-templated phase ``name`` must not change which phase is targeted.
+
+    The rendered envelope resolves ``{{ phase_name }}`` to ``warmup`` and the
+    raw pre-Jinja envelope does not, so re-deriving the phase kind per envelope
+    lands the override on the validated config only, leaving the sweep-time raw
+    envelope without it.
+    """
+    content = _BASE_YAML.replace(
+        "randomSeed: 91",
+        "variables:\n  phase_name: warmup\nrandomSeed: 91",
+    ).replace(
+        "  phases:\n    - name: measured\n",
+        "  phases:\n"
+        "    - name: '{{ phase_name }}'\n"
+        "      type: concurrency\n"
+        "      concurrency: 2\n"
+        "      requests: 3\n"
+        "      excludeFromResults: true\n"
+        "    - name: measured\n",
+    )
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(warmup_request_count=7), config_file)
+
+    warmup = config.benchmark.phases[0]
+    assert warmup.name == "warmup"
+    assert warmup.requests == 7
+    assert len(config.benchmark.phases) == 2
+
+    assert config._raw_envelope is not None
+    raw_phases = config._raw_envelope["benchmark"]["phases"]
+    assert len(raw_phases) == 2
+    assert raw_phases[0]["name"] == "{{ phase_name }}"
+    assert raw_phases[0]["requests"] == 7
+
+
+def test_magic_list_retarget_keys_each_envelope_by_its_own_dataset_name(
+    config_file: Path,
+) -> None:
+    """A templated dataset ``name`` must retarget per envelope, not once.
+
+    ``_retarget_dataset_magic_lists`` rewrites a CLI magic list's
+    ``datasets.main.*`` sweep parameter onto the config's actual dataset name.
+    Unlike the phase-identity and dataset-``type`` decisions, this one must NOT
+    be decided once on the rendered pass and replayed: ``build_benchmark_plan``
+    pops ``sweep`` off the *pre-Jinja* envelope and resolves each parameter path
+    against that same pre-Jinja benchmark subtree *before* per-variation
+    rendering, so the raw pass' key has to match the raw (still-templated)
+    dataset name. Replaying the rendered name here would make the path resolve
+    against ``{{ dataset_name }}`` and raise "no entry named ... found".
+    """
+    content = _BASE_YAML.replace(
+        "randomSeed: 91",
+        "variables:\n  dataset_name: workload\nrandomSeed: 91",
+    ).replace("    - name: workload\n", "    - name: '{{ dataset_name }}'\n")
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(prompt_input_tokens_mean=[128, 256]), config_file)
+
+    assert config.sweep is not None
+    assert config.sweep.parameters == {"datasets.workload.prompts.isl.mean": [128, 256]}
+    assert config._raw_envelope is not None
+    assert config._raw_envelope["benchmark"]["datasets"][0]["name"] == (
+        "{{ dataset_name }}"
+    )
+    assert config._raw_envelope["sweep"]["parameters"] == {
+        "datasets.{{ dataset_name }}.prompts.isl.mean": [128, 256]
+    }
+
+    from aiperf.config.loader.plan import build_benchmark_plan
+
+    plan = build_benchmark_plan(config)
+    assert [
+        (variant.datasets[0].name, variant.datasets[0].prompts.isl.mean)
+        for variant in plan.configs
+    ] == [("workload", 128), ("workload", 256)]
 
 
 # =============================================================================
@@ -341,19 +470,22 @@ def test_request_rate_preserves_yaml_user_centric_phase(
     assert phase.duration == 120
 
 
-def test_arrival_pattern_preserves_yaml_user_centric_phase(
-    user_centric_config_file: Path, caplog: pytest.LogCaptureFixture
+def test_arrival_pattern_on_user_centric_phase_is_rejected(
+    user_centric_config_file: Path,
 ) -> None:
-    with caplog.at_level("WARNING"):
-        config = resolve_config(
-            CLIConfig(arrival_pattern="gamma"), user_centric_config_file
+    with pytest.raises(ConfigurationError, match="user_centric"):
+        resolve_config(
+            CLIConfig(request_rate=9.0, arrival_pattern="gamma"),
+            user_centric_config_file,
         )
 
+
+def test_arrival_pattern_uses_existing_yaml_rate(config_file: Path) -> None:
+    config = resolve_config(CLIConfig(arrival_pattern="constant"), config_file)
+
     phase = config.benchmark.phases[0]
-    assert phase.type == PhaseType.USER_CENTRIC
-    assert phase.users == 30
-    assert phase.rate == 1.0
-    assert "--arrival-pattern is ignored" in caplog.text
+    assert phase.type == PhaseType.CONSTANT
+    assert phase.rate == 2
 
 
 def test_arrival_smoothness_on_user_centric_phase_is_rejected(

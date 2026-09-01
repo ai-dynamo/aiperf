@@ -306,6 +306,12 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
         }
 
     def _is_pre_sustain_credit(self, credit: Credit) -> bool:
+        """True for a credit issued before the sustain window opened.
+
+        Both sides of the comparison must come from the phase lifecycle's clock
+        frame: ``issued_at_ns`` is stamped from it by ``CreditIssuer``, and
+        ``_sustain_started_at_ns`` is read from it in ``enter_sustain``.
+        """
         return (
             self._controller_phase == "sustain"
             and self._sustain_started_at_ns is not None

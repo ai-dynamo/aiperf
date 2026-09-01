@@ -224,7 +224,8 @@ def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
             f"In-process parameter sweep ({len(plan.configs)} variations across "
             f"{swept_params or '<unknown>'}) is not supported in operator-managed "
             f"runs (AIPERF_OPERATOR_MANAGED=1). Use the AIPerfSweep CRD "
-            f"(cluster-scope) for cross-job sweeps - see docs/kubernetes/sweeps.md "
+            f"(cluster-scope) for cross-job sweeps - see "
+            f"docs/tutorials/sweeps.md#running-sweeps-on-kubernetes "
             f"- or submit one AIPerfJob per variation. To run as a single point "
             f"benchmark, drop the comma in --concurrency / other magic-list flags."
         )

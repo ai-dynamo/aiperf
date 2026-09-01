@@ -89,24 +89,23 @@ class CommAddress(CaseInsensitiveStrEnum):
 
 
 class CommandType(CaseInsensitiveStrEnum):
+    FINALIZE_ARTIFACTS = "finalize_artifacts"
+    """Flush and durably publish artifacts before service communication stops."""
+    GET_POD_STATES = "get_pod_states"
+    """Return the SystemController's authoritative worker-pod state snapshot."""
     REALTIME_METRICS = "realtime_metrics"
-    PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
     PROFILE_COMPLETE = "profile_complete"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
-    REGISTER_SERVICE = "register_service"
     SHUTDOWN = "shutdown"
-    SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
-
-
-class CommandResponseStatus(CaseInsensitiveStrEnum):
-    ACKNOWLEDGED = "acknowledged"
-    FAILURE = "failure"
-    SUCCESS = "success"
-    UNHANDLED = "unhandled"  # The command was received but not handled by any hook
+    ABORT = "abort"
+    """Signal sibling pod peers (workers/record-processors) to exit the process
+    with a non-zero status so kubelet restarts them. Used by WorkerGroupManager
+    when its own lifecycle failed -- a clean SHUTDOWN would let siblings exit 0
+    and leave the pod permanently half-dead at 1/13 Ready."""
 
 
 class ConversationBranchMode(CaseInsensitiveStrEnum):
@@ -133,8 +132,8 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
 
     Disambiguation note: this SPAWN is the DAG-branch mode (a child
     *conversation* that runs alongside its parent). It is unrelated to
-    ``SpawnWorkersCommand`` (the controller->worker-manager command that
-    spawns *worker processes*). One is dataset/orchestration semantics;
+    ``CommandType.SPAWN_WORKERS`` (the controller->worker-manager command
+    that spawns *worker processes*). One is dataset/orchestration semantics;
     the other is process lifecycle.
     """
 
@@ -423,8 +422,6 @@ class MessageType(CaseInsensitiveStrEnum):
     """
 
     ALL_RECORDS_RECEIVED = "all_records_received"
-    COMMAND = "command"
-    COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
@@ -440,6 +437,7 @@ class MessageType(CaseInsensitiveStrEnum):
     DATASET_CONFIG_STATUS_REQUEST = "dataset_config_status_request"
     DATASET_CONFIG_STATUS_RESPONSE = "dataset_config_status_response"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
+    DATASET_DOWNLOADED_NOTIFICATION = "dataset_downloaded_notification"
     DATASET_CONFIGURATION_FAILED = "dataset_configuration_failed"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
@@ -456,16 +454,17 @@ class MessageType(CaseInsensitiveStrEnum):
     REALTIME_METRICS = "realtime_metrics"
     REALTIME_SERVER_METRICS = "realtime_server_metrics"
     REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
-    REGISTRATION = "registration"
     RESULTS_EXPORTED = "results_exported"
     SERVICE_ERROR = "service_error"
     SYSTEM_STATE_CHANGED = "system_state_changed"
-    STATUS = "status"
     TELEMETRY_RECORDS = "telemetry_records"
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_STATUS = "server_metrics_status"
     NETWORK_LATENCY_RECORD = "network_latency_record"
+    WORKER_GROUP_STATS = "worker_group_stats"
     WORKER_HEALTH = "worker_health"
+    WORKER_POD_STATE = "worker_pod_state"
+    WORKER_STARTUP_STATE = "worker_startup_state"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
 
 

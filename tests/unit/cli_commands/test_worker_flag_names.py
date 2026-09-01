@@ -8,6 +8,12 @@ from __future__ import annotations
 import contextlib
 import io
 
+import pytest
+from cyclopts.exceptions import UnknownOptionError
+from pytest import param
+
+from aiperf.cli import app
+
 
 def _help(*command: str) -> str:
     """Render ``aiperf <command> --help`` in-process and return its stdout.
@@ -23,6 +29,37 @@ def _help(*command: str) -> str:
     with contextlib.redirect_stdout(buf), contextlib.suppress(SystemExit):
         aiperf.cli.app([*command, "--help"])
     return buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        param(("kube", "profile"), id="kube-profile"),
+        param(("kube", "generate"), id="kube-generate"),
+        param(("kube", "sweep"), id="kube-sweep"),
+    ],
+)  # fmt: skip
+def test_kube_commands_expose_only_total_workers(command: tuple[str, ...]) -> None:
+    output = _help(*command)
+
+    assert "--total-workers" in output
+    assert "--workers-max" not in output
+    assert "--max-workers" not in output
+    for legacy_flag in ("--workers-max", "--max-workers"):
+        with pytest.raises(UnknownOptionError):
+            app.parse_args(
+                [
+                    *command,
+                    "--model",
+                    "test-model",
+                    "--image",
+                    "test",
+                    legacy_flag,
+                    "2",
+                ],
+                exit_on_error=False,
+                print_error=False,
+            )
 
 
 def test_local_profile_retains_workers_max() -> None:

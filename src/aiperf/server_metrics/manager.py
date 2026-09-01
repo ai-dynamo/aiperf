@@ -10,12 +10,16 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import orjson
+
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ServerMetricsDiscoveryMode,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -24,10 +28,6 @@ from aiperf.common.hooks import on_command, on_message, on_stop
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
     ProcessServerMetricsResultMessage,
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
     RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
 )
@@ -48,6 +48,7 @@ from aiperf.credit.messages import (
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import AccumulatorType, PluginType
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+from aiperf.server_metrics.discovery import is_running_in_kubernetes
 from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
 
 if TYPE_CHECKING:
@@ -258,9 +259,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the server metrics collectors but don't start them yet.
 
         Creates ServerMetricsDataCollector instances for each configured endpoint,
@@ -280,6 +279,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             )
             return
 
+        await self._merge_discovered_endpoints()
         self._collectors.clear()
 
         for endpoint_url in self._server_metrics_endpoints:
@@ -354,6 +354,62 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             endpoints_reachable=reachable_endpoints,
         )
 
+    async def _merge_discovered_endpoints(self) -> None:
+        """Merge fully resolved Kubernetes-discovered URLs without duplicates."""
+        discovered_urls = await self._run_metrics_discovery()
+        added = 0
+        for url in discovered_urls:
+            if url not in self._server_metrics_endpoints:
+                self._server_metrics_endpoints.append(url)
+                added += 1
+        if added:
+            self.info(f"Server Metrics: Auto-discovery added {added} endpoint(s)")
+
+    async def _run_metrics_discovery(self) -> list[str]:
+        """Run bounded, best-effort discovery according to YAML configuration."""
+        discovery = self.run.cfg.server_metrics.discovery
+        if discovery.mode == ServerMetricsDiscoveryMode.DISABLED:
+            return []
+
+        in_kubernetes = is_running_in_kubernetes()
+        if discovery.mode == ServerMetricsDiscoveryMode.KUBERNETES:
+            if not in_kubernetes:
+                self.warning(
+                    "Server Metrics: Kubernetes discovery requested but not running in a cluster"
+                )
+                return []
+        elif not in_kubernetes:
+            return []
+
+        self.info("Server Metrics: Running Kubernetes endpoint discovery...")
+        # Imported here, past the in-cluster gate: this module pulls in
+        # kubernetes_asyncio (~130 ms, 700+ modules), and every non-Kubernetes
+        # run would otherwise pay that in the ServerMetricsManager process for
+        # code it can never reach.
+        from aiperf.server_metrics.discovery.kubernetes import (
+            discover_kubernetes_endpoints,
+        )
+
+        try:
+            return await asyncio.wait_for(
+                discover_kubernetes_endpoints(
+                    namespace=discovery.namespace,
+                    label_selector=discovery.label_selector,
+                    request_timeout=discovery.timeout_seconds,
+                ),
+                timeout=discovery.timeout_seconds,
+            )
+        except TimeoutError:
+            self.warning(
+                "Server Metrics: Kubernetes discovery timed out after "
+                f"{discovery.timeout_seconds}s; continuing with configured "
+                "endpoints only (tune server_metrics.discovery.timeout_seconds)"
+            )
+            return []
+        except Exception as exc:  # noqa: BLE001 - discovery is best-effort
+            self.warning(f"Server Metrics: Kubernetes discovery failed: {exc}")
+            return []
+
     async def collect_baseline(self, message: PhaseBaselineRequestMessage) -> None:
         """Capture a one-shot server-metrics scrape for a phase boundary."""
         if self._server_metrics_disabled or not self._collectors:
@@ -383,7 +439,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             raise RuntimeError("; ".join(errors))
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Start all server metrics collectors for profiling phase.
 
         Initializes and starts background collection tasks for each configured
@@ -574,9 +630,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             self._active_phase = None
 
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         When the last profiling phase is also the final configured phase,
@@ -592,9 +646,14 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         RecordsManager instances send the command). Subsequent calls are no-ops.
 
         Args:
-            message: Profile complete command from RecordsManager signaling that
-                    all client request records have been processed
+            message: Profile complete command relayed by the SystemController on
+                    behalf of RecordsManager, signaling that all client request
+                    records have been processed. Its payload carries the results
+                    time window; every field defaults to ``None`` when absent,
+                    matching the optional window fields it replaced.
         """
+        window = orjson.loads(message.payload) if message.payload else {}
+        end_ns = window.get("end_ns")
         async with self._profile_complete_lock:
             if self._result_published:
                 self.debug(
@@ -606,19 +665,17 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             # join barrier every other service waits on, so no scrape or
             # collector-shutdown failure may skip it.
             try:
-                await self._capture_profile_complete_scrape(message)
+                await self._capture_profile_complete_scrape(end_ns)
                 await self._stop_all_collectors()
             finally:
                 await self._publish_server_metrics_result(
-                    start_ns=message.start_ns,
-                    end_ns=message.end_ns,
-                    warmup_start_ns=message.warmup_start_ns,
-                    warmup_end_ns=message.warmup_end_ns,
+                    start_ns=window.get("start_ns"),
+                    end_ns=end_ns,
+                    warmup_start_ns=window.get("warmup_start_ns"),
+                    warmup_end_ns=window.get("warmup_end_ns"),
                 )
 
-    async def _capture_profile_complete_scrape(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _capture_profile_complete_scrape(self, end_ns: int | None) -> None:
         """Scrape every endpoint one last time, attributed to the final profile."""
         if not self._collectors:
             self.debug("Server Metrics: Already stopped, skipping final scrape")
@@ -631,7 +688,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             )
             return
 
-        flush_end_ns = (message.end_ns or time.time_ns()) + int(
+        flush_end_ns = (end_ns or time.time_ns()) + int(
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
         )
         remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000
@@ -661,6 +718,21 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 self.warning(
                     f"Server Metrics: Failed to capture final state from {endpoint_url}: {exc}"
                 )
+                # A warning log alone is invisible to the user: this is the final
+                # scrape that captures accurate end-of-run counter/histogram
+                # deltas, so its failure must reach the CLI error summary
+                # (`error_summary` -> ConsoleErrorExporter), not just the log.
+                self._error_state.record(
+                    ErrorDetails(
+                        type=exc.__class__.__name__,
+                        message=(
+                            "Server metrics: final (PROFILE_COMPLETE) scrape of "
+                            f"{redact_url(endpoint_url)} failed: {exc}. Final "
+                            "server-metrics counters/histograms may be "
+                            "undercounted for this run."
+                        ),
+                    )
+                )
 
     def _should_capture_profile_complete_scrape(self) -> bool:
         """Return whether a late scrape can still belong to the last profile.
@@ -677,13 +749,13 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         return identity.phase_index == len(self.run.cfg.phases) - 1
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all server metrics collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
-        Waits for flush period to allow metrics to finalize, then stops collectors.
+        Stops collectors immediately: unlike the PROFILE_COMPLETE path there is
+        no flush-period wait, because a cancelled run has no settled end state
+        worth waiting for.
 
         The cancel command carries no result window, so the window recorded from
         the credit-phase messages is used instead. Publishing a null window would
@@ -836,7 +908,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         if self._accumulator is None or not self._profiling_started:
             return
         now_ns = time.time_ns()
-        if now_ns - self._last_realtime_publish_ns < 1_000_000_000:
+        publish_interval_ns = int(
+            Environment.SERVER_METRICS.REALTIME_PUBLISH_INTERVAL_SECONDS * 1_000_000_000
+        )
+        if now_ns - self._last_realtime_publish_ns < publish_interval_ns:
             return
         endpoint_summaries = self._accumulator.compute_endpoint_summaries(
             self._profiling_start_ns or 0, now_ns

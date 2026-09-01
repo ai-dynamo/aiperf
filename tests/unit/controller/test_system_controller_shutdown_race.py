@@ -21,6 +21,7 @@ def _controller(state: SystemState) -> MagicMock:
     controller.debug = MagicMock()
     controller.info = MagicMock()
     controller.stop = AsyncMock()
+    controller._finalize_kubernetes_raw_artifacts = AsyncMock()
     controller._set_system_state = AsyncMock()
     controller._check_and_trigger_shutdown = (
         SystemController._check_and_trigger_shutdown.__get__(controller)
@@ -62,6 +63,8 @@ class TestVacuousResultBarrier:
         controller._result_join_coordinator.complete("profile", "records_manager")
 
         await controller._check_and_trigger_shutdown()
+
+        controller._finalize_kubernetes_raw_artifacts.assert_awaited_once()
         controller.stop.assert_awaited_once()
         assert controller._shutdown_triggered is True
 
@@ -72,6 +75,8 @@ class TestVacuousResultBarrier:
         controller._result_join_coordinator.unregister_service("records_manager")
 
         await controller._check_and_trigger_shutdown()
+
+        controller._finalize_kubernetes_raw_artifacts.assert_awaited_once()
         controller.stop.assert_awaited_once()
 
 

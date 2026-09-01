@@ -16,7 +16,6 @@ from textual.widgets import Footer
 
 from aiperf.common.enums import GPUTelemetryMode, WorkerStatus
 from aiperf.common.environment import Environment
-from aiperf.common.messages import StartRealtimeTelemetryCommand
 from aiperf.common.mixins import CombinedPhaseStats
 from aiperf.common.models import MetricResult, WorkerStats
 from aiperf.ui.dashboard.aiperf_theme import AIPERF_THEME
@@ -213,11 +212,7 @@ class AIPerfTextualApp(App):
                     "Enabling live GPU telemetry..."
                 )
 
-            await self.controller.publish(
-                StartRealtimeTelemetryCommand(
-                    service_id=self.controller.service_id,
-                )
-            )
+            await self.controller.start_realtime_telemetry()
 
         await self.action_toggle_maximize("telemetry")
 

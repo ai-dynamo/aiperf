@@ -37,6 +37,8 @@ Example Usage:
 Schema Version: 2.0.0
 """
 
+from typing import Any
+
 from aiperf.config.artifacts import (
     ArtifactsConfig,
     OutputDefaults,
@@ -205,6 +207,34 @@ from aiperf.config.wandb import (
     WandbConfig,
 )
 
+# Kubernetes-only config models, resolved on first attribute access. Importing
+# them eagerly pulls aiperf.config.deployment and aiperf.config.kube -- and
+# through them aiperf.kubernetes.enums -- into all 10 service processes of every
+# local multiprocessing run, which never touch them. Direct submodule imports
+# (the form every real consumer uses) are unaffected.
+_LAZY_EXPORTS = {
+    "DeploymentConfig": "aiperf.config.deployment",
+    "PodTemplateConfig": "aiperf.config.deployment",
+    "SchedulingConfig": "aiperf.config.deployment",
+    "KubeManageOptions": "aiperf.config.kube",
+    "KubeOptions": "aiperf.config.kube",
+    "SecretMountConfig": "aiperf.config.kube",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve a Kubernetes-only config export on first access, then cache it."""
+    module_path = _LAZY_EXPORTS.get(name)
+    if module_path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    module = importlib.import_module(module_path)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
 __all__ = [
     "AIPerfConfig",
     "AdaptiveSearchSweep",
@@ -226,6 +256,7 @@ __all__ = [
     "ConstantPhase",
     "ConvergenceConfig",
     "DatasetConfig",
+    "DeploymentConfig",
     "Distribution",
     "DualBindCommunicationConfig",
     "ENV_VAR_PATTERN",
@@ -243,6 +274,8 @@ __all__ = [
     "InputDefaults",
     "InputTokensDefaults",
     "IpcCommunicationConfig",
+    "KubeManageOptions",
+    "KubeOptions",
     "LatinHypercubeSweep",
     "LogNormalDistribution",
     "LoggingConfig",
@@ -262,6 +295,7 @@ __all__ = [
     "PhaseType",
     "PhaseTypeStr",
     "PoissonPhase",
+    "PodTemplateConfig",
     "PrefixPromptConfig",
     "PromptConfig",
     "PromptSelectionConfig",
@@ -275,6 +309,8 @@ __all__ = [
     "SamplingDimension",
     "SamplingDistribution",
     "ScenarioSweep",
+    "SchedulingConfig",
+    "SecretMountConfig",
     "SequenceDistributionEntry",
     "ServerMetricsConfig",
     "ServerMetricsDiscoveryConfig",

@@ -9,10 +9,12 @@ stalls with no error. Without a bounded reconnect backoff the peer takes far
 longer than necessary to come back.
 """
 
+import importlib
+
 import pytest
 import zmq
 
-from aiperf.zmq.zmq_defaults import ZMQSocketDefaults
+from aiperf.common.environment import Environment
 
 
 class _FakeSocket:
@@ -55,21 +57,33 @@ class TestReconnectOptions:
 
         assert sock.opts.get(zmq.ROUTER_HANDOVER) == 1
 
-    def test_connecting_socket_bounds_reconnect_backoff(self) -> None:
-        """A connecting peer recovers on a bounded backoff, not the default."""
+    def test_connecting_socket_uses_runtime_reconnect_overrides(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A connecting peer receives non-default centralized reconnect values."""
+        from aiperf.zmq import zmq_base_client, zmq_defaults
         from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 
-        client = ZMQStreamingDealerClient(
-            address="tcp://127.0.0.1:5555", identity="w-1", bind=False
-        )
-        sock = _FakeSocket()
-        client.socket = sock
-        client._apply_socket_options()
+        try:
+            with monkeypatch.context() as overrides:
+                overrides.setattr(Environment.ZMQ, "RECONNECT_IVL", 137)
+                overrides.setattr(Environment.ZMQ, "RECONNECT_IVL_MAX", 2468)
+                defaults = importlib.reload(zmq_defaults)
+                overrides.setattr(
+                    zmq_base_client, "ZMQSocketDefaults", defaults.ZMQSocketDefaults
+                )
 
-        assert sock.opts.get(zmq.RECONNECT_IVL) == ZMQSocketDefaults.RECONNECT_IVL
-        assert (
-            sock.opts.get(zmq.RECONNECT_IVL_MAX) == ZMQSocketDefaults.RECONNECT_IVL_MAX
-        )
+                client = ZMQStreamingDealerClient(
+                    address="tcp://127.0.0.1:5555", identity="w-1", bind=False
+                )
+                sock = _FakeSocket()
+                client.socket = sock
+                client._apply_socket_options()
+
+                assert sock.opts.get(zmq.RECONNECT_IVL) == 137
+                assert sock.opts.get(zmq.RECONNECT_IVL_MAX) == 2468
+        finally:
+            importlib.reload(zmq_defaults)
 
     def test_binding_socket_does_not_set_reconnect(self) -> None:
         """Reconnect options are meaningless on a bound socket."""

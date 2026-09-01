@@ -349,6 +349,21 @@ def _detect_cycles_or_depth(
             )
 
 
+def assert_config_depth_and_cycles(
+    data: Any,
+    file_path: Path | str | None = None,
+) -> None:
+    """Public guard for callers that copy or walk a config mapping themselves.
+
+    Any caller that deep-copies or recursively walks a raw mapping before
+    handing it to the loader must run this first: ``copy.deepcopy`` and the
+    Jinja renderer are both recursive, so a pathologically deep mapping raises
+    a bare ``RecursionError`` before the loader's own guard is reached. This
+    walk is iterative and does not mutate ``data``.
+    """
+    _detect_cycles_or_depth(data, file_path)
+
+
 def _expand_with_recursion_guard(
     data: dict[str, Any],
     file_path: Path | str | None,
@@ -467,6 +482,10 @@ def load_config_from_mapping(
             file_path=file_path,
         )
 
+    # Guard BEFORE copying: ``copy.deepcopy`` is itself recursive, so a
+    # pathologically deep mapping blows the stack with a bare ``RecursionError``
+    # before the (iterative, non-mutating) guard would ever run.
+    _detect_cycles_or_depth(data, file_path)
     copied = copy.deepcopy(data)
     try:
         _assert_string_keys(copied)
@@ -597,6 +616,10 @@ def load_config_dict_with_raw_envelope(
         ) from e
 
     data = _parse_yaml_mapping(content, file_path)
+    # Mirror ``load_config_from_mapping``: reject cycles/excess depth before any
+    # mutation pass walks the dict. ``_expand_capture_pre_jinja`` guards again
+    # downstream as defense in depth.
+    _detect_cycles_or_depth(data, file_path)
     _auto_migrate_flat_shape(data, file_path)
     return _expand_capture_pre_jinja(
         data,

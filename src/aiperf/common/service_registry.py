@@ -16,6 +16,24 @@ from aiperf.common.models import ServiceRunInfo
 from aiperf.common.types import ServiceTypeT
 
 
+def liveness_clock_ns() -> int:
+    """Stamp source for ``first_seen_ns``/``last_seen_ns``.
+
+    Monotonic, not wall-clock. ``get_stale_services`` subtracts these stamps
+    from a reading of the same clock to age a heartbeat, and an NTP step or a
+    manual clock correction would otherwise make that age negative (masking a
+    dead service for the duration of the correction) or hugely positive
+    (reaping live services in one sweep).
+
+    A per-process epoch is safe here because these stamps never cross a
+    process boundary: the control-channel structs carry no sender timestamp,
+    the controller stamps every ``ServiceRunInfo`` itself at receipt time, and
+    ``ServiceRunInfo`` is never serialized. Anything user-facing that needs a
+    real date must read the wall clock itself.
+    """
+    return time.monotonic_ns()
+
+
 class _ServiceRegistry(AIPerfLoggerMixin):
     """Centralized service registry for tracking service registration and state.
 
@@ -23,10 +41,6 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     cooperative model, code between await points runs atomically — no locks needed.
     Only the wait_for_* methods are async (they suspend on asyncio.Event).
     """
-
-    _PROGRESS_LOG_INTERVAL: float = (
-        Environment.SERVICE.REGISTRATION_PROGRESS_LOG_INTERVAL
-    )
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -124,6 +138,11 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         info = self.services.get(service_id)
         if info:
             if info.registration_status == ServiceRegistrationStatus.REGISTERED:
+                # Registration starts a new sender process epoch. A replacement
+                # service reuses its stable ID but restarts its local sequence
+                # counter at one, so retaining the old watermark would reject
+                # every early heartbeat and status update from the replacement.
+                info.last_seq = None
                 if info.last_seen_ns is None or first_seen_ns >= info.last_seen_ns:
                     info.last_seen_ns = first_seen_ns
                     info.state = state
@@ -144,6 +163,7 @@ class _ServiceRegistry(AIPerfLoggerMixin):
                 self.expected_by_type[service_type] = (
                     self.expected_by_type.get(service_type, 0) + 1
                 )
+                self._total_expected += 1
                 info.service_type = service_type
             info.registration_status = ServiceRegistrationStatus.REGISTERED
             info.first_seen_ns = first_seen_ns
@@ -182,9 +202,10 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     def update_service(
         self,
         service_id: str,
-        service_type: ServiceTypeT,
+        *,
         last_seen_ns: int,
         state: LifecycleState,
+        seq: int,
     ) -> None:
         """Update a service's last-seen timestamp and state.
 
@@ -192,22 +213,32 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         StatusUpdate and Heartbeat messages can arrive before Registration
         due to message ordering across ZMQ sockets.
 
-        A strictly older ``last_seen_ns`` is a genuinely out-of-order update and
-        is dropped whole. An *equal* one is not out-of-order, though: callers
-        stamp on receipt from the controller's own clock, so two messages
-        processed within one clock tick collide here -- and ``time.time_ns()``
-        has ~15.6ms granularity on Windows, easily coarser than a startup state
-        sequence. Treating that collision as stale would silently drop the newer
-        state, so equal timestamps still apply their state.
+        Takes no ``service_type``: the canonical ``ServiceRunInfo`` is looked
+        up by ``service_id``, and ``register`` is the sole owner of
+        ``info.service_type`` and the ``by_type`` bucketing. Letting a
+        heartbeat re-bucket identity would be strictly worse than ignoring a
+        conflicting type, so the parameter had nothing correct to do.
+
+        Ordering is decided by ``seq``, a per-service counter the SENDING
+        service increments and stamps on every Heartbeat/StatusUpdate --
+        never by the receipt timestamp. ``last_seen_ns`` is stamped by the
+        controller at receipt time and is therefore monotone by construction,
+        so comparing it can never catch real out-of-order delivery caused by
+        HWM backlog or reconnect-flush reordering: a message that was sent
+        earlier but delivered later still receives a *later* receipt stamp.
+        A ``seq`` that is not strictly greater than the last-applied one is
+        dropped whole; ``last_seen_ns`` is still recorded for staleness
+        detection (``get_stale_services``) on every accepted update.
         """
         if service_id not in self.services:
             return
 
         info = self.services[service_id]
-        if info.last_seen_ns is not None and info.last_seen_ns > last_seen_ns:
+        if info.last_seq is not None and seq <= info.last_seq:
             return
         info.state = state
         info.last_seen_ns = last_seen_ns
+        info.last_seq = seq
 
     def unregister(self, service_id: str) -> None:
         """Unregister a service."""
@@ -372,6 +403,18 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         """Get a specific service by ID, regardless of registration status."""
         return self.services.get(service_id)
 
+    def get_all_registered_ids(self) -> set[str]:
+        """Return the IDs of every service currently in the REGISTERED state.
+
+        Pre-expected services that have not registered yet are excluded, so
+        command fan-out never targets a service that cannot answer.
+        """
+        return {
+            service_id
+            for service_id, info in self.services.items()
+            if info.registration_status == ServiceRegistrationStatus.REGISTERED
+        }
+
     def get_services_by_pod(self, pod_index: str) -> list[ServiceRunInfo]:
         """Get all registered services belonging to a specific pod index."""
         return [
@@ -383,13 +426,17 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     def get_stale_services(self, threshold_sec: float) -> list[ServiceRunInfo]:
         """Get registered services whose last heartbeat exceeds the threshold.
 
+        Ages are measured on the monotonic ``liveness_clock_ns`` the write side
+        stamps with, so a clock correction can neither hide a dead service nor
+        reap a live one.
+
         Args:
             threshold_sec: Seconds since last heartbeat before a service is stale.
 
         Returns:
             List of ServiceRunInfo for stale services.
         """
-        now_ns = time.time_ns()
+        now_ns = liveness_clock_ns()
         threshold_ns = int(threshold_sec * 1_000_000_000)
         stale: list[ServiceRunInfo] = []
         for sid, info in self.services.items():
@@ -531,11 +578,15 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     ) -> None:
         """Wait on an event with periodic progress logging.
 
-        Logs registration progress every _PROGRESS_LOG_INTERVAL seconds while
-        waiting, then checks for failures and completeness after waking.
+        Logs registration progress every
+        ``Environment.SERVICE.REGISTRATION_PROGRESS_LOG_INTERVAL`` seconds
+        while waiting, then checks for failures and completeness after waking.
+        The interval is read here rather than bound to a class attribute: this
+        registry is a module-level singleton, so a class attribute would freeze
+        the setting at import time.
         """
         elapsed = 0.0
-        interval = self._PROGRESS_LOG_INTERVAL
+        interval = Environment.SERVICE.REGISTRATION_PROGRESS_LOG_INTERVAL
         started = time.perf_counter()
 
         while not event.is_set():

@@ -1,15 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Adversarial progress and server-metrics API tests.
+"""Adversarial progress API tests.
 
 Focuses on:
 - /api/progress snapshot schema stability beyond pod-state RPC aggregation.
 - SYSTEM_STATE_CHANGED deserialization boundaries and malformed-state rejection.
 - Results-exported and concurrent progress updates reflected through FastAPI.
-- Server-metrics summaries, missing required fields, and non-finite JSON output.
+- Non-finite phase numbers serialized as null rather than NaN/Infinity.
 
-Out of scope: pod-state RPC fallback behavior; see test_pod_state_rpc_adversarial.py.
+Out of scope: pod-state RPC fallback behavior; see
+tests/unit/api/routers/test_progress.py and tests/unit/api/routers/test_debug.py.
 """
 
 from __future__ import annotations
@@ -97,10 +98,12 @@ class TestProgressSnapshotSchema:
 
         assert response.status_code == 200
         data = orjson.loads(response.content)
-        assert set(data) == {"phases", "results_exported", "system_state"}
+        assert set(data) == {"phases", "workers", "results_exported", "system_state"}
         assert data["phases"] == {}
         assert data["results_exported"] is False
         assert data["system_state"] == "initializing"
+        assert data["workers"]["ready"] == 0
+        assert data["workers"]["total_pods"] == 0
 
     def test_get_progress_phase_snapshot_preserves_false_zero_and_null_fields(
         self, progress_client: TestClient, progress_router: ProgressRouter

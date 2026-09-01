@@ -4,7 +4,7 @@
 
 Heartbeats reach the registry, but nothing acted on staleness: a service that
 stopped heartbeating was never failed, so waiters blocked until an outer
-timeout fired. Restores the watchdog with the two protections its predecessor
+timeout fired. Restores the watchdog with the three protections its predecessor
 earned in production, where a controller stall flagged 141 of 285 worker-group
 managers dead in the same millisecond.
 """
@@ -63,9 +63,10 @@ def _stale(service_id: str):
 
 
 @pytest.mark.asyncio
-async def test_two_strikes_required_before_failing(manager, monkeypatch):
-    """One stale tick is a suspicion; two consecutive is a death."""
+async def test_configured_strikes_required_before_failing(manager, monkeypatch):
+    """A service is failed only after the configured consecutive stale ticks."""
     failed: list[str] = []
+    monkeypatch.setattr(Environment.SERVICE, "HEARTBEAT_STALE_CONFIRMATION_TICKS", 3)
     monkeypatch.setattr(
         "aiperf.controller.base_service_manager.ServiceRegistry.get_stale_services",
         lambda _t: [_stale("worker_1")],
@@ -78,6 +79,10 @@ async def test_two_strikes_required_before_failing(manager, monkeypatch):
     await manager._monitor_heartbeats()
     assert failed == [], "failed on the first strike"
     assert manager._suspected_stale == {"worker_1": 1}
+
+    await manager._monitor_heartbeats()
+    assert failed == [], "failed before the configured third strike"
+    assert manager._suspected_stale == {"worker_1": 2}
 
     await manager._monitor_heartbeats()
     assert failed == ["worker_1"]
@@ -123,13 +128,39 @@ async def test_delayed_tick_blames_nobody(manager, monkeypatch):
 
     manager._suspected_stale = {f"worker_{i}": 1 for i in range(141)}
     interval = Environment.SERVICE.HEARTBEAT_INTERVAL
-    manager._last_heartbeat_tick_ns = time.time_ns() - int(interval * 5 * 1_000_000_000)
+    manager._last_heartbeat_tick_ns = time.monotonic_ns() - int(
+        interval * 5 * 1_000_000_000
+    )
 
     await manager._monitor_heartbeats()
 
     assert failed == [], "a delayed watchdog tick killed services"
     assert manager._suspected_stale == {}
     manager.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_configured_delay_factor_controls_watchdog_skip(manager, monkeypatch):
+    """A gap below the configured factor remains eligible for stale decisions."""
+    failed: list[str] = []
+    monkeypatch.setattr(Environment.SERVICE, "HEARTBEAT_STALE_CONFIRMATION_TICKS", 1)
+    monkeypatch.setattr(Environment.SERVICE, "HEARTBEAT_WATCHDOG_DELAY_FACTOR", 10.0)
+    monkeypatch.setattr(
+        "aiperf.controller.base_service_manager.ServiceRegistry.get_stale_services",
+        lambda _t: [_stale("worker_1")],
+    )
+    monkeypatch.setattr(
+        "aiperf.controller.base_service_manager.ServiceRegistry.fail_service",
+        lambda sid, _st: failed.append(sid),
+    )
+    interval = Environment.SERVICE.HEARTBEAT_INTERVAL
+    manager._last_heartbeat_tick_ns = time.monotonic_ns() - int(
+        interval * 5 * 1_000_000_000
+    )
+
+    await manager._monitor_heartbeats()
+
+    assert failed == ["worker_1"]
 
 
 @pytest.mark.asyncio

@@ -117,6 +117,7 @@ class TestExportFailureSurface:
         ctrl = SystemController.__new__(SystemController)
         ctrl.service_id = "controller"
         ctrl._exit_errors = []
+        ctrl._failed_exporters = []
         ctrl.warning = MagicMock()
         return ctrl
 
@@ -132,7 +133,8 @@ class TestExportFailureSurface:
         assert len(ctrl._exit_errors) == 1
         assert ctrl._exit_errors[0].operation == "export:MetricsJsonExporter"
 
-    def test_deferred_failure_does_not_block_local_results(self) -> None:
+    def test_deferred_failure_records_an_exit_error(self) -> None:
+        """Remote-upload CI must fail even when local artifacts are intact."""
         ctrl = self._controller()
         failure = ExporterFailure(
             exporter="WandbDataExporter",
@@ -140,9 +142,78 @@ class TestExportFailureSurface:
             is_deferred=True,
         )
 
+        assert ctrl._surface_export_failures([failure]) is True
+        assert len(ctrl._exit_errors) == 1
+        assert ctrl._exit_errors[0].operation == "export:WandbDataExporter"
+
+    def test_phase_artifact_failure_does_not_record_an_exit_error(self) -> None:
+        """A supplemental phase artifact cannot invalidate root exports."""
+        ctrl = self._controller()
+        failure = ExporterFailure(
+            exporter="PhaseMetricArtifacts:warmup:metrics_csv",
+            error=OSError("phase disk full"),
+            is_deferred=False,
+            is_exit_failure=False,
+        )
+
         assert ctrl._surface_export_failures([failure]) is False
         assert ctrl._exit_errors == []
         ctrl.warning.assert_called_once()
+
+
+class TestPartialLocalFailureStillPublishesReadyMarker:
+    """A failed exporter must not black-hole a sibling exporter's artifact.
+
+    Before this fix, any non-deferred exporter failure set ``_export_failed``,
+    which made ``_announce_results_exported`` return before ever calling
+    ``write_ready_marker`` -- withholding readiness for the ENTIRE run even
+    when another exporter (e.g. JSON) already wrote a valid artifact to disk.
+    """
+
+    @staticmethod
+    def _controller() -> SystemController:
+        ctrl = SystemController.__new__(SystemController)
+        ctrl.service_id = "system_controller"
+        ctrl._exit_errors = []
+        ctrl._export_failed = False
+        ctrl._failed_exporters = []
+        ctrl.warning = MagicMock()
+        ctrl.error = MagicMock()
+        ctrl._was_cancelled = False
+        ctrl.run = MagicMock()
+        ctrl.publish = AsyncMock()
+        return ctrl
+
+    @pytest.mark.asyncio
+    async def test_partial_local_failure_still_writes_ready_marker_with_failed_exporters(
+        self,
+    ) -> None:
+        ctrl = self._controller()
+        failure = ExporterFailure(
+            exporter="MetricsCsvExporter",
+            error=OSError("No space left on device"),
+            is_deferred=False,
+        )
+        # Only the CSV exporter failed; the JSON exporter (not represented in
+        # `failures`, since export_data() only returns failures) succeeded.
+        marker_blocking = ctrl._surface_export_failures([failure])
+        assert marker_blocking is True
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.write_ready_marker"
+            ) as write_ready_marker,
+            patch(
+                "aiperf.kubernetes.completion_signal.signal_benchmark_complete",
+                AsyncMock(),
+            ),
+        ):  # fmt: skip
+            await ctrl._announce_results_exported()
+
+        write_ready_marker.assert_called_once()
+        _, kwargs = write_ready_marker.call_args
+        assert kwargs.get("partial") is True
+        assert kwargs.get("failed_exporters") == ["MetricsCsvExporter"]
 
 
 class TestProcessResultFailureSurface:
@@ -167,8 +238,11 @@ class TestProcessResultFailureSurface:
         ctrl._server_metrics_results = None
         ctrl._result_join_coordinator = MagicMock()
         ctrl._check_and_trigger_shutdown = AsyncMock()
-        # Aggregation diagnostics stay log-only; see
+        # The results-ready marker asserted below is a Kubernetes artifact, so
+        # this exercises the operator path, where aggregation diagnostics do
+        # reach _exit_errors. Locally they stay log-only; see
         # tests/unit/controller/test_advisory_record_diagnostics.py.
+        ctrl._is_kubernetes = MagicMock(return_value=True)
         error = ErrorDetails(
             type="OSError",
             message="stream flush disk full",
@@ -191,19 +265,30 @@ class TestProcessResultFailureSurface:
         )
 
         assert ctrl._export_failed is False
-        # Aggregation diagnostics stay advisory on a local run: they are logged
-        # but never promoted to _exit_errors, so a telemetry-drain timeout on a
-        # complete result set still exits 0.
-        assert ctrl._exit_errors == []
+        assert len(ctrl._exit_errors) == 1
+        assert ctrl._exit_errors[0].operation == "process_records"
+        assert ctrl._exit_errors[0].service_id == "records-manager"
+        assert ctrl._exit_errors[0].error_details == error
         ctrl._check_and_trigger_shutdown.assert_awaited_once()
 
         ctrl.service_id = "system_controller"
         ctrl._was_cancelled = False
+        ctrl._failed_exporters = []
         ctrl.run = MagicMock()
         ctrl.warning = MagicMock()
-        ctrl.publish = AsyncMock()
-        await ctrl._announce_results_exported()
+        with (
+            patch(
+                "aiperf.controller.system_controller.write_ready_marker"
+            ) as write_ready_marker,
+            patch(
+                "aiperf.kubernetes.completion_signal.signal_benchmark_complete",
+                AsyncMock(),
+            ),
+        ):  # fmt: skip
+            ctrl.publish = AsyncMock()
+            await ctrl._announce_results_exported()
 
+        write_ready_marker.assert_called_once()
         ctrl.publish.assert_awaited_once()
 
 

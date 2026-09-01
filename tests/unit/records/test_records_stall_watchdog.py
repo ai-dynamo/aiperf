@@ -54,6 +54,17 @@ async def _tick(mgr: MagicMock) -> None:
 
 class TestRecordStallWatchdog:
     @pytest.mark.asyncio
+    async def test_skips_local_runs(self) -> None:
+        """The pod-recovery watchdog has no local-run recovery target."""
+        mgr = _manager(credits_complete=True, total_records=24)
+        mgr._is_kubernetes_run.return_value = False
+
+        await _tick(mgr)
+
+        mgr._records_tracker.total_records_for_phase.assert_not_called()
+        mgr._handle_all_records_received_once.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_does_not_fire_before_credits_complete(self) -> None:
         """Records legitimately lag credits; only a post-credits stall counts."""
         mgr = _manager(credits_complete=False, total_records=24)
@@ -130,7 +141,7 @@ class TestRecordStallWatchdog:
     async def test_finalizing_stamps_the_incomplete_reason(self) -> None:
         """The degradation must outlive the log stream.
 
-        ``_incomplete_reason`` is what ``_process_records`` turns into
+        ``_incomplete_reason`` is what ``_process_results`` turns into
         ``ProfileResults.is_complete=False`` / ``incomplete_reason``, which the
         ExporterManager renders as a console banner (see
         ``tests/unit/exporters/test_exporter_manager.py``).

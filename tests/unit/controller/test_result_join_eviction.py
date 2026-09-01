@@ -49,7 +49,7 @@ def test_eviction_is_recorded_rather_than_silently_satisfying_the_barrier() -> N
 
 
 def test_evicting_an_unknown_service_reports_no_change() -> None:
-    """Callers skip a redundant readiness re-check when nothing was required."""
+    """A non-member is not a producer, so callers route its death elsewhere."""
     coord = ResultJoinCoordinator()
     coord.register(DOMAIN, "records-1")
 
@@ -105,6 +105,10 @@ def test_evicting_a_completed_producer_is_not_degraded() -> None:
     """A telemetry pod that delivered results and is then OOMKilled must not
     be reported as a missing producer: its results are already present and
     correct in the export, so eviction must not degrade the run.
+
+    The return stays True because it reports barrier *membership*: the pod is
+    still a producer, and the caller must handle it on the producer path.
+    Degradation is ``evicted``'s answer, and it is empty here.
     """
     coord = ResultJoinCoordinator()
     coord.register(OTHER_DOMAIN, "tm-1")

@@ -10,16 +10,14 @@ The chain is sync (no event loop at call site) and order-explicit.
 from __future__ import annotations
 
 import os
-import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset.resolver import DatasetResolver
-
-_EPOCH_RE = re.compile(r"^\d{9,11}$")
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -120,7 +118,7 @@ class ArtifactDirResolver:
                 materialize_user_files,
             )
 
-            run_meta = _derive_run_meta(artifact_dir)
+            run_meta = run.run_meta or _derive_run_meta(artifact_dir)
             context = build_user_file_context(
                 run.cfg,
                 run_meta,
@@ -228,11 +226,11 @@ def _derive_run_meta(artifact_dir: Path) -> RunMeta:
 
     Operator-managed runs use the ``<base>/<ns>/<name>/<epoch>`` layout (see
     ``aiperf.operator.results_layout.run_dir``). When the leaf matches
-    ``_EPOCH_RE`` we treat the parent as the AIPerfJob name and the leaf as
+    ``EPOCH_RE`` we treat the parent as the AIPerfJob name and the leaf as
     the run epoch. Otherwise (local-CLI runs, custom paths) the leaf IS the
     run identifier and we substitute wall-clock seconds for the epoch.
 
-    Using ``_EPOCH_RE`` (not ``str.isdigit``) shrinks the false-positive
+    Using ``EPOCH_RE`` (not ``str.isdigit``) shrinks the false-positive
     surface — e.g. ``/tmp/bench/42`` is correctly treated as a local layout
     rather than a one-day-old operator run.
 
@@ -249,7 +247,7 @@ def _derive_run_meta(artifact_dir: Path) -> RunMeta:
     # / ``results_operator.py`` for runs that predate the operator's
     # epoch-stamped layout. Treat it the same as a numeric epoch so the run
     # metadata reflects the historical sentinel, not wall-clock time.
-    if _EPOCH_RE.match(leaf) or leaf == "legacy":
+    if EPOCH_RE.match(leaf) or leaf == "legacy":
         return RunMeta(
             epoch=leaf,
             job_name=artifact_dir.parent.name,
@@ -297,43 +295,18 @@ class GpuMetricsResolver:
 class CommConfigResolver:
     """Resolve the ZMQ communication config from runtime.communication.
 
-    Maps user-facing communication config (IPC/TCP/DUAL) to the internal
-    ZMQ config classes that services actually consume. This is the single
-    place where communication topology decisions are made.
+    Delegates entirely to ``build_comm_config``: that builder is the single
+    source of truth for the user-facing-model to ZMQ-config mapping, and a
+    second hand-written mapping here silently diverged from it -- the resolved
+    config dropped ``control_tcp_port``, ``credit_return_push_pull_tcp_port``
+    and every proxy port, so a run that resolved its comm config disagreed with
+    one that built it, on the very ports remote worker pods connect to.
     """
 
     def resolve(self, run: BenchmarkRun) -> None:
-        from aiperf.common.enums import CommunicationType
-        from aiperf.config.comm import ZMQDualBindConfig, ZMQIPCConfig, ZMQTCPConfig
+        from aiperf.config.comm import build_comm_config
 
-        comm = run.cfg.runtime.communication
-        if comm is None:
-            run.resolved.comm_config = ZMQIPCConfig()
-            return
-
-        if comm.type == CommunicationType.IPC:
-            run.resolved.comm_config = ZMQIPCConfig(
-                path=getattr(comm, "path", None),
-            )
-        elif comm.type == CommunicationType.TCP:
-            run.resolved.comm_config = ZMQTCPConfig(
-                host=comm.host,
-                records_push_pull_port=comm.records_port,
-                credit_router_port=comm.credit_router_port,
-            )
-        elif comm.type == CommunicationType.DUAL:
-            controller_host = comm.controller_host
-            if controller_host is None:
-                controller_host = os.environ.get("AIPERF_K8S_ZMQ_CONTROLLER_HOST")
-            run.resolved.comm_config = ZMQDualBindConfig(
-                ipc_path=comm.ipc_path,
-                tcp_host=comm.tcp_host,
-                controller_host=controller_host,
-                records_push_pull_tcp_port=comm.records_port,
-                credit_router_tcp_port=comm.credit_router_port,
-            )
-        else:
-            run.resolved.comm_config = ZMQIPCConfig()
+        run.resolved.comm_config = build_comm_config(run.cfg)
 
         _logger.debug(
             f"Resolved comm config: {type(run.resolved.comm_config).__name__}"

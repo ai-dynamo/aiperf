@@ -7,9 +7,10 @@ Provides reusable test utilities for testing the AIPerf API module including:
 - Mock WebSocket creation
 - Mock service factories
 - MetricResult builders
-- UserConfig builders with common variations
+- AIPerfConfig / BenchmarkRun builders with common variations
 """
 
+import importlib
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -22,6 +23,8 @@ from starlette.websockets import WebSocketState
 
 from aiperf.api.api_service import FastAPIService
 from aiperf.api.routers.core import core_router
+from aiperf.api.routers.static import static_router
+from aiperf.api.routers.websocket import WebSocketManager, ws_router
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.config import AIPerfConfig, BenchmarkRun
@@ -231,6 +234,9 @@ def mock_fastapi_service(mock_zmq, api_run: BenchmarkRun) -> FastAPIService:
         run=api_run,
         service_id="api-test-1",
     )
+    # Include routers not yet registered as plugins.
+    svc.app.include_router(static_router)
+    svc.app.include_router(ws_router)
     return svc
 
 
@@ -267,6 +273,17 @@ async def api_async_client(mock_fastapi_service: FastAPIService) -> AsyncClient:
     transport = ASGITransport(app=mock_fastapi_service.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
+
+# -----------------------------------------------------------------------------
+# WebSocket Manager Fixture
+# -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def websocket_manager() -> WebSocketManager:
+    """Create a fresh WebSocketManager for testing."""
+    return WebSocketManager()
 
 
 # -----------------------------------------------------------------------------
@@ -374,3 +391,31 @@ def make_process_records_result(
 # =============================================================================
 # Module-reload isolation
 # =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _restore_reloaded_operator_modules():
+    """Undo ``importlib.reload`` side effects that strand module singletons.
+
+    ``test_config_router.py`` reloads ``aiperf.operator.environment`` to
+    re-materialize ``OperatorEnvironment`` from fresh ``AIPERF_*`` env vars.
+    That rebinds the module's ``OperatorEnvironment`` (and its nested
+    ``RESULTS``/``SERVICE``/``DASHBOARD`` settings) to brand-new instances,
+    while sibling test files captured the *original* object at their own
+    import time -- so a later ``monkeypatch.setattr`` on the stale object is
+    silently ignored and the handler reads the default instead.
+
+    ``tests/unit/operator/conftest.py`` carries the identical guard, but its
+    autouse scope stops at that directory, so a reload performed from here
+    escaped it: running ``pytest tests/unit/api/ tests/unit/operator/`` in one
+    process failed 17 operator tests, while ``-n auto`` hid it by landing the
+    two directories on different workers.
+    """
+    from aiperf.operator import environment as env_mod
+
+    original_module = env_mod
+    original_singleton = env_mod.OperatorEnvironment
+    yield
+    current = importlib.import_module("aiperf.operator.environment")
+    if current.OperatorEnvironment is not original_singleton:
+        original_module.OperatorEnvironment = original_singleton

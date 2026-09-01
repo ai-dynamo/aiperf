@@ -51,7 +51,7 @@ def _router(*, workers: dict[str, float], in_flight: int = 1, heartbeat: bool = 
     clock), i.e. no liveness feed at all.
     """
     router = StickyCreditRouter.__new__(StickyCreditRouter)
-    now = time.time_ns()
+    now = time.monotonic_ns()
     router._workers = {}
     router._workers_by_load = defaultdict(set)
     router._sticky_sessions = {}
@@ -67,6 +67,7 @@ def _router(*, workers: dict[str, float], in_flight: int = 1, heartbeat: bool = 
     router._on_worker_count_changed = None
     router._peak_worker_count = 0
     router._stale_worker_strikes = {}
+    router._last_stale_sweep_ns = None
     router._worker_available_event = MagicMock()
     router.warning = MagicMock()
     router.error = MagicMock()
@@ -159,8 +160,8 @@ class TestStaleWorkerEviction:
         returned, and a ``--request-count`` run waits for those returns with no
         deadline, so the run hung with nothing naming the cause."""
         router = _router(workers={})
-        long_dead = time.time_ns() - int(300 * NS)
-        with patch.object(time, "time_ns", return_value=long_dead):
+        long_dead = time.monotonic_ns() - int(300 * NS)
+        with patch.object(time, "monotonic_ns", return_value=long_dead):
             router._register_worker("w-stillborn")
 
         assert router.evict_stale_workers(stale_after_s=60.0) == ["w-stillborn"]
@@ -463,3 +464,77 @@ class TestPeriodicSweepTwoStrikeConfirmation:
 
         assert "w-1" in router._workers
         assert "w-1" not in router._stale_worker_strikes
+
+
+class TestDelayedSweepIsNotEvidenceOfWorkerDeath:
+    """A stall in the *router's own* event loop must not evict live workers.
+
+    Staleness is silence measured by this loop. If the loop is starved (GC
+    pause, CPU contention, a blocking call), every worker crosses the cutoff at
+    the same instant even though all of them are alive and heartbeating -- a
+    false mass eviction that is terminal for every worker holding in-flight
+    credits. The controller-side watchdog already forgives its own delayed
+    ticks (``BaseServiceManager._monitor_heartbeats_tick``); the router sweep
+    must do the same.
+    """
+
+    @pytest.mark.asyncio
+    async def test_delayed_sweep_does_not_evict_and_clears_strikes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
+        monkeypatch.setattr(Environment.WORKER, "ROUTER_STALE_SWEEP_DELAY_FACTOR", 2.0)
+        router = _router(workers={"w-1": 120.0, "w-2": 120.0})
+        lost = MagicMock()
+        router.set_worker_lost_callback(lost)
+
+        await router._evict_stale_workers_task()
+        assert router._stale_worker_strikes.get("w-1") == 1
+
+        # The next sweep lands 60s late (>> STALE_TIME * 2): the router's own
+        # loop stalled, so the apparent staleness is the router's fault.
+        router._last_stale_sweep_ns = time.monotonic_ns() - int(60 * NS)
+        await router._evict_stale_workers_task()
+
+        assert "w-1" in router._workers
+        assert "w-2" in router._workers
+        assert router._stale_worker_strikes == {}
+        lost.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_time_sweep_after_a_forgiven_one_still_evicts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Forgiveness costs a sweep, it does not disable eviction."""
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
+        monkeypatch.setattr(Environment.WORKER, "ROUTER_STALE_SWEEP_DELAY_FACTOR", 2.0)
+        router = _router(workers={"w-1": 120.0})
+
+        router._last_stale_sweep_ns = time.monotonic_ns() - int(60 * NS)
+        await router._evict_stale_workers_task()
+        assert "w-1" in router._workers
+
+        await router._evict_stale_workers_task()
+        await router._evict_stale_workers_task()
+
+        assert "w-1" not in router._workers
+
+    @pytest.mark.asyncio
+    async def test_suppressed_sweep_resets_the_delay_baseline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Teardown suppression is not a stalled event loop."""
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
+        router = _router(workers={"w-1": 120.0})
+        router._last_stale_sweep_ns = time.monotonic_ns() - int(60 * NS)
+        router._cancellation_pending = True
+
+        await router._evict_stale_workers_task()
+
+        assert router._last_stale_sweep_ns is None

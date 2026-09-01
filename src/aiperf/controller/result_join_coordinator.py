@@ -69,8 +69,14 @@ class ResultJoinCoordinator:
         marks it done) is fully represented in the export, so its later death
         must not retroactively mark the run degraded.
 
-        Returns True if the service was actually required (i.e. the barrier
-        changed), so callers can skip a redundant readiness re-check.
+        Returns True if the service was a member of the barrier at all, i.e.
+        whether it was registered as a required producer in some domain -- not
+        whether readiness changed. The two differ for a producer that had
+        already delivered everything it owed: dropping it leaves ``ready``
+        exactly as it was, yet it is still a producer, and callers must route
+        its death down the producer path rather than treating it as an
+        unrelated service. Whether the eviction *degraded* the run is the
+        separate question ``evicted`` answers.
         """
         was_required = any(
             service_id in required for required in self._required.values()
