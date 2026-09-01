@@ -4,15 +4,6 @@
 sidebar-title: Parameter Sweeps and Multi-Run Statistics
 ---
 
-> **Kubernetes execution — *coming soon*.** Native cluster sweeps via the
-> `AIPerfSweep` CRD and an `aiperf kube sweep` CLI are designed and
-> implemented on the upcoming K8s integration branch but not yet on
-> `main`. The YAML/sweep semantics on this page are the same in both
-> execution modes (local subprocess today; an in-cluster `sweep-controller`
-> pod creating child `AIPerfJob` CRs once shipped). Until the K8s path
-> lands, `aiperf kube profile` rejects `sweep:` and `multi_run:` keys and
-> hands you off to `aiperf profile` for the local CLI.
-
 # Parameter Sweeps and Multi-Run Statistics
 
 Finding the optimal operating point for an inference server requires exploring a multi-dimensional space of concurrency, request rate, input lengths, and batch sizes. Rather than hand-tuning one variable at a time, parameter sweeps let you define the search space declaratively and let AIPerf run every combination, collecting statistically rigorous results for each.

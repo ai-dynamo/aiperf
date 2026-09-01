@@ -111,6 +111,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
     - [Error Request Count](#error-request-count)
+    - [Request Error Rate](#request-error-rate)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
@@ -1625,7 +1626,7 @@ good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
 
 **Unit:** `RATIO` (0.0–1.0)
 
-**Required upstream metrics:** `good_request_count`, `request_count`. `error_request_count` is included in the denominator when present (it is `ERROR_ONLY` and absent on clean runs).
+**Required upstream metrics:** None. Each counter may legitimately be absent: valid-request counters on an all-error run, and `error_request_count` on a clean run.
 
 **Notes:**
 - Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
@@ -1756,6 +1757,22 @@ error_request_count = sum(1 for r in records if not r.valid)
 
 **Notes:**
 - Error rate can be computed as `error_request_count / (request_count + error_request_count)`.
+
+---
+
+### Request Error Rate
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The percentage of completed requests that ended in error.
+
+**Formula:**
+```python
+request_error_rate = 100.0 * error_request_count / (request_count + error_request_count)
+```
+
+**Notes:**
+- Omitted only when both successful and error counts are zero.
 
 ---
 

@@ -45,6 +45,11 @@ The System Controller is the central orchestrator that manages the lifecycle and
 - Monitoring the overall progress and health of the benchmarking process
 - Managing error handling, cleanup, and graceful termination of all modules
 
+Result-producing services register their result domains with the System Controller.
+Shutdown begins only after profiling has started and every registered domain has
+either completed or been evicted after a confirmed service failure. This lifecycle
+gate prevents an empty startup barrier from being mistaken for completed results.
+
 ### Dataset Manager
 
 The Dataset Manager handles all aspects of input data management during benchmarking runs.
@@ -118,14 +123,16 @@ The Records Manager handles the collection, organization, and storage of benchma
 
 The Records Manager does not hard-wire one handler per producer. Instead, every typed record carries a `record_type` class attribute and is fanned out through a metadata-driven routing table: each accumulator and stream exporter declares the record types it consumes via `record_types` in `plugins.yaml`, and `_dispatch_record` routes each record by `getattr(record, "record_type")` to all registered handlers. This makes each record type a dedicated channel.
 
-Accuracy benchmarking is one such dedicated channel, joining `metric_records`, `gpu_telemetry`, and `server_metrics`:
+Accuracy benchmarking and GPU telemetry use dedicated Records Manager channels.
+Server metrics use the same plugin metadata to select local consumers, but raw
+Prometheus snapshots remain inside Server Metrics Manager:
 
 | Channel (`record_type`) | Producer | Message | Consumers (`record_types`) |
 |---|---|---|---|
 | `metric_records` | Record Processor (`MetricRecordProcessor`) | `RecordsMessage` | `MetricsAccumulator`, JSONL/OTel stream exporters |
 | `accuracy` | Record Processor (`AccuracyRecordProcessor`) | `RecordsMessage` | `AccuracyAccumulator`, `AccuracyJSONLWriter` |
 | `gpu_telemetry` | GPU Telemetry Manager | `TelemetryRecordsMessage` | `GPUTelemetryAccumulator`, GPU JSONL writer |
-| `server_metrics` | Server Metrics Manager | `ServerMetricsRecordMessage` | `ServerMetricsAccumulator`, server-metrics JSONL writer |
+| `server_metrics` | Server Metrics Manager | None (manager-local callback) | `ServerMetricsAccumulator`, server-metrics JSONL writer, both hosted by Server Metrics Manager |
 
 **Two-stage record processing.** The `RecordProcessorService` runs two roles per parsed response (mirroring the accumulator/stream-exporter split on the consumer side): **producers** (`record_processor` category) parse and emit one finished typed record on a declared `record_type` channel — `MetricRecordProcessor` → `MetricRecordsData` (`metric_records`), `AccuracyRecordProcessor` → `AccuracyRecordsData` (`accuracy`) — and **observers** (`record_observer` category, e.g. the raw-record and outputs-json writers) receive a `RecordObserverContext` (the parsed record + all producer outputs keyed by `record_type`) and act without emitting a channel record. Each producer's output carries its own serialized `record_type` discriminator, so the service ships **one generic `RecordsMessage`** per request — `{metadata, records: list[RecordData], error}` — and the `RecordsManager` dispatches each record to its channel handlers by `record.record_type` (no per-type message classes, no type-sniffing). The metric record is the canonical per-request record that drives the phase-completion lockstep, keyed off the message metadata.
 
@@ -159,6 +166,13 @@ The GPU Telemetry Manager collects GPU metrics during benchmarking runs via plug
 - Supporting custom endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
 
+Final GPU samples and the completion command use different message-bus channels, so
+the command response alone is not an ingest barrier. The GPU Telemetry Manager closes
+record admission and sends a sequenced terminal marker on the telemetry PUSH socket.
+The Records Manager waits until every sequence through that marker has finished
+dispatch before summarizing or finalizing stream exporters. A missing marker or
+sequence fails result finalization closed instead of publishing a partial JSONL file.
+
 ### GPU Power Efficiency Analysis
 
 At the end of each profiling phase, `EnergyEfficiencyAnalyzer` — an `analyzer` plugin — joins GPU telemetry energy/power data with inference token and throughput totals to produce the GPU power-efficiency metric family.
@@ -178,6 +192,7 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 - Auto-discovering metrics endpoints from configured inference server URLs (`--url`)
 - Supporting custom Prometheus endpoints via `--server-metrics` flag
 - Parsing any metrics exposed in Prometheus format (gauges, counters, histograms)
+- Owning raw server-metric accumulation and JSONL writes locally; only bounded realtime summaries and the final aggregate cross the message bus
 - Typical metrics collected: inference server KV cache usage, request counts, latencies, batch sizes, model-specific metrics, and server resource metrics
 - Auto-detecting non-Prometheus endpoints (e.g. TRT-LLM serves an iteration-stats JSON array at `/metrics` by default), probing `<base>/prometheus/metrics` once as a fallback, and disabling collection for that endpoint after a single warning if neither path yields parseable Prometheus data — see [Server Metrics Compatibility & auto-disable](server-metrics/server-metrics.md#compatibility--auto-disable)
 - Exporting server metrics alongside benchmark results
@@ -204,6 +219,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 **Credit Distribution:**
 - Credits are dispatched to workers via a ROUTER/DEALER pattern (the Timing Manager's sticky ROUTER to each worker's DEALER)
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
+- If a registered worker that owns in-flight credits or sticky sessions is lost during an active benchmark, the Timing Manager cancels the phase and records a terminal failure rather than migrating or truncating worker-local state.
 - Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch
 - The return channel carries no ZMQ envelope identity, so the returning worker id travels inside the message
 - No coordination required between workers
@@ -243,7 +259,7 @@ AIPerf uses ZMQ to maintain **measurement accuracy** by decoupling orchestration
 - **Low-overhead messaging**: Credits are routed directly to workers
 - **Asynchronous by design**: No blocking calls between services, ensuring workers spend maximum time on I/O and timing
 - **Efficient transport**: ZMQ is designed for low-overhead inter-process communication
-- **Scalability**: Supports many local worker processes; Kubernetes is referenced by future-facing code paths, but no Kubernetes service-manager plugin or `ServiceRunType` is registered in this checkout, and distributed Kubernetes execution is not supported
+- **Scalability**: Supports many local worker processes
 
 ### Communication Patterns
 
@@ -277,8 +293,6 @@ AIPerf is built on three core principles:
 AIPerf currently supports one local deployment model:
 
 - **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments)
-
-Kubernetes is referenced by future-facing code paths, but no Kubernetes service-manager plugin or `ServiceRunType` is registered in this checkout; do not treat Kubernetes distributed execution as supported.
 
 ## Configuration Envelope
 
