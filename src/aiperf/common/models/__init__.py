@@ -48,7 +48,9 @@ from aiperf.common.models.health_models import (
     CPUTimes,
     CtxSwitches,
     IOCounters,
+    NumericAggregate,
     ProcessHealth,
+    ProcessHealthAggregates,
 )
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
@@ -62,7 +64,11 @@ from aiperf.common.models.network_latency_models import (
     NetworkLatencyTargetSummary,
 )
 from aiperf.common.models.prerequisites import TurnPrerequisite
-from aiperf.common.models.progress_models import WorkerProcessingStats, WorkerStats
+from aiperf.common.models.progress_models import (
+    WorkerGroupStats,
+    WorkerProcessingStats,
+    WorkerStats,
+)
 from aiperf.common.models.record_models import (
     BaseResponseData,
     BinaryResponse,
@@ -228,7 +234,9 @@ __all__ = [
     "ParsedResponseRecord",
     "PhaseRecordsStats",
     "PhaseProfileResults",
+    "NumericAggregate",
     "ProcessHealth",
+    "ProcessHealthAggregates",
     "ProcessRecordsResult",
     "ProcessServerMetricsResult",
     "ProcessTelemetryResult",
@@ -277,6 +285,7 @@ __all__ = [
     "Usage",
     "Video",
     "VideoResponseData",
+    "WorkerGroupStats",
     "WorkerProcessingStats",
     "WorkerStats",
     "WorkerTaskStats",

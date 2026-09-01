@@ -196,6 +196,7 @@ async def test_profiler_stop_network_error_warns_and_does_not_raise() -> None:
         profiler_start_urls=["http://127.0.0.1:1/start_profile"],
         profiler_stop_urls=["http://127.0.0.1:1/stop_profile"],
         profiler_timeout_s=0.5,
+        reset_max_retry_seconds=1.0,
     )
     await run_phase_with_server_profiler(
         phase=CreditPhase.PROFILING,

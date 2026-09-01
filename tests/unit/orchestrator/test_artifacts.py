@@ -146,15 +146,17 @@ class TestAggregateExporters:
         with open(csv_path) as f:
             content = f.read()
 
-        # Check that metadata section exists (without "Aggregate Metadata" header)
-        assert "confidence" in content
-        assert "Confidence Level" in content or "confidence_level" in content
-
-        # Check that metrics section exists
-        assert "ttft_avg" in content
-        assert "tpot_avg" in content
-        assert "105.00" in content  # ttft mean
-        assert "11.00" in content  # tpot mean
+        lines = content.splitlines()
+        assert lines[0].startswith("metric,mean,std,min,max")
+        assert lines[1].startswith("ttft_avg,105.00")
+        assert lines[2].startswith("tpot_avg,11.00")
+        assert lines[3] == ""
+        assert lines[4:8] == [
+            "Aggregation Type,confidence",
+            "Total Runs,3",
+            "Successful Runs,3",
+            "Confidence Level,0.95",
+        ]
 
     @pytest.mark.asyncio
     async def test_write_creates_directory(self, tmp_path):

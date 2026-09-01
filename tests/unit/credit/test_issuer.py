@@ -14,6 +14,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
+from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.session_tree import SessionTreeRegistry
 
 # =============================================================================
@@ -79,6 +80,8 @@ def mock_lifecycle():
     # CreditIssuer uses these to calculate issued_at_ns timestamps
     mock.started_at_ns = time.time_ns()
     mock.started_at_perf_ns = time.perf_counter_ns()
+    # Real clock-frame math, so issued_at_ns stays a comparable int.
+    mock.now_ns = MagicMock(side_effect=lambda: PhaseLifecycle.now_ns(mock))
     return mock
 
 

@@ -34,6 +34,16 @@ if TYPE_CHECKING:
 
 _AGENTIC_CACHE_WARMUP_DEFAULT_GRACE_PERIOD_SEC = 300.0
 
+# Reserved identity for the synthesized AGENTIC_REPLAY warmup. It has no
+# backing ``PhaseConfig``, so it has no user name to copy; without one it would
+# key progress state under the stringified ``CreditPhase``, unioning the
+# synthetic and user-declared name spaces. The embedded "." makes collision
+# impossible: ``BasePhaseConfig.name`` is pattern-constrained to
+# ``^[A-Za-z_][A-Za-z0-9_-]*$`` (src/aiperf/config/phases.py:89-102), which
+# admits no "." — while "." is still a safe path segment and a legal
+# Kubernetes label value.
+AGENTIC_WARMUP_PHASE_NAME = "agentic.warmup"
+
 
 # Map ``PhaseType`` values onto the ``ArrivalPattern`` values consumed by the
 # timing strategies. Concurrency / fixed_schedule phases don't use an arrival
@@ -640,6 +650,15 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
     ) or getattr(phase, "request_concurrency", None)
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
+        # Identity is stamped explicitly rather than copied from a PhaseConfig:
+        # this warmup is synthesized, so ``phase_name`` is the reserved
+        # AGENTIC_WARMUP_PHASE_NAME. ``phase_index`` stays None deliberately --
+        # it means "absolute index in cfg.phases" and this phase is not in that
+        # list, so any integer would either duplicate a declared phase's index
+        # or invent a position. It also gates per-phase artifact emission
+        # (records_manager.py:1894,1907), which agentic runs must not gain here.
+        phase_name=AGENTIC_WARMUP_PHASE_NAME,
+        phase_kind="warmup",
         timing_mode=TimingMode.AGENTIC_REPLAY,
         # An accelerated cache-pressure warmup is strategy-terminated (the
         # strategy emits ``mark_sending_complete`` when the duration elapses),

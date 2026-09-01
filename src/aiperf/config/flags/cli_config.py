@@ -31,7 +31,7 @@ and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
@@ -90,7 +90,7 @@ from aiperf.plugin.enums import (
 )
 
 # Default server-metrics export formats for CLIConfig, kept self-contained here
-# because aiperf.config.defaults does not carry the equivalent constant.
+# because no config module carries the equivalent constant.
 _DEFAULT_SERVER_METRICS_FORMATS: list[ServerMetricsFormat] = [
     ServerMetricsFormat.JSON,
     ServerMetricsFormat.CSV,
@@ -788,8 +788,11 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             description=(
-                "Path to a YAML configuration file. "
-                "CLI flags override values from the config file."
+                "Path to a YAML configuration file. CLI flags override "
+                "values from the config file. A flag that cannot be applied "
+                "on top of a config file is rejected by name rather than "
+                "ignored, so a run never silently differs from what was "
+                "asked for."
             ),
         ),
         CLIParameter(
@@ -2301,7 +2304,7 @@ class CLIConfig(BaseConfig):
             "count toward the ratio. A grace floor of max(concurrency, 10) records "
             "must accumulate before the check is armed, so a single early failure "
             "cannot kill the run. When the threshold is exceeded a "
-            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
+            "PROFILE_CANCEL is broadcast: in-flight requests drain via the "
             "normal cancel path, partial results are still aggregated, and the run "
             "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
             "in record_processor_service so the rate measures real failures only.",
@@ -4377,3 +4380,10 @@ class CLIConfig(BaseConfig):
     _gpu_telemetry_metrics_file: Path | None = None
 
     _server_metrics_urls: list[str] = []
+
+
+# The local worker-process limit does not apply to distributed Kubernetes
+# execution; KubeOptions.total_workers owns that surface instead.
+KubeCLIConfig: TypeAlias = Annotated[
+    CLIConfig, Parameter(parse=r"^(?!workers_max$).*$")
+]
