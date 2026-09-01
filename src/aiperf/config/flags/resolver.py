@@ -7,16 +7,9 @@ Used by every CLI command that supports both flag-form and file-form input
 (``aiperf profile`` and ``aiperf service``). When both are supplied, the YAML
 supplies the base configuration and any explicitly-set CLI flags on
 ``cli_config`` are deep-merged on top before AIPerfConfig validation -- so
-``aiperf profile --config foo.yaml --streaming --search-recipe X`` works the
-way users intuit instead of throwing
+``aiperf profile --config foo.yaml --search-recipe X --ttft-sla-ms 200``
+works the way users intuit instead of throwing
 ``CLIConfig.endpoint.modelNames: Field required``.
-
-Not every flag can be applied this way. Anything this path cannot route is
-rejected up front by ``reject_unrouted_cli_flags`` with an error naming the
-flag, rather than being silently discarded -- see ``_config_flag_routing``
-and ``docs/dev/global-invariants.md`` for the classification and the tests
-that keep it honest. ``--ttft-sla-ms`` is one such flag today: it does not
-take effect under ``--config`` even alongside a recipe, so it errors.
 """
 
 from __future__ import annotations
@@ -25,6 +18,8 @@ import copy
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
+
+from pydantic.alias_generators import to_camel
 
 from aiperf.common.enums import DatasetType
 from aiperf.common.phase import infer_legacy_phase_kind
@@ -43,7 +38,7 @@ from aiperf.config.flags._section_fields import (
     OUTPUT_FIELDS,
     SWEEPING_FIELDS,
 )
-from aiperf.plugin.enums import ArrivalPattern, PhaseType
+from aiperf.plugin.enums import ArrivalPattern, DatasetFormat, PhaseType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,15 +90,8 @@ def _resolve_config_envelopes(
 ) -> AIPerfConfig:
     """Resolve rendered and pre-Jinja envelopes through one override pipeline."""
     from aiperf.config import AIPerfConfig
-    from aiperf.config.flags._config_flag_routing import reject_unrouted_cli_flags
-    from aiperf.config.loader import load_config_dict
+    from aiperf.config.flags.converter import _wrap_under_envelope
 
-    # Fail before any merging: a flag this path cannot route would otherwise
-    # be dropped without a word, handing the user a benchmark that silently
-    # ignored what they asked for.
-    reject_unrouted_cli_flags(cli_config)
-
-    yaml_dict = load_config_dict(config_file)
     _normalize_loaded_benchmark_shorthands(yaml_dict)
     _normalize_loaded_benchmark_shorthands(raw_yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
@@ -133,12 +121,184 @@ def _resolve_config_envelopes(
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
-    yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
-    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
-    merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
-    _apply_dataset_overrides(merged, cli_config)
-    _apply_phase_loadgen_overrides(merged, cli_config)
-    _apply_warmup_overrides(merged, cli_config)
+    merged = _merge_overrides_into_envelope(
+        yaml_dict, overrides, cli_config, dataset_override=dataset_override
+    )
+    raw_merged = _merge_overrides_into_envelope(
+        raw_yaml_dict,
+        overrides,
+        cli_config,
+        dataset_override=dataset_override,
+        phase_shape_decision=merged.phase_shape_decision,
+    )
+
+    config = AIPerfConfig.model_validate(merged.envelope)
+    config._raw_envelope = raw_merged.envelope
+    _validate_search_space_phase_targets(config, merged.envelope)
+    return config
+
+
+def _validate_search_space_phase_targets(
+    config: AIPerfConfig, envelope: dict[str, Any]
+) -> None:
+    """Reject searched dimensions the resolved phase cannot accept.
+
+    ``--search-space`` shape inference only runs when the profiling phase is
+    built from CLI flags (``_converter_profiling.build_profiling``). A config
+    that authors its own ``phases:`` keeps its discriminator, so a dimension
+    such as ``phases.profiling.users`` can target a phase type that has no
+    such field. The path is syntactically valid, so nothing rejects it until
+    the planner writes its first sampled value and Pydantic raises
+    ``extra_forbidden`` -- mid-run, after the benchmark is already underway
+    and the searched dimension has cost real time. Fail at resolution instead.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+    from aiperf.config.sweep.expand import _find_phase_or_recipe_alias
+
+    dimensions = getattr(config.sweep, "search_space", None)
+    if not dimensions:
+        return
+    benchmark = envelope.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return
+    phases = benchmark.get("phases")
+    if not isinstance(phases, list) or not phases:
+        return
+
+    for dimension in dimensions:
+        path = getattr(dimension, "path", None)
+        if not isinstance(path, str):
+            continue
+        segments = path.split(".")
+        # Only direct ``phases.<selector>.<field>`` scalars are checked; a
+        # deeper path (``phases.profiling.cancellation.rate``) targets a
+        # sub-model whose own validation owns the field.
+        if len(segments) != 3 or segments[0] != "phases":
+            continue
+        selector, field_name = segments[1], segments[2]
+        target = _find_phase_or_recipe_alias(phases, selector, parent_key="phases")
+        if target is None:
+            continue
+        try:
+            resolved = config.benchmark.phases[phases.index(target)]
+        except (ValueError, IndexError):
+            continue
+        if _phase_accepts_field(type(resolved), field_name):
+            continue
+        raise ConfigurationError(
+            f"--search-space dimension {path!r} targets field {field_name!r}, "
+            f"which phase {resolved.name!r} (type {resolved.type}) does not "
+            f"have. {_phase_types_declaring(field_name)} Either search a field "
+            f"the phase declares, or change the phase's 'type:'."
+        )
+
+
+def _phase_accepts_field(phase_cls: type, field_name: str) -> bool:
+    """Whether ``phase_cls`` declares ``field_name`` under either spelling."""
+    fields = phase_cls.model_fields
+    if field_name in fields:
+        return True
+    return any(info.alias == field_name for info in fields.values())
+
+
+def _phase_types_declaring(field_name: str) -> str:
+    """Human-readable hint naming the phase types that do declare a field."""
+    from aiperf.config import phases as phase_models
+
+    declaring: list[str] = []
+    for name in dir(phase_models):
+        candidate = getattr(phase_models, name)
+        if not isinstance(candidate, type) or not hasattr(candidate, "model_fields"):
+            continue
+        type_field = candidate.model_fields.get("type")
+        if type_field is None:
+            continue
+        # Concrete phases pin the discriminator as ``Literal[PhaseType.X]``;
+        # the abstract bases annotate the bare enum, so an empty get_args()
+        # is what filters them out of the hint.
+        members = get_args(type_field.annotation)
+        if len(members) != 1:
+            continue
+        if _phase_accepts_field(candidate, field_name):
+            declaring.append(str(members[0]))
+    unique = sorted(set(declaring))
+    if not unique:
+        return "No phase type declares it."
+    return f"Declared by phase type(s): {', '.join(unique)}."
+
+
+@dataclass(slots=True)
+class _PhaseShapeDecision:
+    """Value-dependent phase-shape outcome of one override pass.
+
+    The rendered envelope is the only one whose phase fields hold real values;
+    in the retained pre-Jinja envelope the same fields may still be ``{{ ... }}``
+    source strings. Re-deriving the phase discriminator there would compare a
+    template string against :class:`PhaseType` members and reach a different
+    answer, so the decision is recorded once on the rendered pass and replayed
+    verbatim onto the raw one.
+
+    Attributes:
+        phase_type: Final discriminator written onto the profiling phase, or
+            ``None`` when no CLI flag changed it.
+        removed_keys: Canonical (snake_case) phase keys discarded as
+            incompatible with ``phase_type``; replayed through
+            :func:`_pop_config_value` so either spelling is removed.
+    """
+
+    phase_type: PhaseType | None = None
+    removed_keys: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class _MergedEnvelope:
+    """One override pass' merged envelope plus the decision it reached.
+
+    Attributes:
+        envelope: The merged config envelope dict.
+        phase_shape_decision: Phase-shape outcome to replay onto sibling
+            envelopes so validation and execution cannot disagree.
+    """
+
+    envelope: dict[str, Any]
+    phase_shape_decision: _PhaseShapeDecision
+
+
+def _merge_overrides_into_envelope(
+    envelope: dict[str, Any],
+    overrides: dict[str, Any] | None,
+    cli_config: CLIConfig,
+    *,
+    dataset_override: tuple[bool, dict[str, Any]] | None = None,
+    phase_shape_decision: _PhaseShapeDecision | None = None,
+) -> _MergedEnvelope:
+    """Apply the config-file CLI override pipeline to one envelope.
+
+    The resolver calls this once for the rendered envelope used for Pydantic
+    validation and once for the retained pre-Jinja envelope used by sweep
+    expansion. Structural rewrites run on both, but every value-dependent
+    phase-shape branch (and the ``ConfigurationError`` guards built on it) runs
+    only on the rendered pass; passing that pass' ``phase_shape_decision`` back
+    in switches this call into replay mode, which is what keeps CLI overrides
+    and Jinja-backed ``sweep.parameters`` from disagreeing at execution time.
+    """
+    from aiperf.config.flags.converter import (
+        _promote_cli_dataset_magic_lists,
+        _promote_magic_lists_to_sweep_block,
+    )
+
+    overrides = copy.deepcopy(overrides) if overrides else overrides
+    envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
+    envelope = normalize_server_metrics_base_for_override(envelope, overrides)
+    merged = deep_merge(envelope, overrides) if overrides else envelope
+    _apply_control_hook_enable_overrides(merged, cli_config)
+    _apply_dataset_override(merged, dataset_override)
+    _apply_dataset_synthesis_overrides(merged, cli_config)
+    _apply_dataset_filter_overrides(merged, cli_config)
+    _apply_random_pool_batch_size_overrides(merged, cli_config)
+    decision = _apply_phase_loadgen_overrides(
+        merged, cli_config, phase_shape_decision=phase_shape_decision
+    )
     promote_benchmark_magic_lists(
         merged,
         cli_config,
@@ -306,33 +466,6 @@ def build_cli_overrides(
     _apply_optional_section(
         out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
     )
-    # These three builders already existed and are used by the CLI-only
-    # converter; this path simply never called them, so --mlflow-*,
-    # --otel-url, and the network-latency flags were dropped whenever a
-    # config file was supplied. They gate on model_fields_set, so an unset
-    # flag leaves the YAML block alone.
-    _apply_optional_section(out, "network_latency", build_network_latency(cli))
-    otel_base_url = benchmark_config is not None and bool(
-        benchmark_config.otel.metrics_url
-    )
-    _apply_optional_section(
-        out, "otel", build_otel(cli, base_metrics_url=otel_base_url)
-    )
-    mlflow_base_uri = benchmark_config is not None and bool(
-        benchmark_config.mlflow.tracking_uri
-    )
-    _apply_optional_section(
-        out, "mlflow", build_mlflow(cli, base_tracking_uri=mlflow_base_uri)
-    )
-    _apply_scenario_overrides(out, cli)
-
-    if cli.goodput:
-        # Recipe-emitted SLOs win on key collision, matching
-        # convert_cli_to_aiperf: a goodput-style recipe owns the SLO contract
-        # for its run, so a stray --goodput must not override its thresholds.
-        slos = dict(cli.goodput)
-        slos.update(out.get("slos") or {})
-        out["slos"] = slos
 
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
@@ -345,45 +478,29 @@ def build_cli_overrides(
     if "unsafe_override" in cli.model_fields_set:
         out["unsafe_override"] = cli.unsafe_override
 
-    # random_seed is an envelope key distinct from the dataset's own seed
-    # field (written by build_dataset onto the dataset block, which only
-    # feeds SessionIDGenerator). AIPerfConfig.random_seed is what
-    # resolve_run_seed threads into rng.init(...) for every child service
-    # process, so every other rng.derive(...) consumer -- synthetic prompt
-    # content, media generation, per-conversation turn shaping -- needs it
-    # too, matching _assemble_optional on the CLI-only path.
-    if "random_seed" in cli.model_fields_set:
-        out["random_seed"] = cli.random_seed
-
     # Service-runtime CLI flags (--ui, --log-level, --verbose, ZMQ knobs)
     # land on RuntimeConfig / LoggingConfig in AIPerfConfig. build_logging_runtime
     # already gates on cli.model_fields_set, so YAML defaults stay
     # intact when the user didn't pass these flags.
-    runtime_base_port = benchmark_config is not None and (
-        benchmark_config.runtime.api_port is not None
-    )
-    logging_dict, runtime_dict = build_logging_runtime(
-        cli, base_api_port=runtime_base_port
-    )
+    logging_dict, runtime_dict = build_logging_runtime(cli)
     _apply_optional_section(out, "logging", logging_dict)
     _apply_optional_section(out, "runtime", runtime_dict)
 
     return out
 
 
-def _apply_scenario_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
-    """Mirror the converter's scenario-lock fields onto the override dict.
-
-    ``scenario`` and ``unsafe_override`` are plain data on ``BenchmarkConfig``
-    rather than envelope keys, so ``_wrap_under_envelope`` moves them under
-    ``benchmark:`` exactly as ``_apply_scenario_fields`` relies on for the
-    CLI-only path.
-    """
-    set_fields = cli.model_fields_set
-    if "scenario" in set_fields:
-        out["scenario"] = cli.scenario
-    if "unsafe_override" in set_fields:
-        out["unsafe_override"] = cli.unsafe_override
+def _hydrate_primary_from_yaml(
+    cli: CLIConfig,
+    *,
+    primary_field: str,
+    base_value: Any,
+) -> CLIConfig:
+    """Let secondary telemetry flags reuse a primary configured in YAML."""
+    if primary_field in cli.model_fields_set or base_value is None:
+        return cli
+    hydrated = cli.model_copy(deep=True)
+    setattr(hydrated, primary_field, str(base_value))
+    return hydrated
 
 
 def _apply_optional_section(
@@ -517,30 +634,11 @@ def _apply_endpoint_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
     ``--model-names`` lives on the CLIConfig endpoint section but maps to the
     ``models.items`` block on AIPerfConfig; everything else stays on ``endpoint``.
     """
-    from aiperf.config.flags._converter_endpoint import (
-        _ENDPOINT_FIELD_MAP,
-        _maybe_build_reset_kv_cache,
-        _maybe_build_server_profiler,
-    )
-
     ep_set = cli.model_fields_set & ENDPOINT_FIELDS
     if not ep_set:
         return
-    endpoint: dict[str, Any] = {}
-    if "urls" in ep_set:
-        endpoint["urls"] = list(cli.urls)
-    for cli_field, aiperf_key in _ENDPOINT_FIELD_MAP.items():
-        if cli_field in ep_set:
-            endpoint[aiperf_key] = getattr(cli, cli_field)
-    # The probe sub-blocks have builders the CLI-only path already uses; this
-    # path simply never called them. They emit only fields the user set, so a
-    # YAML block keeps whatever the flags do not mention.
-    for key, built in (
-        ("reset_kv_cache", _maybe_build_reset_kv_cache(cli)),
-        ("server_profiler", _maybe_build_server_profiler(cli)),
-    ):
-        if built is not None:
-            endpoint[key] = built
+
+    endpoint = _build_endpoint_override(cli, ep_set)
     if endpoint:
         out["endpoint"] = endpoint
 
@@ -694,213 +792,422 @@ def _apply_input_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
         out.pop("endpoint", None)
 
 
-def _locate_yaml_dataset(merged: dict[str, Any]) -> dict[str, Any] | None:
-    """Return the YAML dataset dict that CLI overrides apply to.
+_DATASET_OVERRIDE_FIELDS: frozenset[str] = frozenset(
+    {
+        "allow_dataset_wrap",
+        "audio_batch_size",
+        "audio_depths",
+        "audio_format",
+        "audio_length_mean",
+        "audio_length_stddev",
+        "audio_num_channels",
+        "audio_sample_rates",
+        "cache_bust",
+        "conversation_num",
+        "conversation_num_dataset_entries",
+        "conversation_turn_delay_mean",
+        "conversation_turn_delay_ratio",
+        "conversation_turn_delay_stddev",
+        "conversation_turn_mean",
+        "conversation_turn_stddev",
+        "custom_dataset_type",
+        "dataset_sampling_strategy",
+        "force_min_tokens",
+        "hf_dataset_subset",
+        "hf_weka_dataset",
+        "ignore_trace_delays",
+        "image_batch_size",
+        "image_format",
+        "image_height_mean",
+        "image_height_stddev",
+        "image_source",
+        "image_source_sampling",
+        "image_width_mean",
+        "image_width_stddev",
+        "input_file",
+        "inter_turn_delay_cap_seconds",
+        "max_context_length",
+        "max_idle_gap_cap_seconds",
+        "omit_kv_hints",
+        "open_loop_replay",
+        "open_loop_strict",
+        "prompt_batch_size",
+        "prompt_corpus",
+        "prompt_input_tokens_block_size",
+        "prompt_input_tokens_mean",
+        "prompt_input_tokens_stddev",
+        "prompt_output_tokens_mean",
+        "prompt_output_tokens_stddev",
+        "prompt_prefix_length",
+        "prompt_prefix_pool_size",
+        "prompt_prefix_shared_system_length",
+        "prompt_prefix_user_context_length",
+        "prompt_sequence_distribution",
+        "public_dataset",
+        "random_seed",
+        "rankings_passages_mean",
+        "rankings_passages_prompt_token_mean",
+        "rankings_passages_prompt_token_stddev",
+        "rankings_passages_stddev",
+        "rankings_query_prompt_token_mean",
+        "rankings_query_prompt_token_stddev",
+        "replay_speedup",
+        "synthesis_max_isl",
+        "synthesis_max_osl",
+        "synthesis_output_len_multiplier",
+        "synthesis_prefix_len_multiplier",
+        "synthesis_prefix_root_multiplier",
+        "synthesis_prompt_len_multiplier",
+        "synthesis_speedup_ratio",
+        "trace_idle_gap_cap_seconds",
+        "trace_session_sample_ratio",
+        "use_think_time_only",
+        "video_audio_channels",
+        "video_audio_codec",
+        "video_audio_depth",
+        "video_audio_sample_rate",
+        "video_batch_size",
+        "video_codec",
+        "video_duration",
+        "video_format",
+        "video_fps",
+        "video_height",
+        "video_synth_type",
+        "video_width",
+    }
+)
 
-    Accepts both the ``benchmark.dataset`` shorthand and the canonical
-    ``benchmark.datasets`` list. The multi-dataset branch below anticipates a
-    cap that has not been lifted yet, not current behavior: ``AIPerfConfig
-    .datasets`` is ``max_length=1``, and ``resolve_config`` validates before
-    overrides run, so a YAML with more than one dataset entry fails
-    validation before this function is ever reached. Kept as future-proofing
-    -- matching the long-standing convention of the dataset-filter and
-    synthesis overlays this function replaces, from when the cap did not
-    exist -- for whenever the limit lifts.
+_DATASET_REPLACEMENT_FIELDS: frozenset[str] = frozenset(
+    {"input_file", "public_dataset", "hf_weka_dataset"}
+)
+
+
+def _build_dataset_override(
+    cli: CLIConfig,
+    *,
+    benchmark_config: BenchmarkConfig,
+) -> tuple[bool, dict[str, Any]] | None:
+    """Build a sole-dataset CLI overlay without importing CLI-only defaults.
+
+    Config v2 currently requires exactly one dataset, so an explicit dataset
+    flag has one unambiguous target. Source-selection flags replace that entry;
+    modifier flags deep-merge into it. The converter is hydrated with the YAML
+    dataset source without marking those values explicit, allowing its existing
+    file/public validation and canonical field routing to be reused.
     """
+    fields_set = cli.model_fields_set & _DATASET_OVERRIDE_FIELDS
+    if not fields_set:
+        return None
+
+    from aiperf.common.enums import DatasetType
+    from aiperf.config.flags._converter_dataset import build_dataset
+
+    replacement = bool(fields_set & _DATASET_REPLACEMENT_FIELDS)
+    dataset_cli = cli.model_copy(deep=True)
+    dataset_cli.__pydantic_fields_set__.discard("dataset_filters")
+    object.__setattr__(dataset_cli, "dataset_filters", [])
+    base_dataset = benchmark_config.datasets[0]
+    if "endpoint_type" not in cli.model_fields_set:
+        object.__setattr__(dataset_cli, "endpoint_type", benchmark_config.endpoint.type)
+    if not replacement:
+        if base_dataset.type == DatasetType.FILE:
+            object.__setattr__(dataset_cli, "input_file", base_dataset.path)
+            if "custom_dataset_type" not in fields_set:
+                object.__setattr__(
+                    dataset_cli, "custom_dataset_type", base_dataset.format
+                )
+        elif base_dataset.type == DatasetType.PUBLIC:
+            object.__setattr__(dataset_cli, "public_dataset", base_dataset.dataset)
+            if "hf_dataset_subset" not in fields_set:
+                object.__setattr__(
+                    dataset_cli, "hf_dataset_subset", base_dataset.hf_subset
+                )
+            object.__setattr__(
+                dataset_cli, "hf_weka_dataset", base_dataset.hf_weka_dataset
+            )
+
+    patch = build_dataset(dataset_cli)
+    if replacement:
+        return True, patch
+
+    # These are CLI-only construction defaults, not values the user selected.
+    patch.pop("type", None)
+    if not {"conversation_num", "conversation_num_dataset_entries"} & fields_set:
+        patch.pop("entries", None)
+        patch.pop("_entries_explicit", None)
+    _drop_implicit_dataset_defaults(patch, fields_set)
+    return (False, patch) if patch else None
+
+
+def _drop_implicit_dataset_defaults(
+    patch: dict[str, Any], fields_set: set[str]
+) -> None:
+    """Remove converter defaults so omitted CLI values preserve YAML intent."""
+    prompts = patch.get("prompts")
+    if isinstance(prompts, dict):
+        isl = prompts.get("isl")
+        if isinstance(isl, dict) and "prompt_input_tokens_mean" not in fields_set:
+            isl.pop("mean", None)
+            if not isl:
+                prompts.pop("isl", None)
+        if not prompts:
+            patch.pop("prompts", None)
+
+    for section, explicit_batch_field in (
+        ("audio", "audio_batch_size"),
+        ("images", "image_batch_size"),
+        ("video", "video_batch_size"),
+    ):
+        value = patch.get(section)
+        if isinstance(value, dict) and explicit_batch_field not in fields_set:
+            value.pop("batch_size", None)
+            if not value:
+                patch.pop(section, None)
+
+
+def _apply_dataset_override(
+    merged: dict[str, Any],
+    dataset_override: tuple[bool, dict[str, Any]] | None,
+) -> None:
+    """Apply a prepared override to the config's sole named dataset."""
+    if dataset_override is None:
+        return
+    benchmark = merged.get("benchmark")
+    datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
+    if not isinstance(datasets, list) or len(datasets) != 1:
+        raise ValueError("CLI dataset flags require exactly one YAML dataset")
+    target = datasets[0]
+    if not isinstance(target, dict):
+        raise ValueError("CLI dataset flags require a mapping-shaped YAML dataset")
+    replacement, patch = dataset_override
+    if replacement:
+        name = target.get("name", "main")
+        target.clear()
+        target.update({"name": name, **copy.deepcopy(patch)})
+        return
+    target.update(deep_merge(target, patch))
+
+
+def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    """Apply legacy direct dataset modifiers to a YAML envelope."""
+    _apply_dataset_synthesis_overrides(merged, cli)
+    _apply_dataset_filter_overrides(merged, cli)
+    _apply_random_pool_batch_size_overrides(merged, cli)
+
+
+def _apply_dataset_filter_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    if "dataset_filters" not in cli.model_fields_set:
+        return
+
+    from aiperf.config.flags._converter_dataset import _parse_dataset_filters
+
     benchmark = merged.get("benchmark")
     if not isinstance(benchmark, dict):
-        return None
+        raise ValueError("--dataset-filter requires a public dataset")
+    dataset = benchmark.get("dataset")
+    if not isinstance(dataset, dict):
+        datasets = benchmark.get("datasets")
+        if not isinstance(datasets, list) or not datasets:
+            raise ValueError("--dataset-filter requires a public dataset")
+        if len(datasets) > 1:
+            logger.warning(
+                "--dataset-filter with multiple YAML datasets applies only to "
+                "the first dataset"
+            )
+        dataset = datasets[0]
+    if not isinstance(dataset, dict):
+        raise ValueError("--dataset-filter requires a public dataset")
+    if dataset.get("type") != DatasetType.PUBLIC:
+        raise ValueError("--dataset-filter requires a public dataset")
+    filters = dataset.setdefault("filters", {})
+    filters.update(_parse_dataset_filters(cli.dataset_filters))
+
+
+def _first_yaml_dataset(
+    benchmark: dict[str, Any], *, warn_context: str
+) -> dict[str, Any] | None:
+    """Resolve the singular ``dataset`` or first entry of ``datasets`` from a
+    merged YAML ``benchmark`` mapping. Returns ``None`` if neither is present.
+
+    ``warn_context`` names the flag/feature in the "multiple datasets" warning
+    (e.g. ``"Batch-size flags"``), consistent with the convention shared by
+    ``_apply_dataset_filter_overrides`` and ``_apply_dataset_synthesis_overrides``.
+    """
     dataset = benchmark.get("dataset")
     if isinstance(dataset, dict):
         return dataset
+
     datasets = benchmark.get("datasets")
     if not isinstance(datasets, list) or not datasets:
         return None
     if len(datasets) > 1:
         logger.warning(
-            "Dataset CLI flags with multiple YAML datasets apply only to the "
-            "first dataset"
+            "%s with multiple YAML datasets apply only to the first dataset",
+            warn_context,
         )
-    first = datasets[0]
-    return first if isinstance(first, dict) else None
+    dataset = datasets[0]
+    return dataset if isinstance(dataset, dict) else None
 
 
-def _snake_to_camel(name: str) -> str:
-    head, *rest = name.split("_")
-    return head + "".join(word[:1].upper() + word[1:] for word in rest)
+# Maps CLIConfig attribute name -> (FileDataset field name, CLI flag display name).
+# Used by _apply_random_pool_batch_size_overrides for gating and error messages.
+_RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP: tuple[tuple[str, str, str], ...] = (
+    ("prompt_batch_size", "prompt_batch_size", "--prompt-batch-size"),
+    ("image_batch_size", "image_batch_size", "--image-batch-size"),
+    ("audio_batch_size", "audio_batch_size", "--audio-batch-size"),
+    ("video_batch_size", "video_batch_size", "--video-batch-size"),
+)
 
 
-def _drop_alias_spellings(base: dict[str, Any], override: dict[str, Any]) -> None:
-    """Remove the camelCase spelling of every key the override sets.
-
-    YAML configs address fields by their camelCase alias (``maxOsl``) while
-    ``build_dataset`` emits the snake_case field name (``max_osl``). Merging
-    the two as-is would leave both spellings of the same field in the dict and
-    let validation pick a winner -- which is exactly the kind of quiet
-    ambiguity this work exists to remove. Deleting the alias first makes the
-    CLI value win outright, whichever spelling the config file used.
-    """
-    for key, value in override.items():
-        alias = _snake_to_camel(key)
-        if alias != key and alias in base:
-            if isinstance(value, dict) and isinstance(base[alias], dict):
-                # Same field, different spelling: keep the YAML's siblings by
-                # folding its sub-dict onto the canonical key before merging.
-                base[key] = deep_merge(base.pop(alias), base.get(key) or {})
-            else:
-                base.pop(alias, None)
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _drop_alias_spellings(base[key], value)
-
-
-def _inert_dataset_flags(
-    cli: CLIConfig,
-    declared_type: Any,
-    declared_format: Any,
-    candidates: set[str],
-) -> list[str]:
-    """Return the flags in ``candidates`` that contribute nothing on their own.
-
-    Attribution is by re-running the real builder with exactly one flag set,
-    rather than by inspecting the combined result: a flag that emits nothing
-    alone emits nothing in company either, and asking ``build_dataset``
-    directly means the answer cannot drift from what it actually does.
-
-    A flag whose solo build raises is treated as contributing -- it is loud,
-    which is the property that matters, and the combined build already
-    succeeded.
-    """
-    # CLIConfig is a TYPE_CHECKING-only import at module scope; it has to be
-    # imported for real here, and the narrow `except` below is what would
-    # have surfaced that rather than silently treating every flag as routed.
-    from aiperf.config.flags import CLIConfig as _CLIConfig
-    from aiperf.config.flags._converter_dataset import build_dataset
-    from aiperf.config.loader.errors import ConfigurationError
-
-    inert: list[str] = []
-    for field in candidates:
-        # Solo construction is deliberately outside the try: a CLIConfig
-        # cross-field validator failing on this single field alone would be
-        # a real bug in this function's premise (the combined CLIConfig
-        # already validated), and must surface rather than be swallowed by
-        # the except below, which exists for build_dataset only.
-        solo = _CLIConfig(**{field: getattr(cli, field)})
-        try:
-            emitted = build_dataset(
-                solo, declared_type=declared_type, declared_format=declared_format
-            )
-        except (ValueError, ConfigurationError):
-            # Loud on its own, which is the property that matters; the
-            # combined build already succeeded. Deliberately narrow: a broad
-            # `except` here would turn a bug in this function into a silently
-            # disabled guard.
-            continue
-        if not emitted:
-            inert.append(field)
-    return inert
-
-
-def _reject_inert_dataset_flags(
-    cli: CLIConfig, dataset: dict[str, Any], declared_type: Any
+def _apply_random_pool_batch_size_overrides(
+    merged: dict[str, Any], cli: CLIConfig
 ) -> None:
-    """Raise for dataset flags that resolve cleanly while doing nothing.
+    """Overlay explicit batch-size CLI flags onto a YAML-supplied random_pool dataset.
 
-    Checking only whether the whole override came back empty let any inert
-    flag ride along with a routable one: the result was non-empty, the guard
-    never fired, and the inert flag was dropped exactly as before this work.
-    Every multi-flag command line touching the dataset escaped the guarantee,
-    so the reconciliation is per flag.
+    In the YAML+CLI path ``_apply_input_overrides`` only routes ``headers`` and
+    ``extra_inputs``; every other ``INPUT_FIELDS`` member (including the four
+    batch-size fields added by this PR) was silently discarded.  This function
+    closes that gap for the four fields that ``RandomPoolDatasetLoader`` consumes.
 
-    ``declared_type`` is the caller's already-defaulted value (``dataset.get(
-    "type") or DatasetType.SYNTHETIC``), passed in rather than re-derived so
-    the error message reports the same type the check actually ran against
-    -- re-deriving it here previously meant the message rendered the raw,
-    possibly-``None`` YAML value instead.
+    Gating is on ``cli.model_fields_set`` — not truthiness, not ``is not None``
+    against the field value — so an unset flag never clobbers a YAML-supplied value.
+    Zero is a valid value (``image/audio/video_batch_size=0`` disables that modality).
+
+    Only applies to ``type: file`` datasets. Synthetic and public datasets have no
+    ``format`` field at all, so this function must not touch or reject them here.
+    Note this does NOT mean the flags take effect there: nothing in the YAML+CLI
+    path currently routes batch-size flags onto ``SyntheticDataset.prompts/
+    images/audio/video.batch_size`` (``_apply_input_overrides`` only handles
+    ``headers``/``extra_inputs``), so a batch-size flag against a synthetic YAML
+    dataset has no effect -- a pre-existing gap this function does not close and
+    is out of scope to fix here. It logs a warning rather than dropping the flag
+    silently, since the neighbouring wrong-format case raises loudly. The CLI-only
+    path (no ``--config``) applies these flags correctly; only the YAML+CLI overlay
+    drops them.
+
+    For a ``type: file`` dataset that isn't ``format: random_pool``, a ``ValueError``
+    is raised with a message that names the flag and the format, matching the
+    friendly error the CLI-only path produces instead of letting the ``FileDataset``
+    model validator fire a raw Pydantic trace.
+
+    With multiple YAML datasets the override applies to the first dataset only,
+    consistent with the convention in ``_apply_dataset_synthesis_overrides`` and
+    ``_apply_dataset_filter_overrides``.
     """
-    from aiperf.config.flags._config_flag_routing import (
-        DATASET_FIELDS_OUTSIDE_INPUT,
-        DATASET_OVERRIDE_FIELDS,
-        flag_names_for,
-    )
-    from aiperf.config.loader.errors import ConfigurationError
-
-    candidates = cli.model_fields_set & (
-        DATASET_OVERRIDE_FIELDS | DATASET_FIELDS_OUTSIDE_INPUT
-    )
-    if not candidates:
+    set_fields = cli.model_fields_set & {
+        cli_attr for cli_attr, _, _ in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
+    }
+    if not set_fields:
         return
 
-    inert = _inert_dataset_flags(
-        cli,
-        declared_type,
-        dataset.get("format"),
-        candidates,
-    )
-    if not inert:
+    benchmark = merged.get("benchmark")
+    if not isinstance(benchmark, dict):
         return
 
-    names = sorted("/".join(flag_names_for(f) or (f,)) for f in inert)
-    raise ConfigurationError(
-        f"These CLI flags have no effect on a dataset of type "
-        f"{str(declared_type)!r}: {', '.join(names)}. Remove them, or use a "
-        f"dataset type that supports them."
-    )
-
-
-def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
-    """Overlay explicitly-set dataset flags onto the YAML-supplied dataset.
-
-    Delegates to ``build_dataset`` -- the same builder the CLI-only path uses
-    -- in override mode, so the two paths share one implementation of how a
-    flag maps onto the dataset shape. Previously this file carried a
-    hand-written routing function per field class (synthesis, filters,
-    random_pool batch sizes), each of which had to be kept in step with the
-    converter by hand; anything nobody wrote a function for was silently
-    dropped.
-
-    ``build_dataset`` emits only keys backed by ``cli.model_fields_set``, so
-    an unset flag cannot clobber a YAML value, and the config file keeps
-    ownership of dataset type, format, and source.
-    """
-    from aiperf.config.flags._config_flag_routing import DATASET_OVERRIDE_FIELDS
-    from aiperf.config.flags._converter_dataset import (
-        apply_implicit_media_batch_override,
-        build_dataset,
-    )
-
-    dataset = _locate_yaml_dataset(merged)
+    dataset = _first_yaml_dataset(benchmark, warn_context="Batch-size flags")
     if dataset is None:
-        if cli.model_fields_set & DATASET_OVERRIDE_FIELDS:
-            from aiperf.config.loader.errors import ConfigurationError
-
-            raise ConfigurationError(
-                "Dataset CLI flags require a dataset in the config file, but "
-                "none was found under benchmark.dataset / benchmark.datasets."
-            )
+        return
+    if dataset.get("type") != DatasetType.FILE:
+        # Adjacent to a loud ValueError for a file dataset of the wrong format, so
+        # do not drop this one in silence: the flag genuinely has no effect here.
+        logger.warning(
+            "%s ignored: batch-size flags are only applied to a YAML dataset with "
+            "type: file and format: random_pool (got type: %s). The CLI-only path "
+            "(no --config) applies them normally.",
+            ", ".join(
+                flag
+                for cli_attr, _, flag in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
+                if cli_attr in set_fields
+            ),
+            dataset.get("type"),
+        )
         return
 
-    # A YAML dataset may omit `type`; validation resolves that to synthetic.
-    # Passing None here would instead switch build_dataset back to inferring
-    # the type from flags -- the CLI-only path, which materializes defaults
-    # meant for building a dataset from nothing. Default it so both spellings
-    # of "synthetic" take the same route.
-    declared_type = dataset.get("type") or DatasetType.SYNTHETIC
-    override = build_dataset(
-        cli,
-        declared_type=declared_type,
-        declared_format=dataset.get("format"),
+    # dataset.get("format") reads the raw pre-validation YAML dict, so an omitted
+    # `format:` key reads back as None here even though FileDataset.format defaults
+    # to DatasetFormat.SINGLE_TURN -- fall back to that default so the error message
+    # below reports the actual effective format instead of a misleading "None".
+    fmt = dataset.get("format") or DatasetFormat.SINGLE_TURN
+    if fmt != DatasetFormat.RANDOM_POOL:
+        flag_names = ", ".join(
+            flag
+            for cli_attr, _, flag in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP
+            if cli_attr in set_fields
+        )
+        raise ValueError(
+            f"{flag_names} requires format: random_pool on the YAML dataset "
+            f"(got format: {fmt}). Either set format: random_pool in the dataset "
+            "config, or remove these flags."
+        )
+
+    for cli_attr, dataset_field, _ in _RANDOM_POOL_BATCH_SIZE_OVERRIDE_MAP:
+        if cli_attr in set_fields:
+            # FileDataset uses alias_generator=to_camel with extra="forbid": if the
+            # YAML already supplied this field under its camelCase alias (e.g.
+            # promptBatchSize, the shipped template idiom), writing the snake_case
+            # key here leaves both present and Pydantic rejects the snake_case one
+            # as extra. Drop whichever spelling is already there before writing.
+            dataset.pop(to_camel(dataset_field), None)
+            dataset.pop(dataset_field, None)
+            dataset[dataset_field] = getattr(cli, cli_attr)
+
+
+def _apply_dataset_synthesis_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+    """Overlay explicit synthesis flags onto a YAML-supplied dataset."""
+    if not any(
+        field == "allow_dataset_wrap" or field.startswith("synthesis_")
+        for field in cli.model_fields_set
+    ):
+        return
+
+    from aiperf.config.dataset.trace import SynthesisConfig
+    from aiperf.config.flags._converter_dataset import (
+        _apply_synthesis,
+        _reject_baseten_trace_unsupported_synthesis,
     )
-    _reject_inert_dataset_flags(cli, dataset, declared_type)
-    if not override:
+
+    benchmark = merged.get("benchmark")
+    datasets = benchmark.get("datasets") if isinstance(benchmark, dict) else None
+    if not isinstance(datasets, list) or not datasets:
+        raise ValueError("synthesis flags require a file or public dataset")
+    if len(datasets) > 1:
+        logger.warning(
+            "Synthesis flags with multiple YAML datasets apply only to the first dataset"
+        )
+    dataset = datasets[0]
+    if not isinstance(dataset, dict):
+        raise ValueError("synthesis flags require a file or public dataset")
+    if dataset.get("type") not in (DatasetType.FILE, DatasetType.PUBLIC):
+        logger.warning(
+            "Synthesis flags require a file or public dataset; ignoring them "
+            "for dataset type %r",
+            dataset.get("type"),
+        )
         return
 
-    apply_implicit_media_batch_override(override, dataset)
-    _drop_alias_spellings(dataset, override)
-    merged_dataset = deep_merge(dataset, override)
-    dataset.clear()
-    dataset.update(merged_dataset)
+    if dataset.get("type") == DatasetType.FILE:
+        _reject_baseten_trace_unsupported_synthesis(
+            cli,
+            dataset.get("format"),
+            dataset_format_source="YAML format: baseten_trace",
+        )
+
+    override = {"type": dataset.get("type")}
+    _apply_synthesis(override, cli)
+    if synthesis := override.get("synthesis"):
+        base = SynthesisConfig.model_validate(
+            dataset.get("synthesis") or {}
+        ).model_dump(by_alias=True, exclude_unset=True)
+        update = SynthesisConfig.model_validate(synthesis).model_dump(
+            by_alias=True, exclude_unset=True
+        )
+        dataset["synthesis"] = deep_merge(base, update)
 
 
+# CLI loadgen flag -> phase field. Each entry is (loadgen_attr, phase_key).
+# The CLI help promises "CLI flags override values from the config file";
+# this table makes that real for YAML-supplied phase shapes by overlaying
+# the explicit CLI value onto the resolved profiling phase.
 _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_count", "requests"),
     ("benchmark_duration", "duration"),
@@ -910,21 +1217,24 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
-    # --num-conversations sets the profiling phase's session count as well as
-    # the dataset entry count, matching convert_cli_to_aiperf. It lives in
-    # INPUT_FIELDS rather than LOADGEN_FIELDS, hence the explicit mention in
-    # the gate below.
     ("conversation_num", "sessions"),
 )
 
-# Fields routed onto the profiling phase that are not LOADGEN_FIELDS members.
-_NON_LOADGEN_PHASE_FIELDS: frozenset[str] = frozenset(
-    {
-        "conversation_num",
+_PROFILING_PHASE_OVERRIDE_FIELDS: frozenset[str] = frozenset(
+    {attr for attr, _ in _LOADGEN_PHASE_FIELD_MAP}
+    | {
+        "arrival_pattern",
+        "arrival_smoothness",
+        "concurrency_ramp_duration",
         "fixed_schedule",
         "fixed_schedule_auto_offset",
-        "fixed_schedule_start_offset",
         "fixed_schedule_end_offset",
+        "fixed_schedule_start_offset",
+        "prefill_concurrency_ramp_duration",
+        "request_cancellation_delay",
+        "request_cancellation_rate",
+        "request_rate_ramp_duration",
+        "request_rate_series",
     }
 )
 
@@ -970,7 +1280,8 @@ def _apply_phase_loadgen_overrides(
         _apply_agentic_replay_fields,
     )
 
-    loadgen_set = cli.model_fields_set & (LOADGEN_FIELDS | _NON_LOADGEN_PHASE_FIELDS)
+    decision = phase_shape_decision or _PhaseShapeDecision()
+    loadgen_set = cli.model_fields_set & _PROFILING_PHASE_OVERRIDE_FIELDS
     agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
     if not loadgen_set and not agentic_set:
         return decision
@@ -1046,164 +1357,329 @@ def _apply_default_grace_period_override(
     ):
         target["grace_period"] = cli.benchmark_grace_period
 
-    if cli.fixed_schedule:
-        # _profiling_phase_type does this when building a phase from flags.
-        # Set it before _apply_phase_shaping_overrides so the fixed-schedule
-        # offset routes, which validate against the phase type, can apply.
-        target["type"] = PhaseType.FIXED_SCHEDULE
 
-    _apply_agentic_replay_fields(target, cli)
-    _apply_phase_shaping_overrides(target, cli)
+def _apply_phase_shape_overrides(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    *,
+    decision: _PhaseShapeDecision | None = None,
+) -> _PhaseShapeDecision:
+    """Apply phase-discriminator, ramp, and cancellation CLI overrides.
 
-
-def _apply_phase_shaping_overrides(target: dict[str, Any], cli: CLIConfig) -> None:
-    """Route ramps, cancellation and arrival smoothness onto the phase.
-
-    These were built only by the CLI-only converter, so under ``--config``
-    they were dropped and later rejected. Reuse the converter's own helpers
-    rather than restating the field maps here: ``_RAMP_FIELDS`` and the
-    gamma-only routes stay in one place, and a new entry in either is picked
-    up by both paths.
-
-    ``_apply_phase_specific_routes`` validates against ``prof["type"]``, which
-    on this path is whatever the YAML declared -- so ``--arrival-smoothness``
-    against a non-gamma YAML phase is rejected with the converter's message
-    instead of being silently dropped.
+    With ``decision=None`` this is the deciding pass: the discriminator is
+    derived from ``target``'s own values and every ``ConfigurationError`` guard
+    is evaluated. With a ``decision`` supplied this is the replay pass over a
+    sibling envelope whose values may still be Jinja source; the recorded
+    discriminator is written verbatim and the guards are skipped, since they
+    already passed against real values.
     """
-    from aiperf.config.flags._converter_profiling import (
-        _apply_phase_specific_routes,
-        _apply_profiling_ramps,
-        apply_cancellation,
+    replay = decision is not None
+    if decision is None:
+        decision = _PhaseShapeDecision()
+        _apply_phase_type_override(target, cli, fields_set, decision)
+    else:
+        _replay_phase_shape_decision(target, decision)
+    _apply_arrival_smoothness_override(
+        target, cli, fields_set, decision, validate=not replay
     )
-
-    _apply_profiling_ramps(target, cli)
-    apply_cancellation(target, cli)
-    if "type" in target:
-        _apply_phase_specific_routes(target, cli)
-        # An explicit start offset contradicts auto_offset, whose default is
-        # True; build_profiling clears it the same way at
-        # _converter_profiling.py:531. Without this the user gets a raw
-        # "auto_offset cannot be True when start_offset is set" from
-        # validation for a combination the CLI-only path accepts.
-        if target["type"] == PhaseType.FIXED_SCHEDULE and "start_offset" in target:
-            target.setdefault("auto_offset", False)
+    _apply_phase_ramp_overrides(target, cli, fields_set, validate=not replay)
+    _apply_fixed_schedule_offset_overrides(target, cli, fields_set, validate=not replay)
+    _apply_cancellation_override(target, cli, fields_set)
+    return decision
 
 
-# CLI flags that shape the warmup phase. Derived from the section frozenset
-# rather than restated so a new warmup_* flag is covered automatically.
-_WARMUP_FIELDS: frozenset[str] = frozenset(
-    field for field in LOADGEN_FIELDS if field.startswith("warmup_")
-)
-
-
-def _find_warmup_phase(phases: list[Any]) -> dict[str, Any] | None:
-    """Return the YAML-declared warmup phase, if there is one."""
-    for entry in phases:
-        if not isinstance(entry, dict):
-            continue
-        kind = infer_legacy_phase_kind(entry.get("name"), entry.get("kind"))
-        if kind == "warmup":
-            return entry
-    return None
-
-
-def _apply_warmup_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
-    """Overlay explicitly-set ``--warmup-*`` flags onto the warmup phase.
-
-    ``_apply_phase_loadgen_overrides`` deliberately targets only the profiling
-    phase, so that ``--request-count`` cannot clobber a warmup ramp. That left
-    the warmup flags with nowhere to go: they were dropped before the
-    classification gate and rejected after it.
-
-    Three cases, matching what the CLI-only path does where it can:
-
-    - the config file declares a warmup phase -> merge the set flags onto it,
-      leaving everything the user did not mention alone;
-    - it does not, but a trigger flag (--warmup-request-count /
-      --warmup-num-sessions / --warmup-duration) is set -> build the phase, as
-      ``convert_cli_to_aiperf`` does;
-    - neither -> raise, because a secondary flag such as
-      ``--warmup-concurrency`` has nothing to attach to and would otherwise be
-      silently ignored.
-    """
-    from aiperf.config.flags._converter_warmup import build_warmup
-    from aiperf.config.loader.errors import ConfigurationError
-
-    warmup_set = cli.model_fields_set & _WARMUP_FIELDS
-    if not warmup_set:
-        return
-
-    benchmark = merged.get("benchmark")
-    if not isinstance(benchmark, dict):
-        return
-    phases = benchmark.get("phases")
-    if not isinstance(phases, list) or not phases:
-        return
-
-    existing = _find_warmup_phase(phases)
-    built = build_warmup(cli, base_warmup=existing is not None)
-    if built is None:
-        from aiperf.config.flags._config_flag_routing import flag_names_for
-
-        names = sorted("/".join(flag_names_for(f) or (f,)) for f in warmup_set)
-        raise ConfigurationError(
-            f"{', '.join(names)} needs a warmup phase to apply to. Declare one "
-            f"in the config file, or pass a warmup trigger "
-            f"(--warmup-request-count / --warmup-num-sessions / "
-            f"--warmup-duration)."
-        )
-
-    if existing is None:
-        phases.insert(0, {"name": "warmup", "kind": "warmup", **built})
-        return
-
-    _drop_alias_spellings(existing, built)
-    merged_warmup = deep_merge(existing, built)
-    _reject_incompatible_warmup_transition(merged_warmup, warmup_set)
-    existing.clear()
-    existing.update(merged_warmup)
-
-
-def _reject_incompatible_warmup_transition(
-    merged_warmup: dict[str, Any], warmup_set: frozenset[str] | set[str]
+def _replay_phase_shape_decision(
+    target: dict[str, Any], decision: _PhaseShapeDecision
 ) -> None:
-    """Raise before writing back a warmup override that would merge into an
-    invalid phase.
+    """Write a previously-decided discriminator onto a sibling envelope."""
+    for key in decision.removed_keys:
+        _pop_config_value(target, key)
+    if decision.phase_type is not None:
+        target["type"] = decision.phase_type
 
-    ``_warmup_override_pattern`` emits ``rate``/``concurrency``/``type``
-    independently, so a flag that only touches one side of a type transition
-    can produce a structurally invalid phase: ``--warmup-request-rate`` onto
-    an existing concurrency phase adds ``rate``, which ``ConcurrencyPhase``
-    forbids as an extra field; ``--warmup-arrival-pattern`` onto one switches
-    ``type`` to a rate phase without a ``rate``, which that phase requires.
-    Passing both together is a complete, valid transition and is not
-    rejected here.
+
+def _apply_phase_type_override(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    decision: _PhaseShapeDecision,
+) -> None:
+    if "fixed_schedule" in fields_set and cli.fixed_schedule:
+        _apply_fixed_schedule_type_override(target, fields_set, decision)
+        return
+    if "user_centric_rate" in fields_set:
+        _transition_phase_type(target, PhaseType.USER_CENTRIC, decision)
+        return
+    if "request_rate_series" in fields_set:
+        phase_type = (
+            _arrival_phase_type(cli)
+            if "arrival_pattern" in fields_set
+            else PhaseType.POISSON
+        )
+        _transition_phase_type(target, phase_type, decision)
+        return
+    if "request_rate" in fields_set:
+        _apply_request_rate_type_override(target, cli, fields_set, decision)
+        return
+    if "arrival_pattern" in fields_set:
+        _require_rate_controlled_phase(
+            target, "--arrival-pattern requires a rate-controlled profiling phase"
+        )
+        if _preserve_user_centric_phase(target, fields_set):
+            return
+        _transition_phase_type(target, _arrival_phase_type(cli), decision)
+
+
+def _preserve_user_centric_phase(target: dict[str, Any], fields_set: set[str]) -> bool:
+    """Return True when a YAML ``user_centric`` phase must keep its type.
+
+    ``--request-rate`` / ``--arrival-pattern`` imply an open-loop phase only
+    when the CLI alone defines the workload. Against a config-file
+    ``user_centric`` phase they are edits to a phase that already owns a
+    ``rate`` field, so switching the discriminator would silently drop
+    ``users`` and swap the closed-loop user model the config asked for.
+    """
+    if target.get("type") != PhaseType.USER_CENTRIC:
+        return False
+    if "arrival_pattern" in fields_set:
+        logger.warning(
+            "--arrival-pattern is ignored: the profiling phase in the config "
+            "file is 'user_centric', which has no arrival distribution. The "
+            "phase keeps type 'user_centric' and its 'users' value. Change the "
+            "phase type in YAML to poisson/gamma/constant for an open-loop "
+            "arrival pattern."
+        )
+    return True
+
+
+def _apply_fixed_schedule_type_override(
+    target: dict[str, Any], fields_set: set[str], decision: _PhaseShapeDecision
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    conflicts = fields_set & {
+        "request_rate",
+        "request_rate_series",
+        "user_centric_rate",
+    }
+    if conflicts:
+        raise ConfigurationError(
+            "--fixed-schedule cannot be combined with rate-control CLI flags: "
+            f"{', '.join(sorted(conflicts))}"
+        )
+    _transition_phase_type(target, PhaseType.FIXED_SCHEDULE, decision)
+
+
+def _apply_request_rate_type_override(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    decision: _PhaseShapeDecision,
+) -> None:
+    if _preserve_user_centric_phase(target, fields_set):
+        return
+    current_type = target.get("type")
+    rate_types = {
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+    }
+    if "arrival_pattern" in fields_set:
+        phase_type = _arrival_phase_type(cli)
+    elif current_type in rate_types:
+        phase_type = current_type
+    else:
+        phase_type = PhaseType.POISSON
+    _transition_phase_type(target, phase_type, decision)
+
+
+def _require_rate_controlled_phase(target: dict[str, Any], message: str) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if target.get("rate") is None and _get_config_value(target, "rate_series") is None:
+        raise ConfigurationError(message)
+
+
+def _apply_arrival_smoothness_override(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    decision: _PhaseShapeDecision,
+    *,
+    validate: bool,
+) -> None:
+    if "arrival_smoothness" not in fields_set:
+        return
+    if validate:
+        _require_rate_controlled_phase(
+            target,
+            "--arrival-smoothness requires a rate-controlled profiling phase",
+        )
+        if target.get("type") == PhaseType.USER_CENTRIC:
+            # Unlike --request-rate, smoothness cannot be preserved in place:
+            # UserCentricPhase has no `smoothness` field, so honoring the flag
+            # would mean silently dropping `users` and rewriting the load model.
+            from aiperf.config.loader.errors import ConfigurationError
+
+            raise ConfigurationError(
+                "--arrival-smoothness cannot be applied to the 'user_centric' "
+                "profiling phase from the config file: user-centric phases have no "
+                "arrival-distribution shape. Change the phase type in YAML to "
+                "'gamma' to use --arrival-smoothness."
+            )
+        _transition_phase_type(target, PhaseType.GAMMA, decision)
+    target["smoothness"] = cli.arrival_smoothness
+
+
+def _apply_phase_ramp_overrides(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str], *, validate: bool
+) -> None:
+    """Overlay ramp ``duration`` CLI flags onto the phase's ramp mappings.
+
+    ``RampConfig`` carries ``strategy`` alongside ``duration``, so the flag
+    merges into whichever spelling the YAML already used instead of replacing
+    the mapping -- otherwise ``--concurrency-ramp-duration`` would silently
+    reset a user-authored ``strategy: exponential`` back to the model default,
+    and would do so only for the snake_case spelling (``_coalesce_phase_aliases``
+    already deep-merges the camelCase twin).
     """
     from aiperf.config.loader.errors import ConfigurationError
 
-    final_type = merged_warmup.get("type")
-    if (
-        "warmup_request_rate" in warmup_set
-        and final_type == PhaseType.CONCURRENCY
-        and merged_warmup.get("rate") is not None
+    for cli_field, phase_field in (
+        ("concurrency_ramp_duration", "concurrency_ramp"),
+        ("prefill_concurrency_ramp_duration", "prefill_ramp"),
+        ("request_rate_ramp_duration", "rate_ramp"),
     ):
-        raise ConfigurationError(
-            "--warmup-request-rate has no effect: the warmup phase is "
-            "type: concurrency, which has no rate field. Pass "
-            "--warmup-arrival-pattern too to switch it to a rate-controlled "
-            "phase, or drop --warmup-request-rate."
+        if cli_field not in fields_set:
+            continue
+        if (
+            validate
+            and cli_field == "request_rate_ramp_duration"
+            and target.get("type")
+            not in {
+                PhaseType.POISSON,
+                PhaseType.GAMMA,
+                PhaseType.CONSTANT,
+                PhaseType.USER_CENTRIC,
+            }
+        ):
+            raise ConfigurationError(
+                "--request-rate-ramp-duration requires a rate-controlled profiling phase"
+            )
+        target_key = phase_field
+        alias = to_camel(phase_field)
+        if phase_field not in target and alias in target:
+            target_key = alias
+        existing = target.get(target_key)
+        duration = {"duration": getattr(cli, cli_field)}
+        target[target_key] = (
+            deep_merge(existing, duration) if isinstance(existing, dict) else duration
         )
-    if (
-        "warmup_arrival_pattern" in warmup_set
-        and final_type != PhaseType.CONCURRENCY
-        and merged_warmup.get("rate") is None
-        and merged_warmup.get("rate_series") is None
-    ):
+
+
+def _apply_fixed_schedule_offset_overrides(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str], *, validate: bool
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    fixed_offset_fields = {
+        "fixed_schedule_auto_offset": "auto_offset",
+        "fixed_schedule_start_offset": "start_offset",
+        "fixed_schedule_end_offset": "end_offset",
+    }
+    if fields_set & fixed_offset_fields.keys():
+        if validate and target.get("type") != PhaseType.FIXED_SCHEDULE:
+            raise ConfigurationError(
+                "fixed-schedule offset CLI flags require a fixed_schedule profiling phase"
+            )
+        for cli_field, phase_field in fixed_offset_fields.items():
+            if cli_field in fields_set:
+                target[phase_field] = getattr(cli, cli_field)
+        # This runs before _coalesce_phase_aliases, so a YAML-authored
+        # ``autoOffset`` is still under its camelCase spelling here. Checking
+        # only the snake_case key would miss it, write the default under
+        # ``auto_offset``, and let the coalesce step overwrite the user's
+        # camelCase value with this False default (same hazard as
+        # _apply_default_grace_period_override above).
+        if (
+            "fixed_schedule_start_offset" in fields_set
+            and "auto_offset" not in target
+            and to_camel("auto_offset") not in target
+        ):
+            target["auto_offset"] = False
+
+
+def _arrival_phase_type(cli: CLIConfig) -> PhaseType:
+    return {
+        ArrivalPattern.GAMMA: PhaseType.GAMMA,
+        ArrivalPattern.CONSTANT: PhaseType.CONSTANT,
+    }.get(cli.arrival_pattern, PhaseType.POISSON)
+
+
+def _transition_phase_type(
+    target: dict[str, Any], phase_type: PhaseType, decision: _PhaseShapeDecision
+) -> None:
+    """Change a phase discriminator and discard only incompatible YAML fields.
+
+    Records the outcome on ``decision`` so the same discriminator and the same
+    discarded keys can be replayed onto the pre-Jinja envelope, whose values
+    would otherwise steer this function to a different answer.
+    """
+    rate_types = {
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+        PhaseType.USER_CENTRIC,
+    }
+    if phase_type not in rate_types:
+        removed = ("rate", "rate_ramp", "rate_series", "smoothness", "users")
+    else:
+        removed = ("auto_offset", "start_offset", "end_offset", "rate_series")
+        if phase_type != PhaseType.GAMMA:
+            removed += ("smoothness",)
+        if phase_type != PhaseType.USER_CENTRIC:
+            removed += ("users",)
+    for key in removed:
+        _pop_config_value(target, key)
+    target["type"] = phase_type
+    decision.phase_type = phase_type
+    decision.removed_keys.update(removed)
+
+
+def _get_config_value(mapping: dict[str, Any], key: str) -> Any:
+    from pydantic.alias_generators import to_camel
+
+    return mapping.get(key, mapping.get(to_camel(key)))
+
+
+def _pop_config_value(mapping: dict[str, Any], key: str) -> None:
+    from pydantic.alias_generators import to_camel
+
+    mapping.pop(key, None)
+    mapping.pop(to_camel(key), None)
+
+
+def _apply_cancellation_override(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if not fields_set & {"request_cancellation_rate", "request_cancellation_delay"}:
+        return
+    cancellation = target.get("cancellation")
+    if not isinstance(cancellation, dict):
+        cancellation = {}
+    if "request_cancellation_rate" in fields_set:
+        cancellation["rate"] = cli.request_cancellation_rate
+    if "request_cancellation_delay" in fields_set:
+        cancellation["delay"] = cli.request_cancellation_delay
+    if "rate" not in cancellation:
         raise ConfigurationError(
-            f"--warmup-arrival-pattern switches the warmup phase to "
-            f"type: {final_type}, which requires a rate. Pass "
-            "--warmup-request-rate too, or drop --warmup-arrival-pattern."
+            "--request-cancellation-delay requires a cancellation rate in YAML "
+            "or --request-cancellation-rate"
         )
+    target["cancellation"] = cancellation
 
 
 def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:

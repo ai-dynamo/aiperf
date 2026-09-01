@@ -1033,7 +1033,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             request_id=message.request_id,
             notification=self._last_dataset_configured_notification,
         )
-        await self.publish(notification)
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

@@ -12,6 +12,7 @@ All tests drive ``resolve_config`` with a real YAML file, not ``convert_cli_to_a
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -241,7 +242,9 @@ benchmark:
     yaml_path = tmp_path / "no_format.yaml"
     yaml_path.write_text(yaml_content)
     cli = _cli(prompt_batch_size=4)
-    with pytest.raises(ValueError, match=re.escape("declares format: single_turn")):
+    with pytest.raises(
+        ValueError, match=re.escape("declares format: single_turn")
+    ) as excinfo:
         resolve_config(cli, yaml_path)
 
     assert "None" not in str(excinfo.value), (
