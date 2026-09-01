@@ -1097,6 +1097,32 @@ class TestResponsesStatefulChaining:
         )
         assert endpoint.extract_response_id(record) == "resp_non_stream_456"
 
+    @pytest.mark.parametrize(
+        "status",
+        [
+            param("failed", id="failed"),
+            param("incomplete", id="incomplete"),
+        ],
+    )  # fmt: skip
+    def test_extract_response_id_non_streaming_failure_status_returns_none(
+        self, store_endpoint: ResponsesEndpoint, status: str
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "id": "resp_aborted_non_stream",
+                            "object": "response",
+                            "status": status,
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert store_endpoint.extract_response_id(record) is None
+
     def test_extract_response_id_no_id_returns_none(
         self, endpoint: ResponsesEndpoint
     ) -> None:

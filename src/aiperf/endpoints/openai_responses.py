@@ -18,6 +18,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.common.types import JsonObject
+from aiperf.common.utils import is_truthy_flag
 from aiperf.endpoints import _openai_responses_replay as _replay
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
@@ -279,12 +280,12 @@ class ResponsesEndpoint(BaseEndpoint):
         events (``response.created`` / ``response.completed`` / ...) and at the
         top level for a non-streaming response body.
 
-        A streaming request that returns HTTP 200 but ends in
-        ``response.failed`` / ``response.incomplete`` does not set
-        ``RequestRecord.error``, yet the earlier ``response.created`` event
-        already advertised a stored id. Chaining onto that aborted response
-        would corrupt the next turn, so any stream-end failure event yields
-        ``None`` regardless of the advertised id.
+        A request that returns HTTP 200 but fails does not set
+        ``RequestRecord.error``. Streaming signals this via a
+        ``response.failed`` / ``response.incomplete`` event; a non-streaming
+        body signals it via top-level ``status``. In either case the advertised
+        id belongs to an aborted response, so chaining onto it would corrupt the
+        next turn and we return ``None`` regardless of the advertised id.
         """
         store_requested = self._store_requested()
         resp_id: str | None = None
@@ -296,6 +297,8 @@ class ResponsesEndpoint(BaseEndpoint):
                 return None
             nested = json_obj.get("response")
             source = nested if isinstance(nested, dict) else json_obj
+            if _replay.is_failure_status(source):
+                return None
             candidate = source.get("id")
             if not (isinstance(candidate, str) and candidate):
                 continue
@@ -311,9 +314,7 @@ class ResponsesEndpoint(BaseEndpoint):
         supplied.
         """
         store = dict(self.model_endpoint.endpoint.extra or []).get("store")
-        return store is True or (
-            isinstance(store, str) and store.strip().lower() == "true"
-        )
+        return is_truthy_flag(store)
 
     @staticmethod
     def _maybe_enable_usage_stream_options(

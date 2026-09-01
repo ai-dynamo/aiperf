@@ -26,6 +26,7 @@ from aiperf.common.enums import (
     ModelSelectionStrategy,
     RequestContentType,
 )
+from aiperf.common.utils import is_truthy_flag
 from aiperf.config.base import BaseConfig
 from aiperf.config.control_hooks import (
     ResetKvCacheConfig,
@@ -587,13 +588,9 @@ class EndpointConfig(BaseConfig):
         is only recoverable from the server's ``usage.prompt_tokens``, so require
         ``--use-server-token-count``.
         """
-        store = self.extra.get("store")
-        store_enabled = store is True or (
-            isinstance(store, str) and store.strip().lower() == "true"
-        )
         if (
             self.type == EndpointType.RESPONSES
-            and store_enabled
+            and is_truthy_flag(self.extra.get("store"))
             and not self.use_server_token_count
         ):
             raise ValueError(
