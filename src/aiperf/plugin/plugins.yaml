@@ -1642,6 +1642,21 @@ accuracy_grader:
       output via the upstream 3-tier cascade ("answer is (X)" ->
       "Answer: X" -> last lone A-J letter). No optional dependencies.
 
+  tool_call_ast:
+    class: aiperf.accuracy.graders.tool_call_ast:ToolCallASTGrader
+    description: |
+      BFCL tool-call AST grader. Decodes the model's Prompt-mode response into
+      BFCL's canonical ``[{"func": {"param": "val"}}]`` call list and scores it
+      with bfcl-eval's deterministic ``ast_checker`` (function-name match,
+      required-vs-optional parameters, strict type checking, value matching,
+      order-independent parallel calls). The hallucination categories
+      (``irrelevance`` / ``live_relevance``) are graded on whether a call was
+      emitted at all. ``unparsed`` means no call list was extractable - a model
+      format-adherence failure, distinct from a wrong call. Failure modes are
+      normalized into ``wrong_tool`` / ``param_type_error`` /
+      ``param_value_error`` / ``should_not_have_called`` and surfaced in the
+      grader's explanation. Requires the ``[bfcl]`` install.
+
 # =============================================================================
 # Accuracy Benchmarks
 # =============================================================================
@@ -1782,6 +1797,28 @@ accuracy_benchmark:
     metadata:
       default_grader: code_execution
       default_n_shots: 0
+
+  bfcl_ast:
+    class: aiperf.accuracy.benchmarks.bfcl_ast:BFCLASTBenchmark
+    description: |
+      Berkeley Function Calling Leaderboard (BFCL) single-turn tool-call
+      correctness benchmark, in BFCL's official Prompt mode: the tool schemas
+      are injected into a per-problem system prompt and the model answers in
+      plain text, so the answer lands in ``message.content`` and grading needs
+      no tool-call capture path. Covers the AST categories (simple_python,
+      simple_java, simple_javascript, multiple, parallel, parallel_multiple)
+      plus irrelevance; the ``live_*`` categories are opt-in via
+      ``--accuracy-tasks``. Question files and ``possible_answer`` ground truth
+      are read from the installed ``bfcl-eval`` wheel and serialized into
+      ``BenchmarkProblem.ground_truth`` as an orjson blob so the
+      ``tool_call_ast`` grader stays stateless. ``task`` is the BFCL category,
+      so the existing per-task console/CSV breakdown reports per-category
+      accuracy and per-category unparsed rates. Version-pinned via
+      ``AIPERF_ACCURACY_BFCL_VERSION_PIN``. Requires the ``[bfcl]`` install.
+    metadata:
+      default_grader: tool_call_ast
+      default_n_shots: 0
+      default_enable_cot: false
 
 # =============================================================================
 # Communication Backends

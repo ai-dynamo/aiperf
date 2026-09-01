@@ -59,12 +59,18 @@ DeepEval-backed AIME path
 | Benchmark | `default_system_prompt` |
 |---|---|
 | `aime` | `Please reason step by step, and put your final answer within \boxed{}.` |
+| `bfcl_ast` | _per-problem — built from that problem's tool schemas; `--accuracy-system-prompt` is **rejected** (see [BFCL](#bfcl-tool-call-correctness-bfcl_ast))_ |
 | (others) | _none — pass via `--accuracy-system-prompt` if desired_ |
 
-The CLI's `--accuracy-system-prompt` flag always wins; the per-benchmark
-default is only consulted when the flag is unset. An empty-string default
-in metadata is treated as no default (aiperf doesn't inject a zero-length
-system message).
+For benchmarks that accept an override, the CLI's `--accuracy-system-prompt`
+flag wins; the per-benchmark default is only consulted when the flag is unset.
+An empty-string default in metadata is treated as no default (aiperf doesn't
+inject a zero-length system message).
+
+`bfcl_ast` is the exception: it **rejects** the flag rather than honouring it,
+because its system prompt is built per problem from that problem's tool
+schemas and a global override would strip the tool definitions the model is
+being asked to call.
 
 ## Available Benchmarks
 
@@ -81,6 +87,7 @@ system message).
 | `gpqa_diamond` | `lighteval_gpqa` | 0 | `Idavidrein/gpqa` subset `gpqa_diamond` (trt-llm/lighteval reference, simple-evals template with SHA-256-seeded deterministic A/B/C/D shuffling, `gpqa_metric`) |
 | `lcb_codegeneration` | `code_execution` | 0 | `livecodebench/code_generation_lite` (trt-llm/lighteval reference; LCB test-case payload serialized into `BenchmarkProblem.ground_truth` as an orjson blob; `code_execution` grader runs the generated code against the bundled test cases via lighteval's `codegen_metrics`) |
 | `gsm8k` | `lighteval_gsm8k` | 0 | `gsm8k` subset `main` (trt-llm/lighteval reference, `gsm8k_leaderboard` config; prompt `"Question: {question}\nAnswer:"`, gold is the raw answer ending in `#### <number>`, `quasi_exact_match_gsm8k`) |
+| `bfcl_ast` | `tool_call_ast` | 0 | Berkeley Function Calling Leaderboard, **Prompt mode** — question files and `possible_answer` ground truth read from the installed `bfcl-eval` wheel; single-turn AST categories + Java/JavaScript + hallucination measurement, graded by bfcl-eval's `ast_checker`. Requires the `[bfcl]` extra. See [BFCL tool-call correctness](#bfcl-tool-call-correctness-bfcl_ast) |
 
 ### LiveCodeBench (lcb_codegeneration) version pinning
 
@@ -121,6 +128,165 @@ recover by bumping the env var:
 ```bash
 export AIPERF_ACCURACY_LCB_RELEASE_TAG=v6   # or whatever LCB now ships
 ```
+
+## BFCL tool-call correctness (`bfcl_ast`)
+
+Every other accuracy benchmark grades a natural-language answer channel, so a
+deployment whose tool-call parser is broken can fail every call in production
+and still score 100%. `bfcl_ast` closes that gap: it runs the
+[Berkeley Function Calling Leaderboard](https://gorilla.cs.berkeley.edu/leaderboard.html)
+single-turn suite and grades each response with bfcl-eval's deterministic AST
+checker — while the server is under whatever load the run applies.
+
+### Install
+
+```bash
+uv pip install 'aiperf[bfcl]'
+```
+
+> **The `[bfcl]` and `[accuracy]` extras cannot be installed together.**
+> `bfcl-eval` pins `numpy==1.26.4` while lighteval (`[accuracy]`) requires
+> `numpy>=2`. This is declared as a uv conflict, so each extra resolves on its
+> own; no benchmark needs graders from both. Install `[bfcl]` in the
+> environment you run BFCL from.
+
+### Quick start
+
+```bash
+aiperf profile \
+  -m gpt-oss-120b \
+  --url http://localhost:8000 \
+  --endpoint-type chat \
+  --accuracy-benchmark bfcl_ast \
+  --accuracy-tasks simple_python,multiple,parallel,irrelevance \
+  --extra-inputs '{"temperature": 0}' \
+  --concurrency 32
+```
+
+Run with `temperature=0`. BFCL AST is the most reproducible of the widely used
+tool-calling benchmarks, but sampling variance would otherwise sit on top of
+the signal you are trying to read.
+
+### Categories
+
+`--accuracy-tasks` takes BFCL category names. Omitting it evaluates the
+non-live set (1,390 problems).
+
+| Category | Count | In default set | What it measures |
+|---|---|---|---|
+| `simple_python` | 400 | yes | One function offered, one call expected |
+| `simple_java` | 100 | yes | Same, Java syntax (tree-sitter parsed) |
+| `simple_javascript` | 50 | yes | Same, JavaScript syntax |
+| `multiple` | 200 | yes | Several functions offered, one is correct |
+| `parallel` | 200 | yes | One function, several calls — compared **order-independently** |
+| `parallel_multiple` | 200 | yes | Several functions, several calls |
+| `irrelevance` | 240 | yes | Hallucination measurement: no offered function fits, so the correct answer is **no call** |
+| `live_simple`, `live_multiple`, `live_parallel`, `live_parallel_multiple`, `live_irrelevance`, `live_relevance` | — | no (opt-in) | The same checks over user-contributed real-world schemas |
+
+Deliberately **not** supported, each rejected with the reason rather than an
+"unknown task" error:
+
+| Family | Why not |
+|---|---|
+| `exec_*` | Requires executing generated code against live external APIs (at least four API keys). AIPerf has no execution sandbox on the accuracy path. |
+| `multi_turn_*` | Graded by comparing backend *system state* across turns. AIPerf's grader is stateless and per-record. |
+| `web_search_*`, `memory_*` | Need live web search (SerpAPI), persistent memory and multi-run trajectories. |
+| `format_sensitivity` | A non-scoring category upstream — it varies the prompt template rather than measuring correctness. |
+
+### Reading the results
+
+`task` is the BFCL category, so the existing per-task console table and
+`accuracy_results.csv` give a per-category breakdown for free:
+
+```text
+Accuracy (Overall)                 71.2%
+Accuracy (simple_python)           88.0%   Unparsed  2.5%
+Accuracy (multiple)                74.5%   Unparsed  4.0%
+Accuracy (parallel)                52.0%   Unparsed 11.5%
+Accuracy (irrelevance)             68.0%   Unparsed  0.0%
+```
+
+**Accuracy and `Unparsed` are two different failure modes, and the split is
+the point.** `Unparsed` counts responses from which no call list could be
+extracted at all — the model did not follow the required output format. (On
+the hallucination categories a non-empty response is graded as a call/no-call
+decision instead, so only an empty answer channel is `unparsed` there.)
+Accuracy counts, among **all** responses, how many gave the right answer —
+unparsed records stay in its denominator, so the two rates are read against
+the same total rather than nested. A decoded-but-wrong call is scored
+incorrect and **not** unparsed.
+
+"The right answer" is category-dependent. For the AST categories it means the
+right call: correct function name, parameters and values. For the
+hallucination categories (`irrelevance`, `live_irrelevance`) the right answer
+is **no call at all**, so a prose refusal is scored *correct* — and
+`live_relevance` inverts that again, where emitting a call is correct. Only an
+empty answer channel is treated as unparsed there, since silence is not an
+abstention.
+
+Every graded record in `accuracy_export.jsonl` carries a normalized failure
+bucket at the front of its `explanation`, so a run can be triaged without
+extra tooling:
+
+| Bucket | Meaning |
+|---|---|
+| `correct` | Verdict passed |
+| `wrong_tool` | Wrong function name, or the wrong number of calls |
+| `param_type_error` | Right tool, wrong argument type (e.g. `"5"` for an integer) |
+| `param_value_error` | Right tool and types, wrong/missing argument value |
+| `should_not_have_called` | Emitted a call on an `irrelevance` question |
+| `should_have_called` | Emitted no call on a `live_relevance` question |
+| `unparsed` | No call list could be extracted. On the hallucination categories only an *empty* answer channel counts — a prose refusal is a valid answer there, whereas silence is not an abstention |
+| `unclassified` | An `error_type` this bfcl-eval version added that AIPerf does not yet bucket |
+| `grader_error` | The checker raised on this record, so it could not be graded. An **integration** failure, not a model one — deliberately kept out of `unparsed` so it cannot be mistaken for a formatting problem. Also logged at warning level |
+
+Parameter mismatches (right tool, wrong arguments) dominate tool-calling
+failures at scale, so `param_*` vs `wrong_tool` is usually the split worth
+acting on:
+
+```bash
+jq -r '.explanation | split(":")[0]' artifacts/*/accuracy_export.jsonl | sort | uniq -c | sort -rn
+```
+
+### Version pinning
+
+BFCL ships its dataset **and** its AST checker in the same wheel, so the
+package version determines both which questions are asked and how answers are
+scored. Two runs on different versions are not comparable, and the drift would
+otherwise be silent, so the loader hard-checks it:
+
+```bash
+export AIPERF_ACCURACY_BFCL_VERSION_PIN=2026.3.23   # default
+export AIPERF_ACCURACY_BFCL_VERSION_PIN=2025.12.17  # strict BFCL v4 leaderboard parity
+export AIPERF_ACCURACY_BFCL_VERSION_PIN=any         # skip the check (no version guarantee)
+```
+
+A mismatch fails in preflight — before any service starts — naming both
+versions and the `uv pip install` command that reconciles them.
+
+### What these numbers do and do not tell you
+
+- **Report per-category numbers, not a single "BFCL score".** The public
+  leaderboard averages language subcategories *unweighted* despite very
+  different sample sizes (`simple_python` 400 vs `simple_javascript` 50), so a
+  single aggregate is not comparable to it and hides which category regressed.
+  AIPerf reports per-category natively; the `Accuracy (Overall)` row is a
+  micro-average over whatever categories the run included.
+- **Prompt-mode scores are not a model's native function-calling score.** In
+  Prompt mode the tool schemas go in the system prompt and the model answers
+  in text, using BFCL's Python-style call format. A model trained against a
+  different tool-calling template can score far below its native
+  function-calling ability — MCPVerse reports Claude-4-Sonnet dropping from
+  62.36 to 15.10 between the two modes. Treat `bfcl_ast` as a
+  model-selection and serving-reliability signal, not as a capability ceiling
+  and not as a production gate.
+- **`--accuracy-system-prompt` is rejected for this benchmark.** BFCL builds
+  the system prompt per problem from that problem's tool schemas; a global
+  override would replace it, stripping the tool definitions the model is being
+  asked to call.
+- Array element types are checked only one level deep, matching the official
+  checker. This is upstream's deliberate simplification, mirrored rather than
+  "fixed", so verdicts stay comparable.
 
 ## MMLU chain-of-thought and reasoning models
 
@@ -224,12 +390,12 @@ aiperf profile --model <model> --url <url>/v1 --endpoint-type chat --streaming \
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--accuracy-benchmark` | Benchmark name (`mmlu`, `aime`, `hellaswag`, ...) | — |
+| `--accuracy-benchmark` | Benchmark name (`mmlu`, `aime`, `hellaswag`, `bfcl_ast`, ...) | — |
 | `--accuracy-tasks` | Specific subtasks (e.g., MMLU subjects). Accepts comma-separated values (`abstract_algebra,anatomy`) or repeated flags. Omit for all. | all |
 | `--accuracy-n-shots` | Few-shot example count (0–32). `None` uses the benchmark default (e.g. MMLU=5). | benchmark default |
 | `--accuracy-enable-cot` | Enable chain-of-thought prompting | false |
 | `--accuracy-grader` | Override default grader (`multiple_choice`, `exact_match`, ...) | auto |
-| `--accuracy-system-prompt` | Custom system prompt | — |
+| `--accuracy-system-prompt` | Custom system prompt. Rejected by `bfcl_ast`, which builds a per-problem system prompt from each problem's tool schemas. | — |
 | `--accuracy-verbose` | Show per-problem grading details | false |
 
 ## Endpoint Type: `completions` vs `chat`
@@ -306,6 +472,7 @@ aiperf profile my-model --url http://localhost:8000 \
 | `lighteval_latex` | Same as `lighteval_expr` but the gold/prediction extractor uses lighteval's `LatexExtractionConfig` for `\boxed{...}` LaTeX answers (lighteval `latex_gold_metric`). Requires the `[accuracy]` extra. | MATH-500 |
 | `lighteval_gpqa` | Multiple-choice `A`-`D` index extraction via lighteval's `gpqa_metric` (`NativeLetters`), using the simple-evals template the GPQA-Diamond loader mirrors for parity. Requires the `[accuracy]` extra. | GPQA-Diamond |
 | `lighteval_gsm8k` | Extract the number after `####` from gold and the last number from the prediction (preferring a `####` marker when present); numeric comparison so `24` and `24.0` match (lighteval `quasi_exact_match_gsm8k`). Pure-regex — no lighteval install required. | GSM8K |
+| `tool_call_ast` | Decode the model's Prompt-mode response into BFCL's canonical `[{"func": {"param": "val"}}]` call list, then score it with bfcl-eval's deterministic `ast_checker` (function-name match, required-vs-optional parameters, strict types, accepted values, order-independent parallel calls). Hallucination categories are graded on whether a call was emitted at all, so a non-empty response there is never `unparsed` — only an empty answer channel is. On every other category `unparsed` means no call list was extractable — a format-adherence failure, not a wrong call. Failure modes are normalized into `wrong_tool` / `param_type_error` / `param_value_error` / `should_not_have_called` / `should_have_called` / `unparsed` / `unclassified` / `grader_error` and prefixed onto the explanation. Requires the `[bfcl]` extra. | BFCL (`bfcl_ast`) |
 
 The `math` grader pipeline (aligned with `trt-llm-benchmark-recipe/src/accuracy/aime/`):
 
