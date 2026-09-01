@@ -46,9 +46,7 @@ def test_metadata_requires_token_ids_and_streaming():
     assert metadata.requires_token_ids
 
 
-def test_format_payload_accumulates_context_and_maps_priority(
-    endpoint, model_endpoint
-):
+def test_format_payload_accumulates_context_and_maps_priority(endpoint, model_endpoint):
     turns = [
         Turn(token_ids=[1, 2], max_tokens=3),
         Turn(role="assistant", token_ids=[4, 5]),
@@ -95,7 +93,9 @@ def test_format_payload_requires_streaming_and_token_ids(endpoint, model_endpoin
     model_endpoint.endpoint.streaming = False
     with pytest.raises(ValueError, match="requires streaming"):
         endpoint.format_payload(
-            create_request_info(model_endpoint=model_endpoint, turns=[Turn(token_ids=[1])])
+            create_request_info(
+                model_endpoint=model_endpoint, turns=[Turn(token_ids=[1])]
+            )
         )
 
     model_endpoint.endpoint.streaming = True
