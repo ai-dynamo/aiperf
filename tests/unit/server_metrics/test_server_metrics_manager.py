@@ -4,13 +4,14 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
-    ProfileConfigureCommand,
-    ProfileStartCommand,
 )
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
@@ -121,7 +122,7 @@ class TestServerMetricsManagerInitialization:
             assert count == 1
 
 
-class TestProfileConfigureCommand:
+class TestProfileConfigure:
     """Test profile configuration and endpoint reachability checking."""
 
     @pytest.mark.asyncio
@@ -143,11 +144,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) > 0
@@ -171,11 +168,7 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert len(manager._collectors) == 0
@@ -201,17 +194,13 @@ class TestProfileConfigureCommand:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             assert "old_collector" not in manager._collectors
 
 
-class TestProfileStartCommand:
+class TestProfileStart:
     """Test profile start functionality."""
 
     @pytest.mark.asyncio
@@ -233,9 +222,7 @@ class TestProfileStartCommand:
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_START)
         )
 
         mock_collector.start.assert_called_once()
@@ -266,9 +253,7 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
@@ -291,9 +276,7 @@ class TestProfileStartCommand:
         manager._collectors["http://localhost:8081/metrics"] = mock_collector
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_START)
         )
 
     @pytest.mark.asyncio
@@ -324,9 +307,7 @@ class TestProfileStartCommand:
             "asyncio.create_task", side_effect=close_coroutine
         ) as mock_create_task:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
             # Verify delayed shutdown was scheduled via asyncio.create_task
@@ -750,6 +731,34 @@ class TestRealtimePublication:
         manager.publish.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_realtime_publication_uses_configured_interval(
+        self,
+        cfg_with_endpoint: CLIConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        accumulator = MagicMock()
+        manager._accumulator = accumulator
+        manager._profiling_started = True
+        manager._profiling_start_ns = 1
+        manager._last_realtime_publish_ns = 10_000_000_000
+        manager.publish = AsyncMock()
+        monkeypatch.setattr(
+            Environment.SERVER_METRICS,
+            "REALTIME_PUBLISH_INTERVAL_SECONDS",
+            2.5,
+        )
+
+        with patch(
+            "aiperf.server_metrics.manager.time.time_ns",
+            return_value=12_000_000_000,
+        ):
+            await manager._publish_realtime_server_metrics()
+
+        accumulator.compute_endpoint_summaries.assert_not_called()
+        manager.publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_realtime_publication_before_profiling_remains_suppressed(
         self,
         cfg_with_endpoint: CLIConfig,
@@ -834,11 +843,7 @@ class TestDisabledServerMetrics:
         manager.publish = AsyncMock()
 
         await manager._profile_configure_command(
-            ProfileConfigureCommand(
-                service_id=manager.id,
-                command=CommandType.PROFILE_CONFIGURE,
-                config={},
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Should not create any collectors
@@ -869,11 +874,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Should handle exception and not add collector
@@ -902,11 +903,7 @@ class TestExceptionHandling:
             mock_collector_class.return_value = mock_collector
 
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_CONFIGURE,
-                    config={},
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
             # Collector should still be added despite baseline failure
@@ -940,9 +937,7 @@ class TestPartialStartup:
         }
 
         await manager._on_start_profiling(
-            ProfileStartCommand(
-                service_id=manager.id, command=CommandType.PROFILE_START
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_START)
         )
 
         # Both should be called
@@ -960,8 +955,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete triggers final metrics scrape."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
@@ -971,9 +964,7 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should call final scrape
@@ -985,9 +976,7 @@ class TestProfileCompleteAndCancel:
         assert manager._result_published is True
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
         manager.publish.assert_awaited_once()
 
@@ -997,8 +986,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """A cooldown must not be reattributed to the preceding named profile."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         profiling = manager.run.cfg.phases[0].model_copy(
             update={"name": "profile-a", "kind": "profiling"}
@@ -1018,10 +1005,10 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id,
-                command=CommandType.PROFILE_COMPLETE,
-                end_ns=1,
+            Command(
+                cid="c-1",
+                cmd=CommandType.PROFILE_COMPLETE,
+                payload=orjson.dumps({"end_ns": 1}),
             )
         )
 
@@ -1036,8 +1023,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete handles final scrape failures gracefully."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
@@ -1049,13 +1034,56 @@ class TestProfileCompleteAndCancel:
         manager._collectors = {"endpoint1": mock_collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Should still stop collector even if final scrape fails
         mock_collector.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_profile_complete_final_scrape_timeout_surfaces_visible_warning(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """A timed-out PROFILE_COMPLETE scrape must not be silently swallowed.
+
+        The final scrape exists specifically to capture accurate final
+        counter/histogram deltas. If it times out, the run must not complete
+        "successfully" with an undercounted result and only a log line -- the
+        failure must be surfaced through the same visible-warning mechanism
+        (``_error_state`` -> ``error_summary`` -> console error table) used
+        elsewhere in this module, so it reaches the CLI summary.
+        """
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_endpoint),
+        )
+
+        mock_collector = AsyncMock()
+        mock_collector.collect_and_process_metrics.side_effect = TimeoutError(
+            "final scrape timed out"
+        )
+        manager._collectors = {"endpoint1": mock_collector}
+        accumulator = AsyncMock()
+        accumulator.export_results.return_value = None
+        manager._accumulator = accumulator
+        manager.publish = AsyncMock()
+
+        await manager._handle_profile_complete_command(
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
+        )
+
+        # The timeout must be recorded as a visible warning, not just logged.
+        assert sum(manager._error_state.error_counts.values()) >= 1
+
+        # It must also reach the exported result's error_summary, which is
+        # what ConsoleErrorExporter renders into the CLI summary table.
+        export_ctx = accumulator.export_results.await_args.args[0]
+        assert export_ctx.error_summary
+        assert any(
+            "final" in entry.error_details.message.lower()
+            for entry in export_ctx.error_summary
+        )
 
     @pytest.mark.asyncio
     async def test_profile_complete_when_already_stopped(
@@ -1064,8 +1092,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile complete is idempotent when collectors already stopped."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
         )
@@ -1074,9 +1100,7 @@ class TestProfileCompleteAndCancel:
 
         # Should not raise exception
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
     @pytest.mark.asyncio
@@ -1085,8 +1109,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """The final result is the barrier for manager-owned raw artifacts."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         exporter = AsyncMock()
         accumulator = AsyncMock()
@@ -1097,12 +1119,17 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id,
-                start_ns=100,
-                end_ns=200,
-                warmup_start_ns=10,
-                warmup_end_ns=90,
+            Command(
+                cid="c-1",
+                cmd=CommandType.PROFILE_COMPLETE,
+                payload=orjson.dumps(
+                    {
+                        "start_ns": 100,
+                        "end_ns": 200,
+                        "warmup_start_ns": 10,
+                        "warmup_end_ns": 90,
+                    }
+                ),
             )
         )
 
@@ -1121,7 +1148,6 @@ class TestProfileCompleteAndCancel:
         cfg_with_endpoint: CLIConfig,
     ):
         """Test that profile cancel stops all collectors."""
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(
             run=make_run_from_cli(cfg_with_endpoint),
@@ -1132,9 +1158,7 @@ class TestProfileCompleteAndCancel:
         manager.publish = AsyncMock()
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         mock_collector.stop.assert_called_once()
@@ -1147,10 +1171,9 @@ class TestProfileCompleteAndCancel:
     ) -> None:
         """The cancel path must exclude warmup like the non-cancel path does.
 
-        ProfileCancelCommand carries no window, and a null window collapses to
+        PROFILE_CANCEL carries no window, and a null window collapses to
         ``start_ns=0`` in the accumulator, which excludes no sample at all.
         """
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1187,9 +1210,7 @@ class TestProfileCompleteAndCancel:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1203,8 +1224,7 @@ class TestProfileCompleteAndCancel:
         self,
         cfg_with_endpoint: CLIConfig,
     ) -> None:
-        """Cancelled before profiling began: the profiling window must be empty."""
-        from aiperf.common.messages import ProfileCancelCommand
+        """Cancelled before profiling began: the window must start after warmup."""
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1232,9 +1252,7 @@ class TestProfileCompleteAndCancel:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1252,7 +1270,6 @@ class TestProfileCompleteAndCancel:
         Ending at the cancel timestamp would fold the later warmup's traffic
         into the reported profiling deltas.
         """
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1289,9 +1306,7 @@ class TestProfileCompleteAndCancel:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1577,6 +1592,108 @@ class TestWarmupPhaseCompleteScrape:
         assert manager._active_phase.phase == CreditPhase.PROFILING
 
 
+class TestKubernetesDiscoveryIntegration:
+    """Manager discovery honors mode, timeout, merge, and dedup semantics."""
+
+    @pytest.mark.asyncio
+    async def test_forced_discovery_preserves_custom_path_and_deduplicates(
+        self, cfg_with_endpoint: CLIConfig
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager.run.cfg.server_metrics.discovery.mode = "kubernetes"
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new=AsyncMock(return_value=["http://discovered:9090/vllm/stats"]),
+            ) as discover,
+        ):
+            await manager._merge_discovered_endpoints()
+            await manager._merge_discovered_endpoints()
+
+        assert (
+            manager._server_metrics_endpoints.count("http://discovered:9090/vllm/stats")
+            == 1
+        )
+        assert "http://discovered:9090/vllm/stats/metrics" not in (
+            manager._server_metrics_endpoints
+        )
+        discover.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auto_discovery_skips_outside_cluster(
+        self, cfg_with_endpoint: CLIConfig
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=False,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+            ) as discover,
+        ):
+            assert await manager._run_metrics_discovery() == []
+        discover.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_discovery_timeout_degrades_to_explicit_endpoints(
+        self, cfg_with_endpoint: CLIConfig
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager.run.cfg.server_metrics.discovery.mode = "kubernetes"
+        manager.run.cfg.server_metrics.discovery.timeout_seconds = 0.001
+
+        async def never_returns(**_: object) -> list[str]:
+            await asyncio.Future()
+            return []
+
+        manager.warning = MagicMock()
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new=never_returns,
+            ),
+        ):
+            assert await manager._run_metrics_discovery() == []
+        assert "timed out" in manager.warning.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_phase_start_tracks_active_phase(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """CREDIT_PHASE_START updates the phase used to tag scrapes."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        assert manager._active_phase is None
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.PROFILING, start_ns=1_000_000_000
+                ),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.PROFILING
+
+
 class TestScrapeHangContainment:
     """Manager-initiated scrapes must never block the terminal result."""
 
@@ -1605,7 +1722,6 @@ class TestScrapeHangContainment:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """profiling -> warmup -> profiling -> cancel must not reuse the first end."""
-        from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         accumulator = AsyncMock()
@@ -1631,9 +1747,7 @@ class TestScrapeHangContainment:
         )
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         context = accumulator.export_results.await_args.args[0]
@@ -1648,8 +1762,6 @@ class TestScrapeHangContainment:
         cfg_with_endpoint: CLIConfig,
     ) -> None:
         """A headers-then-stall endpoint must not block the terminal result."""
-        from aiperf.common.messages import ProfileCompleteCommand
-
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
         manager._scrape_timeout = 0.05
         accumulator = AsyncMock()
@@ -1669,10 +1781,10 @@ class TestScrapeHangContainment:
 
         await asyncio.wait_for(
             manager._handle_profile_complete_command(
-                ProfileCompleteCommand(
-                    service_id=manager.id,
-                    command=CommandType.PROFILE_COMPLETE,
-                    end_ns=1,
+                Command(
+                    cid="c-1",
+                    cmd=CommandType.PROFILE_COMPLETE,
+                    payload=orjson.dumps({"end_ns": 1}),
                 )
             ),
             timeout=2.0,
@@ -1780,7 +1892,7 @@ class TestScrapeHangContainment:
         ):
             await asyncio.wait_for(
                 manager._profile_configure_command(
-                    ProfileConfigureCommand(service_id="system_controller")
+                    Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                 ),
                 timeout=2.0,
             )

@@ -512,8 +512,8 @@ Warmup flags do not rewrite an existing phase list because inserting or
 choosing a warmup phase is ambiguous in an advanced multi-phase workflow. Set
 warmup phases in YAML. Likewise, if more than one phase has `kind: profiling`,
 put phase-local values in YAML so the target is explicit. Command-operation
-flags such as `--config` itself are consumed by their commands rather than
-merged into `benchmark:`.
+flags such as `--config` itself and Kubernetes deployment/manage options are
+consumed by their commands rather than merged into `benchmark:`.
 
 ## Where to go next
 

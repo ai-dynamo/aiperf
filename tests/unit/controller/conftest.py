@@ -4,14 +4,15 @@
 Shared fixtures for testing AIPerf controller.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.control_structs import CommandErr
 from aiperf.common.enums import CommandType
-from aiperf.common.messages import CommandErrorResponse
 from aiperf.common.models import ErrorDetails
-from aiperf.controller.protocols import ServiceManagerProtocol
+from aiperf.controller.protocols import KubernetesServiceManagerProtocol
 from aiperf.controller.system_controller import SystemController
 
 
@@ -22,9 +23,11 @@ class MockTestException(Exception):
 @pytest.fixture
 def mock_service_manager() -> AsyncMock:
     """Mock service manager."""
-    mock_manager = AsyncMock(spec=ServiceManagerProtocol)
+    mock_manager = AsyncMock(spec=KubernetesServiceManagerProtocol)
     mock_manager.service_id_map = {"test_service_1": MagicMock()}
     mock_manager.service_map = {}
+    mock_manager.pod_failure_abort_event = asyncio.Event()
+    mock_manager.pod_failure_abort_reason = ""
     return mock_manager
 
 
@@ -36,6 +39,10 @@ def system_controller(
     """Create a SystemController instance with mocked dependencies."""
     mock_ui = AsyncMock()
     mock_comm = AsyncMock()
+    # The control ROUTER is created synchronously in SystemController.__init__ and
+    # later awaited on (initialize/start/stop). A bare AsyncMock attribute would
+    # hand back a coroutine object instead of a client.
+    mock_comm.create_streaming_router_client = MagicMock(return_value=AsyncMock())
 
     def mock_get_class(protocol, name):
         if protocol == "service_manager":
@@ -85,11 +92,11 @@ def error_details(mock_exception: MockTestException) -> ErrorDetails:
 
 
 @pytest.fixture
-def error_response(error_details: ErrorDetails) -> CommandErrorResponse:
-    """Mock the command responses."""
-    return CommandErrorResponse(
-        service_id="test_service_1",
-        command=CommandType.PROFILE_CONFIGURE,
-        command_id="test_command_id",
-        error=error_details,
+def error_response(error_details: ErrorDetails) -> CommandErr:
+    """A control-channel command failure response."""
+    return CommandErr(
+        cid="test_command_id",
+        cmd=CommandType.PROFILE_CONFIGURE,
+        sid="test_service_1",
+        error=error_details.message,
     )

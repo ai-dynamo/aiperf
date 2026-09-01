@@ -16,6 +16,8 @@ from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.endpoint_credentials import (
     apply_endpoint_credentials,
     consume_endpoint_credentials,
+    credential_values,
+    redact_credential_text,
 )
 
 # Endpoint credentials (api_key, sensitive headers, userinfo-bearing URLs) are
@@ -82,8 +84,18 @@ def main() -> None:
     from aiperf.cli_runner import _run_single_benchmark
     from aiperf.config import BenchmarkRun
 
+    # Every credential this process rehydrates is scrubbed from error output
+    # below: stderr of this subprocess is spliced verbatim into RunResult.error
+    # and the orchestrator's logs by LocalSubprocessExecutor, so an exception
+    # message or traceback frame that happens to echo the key (a connection
+    # error naming a userinfo URL, a config repr, an HTTP client that formats
+    # its auth header) would otherwise persist the secret. Redacting here --
+    # at the only point that holds the plaintext -- keeps it off every
+    # downstream path at once.
+    secrets: list[str] = []
     try:
         credentials = consume_endpoint_credentials()
+        secrets.extend(credential_values(credentials=credentials))
 
         with open(config_file, "rb") as f:
             data = orjson.loads(f.read())
@@ -96,23 +108,53 @@ def main() -> None:
         # "<redacted>" upstream and report an opaque 401 instead of the real
         # cause -- the injection env vars were never supplied.
         apply_endpoint_credentials(run, credentials, require_resolved=True)
+        secrets.extend(credential_values(endpoint=run.cfg.endpoint))
         _run_single_benchmark(run)
 
     except KeyError as e:
-        print(f"Error: Missing required config key: {e}", file=sys.stderr)
+        message = redact_credential_text(str(e), secrets)
+        print(f"Error: Missing required config key: {message}", file=sys.stderr)
         sys.exit(1)
     except orjson.JSONDecodeError as e:
-        print(f"Error: Invalid JSON in config file: {e}", file=sys.stderr)
+        message = redact_credential_text(str(e), secrets)
+        print(f"Error: Invalid JSON in config file: {message}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:  # subprocess entry point: final safety net so the parent orchestrator gets a nonzero exit + traceback rather than an opaque crash
-        print(f"Error: Failed to run benchmark: {e}", file=sys.stderr)
         import traceback
 
-        traceback.print_exc()
+        print(
+            f"Error: Failed to run benchmark: {redact_credential_text(str(e), secrets)}",
+            file=sys.stderr,
+        )
+        # format_exc() rather than print_exc(): the traceback must pass through
+        # the redactor before it reaches stderr, since locals repr'd in a frame
+        # summary can carry the same credential values.
+        print(
+            redact_credential_text(traceback.format_exc(), secrets),
+            file=sys.stderr,
+            end="",
+        )
         sys.exit(1)
 
 
-if __name__ == "__main__":
+def _script_entrypoint() -> None:
+    """Real ``python -m aiperf.orchestrator.subprocess_runner`` entrypoint.
+
+    Applies process-wide startup fixups that must happen before anything
+    else in this process: the Windows event-loop policy switch must run
+    before the first ``asyncio.run()`` this process makes (deep inside
+    ``main()`` -> ``_run_single_benchmark`` -> ``bootstrap_and_run_service``),
+    and pipe release must happen before ``main()`` does any real work.
+
+    Split out from the ``if __name__ == "__main__":`` guard so it's directly
+    unit-testable (module-level guards never execute under import/pytest).
+    """
+    from aiperf.common.event_loop import configure_event_loop_policy_for_platform
+
+    # Must run before any asyncio.run()/uvloop.run() call in this process --
+    # see aiperf.common.event_loop for the full rationale.
+    configure_event_loop_policy_for_platform()
+
     # Release inherited pipe handles only when actually run as a subprocess
     # (`python -m aiperf.orchestrator.subprocess_runner ...`). Calling
     # ``main()`` from unit tests must NOT redirect stderr — pytest's capsys
@@ -121,3 +163,7 @@ if __name__ == "__main__":
     # itself is also gated on IS_WINDOWS so this is belt-and-suspenders.
     _release_inherited_pipes_on_windows()
     main()
+
+
+if __name__ == "__main__":
+    _script_entrypoint()

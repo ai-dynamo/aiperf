@@ -177,9 +177,47 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
 # =============================================================================
 
 
+class TimePing(Struct, frozen=True, kw_only=True, tag_field="t", tag="tp"):
+    """Worker requests RTT measurement from router.
+
+    Sent during startup before the worker declares itself dispatchable. The router
+    echoes it back as a TimePong so the worker can measure round-trip time on the
+    credit channel itself, rather than on a separate socket with different queuing.
+
+    Attributes:
+        sequence: Probe sequence number.
+        sent_at_ns: Worker perf_counter timestamp when the ping was sent
+            (``time.perf_counter_ns``).
+    """
+
+    sequence: int
+    sent_at_ns: int
+
+
+class TimePong(Struct, frozen=True, kw_only=True, tag_field="t", tag="tpo"):
+    """Router echoes back a TimePing as TimePong.
+
+    Both fields are echoed verbatim so the worker can match the reply to its probe
+    and compute RTT entirely against its own clock -- no router clock is involved,
+    which is what makes the RTT measurement immune to cross-machine skew.
+
+    Attributes:
+        sequence: Probe sequence number (echoed from TimePing).
+        sent_at_ns: Original worker send timestamp (echoed from TimePing).
+    """
+
+    sequence: int
+    sent_at_ns: int
+
+
 # Union type for decoding worker -> router messages
 WorkerToRouterMessage: TypeAlias = (
-    WorkerConnected | WorkerDispatchable | WorkerShutdown | CreditReturn | FirstToken
+    WorkerConnected
+    | WorkerDispatchable
+    | WorkerShutdown
+    | CreditReturn
+    | FirstToken
+    | TimePing
 )
 
 # =============================================================================
@@ -201,4 +239,4 @@ class CancelCredits(Struct, frozen=True, kw_only=True, tag_field="t", tag="cc"):
 
 # Union type for decoding router -> worker messages
 # Credit is sent directly (no wrapper), CancelCredits for cancellation
-RouterToWorkerMessage: TypeAlias = Credit | CancelCredits
+RouterToWorkerMessage: TypeAlias = Credit | CancelCredits | TimePong

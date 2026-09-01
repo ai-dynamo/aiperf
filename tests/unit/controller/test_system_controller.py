@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from msgspec.structs import replace
 
+from aiperf.common.control_structs import CommandErr, CommandUnhandled
 from aiperf.common.enums import (
     CommandType,
     LifecycleState,
@@ -13,11 +16,10 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
-from aiperf.common.messages.command_messages import CommandErrorResponse
 from aiperf.common.messages.service_messages import BaseServiceErrorMessage
 from aiperf.common.models import ErrorDetails, ExitErrorInfo
 from aiperf.controller.system_controller import SystemController
-from aiperf.plugin.enums import AccuracyBenchmarkType
+from aiperf.plugin.enums import AccuracyBenchmarkType, ServiceType
 from tests.unit.controller.conftest import MockTestException
 
 
@@ -78,6 +80,44 @@ class TestSystemController:
         assert system_controller._profile_configure_all_services.called
 
     @pytest.mark.asyncio
+    async def test_dispatchable_pod_wait_uses_configured_grace_period(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from aiperf.controller import system_controller as system_controller_module
+
+        service_manager = MagicMock()
+        # service_map is intentionally left empty: KubernetesServiceManager never
+        # populates it, so the expected count must come from the k8s topology.
+        service_manager.service_map = {}
+        system_controller.service_manager = service_manager
+        system_controller._k8s_topology = MagicMock(num_worker_pods=2)
+        monkeypatch.setattr(system_controller, "_is_kubernetes", lambda: True)
+        monkeypatch.setattr(
+            system_controller, "_ready_worker_pod_count", MagicMock(return_value=1)
+        )
+        warning = MagicMock()
+        monkeypatch.setattr(system_controller, "warning", warning)
+        monkeypatch.setattr(Environment.DATASET, "CONFIGURATION_TIMEOUT", 100.0)
+        monkeypatch.setattr(
+            Environment.WORKER, "DISPATCHABLE_POD_GRACE_PERIOD_SECONDS", 11.0
+        )
+        monkeypatch.setattr(Environment.WORKER, "STATUS_SUMMARY_INTERVAL", 0.625)
+        sleep = AsyncMock()
+        monkeypatch.setattr(
+            system_controller_module,
+            "time",
+            MagicMock(perf_counter=MagicMock(side_effect=[100.0, 107.0, 111.0])),
+        )
+        monkeypatch.setattr(system_controller_module, "asyncio", MagicMock(sleep=sleep))
+
+        await system_controller._wait_for_dispatchable_worker_pods()
+
+        sleep.assert_awaited_once_with(0.625)
+        assert "after 11.0s" in warning.call_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_service_error_aborts_active_profiling(
         self, system_controller: SystemController
     ) -> None:
@@ -95,6 +135,24 @@ class TestSystemController:
 
         system_controller._cancel_profiling.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_start_realtime_telemetry_sends_command_to_records_managers(
+        self, system_controller: SystemController
+    ) -> None:
+        """start_realtime_telemetry is the public entry point callers (e.g. the
+        dashboard) use instead of reaching into the private control-command and
+        records-manager-id internals directly."""
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller._records_manager_ids = MagicMock(
+            return_value=["records_manager_1"]
+        )
+
+        await system_controller.start_realtime_telemetry()
+
+        system_controller._send_control_command_to_all.assert_awaited_once_with(
+            CommandType.START_REALTIME_TELEMETRY, ["records_manager_1"]
+        )
+
 
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""
@@ -104,16 +162,12 @@ class TestSystemControllerExitScenarios:
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
+        error_response: CommandErr,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_configure."""
-        error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_CONFIGURE}
-            )
-        ]
+        """Test that SystemController exits when receiving a CommandErr for profile_configure."""
+        error_responses = [replace(error_response, cmd=CommandType.PROFILE_CONFIGURE)]
         # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=error_responses
         )
 
@@ -126,9 +180,9 @@ class TestSystemControllerExitScenarios:
         # Verify that exit errors were recorded
         assert_exit_error(
             system_controller,
-            error_response.error,
+            ErrorDetails(type="CommandError", message=error_response.error),
             "Configure Profiling",
-            error_responses[0].service_id,
+            error_responses[0].sid,
         )
 
     @pytest.mark.asyncio
@@ -136,16 +190,12 @@ class TestSystemControllerExitScenarios:
         self,
         system_controller: SystemController,
         mock_exception: MockTestException,
-        error_response: CommandErrorResponse,
+        error_response: CommandErr,
     ):
-        """Test that SystemController exits when receiving a CommandErrorResponse for profile_start."""
-        error_responses = [
-            error_response.model_copy(
-                deep=True, update={"command": CommandType.PROFILE_START}
-            )
-        ]
+        """Test that SystemController exits when receiving a CommandErr for profile_start."""
+        error_responses = [replace(error_response, cmd=CommandType.PROFILE_START)]
         # Mock the command responses (using fail-fast method)
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=error_responses
         )
 
@@ -158,9 +208,9 @@ class TestSystemControllerExitScenarios:
         # Verify that exit errors were recorded
         assert_exit_error(
             system_controller,
-            error_response.error,
+            ErrorDetails(type="CommandError", message=error_response.error),
             "Start Profiling",
-            error_responses[0].service_id,
+            error_responses[0].sid,
         )
 
     @pytest.mark.asyncio
@@ -316,9 +366,7 @@ class TestSignalHandling:
     ):
         """First Ctrl+C sets _was_cancelled flag via _cancel_profiling."""
         # Mock the command response
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
         system_controller.stop = AsyncMock()  # Prevent actual stop
 
         assert system_controller._was_cancelled is False
@@ -332,18 +380,53 @@ class TestSignalHandling:
     async def test_cancel_profiling_sends_profile_cancel_command(
         self, system_controller: SystemController, mock_service_manager: AsyncMock
     ):
-        """_cancel_profiling sends ProfileCancelCommand to all services."""
-        system_controller.send_command_and_wait_for_all_responses = AsyncMock(
-            return_value=[]
-        )
+        """_cancel_profiling sends PROFILE_CANCEL to every service.
+
+        The RecordsManagers are awaited (their response carries the final
+        ProcessRecordsResult); every other service gets the same command
+        fire-and-forget, exactly as the pub/sub broadcast this replaced did.
+        """
+        system_controller._send_control_command_to_all = AsyncMock(return_value=[])
+        system_controller._broadcast_control_command = AsyncMock()
         system_controller.stop = AsyncMock()
 
         await system_controller._cancel_profiling()
 
-        # Verify ProfileCancelCommand was sent
-        system_controller.send_command_and_wait_for_all_responses.assert_called_once()
-        call_args = system_controller.send_command_and_wait_for_all_responses.call_args
-        assert call_args[0][0].command == CommandType.PROFILE_CANCEL
+        system_controller._send_control_command_to_all.assert_called_once()
+        assert (
+            system_controller._send_control_command_to_all.call_args[0][0]
+            == CommandType.PROFILE_CANCEL
+        )
+        system_controller._broadcast_control_command.assert_awaited_once()
+        assert (
+            system_controller._broadcast_control_command.await_args[0][0]
+            == CommandType.PROFILE_CANCEL
+        )
+
+    def test_consume_profile_cancel_responses_warns_on_unhandled(
+        self, system_controller: SystemController
+    ):
+        """A RecordsManager with no PROFILE_CANCEL hook must not report clean.
+
+        CommandUnhandled is ack-shaped: nothing else in the loop distinguishes
+        it from success. Swallowing it silently turns "this RecordsManager
+        never had a chance to flush its final summary" into a clean-looking
+        cancel with ``_profile_results`` left as None -- exactly the failure
+        mode the other PROFILE_CANCEL/PROFILE_COMPLETE relay and finalize call
+        sites already guard against.
+        """
+        with patch.object(system_controller, "warning") as mock_warning:
+            system_controller._consume_profile_cancel_responses(
+                [
+                    CommandUnhandled(
+                        cid="c-1", cmd=CommandType.PROFILE_CANCEL, sid="rm-1"
+                    )
+                ]
+            )
+
+        assert system_controller._profile_results is None
+        warnings = [str(call) for call in mock_warning.call_args_list]
+        assert any("rm-1" in w and "unhandled" in w for w in warnings), warnings
 
     def test_print_cancel_warning_uses_console(
         self, system_controller: SystemController
@@ -482,12 +565,46 @@ class TestStopHookHardening:
             assert mock_exit.call_args[0][0] == 1
 
     @pytest.mark.asyncio
-    async def test_stop_hook_exports_before_message_bus_shutdown(
+    async def test_stop_hook_propagates_reporting_cancellation(
         self,
         system_controller: SystemController,
         mock_service_manager: AsyncMock,
     ) -> None:
-        """ResultsExported must be publishable while the API subscriber is alive."""
+        """Cancellation must not be converted into a successful process exit."""
+        system_controller._exit_errors = []
+        system_controller.publish = AsyncMock()
+        system_controller.service_manager = mock_service_manager
+        system_controller.comms = AsyncMock()
+        system_controller.proxy_manager = AsyncMock()
+        system_controller.ui = AsyncMock()
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock(
+            side_effect=asyncio.CancelledError
+        )
+
+        with (
+            patch(
+                "aiperf.controller.system_controller.asyncio.sleep",
+                new=AsyncMock(),
+            ),
+            patch(
+                "aiperf.controller.system_controller.cleanup_global_log_queue",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+            patch("aiperf.controller.system_controller.os._exit") as mock_exit,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await system_controller._stop_system_controller()
+
+        mock_cleanup.assert_not_awaited()
+        mock_exit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stop_hook_stops_children_before_exporting(
+        self,
+        system_controller: SystemController,
+        mock_service_manager: AsyncMock,
+    ) -> None:
+        """Result export starts only after inference children have stopped."""
         order: list[str] = []
         system_controller._exit_errors = []
         system_controller._set_system_state = AsyncMock()
@@ -501,9 +618,10 @@ class TestStopHookHardening:
         system_controller._announce_benchmark_complete = AsyncMock(
             side_effect=lambda: order.append("benchmark_complete")
         )
-        system_controller.publish = AsyncMock(
-            side_effect=lambda _message: order.append("shutdown_broadcast")
+        system_controller._broadcast_control_command = AsyncMock(
+            side_effect=lambda *_a, **_kw: order.append("shutdown_broadcast")
         )
+        system_controller.publish = AsyncMock()
         mock_service_manager.shutdown_all_services.side_effect = lambda: order.append(
             "services_stopped"
         )
@@ -513,16 +631,17 @@ class TestStopHookHardening:
             patch(
                 "aiperf.controller.system_controller.asyncio.sleep",
                 new=AsyncMock(),
-            ),
+            ) as sleep,
             patch("aiperf.controller.system_controller.os._exit"),
         ):
             await system_controller._stop_system_controller()
 
+        sleep.assert_any_await(0.1)
         assert order == [
-            "export",
-            "benchmark_complete",
             "shutdown_broadcast",
             "services_stopped",
+            "export",
+            "benchmark_complete",
             "comms_stopped",
         ]
 
@@ -599,7 +718,7 @@ class TestSSLVerificationWarning:
         """Test that a warning is logged when SSL verification is disabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", False)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=[]
         )
 
@@ -617,7 +736,7 @@ class TestSSLVerificationWarning:
         """Test that no warning is logged when SSL verification is enabled."""
         monkeypatch.setattr(Environment.HTTP, "SSL_VERIFY", True)
 
-        system_controller.send_command_and_wait_until_first_error = AsyncMock(
+        system_controller._send_control_command_to_all_fail_fast = AsyncMock(
             return_value=[]
         )
 
@@ -637,7 +756,6 @@ class TestShutdownDeliveryGrace:
     ) -> None:
         """Populate service_map with an API ServiceRunInfo in the given lifecycle state."""
         from aiperf.common.models import ServiceRunInfo
-        from aiperf.plugin.enums import ServiceType
 
         info = ServiceRunInfo(
             service_type=ServiceType.API,
@@ -753,7 +871,6 @@ class TestShutdownDeliveryGrace:
     @staticmethod
     def _set_api_process_liveness(controller: SystemController, alive: bool) -> None:
         """Populate multi_process_info with an API process record reporting `alive`."""
-        from aiperf.plugin.enums import ServiceType
 
         proc = MagicMock()
         proc.is_alive.return_value = alive
@@ -770,7 +887,7 @@ class TestShutdownDeliveryGrace:
     ) -> None:
         """API process exited but service_map state stayed at RUNNING.
 
-        BaseComponentService._on_state_change suppresses StatusMessage publishes
+        BaseComponentService._on_state_change suppresses StatusUpdate sends
         once stop_requested is set, so the controller's view of the API service
         state is frozen at RUNNING even after the API process self-stopped,
         crashed, or transitioned to FAILED. Cross-check process.is_alive() so
@@ -820,6 +937,7 @@ class TestFailureShutdownTimeoutStaysFinite:
         timeout = system_controller.failure_shutdown_timeout
 
         assert timeout is not None, "an unbounded failure teardown is a zombie"
+        assert timeout == Environment.SERVICE.CONTROLLER_FAILURE_SHUTDOWN_TIMEOUT
         assert timeout > Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT, (
             "the override exists to widen the global bound, not to match it"
         )

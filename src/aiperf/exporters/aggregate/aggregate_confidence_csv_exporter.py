@@ -42,13 +42,8 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Write metrics section FIRST (for test compatibility)
         self._write_metrics_section(writer)
-
-        # Blank line separator (same as MetricsCsvExporter)
         writer.writerow([])
-
-        # Write metadata section
         self._write_metadata_section(writer)
 
         return buf.getvalue()
@@ -123,7 +118,7 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
             decimals: Number of decimal places
 
         Returns:
-            str: Formatted number or empty string if None
+            str: Formatted number, or empty string for None and NaN
         """
         if value is None:
             return ""

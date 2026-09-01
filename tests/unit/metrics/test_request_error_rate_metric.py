@@ -60,5 +60,19 @@ class TestRequestErrorRateMetric:
         results[ErrorRequestCountMetric.tag] = 5
         assert RequestErrorRateMetric().derive_value(results) == approx(100.0)
 
-    def test_error_rate_has_no_hard_required_counter(self):
+    def test_counter_dependencies_are_optional(self):
         assert RequestErrorRateMetric.required_metrics is None
+        assert RequestErrorRateMetric.optional_metrics == frozenset(
+            {
+                RequestCountMetric.tag,
+                ErrorRequestCountMetric.tag,
+            }
+        )
+
+    def test_registry_orders_optional_counters_before_error_rate(self):
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        order = MetricRegistry.create_dependency_order_for([RequestErrorRateMetric.tag])
+        error_rate_index = order.index(RequestErrorRateMetric.tag)
+        for tag in RequestErrorRateMetric.optional_metrics:
+            assert order.index(tag) < error_rate_index

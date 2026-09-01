@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from rich.console import Console
 
 from aiperf.common.enums import PrometheusMetricType
 from aiperf.common.exceptions import ConsoleExporterDisabled
@@ -21,6 +20,7 @@ from aiperf.exporters.sglang.speculative_decoding_console_exporter import (
     SGLangSpeculativeDecodingConsoleExporter,
 )
 from aiperf.plugin.enums import EndpointType
+from tests.harness import fixed_console
 from tests.unit.conftest import create_exporter_config
 
 
@@ -147,7 +147,7 @@ async def test_export_prints_sglang_speculative_decoding_table(
     )
 
     exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
-    await exporter.export(Console(width=115))
+    await exporter.export(fixed_console(115))
 
     output = capsys.readouterr().out
     assert "NVIDIA AIPerf | Server Metrics: Speculative Decoding" in output
@@ -236,7 +236,7 @@ async def test_export_renders_multiple_matching_series_without_averaging(
     )
 
     exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
-    await exporter.export(Console(width=115))
+    await exporter.export(fixed_console(115))
 
     output = capsys.readouterr().out
     assert "dp_rank=0" in output
@@ -264,7 +264,7 @@ async def test_export_distinguishes_matching_series_from_different_endpoints(
     )
 
     exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
-    await exporter.export(Console(width=115))
+    await exporter.export(fixed_console(115))
 
     output = capsys.readouterr().out
     assert "endpoint=host-a:8081" in output
@@ -317,7 +317,7 @@ async def test_export_escapes_server_metric_labels(
     )
 
     exporter = SGLangSpeculativeDecodingConsoleExporter(_config(server_metrics_results))
-    await exporter.export(Console(width=115))
+    await exporter.export(fixed_console(115))
 
     output = capsys.readouterr().out
     assert "engine_type=[red]unified[/red]" in output

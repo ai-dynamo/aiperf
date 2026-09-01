@@ -38,9 +38,9 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         # Create service ID map for component lookups
         self.service_id_map: dict[str, ServiceRunInfo] = {}
 
-        # Heartbeat watchdog state: two-strike verification + catch-up
-        # detection. A service is only failed after appearing stale on TWO
-        # consecutive ticks, and decisions are skipped entirely when the
+        # Heartbeat watchdog state: consecutive-strike verification + catch-up
+        # detection. A service is only failed after appearing stale for the
+        # configured number of ticks, and decisions are skipped entirely when the
         # watchdog itself was delayed -- see _monitor_heartbeats.
         self._suspected_stale: dict[str, int] = {}
         self._last_heartbeat_tick_ns: int | None = None
@@ -104,7 +104,7 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     def _judge_stale_service(self, info: ServiceRunInfo) -> None:
         """Decide what a single stale service means, and act on it.
 
-        Split out of ``_monitor_heartbeats`` so the tick-level protections
+        Split out of ``_monitor_heartbeats_tick`` so the tick-level protections
         (catch-up detection, strike bookkeeping) stay readable next to the
         per-service verdict.
         """
@@ -122,11 +122,13 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
             return
 
         strikes = self._suspected_stale.get(info.service_id, 0) + 1
-        if strikes < 2:
+        if strikes < Environment.SERVICE.HEARTBEAT_STALE_CONFIRMATION_TICKS:
             self._suspected_stale[info.service_id] = strikes
             self.debug(
                 lambda i=info: f"Service '{i.service_id}' ({i.service_type}) "
-                "appears stale; awaiting second-tick confirmation"
+                f"appears stale ({strikes}/"
+                f"{Environment.SERVICE.HEARTBEAT_STALE_CONFIRMATION_TICKS}); "
+                "awaiting confirmation"
             )
             return
 
@@ -180,18 +182,17 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         on staleness, so a genuinely dead service produces an indefinite hang
         rather than a fail-fast.
 
-        Two protections against false-positive batch expiry, both earned in
+        Three protections against false-positive batch expiry, all earned in
         production at 285 worker-group managers where a controller stall
         flagged 141 of them dead in the same millisecond:
 
         1. Catch-up detection -- if the gap between consecutive ticks exceeds
-           twice ``HEARTBEAT_INTERVAL``, the watchdog itself was delayed and
-           every service looks stale through no fault of its own. Skip the
-           tick; the next one sees fresh heartbeats.
-        2. Two-strike verification -- a service must appear stale on two
-           consecutive ticks before being failed. Worst-case detection for a
-           genuinely dead service is ``HEARTBEAT_INTERVAL * (threshold + 1)``,
-           20 s at the defaults.
+           ``HEARTBEAT_INTERVAL * HEARTBEAT_WATCHDOG_DELAY_FACTOR``, the watchdog
+           itself was delayed and every service looks stale through no fault of
+           its own. Skip the tick; the next one sees fresh heartbeats.
+        2. Consecutive-tick verification -- a service must appear stale on
+           ``HEARTBEAT_STALE_CONFIRMATION_TICKS`` consecutive ticks before being
+           failed. Worst-case detection at the defaults remains 20 seconds.
         3. Liveness ground truth -- ``get_service_liveness`` is consulted before
            reaping. Where the manager owns a real process handle (local
            multiprocessing) a demonstrably-alive service is never reaped, so a
@@ -228,7 +229,7 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
             self._last_heartbeat_tick_ns = None
             return
 
-        now_ns = time.time_ns()
+        now_ns = time.monotonic_ns()
         last_tick_ns = self._last_heartbeat_tick_ns
         self._last_heartbeat_tick_ns = now_ns
 
@@ -244,7 +245,10 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
 
         if last_tick_ns is not None:
             gap_sec = (now_ns - last_tick_ns) / 1_000_000_000
-            if gap_sec > interval_sec * 2:
+            if (
+                gap_sec
+                > interval_sec * Environment.SERVICE.HEARTBEAT_WATCHDOG_DELAY_FACTOR
+            ):
                 self.warning(
                     f"Heartbeat watchdog tick delayed {gap_sec:.1f}s "
                     f"(expected ~{interval_sec:.1f}s); skipping stale checks for "

@@ -294,7 +294,8 @@ class ServerMetricsRecord(AIPerfBaseModel):
         so they will be include in the final export, but not in the JSONL records.
 
         Returns:
-            ServerMetricsSlimRecord with only timestamp and slim samples (flat structure)
+            SlimRecord carrying the same timing and phase identity with flat
+            per-family sample lists instead of full MetricFamily objects
         """
         slim_metrics = {
             name: family.samples

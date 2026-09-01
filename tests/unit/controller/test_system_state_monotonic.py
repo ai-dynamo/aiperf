@@ -3,7 +3,7 @@
 """SystemState advances forward only.
 
 _set_system_state deduped the same state but had no ordering guard.
-_cancel_profiling sets STOPPING and then blocks on ProfileCancelCommand; during
+_cancel_profiling sets STOPPING and then blocks on PROFILE_CANCEL; during
 that window the cancelled PhaseOrchestrator's `finally:` unconditionally
 publishes CreditsCompleteMessage, which stamps PROCESSING. status.subPhase then
 went stopping -> processing -> shutdown, breaking every consumer that treats

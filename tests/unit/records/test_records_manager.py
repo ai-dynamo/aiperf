@@ -7,12 +7,14 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import orjson
 import pytest
 
 from aiperf.common.accumulator_protocols import ExportContext
-from aiperf.common.enums import CreditPhase
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.messages import BaseServiceErrorMessage, ProfileCancelCommand
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
     RecordsMessage,
@@ -1090,6 +1092,25 @@ def _metric_records_message(
 
 class TestRecordsManagerTimingDispatch:
     @pytest.mark.asyncio
+    async def test_all_records_received_publishes_terminal_progress_once(self) -> None:
+        """A duplicate completion signal must not republish terminal progress."""
+        manager = _create_manager_for_timing_dispatch()
+        progress = MagicMock()
+        overall = MagicMock()
+        manager._records_tracker.create_overall_worker_stats.return_value = overall
+        manager._records_tracker.create_progress_stats_for_phase.return_value = [
+            progress
+        ]
+
+        await manager._handle_all_records_received_once(CreditPhase.PROFILING)
+        await manager._handle_all_records_received_once(CreditPhase.PROFILING)
+
+        manager._publish_processing_stats.assert_awaited_once_with(progress, overall)
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
+    @pytest.mark.asyncio
     async def test_on_credit_phase_start_dispatches_timing_snapshot(self) -> None:
         manager = _create_manager_for_timing_dispatch()
         stats = _create_credit_phase_stats()
@@ -1423,6 +1444,7 @@ class TestRecordsManagerTimingDispatch:
         manager.service_id = "records-manager"
         manager.warning = MagicMock()
         manager.publish = AsyncMock()
+        manager.send_command_to_controller = AsyncMock()
         request_error = ErrorDetails(
             code=500,
             type="ServerError",
@@ -1435,8 +1457,14 @@ class TestRecordsManagerTimingDispatch:
             await manager._on_records(message)
 
         assert manager._failed_request_abort_triggered
-        manager.publish.assert_awaited_once()
-        assert isinstance(manager.publish.await_args.args[0], ProfileCancelCommand)
+        manager.send_command_to_controller.assert_awaited_once()
+        assert (
+            manager.send_command_to_controller.await_args.args[0]
+            == CommandType.PROFILE_CANCEL
+        )
+        assert orjson.loads(
+            manager.send_command_to_controller.await_args.kwargs["payload"]
+        ) == {"origin_service_id": "records-manager"}
         assert (
             manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
             == 10
@@ -1463,6 +1491,7 @@ class TestRecordsManagerTimingDispatch:
         manager.service_id = "records-manager"
         manager.warning = MagicMock()
         manager.publish = AsyncMock()
+        manager.send_command_to_controller = AsyncMock()
         request_error = ErrorDetails(
             code=500,
             type="ServerError",
@@ -1481,8 +1510,14 @@ class TestRecordsManagerTimingDispatch:
             await manager._on_records(message)
 
         assert manager._failed_request_abort_triggered
-        manager.publish.assert_awaited_once()
-        assert isinstance(manager.publish.await_args.args[0], ProfileCancelCommand)
+        manager.send_command_to_controller.assert_awaited_once()
+        assert (
+            manager.send_command_to_controller.await_args.args[0]
+            == CommandType.PROFILE_CANCEL
+        )
+        assert orjson.loads(
+            manager.send_command_to_controller.await_args.kwargs["payload"]
+        ) == {"origin_service_id": "records-manager"}
 
     @pytest.mark.asyncio
     async def test_failed_request_threshold_read_from_owning_phase(self) -> None:
@@ -1503,7 +1538,7 @@ class TestRecordsManagerTimingDispatch:
     async def test_trailing_named_warmup_defers_profiling_finalization(
         self,
     ) -> None:
-        """A ``profiling -> cooldown(warmup)`` run finalizes only after cooldown."""
+        """A ``profiling -> cooldown(warmup)`` run finalizes only after credits complete."""
         manager = _create_manager_for_timing_dispatch()
         manager._records_tracker = RecordsTracker()
         profiling_complete = CreditPhaseCompleteMessage(
@@ -1663,6 +1698,7 @@ class TestRecordsManagerAnalyzerMetrics:
 
         manager._process_results_lock = asyncio.Lock()
         manager._processed_results = {}
+        manager._finalize_record_processor_artifacts = AsyncMock()
         manager._await_telemetry_ingest_complete = AsyncMock(return_value=[])
 
         result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
@@ -1679,6 +1715,36 @@ class TestRecordsManagerAnalyzerMetrics:
             "output_tokens_per_joule",
         }
         stub_analyzer.analyze.assert_awaited_once()
+        manager._finalize_record_processor_artifacts.assert_awaited_once()
+
+
+class TestRecordsManagerArtifactFinalization:
+    @pytest.mark.asyncio
+    async def test_profile_cancel_waits_for_artifact_barrier(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.service_id = "records-manager-test"
+        manager.warning = MagicMock()
+        manager.debug = MagicMock()
+        manager.info = MagicMock()
+        manager._records_tracker = MagicMock()
+        manager.run = SimpleNamespace(
+            cfg=SimpleNamespace(runtime=SimpleNamespace(service_run_type="kubernetes"))
+        )
+        manager._process_results_lock = asyncio.Lock()
+        manager._processed_results = {}
+        manager._finalize_record_processor_artifacts = AsyncMock(
+            side_effect=RuntimeError("artifact barrier failed")
+        )
+
+        with pytest.raises(RuntimeError, match="artifact barrier failed"):
+            await manager._on_profile_cancel_command(
+                Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
+            )
+
+        manager._records_tracker.mark_phase_cancelled.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._finalize_record_processor_artifacts.assert_awaited_once()
 
 
 class TestMidRunCacheReportingHint:

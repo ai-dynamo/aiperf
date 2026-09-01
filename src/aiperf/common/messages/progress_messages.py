@@ -143,7 +143,9 @@ class ResultsExportedMessage(BaseServiceMessage):
     """Signals that all result artifacts have been written to disk.
 
     Published by the SystemController after ``ExporterManager.export_data()``
-    completes and every artifact is on disk.
+    completes and after ``write_ready_marker(...)`` is on disk; the marker is
+    written on every run, not only under Kubernetes, because the local
+    ``--api-port`` results router fails closed on it too.
     The operator gates ``JobProgress.is_complete`` on this signal: for
     sub-second benchmarks the existing ``is_requests_complete &&
     is_records_complete`` check flips True before the controller has finished

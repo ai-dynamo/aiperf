@@ -67,6 +67,7 @@ from aiperf.config.loader.jinja import (
 
 if TYPE_CHECKING:
     from aiperf.config.loader.core import (
+        assert_config_depth_and_cycles,
         dump_config,
         load_config,
         load_config_dict,
@@ -90,6 +91,7 @@ if TYPE_CHECKING:
 # own initialization would otherwise trigger a circular import via
 # ``loader.core`` -> ``aiperf.config.config`` -> ``aiperf.config.artifacts``.
 _LAZY_EXPORTS = {
+    "assert_config_depth_and_cycles": "aiperf.config.loader.core",
     "dump_config": "aiperf.config.loader.core",
     "load_config": "aiperf.config.loader.core",
     "load_config_dict": "aiperf.config.loader.core",
@@ -124,6 +126,7 @@ __all__ = [
     "ConfigurationError",
     "MissingEnvironmentVariableError",
     # Core loading functions
+    "assert_config_depth_and_cycles",
     "build_benchmark_plan",
     "load_benchmark_plan",
     "load_config",

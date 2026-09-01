@@ -31,6 +31,15 @@ Returning ``None`` is fire-and-forget streaming; returning a ``Struct`` makes th
 exchange request-reply -- the ROUTER sends it straight back to the originating
 DEALER. The message type is whatever ``decode_type`` selected, hence ``Any``."""
 
+PEER_GONE_ERRNOS = frozenset({zmq.EHOSTUNREACH, zmq.ENOTCONN})
+"""Errnos meaning "that DEALER is gone", not "this ROUTER is broken".
+
+Only a ``ROUTER_MANDATORY`` socket reports these; without it libzmq drops the
+message silently. Callers that fan out to peers which may legitimately have
+departed match on these values rather than on the exception message, because
+``ZMQError`` text is not stable across pyzmq and libzmq versions and a text match
+would fail open with no test noticing."""
+
 
 class ZMQStreamingRouterClient(BaseZMQClient):
     """
@@ -62,13 +71,13 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     Usage Pattern:
     - ROUTER sends messages to specific DEALER clients by identity
     - ROUTER receives messages from DEALER clients (identity included in envelope)
-    - No request-response pairing - pure streaming
+    - Streaming by default; `request_to()` opts into `cid`-correlated request-reply
     - Supports concurrent message processing
     - Automatic peer tracking via worker ready and shutdown messages
 
     Example:
     ```python
-        from aiperf.common.structs import (
+        from aiperf.credit.messages import (
             Credit, WorkerDispatchable, WorkerShutdown, CreditReturn
         )
 
@@ -84,8 +93,8 @@ class ZMQStreamingRouterClient(BaseZMQClient):
                     await register_worker(identity)
                 case WorkerShutdown():
                     await unregister_worker(identity)
-                case CreditReturn(credit_id=id, cancelled=c, error=e):
-                    await handle_credit_return(identity, id, c, e)
+                case CreditReturn(credit=credit, cancelled=c, error=e):
+                    await handle_credit_return(identity, credit, c, e)
 
         router.register_receiver(handle_message)
 
@@ -137,6 +146,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
             WorkerToRouterMessage if decode_type is None else decode_type
         )
         self._receiver_handler: WorkerToRouterHandler | None = None
+        self._pending_requests: dict[str, asyncio.Future[Any]] = {}
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.STREAMING_ROUTER_YIELD_INTERVAL
         self._fd_reader: FdEdgeReader | None = None
@@ -158,11 +168,16 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
     @on_stop
     async def _clear_receiver(self) -> None:
-        """Clear receiver handler and callbacks on stop."""
+        """Clear receiver handler, pending requests, and callbacks on stop."""
         if self._fd_reader is not None:
-            self._fd_reader.stop()
+            await self._fd_reader.stop()
             self._fd_reader = None
         self._receiver_handler = None
+        # Cancel rather than leave awaiters hanging on a socket that is going away.
+        for future in self._pending_requests.values():
+            if not future.done():
+                future.cancel()
+        self._pending_requests.clear()
 
     def _recv_one_router(self) -> tuple[str, WorkerToRouterMessage]:
         """Synchronous NOBLOCK multipart recv + decode for the FD-reader drain.
@@ -181,6 +196,15 @@ class ZMQStreamingRouterClient(BaseZMQClient):
 
     def _dispatch_router(self, item: tuple[str, Any]) -> None:
         identity, message = item
+        # Responses to an in-flight ``request_to`` are resolved here, before the
+        # handler sees them: a reply belongs to its awaiting caller, not to the
+        # general receiver. The dict check is inline and first because the hot
+        # credit-plane ROUTER never calls request_to() -- an empty dict makes
+        # _try_resolve_pending_request unable to return anything but False, so
+        # skipping the call is behaviour-identical and saves a Python frame per
+        # inbound message. Mirrors the same guard in _dispatch_dealer.
+        if self._pending_requests and self._try_resolve_pending_request(message):
+            return
         if self._receiver_handler is None:
             self.warning(f"Received {type(message).__name__} but no handler registered")
             return
@@ -249,7 +273,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         zmq.Socket.send(self.socket, payload, flags=zmq.NOBLOCK, copy=False)
 
     # A departed DEALER: the ROUTER stays valid for every other peer.
-    _PEER_GONE_ERRNOS = frozenset({zmq.EHOSTUNREACH, zmq.ENOTCONN})
+    _PEER_GONE_ERRNOS = PEER_GONE_ERRNOS
 
     async def _recover_from_send_failure(self, identity: str, error: Exception) -> None:
         """Log a send failure that a departed peer explains; nothing else is actionable.
@@ -258,8 +282,10 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         is raised only by the REQ/REP state machines and the security
         mechanisms (``req.cpp``, ``rep.cpp``, ``null_mechanism.cpp``,
         ``gssapi_server.cpp``) -- never by ROUTER -- and ``router_t::xsend``
-        returns -1 only when ROUTER_MANDATORY is set, which this codebase never
-        sets. A ROUTER send therefore cannot wedge the socket's state machine.
+        returns -1 only when ROUTER_MANDATORY is set, which only the
+        SystemController's control ROUTER does, and then only with
+        EHOSTUNREACH/EAGAIN. A ROUTER send therefore cannot wedge the socket's
+        state machine.
         """
         if self.stop_requested or not isinstance(error, zmq.ZMQError):
             return
@@ -309,13 +335,77 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         if self.is_trace_enabled:
             self.trace(f"Sent {type(struct).__name__} to {identity}: {struct}")
 
+    async def request_to(self, identity: str, struct: Struct, timeout: float) -> Any:
+        """Send a request to one DEALER and await the reply matched by ``cid``.
+
+        The peer must echo the request's ``cid`` on its response struct; that is
+        what pairs the two. Used by the worker-pod lifecycle channel, e.g.
+        ``request_to("worker_0", GroupPeerCommand(cid="a1b2", ...), timeout=60.0)``
+        returning the peer's ``GroupPeerCommandAck``.
+
+        Args:
+            identity: The DEALER client's identity (routing key).
+            struct: The request struct; must carry a non-empty ``cid``.
+            timeout: Maximum seconds to wait for the reply.
+
+        Returns:
+            The decoded response struct whose ``cid`` matched the request.
+
+        Raises:
+            ValueError: If ``struct`` has no ``cid`` to correlate on.
+            TimeoutError: If no matching reply arrives within ``timeout``.
+        """
+        cid = getattr(struct, "cid", None)
+        # ``not cid`` (not ``is None``) so this agrees with the resolution guard
+        # in _try_resolve_pending_request: an empty-string cid would otherwise
+        # register a future that side can never match, hanging until timeout.
+        if not cid:
+            raise ValueError(
+                f"request_to() requires a struct with a 'cid' to correlate the "
+                f"reply on; {type(struct).__name__} has none. Use send_to() for "
+                f"fire-and-forget sends."
+            )
+
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._pending_requests[cid] = future
+        try:
+            await self.send_to(identity, struct)
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._pending_requests.pop(cid, None)
+
+    def _try_resolve_pending_request(self, message: Any) -> bool:
+        """Resolve a pending ``request_to`` future when ``message.cid`` matches.
+
+        The ``cid`` is the SOLE correlation key -- the sending identity is
+        deliberately not checked. Each cid is a uuid4 minted per request and sent
+        to exactly one peer, so a cross-peer collision requires a uuid4
+        collision. Matching on identity as well would be strictly worse here: a
+        DEALER that reconnects between request and reply can present a different
+        routing key, and rejecting its reply converts a working exchange into a
+        guaranteed timeout. Callers that need peer-authenticated replies must
+        carry the peer identity inside the message and check it themselves.
+
+        Returns True when the message was consumed as a response, so the caller
+        skips normal handler dispatch.
+        """
+        cid = getattr(message, "cid", None)
+        if not cid or cid not in self._pending_requests:
+            return False
+        future = self._pending_requests.pop(cid)
+        if not future.done():
+            future.set_result(message)
+        return True
+
     @background_task(immediate=True, interval=None)
     async def _streaming_router_receiver(self) -> None:
         """
         Background task for receiving messages from DEALER clients.
 
-        Runs continuously until stop is requested. Decodes messages as
-        WorkerToRouterMessage (WorkerDispatchable | WorkerShutdown | CreditReturn) using msgpack.
+        Runs once: it starts the edge-triggered FD reader and returns. The reader
+        then drains and dispatches until stop is requested, decoding messages with
+        the configured `decode_type` (WorkerToRouterMessage by default, i.e.
+        WorkerDispatchable | WorkerShutdown | CreditReturn) using msgpack.
         """
         self.debug("Streaming ROUTER receiver task started")
 

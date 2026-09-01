@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aiperf.common.enums import (
     GPUTelemetryMode,
@@ -25,6 +25,7 @@ from aiperf.config.sweep import (
     _GridSweepBase,
 )
 from aiperf.config.sweep.multi_run import MultiRunConfig
+from aiperf.config.user_files import RunMeta
 from aiperf.plugin.enums import (
     CustomDatasetType,
     DatasetSamplingStrategy,
@@ -42,7 +43,7 @@ def _new_uuid() -> str:
     return str(uuid.uuid4())
 
 
-# Inlined from aiperf.kubernetes.sweep_models to keep aiperf.config free of
+# Inlined from aiperf.kubernetes.crd_models to keep aiperf.config free of
 # kubernetes imports. Identical surface; orchestrator/cluster code that needs
 # to share this type can re-import it from here.
 class FailurePolicy(BaseConfig):
@@ -455,10 +456,37 @@ class BenchmarkRun(BaseModel):
         "artifacts.user_files). Empty dict when no envelope-level variables "
         "were set.",
     )
+    plot: Any = Field(
+        default=None,
+        description="Resolved envelope-level plot configuration propagated to "
+        "the runtime process. Runtime type: "
+        "aiperf.config.plot.PlotEnvelopeConfig | None. Typed ``Any`` to avoid "
+        "the same plot-module import cycle as BenchmarkPlan.plot.",
+    )
+    run_meta: RunMeta | None = Field(
+        default=None,
+        description="Explicit run identity (epoch, job_name, namespace) for "
+        "artifacts.user_files rendering. Set by the Kubernetes launcher, whose "
+        "artifact_dir is a fixed mount path carrying no epoch or job name. None "
+        "on local paths, where ArtifactDirResolver derives it from the resolved "
+        "artifact dir instead.",
+    )
     resolved: ResolvedConfig = Field(
         default_factory=ResolvedConfig,
         description="Runtime-computed state populated after construction.",
     )
+
+    @field_validator("plot", mode="before")
+    @classmethod
+    def _validate_plot_envelope(cls, value: Any) -> Any:
+        """Restore the typed plot envelope after BenchmarkRun JSON transport."""
+        if value is None:
+            return None
+        from aiperf.config.plot import PlotEnvelopeConfig
+
+        if isinstance(value, PlotEnvelopeConfig):
+            return value
+        return PlotEnvelopeConfig.model_validate(value)
 
     @property
     def comm_config(self) -> BaseZMQCommunicationConfig:

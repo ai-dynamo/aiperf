@@ -621,12 +621,17 @@ def _load_corpus() -> tuple[str, ...] | None:
                     tokenizer=tokenizer,
                 )
 
-            # Decode through the public wrapper so both Hugging Face and the
-            # built-in tiktoken adapter produce the text fragments streamed by
-            # the mock server.
-            tokens = tuple(
-                tokenizer.decode([token_id]) for token_id in generator._tokenized_corpus
+            # Decode through the public wrapper's batched call so both Hugging
+            # Face and the built-in tiktoken adapter produce the text
+            # fragments streamed by the mock server, without paying decode()
+            # overhead once per token.
+            token_ids = generator._tokenized_corpus
+            unique_token_ids = list(dict.fromkeys(token_ids))
+            decoded_tokens = tokenizer.decode_batch(
+                [[token_id] for token_id in unique_token_ids]
             )
+            decoded_by_id = dict(zip(unique_token_ids, decoded_tokens, strict=True))
+            tokens = tuple(decoded_by_id[token_id] for token_id in token_ids)
         except TypeError:
             raise
         except Exception as e:

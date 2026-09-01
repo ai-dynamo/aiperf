@@ -7,8 +7,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import orjson
+
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_hooks import prepare_endpoint_control_hooks
+from aiperf.common.control_structs import Command
 from aiperf.common.endpoint_auth import auth_headers_for_endpoint
 from aiperf.common.enums import CommandType, MessageType
 from aiperf.common.environment import Environment
@@ -20,16 +23,13 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
-    CommandMessage,
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
     HeartbeatMessage,
-    ProfileCancelCommand,
-    ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter
-from aiperf.plugin.enums import ServiceType
+from aiperf.plugin.enums import ServiceRunType, ServiceType
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
@@ -67,6 +67,7 @@ class TimingManager(BaseComponentService):
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
             service_id=self.service_id,
+            profile_cancel_sender=self._request_profile_cancel,
         )
 
         self._dataset_configured_event = asyncio.Event()
@@ -133,7 +134,7 @@ class TimingManager(BaseComponentService):
         Without this, _profile_configure_command would block on
         _dataset_configured_event for the full DATASET.CONFIGURATION_TIMEOUT
         (300s default) even though the SystemController has already seen the
-        CommandErrorResponse from DatasetManager and is trying to abort.
+        CommandErr from DatasetManager and is trying to abort.
         """
         self.error(
             f"Received dataset configuration failed notification from "
@@ -143,9 +144,7 @@ class TimingManager(BaseComponentService):
         self._dataset_failed_event.set()
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Create and configure phase orchestrator."""
         self.info("Waiting for dataset to be configured before configuring timing")
         await self._wait_for_dataset_or_failure()
@@ -204,7 +203,7 @@ class TimingManager(BaseComponentService):
                     task.cancel()
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, _message: CommandMessage) -> None:
+    async def _on_start_profiling(self, _message: Command) -> None:
         """Start credit issuance.
 
         GC is already disabled for this process by the bootstrap path
@@ -317,10 +316,28 @@ class TimingManager(BaseComponentService):
                 )
             )
 
+    async def _request_profile_cancel(self) -> None:
+        """Ask the controller to relay PROFILE_CANCEL to the peer services.
+
+        The ROUTER is the only path between two non-controller services, so a
+        TimingManager-originated abort cannot reach the records / telemetry /
+        server-metrics managers directly. The controller's
+        ``_handle_profile_cancel_relay`` fans it out and excludes this service,
+        so callers still cancel their own orchestrator locally.
+
+        Best effort: every caller is already on a terminal abort path and must
+        continue to its own teardown even if the control channel is gone.
+        """
+        try:
+            await self.send_command_to_controller(
+                CommandType.PROFILE_CANCEL,
+                payload=orjson.dumps({"origin_service_id": self.service_id}),
+            )
+        except Exception as e:  # noqa: BLE001 - abort path must not be blocked by transport failure
+            self.warning(f"Failed to request PROFILE_CANCEL from controller: {e!r}")
+
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Cancel credit issuance gracefully.
 
         Stops new credits and cancels in-flight requests.
@@ -346,8 +363,27 @@ class TimingManager(BaseComponentService):
         matter how healthy the rest of the fleet is. A floor-fraction check
         would be meaningless here: even one such loss is unrecoverable, so it
         is always terminal regardless of how many workers remain alive.
+
+        This unconditional path is gated on ``ServiceRunType.KUBERNETES``
+        because pod loss there is confirmed by the apiserver, not merely
+        inferred from a stale heartbeat. In local (multiprocessing) mode, the
+        stale-heartbeat eviction sweep in ``StickyCreditRouter`` has no
+        equivalent ground truth: a worker whose event loop is starved under
+        high local concurrency (a documented failure mode - see
+        ``base_service_manager._judge_stale_service``, which consults real
+        ``Process.is_alive()`` before reaping) looks identical to a dead one.
+        Killing the whole run on that heuristic alone is a false-positive
+        risk, so local mode defers to the worker-count-changed callback,
+        which already fires from the same unregister path and applies the
+        ``MIN_ALIVE_FRACTION`` floor with its ``STALE_TIME`` grace period.
         """
         if not self._profiling_active or self._worker_floor_abort_started:
+            return
+        if self.run.cfg.runtime.service_run_type != ServiceRunType.KUBERNETES:
+            self.warning(
+                f"Worker lost outside Kubernetes ({reason}); deferring to the "
+                f"worker-floor grace period instead of an immediate abort"
+            )
             return
         self._worker_floor_abort_started = True
         self._cancel_worker_floor_abort_task()
@@ -359,7 +395,7 @@ class TimingManager(BaseComponentService):
         """Publish terminal failure and stop work after worker loss."""
         message = f"Fatal worker loss: {reason}"
         self.error(message)
-        await self.phase_publisher.publish_profile_cancel()
+        await self.phase_publisher.request_profile_cancel()
         if self._phase_orchestrator is not None:
             await self._phase_orchestrator.cancel()
         await self._publish_phase_failure_and_wait(RuntimeError(message))
@@ -409,7 +445,7 @@ class TimingManager(BaseComponentService):
         self._worker_floor_abort_started = True
         message = f"Fatal worker availability threshold breached: {reason}"
         self.error(message)
-        await self.phase_publisher.publish_profile_cancel()
+        await self.phase_publisher.request_profile_cancel()
         if self._phase_orchestrator is not None:
             await self._phase_orchestrator.cancel()
         await self._publish_phase_failure_and_wait(RuntimeError(message))

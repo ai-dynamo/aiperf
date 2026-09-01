@@ -47,10 +47,10 @@ class ProcessServerMetricsResultMessage(BaseServiceMessage):
 class RealtimeServerMetricsMessage(BaseServiceMessage):
     """Real-time per-endpoint server metrics fan-out.
 
-    Published by the ServerMetricsManager on every scrape cycle so the
-    ``/api/server-metrics`` router can serve a live view without waiting for
-    end-of-run aggregation. Carries only summaries, not raw samples, to keep
-    the per-cycle message size bounded.
+    Published by the ServerMetricsManager while profiling is under way, rate
+    limited to at most one message per second, so the ``/api/server-metrics``
+    router can serve a live view without waiting for end-of-run aggregation.
+    Carries only summaries, not raw samples, to keep the message size bounded.
     """
 
     message_type: MessageTypeT = MessageType.REALTIME_SERVER_METRICS

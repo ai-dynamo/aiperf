@@ -46,6 +46,50 @@ def test_unresolvable_command_group_fails_generation(monkeypatch) -> None:
     )
 
 
+def test_allowlisted_command_group_warns_instead_of_aborting(monkeypatch) -> None:
+    """A declared-unresolvable group must not break every unrelated commit.
+
+    The generator runs from pre-commit on any `.py` change, so a blanket raise
+    makes one broken command group block every contributor until it is fixed.
+    An entry in the allowlist is a reviewed, visible admission that the group
+    is missing from the page -- the omission is warned about rather than
+    silently accepted, and every group NOT listed still hard-fails.
+    """
+
+    def _boom(cmd: Any) -> None:
+        raise ValueError("Cannot apply configuration to imported App")
+
+    monkeypatch.setattr(generate_cli_docs, "_resolve_lazy_commands", _boom)
+    monkeypatch.setattr(
+        generate_cli_docs, "KNOWN_UNRESOLVABLE_COMMANDS", frozenset({"broken-group"})
+    )
+
+    warnings: list[str] = []
+    monkeypatch.setattr(generate_cli_docs, "print_warning", warnings.append)
+
+    assert extract_commands(_FakeApp()) == []
+    assert any("broken-group" in w for w in warnings), (
+        f"the skipped group must be announced, got {warnings}"
+    )
+
+
+def test_allowlist_only_covers_its_own_entries(monkeypatch) -> None:
+    """A non-empty allowlist must not turn every resolve failure into a warning."""
+
+    def _boom(cmd: Any) -> None:
+        raise ValueError("Cannot apply configuration to imported App")
+
+    monkeypatch.setattr(generate_cli_docs, "_resolve_lazy_commands", _boom)
+    monkeypatch.setattr(
+        generate_cli_docs,
+        "KNOWN_UNRESOLVABLE_COMMANDS",
+        frozenset({"some-other-group"}),
+    )
+
+    with pytest.raises(RuntimeError, match="broken-group"):
+        extract_commands(_FakeApp())
+
+
 def test_real_cli_resolves_every_command_group() -> None:
     """The shipped CLI must actually resolve, not merely tolerate failure."""
     from aiperf.cli import app

@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+
 # This is a command-line tool Makefile for the AIPerf project.
 #
 # It is being used to support common development workflow commands without
@@ -13,20 +14,30 @@
 # to read the source code and documentation for more information on how to use
 # the project.
 
+
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
-		test coverage clean install install-app docker docker-run first-time-setup \
+		test coverage clean install install-app precompile docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
 		test-verbose setup-venv install-mock-server install-mock-amdsmi test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
 		test-integration test-integration-ci test-integration-verbose test-integration-ci-macos \
+		kubernetes-tests-ci test-kubernetes-ci \
+		kubernetes-audit-tests-ci test-kubernetes-audit-ci \
+		kubernetes-chaos-tests-ci test-kubernetes-chaos-ci \
+		kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
+		ui-e2e-tests test-ui-e2e \
 		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
+		generate-crd check-crd check-chart-consistency crd-release \
+		helm-lint helm-template helm-package \
 		check-ergonomics regenerate-ergonomics-baseline \
 		check-ruff-baselined regenerate-ruff-baseline \
-		check-agent-files-sync
+		check-agent-files-sync \
+		check-vendor-ui-deps update-vendor-ui-deps
+
 
 # Include user-defined environment variables
 -include .env.mk
@@ -72,6 +83,7 @@ dim := $(shell tput dim)
 
 .DEFAULT_GOAL := help
 
+
 help: #? show this help
 	@$(MAKE) internal-help --no-print-directory
 
@@ -112,13 +124,13 @@ check-format check-fmt: #? check the formatting of the project using ruff.
 	$(activate_venv) && ruff format . --check $(args)
 
 test: #? run the tests using pytest-xdist.
-	$(activate_venv) && pytest tests/unit -n auto --dist=worksteal -m 'not integration and not performance and not component_integration and not slow' $(args)
+	$(activate_venv) && pytest tests/unit tests/ui -n auto --dist=worksteal -m 'not integration and not performance and not component_integration and not slow' $(args)
 
 test-zmq: #? run the real-socket zmq transport tests (real libzmq, no looptime).
 	$(activate_venv) && pytest tests/zmq --no-looptime $(args)
 
 test-verbose: #? run the tests using pytest-xdist with DEBUG logging.
-	$(activate_venv) && pytest tests/unit -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance and not component_integration and not slow'
+	$(activate_venv) && pytest tests/unit tests/ui -n auto -v -s --log-cli-level=DEBUG -m 'not integration and not performance and not component_integration and not slow'
 
 test-imports: #? verify all modules (src and tests) can be imported.
 	$(activate_venv) && pytest tests/unit/test_imports.py -q $(args)
@@ -145,12 +157,15 @@ check-agent-files-sync: #? verify AGENTS.md, CLAUDE.md, .github/copilot-instruct
 	$(activate_venv) && python tools/check_agent_files_sync.py
 
 coverage: #? run the tests and generate an html coverage report.
-	$(activate_venv) && pytest tests/unit -n auto --dist=worksteal --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
+	$(activate_venv) && pytest tests/unit tests/ui -n auto --dist=worksteal --cov=src/aiperf --cov-branch --cov-report=html --cov-report=xml --cov-report=term -m 'not integration and not performance and not component_integration and not slow' $(args)
 
-install: install-app install-mock-server install-mock-amdsmi #? install the project, mock server, and fake amdsmi bindings in editable mode.
+install: install-app install-mock-server install-mock-amdsmi precompile #? install the project, mock server, and fake amdsmi bindings in editable mode.
 
 install-app: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]"
+
+precompile: #? precompile source bytecode so parallel test subprocesses never race to write __pycache__ on first import.
+	$(activate_venv) && python -m compileall -q -x '/(\.venv|\.ruff_cache|.*\.egg-info)/' src/aiperf tests/aiperf_mock_server tests/aiperf_mock_amdsmi
 
 docker: #? build the docker image.
 	docker build -t $(DOCKER_IMAGE_NAME):$(DOCKER_IMAGE_TAG) $(args) .
@@ -256,7 +271,7 @@ test-ci: #? run the tests using pytest-xdist for CI.
 	@printf "$(bold)$(blue)Running unit and component integration tests (CI mode)...$(reset)\n"
 	@# Run unit tests first, optionally with coverage
 	@printf "$(bold)$(blue)Running unit tests...$(reset)\n"
-	@$(activate_venv) && pytest tests/unit -n auto --dist=worksteal \
+	@$(activate_venv) && pytest tests/unit tests/ui -n auto --dist=worksteal \
 	  $$([ "$(COV)" = "1" ] && echo "--cov=src/aiperf --cov-branch --cov-report=" || true) \
 	  -m 'not performance and not stress and not slow' --tb=short $(args) || exit_code=$$?; \
 	# Run real-socket zmq transport tests (real time + real sockets, no looptime) regardless of unit result \
@@ -311,6 +326,32 @@ integration-tests-slow test-integration-slow: #? run only the slow-marked integr
 	@printf "$(bold)$(blue)Running slow integration tests with AIPerf Mock Server...$(reset)\n"
 	$(activate_venv) && pytest tests/integration/ -m 'integration and slow and not performance and not ffmpeg and not stress' -n auto -v --tb=long --no-looptime $(args)
 	@printf "$(bold)$(green)AIPerf Mock Server slow integration tests passed!$(reset)\n"
+
+ui-e2e-tests test-ui-e2e: #? run browser-based UI e2e tests (requires playwright chromium; opt-in, deselected by default).
+	@printf "$(bold)$(blue)Running UI browser e2e tests...$(reset)\n"
+	$(activate_venv) && pytest tests/ui_e2e/ -m ui_e2e -n 0 -v --tb=long $(args)
+	@printf "$(bold)$(green)UI browser e2e tests passed!$(reset)\n"
+
+kubernetes-tests-ci test-kubernetes-ci: #? run the serial Kubernetes PR gate on an isolated Kind cluster.
+	$(activate_venv) && pytest tests/kubernetes/ \
+		--ignore=tests/kubernetes/gpu \
+		--ignore=tests/kubernetes/audit \
+		--ignore=tests/kubernetes/chaos \
+		--ignore=tests/kubernetes/chaos_aiperf \
+		-m 'k8s and not gpu and not k8s_slow and not k8s_audit and not slow' \
+		-n 0 -v --tb=long $(args)
+
+kubernetes-audit-tests-ci test-kubernetes-audit-ci: #? run the serial Kubernetes operator-vs-bare-pod audit suite.
+	$(activate_venv) && pytest tests/kubernetes/audit/ \
+		-m 'k8s and k8s_audit' -n 0 -v --tb=long $(args)
+
+kubernetes-chaos-tests-ci test-kubernetes-chaos-ci: #? run the legacy Kubernetes fault-injection scenarios serially.
+	$(activate_venv) && pytest tests/kubernetes/chaos/ \
+		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
+
+kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci: #? run the unified-API Kubernetes fault-injection scenarios serially.
+	$(activate_venv) && pytest tests/kubernetes/chaos_aiperf/ \
+		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
 
 component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.
 	@printf "$(bold)$(blue)Running Fake Component Integration tests...$(reset)\n"
@@ -377,6 +418,42 @@ validate-plugin-schemas: #? validate categories.yaml and plugins.yaml against th
 
 generate-all-plugin-files: #? generate all plugin files (enums, overloads, schemas).
 	$(activate_venv) && ./tools/generate_plugin_artifacts.py
+
+generate-crd: #? generate Kubernetes CRD YAML from the AIPerfJob/AIPerfSweep spec models.
+	uv run python -m tools.generate_crd $(args)
+
+check-crd: #? check if the generated CRD YAML is up-to-date.
+	uv run python -m tools.generate_crd --check $(args)
+
+check-chart-consistency: #? assert operator code-side defaults match the Helm chart's values.yaml.
+	uv run python tools/check_chart_consistency.py
+
+check-vendor-ui-deps: #? verify vendored dashboard JS/CSS assets match tools/vendor_ui_deps.py's MANIFEST.
+	uv run python tools/vendor_ui_deps.py --check
+
+update-vendor-ui-deps: #? re-fetch and re-pin every vendored dashboard JS/CSS asset.
+	uv run python tools/vendor_ui_deps.py --update
+
+HELM_DIST_DIR ?= dist
+
+crd-release: #? render standalone AIPerfJob and AIPerfSweep CRDs into HELM_DIST_DIR.
+	mkdir -p "$(HELM_DIST_DIR)"
+	helm template aiperf-operator deploy/helm/aiperf-operator \
+		--show-only templates/crd-aiperfjob.yaml \
+		> "$(HELM_DIST_DIR)/aiperfjob-crd.yaml"
+	helm template aiperf-operator deploy/helm/aiperf-operator \
+		--show-only templates/crd-aiperfsweep.yaml \
+		> "$(HELM_DIST_DIR)/aiperfsweep-crd.yaml"
+
+helm-lint: #? lint the aiperf-operator Helm chart.
+	helm lint deploy/helm/aiperf-operator
+
+helm-template: #? smoke-check Helm chart rendering (no cluster required).
+	helm template test deploy/helm/aiperf-operator > /dev/null
+
+helm-package: #? package the aiperf-operator Helm chart into HELM_DIST_DIR.
+	mkdir -p "$(HELM_DIST_DIR)"
+	helm package deploy/helm/aiperf-operator --destination "$(HELM_DIST_DIR)"
 
 generate-all-docs: #? generate all documentation files.
 	$(activate_venv) && ./tools/generate_cli_docs.py
