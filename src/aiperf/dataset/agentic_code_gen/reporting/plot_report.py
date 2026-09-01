@@ -12,7 +12,10 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 from aiperf.dataset.agentic_code_gen.reporting.templates import render_template
-from aiperf.dataset.agentic_code_gen.reporting.trace import ParsedTurn
+from aiperf.dataset.agentic_code_gen.reporting.trace import (
+    ParsedTurn,
+    reconstruct_cumulative_context,
+)
 from aiperf.plot.constants import NVIDIA_GREEN
 
 _HISTOGRAM_PLOTS: list[tuple[str, str]] = [
@@ -118,19 +121,10 @@ def _context_growth_figure(
     )
     for sid in sample_ids:
         turns = sessions[sid]
-        # turns[i].input_length is the Mooncake-incremental value (new tokens
-        # only) for turn 1+; reconstruct the cumulative context so the line
-        # actually shows growth instead of dropping at each turn boundary.
-        cumulative_context = 0.0
-        y_vals = []
-        for t in turns:
-            cumulative_context += t.input_length
-            y_vals.append(cumulative_context)
-            cumulative_context += t.output_length
         fig.add_trace(
             go.Scatter(
                 x=list(range(len(turns))),
-                y=y_vals,
+                y=reconstruct_cumulative_context(turns),
                 mode="lines",
                 name=sid[:8],
             )

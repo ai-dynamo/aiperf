@@ -22,7 +22,10 @@ from aiperf.dataset.agentic_code_gen.models import (
     SynthesizedSession,
     percentile_stats,
 )
-from aiperf.dataset.agentic_code_gen.reporting.trace import ParsedTurn
+from aiperf.dataset.agentic_code_gen.reporting.trace import (
+    ParsedTurn,
+    reconstruct_cumulative_context,
+)
 
 
 def _pct_error(target: float, observed: float) -> float:
@@ -105,12 +108,10 @@ def extract_metrics(
     for turns in sessions.values():
         turns_per_session.append(float(len(turns)))
         session_lat = 0.0
-        # ParsedTurn.input_length is the Mooncake-incremental value (new tokens
-        # only) for turn 1+. Reconstruct the cumulative context length the
-        # server actually sees, mirroring trace.load_simulation_sessions.
-        cumulative_context = 0.0
-        for i, turn in enumerate(turns):
-            cumulative_context += turn.input_length
+        cumulative_contexts = reconstruct_cumulative_context(turns)
+        for i, (turn, cumulative_context) in enumerate(
+            zip(turns, cumulative_contexts, strict=True)
+        ):
             total_isl.append(cumulative_context)
             total_osl.append(float(turn.output_length))
             generation_length.append(float(turn.output_length))
@@ -127,8 +128,6 @@ def extract_metrics(
             else:
                 new_tokens_per_turn.append(float(turn.input_length))
                 inter_turn_delay.append(turn.delay_ms / 1000.0)
-
-            cumulative_context += turn.output_length
 
         session_duration_min.append(session_lat / 1000.0 / 60.0)
 
