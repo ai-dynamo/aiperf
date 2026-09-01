@@ -96,12 +96,13 @@ class ArtifactsConfig(BaseConfig):
             description="Base filename override applied to ALL profile and server-metrics "
             "exports. With prefix='foo' every output becomes `foo.csv`, `foo.json`, "
             "`foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, "
-            "`foo_gpu_telemetry.jsonl`, `foo_server_metrics.{jsonl,json,csv,parquet}`. "
+            "`foo_outputs.json`, `foo_gpu_telemetry.jsonl`, "
+            "`foo_server_metrics.{jsonl,json,csv,parquet}`. "
             "When unset (the default), historical per-file names are used: "
             "`profile_export_aiperf.csv/json`, `profile_export.jsonl`, "
-            "`profile_export_raw.jsonl`, `gpu_telemetry_export.jsonl`, "
+            "`profile_export_raw.jsonl`, `outputs.json`, `gpu_telemetry_export.jsonl`, "
             "`server_metrics_export.{jsonl,json,csv,parquet}`. Known suffixes "
-            "(`_raw.jsonl`, `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, "
+            "(`_raw.jsonl`, `_outputs.json`, `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, "
             "`_server_metrics.{jsonl,json,csv,parquet}`, `.csv`/`.json`/`.jsonl`/`.parquet`) "
             "are stripped from the supplied value so `--profile-export-prefix foo_raw.jsonl` "
             "still yields a clean `foo` base.",
@@ -204,7 +205,8 @@ class ArtifactsConfig(BaseConfig):
         bool,
         Field(
             default=False,
-            description="Export generated response text to outputs.json after the run.",
+            description="Export generated response text to outputs.json after the run. "
+            "Implied by `raw` export level unless explicitly set False.",
         ),
     ]
 
@@ -221,20 +223,19 @@ class ArtifactsConfig(BaseConfig):
             )
         if self.slice_duration is not None and self.slice_duration <= 0:
             raise ValueError("slice_duration must be > 0")
-        if self.export_outputs_json and self.prefix is not None:
-            self._check_outputs_json_collision()
+        self._apply_raw_implies_outputs_json()
         return self
 
-    def _check_outputs_json_collision(self) -> None:
-        """Reject prefix values that collide with the outputs.json path."""
-        if self.profile_export_json_file.resolve() == self.outputs_json_file.resolve():
-            base = self._base()
-            raise ValueError(
-                f"--profile-export-prefix resolves to '{base}' which produces "
-                f"'{base}.json', colliding with --export-outputs-json "
-                f"(also '{OutputDefaults.OUTPUTS_JSON_FILE.name}'). "
-                f"Use a different prefix."
-            )
+    def _apply_raw_implies_outputs_json(self) -> None:
+        """Raw export implies outputs.json unless the user explicitly declined.
+
+        If you asked for the full request/response bodies, you want the generated
+        text too. An explicit ``--no-export-outputs-json`` (or ``exportOutputsJson:
+        false`` in YAML) wins, so raw-level debugging can skip the second copy.
+        """
+        if not self.raw or "export_outputs_json" in self.model_fields_set:
+            return
+        self.export_outputs_json = True
 
     # ==========================================================================
     # COMPUTED FILE PATH PROPERTIES
@@ -254,6 +255,7 @@ class ArtifactsConfig(BaseConfig):
         "_timeslices.csv",
         "_timeslices.json",
         "_console.txt",
+        "_outputs.json",
         "_raw.jsonl",
         ".parquet",
         ".csv",
@@ -320,7 +322,9 @@ class ArtifactsConfig(BaseConfig):
     @property
     def outputs_json_file(self) -> Path:
         """Path for the aggregated generated outputs JSON export file."""
-        return self.dir / OutputDefaults.OUTPUTS_JSON_FILE
+        base = self._base()
+        name = f"{base}_outputs.json" if base else "outputs.json"
+        return self.dir / name
 
     @property
     def profile_export_raw_jsonl_file(self) -> Path:

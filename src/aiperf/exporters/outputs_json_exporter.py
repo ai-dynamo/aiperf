@@ -8,6 +8,7 @@ from typing import Any
 import aiofiles
 import orjson
 
+from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -26,6 +27,10 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
 
     Self-disables unless --export-outputs-json is set.
     """
+
+    # 1.1 added the top-level `warmup` array and the per-entry `benchmark_phase`
+    # field. Both are additive: `data` is still profiling-only.
+    SCHEMA_VERSION = "1.1"
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -61,24 +66,40 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         fragments = await self._read_fragments(fragment_files)
 
         records: list[JsonObject] = []
+        warmup: list[JsonObject] = []
         for frag in fragments:
+            phase = frag.get("benchmark_phase")
             entry = {
                 "session_num": frag["session_num"],
                 "conversation_id": frag.get("conversation_id"),
                 "turn_index": frag.get("turn_index"),
                 "x_request_id": frag.get("x_request_id"),
+                "benchmark_phase": phase,
                 "request_start_ns": frag.get("request_start_ns"),
                 "request_end_ns": frag.get("request_end_ns"),
                 "metrics": frag.get("metrics") or {},
                 "response_text": frag.get("response_text"),
             }
-            records.append(entry)
+            # `data` stays profiling-only so consumers that sum over it do not
+            # silently start counting warmup responses. Test explicitly for
+            # WARMUP rather than for PROFILING: only a known-warmup record may
+            # leave `data`, so a missing or newly-added phase surfaces there
+            # instead of silently vanishing from everyone's denominators.
+            if phase == CreditPhase.WARMUP:
+                warmup.append(entry)
+            else:
+                records.append(entry)
 
-        records.sort(key=lambda r: (r["session_num"], r.get("turn_index") or 0))
+        def _order(record: JsonObject) -> tuple[int, int]:
+            return (record["session_num"], record.get("turn_index") or 0)
+
+        records.sort(key=_order)
+        warmup.sort(key=_order)
 
         output = {
-            "schema_version": "1.0",
+            "schema_version": self.SCHEMA_VERSION,
             "data": records,
+            "warmup": warmup,
         }
 
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,7 +107,10 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         async with aiofiles.open(self._file_path, "wb") as f:
             await f.write(content)
 
-        self.info(f"Exported {len(records)} records to {self._file_path}")
+        self.info(
+            f"Exported {len(records)} records ({len(warmup)} warmup) "
+            f"to {self._file_path}"
+        )
 
         self._cleanup_fragments(fragment_files)
 
