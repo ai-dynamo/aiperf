@@ -46,7 +46,7 @@ from aiperf.post_processors.protocols import (
     RecordProcessorProtocol,
 )
 from aiperf.post_processors.record_observer_context import RecordObserverContext
-from aiperf.records.dataset_gate import await_dataset_configured
+from aiperf.records.dataset_gate import DatasetConfigCatchUp, await_dataset_configured
 from aiperf.records.inference_result_parser import InferenceResultParser
 
 if TYPE_CHECKING:
@@ -106,6 +106,14 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # this event so processors are configured (e.g. accuracy ground truths) before
         # any record is graded.
         self._dataset_configured_event: asyncio.Event = asyncio.Event()
+        self._dataset_config_catch_up = DatasetConfigCatchUp(
+            request_client=self.comms.create_request_client(
+                address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
+                bind=False,
+            ),
+            on_configured=self._on_dataset_configured,
+            service_id=self.service_id,
+        )
 
         # Stage 1 - PRODUCERS: parse a record and emit one typed result on the
         # record_type channel declared in plugins.yaml metadata. Grouped by that
@@ -322,7 +330,11 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         the one exception: its False path has already killed the service and
         aborted the run, so no barrier is left waiting.
         """
-        if not await await_dataset_configured(self, self._dataset_configured_event):
+        if not await await_dataset_configured(
+            self,
+            self._dataset_configured_event,
+            getattr(self, "_dataset_config_catch_up", None),
+        ):
             return
         record = message.record
 

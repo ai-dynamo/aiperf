@@ -103,6 +103,37 @@ class DatasetConfiguredNotification(BaseServiceMessage):
         return v
 
 
+class DatasetConfigStatusRequest(BaseServiceMessage):
+    """Late-join catch-up request: ask DatasetManager whether dataset
+    configuration has already completed.
+
+    DatasetConfiguredNotification is a one-shot PUB/SUB broadcast with no
+    replay. A RecordProcessor or RecordsManager that hasn't received it yet
+    sends this request to recover deterministically instead of blocking for
+    the full CONFIGURATION_TIMEOUT -- covers the race where a subscriber
+    finishes subscribing after the notification was already published.
+    """
+
+    message_type: MessageTypeT = MessageType.DATASET_CONFIG_STATUS_REQUEST
+
+
+class DatasetConfigStatusResponse(BaseServiceMessage):
+    """Response to DatasetConfigStatusRequest.
+
+    ``notification`` carries the already-published DatasetConfiguredNotification
+    if configuration has completed, else None -- in which case the requester
+    falls back to waiting on the normal PUB/SUB path.
+    """
+
+    message_type: MessageTypeT = MessageType.DATASET_CONFIG_STATUS_RESPONSE
+
+    notification: DatasetConfiguredNotification | None = Field(
+        default=None,
+        description="The already-published DatasetConfiguredNotification, if "
+        "dataset configuration has completed. None if not yet configured.",
+    )
+
+
 class DatasetConfigurationFailedNotification(BaseServiceMessage):
     """Notification published by DatasetManager when its PROFILE_CONFIGURE handler raises.
 

@@ -87,7 +87,7 @@ from aiperf.plugin.enums import (
     UIType,
 )
 from aiperf.records import records_manager_processing
-from aiperf.records.dataset_gate import await_dataset_configured
+from aiperf.records.dataset_gate import DatasetConfigCatchUp, await_dataset_configured
 from aiperf.records.error_tracker import ErrorTracker
 from aiperf.records.records_manager_processing import (
     LoadedAnalyzer,
@@ -598,6 +598,14 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # this event so results processors are configured (e.g. accuracy task names)
         # before any record is accumulated.
         self._dataset_configured_event: asyncio.Event = asyncio.Event()
+        self._dataset_config_catch_up = DatasetConfigCatchUp(
+            request_client=self.comms.create_request_client(
+                address=CommAddress.DATASET_MANAGER_PROXY_FRONTEND,
+                bind=False,
+            ),
+            on_configured=self._on_dataset_configured,
+            service_id=self.service_id,
+        )
 
         self._previous_realtime_records: int | None = None
         # Server-metric snapshot from the prior realtime tick. The realtime block
@@ -930,7 +938,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         envelope (``message.metadata`` / ``message.error``), never off sniffing a
         record type.
         """
-        if not await await_dataset_configured(self, self._dataset_configured_event):
+        if not await await_dataset_configured(
+            self,
+            self._dataset_configured_event,
+            getattr(self, "_dataset_config_catch_up", None),
+        ):
             return
         if self.is_trace_enabled:
             self.trace(f"Received records: {message}")
