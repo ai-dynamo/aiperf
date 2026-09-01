@@ -37,6 +37,32 @@ def test_mixin_decodes_via_parallel_decode_for_hash_id_requests():
     pg._build_token_sequence.assert_called_once_with(10, [1, 2], 64)
 
 
+def test_mixin_preserves_predecode_token_ids():
+    pg = MagicMock()
+    pg.tokenizer.resolved_name = "test-tok"
+    pg._build_token_sequence.return_value = [10, 20, 30]
+
+    class _Loader(HashIdsPromptSynthesisMixin):
+        pass
+
+    loader = _Loader()
+    loader.prompt_generator = pg
+    loader._tokenizer_name = "test-tok"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = 64
+
+    requests = [HashIdsPromptRequest(key="a", hash_ids=[1, 2], input_length=3)]
+    with patch(
+        "aiperf.dataset.loader.hash_ids_synthesis.parallel_decode",
+        return_value=["decoded-prompt"],
+    ):
+        result = loader.synthesize_prompt_data_from_hash_ids(requests)
+
+    assert result["a"].text == "decoded-prompt"
+    assert result["a"].token_ids == [10, 20, 30]
+
+
 def test_mixin_falls_back_to_generator_for_empty_hash_ids():
     pg = MagicMock()
     pg.generate.return_value = "synth"

@@ -6,6 +6,7 @@ from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TextResponseData,
+    TokenIdsResponseData,
     ToolCallResponseData,
 )
 from aiperf.metrics import BaseRecordMetric
@@ -68,6 +69,10 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
                 response.perf_ns
                 for response in record.content_responses
                 if (isinstance(response.data, TextResponseData) and response.data.text)
+                or (
+                    isinstance(response.data, TokenIdsResponseData)
+                    and response.data.token_ids
+                )
                 or (
                     isinstance(response.data, ReasoningResponseData)
                     and response.data.content

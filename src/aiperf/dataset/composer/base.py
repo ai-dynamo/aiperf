@@ -23,6 +23,7 @@ from aiperf.dataset.generator.corpus import resolve_prompt_generator
 from aiperf.dataset.generator.image import ImageGenerator
 from aiperf.dataset.generator.video import VideoGenerator
 from aiperf.dataset.protocols import CorpusGeneratorProtocol
+from aiperf.plugin import plugins
 
 if TYPE_CHECKING:
     from aiperf.config.dataset import VideoConfig
@@ -128,6 +129,8 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         self.run = run
         self.tokenizer = tokenizer
         super().__init__(run=run, tokenizer=tokenizer, **kwargs)
+        endpoint_metadata = plugins.get_endpoint_metadata(run.cfg.endpoint.type)
+        self._requires_token_ids = endpoint_metadata.requires_token_ids
 
         # Cache the dataset shape and the synthetic-only sub-shapes once
         # so per-call accessors don't re-narrow.
@@ -554,6 +557,28 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         if turn.model is None:
             turn.model = self._select_model_name()
         self._set_max_tokens(turn)
+        if self._requires_token_ids and turn.token_ids is None:
+            if self.tokenizer is None:
+                raise ValueError(
+                    "The selected endpoint requires token IDs, but no tokenizer "
+                    "was configured."
+                )
+            if turn.raw_payload is not None or turn.raw_messages is not None:
+                raise ValueError(
+                    "The selected token-ID endpoint does not support raw payload or "
+                    "raw message turns. Use text/hash-id trace input instead."
+                )
+            contents = [
+                content for text in turn.texts for content in text.contents if content
+            ]
+            if not contents:
+                raise ValueError(
+                    "The selected token-ID endpoint requires non-empty text or "
+                    "pre-populated token_ids on every request turn."
+                )
+            turn.token_ids = self.tokenizer.encode(
+                " ".join(contents), add_special_tokens=False
+            )
 
         # Clear cached sequence lengths for this turn to free memory
         turn_id = id(turn)

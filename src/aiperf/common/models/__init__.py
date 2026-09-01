@@ -101,6 +101,7 @@ from aiperf.common.models.record_models import (
     TextResponseData,
     TimesliceResult,
     TokenCounts,
+    TokenIdsResponseData,
     ToolCallResponseData,
     VideoResponseData,
 )
@@ -272,6 +273,7 @@ __all__ = [
     "Text",
     "TextResponse",
     "TextResponseData",
+    "TokenIdsResponseData",
     "TimeRangeFilter",
     "TimesliceCollectionExportData",
     "TimesliceData",

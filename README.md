@@ -138,6 +138,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Sampling Distributions in YAML Configs](docs/tutorials/yaml-distributions.md) - Fixed, Normal, Log-normal, Multimodal, and Empirical shapes for ISL/OSL/turns/etc.
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
+- [Native SGLang Generate](docs/tutorials/sglang-generate.md) - Profile streaming token-in/token-out `/generate` endpoints
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
 
 ### Load Control and Timing

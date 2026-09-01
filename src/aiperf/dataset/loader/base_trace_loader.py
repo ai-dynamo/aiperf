@@ -21,6 +21,7 @@ from aiperf.dataset.loader.hash_ids_synthesis import (
 )
 from aiperf.dataset.synthesis.models import SynthesisParams
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
+from aiperf.plugin import plugins
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
 if TYPE_CHECKING:
@@ -94,6 +95,9 @@ class BaseTraceDatasetLoader(
     ) -> None:
         super().__init__(filename=filename, run=run, **kwargs)
         self.prompt_generator = prompt_generator
+        self._requires_token_ids = plugins.get_endpoint_metadata(
+            self.run.cfg.endpoint.type
+        ).requires_token_ids
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
@@ -394,7 +398,16 @@ class BaseTraceDatasetLoader(
                 )
                 conversations_data[session_id].append((trace, None))
 
-        prompts_by_key = self.synthesize_prompts_from_hash_ids(requests)
+        prompt_data_by_key = (
+            self.synthesize_prompt_data_from_hash_ids(requests)
+            if self._requires_token_ids
+            else None
+        )
+        prompts_by_key = (
+            None
+            if self._requires_token_ids
+            else self.synthesize_prompts_from_hash_ids(requests)
+        )
 
         # Phase 2: Build final conversation objects.
         conversations: list[Conversation] = []
@@ -406,12 +419,28 @@ class BaseTraceDatasetLoader(
                 session_id=session_id, context_mode=context_mode
             )
             for idx, (trace, existing) in enumerate(trace_prompt_pairs):
-                prompt = (
-                    existing
-                    if existing is not None
-                    else prompts_by_key[f"{session_id}:{idx}"]
-                )
-                conversation.turns.append(self._build_turn(trace, prompt))
+                if existing is not None:
+                    prompt = existing
+                    token_ids = (
+                        self.prompt_generator.tokenizer.encode(
+                            prompt, add_special_tokens=False
+                        )
+                        if self._requires_token_ids
+                        else None
+                    )
+                else:
+                    key = f"{session_id}:{idx}"
+                    if prompt_data_by_key is not None:
+                        prompt_data = prompt_data_by_key[key]
+                        prompt = prompt_data.text
+                        token_ids = prompt_data.token_ids
+                    else:
+                        assert prompts_by_key is not None
+                        prompt = prompts_by_key[key]
+                        token_ids = None
+                turn = self._build_turn(trace, prompt)
+                turn.token_ids = token_ids
+                conversation.turns.append(turn)
             conversations.append(conversation)
 
         self._delay_cap_tracker.log_summary(logger_name=type(self).__module__)

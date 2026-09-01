@@ -356,6 +356,14 @@ class Turn(AIPerfBaseModel):
         ge=1,
         description="Maximum number of tokens to generate for this turn.",
     )
+    token_ids: list[int] | None = Field(
+        default=None,
+        description=(
+            "Pre-tokenized content for endpoints that accept token IDs directly. "
+            "Dataset composers populate user turns once before dispatch; native "
+            "token-output endpoints populate assistant turns from the response."
+        ),
+    )
     raw_messages: list[dict[str, Any]] | None = Field(
         default=None,
         description="Pre-formatted OpenAI-compatible messages array. "

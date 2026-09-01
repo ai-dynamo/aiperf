@@ -32,6 +32,14 @@ class HashIdsPromptRequest:
     """Target input token count."""
 
 
+@dataclass(slots=True)
+class SynthesizedPrompt:
+    """Decoded prompt and the exact token IDs used to build it."""
+
+    text: str
+    token_ids: list[int]
+
+
 class HashIdsPromptSynthesisMixin:
     """Provide :meth:`synthesize_prompts_from_hash_ids` to any loader.
 
@@ -53,13 +61,30 @@ class HashIdsPromptSynthesisMixin:
     def synthesize_prompts_from_hash_ids(
         self, requests: list[HashIdsPromptRequest]
     ) -> dict[str, str]:
+        return {
+            key: prompt.text
+            for key, prompt in self.synthesize_prompt_data_from_hash_ids(
+                requests
+            ).items()
+        }
+
+    def synthesize_prompt_data_from_hash_ids(
+        self, requests: list[HashIdsPromptRequest]
+    ) -> dict[str, SynthesizedPrompt]:
+        """Return decoded prompts together with their pre-decode token IDs."""
         pending: list[tuple[str, list[int]]] = []
-        result: dict[str, str] = {}
+        result: dict[str, SynthesizedPrompt] = {}
 
         for req in requests:
             if not req.hash_ids:
-                result[req.key] = self.prompt_generator.generate(
+                prompt = self.prompt_generator.generate(
                     mean=req.input_length, stddev=0, hash_ids=[]
+                )
+                result[req.key] = SynthesizedPrompt(
+                    text=prompt,
+                    token_ids=self.prompt_generator.tokenizer.encode(
+                        prompt, add_special_tokens=False
+                    ),
                 )
                 continue
             tokens = self.prompt_generator._build_token_sequence(
@@ -76,7 +101,7 @@ class HashIdsPromptSynthesisMixin:
                 revision=self._tokenizer_revision,
             )
             for (key, _tokens), prompt in zip(pending, decoded, strict=True):
-                result[key] = prompt
+                result[key] = SynthesizedPrompt(text=prompt, token_ids=_tokens)
 
         return result
 

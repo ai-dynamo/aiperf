@@ -1266,6 +1266,14 @@ class TextResponseData(BaseResponseData):
 
 
 @dataclass(slots=True)
+class TokenIdsResponseData(BaseResponseData):
+    """Parsed native token output from an inference endpoint."""
+
+    token_ids: list[int]
+    """Incremental output token IDs carried by this response chunk."""
+
+
+@dataclass(slots=True)
 class ReasoningResponseData(BaseResponseData):
     """Parsed reasoning response data."""
 
@@ -1496,6 +1504,7 @@ class ParsedResponse:
     data: SerializeAsAny[
         ReasoningResponseData
         | TextResponseData
+        | TokenIdsResponseData
         | ToolCallResponseData
         | EmbeddingResponseData
         | RankingsResponseData

@@ -253,6 +253,13 @@ class EndpointMetadata(BaseModel):
     tokenizes_input: bool = Field(
         ..., description="Whether endpoint tokenizes text inputs."
     )
+    requires_token_ids: bool = Field(
+        default=False,
+        description=(
+            "Whether dataset turns must carry pre-tokenized token IDs for request "
+            "formatting. Dataset composers materialize them once before dispatch."
+        ),
+    )
     produces_tokens: bool = Field(
         ..., description="Whether endpoint produces token-based output."
     )
