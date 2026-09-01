@@ -1225,6 +1225,23 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         if assistant_turn is not None:
             session.store_response(assistant_turn)
+        # Response-ID chaining is only coherent for the mode that captures live
+        # responses and accumulates genuine deltas (DELTAS_WITHOUT_RESPONSES).
+        # In the *_WITH_RESPONSES modes ``turns[-1]`` already carries the full
+        # authored history, so chaining would double the context on the wire.
+        # A failed turn may still emit a ``response.created`` id for a partial or
+        # aborted response; chaining onto it would corrupt the server context, so
+        # keep the last good id (from a prior successful turn) instead.
+        if (
+            not record.has_error
+            and session.should_store_response()
+            and (
+                extract_response_id := getattr(
+                    self.inference_client.endpoint, "extract_response_id", None
+                )
+            )
+        ):
+            session.store_response_id(extract_response_id(record))
         self._populate_response_metrics(credit_context, record, parsed_responses)
 
     def _populate_response_metrics(
@@ -1523,6 +1540,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             source_inner_idx=source_turn.source_inner_idx if source_turn else None,
             source_kind=source_turn.source_kind if source_turn else None,
             turns=turns,
+            previous_response_id=session.previous_response_id if session else None,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,
