@@ -14,6 +14,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.branch_orchestrator import PendingBranchJoin
+from aiperf.timing.phase.lifecycle import PhaseLifecycle
 
 
 @pytest.fixture
@@ -49,6 +50,7 @@ def issuer(captured_router: MagicMock) -> CreditIssuer:
     lifecycle = MagicMock()
     lifecycle.started_at_ns = time.time_ns()
     lifecycle.started_at_perf_ns = time.perf_counter_ns()
+    lifecycle.now_ns = MagicMock(side_effect=lambda: PhaseLifecycle.now_ns(lifecycle))
 
     return CreditIssuer(
         phase=CreditPhase.PROFILING,

@@ -6,9 +6,11 @@ import asyncio
 import socket
 import time
 
-import httpx
+import aiohttp
 import pytest
 import uvicorn
+from aiperf.transports.aiohttp_client import create_tcp_connector
+from aiperf.transports.http_defaults import AioHttpDefaults
 from aiperf_mock_server.app import asgi_app
 from aiperf_mock_server.config import MockServerConfig, set_server_config
 
@@ -41,25 +43,27 @@ async def test_throughput_knees_at_max_batch_size():
     server_task = asyncio.create_task(server.serve())
 
     try:
-        # trust_env=False bypasses HTTP_PROXY env var that would otherwise
-        # route localhost requests through a sandbox proxy returning 405.
-        async with httpx.AsyncClient(
-            base_url=f"http://127.0.0.1:{port}",
-            timeout=30,
-            trust_env=False,
-            limits=httpx.Limits(max_connections=128, max_keepalive_connections=128),
+        # trust_env comes from AioHttpDefaults (False by default), which keeps
+        # localhost requests off any ambient HTTP_PROXY -- a sandbox proxy
+        # returns 405 for them.
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(
+            base_url=base,
+            timeout=aiohttp.ClientTimeout(total=30),
+            trust_env=AioHttpDefaults.TRUST_ENV,
+            connector=create_tcp_connector(limit=128, limit_per_host=128),
         ) as client:
             for _ in range(50):
                 try:
-                    r = await client.get("/v1/models")
-                    if r.status_code == 200:
-                        break
-                except httpx.ConnectError:
+                    async with client.get("/v1/models") as r:
+                        if r.status == 200:
+                            break
+                except (aiohttp.ClientConnectionError, OSError):
                     await asyncio.sleep(0.05)
 
             async def one_request() -> float:
                 t0 = time.perf_counter()
-                r = await client.post(
+                async with client.post(
                     "/v1/chat/completions",
                     json={
                         "model": "mock-model",
@@ -67,8 +71,9 @@ async def test_throughput_knees_at_max_batch_size():
                         "max_tokens": 32,
                         "stream": False,
                     },
-                )
-                r.raise_for_status()
+                ) as r:
+                    r.raise_for_status()
+                    await r.read()
                 return time.perf_counter() - t0
 
             async def measure_throughput(concurrency: int, n: int = 64) -> float:

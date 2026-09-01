@@ -65,11 +65,16 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
         self._request_handlers: dict[
             MessageTypeT,
-            tuple[str, Callable[[Message], Coroutine[Any, Any, Message | None]]],
+            tuple[
+                str,
+                Callable[[Message], Coroutine[Any, Any, Message | None]],
+                bool,
+            ],
         ] = {}
         self._response_futures: dict[str, asyncio.Future[Message | None]] = {}
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.REPLY_YIELD_INTERVAL
+        self._response_timeout: float = Environment.SERVICE.COMMS_REQUEST_TIMEOUT
 
     @on_stop
     async def _clear_request_handlers(self) -> None:
@@ -80,10 +85,17 @@ class ZMQRouterReplyClient(BaseZMQClient):
         service_id: str,
         message_type: MessageTypeT,
         handler: Callable[[Message], Coroutine[Any, Any, Message | None]],
+        *,
+        fire_and_forget: bool = False,
     ) -> None:
         """Register a request handler. Anytime a request is received that matches the
-        message type, the handler will be called. The handler should return a response
-        message. If the handler returns None, the request will be ignored.
+        message type, the handler will be called.
+
+        For request-reply handlers (the default), the handler should return a response
+        message. If the handler returns None, an ErrorMessage is sent back to the caller.
+
+        For fire-and-forget handlers (``fire_and_forget=True``), no response is sent back
+        to the caller and the handler's return value is ignored.
 
         Note that there is a limit of 1 to 1 mapping between message type and handler.
 
@@ -91,6 +103,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
             service_id: The service ID to register the handler for
             message_type: The message type to register the handler for
             handler: The handler to register
+            fire_and_forget: If True, no response is sent back to the caller
         """
         if message_type in self._request_handlers:
             raise ValueError(
@@ -101,7 +114,26 @@ class ZMQRouterReplyClient(BaseZMQClient):
             lambda service_id=service_id,
             type=message_type: f"Registering request handler for {service_id} with message type {type}"
         )
-        self._request_handlers[message_type] = (service_id, handler)
+        self._request_handlers[message_type] = (service_id, handler, fire_and_forget)
+
+    async def _handle_fire_and_forget(self, request: Message) -> None:
+        """Call the registered handler for a fire-and-forget message.
+
+        No response is sent back to the caller, and the handler's return value is
+        discarded. Handler failures are logged rather than raised because there is no
+        response channel on which to report them.
+        """
+        message_type = request.message_type
+
+        try:
+            _, handler, _ = self._request_handlers[message_type]
+            await handler(request)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - fire-and-forget boundary, no response channel
+            self.exception(
+                f"Exception calling fire-and-forget handler for {message_type}: {e}"
+            )
 
     async def _handle_request(self, request_id: str, request: Message) -> None:
         """Handle a request.
@@ -114,7 +146,7 @@ class ZMQRouterReplyClient(BaseZMQClient):
         message_type = request.message_type
 
         try:
-            _, handler = self._request_handlers[message_type]
+            _, handler, _ = self._request_handlers[message_type]
             response = await handler(request)
 
         except Exception as e:
@@ -131,6 +163,22 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 f"Exception setting response future for request {request_id}: {e}"
             )
 
+    async def _send_duplicate_request_error(
+        self, request_id: str, routing_envelope: tuple[bytes, ...]
+    ) -> None:
+        """Reply with an error for a request_id that is already in flight."""
+        error = ErrorMessage(
+            request_id=request_id,
+            error=ErrorDetails(
+                type="DUPLICATE_REQUEST_ID",
+                message=f"request_id {request_id} is already in flight",
+            ),
+        )
+        try:
+            await self.socket.send_multipart([*routing_envelope, error.to_json_bytes()])
+        except Exception as e:  # noqa: BLE001 - best-effort error reply
+            self.exception(f"Failed to send duplicate-request error: {e}")
+
     async def _wait_for_response(
         self, request_id: str, routing_envelope: tuple[bytes, ...]
     ) -> None:
@@ -138,10 +186,30 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
         This method will wait for the response future to be set and then send the response
         back to the client.
+
+        The future entry is always removed in a ``finally`` block: it is what gates
+        duplicate-request rejection, so a stranded entry would leak memory and
+        permanently reject every later request reusing the same request_id. The wait is
+        bounded by the same timeout the requesting DEALER applies, so a handler that
+        never resolves the future cannot strand it forever either.
         """
         try:
-            # Wait for the response asynchronously.
-            response = await self._response_futures[request_id]
+            try:
+                # Wait for the response asynchronously.
+                response = await asyncio.wait_for(
+                    self._response_futures[request_id], timeout=self._response_timeout
+                )
+            except TimeoutError:
+                self.warning(
+                    lambda req_id=request_id: f"Timed out waiting for a response to request {req_id}"
+                )
+                response = ErrorMessage(
+                    request_id=request_id,
+                    error=ErrorDetails(
+                        type="RESPONSE_TIMEOUT",
+                        message="Timed out waiting for a response to the request.",
+                    ),
+                )
 
             if response is None:
                 self.warning(
@@ -155,8 +223,6 @@ class ZMQRouterReplyClient(BaseZMQClient):
                     ),
                 )
 
-            self._response_futures.pop(request_id, None)
-
             # Send the response back to the client.
             await self.socket.send_multipart(
                 [*routing_envelope, response.to_json_bytes()]
@@ -165,6 +231,8 @@ class ZMQRouterReplyClient(BaseZMQClient):
             self.exception(
                 f"Exception waiting for response for request {request_id}: {e}"
             )
+        finally:
+            self._response_futures.pop(request_id, None)
 
     @background_task(immediate=True, interval=None)
     async def _rep_router_receiver(self) -> None:
@@ -200,14 +268,37 @@ class ZMQRouterReplyClient(BaseZMQClient):
                     await yield_to_event_loop()
                     continue
 
-                # Create a new response future for this request that will be resolved
-                # when the handler returns a response.
-                self._response_futures[request.request_id] = asyncio.Future()
-                # Handle the request in a new task.
-                self.execute_async(self._handle_request(request.request_id, request))
-                self.execute_async(
-                    self._wait_for_response(request.request_id, routing_envelope)
+                _, _, fire_and_forget = self._request_handlers.get(
+                    request.message_type, (None, None, False)
                 )
+
+                if fire_and_forget:
+                    self.execute_async(self._handle_fire_and_forget(request))
+                elif request.request_id in self._response_futures:
+                    # Overwriting the in-flight Future would strand the first
+                    # waiter forever and route the response to the second
+                    # request's envelope -- i.e. answer the wrong caller.
+                    # Retries and uuid reuse both produce duplicates, so
+                    # reject inline instead of clobbering.
+                    self.warning(
+                        lambda req_id=request.request_id: f"Duplicate request_id {req_id}, rejecting"
+                    )
+                    self.execute_async(
+                        self._send_duplicate_request_error(
+                            request.request_id, routing_envelope
+                        )
+                    )
+                else:
+                    # Create a new response future for this request that will be
+                    # resolved when the handler returns a response.
+                    self._response_futures[request.request_id] = asyncio.Future()
+                    # Handle the request in a new task.
+                    self.execute_async(
+                        self._handle_request(request.request_id, request)
+                    )
+                    self.execute_async(
+                        self._wait_for_response(request.request_id, routing_envelope)
+                    )
                 self._msg_count += 1
                 # Yield periodically to allow scheduled handlers to run
                 # and prevent event loop starvation during message bursts.

@@ -128,8 +128,8 @@ class PhaseProgressTracker:
         self,
         is_final_turn: bool,
         cancelled: bool,
-        errored: bool = False,
         *,
+        errored: bool = False,
         is_child: bool = False,
         no_request: bool = False,
     ) -> bool:

@@ -474,7 +474,12 @@ async def aiperf_runner(
                     _killpg(process, signal.SIGKILL)
                     stdout = ""
                     stderr = ""
-            raise RuntimeError(f"AIPerf timed out after {timeout}s") from e
+            diagnostics = ""
+            if stdout:
+                diagnostics += f"\nSTDOUT:\n{stdout}"
+            if stderr:
+                diagnostics += f"\nSTDERR:\n{stderr}"
+            raise RuntimeError(f"AIPerf timed out after {timeout}s{diagnostics}") from e
 
         return AIPerfRunnerResult(
             exit_code=process.returncode or 0,
@@ -597,7 +602,23 @@ class AIPerfSignalCLI:
             if process.returncode is None:
                 process.send_signal(signal.SIGINT)
 
-                # Wait for graceful shutdown
+                # Drain both pipes while waiting for graceful shutdown.
+                # Without draining, shutdown output (results table, file paths,
+                # log lines) can fill the OS pipe buffer and block the process,
+                # causing it to hang until the 30s timeout fires SIGKILL before
+                # the JSON export is written.
+                async def _drain(stream: asyncio.StreamReader) -> None:
+                    while True:
+                        chunk = await stream.read(4096)
+                        if not chunk:
+                            break
+
+                drain_task = asyncio.ensure_future(
+                    asyncio.gather(
+                        _drain(process.stdout),
+                        _drain(process.stderr),
+                    )
+                )
                 try:
                     await asyncio.wait_for(process.wait(), timeout=30.0)
                 except TimeoutError:
@@ -606,6 +627,8 @@ class AIPerfSignalCLI:
                     )
                     _killpg(process, signal.SIGKILL)
                     await process.wait()
+                finally:
+                    drain_task.cancel()
 
         except asyncio.CancelledError:
             _killpg(process, signal.SIGKILL)
