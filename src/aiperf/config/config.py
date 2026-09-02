@@ -496,6 +496,38 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def reject_tokenizer_options_on_non_tokenizing_endpoint(self) -> Self:
+        """Reject explicit tokenizer options on endpoints that never tokenize.
+
+        Endpoints that neither tokenize input nor produce token counts (image
+        retrieval, rankings, embeddings) skip tokenizer resolution entirely, so
+        a ``tokenizer:`` block there is silently discarded. Failing loudly turns
+        a misplaced or typo'd option into an actionable error instead of a
+        benchmark that quietly ignored it.
+
+        ``resolved_names`` is excluded because the CLI writes it back after
+        alias resolution; it is never user input.
+        """
+        from aiperf.plugin import plugins
+
+        if self.tokenizer is None:
+            return self
+        explicit = self.tokenizer.model_fields_set - {"resolved_names"}
+        if not explicit:
+            return self
+
+        meta = plugins.get_endpoint_metadata(self.endpoint.type)
+        if meta.produces_tokens or meta.tokenizes_input:
+            return self
+
+        raise ValueError(
+            f"Tokenizer options cannot be used with endpoint type "
+            f"'{self.endpoint.type}': it neither tokenizes input nor produces "
+            f"token counts, so {sorted(explicit)} would be ignored. Remove the "
+            f"tokenizer configuration."
+        )
+
+    @model_validator(mode="after")
     def default_tokenizer_when_unset(self) -> Self:
         """Materialize a default ``TokenizerConfig`` when the user omitted one.
 

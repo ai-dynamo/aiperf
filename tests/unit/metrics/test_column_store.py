@@ -438,3 +438,94 @@ def test_ingest_skips_unsupported_value_types():
     assert store.numeric("ok")[0] == 5.0
     assert "weird" not in store.numeric_tags()
     assert "weird" not in store.ragged_tags()
+
+
+# ---------------------------------------------------------------------------
+# mask_for_categorical count snapshot (1d6c7bfe49)
+# ---------------------------------------------------------------------------
+
+
+def test_mask_for_categorical_count_kwarg_limits_mask_to_snapshot() -> None:
+    """``count`` kwarg caps the returned mask to a snapshot taken before new
+    records arrived.
+
+    Before 1d6c7bfe49, mask_for_categorical always used self._count, so a
+    new record arriving between the snapshot (n = store.count) and the
+    mask_for_categorical call produced a mask of length n+1 — one element
+    longer than the column arrays sliced to [:n] — causing shape mismatches
+    in compute_sweep_curves and _mask_for_export_context.
+    """
+    store = _make_store()
+    for i in range(3):
+        store.ingest(
+            i,
+            record_metrics={"x": float(i)},
+            start_ns=0,
+            end_ns=1,
+            generation_start_ns=None,
+        )
+        store.ingest_metadata(i, {}, {}, metadata_categorical={"phase": "profiling"})
+
+    # Simulate snapshot taken before record 3 arrives.
+    snapshot_n = store.count  # == 3
+
+    # A new record arrives while mask_for_categorical runs in another thread.
+    store.ingest(
+        3,
+        record_metrics={"x": 99.0},
+        start_ns=0,
+        end_ns=1,
+        generation_start_ns=None,
+    )
+    store.ingest_metadata(3, {}, {}, metadata_categorical={"phase": "profiling"})
+    assert store.count == 4
+
+    # Without count=, the mask has length 4 (current store count).
+    full_mask = store.mask_for_categorical("phase", "profiling")
+    assert len(full_mask) == 4
+
+    # With count=snapshot_n, the mask is capped to the snapshot length.
+    snapped_mask = store.mask_for_categorical("phase", "profiling", count=snapshot_n)
+    assert len(snapped_mask) == snapshot_n
+    # All 3 snapshot records matched.
+    assert snapped_mask.all()
+
+
+# ---------------------------------------------------------------------------
+# Accumulator mask/count race — numeric column sliced to :len(mask) (d9132415ff)
+# ---------------------------------------------------------------------------
+
+
+def test_numeric_column_slice_to_mask_length_prevents_index_error() -> None:
+    """Applying a boolean mask shorter than the column must not raise IndexError.
+
+    Before d9132415ff, _collect_scalars_and_arrays did ``store.numeric(tag)[mask]``
+    directly.  When a new record arrived (event loop) after the mask snapshot was
+    taken (asyncio.to_thread), the column had grown past len(mask), making numpy
+    raise IndexError: "boolean index did not match indexed array".
+
+    The fix applies ``store.numeric(tag)[:len(mask)][mask]``, so a column longer
+    than the mask is safely clipped before the boolean index.
+    """
+    import numpy as np
+
+    store = _make_store()
+    for i in range(5):
+        store.ingest(
+            i,
+            record_metrics={"latency": float(i)},
+            start_ns=0,
+            end_ns=1,
+            generation_start_ns=None,
+        )
+
+    # Mask snapshotted at n=3, column now has 5 entries.
+    mask = np.array([True, False, True])
+
+    col = store.numeric("latency")
+    assert len(col) == 5  # column is longer than mask
+
+    # Pre-fix: col[mask] raises IndexError (mask shorter than col).
+    # Post-fix: col[:len(mask)][mask] is [0.0, 2.0].
+    selected = col[: len(mask)][mask]
+    np.testing.assert_array_equal(selected, [0.0, 2.0])

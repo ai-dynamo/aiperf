@@ -247,12 +247,12 @@ class TestMultiProcessServiceManager:
         self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
     ):
         """Regression: optional services started via run_service() must also
-        be waited for before ProfileConfigureCommand is broadcast.
+        be waited for before PROFILE_CONFIGURE is fanned out.
 
         Failure mode: ServerMetricsManager (an optional service started via
         run_service, not part of required_services) registers ~1s later than
         the core services on slow Windows VDI. The SystemController previously
-        only waited for required_services; it broadcast ProfileConfigureCommand
+        only waited for required_services; it fanned out PROFILE_CONFIGURE
         before ServerMetricsManager had subscribed, leaving it un-configured
         and the JSON export file missing on disk.
 
@@ -436,3 +436,49 @@ class TestWaitForProcess:
         info.process.join.assert_called_once()
         method_names = [c[0] for c in info.process.method_calls]
         assert method_names.index("kill") < method_names.index("join")
+
+
+class TestGetServiceLiveness:
+    """Local runs hold a real Process handle; the watchdog must consult it.
+
+    Without this override the heartbeat watchdog can only infer death from
+    silence, so a service that merely blocks its event loop past the stale
+    threshold is reaped and its buffered results vanish from the run.
+    """
+
+    @pytest.fixture
+    def manager(self) -> MultiProcessServiceManager:
+        mgr = MultiProcessServiceManager.__new__(MultiProcessServiceManager)
+        mgr.multi_process_info = []
+        return mgr
+
+    def _add(self, manager, service_id: str, alive: bool | None) -> None:
+        process = None
+        if alive is not None:
+            process = MagicMock(spec=Process)
+            process.is_alive.return_value = alive
+        manager.multi_process_info.append(
+            MultiProcessRunInfo.model_construct(
+                process=process,
+                service_type=ServiceType.WORKER,
+                service_id=service_id,
+            )
+        )
+
+    def test_get_service_liveness_running_process_returns_true(self, manager) -> None:
+        self._add(manager, "worker_1", alive=True)
+        assert manager.get_service_liveness("worker_1") is True
+
+    def test_get_service_liveness_exited_process_returns_false(self, manager) -> None:
+        self._add(manager, "worker_1", alive=False)
+        assert manager.get_service_liveness("worker_1") is False
+
+    def test_get_service_liveness_missing_handle_returns_false(self, manager) -> None:
+        """A None process means the spawn failed before producing a handle."""
+        self._add(manager, "worker_1", alive=None)
+        assert manager.get_service_liveness("worker_1") is False
+
+    def test_get_service_liveness_unknown_service_returns_none(self, manager) -> None:
+        """Services this manager never spawned have no ground truth to offer."""
+        self._add(manager, "worker_1", alive=True)
+        assert manager.get_service_liveness("worker_2") is None

@@ -599,7 +599,10 @@ class BranchOrchestrator:
             self._session_tree_registry.on_descendant_done(root_corr)
 
     def _register_fork_routing(
-        self, parent_corr: str, mode: ConversationBranchMode
+        self,
+        parent_corr: str,
+        mode: ConversationBranchMode,
+        child_corr: str | None = None,
     ) -> None:
         """Bump the parent's sticky routing refcount for a FORK child.
 
@@ -609,7 +612,10 @@ class BranchOrchestrator:
         parent entry is live, but register no refcount.
         """
         if mode == ConversationBranchMode.FORK and self._sticky_router is not None:
-            self._sticky_router.register_child_routing(parent_corr)
+            # Pass the child's own id so its descendants resolve to the same
+            # entry: only the session root owns one, so a depth-2 grandchild
+            # looking up its depth-1 parent used to miss entirely.
+            self._sticky_router.register_child_routing(parent_corr, child_corr)
 
     def _seeded_join_entries(
         self,
@@ -693,7 +699,11 @@ class BranchOrchestrator:
                 self._child_modes[child_state.x_correlation_id] = (
                     child_state.branch_mode
                 )
-                self._register_fork_routing(parent_corr, child_state.branch_mode)
+                self._register_fork_routing(
+                    parent_corr,
+                    child_state.branch_mode,
+                    child_state.x_correlation_id,
+                )
                 entries = self._seeded_join_entries(
                     parent_corr=parent_corr,
                     parent_state=parent_state,
@@ -974,7 +984,7 @@ class BranchOrchestrator:
                 all_children.append(child)
 
                 # Only FORK-mode children sticky-route to the parent's worker.
-                self._register_fork_routing(parent_corr, branch.mode)
+                self._register_fork_routing(parent_corr, branch.mode, child_corr)
                 self.stats.children_spawned += 1
 
                 # Register in _child_to_join (one entry per gate this child

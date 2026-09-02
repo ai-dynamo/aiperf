@@ -49,22 +49,41 @@ def normalize_server_metrics_base_for_override(
     base: dict[str, Any],
     overrides: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Normalize YAML server_metrics shorthand before CLI override merging."""
+    """Normalize YAML server_metrics shorthand before CLI override merging.
+
+    The YAML key may be authored under either the canonical ``server_metrics``
+    spelling or its documented ``serverMetrics`` camelCase alias -- gating on
+    the snake_case key alone leaves the camelCase spelling un-normalized, so
+    shorthand fields like ``url`` never get expanded to ``urls`` before
+    ``deep_merge`` adds its own ``urls`` key, leaving both to trip
+    ``extra="forbid"``.
+    """
     if not _has_benchmark_server_metrics_override(overrides):
         return base
 
     benchmark = base.get("benchmark")
-    if not isinstance(benchmark, dict) or "server_metrics" not in benchmark:
+    key = _server_metrics_key(benchmark) if isinstance(benchmark, dict) else None
+    if key is None:
         return base
 
     from aiperf.config.server_metrics import ServerMetricsConfig
 
     normalized = copy.deepcopy(base)
     normalized_benchmark = normalized["benchmark"]
-    normalized_benchmark["server_metrics"] = ServerMetricsConfig.model_validate(
-        normalized_benchmark["server_metrics"]
+    normalized_benchmark[key] = ServerMetricsConfig.model_validate(
+        normalized_benchmark[key]
     ).model_dump(mode="python")
     return normalized
+
+
+def _server_metrics_key(benchmark: dict[str, Any]) -> str | None:
+    """Return whichever spelling of the server_metrics key is present, if any."""
+    from pydantic.alias_generators import to_camel
+
+    for key in ("server_metrics", to_camel("server_metrics")):
+        if key in benchmark:
+            return key
+    return None
 
 
 def _has_benchmark_server_metrics_override(overrides: dict[str, Any] | None) -> bool:

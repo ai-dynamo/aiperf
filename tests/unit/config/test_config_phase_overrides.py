@@ -128,7 +128,7 @@ def test_request_cancellation_delay_routes_with_rate(concurrency_yaml: Path) -> 
 
 def test_cancellation_delay_without_rate_still_errors(concurrency_yaml: Path) -> None:
     """The converter's dependency guard must hold on this path too."""
-    with pytest.raises(ValueError, match="requires --request-cancellation-rate"):
+    with pytest.raises((ValueError, ConfigurationError), match="cancellation rate"):
         resolve_config(cli(request_cancellation_delay=2.0), concurrency_yaml)
 
 
@@ -145,7 +145,7 @@ def test_arrival_smoothness_routes_on_gamma_phase(gamma_yaml: Path) -> None:
 def test_arrival_smoothness_rejected_on_non_gamma_phase(
     concurrency_yaml: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="arrival-smoothness"):
+    with pytest.raises((ValueError, ConfigurationError), match="arrival-smoothness"):
         resolve_config(cli(arrival_smoothness=0.5), concurrency_yaml)
 
 
