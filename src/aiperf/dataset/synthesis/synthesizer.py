@@ -213,14 +213,12 @@ class Synthesizer(AIPerfLoggerMixin):
                 else:
                     break
 
-            # Compute prefix_len and prompt_len
+            # Clamp prefix_len to input_len when the shared prefix consumes a
+            # final partial block.
             prefix_len = len(prefix_ids) * block_size
+            if prefix_len > input_len:
+                prefix_len = input_len
             prompt_len = input_len - prefix_len
-            if prompt_len < 0:
-                raise ValueError(
-                    f"input_len ({input_len}) < prefix_len ({prefix_len}): "
-                    f"trace has fewer tokens than its shared prefix blocks"
-                )
 
             # Step 3: Apply prefix_len_mult - stretch or squeeze prefix
             if prefix_mult > 1.0:
