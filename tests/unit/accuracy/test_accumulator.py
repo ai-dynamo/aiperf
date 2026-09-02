@@ -10,7 +10,12 @@ from aiperf.accuracy.models import AccuracyRecordsData, AccuracySummary
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import PostProcessorDisabled
-from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
+from aiperf.common.models import ConversationMetadata, DatasetMetadata
+from aiperf.plugin.enums import (
+    AccuracyBenchmarkType,
+    DatasetSamplingStrategy,
+    EndpointType,
+)
 from tests.unit.conftest import make_benchmark_run
 
 
@@ -21,6 +26,18 @@ def _make_accumulator() -> AccuracyAccumulator:
             endpoint_type=EndpointType.COMPLETIONS,
             streaming=False,
             accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+        )
+    )
+
+
+def _configure_dataset(acc: AccuracyAccumulator, resolved_tasks: list[str]) -> None:
+    acc.on_dataset_configured(
+        DatasetMetadata(
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+            conversations=[
+                ConversationMetadata(conversation_id=f"conv-{i}", accuracy_task=task)
+                for i, task in enumerate(resolved_tasks)
+            ],
         )
     )
 
@@ -156,6 +173,39 @@ class TestAccuracyAccumulator:
         assert summary.total_evaluated == 2
         assert summary.total_passed == 1
         assert set(summary.per_task) == {"math"}
+
+    async def test_configured_tasks_with_no_dispatched_requests_are_zero_filled(
+        self,
+    ) -> None:
+        acc = _make_accumulator()
+        _configure_dataset(acc, ["math", "physics", "computer science"])
+        await _seed(acc, [_record(timestamp_ns=10, task="math", passed=True)])
+
+        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+
+        assert summary is not None
+        assert set(summary.per_task) == {"math", "physics", "computer science"}
+
+        physics = summary.per_task["physics"]
+        assert physics.total == 0
+        assert physics.passed == 0
+        assert physics.unparsed == 0
+        assert physics.accuracy_rate == 0.0
+
+    async def test_configured_tasks_with_zero_records_still_produce_a_summary(
+        self,
+    ) -> None:
+        acc = _make_accumulator()
+        _configure_dataset(acc, ["math", "physics"])
+
+        summary = await acc.export_results(ExportContext(phase=CreditPhase.PROFILING))
+
+        assert summary is not None
+        assert summary.total_evaluated == 0
+        assert summary.grader_name is None
+        assert set(summary.per_task) == {"math", "physics"}
+        assert summary.per_task["math"].total == 0
+        assert summary.per_task["physics"].total == 0
 
     async def test_summarize_is_phase_agnostic(self) -> None:
         acc = _make_accumulator()

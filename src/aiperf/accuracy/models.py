@@ -209,20 +209,25 @@ class AccuracySummary(AIPerfBaseModel):
 
         Emitted in this exact order (load-bearing for byte-exact JSON/CSV):
         overall, tasks sorted, unparsed overall, unparsed tasks sorted.
+
+        A zero-total task or overall gets ``current=None`` instead of ``0.0``, so
+        exporters render N/A instead of a misleading 0% accuracy.
         """
         from aiperf.common.enums import MetricConsoleGroup
         from aiperf.common.models import MetricResult
 
         results: list[MetricResult] = []
 
-        if self.total_evaluated > 0:
+        if self.total_evaluated > 0 or self.per_task:
             results.append(
                 MetricResult(
                     tag=ACCURACY_OVERALL_TAG,
                     header="Accuracy (Overall)",
                     unit="ratio",
                     count=self.total_evaluated,
-                    current=self.total_passed / self.total_evaluated,
+                    current=self.total_passed / self.total_evaluated
+                    if self.total_evaluated
+                    else None,
                     sum=self.total_passed,
                     console_group=MetricConsoleGroup.NONE,
                 )
@@ -236,20 +241,22 @@ class AccuracySummary(AIPerfBaseModel):
                     header=f"Accuracy ({task})",
                     unit="ratio",
                     count=stats.total,
-                    current=stats.passed / stats.total if stats.total else 0.0,
+                    current=stats.passed / stats.total if stats.total else None,
                     sum=stats.passed,
                     console_group=MetricConsoleGroup.NONE,
                 )
             )
 
-        if self.total_evaluated > 0:
+        if self.total_evaluated > 0 or self.per_task:
             results.append(
                 MetricResult(
                     tag=ACCURACY_UNPARSED_TAG,
                     header="Accuracy Unparsed (Overall)",
                     unit="ratio",
                     count=self.total_evaluated,
-                    current=self.overall_unparsed / self.total_evaluated,
+                    current=self.overall_unparsed / self.total_evaluated
+                    if self.total_evaluated
+                    else None,
                     sum=self.overall_unparsed,
                     console_group=MetricConsoleGroup.NONE,
                 )
@@ -263,7 +270,7 @@ class AccuracySummary(AIPerfBaseModel):
                     header=f"Accuracy Unparsed ({task})",
                     unit="ratio",
                     count=stats.total,
-                    current=stats.unparsed / stats.total if stats.total else 0.0,
+                    current=stats.unparsed / stats.total if stats.total else None,
                     sum=stats.unparsed,
                     console_group=MetricConsoleGroup.NONE,
                 )

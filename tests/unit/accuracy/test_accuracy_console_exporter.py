@@ -35,7 +35,9 @@ def _make_exporter(records: list[MetricResult] | None) -> AccuracyConsoleExporte
     return AccuracyConsoleExporter(exporter_config=exporter_config)
 
 
-def _make_metric(tag: str, correct: int, total: int, accuracy: float) -> MetricResult:
+def _make_metric(
+    tag: str, correct: int, total: int, accuracy: float | None
+) -> MetricResult:
     return MetricResult(
         tag=tag,
         header=tag,
@@ -121,6 +123,26 @@ class TestAccuracyConsoleExporterExport:
         await exporter.export(console)
 
         assert "60.00%" in buf.getvalue()
+
+    async def test_zero_total_task_renders_na_row(self) -> None:
+        exporter = _make_exporter(
+            records=[
+                _make_metric("accuracy.overall", correct=1, total=30, accuracy=1 / 30),
+                _make_metric(
+                    "accuracy.task.math", correct=1, total=30, accuracy=1 / 30
+                ),
+                _make_metric(
+                    "accuracy.task.physics", correct=0, total=0, accuracy=None
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        console = Console(file=buf, highlight=False)
+        await exporter.export(console)
+
+        output = buf.getvalue()
+        assert "physics" in output
+        assert "N/A" in output
 
     async def test_warns_when_all_responses_unparsed(self) -> None:
         """Smoke-test J regression: when 100% of responses fail to parse,
