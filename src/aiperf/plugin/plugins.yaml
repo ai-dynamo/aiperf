@@ -666,86 +666,6 @@ custom_dataset_loader:
   # SPEED-Bench: qualitative split per category (80 prompts each)
   # ---------------------------------------------------------------------------
 
-  speed_bench_coding:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench coding category (80 prompts). Code generation and programming tasks.
-    metadata:
-      category: coding
-
-  speed_bench_humanities:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench humanities category (80 prompts). History, philosophy, and liberal arts.
-    metadata:
-      category: humanities
-
-  speed_bench_math:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench math category (80 prompts). Mathematical reasoning and computation.
-    metadata:
-      category: math
-
-  speed_bench_multilingual:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench multilingual category (80 prompts). Tasks across 23 languages.
-    metadata:
-      category: multilingual
-
-  speed_bench_qa:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench QA category (80 prompts). Question answering tasks.
-    metadata:
-      category: qa
-
-  speed_bench_rag:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench RAG category (80 prompts). Retrieval-augmented generation tasks.
-    metadata:
-      category: rag
-
-  speed_bench_reasoning:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench reasoning category (80 prompts). Logical and analytical reasoning.
-    metadata:
-      category: reasoning
-
-  speed_bench_roleplay:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench roleplay category (80 prompts). Creative roleplay and dialogue.
-    metadata:
-      category: roleplay
-
-  speed_bench_stem:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench STEM category (80 prompts). Science, technology, engineering tasks.
-    metadata:
-      category: stem
-
-  speed_bench_summarization:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench summarization category (80 prompts). Text summarization tasks.
-    metadata:
-      category: summarization
-
-  speed_bench_writing:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchQualitativeLoader
-    description: |
-      SPEED-Bench writing category (80 prompts). Creative and technical writing.
-    metadata:
-      category: writing
-
-  # ---------------------------------------------------------------------------
-  # SPEED-Bench: throughput splits (all entropy tiers combined)
-  # ---------------------------------------------------------------------------
   speed_bench_throughput_1k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KLoader
     description: |
@@ -779,111 +699,6 @@ custom_dataset_loader:
   # ---------------------------------------------------------------------------
   # SPEED-Bench: throughput per entropy tier (512 prompts each per ISL bucket)
   # ---------------------------------------------------------------------------
-  speed_bench_throughput_1k_low_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KLoader
-    description: |
-      SPEED-Bench throughput ~1K ISL, low entropy tier (512 prompts). Code and sorting tasks.
-    metadata:
-      category: low_entropy
-
-  speed_bench_throughput_1k_mixed:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KLoader
-    description: |
-      SPEED-Bench throughput ~1K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
-    metadata:
-      category: mixed
-
-  speed_bench_throughput_1k_high_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KLoader
-    description: |
-      SPEED-Bench throughput ~1K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
-    metadata:
-      category: high_entropy
-
-  speed_bench_throughput_2k_low_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput2KLoader
-    description: |
-      SPEED-Bench throughput ~2K ISL, low entropy tier (512 prompts). Code and sorting tasks.
-    metadata:
-      category: low_entropy
-
-  speed_bench_throughput_2k_mixed:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput2KLoader
-    description: |
-      SPEED-Bench throughput ~2K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
-    metadata:
-      category: mixed
-
-  speed_bench_throughput_2k_high_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput2KLoader
-    description: |
-      SPEED-Bench throughput ~2K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
-    metadata:
-      category: high_entropy
-
-  speed_bench_throughput_8k_low_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput8KLoader
-    description: |
-      SPEED-Bench throughput ~8K ISL, low entropy tier (512 prompts). Code and sorting tasks.
-    metadata:
-      category: low_entropy
-
-  speed_bench_throughput_8k_mixed:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput8KLoader
-    description: |
-      SPEED-Bench throughput ~8K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
-    metadata:
-      category: mixed
-
-  speed_bench_throughput_8k_high_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput8KLoader
-    description: |
-      SPEED-Bench throughput ~8K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
-    metadata:
-      category: high_entropy
-
-  speed_bench_throughput_16k_low_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput16KLoader
-    description: |
-      SPEED-Bench throughput ~16K ISL, low entropy tier (512 prompts). Code and sorting tasks.
-    metadata:
-      category: low_entropy
-
-  speed_bench_throughput_16k_mixed:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput16KLoader
-    description: |
-      SPEED-Bench throughput ~16K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
-    metadata:
-      category: mixed
-
-  speed_bench_throughput_16k_high_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput16KLoader
-    description: |
-      SPEED-Bench throughput ~16K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
-    metadata:
-      category: high_entropy
-
-  speed_bench_throughput_32k_low_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput32KLoader
-    description: |
-      SPEED-Bench throughput ~32K ISL, low entropy tier (512 prompts). Code and sorting tasks.
-    metadata:
-      category: low_entropy
-
-  speed_bench_throughput_32k_mixed:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput32KLoader
-    description: |
-      SPEED-Bench throughput ~32K ISL, mixed entropy tier (512 prompts). Needle-in-a-haystack and exams.
-    metadata:
-      category: mixed
-
-  speed_bench_throughput_32k_high_entropy:
-    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput32KLoader
-    description: |
-      SPEED-Bench throughput ~32K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
-    metadata:
-      category: high_entropy
-
   tracelab:
     class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
     description: |
@@ -2550,6 +2365,360 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+
+  # ---------------------------------------------------------------------------
+  # SPEED-Bench. Prompt text for rows whose source datasets forbid
+  # redistribution is resolved on first use via the vendored upstream prepare
+  # script, then cached per config and shared by every category of that config.
+  # Requires accepting the cais/hle terms on HuggingFace; see
+  # docs/tutorials/speed-bench.md.
+  # ---------------------------------------------------------------------------
+  speed_bench_qualitative:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench qualitative split (880 prompts across 11 semantic domains)
+      for measuring speculative decoding acceptance rates.
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+
+  speed_bench_coding:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench coding category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: coding
+
+  speed_bench_humanities:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench humanities category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: humanities
+
+  speed_bench_math:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench math category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: math
+
+  speed_bench_multilingual:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench multilingual category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: multilingual
+
+  speed_bench_qa:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench qa category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: qa
+
+  speed_bench_rag:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench rag category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: rag
+
+  speed_bench_reasoning:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench reasoning category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: reasoning
+
+  speed_bench_roleplay:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench roleplay category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: roleplay
+
+  speed_bench_stem:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench stem category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: stem
+
+  speed_bench_summarization:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench summarization category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: summarization
+
+  speed_bench_writing:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench writing category (80 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: qualitative
+      multi_turn: true
+      category: writing
+
+  speed_bench_throughput_1k:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 1K split (1,536 prompts, ~1k input tokens).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+      multi_turn: true
+
+  speed_bench_throughput_1k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 1K low_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+      multi_turn: true
+      category: low_entropy
+
+  speed_bench_throughput_1k_mixed:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 1K mixed tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+      multi_turn: true
+      category: mixed
+
+  speed_bench_throughput_1k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 1K high_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_1k
+      multi_turn: true
+      category: high_entropy
+
+  speed_bench_throughput_2k:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 2K split (1,536 prompts, ~2k input tokens).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+      multi_turn: true
+
+  speed_bench_throughput_2k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 2K low_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+      multi_turn: true
+      category: low_entropy
+
+  speed_bench_throughput_2k_mixed:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 2K mixed tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+      multi_turn: true
+      category: mixed
+
+  speed_bench_throughput_2k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 2K high_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_2k
+      multi_turn: true
+      category: high_entropy
+
+  speed_bench_throughput_8k:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 8K split (1,536 prompts, ~8k input tokens).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+      multi_turn: true
+
+  speed_bench_throughput_8k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 8K low_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+      multi_turn: true
+      category: low_entropy
+
+  speed_bench_throughput_8k_mixed:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 8K mixed tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+      multi_turn: true
+      category: mixed
+
+  speed_bench_throughput_8k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 8K high_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_8k
+      multi_turn: true
+      category: high_entropy
+
+  speed_bench_throughput_16k:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 16K split (1,536 prompts, ~16k input tokens).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+      multi_turn: true
+
+  speed_bench_throughput_16k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 16K low_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+      multi_turn: true
+      category: low_entropy
+
+  speed_bench_throughput_16k_mixed:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 16K mixed tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+      multi_turn: true
+      category: mixed
+
+  speed_bench_throughput_16k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 16K high_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_16k
+      multi_turn: true
+      category: high_entropy
+
+  speed_bench_throughput_32k:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 32K split (1,536 prompts, ~32k input tokens).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+      multi_turn: true
+
+  speed_bench_throughput_32k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 32K low_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+      multi_turn: true
+      category: low_entropy
+
+  speed_bench_throughput_32k_mixed:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 32K mixed tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+      multi_turn: true
+      category: mixed
+
+  speed_bench_throughput_32k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 32K high_entropy tier (512 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_32k
+      multi_turn: true
+      category: high_entropy
 
 # =============================================================================
 # ZMQ Proxies

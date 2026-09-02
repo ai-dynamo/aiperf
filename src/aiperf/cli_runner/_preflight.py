@@ -198,3 +198,70 @@ def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
             headers=headers,
         )
     )
+
+
+def _public_dataset_loaders(plan: BenchmarkPlan):
+    """Yield ``(LoaderClass, loader_kwargs)`` for each public dataset in the plan.
+
+    Reads plugin metadata directly rather than going through the composer,
+    which needs a live run. Only the fields the preflight hooks care about are
+    forwarded.
+    """
+    from aiperf.config.dataset import PublicDataset
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    seen: set[str] = set()
+    for cfg in plan.configs:
+        dataset = cfg.get_default_dataset()
+        if not isinstance(dataset, PublicDataset) or dataset.dataset in seen:
+            continue
+        seen.add(dataset.dataset)
+
+        LoaderClass = plugins.get_class(
+            PluginType.PUBLIC_DATASET_LOADER, dataset.dataset
+        )
+        metadata = plugins.get_public_dataset_loader_metadata(dataset.dataset)
+        kwargs = {
+            "hf_subset": dataset.hf_subset or metadata.hf_subset,
+            "category": metadata.category,
+        }
+        yield LoaderClass, {k: v for k, v in kwargs.items() if v is not None}
+
+
+def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
+    """Verify gated public datasets are reachable before anything expensive.
+
+    Why: access to a gated dataset is granted per user through a browser, so it
+    cannot be fixed mid-run. Probing first turns a multi-GB download that ends
+    in a 403 -- or a wait on a model that was never going to be used -- into an
+    immediate, actionable message.
+    """
+    for LoaderClass, kwargs in _public_dataset_loaders(plan):
+        LoaderClass.preflight_access(**kwargs)
+
+
+def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
+    """Fetch and cache public datasets that need resolution before services start.
+
+    Why: ``DatasetManager`` performs dataset setup while ``TimingManager``
+    blocks on the profiling handshake, so a large download there trips
+    ``AIPERF_DATASET_CONFIGURATION_TIMEOUT`` (and raising that limit would
+    weaken hang detection for every run, since ``PROFILE_CONFIGURE_TIMEOUT`` is
+    constrained to be at least as large). Runs after the endpoint probe so an
+    unreachable server fails in seconds rather than after the download.
+    """
+    import logging
+
+    # Same reason as _preflight_endpoint_ready: rich logging isn't installed
+    # yet, and a multi-GB fetch with no output looks like a hang. That check
+    # returns early when endpoint waiting is disabled, so don't rely on it
+    # having installed the handler.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
+    for LoaderClass, kwargs in _public_dataset_loaders(plan):
+        LoaderClass.preflight_materialize(**kwargs)

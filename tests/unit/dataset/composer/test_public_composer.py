@@ -166,6 +166,7 @@ class TestCreateDatasetAsync:
                     multi_turn=False,
                     streaming=False,
                     is_trace=False,
+                    category=None,
                 ),
             ),
         ):
@@ -210,6 +211,7 @@ class TestCreateDatasetAsync:
                     multi_turn=False,
                     streaming=False,
                     is_trace=False,
+                    category=None,
                 ),
             ),
         ):

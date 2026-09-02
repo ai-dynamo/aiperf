@@ -155,7 +155,11 @@ class TestSpeedBenchCanLoad:
                         {"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}
                     ],
                 },
-                False,
+                # Shape is valid; the content is merely unprepared. Rejecting it
+                # here would make auto-detection fail with "No loader can handle
+                # the data format" instead of the placeholder guidance the loader
+                # raises.
+                True,
                 id="turns_placeholder",
             ),
             param(
@@ -583,3 +587,46 @@ class TestUnrecognizedTypeFieldFallback:
         }
         result = composer._infer_type(data)
         assert result == CustomDatasetType.BAILIAN_TRACE
+
+
+class TestSpeedBenchAutoDetection:
+    """Auto-detection must not be defeated by category-filtered registry entries.
+
+    SPEED-Bench registers 28 category-filtered plugin entries across 6 loader
+    classes (e.g. ``speed_bench_coding`` -> ``SpeedBenchQualitativeLoader``).
+    Because ``_infer_type`` counted matching *entries* rather than classes, a
+    correctly prepared file matched 12 of them and auto-detection died with
+    "Multiple loaders can handle the data format" -- failing the user who did
+    the preparation step correctly.
+    """
+
+    @staticmethod
+    def _valid_row() -> dict:
+        return {
+            "question_id": "a" * 32,
+            "category": "coding",
+            "messages": [{"role": "user", "content": "Implement binary search."}],
+        }
+
+    def test_prepared_file_infers_unfiltered_split_loader(
+        self, create_cfg_and_composer
+    ):
+        _, composer = create_cfg_and_composer()
+
+        result = composer._infer_type(self._valid_row(), filename="qualitative.jsonl")
+
+        assert result == CustomDatasetType.SPEED_BENCH_QUALITATIVE
+
+    def test_category_filtered_entries_are_excluded_from_detection(self):
+        """Only the unfiltered entry may claim a file structurally."""
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        matches = [
+            entry.name
+            for entry, LoaderClass in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER)
+            if entry.metadata.get("category") is None
+            and LoaderClass.can_load(self._valid_row(), "qualitative.jsonl")
+        ]
+
+        assert matches == ["speed_bench_qualitative"]

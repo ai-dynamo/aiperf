@@ -9,12 +9,18 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field, ValidationError, model_validator
 
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+HLE_ACCESS_URL = "https://huggingface.co/datasets/cais/hle"
+SPEED_BENCH_DOCS_URL = (
+    "https://github.com/ai-dynamo/aiperf/blob/main/docs/tutorials/speed-bench.md"
+)
 
 
 class SpeedBenchRow(AIPerfBaseModel):
@@ -40,20 +46,38 @@ class SpeedBenchRow(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def validate_messages_structure(self) -> SpeedBenchRow:
-        """Validate the messages field structure."""
+        """Validate the messages field structure.
+
+        Deliberately shape-only: placeholder content is a *preparation* problem,
+        not a format problem. Rejecting it here would make ``can_load`` return
+        False for an unprepared file, so auto-detection would fail with the
+        unrelated "No loader can handle the data format" instead of the
+        placeholder guidance :meth:`SpeedBenchLoader.load_dataset` emits.
+        """
         if not all(
             isinstance(message, dict)
             and isinstance(message.get("role"), str)
             and bool(message["role"].strip())
             and isinstance(message.get("content"), str)
             and bool(message["content"].strip())
-            and message["content"] != self.TURNS_PLACEHOLDER
             for message in self.messages
         ):
             raise ValueError(
-                "messages must be a non-empty list of dictionaries with role and content fields, and the content must not be the placeholder string"
+                "messages must be a non-empty list of dictionaries with role and content fields"
             )
         return self
+
+    def has_placeholder_turn(self) -> bool:
+        """Return whether any message still holds unresolved placeholder text.
+
+        Uses a prefix match because the upstream dataset appends per-row detail
+        after the placeholder sentinel; upstream's own ``prepare.py`` tests the
+        same way. An equality check misses 144 of the 494 placeholder rows.
+        """
+        return any(
+            message["content"].startswith(self.TURNS_PLACEHOLDER)
+            for message in self.messages
+        )
 
 
 def is_speed_bench_row(data: object) -> bool:
@@ -151,9 +175,10 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         into a ``SingleTurn(role=..., text=...)``.
 
         When ``self.category`` is set, lines whose ``category`` field does not
-        match are skipped. If the filter eliminates every row, a warning is
-        emitted to surface a likely category/file mismatch rather than
-        silently returning an empty dataset.
+        match are skipped. If the filter eliminates every row, the mismatch is
+        raised here: an empty dataset is never survivable downstream -- it dies
+        ~26s later inside timing_manager with ``conversation_ids cannot be
+        empty`` and a SIGKILL, long after the cause has scrolled away.
 
         When ``self.multi_turn`` is set, all turns in the row are used,
         otherwise only the first turn is used.
@@ -161,13 +186,31 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         Returns:
             A dictionary mapping session_id (the SPEED-Bench question_id) to
             a list of MultiTurn objects.
+
+        Raises:
+            DatasetLoaderError: If the file still holds unresolved placeholder
+                text, or if a category filter matches no rows.
         """
         data: dict[str, list[MultiTurn]] = defaultdict(list)
+        total = 0
+        matched = 0
+        placeholders = 0
 
         for row in self._iter_record_dicts():
             loaded_line = SpeedBenchRow.model_validate(row)
+            total += 1
 
+            # Filter before counting placeholders: the counts must describe the
+            # rows the user asked for. Counting whole-file would refuse a fully
+            # prepared category because some other category is unprepared.
             if self.category and loaded_line.category != self.category:
+                continue
+            matched += 1
+
+            # Count every unprepared row rather than failing on the first, so the
+            # message reports the true scale of the problem in one run.
+            if loaded_line.has_placeholder_turn():
+                placeholders += 1
                 continue
 
             messages = (
@@ -184,13 +227,29 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
 
             data[multi_turn_data.session_id].append(multi_turn_data)
 
+        if placeholders:
+            scope = f"category {self.category!r}" if self.category else "this file"
+            raise DatasetLoaderError(
+                f"{self.filename}: {placeholders} of {matched} SPEED-Bench rows in "
+                f"{scope} still contain placeholder text instead of prompts, so it "
+                f"cannot be benchmarked. "
+                f"SPEED-Bench ships without the prompt text for rows whose source "
+                f"datasets do not permit redistribution. Let AIPerf fetch and "
+                f"resolve it instead of pointing at a file: "
+                f"aiperf profile --public-dataset speed_bench_{self.category or 'qualitative'} ... "
+                f"One of the 14 sources, cais/hle, is gated: accept its terms at "
+                f"{HLE_ACCESS_URL} (approval is automatic, and required per user "
+                f"-- HuggingFace grants access to individuals, not organizations), "
+                f"then run 'hf auth login'. "
+                f"Full instructions: {SPEED_BENCH_DOCS_URL}"
+            )
+
         if self.category and not data:
-            self.warning(
-                lambda: (
-                    f"SPEED-Bench category filter {self.category!r} matched no rows "
-                    f"in {self.filename}. Verify the configured category exists in "
-                    f"this dataset."
-                )
+            raise DatasetLoaderError(
+                f"{self.filename}: SPEED-Bench category filter {self.category!r} "
+                f"matched none of the {total} rows in this file. Verify the category "
+                f"exists in this split -- the qualitative and throughput splits have "
+                f"different category names."
             )
 
         return data
