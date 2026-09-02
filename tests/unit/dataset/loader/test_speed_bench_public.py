@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -260,3 +261,154 @@ def test_public_loaders_construct_outside_an_event_loop():
     loader = SpeedBenchPublicLoader(hf_subset="qualitative")
 
     assert loader.config == "qualitative"
+
+
+class TestResolveConfig:
+    """resolve_config drives the vendored script and publishes the cache."""
+
+    @staticmethod
+    def _fake_hf_dataset(rows):
+        """Stand in for a datasets.Dataset through the calls resolve_config makes."""
+
+        class _FakeDataset:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def map(self, fn, remove_columns=None):
+                return _FakeDataset([{**r, **fn(r)} for r in self._rows])
+
+            def to_json(self, path):
+                Path(path).write_text(
+                    "\n".join(
+                        json.dumps({k: v for k, v in r.items() if k != "turns"})
+                        for r in self._rows
+                    )
+                )
+
+        return _FakeDataset(rows)
+
+    def _patched_resolve(self, monkeypatch, tmp_path, rows):
+        """Point the cache at tmp_path and stub out every network call.
+
+        Patches attributes on the real modules rather than replacing them in
+        ``sys.modules``: the vendored script does ``from datasets import
+        Dataset, ...`` at import time, so a stub module breaks its import
+        before the code under test is reached.
+        """
+        import datasets as datasets_mod
+
+        from aiperf.dataset.loader.vendor import speed_bench_prepare
+
+        monkeypatch.setattr(
+            SpeedBenchPublicLoader,
+            "cache_path_for",
+            staticmethod(lambda config: tmp_path / f"{config}.jsonl"),
+        )
+        fake = self._fake_hf_dataset(rows)
+        monkeypatch.setattr(datasets_mod, "load_dataset", lambda *a, **k: fake)
+        monkeypatch.setattr(
+            speed_bench_prepare, "_resolve_external_data", lambda ds, config: ds
+        )
+        return fake
+
+    def test_publishes_a_cache_for_a_fully_resolved_config(self, monkeypatch, tmp_path):
+        rows = [{"question_id": "a" * 32, "category": "qa", "turns": ["A prompt."]}]
+        self._patched_resolve(monkeypatch, tmp_path, rows)
+
+        path = SpeedBenchPublicLoader.resolve_config("qualitative")
+
+        assert path.exists()
+        written = json.loads(path.read_text().splitlines()[0])
+        assert written["messages"] == [{"role": "user", "content": "A prompt."}]
+
+    def test_leaves_no_partial_file_when_rows_are_unresolved(
+        self, monkeypatch, tmp_path
+    ):
+        """A rejected resolve must not leave a cache the next run would trust."""
+        rows = [{"question_id": "a" * 32, "category": "qa", "turns": [PLACEHOLDER]}]
+        self._patched_resolve(monkeypatch, tmp_path, rows)
+
+        with pytest.raises(DatasetLoaderError, match="unresolved"):
+            SpeedBenchPublicLoader.resolve_config("qualitative")
+
+        assert list(tmp_path.iterdir()) == [], "no cache or .partial may survive"
+
+    def test_wraps_a_resolution_failure_with_context(self, monkeypatch, tmp_path):
+        self._patched_resolve(monkeypatch, tmp_path, [])
+        from aiperf.dataset.loader.vendor import speed_bench_prepare
+
+        def _boom(dataset, config):
+            raise RuntimeError("source unreachable")
+
+        monkeypatch.setattr(speed_bench_prepare, "_resolve_external_data", _boom)
+
+        with pytest.raises(DatasetLoaderError, match="Failed to resolve"):
+            SpeedBenchPublicLoader.resolve_config("qualitative")
+
+    def test_gated_failure_is_reported_as_a_gate_problem(self, monkeypatch, tmp_path):
+        """A 403 surfacing during resolve must still name the browser step."""
+        self._patched_resolve(monkeypatch, tmp_path, [])
+        from aiperf.dataset.loader.vendor import speed_bench_prepare
+
+        def _gated(dataset, config):
+            raise RuntimeError("cais/hle is a gated dataset on the Hub")
+
+        monkeypatch.setattr(speed_bench_prepare, "_resolve_external_data", _gated)
+
+        with pytest.raises(DatasetLoaderError) as excinfo:
+            SpeedBenchPublicLoader.resolve_config("qualitative")
+
+        assert "https://huggingface.co/datasets/cais/hle" in str(excinfo.value)
+
+
+class TestPreflightMaterialize:
+    def test_resolves_when_the_cache_is_cold(self, monkeypatch, tmp_path):
+        called = []
+        monkeypatch.setattr(
+            SpeedBenchPublicLoader,
+            "cache_path_for",
+            staticmethod(lambda config: tmp_path / f"{config}.jsonl"),
+        )
+        monkeypatch.setattr(
+            SpeedBenchPublicLoader,
+            "resolve_config",
+            classmethod(lambda cls, config: called.append(config)),
+        )
+
+        SpeedBenchPublicLoader.preflight_materialize(hf_subset="qualitative")
+
+        assert called == ["qualitative"]
+
+    def test_surfaces_resolution_failure_as_a_configuration_error(
+        self, monkeypatch, tmp_path
+    ):
+        """Preflight failures must render as a clean panel, not a traceback."""
+
+        def _fail(cls, config):
+            raise DatasetLoaderError("resolution blew up")
+
+        monkeypatch.setattr(
+            SpeedBenchPublicLoader,
+            "cache_path_for",
+            staticmethod(lambda config: tmp_path / f"{config}.jsonl"),
+        )
+        monkeypatch.setattr(
+            SpeedBenchPublicLoader, "resolve_config", classmethod(_fail)
+        )
+
+        with pytest.raises(ConfigurationError, match="resolution blew up"):
+            SpeedBenchPublicLoader.preflight_materialize(hf_subset="qualitative")
+
+
+class TestConvertEdgeCases:
+    async def test_rows_with_only_blank_content_are_skipped(self):
+        data = {
+            "dataset": [
+                _row("a" * 32, "qa", "   "),
+                _row("b" * 32, "qa", "Real."),
+            ]
+        }
+
+        conversations = await _loader().convert_to_conversations(data)
+
+        assert len(conversations) == 1
