@@ -276,6 +276,12 @@ class ResponsesEndpoint(BaseEndpoint):
         When neither is set we return ``None`` so the caller falls back to
         sending the full history.
 
+        WebSocket mode is exempt from the store gate: the Responses WebSocket
+        contract keeps a connection-local (and, on real servers, persisted)
+        cache of recent responses so ``previous_response_id`` resolves without
+        ``store``. Chaining is the whole point of the stateful WebSocket path,
+        so we always extract the id there.
+
         The response object lives under ``response`` for streaming lifecycle
         events (``response.created`` / ``response.completed`` / ...) and at the
         top level for a non-streaming response body.
@@ -287,7 +293,7 @@ class ResponsesEndpoint(BaseEndpoint):
         id belongs to an aborted response, so chaining onto it would corrupt the
         next turn and we return ``None`` regardless of the advertised id.
         """
-        store_requested = self._store_requested()
+        store_requested = self._store_requested() or self._is_websocket_transport()
         resp_id: str | None = None
         for response in record.responses:
             json_obj = response.get_json()
@@ -315,6 +321,16 @@ class ResponsesEndpoint(BaseEndpoint):
         """
         store = dict(self.model_endpoint.endpoint.extra or []).get("store")
         return is_truthy_flag(store)
+
+    def _is_websocket_transport(self) -> bool:
+        """Whether this run uses the WebSocket transport (ws/wss).
+
+        WebSocket Responses chaining resolves ``previous_response_id`` from the
+        connection's response cache regardless of ``store``, so the store gate
+        in ``extract_response_id`` does not apply.
+        """
+        transport = self.model_endpoint.transport
+        return transport is not None and str(transport) == "websocket"
 
     @staticmethod
     def _maybe_enable_usage_stream_options(

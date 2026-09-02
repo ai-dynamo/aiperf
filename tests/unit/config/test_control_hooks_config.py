@@ -152,3 +152,16 @@ def test_control_hooks_require_http_transport_gate() -> None:
     )
     with pytest.raises(ValueError, match="HTTP transport"):
         cfg._validate_control_hooks_require_http()
+
+
+def test_control_hooks_reject_websocket_autodetected_from_url() -> None:
+    """A ws:// URL auto-selects the WebSocket transport, which control hooks
+    cannot use — even though ``transport`` is left unset (None)."""
+    with pytest.raises(ValidationError, match="HTTP transport"):
+        EndpointConfig.model_validate(
+            {
+                "urls": ["ws://127.0.0.1:19000"],
+                "type": "responses",
+                "reset_kv_cache": {"path": "/reset_prefix_cache"},
+            }
+        )

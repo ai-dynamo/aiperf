@@ -310,6 +310,79 @@ See the [Multi-Turn Conversations](multi-turn.md) tutorial for details on conver
 
 ---
 
+## WebSocket Mode
+
+The Responses API also supports [WebSocket mode](https://developers.openai.com/api/docs/guides/websocket-mode):
+instead of one HTTP request per turn, AIPerf keeps a persistent socket open and
+sends each turn as a `response.create` event, reading back the same `response.*`
+lifecycle events the HTTP SSE path streams. Select it by giving the endpoint a
+`ws://` or `wss://` URL — the WebSocket transport is auto-detected from the
+scheme:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type responses \
+    --endpoint /v1/responses \
+    --streaming \
+    --use-server-token-count \
+    --url ws://localhost:8000 \
+    --conversation-num 10 \
+    --conversation-turn-mean 3 \
+    --concurrency 4
+```
+
+Key behaviors:
+
+- **One dedicated socket per conversation.** Each conversation holds a socket for
+  its whole lifetime (a hard lease keyed on the conversation, like the HTTP
+  sticky-user-sessions strategy), opened on the first turn and closed on the
+  final turn. Every turn of a conversation therefore reuses the same connection,
+  so `previous_response_id` chaining stays inside the server's connection-local
+  cache even when turns from other conversations interleave.
+- **Open sockets track concurrently active conversations, not in-flight requests.**
+  `--concurrency` caps concurrent *sessions* (a session slot is held from a
+  conversation's first turn through its final turn), so at saturation the socket
+  count equals `--concurrency`. Under request-rate load, where session
+  concurrency is unbounded, the socket count instead tracks how many
+  conversations are active at once — the same way the HTTP sticky strategy
+  behaves.
+- **Chaining is automatic and does not require `store: true`.** The WebSocket
+  contract resolves `previous_response_id` from the connection's response cache,
+  so multi-turn conversations chain in the default `deltas_without_responses`
+  context mode without requesting server-side storage. As with HTTP chaining,
+  only the newest turn is put on the wire, so pair WebSocket runs with
+  [`--use-server-token-count`](#server-token-counts) for accurate multi-turn ISL.
+- **A mid-conversation reconnect ends a chained turn.** Because non-stored
+  chaining lives only in the connection-local cache, if the peer drops a
+  conversation's socket between turns the cached `previous_response_id` is no
+  longer resolvable on the fresh socket. AIPerf fails that turn explicitly
+  (`ChainingContextLost`) rather than emitting a confusing
+  `previous_response_not_found` from the server. Add `--extra-inputs
+  '{"store": true}'` to persist responses server-side so a reconnect still
+  resolves the id.
+- **HTTP-only fields are stripped.** `stream`, `stream_options`, and `background`
+  are HTTP-transport concepts; the socket always streams events, so AIPerf drops
+  them from the `response.create` envelope automatically.
+- **Requests carry a `stream_id`** derived from the conversation so forked
+  conversations replaying against the same server remain addressable.
+- **WebSocket mode requires `--endpoint-type responses`.** The transport only
+  speaks the Responses API contract; a `ws://`/`wss://` URL (or `--transport
+  websocket`) with any other endpoint type is rejected at config validation.
+- **Credentials require `wss://`.** An API key or authentication header sent over
+  unencrypted `ws://` would travel in cleartext, so AIPerf rejects that
+  combination — use `wss://` for credential-bearing WebSocket runs.
+
+The endpoint layer is transport-agnostic: metrics, parsing, and multi-turn
+control behave identically to the HTTP path. You can therefore compare stateless
+HTTP, stateful HTTP (`store: true` chaining), and WebSocket runs against the same
+server by only changing the URL scheme and the chaining flags.
+
+> **Note:** WebSocket mode is specific to the Responses endpoint. Other endpoint
+> types continue to use the HTTP transport.
+
+---
+
 ## Server Token Counts
 
 Use server-reported token counts instead of client-side tokenization:
