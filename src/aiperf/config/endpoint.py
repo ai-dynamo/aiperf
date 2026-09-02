@@ -214,9 +214,10 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Transport plugin name. 'http' (aiohttp-based HTTP/1.1) and "
+            "'websocket' (OpenAI Responses WebSocket mode, ws/wss URLs) are shipped. "
+            "Auto-detected from the URL scheme when unset (http/https -> http, "
+            "ws/wss -> websocket); explicit setting overrides auto-detection.",
         ),
     ]
 
@@ -511,10 +512,10 @@ class EndpointConfig(BaseConfig):
                     f"URL {url!r} is missing scheme or host. "
                     f"Expected 'http://host:port' or 'https://host:port'."
                 )
-            if parsed.scheme.lower() not in ("http", "https"):
+            if parsed.scheme.lower() not in ("http", "https", "ws", "wss"):
                 raise ValueError(
                     f"URL {url!r} has unsupported scheme {parsed.scheme!r}. "
-                    f"Expected 'http' or 'https'."
+                    f"Expected 'http', 'https', 'ws', or 'wss'."
                 )
             # Validate the port if one is present. urlparse.port raises
             # ValueError on access for non-numeric or out-of-range ports
@@ -678,15 +679,88 @@ class EndpointConfig(BaseConfig):
             )
         return self
 
+    def _effective_transports(self) -> set[TransportType]:
+        """Resolve the transport(s) this endpoint will actually use.
+
+        An explicit ``transport`` wins; otherwise it is auto-detected from each
+        URL scheme (``ws``/``wss`` -> websocket, everything else -> http),
+        mirroring ``InferenceClient.detect_transport_from_url``. Validators that
+        gate on transport must consult this rather than the raw ``transport``
+        field, which is ``None`` until the worker resolves it at request time.
+        """
+        if self.transport is not None:
+            return {self.transport}
+        resolved: set[TransportType] = set()
+        for url in self.urls:
+            scheme = urlparse(url).scheme.lower()
+            resolved.add(
+                TransportType.WEBSOCKET
+                if scheme in ("ws", "wss")
+                else TransportType.HTTP
+            )
+        return resolved
+
     @model_validator(mode="after")
     def _validate_control_hooks_require_http(self) -> Self:
         if self.reset_kv_cache is None and self.server_profiler is None:
             return self
-        # Transport None means auto-detect HTTP from URL — allowed.
-        if self.transport is not None and self.transport != TransportType.HTTP:
+        non_http = self._effective_transports() - {TransportType.HTTP}
+        if non_http:
+            shown = ", ".join(sorted(str(t) for t in non_http))
             raise ValueError(
                 "endpoint.reset_kv_cache and endpoint.server_profiler require "
-                "HTTP transport; unsupported transport "
-                f"{self.transport!r}"
+                f"HTTP transport; resolved transport {shown!r}"
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_websocket_requires_responses(self) -> Self:
+        """WebSocket transport only speaks the Responses API contract.
+
+        With ``transport`` unset, a ``ws``/``wss`` URL auto-selects the
+        WebSocket transport while ``type`` still defaults to ``chat``. The
+        WebSocket transport wraps the payload in a ``response.create`` envelope,
+        so a Chat Completions payload would violate the Responses WebSocket
+        contract. Require ``responses`` explicitly rather than silently sending
+        a malformed request.
+        """
+        if (
+            TransportType.WEBSOCKET in self._effective_transports()
+            and self.type != EndpointType.RESPONSES
+        ):
+            raise ValueError(
+                "WebSocket transport (ws/wss URL or --transport websocket) is "
+                f"only supported for endpoint type 'responses', not {str(self.type)!r}. "
+                "Pass --endpoint-type responses, or use an http/https URL."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ws_credentials_require_tls(self) -> Self:
+        """Reject transmitting credentials over an unencrypted ``ws://`` socket.
+
+        ``aiohttp.ClientSession.ws_connect`` sends the configured API key and
+        authentication headers on the initial upgrade request; over ``ws://``
+        those travel in cleartext (CWE-319). Require ``wss://`` whenever
+        credentials are configured, or drop the credentials.
+        """
+        if not self._has_credentials():
+            return self
+        for url in self.urls:
+            if urlparse(url).scheme.lower() == "ws":
+                raise ValueError(
+                    f"URL {url!r} uses the unencrypted 'ws://' scheme but the "
+                    "endpoint carries credentials (api_key or authentication "
+                    "headers), which would be transmitted in cleartext. Use "
+                    "'wss://' for credential-bearing WebSocket connections, or "
+                    "remove the credentials."
+                )
+        return self
+
+    def _has_credentials(self) -> bool:
+        """Whether the endpoint carries transport credentials worth protecting."""
+        if self.api_key:
+            return True
+        from aiperf.common.redact import is_sensitive_header_name
+
+        return any(is_sensitive_header_name(name) for name in (self.headers or {}))

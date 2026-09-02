@@ -224,8 +224,10 @@ spec:
                         type: string
                         enum:
                         - http
-                        description: Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected
-                          from URL when unset; explicit setting overrides auto-detection.
+                        - websocket
+                        description: Transport plugin name. 'http' (aiohttp-based HTTP/1.1) and 'websocket' (OpenAI Responses
+                          WebSocket mode, ws/wss URLs) are shipped. Auto-detected from the URL scheme when unset (http/https
+                          -> http, ws/wss -> websocket); explicit setting overrides auto-detection.
                       connectionReuse:
                         type: string
                         description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:
@@ -382,6 +384,8 @@ spec:
                         form data: audio_transcription, image_edit, video_generation'
                     - rule: '!has(self.path) || self.path.startsWith(''/'')'
                       message: endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')
+                    - rule: '!has(self.transport) || self.transport != ''websocket'' || (has(self.type) && self.type == ''responses'')'
+                      message: transport='websocket' requires endpoint.type='responses'
                   datasets:
                     type: array
                     description: Dataset configuration as a single-element list. The list shape exists to share the schema
