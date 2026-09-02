@@ -3,6 +3,7 @@
 """Unit tests for the chunked inputs.json encoder and the streamed DatasetManager writer."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import orjson
 import pytest
@@ -16,7 +17,6 @@ from aiperf.dataset.payload_formatting import iter_inputs_json_chunks
 
 
 def _single_dump(inputs: InputsFile) -> bytes:
-    """The whole-document encoding the chunked encoder must reproduce byte for byte."""
     return orjson.dumps(
         inputs.model_dump(exclude_none=True, mode="json"), option=orjson.OPT_INDENT_2
     )
@@ -45,15 +45,28 @@ class TestIterInputsJsonChunks:
         [
             param(InputsFile(), id="empty"),
             param(InputsFile(data=[_session("s1", 1, "hi")]), id="single-session"),
+            param(InputsFile(data=[_session("s1", 0, "")]), id="session-without-payloads"),
+            param(InputsFile(data=[_session(None, 2, "hi")]), id="session-without-id"),
             param(
                 InputsFile(
                     data=[
                         _session("s1", 2, 'line1\nline2\ttab "quoted" \\ slash'),
                         _session(None, 0, ""),
                         _session("s3", 3, "unicode é 中 \U0001f600"),
+                        SessionPayloads(
+                            session_id="s4",
+                            payloads=[
+                                {},
+                                {
+                                    "top": None,
+                                    "nested": {"none": None, "list": [None, 1.5, True]},
+                                    "n": 0,
+                                },
+                            ],
+                        ),
                     ]
                 ),
-                id="escapes-unicode-no-session-id",
+                id="escapes-unicode-none-values-mixed",
             ),
         ],
     )  # fmt: skip
@@ -73,14 +86,25 @@ class TestIterInputsJsonChunks:
         assert all(len(chunk) < 2 * chunk_bytes for chunk in chunks)
         assert b"".join(chunks) == _single_dump(inputs)
 
+    def test_iter_inputs_json_chunks_splits_oversized_session_at_payload_boundaries(
+        self,
+    ) -> None:
+        chunk_bytes = 4096
+        inputs = InputsFile(data=[_session("big", 64, "y" * 1024)])
+
+        chunks = list(iter_inputs_json_chunks(inputs, chunk_bytes=chunk_bytes))
+
+        assert len(chunks) > 1
+        assert all(len(chunk) >= chunk_bytes for chunk in chunks[:-1])
+        assert all(len(chunk) < 2 * chunk_bytes for chunk in chunks)
+        assert b"".join(chunks) == _single_dump(inputs)
+
 
 class TestGenerateInputsJsonFileStreaming:
     @pytest.mark.asyncio
-    async def test_generate_inputs_json_file_large_dataset_matches_single_dump(
+    async def test_generate_inputs_json_file_writes_multiple_bounded_chunks(
         self, benchmark_run, tmp_path: Path
     ) -> None:
-        """A dataset several times the flush threshold is written across multiple
-        chunks and still lands on disk byte-identical to the one-shot encoding."""
         manager = DatasetManager(run=benchmark_run, service_id="test_dataset_manager")
         manager.dataset = {
             f"session_{i}": Conversation(
@@ -90,14 +114,32 @@ class TestGenerateInputsJsonFileStreaming:
                     for _ in range(2)
                 ],
             )
-            for i in range(2000)
+            for i in range(1200)
         }
         expected = _single_dump(
             manager._generate_input_payloads(ModelEndpointInfo.from_run(benchmark_run))
         )
         assert len(expected) > 2 * BYTES_PER_MIB
+        write_sizes: list[int] = []
 
-        await manager._generate_inputs_json_file()
+        class _RecordingFile:
+            def __init__(self, path: Path) -> None:
+                self._file = path.open("wb")
 
+            async def write(self, data: bytes) -> None:
+                write_sizes.append(len(data))
+                self._file.write(data)
+
+            async def __aenter__(self) -> "_RecordingFile":
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                self._file.close()
+
+        with patch("aiofiles.open", lambda path, mode: _RecordingFile(Path(path))):
+            await manager._generate_inputs_json_file()
+
+        assert len(write_sizes) > 1
+        assert all(size >= BYTES_PER_MIB for size in write_sizes[:-1])
         assert (tmp_path / "inputs.json").read_bytes() == expected
         assert not (tmp_path / "inputs.tmp").exists()

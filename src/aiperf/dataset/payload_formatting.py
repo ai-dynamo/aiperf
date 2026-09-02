@@ -18,7 +18,7 @@ import orjson
 
 from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models import Conversation, InputsFile
+from aiperf.common.models import Conversation, InputsFile, SessionPayloads
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import RequestInfo
 from aiperf.plugin import plugins
@@ -70,36 +70,51 @@ def format_conversation_payloads(
 
 
 # Flush threshold for the streamed inputs.json encoder. Bounds the bytes held
-# between writes without paying an aiofiles thread hop per session.
+# between writes without paying an aiofiles thread hop per payload.
 INPUTS_JSON_WRITE_CHUNK_BYTES = BYTES_PER_MIB
 
 _INPUTS_JSON_EMPTY = b'{\n  "data": []\n}'
 _INPUTS_JSON_HEAD = b'{\n  "data": ['
 _INPUTS_JSON_TAIL = b"\n  ]\n}"
-# Sessions sit two levels deep (root object, "data" array) under OPT_INDENT_2.
+# OPT_INDENT_2 nesting: session objects sit under the "data" array, payload
+# objects under each session's "payloads" array.
 _SESSION_INDENT = b"\n    "
+_PAYLOAD_INDENT = b"\n        "
+
+
+def _iter_session_pieces(session: SessionPayloads) -> Iterator[bytes]:
+    """Yield one session exactly as OPT_INDENT_2 would print it, one payload per piece."""
+    dumped = session.model_dump(exclude_none=True, mode="json")
+    payloads = dumped.pop("payloads")
+    head = b"{"
+    if "session_id" in dumped:
+        head += b'\n      "session_id": ' + orjson.dumps(dumped["session_id"]) + b","
+    if not payloads:
+        yield head + b'\n      "payloads": []\n    }'
+        return
+    yield head + b'\n      "payloads": ['
+    for index, payload in enumerate(payloads):
+        piece = b"," if index else b""
+        yield (
+            piece
+            + _PAYLOAD_INDENT
+            + orjson.dumps(payload, option=orjson.OPT_INDENT_2).replace(
+                b"\n", _PAYLOAD_INDENT
+            )
+        )
+    yield b"\n      ]\n    }"
 
 
 def iter_inputs_json_chunks(
     inputs: InputsFile, chunk_bytes: int = INPUTS_JSON_WRITE_CHUNK_BYTES
 ) -> Iterator[bytes]:
-    """Yield the inputs.json document as byte chunks of roughly ``chunk_bytes``.
+    """Yield the inputs.json document in chunks flushed at payload boundaries.
 
-    Sessions are encoded one at a time and re-indented under ``"data"``, so the
-    peak memory cost is one chunk plus one session instead of a JSON-mode copy
-    of every payload plus the fully encoded document. orjson escapes control
-    characters inside strings, so a raw newline in a session's encoding only
-    ever separates lines and the re-indent is exact: the concatenated chunks
-    are byte-identical to encoding the whole ``InputsFile`` with
-    ``OPT_INDENT_2`` in a single call.
-
-    Args:
-        inputs: The sessions to encode.
-        chunk_bytes: Flush threshold; every chunk but the last is at least
-            this long.
-
-    Yields:
-        Byte chunks that concatenate to the inputs.json document.
+    Every chunk but the last is at least ``chunk_bytes`` and none exceeds it by
+    more than one encoded payload. orjson escapes control characters inside
+    strings, so re-indenting on raw newlines is exact and the concatenated
+    chunks are byte-identical to encoding the whole ``InputsFile`` with
+    ``OPT_INDENT_2`` in one call.
     """
     if not inputs.data:
         yield _INPUTS_JSON_EMPTY
@@ -110,12 +125,10 @@ def iter_inputs_json_chunks(
         if index:
             buffer += b","
         buffer += _SESSION_INDENT
-        buffer += orjson.dumps(
-            session.model_dump(exclude_none=True, mode="json"),
-            option=orjson.OPT_INDENT_2,
-        ).replace(b"\n", _SESSION_INDENT)
-        if len(buffer) >= chunk_bytes:
-            yield bytes(buffer)
-            buffer.clear()
+        for piece in _iter_session_pieces(session):
+            buffer += piece
+            if len(buffer) >= chunk_bytes:
+                yield bytes(buffer)
+                buffer.clear()
     buffer += _INPUTS_JSON_TAIL
     yield bytes(buffer)

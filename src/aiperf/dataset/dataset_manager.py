@@ -521,13 +521,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         return inputs
 
     async def _generate_inputs_json_file(self) -> None:
-        """Generate inputs.json file in the artifact directory.
-
-        The document is streamed to disk in bounded chunks (see
-        ``iter_inputs_json_chunks``) instead of being encoded in one piece, so
-        a large dataset neither holds a second copy of every payload plus the
-        whole encoded file in memory nor issues the write as one giant call.
-        """
+        """Generate inputs.json in the artifact directory, streamed in bounded chunks
+        so the fully encoded document is never held in memory."""
         file_path = self.run.cfg.artifacts.dir / OutputDefaults.INPUTS_JSON_FILE
         temp_file_path = file_path.with_suffix(".tmp")
         self.info(f"Generating inputs.json file at {file_path.resolve()}")
