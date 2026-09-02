@@ -76,6 +76,30 @@ def _warmup_pattern_type(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None
         w["concurrency"] = warmup_concurrency if warmup_concurrency is not None else 1
 
 
+def _warmup_override_pattern(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None:
+    """Emit only the pattern fields the user set, for an existing warmup phase.
+
+    ``_warmup_pattern_type`` derives ``type``/``rate``/``concurrency`` together,
+    falling back to the non-warmup ``--concurrency`` / ``--request-rate`` /
+    ``--arrival-pattern`` when the warmup-specific flag is absent. That is right
+    when building a phase from nothing and wrong as an override: it would
+    recompute the phase type the config file declared from flags aimed at the
+    profiling phase.
+    """
+    if "warmup_concurrency" in s and not isinstance(cli.warmup_concurrency, list):
+        w["concurrency"] = cli.warmup_concurrency
+    if "warmup_request_rate" in s and cli.warmup_request_rate is not None:
+        w["rate"] = cli.warmup_request_rate
+    if "warmup_arrival_pattern" in s:
+        match cli.warmup_arrival_pattern:
+            case ArrivalPattern.GAMMA:
+                w["type"] = PhaseType.GAMMA
+            case ArrivalPattern.CONSTANT:
+                w["type"] = PhaseType.CONSTANT
+            case _:
+                w["type"] = PhaseType.POISSON
+
+
 def _warmup_ramps(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None:
     def _pick(warmup_field: str, fallback_field: str) -> Any:
         if warmup_field in s:
@@ -106,7 +130,7 @@ def _warmup_ramps(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None:
         w["rate_ramp"] = {"duration": rr}
 
 
-def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
+def build_warmup(cli: CLIConfig, *, base_warmup: bool = False) -> dict[str, Any] | None:
     """Build a warmup phase dict from CLIConfig, or return None.
 
     The warmup phase is only emitted when the caller explicitly set one of the
@@ -124,7 +148,13 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
         #     "concurrency": 10, "requests": 50}
     """
     s = cli.model_fields_set
-    if not ({"warmup_request_count", "warmup_num_sessions", "warmup_duration"} & s):
+    # base_warmup: a YAML config file already declares a warmup phase, so the
+    # trigger the CLI-only path requires is already satisfied -- the flags
+    # have somewhere to land, and dropping them would be the silent-ignore
+    # behavior this exists to prevent.
+    if not base_warmup and not (
+        {"warmup_request_count", "warmup_num_sessions", "warmup_duration"} & s
+    ):
         # No warmup trigger -> no warmup phase. Refuse to silently drop
         # secondary warmup-only flags the user supplied — except under a
         # --scenario, where the auto-synthesized agentic warmup consumes
@@ -139,9 +169,15 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
                 "the grace period, or drop --warmup-grace-period."
             )
         return None
-    w: dict[str, Any] = {"exclude_from_results": True}
+    # Overriding an existing phase emits only what the user set: the config
+    # file owns exclude_from_results, and the phase type it declares must not
+    # be recomputed from flags the user did not pass.
+    w: dict[str, Any] = {} if base_warmup else {"exclude_from_results": True}
     _warmup_count_field(w, cli)
-    _warmup_pattern_type(w, cli, s)
+    if base_warmup:
+        _warmup_override_pattern(w, cli, s)
+    else:
+        _warmup_pattern_type(w, cli, s)
     _warmup_ramps(w, cli, s)
     _apply_agentic_replay_fields(w, cli)
     if "warmup_prefill_concurrency" in s:
@@ -156,7 +192,7 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
         # has a non-None default and so cannot be reliably distinguished from
         # explicit user input downstream), warmup_grace_period defaults to None,
         # so a non-None value means the user explicitly asked for it.
-        if "duration" not in w:
+        if "duration" not in w and not base_warmup:
             if cli.scenario is not None:
                 # Under a scenario the agentic warmup barrier consumes the
                 # grace via _apply_agentic_replay_fields; the user-declared

@@ -150,6 +150,8 @@ def _build_communication(cli: CLIConfig) -> dict[str, Any] | None:
 
 def build_logging_runtime(
     cli: CLIConfig,
+    *,
+    base_api_port: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build (logging, runtime) dicts for AIPerfConfig from a CLIConfig.
 
@@ -162,8 +164,11 @@ def build_logging_runtime(
     Pydantic defaults on ``RuntimeConfig`` / ``LoggingConfig``. Verbose-driven
     log-level/UI promotion still writes (it's a derived effect, not a default).
     """
-    # api_host requires api_port to be set explicitly (or via env).
-    if cli.api_host is not None and cli.api_port is None:
+    # api_host requires api_port to be set explicitly (or via env, or -- when
+    # a config file is in play -- by the file itself: base_api_port says the
+    # YAML already supplies runtime.api_port, so demanding the flag would
+    # reject a supported combination).
+    if cli.api_host is not None and cli.api_port is None and not base_api_port:
         raise ValueError(
             "api_host requires api_port (or AIPERF_API_SERVER_PORT) to be set"
         )

@@ -234,7 +234,7 @@ aiperf profile \
 
 ---
 
-## Multi-Turn Conversations
+## Multi-Turn Conversations & Stateful Chaining
 
 Benchmark multi-turn conversations using the Responses API:
 
@@ -250,6 +250,61 @@ aiperf profile \
     --output-tokens-mean 200 \
     --url localhost:8000
 ```
+
+### Stateful Chaining with `previous_response_id`
+
+Stateful chaining is **opt-in and driven by requesting storage**. Enable it with:
+
+```bash
+--extra-inputs '{"store": true}'
+```
+
+`store` is a *request* parameter, not a standard field of the Responses object,
+so AIPerf keys chaining off the storage you requested rather than off an echoed
+response field — the OpenAI spec does not include `store` on the response, and
+servers such as vLLM's agentic-api accept it on the request but never serialize
+it back. (If a server *does* echo `store: true` on the response object, that is
+honored too.)
+
+Some backends also require a server-side flag (e.g. vLLM with
+`VLLM_ENABLE_RESPONSES_API_STORE=1`) to actually persist responses. If the
+server does not persist a requested response, the next chained request fails
+against the missing `previous_response_id`; use a storing backend when enabling
+this feature.
+
+> **Startup requirement:** requesting `store: true` on `--endpoint-type responses`
+> is rejected at startup unless [`--use-server-token-count`](#server-token-counts)
+> is also set. Chaining sends only the newest turn on the wire, so client-side ISL
+> would undercount the server-side prompt; server-reported token counts are the
+> only accurate source. Add `--use-server-token-count`, or drop `store: true` to
+> keep sending the full history client-side.
+
+When chaining is active with `--endpoint-type responses`:
+- On **Turn 0**, AIPerf sends the initial prompt and captures the server-generated `response.id` (e.g. `resp_<hash>`) from the response object — because `store: true` was requested for the run.
+- On **Turn 1+**, AIPerf sets `previous_response_id: <resp_id>` and sends only the single newest turn in the `input` array rather than re-sending the entire accumulated conversation history.
+
+**Scope:** chaining is applied only in the default delta context mode
+(`deltas_without_responses`), where the newest turn is a genuine delta. The
+`*_with_responses` context modes carry full per-turn history and are left
+unchained to avoid sending the conversation twice.
+
+Chaining is also limited to the session-driven request path. Pre-encoded
+datasets (`--input-file` payloads sent verbatim) bypass session tracking, so
+their requests are sent exactly as authored and are never chained — author
+`previous_response_id` into those payloads yourself if you need it.
+
+The startup requirement above inspects the endpoint-level `--extra-inputs`. If
+`store: true` is instead supplied per turn (via a dataset row's `extra`),
+it cannot be seen at startup, but chaining still triggers the one-time runtime
+warning that client-side ISL undercounts the server-side prompt — enable
+`--use-server-token-count` in that case too.
+
+> **Input Sequence Length note:** because a chained turn only puts the newest turn
+> on the wire (the prior history lives server-side), the default client-side ISL
+> reflects just that turn and undercounts the prompt the server actually prefills.
+> Use [`--use-server-token-count`](#server-token-counts) for accurate multi-turn
+> ISL when chaining is enabled. AIPerf emits a one-time warning if chaining runs
+> without it.
 
 See the [Multi-Turn Conversations](multi-turn.md) tutorial for details on conversation control parameters.
 
@@ -348,10 +403,13 @@ For reference, AIPerf processes these Responses API streaming events:
 
 | Event Type | Data Extracted |
 |---|---|
+| `response.created` | Server-generated response ID (`resp_<hash>`) for stateful session chaining |
 | `response.output_text.delta` | Text content delta |
 | `response.reasoning_text.delta` | Reasoning content delta |
+| `response.function_call_arguments.delta` | Tool call arguments delta |
 | `response.output_text.done` | Final text (fallback for providers that emit text only in done events) |
-| `response.completed` | Usage statistics |
+| `response.completed` | Usage statistics and response ID |
 | All other events | Skipped |
 
 This enables accurate measurement of TTFT, ITL, and token throughput metrics when streaming is enabled.
+
