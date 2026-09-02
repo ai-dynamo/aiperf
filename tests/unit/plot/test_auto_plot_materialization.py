@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from aiperf.config.plot import PlotEnvelopeConfig
-from aiperf.plot.auto_plot import build_auto_plot_callback
+from aiperf.plot.auto_plot import build_auto_plot_callback, run_auto_plot_async
 
 
 def _make_envelope() -> PlotEnvelopeConfig:
@@ -108,6 +108,62 @@ def test_callback_plot_required_false_swallows(tmp_path: Path, caplog):
     ):
         cb(_fake_completed_run(tmp_path))
     assert any("auto-plot failed" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_async_auto_plot_supports_separate_input_and_output(tmp_path: Path):
+    envelope = _make_envelope()
+    artifact_dir = tmp_path / "ns" / "sweeps" / "demo" / "123"
+    input_dir = tmp_path / "inputs"
+
+    with patch("aiperf.plot.auto_plot.run_plot_controller") as runner:
+        await run_auto_plot_async(
+            artifact_dir=artifact_dir,
+            input_paths=[input_dir],
+            output_dir=artifact_dir / "plots",
+            plot_required=True,
+            plot_envelope=envelope,
+        )
+
+    materialized = artifact_dir / ".aiperf-plot-config.yaml"
+    assert materialized.is_file()
+    runner.assert_called_once_with(
+        paths=[str(input_dir)],
+        output=str(artifact_dir / "plots"),
+        config=str(materialized),
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_optional_materialization_failure_warns(
+    tmp_path: Path, caplog
+) -> None:
+    with patch(
+        "aiperf.plot.auto_plot._materialize_plot_envelope",
+        side_effect=OSError("read-only volume"),
+    ):
+        await run_auto_plot_async(
+            artifact_dir=tmp_path,
+            plot_required=False,
+            plot_envelope=_make_envelope(),
+        )
+
+    assert any("auto-plot failed" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_async_required_failure_propagates(tmp_path: Path) -> None:
+    with (
+        patch(
+            "aiperf.plot.auto_plot.run_plot_controller",
+            side_effect=RuntimeError("renderer missing"),
+        ),
+        pytest.raises(RuntimeError, match="renderer missing"),
+    ):
+        await run_auto_plot_async(
+            artifact_dir=tmp_path,
+            plot_required=True,
+        )
 
 
 def test_materialize_helper_round_trips_to_disk(tmp_path: Path):

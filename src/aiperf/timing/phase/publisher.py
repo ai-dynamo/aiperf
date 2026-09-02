@@ -7,10 +7,11 @@ Publishes phase events (start, progress, complete) to message bus.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from aiperf.common.enums import BaselineKind
-from aiperf.common.messages import PhaseBaselineRequestMessage, ProfileCancelCommand
+from aiperf.common.messages import PhaseBaselineRequestMessage
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -39,10 +40,19 @@ class PhasePublisher:
         *,
         pub_client: PubClientProtocol,
         service_id: str,
+        profile_cancel_sender: Callable[[], Awaitable[None]],
     ):
-        """Initialize publisher with message bus client."""
+        """Initialize publisher with message bus client.
+
+        ``profile_cancel_sender`` is injected rather than derived from
+        ``pub_client`` because PROFILE_CANCEL no longer rides the pub bus: it is
+        a command to the controller, which relays it to the peer services. The
+        publisher stays transport-agnostic and the owning service supplies its
+        own control-channel send.
+        """
         self._pub_client = pub_client
         self._service_id = service_id
+        self._profile_cancel_sender = profile_cancel_sender
 
     async def publish_phases_configured(self, configs: list[CreditPhaseConfig]) -> None:
         """Publish phases configured event."""
@@ -120,15 +130,17 @@ class PhasePublisher:
         msg = CreditsCompleteMessage(service_id=self._service_id)
         await self._pub_client.publish(msg)
 
-    async def publish_profile_cancel(self) -> None:
-        """Broadcast ProfileCancelCommand to abort the run.
+    async def request_profile_cancel(self) -> None:
+        """Ask the controller to fan PROFILE_CANCEL out and abort the run.
 
         Used by the agentic-replay WARMUP early-abort path: a terminal warmup
-        failure means PROFILING must not start, so we broadcast the same command
-        the profiling teardown abort uses. The timing manager cancels credit
-        issuance, the records manager finalizes, and the system controller shuts
-        down -- instead of warmup running to teardown and hanging the run.
-        Reuses the existing PROFILE_CANCEL handlers across services.
+        failure means PROFILING must not start, so we raise the same command the
+        profiling teardown abort uses. The records manager finalizes and the
+        system controller shuts down -- instead of warmup running to teardown
+        and hanging the run. Reuses the existing PROFILE_CANCEL handlers across
+        services.
+
+        The controller's relay excludes this service, so the caller must still
+        cancel its own orchestrator locally.
         """
-        msg = ProfileCancelCommand(service_id=self._service_id)
-        await self._pub_client.publish(msg)
+        await self._profile_cancel_sender()

@@ -221,7 +221,7 @@ class ZMQSubClient(BaseZMQClient):
     @on_stop
     async def _stop_fd_reader(self) -> None:
         if self._fd_reader is not None:
-            self._fd_reader.stop()
+            await self._fd_reader.stop()
             self._fd_reader = None
 
     @background_task(immediate=True, interval=None)

@@ -86,6 +86,14 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         record._parsed_responses_cache = parsed_responses
         return parsed_responses
 
+    def extract_response_id(self, record: RequestRecord) -> str | None:
+        """Extract server-generated response ID for stateful session chaining.
+
+        Default returns None (stateless). Subclasses implementing stateful protocols
+        (e.g. ResponsesEndpoint) override this.
+        """
+        return None
+
     def process_responses(
         self,
         record: RequestRecord,

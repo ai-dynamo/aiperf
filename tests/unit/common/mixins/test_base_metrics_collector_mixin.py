@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.mixins.base_metrics_collector_mixin import (
     BaseMetricsCollectorMixin,
@@ -72,6 +73,60 @@ class TestTrustEnvPassedToSessions:
             assert mock_session_class.call_count == 2
             for call in mock_session_class.call_args_list:
                 assert call[1]["trust_env"] == trust_env_value
+
+
+class TestReadTimeoutSanityWarning:
+    """The collector should warn at init when the socket read timeout is far
+    above the collection cadence, but stay quiet for well-proportioned pairs
+    (including the shipped defaults)."""
+
+    @pytest.mark.asyncio
+    async def test_warns_for_badly_skewed_pair(self, monkeypatch) -> None:
+        monkeypatch.setattr(Environment.HTTP, "METRICS_SCRAPE_READ_TIMEOUT", 60.0)
+        collector = ConcreteCollector(
+            endpoint_url="http://localhost:9400/metrics",
+            collection_interval=0.05,  # 60 / 0.05 = 1200x
+            reachability_timeout=5.0,
+        )
+        try:
+            with patch.object(collector, "warning") as mock_warning:
+                await collector._initialize_http_client()
+
+            assert mock_warning.call_count == 1
+        finally:
+            await collector._session.close()
+
+    @pytest.mark.asyncio
+    async def test_does_not_warn_for_default_read_timeout_and_interval(
+        self,
+    ) -> None:
+        collector = ConcreteCollector(
+            endpoint_url="http://localhost:9400/metrics",
+            collection_interval=Environment.SERVER_METRICS.COLLECTION_INTERVAL,
+            reachability_timeout=5.0,
+        )
+        try:
+            with patch.object(collector, "warning") as mock_warning:
+                await collector._initialize_http_client()
+
+            mock_warning.assert_not_called()
+        finally:
+            await collector._session.close()
+
+    @pytest.mark.asyncio
+    async def test_does_not_warn_for_sane_custom_pair(self) -> None:
+        collector = ConcreteCollector(
+            endpoint_url="http://localhost:9400/metrics",
+            collection_interval=1.0,
+            reachability_timeout=5.0,
+        )
+        try:
+            with patch.object(collector, "warning") as mock_warning:
+                await collector._initialize_http_client()
+
+            mock_warning.assert_not_called()
+        finally:
+            await collector._session.close()
 
 
 class _RaisingCollector(BaseMetricsCollectorMixin[dict]):
