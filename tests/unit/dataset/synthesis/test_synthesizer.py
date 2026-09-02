@@ -195,6 +195,20 @@ class TestSynthesizer:
         assert len(synthetic[0]["hash_ids"]) == 48
         assert len(synthetic[1]["hash_ids"]) == 48
 
+    def test_shared_prefix_overshoot_rejected(self) -> None:
+        """Reject traces whose shared prefix overshoots input_length by a full block."""
+        # 3 shared blocks * 16 = 48 tokens, but input_length claims only 16.
+        # The overshoot (32) is >= block_size, so this is not just a partial block.
+        traces = [
+            {"input_length": 16, "output_length": 10, "hash_ids": [1, 2, 3]},
+            {"input_length": 16, "output_length": 10, "hash_ids": [1, 2, 3]},
+        ]
+        params = SynthesisParams(speedup_ratio=2.0, block_size=16)
+        synthesizer = Synthesizer(params=params)
+
+        with pytest.raises(ValueError, match="trace has fewer tokens than"):
+            synthesizer.synthesize_traces(traces)
+
     # ============================================================================
     # Prefix Multiplier Tests
     # ============================================================================

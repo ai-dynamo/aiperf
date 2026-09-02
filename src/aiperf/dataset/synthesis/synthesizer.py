@@ -213,10 +213,16 @@ class Synthesizer(AIPerfLoggerMixin):
                 else:
                     break
 
-            # Clamp prefix_len to input_len when the shared prefix consumes a
-            # final partial block.
+            # Clamp prefix_len to input_len only when the overshoot is smaller
+            # than one block (a final partial block). Larger mismatches mean
+            # the trace claims fewer tokens than its full shared-prefix blocks.
             prefix_len = len(prefix_ids) * block_size
             if prefix_len > input_len:
+                if prefix_len - input_len >= block_size:
+                    raise ValueError(
+                        f"input_len ({input_len}) < prefix_len ({prefix_len}): "
+                        f"trace has fewer tokens than its shared prefix blocks"
+                    )
                 prefix_len = input_len
             prompt_len = input_len - prefix_len
 
