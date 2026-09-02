@@ -302,16 +302,28 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                 f"will be absent for this GPU; the counter requires Volta or "
                 f"newer."
             )
+        except pynvml.NVMLError_FunctionNotFound as e:
+            # libnvidia-ml does not export the symbol at all, which pynvml raises
+            # from _nvmlGetFunctionPointer. That cannot recover within the
+            # process, so it is permanent for the same reason NotSupported is,
+            # but the cause is the driver rather than the age of the device.
+            gpu.energy_counter_supported = False
+            self.warning(
+                f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
+                f"NVML total energy counter not available ({e}). Energy metrics "
+                f"will be absent for this GPU; the installed driver does not "
+                f"export nvmlDeviceGetTotalEnergyConsumption."
+            )
         except pynvml.NVMLError as e:
             # Anything else may be transient, so leave the capability alone and
             # let the collection loop try again rather than disabling energy for
-            # the whole run on one bad reading. The message is bound here
-            # because Python clears the exception variable when the block ends,
-            # and self.debug evaluates its lambda later.
-            reason = str(e)
-            self.debug(
-                lambda: f"GPU {gpu.metadata.gpu_index}: energy counter probe "
-                f"failed with a non-fatal error ({reason}); keeping it enabled"
+            # the whole run on one bad reading. Warned rather than logged at
+            # debug so that no probe failure can leave a run silent about why
+            # energy is missing, which is the gap this probe exists to close.
+            self.warning(
+                f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
+                f"energy counter probe failed ({e}); keeping it enabled in case "
+                f"the failure is transient."
             )
 
     def _free_gpm_samples(self) -> None:

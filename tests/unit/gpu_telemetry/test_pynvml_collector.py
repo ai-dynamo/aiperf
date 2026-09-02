@@ -36,7 +36,11 @@ def mock_pynvml():
     class _NVMLErrorNotSupported(Exception):
         pass
 
+    class _NVMLErrorFunctionNotFound(Exception):
+        pass
+
     mock_module.NVMLError_NotSupported = _NVMLErrorNotSupported
+    mock_module.NVMLError_FunctionNotFound = _NVMLErrorFunctionNotFound
     mock_module.NVML_TEMPERATURE_GPU = 0
     mock_module.NVML_PERF_POLICY_POWER = 0
 
@@ -391,6 +395,35 @@ class TestPyNVMLEnergyCounterProbe:
         collector._collect_gpu_metrics()
         collector._collect_gpu_metrics()
 
+        assert (
+            mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+            == calls_after_init
+        )
+
+    @pytest.mark.asyncio
+    async def test_function_not_found_disables_energy_permanently(self, patch_pynvml):
+        """A driver that does not export the symbol is permanent, not transient.
+
+        pynvml raises NVMLError_FunctionNotFound from _nvmlGetFunctionPointer
+        when libnvidia-ml has no such symbol, which cannot start working later
+        in the same process. Treating it as transient left the collection loop
+        making a doomed call per GPU per sample.
+        """
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+        mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.side_effect = (
+            mock_pynvml.NVMLError_FunctionNotFound("Function Not Found")
+        )
+
+        collector = PyNVMLTelemetryCollector()
+        await collector.initialize()
+
+        assert all(not gpu.energy_counter_supported for gpu in collector._gpus)
+
+        calls_after_init = (
+            mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+        )
+        collector._collect_gpu_metrics()
+        collector._collect_gpu_metrics()
         assert (
             mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
             == calls_after_init
