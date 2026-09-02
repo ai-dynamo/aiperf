@@ -9,9 +9,10 @@ substitution and Jinja2 rendering. Body fields (models, endpoint, datasets,
 phases, ...) live under the ``benchmark:`` key; envelope-level keys include
 ``variables``, ``sweep``, ``multi_run``, and ``random_seed``.
 
-Exports include ``load_config``, ``load_config_from_string``, ``load_config_dict``,
-``load_config_from_env``, ``validate_config_file``, ``merge_configs``, and helpers
-for env substitution and Jinja expansion.
+Exports include ``load_config``, ``load_config_from_string``,
+``load_config_dict``, ``load_config_dict_with_raw_envelope``,
+``load_config_from_env``, ``validate_config_file``, ``merge_configs``, and
+helpers for env substitution and Jinja expansion.
 
 Example:
     >>> from aiperf.config import load_config
@@ -66,10 +67,13 @@ from aiperf.config.loader.jinja import (
 
 if TYPE_CHECKING:
     from aiperf.config.loader.core import (
+        assert_config_depth_and_cycles,
         dump_config,
         load_config,
         load_config_dict,
+        load_config_dict_with_raw_envelope,
         load_config_from_env,
+        load_config_from_mapping,
         load_config_from_string,
         merge_configs,
         save_config,
@@ -87,10 +91,13 @@ if TYPE_CHECKING:
 # own initialization would otherwise trigger a circular import via
 # ``loader.core`` -> ``aiperf.config.config`` -> ``aiperf.config.artifacts``.
 _LAZY_EXPORTS = {
+    "assert_config_depth_and_cycles": "aiperf.config.loader.core",
     "dump_config": "aiperf.config.loader.core",
     "load_config": "aiperf.config.loader.core",
     "load_config_dict": "aiperf.config.loader.core",
+    "load_config_dict_with_raw_envelope": "aiperf.config.loader.core",
     "load_config_from_env": "aiperf.config.loader.core",
+    "load_config_from_mapping": "aiperf.config.loader.core",
     "load_config_from_string": "aiperf.config.loader.core",
     "merge_configs": "aiperf.config.loader.core",
     "save_config": "aiperf.config.loader.core",
@@ -119,11 +126,14 @@ __all__ = [
     "ConfigurationError",
     "MissingEnvironmentVariableError",
     # Core loading functions
+    "assert_config_depth_and_cycles",
     "build_benchmark_plan",
     "load_benchmark_plan",
     "load_config",
     "load_config_from_env",
+    "load_config_from_mapping",
     "load_config_dict",
+    "load_config_dict_with_raw_envelope",
     "load_config_from_string",
     "dump_config",
     "save_config",

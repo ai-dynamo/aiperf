@@ -476,8 +476,11 @@ class MultiRunOrchestrator:
         planner, write search_history.json incrementally.
         """
         from aiperf.exporters.search_history import write_search_history
+        from aiperf.orchestrator.search_planner import write_search_checkpoint
 
-        all_results: list[RunResult] = []
+        all_results = [
+            result for iteration in planner.history() for result in iteration.results
+        ]
         sweep = plan.sweep
         assert sweep is not None  # guaranteed by plan.is_adaptive_search
         logger.info(
@@ -486,13 +489,23 @@ class MultiRunOrchestrator:
             f"trials per point={plan.trials})"
         )
 
-        def _flush_history(reason: str | None) -> None:
-            write_search_history(
+        async def _flush_history(reason: str | None) -> None:
+            history = planner.history()
+            await asyncio.to_thread(
+                write_search_history,
                 self.base_dir,
-                planner.history(),
+                history,
                 sweep,
                 convergence_reason=reason,
                 planner=planner,
+            )
+            await asyncio.to_thread(
+                write_search_checkpoint,
+                self.base_dir,
+                [
+                    (iteration.variation_values, iteration.results)
+                    for iteration in history
+                ],
             )
 
         while True:
@@ -500,7 +513,7 @@ class MultiRunOrchestrator:
                 logger.info(
                     f"Adaptive outer loop cancelled after {planner.iter_count} iterations"
                 )
-                _flush_history("cancelled")
+                await _flush_history("cancelled")
                 return all_results
 
             proposal = planner.ask()
@@ -511,7 +524,7 @@ class MultiRunOrchestrator:
                     planner.iter_count,
                     reason,
                 )
-                _flush_history(reason)
+                await _flush_history(reason)
                 return all_results
             cfg, variation = proposal
             strategy = _build_strategy(plan)
@@ -530,13 +543,13 @@ class MultiRunOrchestrator:
             )
             planner.tell(variation, cell_results)
             all_results.extend(cell_results)
-            _flush_history(None)
+            await _flush_history(None)
 
             if aborted:
                 logger.warning(
                     f"Outer-loop cell at iter {variation.index} aborted; halting BO"
                 )
-                _flush_history("aborted")
+                await _flush_history("aborted")
                 return all_results
 
     async def _execute_repeated(
@@ -702,10 +715,10 @@ class MultiRunOrchestrator:
         if failure_policy is None:
             return False
         if getattr(failure_policy, "on_child_failure", "continue") == "abort":
-            return any(not r.success for r in results)
+            return any(not r.success and not r.was_cancelled for r in results)
         max_fail = getattr(failure_policy, "max_failures", 0)
         if max_fail > 0:
-            failed = sum(1 for r in results if not r.success)
+            failed = sum(1 for r in results if not r.success and not r.was_cancelled)
             return failed >= max_fail
         return False
 
