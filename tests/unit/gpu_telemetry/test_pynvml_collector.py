@@ -419,9 +419,7 @@ class TestPyNVMLEnergyCounterProbe:
 
         assert all(not gpu.energy_counter_supported for gpu in collector._gpus)
 
-        calls_after_init = (
-            mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
-        )
+        calls_after_init = mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
         collector._collect_gpu_metrics()
         collector._collect_gpu_metrics()
         assert (
