@@ -11,6 +11,19 @@ Note: router_with_worker fixture is provided by conftest.py.
 """
 
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
+from aiperf.credit.structs import Credit
+from tests.unit.credit.test_per_turn_integration import create_credit
+
+
+def make_credit(id: int, corr_id: str, num_turns: int) -> Credit:
+    """Helper to create test credits with default values for missing fields."""
+    return create_credit(
+        credit_id=id,
+        conversation_id="test-conv",
+        x_correlation_id=corr_id,
+        turn_index=0,
+        num_turns=num_turns,
+    )
 
 
 class TestConcurrentCreditTracking:
@@ -25,7 +38,8 @@ class TestConcurrentCreditTracking:
 
         # Send all credits
         for credit_num in credit_nums:
-            router._track_credit_sent("worker-1", credit_num)
+            credit = make_credit(id=credit_num, corr_id="test", num_turns=1)
+            router._track_credit_sent("worker-1", credit)
 
         # Verify all credits are in-flight
         worker_load = router._workers["worker-1"]
@@ -35,8 +49,9 @@ class TestConcurrentCreditTracking:
 
         # Return half
         for credit_num in credit_nums[:50]:
+            credit = make_credit(id=credit_num, corr_id="test", num_turns=1)
             router._track_credit_returned(
-                "worker-1", credit_num, cancelled=False, error_reported=False
+                "worker-1", credit, cancelled=False, error_reported=False
             )
 
         assert worker_load.in_flight_credits == 50
@@ -46,8 +61,9 @@ class TestConcurrentCreditTracking:
 
         # Cancel remaining half
         for credit_num in credit_nums[50:]:
+            credit = make_credit(id=credit_num, corr_id="test", num_turns=1)
             router._track_credit_returned(
-                "worker-1", credit_num, cancelled=True, error_reported=False
+                "worker-1", credit, cancelled=True, error_reported=False
             )
 
         assert worker_load.in_flight_credits == 0
@@ -63,12 +79,14 @@ class TestConcurrentCreditTracking:
         # Interleave sends and returns
         for i in range(50):
             # Send two credits
-            router._track_credit_sent("worker-1", i * 2)
-            router._track_credit_sent("worker-1", i * 2 + 1)
+            credit1 = make_credit(id=i * 2, corr_id="test", num_turns=1)
+            credit2 = make_credit(id=i * 2 + 1, corr_id="test", num_turns=1)
+            router._track_credit_sent("worker-1", credit1)
+            router._track_credit_sent("worker-1", credit2)
 
             # Return one credit
             router._track_credit_returned(
-                "worker-1", i * 2, cancelled=False, error_reported=False
+                "worker-1", credit1, cancelled=False, error_reported=False
             )
 
         # At end: sent 100, returned 50, in-flight should be 50
@@ -78,7 +96,7 @@ class TestConcurrentCreditTracking:
         assert len(worker_load.active_credit_ids) == 50
 
         # Verify the correct credits are still in-flight (odd numbered)
-        expected_in_flight = {i * 2 + 1 for i in range(50)}
+        expected_in_flight = {("profiling", None, i * 2 + 1) for i in range(50)}
         assert worker_load.active_credit_ids == expected_in_flight
 
     async def test_track_credit_sent_increments_all_counters(self, router_with_worker):
@@ -92,12 +110,13 @@ class TestConcurrentCreditTracking:
         assert len(worker_load.active_credit_ids) == 0
 
         # Send a credit
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="test", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
 
         # All counters should be updated
         assert worker_load.total_sent_credits == 1
         assert worker_load.in_flight_credits == 1
-        assert 1 in worker_load.active_credit_ids
+        assert ("profiling", None, 1) in worker_load.active_credit_ids
 
     async def test_track_credit_returned_decrements_correctly(self, router_with_worker):
         """Test that track_credit_returned decrements in-flight counter atomically."""
@@ -105,16 +124,17 @@ class TestConcurrentCreditTracking:
         worker_load = router._workers["worker-1"]
 
         # Send and return a credit
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="test", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
         router._track_credit_returned(
-            "worker-1", 1, cancelled=False, error_reported=False
+            "worker-1", credit, cancelled=False, error_reported=False
         )
 
         # Verify state after return
         assert worker_load.total_sent_credits == 1
         assert worker_load.total_completed_credits == 1
         assert worker_load.in_flight_credits == 0
-        assert 1 not in worker_load.active_credit_ids
+        assert ("profiling", None, 1) not in worker_load.active_credit_ids
 
     async def test_track_credit_cancelled_updates_correct_counter(
         self, router_with_worker
@@ -124,9 +144,10 @@ class TestConcurrentCreditTracking:
         worker_load = router._workers["worker-1"]
 
         # Send and cancel a credit
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="test", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
         router._track_credit_returned(
-            "worker-1", 1, cancelled=True, error_reported=False
+            "worker-1", credit, cancelled=True, error_reported=False
         )
 
         # Verify cancelled counter is updated, not returned
@@ -146,18 +167,21 @@ class TestWorkerLoadInvariants:
 
         # Test invariant through various operations
         for i in range(10):
-            router._track_credit_sent("worker-1", i)
+            credit = make_credit(id=i, corr_id="test", num_turns=1)
+            router._track_credit_sent("worker-1", credit)
             assert worker_load.in_flight_credits == len(worker_load.active_credit_ids)
 
         for i in range(5):
+            credit = make_credit(id=i, corr_id="test", num_turns=1)
             router._track_credit_returned(
-                "worker-1", i, cancelled=False, error_reported=False
+                "worker-1", credit, cancelled=False, error_reported=False
             )
             assert worker_load.in_flight_credits == len(worker_load.active_credit_ids)
 
         for i in range(5, 10):
+            credit = make_credit(id=i, corr_id="test", num_turns=1)
             router._track_credit_returned(
-                "worker-1", i, cancelled=True, error_reported=False
+                "worker-1", credit, cancelled=True, error_reported=False
             )
             assert worker_load.in_flight_credits == len(worker_load.active_credit_ids)
 
@@ -170,16 +194,19 @@ class TestWorkerLoadInvariants:
 
         # Send 20 credits
         for i in range(20):
-            router._track_credit_sent("worker-1", i)
+            credit = make_credit(id=i, corr_id="test", num_turns=1)
+            router._track_credit_sent("worker-1", credit)
 
         # Return 10, cancel 5, leave 5 in-flight
         for i in range(10):
+            credit = make_credit(id=i, corr_id="test", num_turns=1)
             router._track_credit_returned(
-                "worker-1", i, cancelled=False, error_reported=False
+                "worker-1", credit, cancelled=False, error_reported=False
             )
         for i in range(10, 15):
+            credit = make_credit(id=i, corr_id="test", num_turns=1)
             router._track_credit_returned(
-                "worker-1", i, cancelled=True, error_reported=False
+                "worker-1", credit, cancelled=True, error_reported=False
             )
 
         # Verify invariant
@@ -211,9 +238,12 @@ class TestMultipleWorkerConcurrency:
 
         # Send credits to each worker (use offset ranges to avoid collisions)
         for i in range(10):
-            router._track_credit_sent("worker-1", i)
-            router._track_credit_sent("worker-2", 100 + i)
-            router._track_credit_sent("worker-3", 200 + i)
+            credit1 = make_credit(id=i, corr_id="test", num_turns=1)
+            credit2 = make_credit(id=100 + i, corr_id="test", num_turns=1)
+            credit3 = make_credit(id=200 + i, corr_id="test", num_turns=1)
+            router._track_credit_sent("worker-1", credit1)
+            router._track_credit_sent("worker-2", credit2)
+            router._track_credit_sent("worker-3", credit3)
 
         # Verify each worker has correct state
         for worker_id in ["worker-1", "worker-2", "worker-3"]:
@@ -224,11 +254,13 @@ class TestMultipleWorkerConcurrency:
 
         # Return credits from worker-1, cancel from worker-2, leave worker-3 alone
         for i in range(10):
+            credit1 = make_credit(id=i, corr_id="test", num_turns=1)
+            credit2 = make_credit(id=100 + i, corr_id="test", num_turns=1)
             router._track_credit_returned(
-                "worker-1", i, cancelled=False, error_reported=False
+                "worker-1", credit1, cancelled=False, error_reported=False
             )
             router._track_credit_returned(
-                "worker-2", 100 + i, cancelled=True, error_reported=False
+                "worker-2", credit2, cancelled=True, error_reported=False
             )
 
         # Verify independent state
@@ -250,15 +282,19 @@ class TestMultipleWorkerConcurrency:
 
         # Interleave operations across workers (use offset ranges)
         for i in range(50):
-            router._track_credit_sent("worker-1", i)
-            router._track_credit_sent("worker-2", 100 + i)
+            credit1 = make_credit(id=i, corr_id="test", num_turns=1)
+            credit2 = make_credit(id=100 + i, corr_id="test", num_turns=1)
+            router._track_credit_sent("worker-1", credit1)
+            router._track_credit_sent("worker-2", credit2)
 
             if i > 0:
+                credit3 = make_credit(id=i - 1, corr_id="test", num_turns=1)
+                credit4 = make_credit(id=100 + i - 1, corr_id="test", num_turns=1)
                 router._track_credit_returned(
-                    "worker-1", i - 1, cancelled=False, error_reported=False
+                    "worker-1", credit3, cancelled=False, error_reported=False
                 )
                 router._track_credit_returned(
-                    "worker-2", 100 + i - 1, cancelled=False, error_reported=False
+                    "worker-2", credit4, cancelled=False, error_reported=False
                 )
 
         # Worker-1 should have 1 in-flight (last one), 49 returned

@@ -175,7 +175,7 @@ class MultiProcessServiceManager(BaseServiceManager):
         # but never added to required_services. On slow targets (Windows VDI
         # multiprocessing.spawn) those optional services register hundreds of
         # ms after the core ones — if we only waited on required_services, the
-        # ProfileConfigureCommand would broadcast before the optionals had
+        # PROFILE_CONFIGURE would fan out before the optionals had
         # subscribed, leaving them un-configured and their data missing from
         # the final export.
         #
@@ -231,6 +231,20 @@ class MultiProcessServiceManager(BaseServiceManager):
 
             raise AIPerfError("Some services failed to register within timeout") from e
 
+    def get_service_liveness(self, service_id: str) -> bool | None:
+        """Answer liveness from the real ``multiprocessing.Process`` handle.
+
+        Local runs have authoritative ground truth that the heartbeat watchdog
+        would otherwise only guess at. ``None`` is returned for services this
+        manager did not spawn (nothing to consult), and a missing process
+        handle counts as dead -- the spawn call failed before producing one,
+        matching ``_reap_dead_processes_during_registration``.
+        """
+        for info in self.multi_process_info:
+            if info.service_id == service_id:
+                return info.process is not None and info.process.is_alive()
+        return None
+
     def _reap_dead_processes_during_registration(
         self, required_counts: "Counter[ServiceTypeT]"
     ) -> None:
@@ -272,7 +286,7 @@ class MultiProcessServiceManager(BaseServiceManager):
 
         Children install ``signal.SIG_IGN`` for SIGTERM in
         ``bootstrap_and_run_service`` (to avoid C-extension teardown SIGSEGVs).
-        Graceful exit is exclusively via ``ShutdownCommand`` on the message
+        Graceful exit is exclusively via the ``SHUTDOWN`` command on the control
         bus; by the time we reach here that path has already been given its
         delivery grace. ``Process.terminate()`` (SIGTERM) is therefore a
         no-op on POSIX, and waiting ``TASK_CANCEL_TIMEOUT_SHORT`` (~2s) on

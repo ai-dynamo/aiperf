@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from aiperf.common.enums import CacheBustTarget, MemoryMapFormat
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CacheBustTarget, CommandType, MemoryMapFormat
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -15,7 +16,6 @@ from aiperf.common.messages import (
     DatasetConfigStatusRequest,
     DatasetConfiguredNotification,
 )
-from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.models import Conversation, Image, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset import mmap_cache
@@ -71,7 +71,7 @@ async def initialized_dataset_manager(mock_tokenizer, base_cfg):
 async def configured_dataset_manager(initialized_dataset_manager, base_cfg):
     """Create a fully configured DatasetManager ready for request handling."""
     await initialized_dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(service_id="test_service")
+        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
     )
     return initialized_dataset_manager
 
@@ -102,7 +102,7 @@ async def capture_published_messages(dataset_manager, cli_config):
     dataset_manager.publish = AsyncMock(side_effect=mock_publish)
 
     await dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(service_id="test_service")
+        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
     )
 
     return published_messages
@@ -286,7 +286,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Verify the loader's recommended strategy was used (SEQUENTIAL for ShareGPT)
@@ -312,7 +312,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # In v2, each dataset config has its own ``sampling`` default; the
@@ -349,7 +349,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Verify the explicit strategy was preserved, not overwritten by loader's SEQUENTIAL
@@ -375,7 +375,7 @@ class TestDatasetManagerMemoryAndClient:
         assert dataset_manager._dataset_client is None
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, client should be initialized
@@ -398,7 +398,7 @@ class TestDatasetManagerMemoryAndClient:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, in-memory dataset should be empty
@@ -418,7 +418,7 @@ class TestDatasetManagerMemoryAndClient:
         assert not dataset_manager.dataset_configured.is_set()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, event should be set
@@ -448,7 +448,7 @@ class TestDatasetManagerFallbackHandlers:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         return dataset_manager
@@ -605,7 +605,7 @@ class TestDatasetManagerTokenizerSkip:
             DatasetManager, "_configure_tokenizer", new_callable=AsyncMock
         ) as mock_configure_tokenizer:
             await dataset_manager._profile_configure_command(
-                ProfileConfigureCommand(service_id="test_service")
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
             mock_configure_tokenizer.assert_not_called()
 
@@ -626,7 +626,7 @@ class TestDatasetManagerTokenizerSkip:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         assert dataset_manager.tokenizer is not None
@@ -661,24 +661,81 @@ class TestDatasetManagerTokenizerSkip:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         assert dataset_manager.tokenizer is not None
 
-    @pytest.mark.skip(
-        reason="v1 CLIConfig validator that rejected tokenizer options on "
-        "non-tokenizing endpoints was not ported to v2; equivalent v2 validation "
-        "(if any) would live on BenchmarkConfig.",
-    )
     def test_tokenizer_rejected_when_explicitly_set_on_non_tokenizing_endpoint(self):
         """Tokenizer options are rejected for endpoints that don't tokenize input or produce tokens."""
+        from aiperf.config import BenchmarkConfig
+
         with pytest.raises(ValidationError, match="Tokenizer options cannot be used"):
-            CLIConfig(
-                model_names=["nvidia/nemoretriever-page-elements-v3"],
-                endpoint_type="image_retrieval",
-                tokenizer_name="test-model",
+            BenchmarkConfig(
+                models=["nvidia/nemoretriever-page-elements-v3"],
+                endpoint={"urls": ["http://x"], "type": "image_retrieval"},
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "prompts": {"isl": 64, "osl": 32},
+                    }
+                ],
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 10,
+                        "concurrency": 8,
+                    }
+                ],
+                tokenizer={"name": "test-model"},
             )
+
+    def test_tokenizer_allowed_when_unset_on_non_tokenizing_endpoint(self):
+        """The defaulted TokenizerConfig must not trip the rejection."""
+        from aiperf.config import BenchmarkConfig
+
+        config = BenchmarkConfig(
+            models=["nvidia/nemoretriever-page-elements-v3"],
+            endpoint={"urls": ["http://x"], "type": "image_retrieval"},
+            datasets=[
+                {"name": "main", "type": "synthetic", "prompts": {"isl": 64, "osl": 32}}
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 10,
+                    "concurrency": 8,
+                }
+            ],
+        )
+
+        assert config.tokenizer is not None
+
+    def test_tokenizer_allowed_on_tokenizing_endpoint(self):
+        """A chat endpoint tokenizes input, so explicit options are honored."""
+        from aiperf.config import BenchmarkConfig
+
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://x"], "type": "chat"},
+            datasets=[
+                {"name": "main", "type": "synthetic", "prompts": {"isl": 64, "osl": 32}}
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 10,
+                    "concurrency": 8,
+                }
+            ],
+            tokenizer={"name": "explicit-tokenizer"},
+        )
+
+        assert config.tokenizer.name == "explicit-tokenizer"
 
 
 # ============================================================================

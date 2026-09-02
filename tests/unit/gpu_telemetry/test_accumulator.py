@@ -490,3 +490,74 @@ class TestRealtimeTelemetryTask:
         await accumulator._report_realtime_telemetry_metrics_task()
 
         accumulator._report_realtime_metrics.assert_awaited_once()
+
+
+class TestRealtimeTelemetryPublishGate:
+    """``--api-port``/Kubernetes headless runs must also enable realtime telemetry."""
+
+    def test_dashboard_always_enabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert accumulator._realtime_telemetry_publish_enabled()
+
+    def test_none_ui_no_consumer_disabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = None
+        mock_run.cfg.runtime.service_run_type = "multiprocessing"
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert not accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode != GPUTelemetryMode.REALTIME_DASHBOARD
+
+    def test_none_ui_with_api_port_enabled_and_forces_mode(
+        self, mock_run, mock_pub_client
+    ) -> None:
+        # A local API server serves the web dashboard even with --ui-type none.
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = 9090
+        mock_run.cfg.runtime.service_run_type = "multiprocessing"
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+
+    def test_none_ui_under_kubernetes_enabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = None
+        mock_run.cfg.runtime.service_run_type = "kubernetes"
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+
+    def test_none_ui_env_override_enabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = None
+        mock_run.cfg.runtime.service_run_type = "multiprocessing"
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", True):
+            assert accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD

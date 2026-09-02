@@ -277,7 +277,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             "count toward the ratio. A grace floor of max(concurrency, 10) records "
             "must accumulate before the check is armed, so a single early failure "
             "cannot kill the run. When the threshold is exceeded a "
-            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
+            "PROFILE_CANCEL is broadcast: in-flight requests drain via the "
             "normal cancel path, partial results are still aggregated, and the run "
             "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
             "in record_processor_service so the rate measures real failures only.",

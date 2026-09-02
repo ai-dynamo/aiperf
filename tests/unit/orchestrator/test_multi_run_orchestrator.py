@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pytest import param
@@ -16,6 +17,40 @@ from aiperf.config.sweep import GridSweep, SweepVariation
 from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
+
+
+@pytest.mark.parametrize(
+    "failure_policy",
+    [
+        param(
+            SimpleNamespace(on_child_failure="abort", max_failures=0),
+            id="abort-policy",
+        ),
+        param(
+            SimpleNamespace(on_child_failure="continue", max_failures=1),
+            id="failure-budget",
+        ),
+    ],
+)
+def test_failure_policy_does_not_count_cancelled_runs(failure_policy: object) -> None:
+    plan = SimpleNamespace(failure_policy=failure_policy)
+    cancelled = RunResult(
+        label="cancelled",
+        success=False,
+        error="user requested cancellation",
+        was_cancelled=True,
+    )
+
+    assert not MultiRunOrchestrator._sweep_failure_threshold_exceeded([cancelled], plan)
+
+
+def test_failure_policy_still_counts_genuine_failures() -> None:
+    plan = SimpleNamespace(
+        failure_policy=SimpleNamespace(on_child_failure="continue", max_failures=1)
+    )
+    failed = RunResult(label="failed", success=False, error="endpoint failed")
+
+    assert MultiRunOrchestrator._sweep_failure_threshold_exceeded([failed], plan)
 
 
 class FakeExecutor(RunExecutor):

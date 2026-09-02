@@ -19,6 +19,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import CommAddress, LifecycleState
+from aiperf.common.exceptions import InvalidStateError
 from aiperf.config.comm import ZMQDualBindConfig, ZMQTCPConfig
 from aiperf.config.comm.dual_bind import ZMQDualBindProxyConfig
 from aiperf.config.comm.ipc import ZMQIPCProxyConfig
@@ -559,6 +560,77 @@ class TestBaseCommunicationDualBind:
             additional_bind_address="tcp://0.0.0.0:5564",
         )
         assert client.additional_bind_address == "tcp://0.0.0.0:5564"
+
+    def test_create_streaming_router_client_attaches_lifecycle_by_default(self) -> None:
+        comm = ZMQDualBindCommunication()
+        client = comm.create_streaming_router_client(
+            address="tcp://127.0.0.1:5599",
+            bind=True,
+        )
+        assert client in comm._children
+
+    def test_create_streaming_router_client_can_opt_out_of_lifecycle(self) -> None:
+        """The control ROUTER is owned by SystemController: it must be started
+        ahead of comms and outlive comms.stop(), so comms must not manage it."""
+        comm = ZMQDualBindCommunication()
+        client = comm.create_streaming_router_client(
+            address="tcp://127.0.0.1:5598",
+            bind=True,
+            attach_lifecycle=False,
+        )
+        assert client not in comm._children
+
+    def test_create_streaming_router_client_cached_attached_then_opt_out_raises(
+        self,
+    ) -> None:
+        """A cache hit must not silently hand back a lifecycle-managed client to a
+        caller that asked to own the lifecycle itself: the two callers disagree
+        about ownership and the opt-out's ordering guarantee would be lost."""
+        comm = ZMQDualBindCommunication()
+        comm.create_streaming_router_client(
+            address="tcp://127.0.0.1:5597",
+            bind=True,
+        )
+        with pytest.raises(InvalidStateError, match="attach_lifecycle=False"):
+            comm.create_streaming_router_client(
+                address="tcp://127.0.0.1:5597",
+                bind=True,
+                attach_lifecycle=False,
+            )
+
+    def test_create_streaming_router_client_cached_unattached_returns_same_client(
+        self,
+    ) -> None:
+        comm = ZMQDualBindCommunication()
+        first = comm.create_streaming_router_client(
+            address="tcp://127.0.0.1:5596",
+            bind=True,
+            attach_lifecycle=False,
+        )
+        second = comm.create_streaming_router_client(
+            address="tcp://127.0.0.1:5596",
+            bind=True,
+            attach_lifecycle=False,
+        )
+        assert first is second
+        assert first not in comm._children
+
+    def test_create_reply_client_passes_additional_bind(self) -> None:
+        comm = ZMQDualBindCommunication()
+        client = comm.create_reply_client(
+            "ipc:///tmp/test-dual-bind-primary",
+            bind=True,
+            additional_bind_address="ipc:///tmp/test-dual-bind-secondary",
+        )
+        assert client.additional_bind_address == "ipc:///tmp/test-dual-bind-secondary"
+
+    def test_create_reply_client_without_additional_bind(self) -> None:
+        comm = ZMQDualBindCommunication()
+        client = comm.create_reply_client(
+            "ipc:///tmp/test-dual-bind-plain",
+            bind=True,
+        )
+        assert client.additional_bind_address is None
 
     def test_create_pull_client_without_additional_bind(self) -> None:
         comm = ZMQDualBindCommunication()
