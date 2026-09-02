@@ -103,10 +103,12 @@ def compute_credit_to_start_latency(
     issued_col = store.metadata_numeric("credit_issued_ns")
     if issued_col.size == 0:
         return None
+    if mask is not None:
+        n = min(n, len(mask))
     start_ns = store.start_ns[:n]
     if mask is not None:
         start_ns = start_ns[mask]
-        issued_col = issued_col[mask]
+        issued_col = issued_col[:n][mask]
     values_ms = _delta_ms(start_ns, issued_col)
     if values_ms.size == 0:
         return None
@@ -136,10 +138,12 @@ def compute_effective_latency(
     issued_col = store.metadata_numeric("credit_issued_ns")
     if issued_col.size == 0:
         return None
+    if mask is not None:
+        n = min(n, len(mask))
     end_ns = store.end_ns[:n]
     if mask is not None:
         end_ns = end_ns[mask]
-        issued_col = issued_col[mask]
+        issued_col = issued_col[:n][mask]
     values_ms = _delta_ms(end_ns, issued_col)
     if values_ms.size == 0:
         return None

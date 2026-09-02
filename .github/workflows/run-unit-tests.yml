@@ -92,7 +92,7 @@ jobs:
       shell: bash
       run: |
         uv venv .venv --python ${{ matrix.python-version }}
-        uv pip install -e ".[test]"
+        uv sync --locked --extra test --no-dev
         uv pip install -e "tests/aiperf_mock_server[dev]"
         uv run python -c "import aiperf_mock_server"
         uv run python tools/generate_plugin_artifacts.py --enums

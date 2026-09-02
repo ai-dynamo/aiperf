@@ -10,11 +10,12 @@ server metrics accumulators return list-shaped results.
 
 The pipeline:
 
-1. ``_deliver_network_rtt_to_accumulators`` wires optional RTT calibration.
-2. ``_summarize_metric_record_accumulators`` exports metric-record accumulators.
-3. ``_finalize_stream_exporters`` flushes JSONL writers concurrently.
-4. ``ProcessRecordsResultMessage`` is published.
-5. ``ProcessAllResultsMessage`` is published for the SystemController fan-in.
+1. ``_await_telemetry_ingest_complete`` drains the GPU telemetry producer.
+2. ``_deliver_network_rtt_to_accumulators`` wires optional RTT calibration.
+3. ``_summarize_metric_record_accumulators`` exports metric-record accumulators.
+4. ``_finalize_stream_exporters`` flushes JSONL writers concurrently.
+5. ``ProcessRecordsResultMessage`` is published.
+6. ``ProcessAllResultsMessage`` is published for the SystemController fan-in.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from aiperf.common.messages import (
     ProcessServerMetricsResultMessage,
 )
 from aiperf.common.models import (
+    ErrorDetails,
     MetricResult,
     PhaseRecordsStats,
     ProcessRecordsResult,
@@ -127,6 +129,8 @@ def _make_manager_mock(
     mgr._server_metrics_accumulator = None
     # Branch-stats snapshot (read by _process_results).
     mgr._latest_branch_stats = None
+    # No stall-watchdog degradation by default.
+    mgr._incomplete_reason = None
 
     # Records tracker — drives the time window via PROFILING phase stats.
     phase_stats = PhaseRecordsStats(
@@ -162,6 +166,8 @@ def _make_manager_mock(
     # Bind real methods
     mgr._process_results = RecordsManager._process_results.__get__(mgr)
     mgr._process_results_impl = RecordsManager._process_results_impl.__get__(mgr)
+    mgr._finalize_record_processor_artifacts = AsyncMock()
+    mgr._await_telemetry_ingest_complete = AsyncMock(return_value=[])
     mgr._summarize_metric_record_accumulators = (
         RecordsManager._summarize_metric_record_accumulators.__get__(mgr)
     )
@@ -184,10 +190,6 @@ def _make_manager_mock(
     mgr._publish_telemetry_results = RecordsManager._publish_telemetry_results.__get__(
         mgr
     )
-    mgr._publish_server_metrics_results = (
-        RecordsManager._publish_server_metrics_results.__get__(mgr)
-    )
-
     return mgr
 
 
@@ -241,6 +243,51 @@ class TestProcessResultsAccumulatorPath:
         assert isinstance(result, ProcessRecordsResult)
         assert result.results.records is not None
         assert _STUB_METRIC_RESULT in result.results.records
+
+    @pytest.mark.asyncio
+    async def test_local_artifact_barrier_failure_preserves_summary(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._is_kubernetes_run = MagicMock(return_value=False)
+        mgr._finalize_record_processor_artifacts = AsyncMock(
+            side_effect=RuntimeError("artifact barrier failed")
+        )
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert result.results.records == [_STUB_METRIC_RESULT]
+        assert result.results.completed == 1
+        assert any(
+            error.message == "RuntimeError('artifact barrier failed')"
+            and error.details
+            == {
+                "stage": "record_processor_artifact_finalize",
+                "fatal": False,
+            }
+            for error in result.errors
+        )
+        mgr.error.assert_called_once_with(
+            "Non-fatal record-processor artifact finalization failure: "
+            "RuntimeError('artifact barrier failed')"
+        )
+
+    @pytest.mark.asyncio
+    async def test_kubernetes_artifact_barrier_failure_remains_fatal(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._is_kubernetes_run = MagicMock(return_value=True)
+        mgr._finalize_record_processor_artifacts = AsyncMock(
+            side_effect=RuntimeError("artifact barrier failed")
+        )
+
+        with pytest.raises(RuntimeError, match="artifact barrier failed"):
+            await mgr._process_results_impl(
+                phase=CreditPhase.PROFILING, cancelled=False
+            )
+
+        acc.summarize.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_legacy_list_shape_accumulator_results_extended(self) -> None:
@@ -329,6 +376,11 @@ class TestProcessResultsCancelled:
         result = await mgr._process_results(phase=CreditPhase.PROFILING, cancelled=True)
 
         assert result.results.was_cancelled is True
+        assert result.results.is_complete is False
+        assert (
+            result.results.incomplete_reason
+            == "Run cancelled before all records were processed."
+        )
 
     @pytest.mark.asyncio
     async def test_cancelled_false_propagated_to_profile_results(self) -> None:
@@ -348,6 +400,44 @@ class TestProcessResultsCancelled:
 
 
 class TestProcessResultsStreamExporters:
+    @pytest.mark.asyncio
+    async def test_telemetry_drain_precedes_summary_and_finalize(self) -> None:
+        order: list[str] = []
+        drain_error = ErrorDetails(
+            message="telemetry drain incomplete",
+            details={"stage": "gpu_telemetry_drain"},
+        )
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        exp = _make_stub_stream_exporter()
+
+        async def summarize(*_args, **_kwargs) -> AccumulatorMetricsSummary:
+            order.append("summarize")
+            return AccumulatorMetricsSummary(
+                results={_STUB_METRIC_RESULT.tag: _STUB_METRIC_RESULT}
+            )
+
+        async def finalize() -> None:
+            order.append("finalize")
+
+        async def await_drain() -> list[ErrorDetails]:
+            order.append("drain")
+            return [drain_error]
+
+        acc.summarize.side_effect = summarize
+        exp.finalize.side_effect = finalize
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+            stream_exporters={StreamExporterType.RECORD_EXPORT: exp},
+        )
+        mgr._await_telemetry_ingest_complete = AsyncMock(side_effect=await_drain)
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert order == ["drain", "summarize", "finalize"]
+        assert drain_error in result.errors
+
     @pytest.mark.asyncio
     async def test_stream_exporters_finalized(self) -> None:
         acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
@@ -373,6 +463,30 @@ class TestProcessResultsStreamExporters:
 
         published = [c.args[0] for c in mgr.publish.await_args_list]
         assert any(isinstance(m, ProcessAllResultsMessage) for m in published)
+
+    @pytest.mark.asyncio
+    async def test_finalize_failure_is_published_in_process_result(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        exp = _make_stub_stream_exporter()
+        exp.finalize.side_effect = OSError("stream flush disk full")
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: acc},
+            stream_exporters={StreamExporterType.RECORD_EXPORT: exp},
+        )
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert len(result.errors) == 1
+        assert result.errors[0].type == "OSError"
+        messages = [
+            call.args[0]
+            for call in mgr.publish.await_args_list
+            if isinstance(call.args[0], ProcessRecordsResultMessage)
+        ]
+        assert len(messages) == 1
+        assert messages[0].results.errors == result.errors
 
 
 # ---------------------------------------------------------------------------
@@ -432,11 +546,11 @@ class TestProcessResultsSingleFlight:
         exp.finalize.assert_awaited_once()
 
 
-class TestProcessResultsServerMetricsFailure:
-    """A server-metrics processing failure must not abort the fan-in publish."""
+class TestProcessResultsServerMetricsOwnership:
+    """RecordsManager never publishes manager-owned server metrics."""
 
     @pytest.mark.asyncio
-    async def test_server_metrics_processing_failure_still_publishes_fanin(
+    async def test_server_metrics_enabled_still_publishes_only_records_fanin(
         self,
     ) -> None:
         acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
@@ -444,10 +558,6 @@ class TestProcessResultsServerMetricsFailure:
             accumulators={AccumulatorType.METRIC_RESULTS: acc},
             user_config_server_metrics_disabled=False,
         )
-        mgr._process_server_metrics_results = AsyncMock(
-            side_effect=ValueError("start_ns must be less than end_ns")
-        )
-
         await mgr._process_results(phase=CreditPhase.WARMUP, cancelled=True)
 
         published = [c.args[0] for c in mgr.publish.await_args_list]
@@ -455,9 +565,4 @@ class TestProcessResultsServerMetricsFailure:
         server_metrics_messages = [
             m for m in published if isinstance(m, ProcessServerMetricsResultMessage)
         ]
-        assert len(server_metrics_messages) == 1
-        assert server_metrics_messages[0].server_metrics_result.results is None
-        assert any(
-            "Failed to process server metrics results" in str(call.args[0])
-            for call in mgr.exception.call_args_list
-        )
+        assert server_metrics_messages == []

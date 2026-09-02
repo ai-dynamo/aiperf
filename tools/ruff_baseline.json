@@ -261,11 +261,6 @@
     ],
     [
       "C901",
-      "src/aiperf/config/flags/resolver.py",
-      "_apply_phase_loadgen_overrides"
-    ],
-    [
-      "C901",
       "src/aiperf/config/flags/variant_parser.py",
       "parse_variant"
     ],
@@ -343,6 +338,11 @@
       "C901",
       "src/aiperf/gpu_telemetry/dcgm_collector.py",
       "DCGMTelemetryCollector._parse_metrics_to_records"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/handlers/monitor.py",
+      "monitor_progress"
     ],
     [
       "C901",
@@ -603,6 +603,11 @@
       "C901",
       "src/aiperf/ui/dashboard/progress_dashboard.py",
       "ProgressDashboard.create_stats_table"
+    ],
+    [
+      "C901",
+      "src/aiperf/workers/session_manager.py",
+      "UserSessionManager._evict_lru_overflow"
     ],
     [
       "D103",

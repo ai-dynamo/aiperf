@@ -202,6 +202,16 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
+### Kubernetes
+- [Kubernetes Benchmark Recipes](recipes/README.md) - Validated model and engine workload manifests
+- [Getting Started on Kubernetes](docs/kubernetes/getting-started.md) - Install operator, run first benchmark, retrieve results
+- [Deploy from Source Checkout](docs/kubernetes/source-checkout-deploy.md) - Build and push AIPerf, Helm install, run on a real cluster
+- [Kubernetes Configuration](docs/kubernetes/configuration.md) - CRD fields, CLI flags, Helm chart, config patterns
+- [Monitoring and Troubleshooting](docs/kubernetes/monitoring.md) - Watch, debug, logs, and common issues
+- [Production Deployments](docs/kubernetes/production.md) - CI/CD, Kueue, secrets, GitOps, multi-tenant
+- [AI Agent Debugging Guide](docs/kubernetes/ai-debugging-guide.md) - Machine-parseable diagnostics and decision trees for AI agents
+- [Parameter Sweeps on Kubernetes](docs/tutorials/sweeps.md#running-sweeps-on-kubernetes) - grid/scenarios sweeps, multi-run trials, adaptive convergence on cluster
+
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis
 - [Goodput](docs/tutorials/goodput.md) - SLO-based throughput measurement

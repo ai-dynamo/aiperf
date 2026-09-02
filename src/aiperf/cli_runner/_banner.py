@@ -53,7 +53,7 @@ def _log_search_planner_active(
     if search_planner is None:
         return
     sweep = plan.sweep
-    assert sweep is not None  # _build_search_planner returned non-None
+    assert sweep is not None  # build_search_planner returned non-None
     logger.info(
         f"Adaptive search active: planner={sweep.planner}, "
         f"max_iterations={sweep.max_iterations}, "
