@@ -2,8 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for CaseInsensitiveStrEnum and dash/underscore normalization."""
 
+from typing import Self
+
 import pytest
 from pydantic import BaseModel, ValidationError
+from pytest import param
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum, _normalize_name
 
@@ -285,3 +288,178 @@ class TestEdgeCases:
 
         assert MultiDashEnum("foo__bar") == MultiDashEnum.MULTI
         assert MultiDashEnum.MULTI == "foo__bar"
+
+
+# =============================================================================
+# Normalization Caching Tests
+# =============================================================================
+
+
+class TestNormalizationCaching:
+    """Tests for the per-member cached normalized value/hash hot-path."""
+
+    def test_norm_value_cached_on_construction(self: Self) -> None:
+        """Members precompute the normalized value once during construction."""
+        assert SampleEnum.FOO_BAR.__dict__.get("_norm_value_cache") == "foo_bar"
+        assert DashValueEnum.MY_VALUE.__dict__.get("_norm_value_cache") == "my_value"
+
+    def test_norm_hash_cached_on_construction(self: Self) -> None:
+        """Members precompute the normalized hash once during construction."""
+        member = DashValueEnum.MY_VALUE
+        assert member.__dict__.get("_norm_hash_cache") == hash("my_value")
+        assert hash(member) == hash("my_value")
+
+    def test_exact_match_fast_path(self: Self) -> None:
+        """An exact string match compares equal without normalization work."""
+        assert SampleEnum.FOO_BAR == "foo_bar"
+        # Non-exact but normalized-equal still matches via the fallback.
+        assert SampleEnum.FOO_BAR == "FOO-BAR"
+
+    def test_identity_fast_path(self: Self) -> None:
+        """A member is equal to itself via the identity short-circuit."""
+        member = SampleEnum.ALPHA
+        assert member == member
+
+    def test_lazy_norm_value_fallback(self: Self) -> None:
+        """A member missing the cached attr recomputes and caches lazily.
+
+        A non-exact (normalized-equal) compare misses the exact-match fast path
+        and forces the normalization fallback, which repopulates the cache.
+        """
+        member = SampleEnum.BETA
+        # Simulate a member that skipped __init__ (e.g. dynamic creation).
+        member.__dict__.pop("_norm_value_cache", None)
+        member.__dict__.pop("_norm_hash_cache", None)
+        assert member == "BETA"  # non-exact -> normalization path
+        assert member.__dict__.get("_norm_value_cache") == "beta"
+        assert hash(member) == hash("beta")
+        assert member.__dict__.get("_norm_hash_cache") == hash("beta")
+
+    def test_enum_vs_enum_uses_cached_norm(self: Self) -> None:
+        """Cross-enum equality still holds using cached normalized values."""
+
+        class EnumA(CaseInsensitiveStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(CaseInsensitiveStrEnum):
+            ITEM = "foo-bar"
+
+        assert EnumA.ITEM == EnumB.ITEM
+        assert hash(EnumA.ITEM) == hash(EnumB.ITEM)
+
+    def test_non_str_enum_not_equal(self: Self) -> None:
+        """An Enum whose value is not a str does not compare equal."""
+        from enum import Enum
+
+        class IntEnum(Enum):
+            X = 1
+
+        assert SampleEnum.ALPHA != IntEnum.X
+
+
+# =============================================================================
+# __ne__ / __eq__ Symmetry Tests
+# =============================================================================
+
+
+class TestNotEqualMirrorsEqual:
+    """`!=` must be the exact negation of `==` for every operand shape.
+
+    Regression guard: `str.__ne__` sits between these classes and `object` in
+    the MRO, so an inherited `__ne__` silently bypasses the normalizing
+    `__eq__` and makes `a == b` and `a != b` both True.
+    """
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            "alpha",
+            "ALPHA",
+            "Alpha",
+            "aLpHa",
+            "beta",
+            "nonexistent",
+            123,
+            None,
+            [],
+            SampleEnum.ALPHA,
+            SampleEnum.BETA,
+        ],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq(self: Self, other: object) -> None:
+        """`member != other` equals `not (member == other)` for any operand."""
+        assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar", "baz"],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq_across_dash_forms(self: Self, other: object) -> None:
+        """Dash/underscore/case variants negate consistently."""
+        assert (SampleEnum.FOO_BAR != other) is not (SampleEnum.FOO_BAR == other)  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_for_normalized_match(self: Self, other: str) -> None:
+        """A normalized match is never `!=`."""
+        assert (SampleEnum.FOO_BAR != other) is False  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
+
+    @pytest.mark.parametrize(
+        "other",
+        ["my_value", "my-value", "MY_VALUE", "MY-VALUE"],
+    )  # fmt: skip
+    def test_ne_false_for_dash_valued_enum(self: Self, other: str) -> None:
+        """Dash-valued members are not `!=` their underscore spellings."""
+        assert (DashValueEnum.MY_VALUE != other) is False  # noqa: SIM300 - enum must stay on the left; that is the operand order under test
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_with_string_on_the_left(self: Self, other: str) -> None:
+        """Reflected `!=` also routes through the normalizing comparison."""
+        assert (other != SampleEnum.FOO_BAR) is False
+
+    def test_ne_true_for_different_member(self: Self) -> None:
+        """Genuinely different members stay `!=`."""
+        assert (SampleEnum.ALPHA != SampleEnum.BETA) is True
+
+    def test_ne_false_across_enums_with_same_normalized_value(self: Self) -> None:
+        """Cross-enum members sharing a normalized value are not `!=`."""
+
+        class EnumA(CaseInsensitiveStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(CaseInsensitiveStrEnum):
+            ITEM = "foo-bar"
+
+        assert (EnumA.ITEM != EnumB.ITEM) is False
+
+    def test_ne_true_for_non_string_types(self: Self) -> None:
+        """Non-string, non-enum operands remain `!=`."""
+        assert (SampleEnum.ALPHA != 123) is True
+        assert (SampleEnum.ALPHA != None) is True  # noqa: E711 - testing __ne__ with None
+        assert (SampleEnum.ALPHA != []) is True
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            param(123, id="int"),
+            param(None, id="none"),
+            param([], id="list"),
+            param(4.5, id="float"),
+        ],
+    )  # fmt: skip
+    def test_ne_forwards_notimplemented_for_unsupported_operands(
+        self: Self, other: object
+    ) -> None:
+        """__ne__ defers to the other operand instead of asserting inequality.
+
+        The operator-level check above cannot see this: `!= 123` is True either
+        way, whether __ne__ forwards NotImplemented or wrongly hardcodes True.
+        Only the direct call distinguishes them, and the difference matters for
+        any third-party type whose reflected __eq__ should decide the result.
+        """
+        assert SampleEnum.ALPHA.__ne__(other) is NotImplemented

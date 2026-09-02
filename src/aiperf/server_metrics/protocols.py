@@ -6,60 +6,40 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from aiperf.common.accumulator_protocols import ExportContext
     from aiperf.common.models import (
-        ErrorDetailsCount,
         MetricResult,
+        ServerMetricsEndpointSummary,
         ServerMetricsRecord,
         ServerMetricsResults,
-        TimeRangeFilter,
     )
 
 
 @runtime_checkable
-class ServerMetricsProcessorProtocol(Protocol):
-    """Protocol for server metrics results processors that handle ServerMetricsRecord objects.
+class ServerMetricsAccumulatorProtocol(Protocol):
+    """Protocol for server metrics accumulators and realtime exporters."""
 
-    This protocol is separate from ResultsProcessorProtocol because server metrics data
-    has fundamentally different structure (hierarchical Prometheus snapshots) compared
-    to inference metrics (flat key-value pairs).
-    """
-
-    async def process_server_metrics_record(self, record: ServerMetricsRecord) -> None:
-        """Process individual server metrics record with complete Prometheus snapshot.
-
-        Args:
-            record: ServerMetricsRecord containing Prometheus metrics snapshot and metadata
-        """
+    async def process_record(self, record: ServerMetricsRecord) -> None:
+        """Process one Prometheus server-metrics snapshot."""
         ...
 
     async def summarize(self) -> list[MetricResult]: ...
 
+    async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
+        """Export accumulated server metrics scoped to ``ctx``."""
+        ...
 
-@runtime_checkable
-class ServerMetricsAccumulatorProtocol(ServerMetricsProcessorProtocol, Protocol):
-    """Protocol for server metrics accumulators that accumulate server metrics data and export aggregated results.
-
-    Extends ServerMetricsProcessorProtocol to provide result export functionality with time filtering
-    and error summary support. Implementations should accumulate Prometheus snapshot data and compute
-    aggregated statistics (mean, p50, p90, p95, p99) for configured metrics across collection windows.
-    """
-
-    async def export_results(
+    def compute_endpoint_summaries(
         self,
-        start_ns: int,
-        end_ns: int,
-        time_filter: TimeRangeFilter | None = None,
-        error_summary: list[ErrorDetailsCount] | None = None,
-    ) -> ServerMetricsResults | None:
-        """Export accumulated server metrics as results.
+        profiling_start_ns: int,
+        profiling_end_ns: int,
+        slice_duration: float | None = None,
+        *,
+        include_final_collection: bool = True,
+    ) -> dict[str, ServerMetricsEndpointSummary]:
+        """Compute endpoint summaries for a bounded realtime message."""
+        ...
 
-        Args:
-            start_ns: Start time of collection in nanoseconds
-            end_ns: End time of collection in nanoseconds
-            time_filter: Optional time filter for aggregation (excludes warmup/buffer)
-            error_summary: Optional list of error counts
-
-        Returns:
-            ServerMetricsResults if data was collected, None otherwise
-        """
+    def realtime_snapshot(self, start_ns: int | None = None) -> dict[str, float]:
+        """Return the compact scalar fields used by realtime consumers."""
         ...

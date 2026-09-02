@@ -15,6 +15,7 @@ Sweep keys are body-rooted (``datasets.main.prompts.isl``,
 from __future__ import annotations
 
 import pytest
+from pytest import param
 
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -65,19 +66,17 @@ def test_prefill_ttft_curve_allows_default_streaming():
 # ---- Adversarial cases ----
 
 
-def test_prefill_ttft_curve_isl_lo_eq_hi_raises():
-    with pytest.raises(ValueError, match=r"hi .* must be > lo"):
-        PrefillTTFTCurve().expand(make_ctx(isl_min=1024, isl_max=1024))
-
-
-def test_prefill_ttft_curve_isl_lo_gt_hi_raises():
-    with pytest.raises(ValueError, match=r"hi .* must be > lo"):
-        PrefillTTFTCurve().expand(make_ctx(isl_min=4096, isl_max=256))
-
-
-def test_prefill_ttft_curve_zero_isl_steps_raises():
-    with pytest.raises(ValueError, match="steps must be >= 2"):
-        PrefillTTFTCurve().expand(make_ctx(isl_steps=0))
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        param({"isl_min": 1024, "isl_max": 1024}, r"hi .* must be > lo", id="isl_lo_eq_hi"),
+        param({"isl_min": 4096, "isl_max": 256}, r"hi .* must be > lo", id="isl_lo_gt_hi"),
+        param({"isl_steps": 0}, "steps must be >= 2", id="zero_isl_steps"),
+    ],
+)  # fmt: skip
+def test_prefill_ttft_curve_invalid_grid_raises(overrides, match):
+    with pytest.raises(ValueError, match=match):
+        PrefillTTFTCurve().expand(make_ctx(**overrides))
 
 
 def test_prefill_ttft_curve_concurrency_overrides_silently_ignored():

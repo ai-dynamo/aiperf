@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.3",
+  "schema_version": "1.4",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -71,6 +71,35 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 | `run_info` | object | Per-run reproducibility — see below. Schema 1.2+. |
 | `telemetry_data` | object | GPU telemetry summaries when telemetry collection was active. |
 | `error_summary` | array | Per-error counts collected during the run. |
+
+### `telemetry_data`
+
+Schema 1.4 adds a `platform` field to each GPU summary and vendor-scopes GPU
+telemetry metric names. NVIDIA metrics collected through DCGM or pynvml use
+`nvidia_*` names, and AMD metrics collected through amdsmi use `amd_*` names.
+Metric semantics are platform-specific; cross-platform comparisons require
+validation of the workload, collector behavior, and metric definitions.
+
+```json
+"telemetry_data": {
+  "endpoints": {
+    "localhost:9400": {
+      "gpus": {
+        "gpu_0": {
+          "gpu_index": 0,
+          "gpu_name": "NVIDIA H100",
+          "gpu_uuid": "GPU-...",
+          "platform": "nvidia",
+          "metrics": {
+            "nvidia_power_usage": {"unit": "W", "avg": 310.0},
+            "nvidia_gpu_utilization": {"unit": "%", "avg": 85.0}
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ### `run_info`
 
@@ -114,6 +143,8 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.1` | Added `count` and `sum` to per-metric stats blocks. Backward-compatible for readers that ignore unknown fields; the new fields are present only on record-type metrics, omitted on derived/aggregate. |
 | `1.2` | Added top-level `run_info` block (`random_seed`, `trial`, `run_label`, `variation_label`, `variation_index`, `variation_values`). Backward-compatible: readers that don't need reproducibility can ignore the field. |
 | `1.3` | Added `benchmark_id`, `sweep_id`, and `cli_command` to `run_info`. `benchmark_id` duplicates the top-level field so `run_info` is self-contained; `sweep_id` (UUID4 of the outer sweep) lets readers join all per-run exports from one plan without consulting the parent multi-run artifact directory; `cli_command` records the redacted command line when available. Backward-compatible: nullable fields default to `null` when unavailable. |
+| `1.4` | Added optional top-level `warmup_metrics`, keyed by metric tag, containing metrics computed only from warmup-phase requests. Existing top-level metric fields remain profiling-only. |
+| `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. |
 
 ### Other JSON exports use independent schema versions
 
@@ -123,6 +154,12 @@ The current schema version is exported as the top-level `schema_version` field o
 - `profile_export_aiperf_collated.json` — pools per-request values from all runs into a single population, then emits combined percentiles (`mean`, `std`, `p50`, `p90`, `p95`, `p99`, `count`) under a `combined` key plus a `per_run` list of run-level summaries. Uses its own `schema_version` (`"1.0.0"`).
 
 The `schema_version` documented on this page applies only to `profile_export_aiperf.json`. The other files evolve on their own cadence.
+
+### Named phase artifacts
+
+Named multi-phase workflows keep the root exports (`profile_export_aiperf.{json,csv}`, `server_metrics_export.{json,csv}`, and related files) as backward-compatible aggregate artifacts. Phase-scoped artifacts are additive and are referenced from `phase_manifest.json`, for example `phases/<phase_name>/profile_export_aiperf.json`, `phases/<phase_name>/profile_export_aiperf.csv`, and, when server metrics produced data for that phase, `phases/<phase_name>/server_metrics.json`.
+
+For server metrics specifically, the root `server_metrics_export.json` preserves the legacy aggregate semantic phase view; in workflows with multiple phases of the same kind, its phase ranges may span inter-phase gaps. Consumers that need exact per-phase telemetry should read the phase-scoped `server_metrics.json` files.
 
 ## For downstream parsers
 

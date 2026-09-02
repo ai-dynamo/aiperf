@@ -96,7 +96,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
     tracking server happens in a dedicated child process — see
     ``run_otel_streaming_fanout``.
 
-    Registered as the ``otel_metrics_streamer`` results processor in ``plugins.yaml``.
+    Registered as the ``otel_metrics_streamer`` stream exporter in ``plugins.yaml``.
     Raises ``PostProcessorDisabled`` from ``__init__`` when neither ``--otel-url``
     nor ``--mlflow-tracking-uri`` is set, or when the optional ``aiperf[otel]`` extra
     is missing.
@@ -105,9 +105,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
     protocol.
     """
 
-    # Telemetry failures must not crash the benchmark. The records manager
-    # checks this attribute (see ``post_processors.protocols.BestEffortMarker``
-    # and ``IS_BEST_EFFORT_ATTR``) and swallows the exception when True.
+    # Telemetry failures must not crash the benchmark. Stream-exporter dispatch
+    # returns per-handler errors instead of propagating them through the run.
     is_best_effort: ClassVar[bool] = True
 
     def __init__(
@@ -220,7 +219,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 daemon=True,
             )
             await asyncio.to_thread(process.start)
-        except Exception as exc:  # noqa: BLE001 - multiprocessing startup can raise OS/resource errors
+        except Exception as exc:  # multiprocessing startup can raise OS/resource errors
             self.warning(f"Failed to start telemetry fanout process. Error={exc!r}")
             with suppress(Exception):
                 if "queue" in locals():
@@ -243,7 +242,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             f"MLflow live: {self._mlflow_live_enabled})"
         )
 
-    async def process_result(self, record_data: OTelResultData) -> None:
+    async def process_record(self, record_data: OTelResultData) -> None:
         """Record metric data for export via the OpenTelemetry SDK."""
         if not self._streaming_ready:
             return
@@ -259,6 +258,10 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             )
         )
 
+    async def finalize(self) -> None:
+        """Flush pending streaming telemetry events before results publication."""
+        await self.flush(force=True)
+
     async def flush(self, *, force: bool = False) -> None:
         """Force a flush of pending SDK metrics exports."""
         self._queue_fanout_event("flush", {})
@@ -271,7 +274,7 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
         """Final flush before shutdown and close SDK resources."""
         try:
             await self.flush(force=True)
-        except Exception as exc:  # noqa: BLE001 - flush must not crash shutdown sequence
+        except Exception as exc:  # flush must not crash shutdown sequence
             self.warning(f"Failed to flush metrics: {exc!r}")
         finally:
             await self._stop_fanout_process()
@@ -389,7 +392,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             self._fanout_queue.get_nowait()
         except Empty:
             return False
-        except Exception as exc:  # noqa: BLE001 - queue ops may raise OS errors; telemetry must not crash hot path
+        # queue ops may raise OS errors; telemetry must not crash hot path
+        except Exception as exc:
             self.warning(f"Failed to drop oldest OTel fanout event: {exc!r}")
             return False
 
@@ -417,7 +421,8 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
             self._record_fanout_drop(
                 "OTel fanout queue remained full; dropping newest event"
             )
-        except Exception as exc:  # noqa: BLE001 - queue/OS errors must not block the benchmarking event loop
+        # queue/OS errors must not block the benchmarking event loop
+        except Exception as exc:
             self.warning(f"Failed to enqueue OTel fanout event: {exc!r}")
 
     @staticmethod

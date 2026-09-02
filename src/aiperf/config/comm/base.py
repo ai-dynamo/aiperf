@@ -143,6 +143,7 @@ _ADDRESS_RESOLVERS: dict[CommAddress, Callable[[BaseZMQCommunicationConfig], str
     ),
     CommAddress.CREDIT_ROUTER: lambda c: c.credit_router_address,
     CommAddress.CREDIT_RETURN_ROUTER: lambda c: c.credit_return_router_address,
+    CommAddress.CREDIT_RETURN: lambda c: c.credit_return_push_pull_address,
     CommAddress.RECORDS: lambda c: c.records_push_pull_address,
     CommAddress.CONTROL: lambda c: c.control_address,
     CommAddress.GROUP_LIFECYCLE: lambda c: c.group_lifecycle_address,

@@ -9,15 +9,27 @@ evaluate rather than walking a pre-enumerated variation list.
 """
 
 from aiperf.orchestrator.search_planner.base import SearchIteration, SearchPlanner
+from aiperf.orchestrator.search_planner.factory import build_search_planner
 from aiperf.orchestrator.search_planner.monotonic import MonotonicSLASearchPlanner
+from aiperf.orchestrator.search_planner.recovery import (
+    read_search_checkpoint,
+    restore_planner_history,
+    write_search_checkpoint,
+)
 
 __all__ = [
     "BayesianSearchPlanner",
     "MonotonicSLASearchPlanner",
+    "MultiTierPlanner",
     "OptunaSearchPlanner",
     "SearchIteration",
     "SearchPlanner",
     "SmoothIsotonicSLAPlanner",
+    "build_search_planner",
+    "evaluate_tiers_on_grid",
+    "read_search_checkpoint",
+    "restore_planner_history",
+    "write_search_checkpoint",
 ]
 
 
@@ -41,4 +53,16 @@ def __getattr__(name: str) -> object:
         )
 
         return SmoothIsotonicSLAPlanner
+    if name == "MultiTierPlanner":
+        from aiperf.orchestrator.search_planner.multi_tier_planner import (
+            MultiTierPlanner,
+        )
+
+        return MultiTierPlanner
+    if name == "evaluate_tiers_on_grid":
+        from aiperf.orchestrator.search_planner.multi_tier_grid import (
+            evaluate_tiers_on_grid,
+        )
+
+        return evaluate_tiers_on_grid
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

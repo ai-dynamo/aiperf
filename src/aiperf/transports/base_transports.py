@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     RequestInfo,
@@ -33,6 +34,15 @@ Returns:
 This callback is used to determine if the first token has been received and can be released.
 It is used to release prefill concurrency.
 """
+
+
+def _remove_headers_case_insensitive(
+    headers: dict[str, str], names: tuple[str, ...]
+) -> None:
+    """Remove every key in ``headers`` that case-insensitively matches ``names``."""
+    lowered = {name.lower() for name in names}
+    for key in [k for k in headers if k.lower() in lowered]:
+        del headers[key]
 
 
 @runtime_checkable
@@ -122,7 +132,46 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             headers[correlation_header] = request_info.x_correlation_id
 
         headers.update(request_info.endpoint_headers)
+        if request_info.turns and request_info.turns[-1].extra_headers:
+            headers.update(request_info.turns[-1].extra_headers)
         headers.update(self.get_transport_headers(request_info))
+
+        # Apply derived session-affinity headers last so they are authoritative
+        # and cannot be silently overwritten by endpoint, extra, or transport
+        # headers. Strip caller-supplied variants case-insensitively first, since
+        # HTTP header names are case-insensitive and these merge into a plain dict.
+        if request_info.x_correlation_id:
+            # Additive (distinct from --session-header, which RENAMES the single
+            # correlation header above): some routers require X-Session-ID
+            # ALONGSIDE the correlation header for session affinity.
+            if Environment.HTTP.X_SESSION_ID_FROM_CORRELATION_ID:
+                _remove_headers_case_insensitive(headers, ("X-Session-ID",))
+                headers["X-Session-ID"] = request_info.x_correlation_id
+            if Environment.HTTP.X_SESSION_AFFINITY_FROM_CORRELATION_ID:
+                _remove_headers_case_insensitive(headers, ("X-Session-Affinity",))
+                headers["X-Session-Affinity"] = request_info.x_correlation_id
+            # Additive SGLang Model Gateway routing key: co-locate a session's
+            # requests on one worker via the stable correlation ID.
+            if Environment.HTTP.X_SMG_ROUTING_KEY_FROM_CORRELATION_ID:
+                _remove_headers_case_insensitive(headers, ("X-SMG-Routing-Key",))
+                headers["X-SMG-Routing-Key"] = request_info.x_correlation_id
+
+        # Apply derived Dynamo session headers last so they are authoritative
+        # and cannot be overwritten by endpoint, extra, or transport headers.
+        # Strip any caller-supplied variants case-insensitively first, since HTTP
+        # header names are case-insensitive and these are merged into a plain dict.
+        if (
+            request_info.x_correlation_id
+            and Environment.HTTP.X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID
+        ):
+            _remove_headers_case_insensitive(
+                headers, ("X-Dynamo-Session-ID", "X-Dynamo-Parent-Session-ID")
+            )
+            headers["X-Dynamo-Session-ID"] = request_info.x_correlation_id
+            if request_info.parent_correlation_id:
+                headers["X-Dynamo-Parent-Session-ID"] = (
+                    request_info.parent_correlation_id
+                )
 
         return headers
 

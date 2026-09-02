@@ -48,6 +48,8 @@ def build_tokenizer(cli: CLIConfig) -> dict[str, Any] | None:
         out["revision"] = cli.tokenizer_revision
     if "trust_remote_code" in tok_set:
         out["trust_remote_code"] = cli.trust_remote_code
+    if "apply_chat_template" in tok_set:
+        out["apply_chat_template"] = cli.apply_chat_template
     return out or None
 
 
@@ -159,6 +161,40 @@ def _resolve_recipe_instance(cli: CLIConfig) -> Any | None:
         return None
 
 
+# Flags that only have meaning when the WHOLE profiling run repeats (>1 trial):
+# they govern behavior ACROSS trials. v1 rejected each at num_profile_runs==1
+# with a clear error; the port routed them but dropped the guard, silently
+# building a no-op single-run multi_run block. (output_key, --flag) for messages.
+_REPEAT_TRIAL_ONLY_FLAGS: tuple[tuple[str, str], ...] = (
+    ("set_consistent_seed", "--set-consistent-seed"),
+    (
+        "profile_run_disable_warmup_after_first",
+        "--profile-run-disable-warmup-after-first",
+    ),
+    ("profile_run_cooldown_seconds", "--profile-run-cooldown-seconds"),
+)
+
+
+def _reject_repeat_trial_flags_without_multiple_runs(cli: CLIConfig) -> None:
+    """Reject across-trial flags when only a single profiling run is configured.
+
+    Mirrors v1's ``num_profile_runs == 1`` guard. ``num_profile_runs`` is a
+    scalar int defaulting to 1, so ``> 1`` means the user opted into repeated
+    trials; otherwise these flags are no-ops and must fail loud rather than
+    silently produce a single-run ``multi_run`` block.
+    """
+    runs = cli.num_profile_runs if isinstance(cli.num_profile_runs, int) else 1
+    if runs > 1:
+        return
+    for field_name, flag in _REPEAT_TRIAL_ONLY_FLAGS:
+        if field_name in cli.model_fields_set:
+            raise ValueError(
+                f"{flag} only applies when running multiple trials "
+                f"(--num-profile-runs > 1). Either remove {flag} or add "
+                f"--num-profile-runs 5 (or higher)."
+            )
+
+
 def build_multi_run(
     cli: CLIConfig,
     *,
@@ -193,6 +229,7 @@ def build_multi_run(
         return None
     if recipe_output is None and "search_recipe" in sw.model_fields_set:
         raise ValueError("recipe_output must be precomputed before build_multi_run")
+    _reject_repeat_trial_flags_without_multiple_runs(sw)
     mapping = {
         "num_profile_runs": "num_runs",
         "profile_run_cooldown_seconds": "cooldown_seconds",
@@ -259,6 +296,7 @@ def build_sweep(
     if recipe_output is None and "search_recipe" in sw.model_fields_set:
         raise ValueError("recipe_output must be precomputed before build_sweep")
     extra_sla_dumps = _parse_search_sla_flags(sw)
+    sla_tier_dumps = _parse_search_sla_tier_flags(sw)
     adaptive_search = _resolve_adaptive_search(sw, recipe_output)
     if adaptive_search is None:
         if recipe_output is None or not recipe_output.get("sweep_parameters"):
@@ -273,6 +311,8 @@ def build_sweep(
     if extra_sla_dumps:
         existing = list(adaptive_search.get("sla_filters") or [])
         adaptive_search["sla_filters"] = existing + extra_sla_dumps
+    if sla_tier_dumps:
+        adaptive_search["sla_tiers"] = sla_tier_dumps
     return adaptive_search
 
 
@@ -288,6 +328,24 @@ def _parse_search_sla_flags(sw: Any) -> list[dict[str, Any]]:
     from aiperf.orchestrator.search_planner.parsing import parse_sla_filter
 
     return [parse_sla_filter(s).model_dump(mode="json") for s in sw.search_sla]
+
+
+def _parse_search_sla_tier_flags(sw: Any) -> list[dict[str, Any]]:
+    """Parse `--search-sla-tier` flag values into model-dumped SLOTier dicts.
+
+    Returns an empty list when the flag is unset or empty. Validates tier
+    count and label uniqueness via :func:`validate_tier_list`.
+    """
+    if "search_sla_tier" not in sw.model_fields_set or not sw.search_sla_tier:
+        return []
+    from aiperf.orchestrator.search_planner.parsing import (
+        parse_sla_tier,
+        validate_tier_list,
+    )
+
+    tiers = [parse_sla_tier(s, _auto_index=i) for i, s in enumerate(sw.search_sla_tier)]
+    validate_tier_list(tiers)
+    return [t.model_dump(mode="json") for t in tiers]
 
 
 def _resolve_adaptive_search(

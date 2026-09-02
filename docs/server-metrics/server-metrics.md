@@ -70,6 +70,18 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `sglang:prompt_tokens` | counter | Prefill throughput (`stats.rate`) |
 | `sglang:generation_tokens` | counter | Decode throughput (`stats.rate`) |
 
+> [!IMPORTANT]
+> **SGLang server-side setup is required.** SGLang does not expose Prometheus exposition format at `/metrics` by default. Launch the server with `--enable-metrics`:
+>
+> ```bash
+> python -m sglang.launch_server \
+>   --model-path <model> \
+>   --enable-metrics \
+>   --host 0.0.0.0 --port 8000
+> ```
+>
+> Without this flag, `GET /metrics` returns 404 and AIPerf's auto-discovery silently falls back to no server-metrics collection (`server_metrics_export.*` files will not be produced).
+
 </Accordion>
 
 <Accordion title="TRT-LLM">
@@ -91,7 +103,7 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | `trtllm_kv_cache_hit_rate` | gauge | KV cache reuse efficiency (`stats.avg`) |
 
 > [!IMPORTANT]
-> **TRT-LLM server-side setup is required.** Unlike vLLM and SGLang, `trtllm-serve` does not expose Prometheus exposition format at `/metrics` by default — the default `/metrics` returns an iteration-stats JSON array (`application/json`), which is not parseable as Prometheus. Two consequences:
+> **TRT-LLM server-side setup is required.** Unlike vLLM, `trtllm-serve` does not expose Prometheus exposition format at `/metrics` by default — the default `/metrics` returns an iteration-stats JSON array (`application/json`), which is not parseable as Prometheus. Two consequences:
 >
 > 1. **Enable Prometheus on the server.** Pass `return_perf_metrics: true` in your `extra_llm_api_options.yaml`. This mounts the proper Prometheus exposition at `/prometheus/metrics` (a non-standard path). Add `enable_iter_perf_stats: true` when you want iteration-derived queue/KV/memory metrics from the PyTorch backend.
 > 2. **AIPerf auto-detects and falls back.** When AIPerf hits `/metrics` and gets `application/json`, it automatically probes `<base>/prometheus/metrics` once. If the alt path serves Prometheus, AIPerf swaps the URL and continues — no manual override needed. If the alt path also fails (e.g. `return_perf_metrics` was not set), the collector auto-disables for the remainder of the run with a single warning.
@@ -185,6 +197,71 @@ aiperf profile --model MODEL ... --server-metrics \
     http://node2:8081
 ```
 
+### Kubernetes auto-discovery
+
+When AIPerf runs in Kubernetes, `server_metrics.discovery` can add inference-pod
+Prometheus endpoints to the endpoints derived from `endpoint.urls` and the explicit
+`server_metrics.urls` list:
+
+```yaml
+server_metrics:
+  discovery:
+    mode: kubernetes
+    namespace: dynamo-server
+    label_selector: app.kubernetes.io/name=dynamo
+    timeout_seconds: 10
+```
+
+`mode: auto` (the default) uses Kubernetes discovery only when AIPerf is running
+in-cluster. `mode: kubernetes` requires the Kubernetes path and warns when used
+outside a cluster. `mode: disabled` uses only URL-derived and explicit endpoints.
+Discovery is best-effort: a timeout or API error does not prevent the benchmark
+from using its other endpoints.
+
+If `namespace` is omitted, discovery searches only the benchmark pod's own
+namespace, resolved from `AIPERF_NAMESPACE` or its mounted ServiceAccount namespace.
+It never silently expands to cluster scope. `namespace: "*"` is the explicit
+all-namespace mode and requires a cluster-scoped `pods: list` grant. To discover a
+server in another named namespace, add that namespace to the operator chart's
+`serverMetricsDiscoveryNamespaces` value; if the benchmark pod uses a custom
+ServiceAccount, use the chart's `{namespace, serviceAccounts}` entry form. See
+[Kubernetes RBAC and security](../kubernetes/rbac-security.md#benchmark-pod-permissions).
+
+The built-in eligibility rules select Dynamo's
+`nvidia.com/metrics-enabled=true` pods, pods with
+`aiperf.nvidia.com/metrics-paths`, and recognized inference-server images. A supplied
+`label_selector` explicitly selects matching pods. A generic
+`prometheus.io/scrape=true` annotation alone is not enough, which avoids collecting
+unrelated Loki, Grafana, and cluster-monitoring endpoints. Eligible pods can use the
+standard `prometheus.io/{port,path,scheme}` annotations; the AIPerf paths annotation
+accepts a comma-separated path list. Discovered paths are used as declared after
+adding a leading slash when needed; AIPerf does not append `/metrics` to a custom
+annotation path.
+
+#### RBAC prerequisites
+
+Discovery lists pods using the benchmark pod's ServiceAccount:
+
+| `discovery.namespace` | Searches | RBAC required |
+|---|---|---|
+| omitted | The benchmark pod's own namespace | None beyond the operator chart's normal benchmark Role (`pods: get/list/watch`) |
+| A named inference namespace | That namespace | Add it to `serverMetricsDiscoveryNamespaces`, using `{namespace, serviceAccounts}` when benchmarks use a custom ServiceAccount |
+| `"*"` | All namespaces | A manually provisioned ClusterRole with `pods: list`, bound to the benchmark ServiceAccount; the chart intentionally does not create this grant |
+
+For example, to allow benchmarks in the chart-configured benchmark namespace to
+discover Dynamo in `dynamo-server`:
+
+```bash
+helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+  --namespace aiperf-system \
+  --reuse-values \
+  --set 'serverMetricsDiscoveryNamespaces={dynamo-server}'
+```
+
+Then set `server_metrics.discovery.namespace: dynamo-server` in the AIPerf YAML.
+A denied pod list emits a warning naming the namespace and required grant; it does
+not fail the benchmark.
+
 ### Disabling Server Metrics
 
 ```bash
@@ -237,6 +314,7 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 |---------------------|---------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | 0.333s | Collection frequency (333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for final metrics after benchmark |
+| `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | 60s | Maximum wait for the manager-owned final scrape and artifact flush command |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | 10s | Timeout for endpoint reachability tests |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | 100 | Batch size for JSONL writer |
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | 5.0s | Shutdown delay for command response transmission |
@@ -281,6 +359,9 @@ Line-delimited JSON with metrics snapshots over time:
 ### 2. Aggregated Statistics: `server_metrics_export.json`
 
 Aggregated statistics from profiling period. Metrics from all endpoints are merged, each series tagged with `endpoint_url`.
+
+> [!NOTE]
+> In named multi-phase runs, `server_metrics_export.json` remains the run-level export for existing readers. For exact server metrics from one phase, use `phases/<phase_name>/server_metrics.json`; `phase_manifest.json` lists which phase files were written.
 
 ```json
 {
@@ -644,4 +725,3 @@ with open('server_metrics_export.json') as f:
 latency = data['metrics']['vllm:e2e_request_latency_seconds']['series'][0]['stats']
 assert latency['p99_estimate'] < 5.0, f"P99 latency too high: {latency['p99_estimate']}"
 ```
-

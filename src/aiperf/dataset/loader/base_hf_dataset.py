@@ -10,11 +10,9 @@ import mimetypes
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
-import soundfile as sf
-from datasets import load_dataset as hf_load_dataset
 from PIL import Image as PILImage
 
-from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.common.exceptions import ConfigurationError, DatasetLoaderError
 from aiperf.common.models import Audio, Conversation, Image, Video
 from aiperf.dataset import utils
 from aiperf.dataset.loader.base_public_dataset import BasePublicDatasetLoader
@@ -26,6 +24,8 @@ if TYPE_CHECKING:
 
 class BaseHFDatasetLoader(BasePublicDatasetLoader):
     """Base class for loading datasets from HuggingFace via the datasets library."""
+
+    hf_revision: str | None = None
 
     def __init__(
         self,
@@ -52,6 +52,8 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             dataset = await asyncio.get_running_loop().run_in_executor(
                 None, self._load_hf_dataset
             )
+        except ConfigurationError:
+            raise
         except Exception as e:
             raise DatasetLoaderError(
                 f"Failed to load HuggingFace dataset '{self.hf_dataset_name}': {e}. "
@@ -61,12 +63,25 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         return {"dataset": dataset}
 
     def _load_hf_dataset(self) -> Any:
+        # Lazy import: datasets has no Windows-on-ARM wheel, so importing it at
+        # module load would break importing this loader on that platform.
+        try:
+            from datasets import load_dataset as hf_load_dataset
+        except ImportError as e:
+            raise ConfigurationError(
+                "HuggingFace --public-dataset support requires the 'datasets' "
+                "package, which has no prebuilt Windows-on-ARM wheel. Use Linux "
+                "or WSL, or switch to a synthetic or --input-file dataset."
+            ) from e
+
+        revision = {"revision": self.hf_revision} if self.hf_revision else {}
         return hf_load_dataset(
             self.hf_dataset_name,
             name=self.hf_subset,
             split=self.hf_split,
             trust_remote_code=False,
             streaming=self.streaming,
+            **revision,
         )
 
     def _pil_to_image(self, pil_image: PILImage.Image) -> Image:
@@ -152,11 +167,16 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
         if array is None or sr is None:
             return []
         try:
+            # Lazy import: soundfile bundles libsndfile, which has no
+            # Windows-on-ARM build; importing at module load would break this
+            # loader's import there even though audio is rarely used.
+            import soundfile as sf
+
             buf = io.BytesIO()
             sf.write(buf, array, sr, format="WAV")
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             return [Audio(name="", contents=[f"wav,{b64}"])]
-        except (OSError, ValueError, RuntimeError) as e:
+        except (ImportError, OSError, ValueError, RuntimeError) as e:
             self.debug(
                 lambda exc=e: f"Failed to encode WAV from column '{audio_column}': {exc.__class__.__name__}: {exc}"
             )

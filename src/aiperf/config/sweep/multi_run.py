@@ -11,10 +11,9 @@ on `SweepConfig` (`aiperf.config.sweep`) — not here.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Self
 
 from pydantic import ConfigDict, Field, model_validator
-from typing_extensions import Self
 
 from aiperf.common.enums import ConvergenceStat
 from aiperf.config.base import BaseConfig

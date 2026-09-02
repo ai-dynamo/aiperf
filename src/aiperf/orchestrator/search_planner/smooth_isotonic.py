@@ -87,13 +87,15 @@ _PhaseLiteral = Literal["bracket", "fit", "replicate", "cliff_bisect"]
 
 
 def _find_phase_index(phases: list[dict[str, Any]], name: str) -> int | None:
-    """Return the index of the first phase with ``name`` field equal to ``name``.
+    """Return the first phase matching a literal name or semantic kind.
 
     Defensive against malformed fixtures where a phase entry is not a dict
     (e.g. test stubs); such entries are skipped rather than raising.
     """
     for idx, phase in enumerate(phases):
-        if isinstance(phase, dict) and phase.get("name") == name:
+        if not isinstance(phase, dict):
+            continue
+        if phase.get("name") == name or phase.get("kind") == name:
             return idx
     return None
 
@@ -373,7 +375,19 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         return out
 
     def _mutate_base(self, value: int) -> BenchmarkConfig:
-        cfg_dict = self._base.model_dump(mode="json", exclude_none=True)
+        # mode="python" silences the when_used="json" credential redactors
+        # (api_key / headers). context={"include_secrets": True} silences
+        # the unconditional _redact_urls serializer that strips userinfo
+        # (user:pass@host) from endpoint.urls regardless of mode. Both
+        # are needed; without the context flag, URL-credentialed sweeps
+        # like postgres / MLflow URIs would hit "<redacted>" in the
+        # iteration's config and fail to authenticate. Mirrors the
+        # pattern in config/loader/plan.py (PR #972).
+        cfg_dict = self._base.model_dump(
+            mode="python",
+            exclude_none=True,
+            context={"include_secrets": True},
+        )
         _set_nested_value(cfg_dict, self._dim.path, value)
         self._apply_sla_precision(cfg_dict)
         self._apply_sla_warmup(cfg_dict, value)

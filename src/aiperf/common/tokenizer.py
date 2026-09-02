@@ -38,6 +38,32 @@ TIKTOKEN_ENCODING_NAMES = frozenset(
 )
 
 
+def _tiktoken_internal(encoding: "tiktoken.Encoding", attr: str) -> object:
+    """Read a private ``tiktoken.Encoding`` attribute, or fail with a clear error.
+
+    tiktoken exposes no public API for enumerating its token IDs, and its ID
+    space is sparse -- gaps between mergeable ranks and special tokens are not
+    decodable -- so ``range(n_vocab)`` is not a usable substitute. These
+    privates are the only source of a correct token pool.
+
+    Deliberately raises instead of degrading. Unlike
+    :meth:`Tokenizer.num_prompt_special_tokens`, where falling back to 0 is
+    conservative in a known direction, there is no safe default here: a wrong
+    token pool silently produces prompts drawn from invalid IDs, which either
+    raise ``KeyError`` deep inside a decode or corrupt the benchmark's ISL
+    accounting. Failing at setup with the attribute name beats either.
+    """
+    value = getattr(encoding, attr, None)
+    if value is None:
+        raise TokenizerError(
+            f"tiktoken.Encoding has no {attr!r}, which AIPerf needs to enumerate "
+            "token IDs for --prompt-corpus random. This usually means the "
+            "installed tiktoken renamed or removed the attribute. Pin a "
+            "compatible tiktoken, or use a HuggingFace tokenizer instead."
+        )
+    return value
+
+
 class _TiktokenAdapter:
     """Adapts tiktoken.Encoding to the interface expected by Tokenizer._tokenizer."""
 
@@ -57,6 +83,9 @@ class _TiktokenAdapter:
 
     def decode(self, token_ids: list[int], **kwargs) -> str:
         return self._encoding.decode(token_ids)
+
+    def encode_batch(self, texts: list[str]) -> list[list[int]]:
+        return self._encoding.encode_batch(texts, allowed_special="all")
 
     def __call__(self, text: str, **kwargs) -> dict:
         return {"input_ids": self.encode(text)}
@@ -275,10 +304,15 @@ def resolve_alias(name: str) -> AliasResolutionResult:
     Returns:
         AliasResolutionResult with resolved name and any suggestions.
     """
-    # Check if this looks like a local path
+    # Check if this looks like a local path. Use ``path.anchor`` instead of
+    # ``path.is_absolute()`` because the latter requires a drive letter on
+    # Windows (``WindowsPath("/home/user/foo").is_absolute() == False``;
+    # pinned by ``test_resolve_alias_treats_posix_absolute_path_as_local``).
+    # Anchor is truthy for any path with a drive AND/OR root, so a POSIX-style
+    # absolute path passed on Windows is correctly recognized as local.
     path = Path(name)
     is_local_path = (
-        path.is_absolute()
+        bool(path.anchor)
         or name.startswith("./")
         or name.startswith("../")
         or path.is_dir()
@@ -369,6 +403,51 @@ def _missing_tokenizer_class_hint(error: Exception) -> str | None:
         f"Tokenizer class '{missing}' is not registered in your installed "
         f"transformers {version}.{suggestion}"
     )
+
+
+_DEEPSEEK_V32_MODEL_TYPE = "deepseek_v32"
+
+
+def _ensure_deepseek_v32_config_registered() -> None:
+    """Register a ``deepseek_v32`` config alias when transformers lacks one.
+
+    DeepSeek-V3.2-Exp ships ``config.json`` with ``model_type: "deepseek_v32"``
+    and no ``auto_map``. On transformers releases without a native
+    ``deepseek_v32`` entry (the ``>=4.56`` floor we still support), the
+    ``AutoConfig`` lookup that ``AutoTokenizer`` performs internally falls back
+    to an empty config and tokenizer loading aborts -- and
+    ``--tokenizer-trust-remote-code`` cannot help, since with no ``auto_map``
+    there is no remote config class to import. V3.2 reuses the V3 config schema,
+    so we alias it onto ``DeepseekV3Config`` (vLLM and SGLang do the same).
+
+    Idempotent and best-effort: a no-op once the model type is known (native
+    support on newer transformers, or a prior call), and silent when the
+    expected DeepSeek-V3 config class is unavailable so tokenizer loading
+    proceeds to its normal error path. Native support landed in transformers
+    via huggingface/transformers#41251; this shim covers the older releases in
+    our supported range (``>=4.56``) that predate it, and self-disables where
+    native support exists, so it can be removed once that floor moves past it.
+    """
+    try:
+        from transformers import AutoConfig, DeepseekV3Config
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+
+        if _DEEPSEEK_V32_MODEL_TYPE in CONFIG_MAPPING:
+            return
+
+        class _DeepseekV32ConfigAlias(DeepseekV3Config):
+            model_type = _DEEPSEEK_V32_MODEL_TYPE
+
+        AutoConfig.register(
+            _DEEPSEEK_V32_MODEL_TYPE, _DeepseekV32ConfigAlias, exist_ok=True
+        )
+    except (ImportError, TypeError, ValueError) as e:
+        # ImportError: DeepseekV3Config / CONFIG_MAPPING moved or renamed in a
+        # transformers version we don't pin. TypeError: base config unavailable
+        # (e.g. patched to None) so subclassing fails. ValueError: register()
+        # rejected the model type. All mean "leave the registry untouched and
+        # let tokenizer loading hit its normal error path."
+        _logger.debug(f"deepseek_v32 config alias registration skipped: {e!r}")
 
 
 class Tokenizer:
@@ -474,6 +553,8 @@ class Tokenizer:
         resolve_alias: bool,
     ) -> "Tokenizer":
         from transformers import AutoTokenizer
+
+        _ensure_deepseek_v32_config_registered()
 
         if _is_offline_mode():
             tokenizer_instance = cls._from_pretrained_local(
@@ -682,6 +763,55 @@ class Tokenizer:
         self._require_init()
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
+    def decode_batch(self, token_id_lists: list[list[int]], **kwargs) -> list[str]:
+        """Decode many token ID sequences with a single batched call.
+
+        Avoids paying the per-call kwarg-merge and dispatch overhead of
+        `decode()` once per sequence, which matters when decoding a corpus of
+        individual tokens (e.g. mock-server startup).
+
+        Args:
+            token_id_lists: A list of token ID sequences to decode.
+
+        Returns:
+            One decoded string per input sequence, in order.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return self._tokenizer._encoding.decode_batch(token_id_lists)
+        return self._tokenizer.batch_decode(
+            token_id_lists, **{**self._decode_args, **kwargs}
+        )
+
+    def encode_lengths_batch(
+        self, texts: list[str], chunk_size: int = 4096
+    ) -> list[int]:
+        """Return the token count for each text using chunked batch calls.
+
+        Processes texts in bounded chunks to avoid materialising the full token
+        corpus in memory at once. Uses tiktoken's native parallel encode_batch or
+        the HuggingFace tokenizer's batch __call__.
+
+        Args:
+            texts: List of strings to tokenize.
+            chunk_size: Maximum number of texts per batch call.
+
+        Returns:
+            List of token counts, one per input text.
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+        self._require_init()
+        lengths: list[int] = []
+        for i in range(0, len(texts), chunk_size):
+            chunk = texts[i : i + chunk_size]
+            if isinstance(self._tokenizer, _TiktokenAdapter):
+                lengths.extend(len(ids) for ids in self._tokenizer.encode_batch(chunk))
+            else:
+                result = self._tokenizer(chunk, **self._call_args)
+                lengths.extend(len(ids) for ids in result["input_ids"])
+        return lengths
+
     @property
     def resolved_name(self) -> str | None:
         """The resolved model name used to load this tokenizer."""
@@ -715,6 +845,83 @@ class Tokenizer:
         if self.eos_token_id is not None:
             return self.eos_token_id
         return None
+
+    @property
+    def vocab_size(self) -> int:
+        """Total vocabulary size of the underlying tokenizer."""
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return self._tokenizer._encoding.n_vocab
+        return self._tokenizer.vocab_size
+
+    @property
+    def all_special_ids(self) -> set[int]:
+        """Set of special token IDs that should be excluded from random sampling."""
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return set(
+                _tiktoken_internal(self._tokenizer._encoding, "_special_token_values")
+            )
+        return set(self._tokenizer.all_special_ids)
+
+    @property
+    def valid_token_ids(self) -> list[int]:
+        """Sorted list of all decodable, non-special token IDs.
+
+        Tiktoken encodings have sparse ID spaces (gaps between mergeable ranks
+        and special tokens), so range(vocab_size) includes invalid IDs that
+        raise KeyError on decode. This property returns only IDs that are both
+        decodable and non-special.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            enc = self._tokenizer._encoding
+            special = _tiktoken_internal(enc, "_special_token_values")
+            ranks = _tiktoken_internal(enc, "_mergeable_ranks")
+            return sorted(id_ for id_ in ranks.values() if id_ not in special)
+        special = self.all_special_ids
+        return [i for i in range(self._tokenizer.vocab_size) if i not in special]
+
+    @property
+    def all_token_ids(self) -> list[int]:
+        """Sorted list of all decodable token IDs, including special tokens.
+
+        For tiktoken encodings gap IDs are excluded because they cannot be
+        decoded. Use valid_token_ids to additionally exclude special tokens.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            enc = self._tokenizer._encoding
+            ranks = _tiktoken_internal(enc, "_mergeable_ranks")
+            special = _tiktoken_internal(enc, "_special_token_values")
+            return sorted(set(ranks.values()) | set(special))
+        return list(range(self._tokenizer.vocab_size))
+
+    def num_prompt_special_tokens(self) -> int:
+        """Number of special tokens the server adds to each prompt.
+
+        Mirrors vllm's ``tokenizer.num_special_tokens_to_add(pair=False)``,
+        which returns the count from ``build_inputs_with_special_tokens([])``:
+        e.g. 1 for Llama/Mistral (BOS), 0 for GPT-2 (no auto-BOS despite
+        having ``bos_token_id``), 2 for BERT (CLS+SEP), 1 for T5 (EOS).
+        Used to adjust the ISL mean in RangeRatioDistribution so that
+        ``--isl`` represents the total server-side token count rather than
+        the aiperf-side content count.
+
+        Falls back to 0 for tokenizers that don't expose
+        ``num_special_tokens_to_add`` (tiktoken adapter, some custom
+        tokenizers) — conservative rather than wrong-directionally-confident,
+        since ``bos_token_id`` being defined does not mean the tokenizer
+        prepends it (e.g. GPT-2).
+        """
+        self._require_init()
+        method = getattr(self._tokenizer, "num_special_tokens_to_add", None)
+        if callable(method):
+            try:
+                return int(method(pair=False))
+            except (TypeError, NotImplementedError):
+                pass
+        return 0
 
     def __repr__(self) -> str:
         """

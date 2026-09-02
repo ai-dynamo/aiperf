@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiohttp
 import pytest
 
-from aiperf.common.enums import SSEEventType, SSEFieldType
 from aiperf.common.models import SSEField, SSEMessage
 from aiperf.transports.aiohttp_client import AioHttpClient
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
@@ -137,11 +136,11 @@ class TestAioHttpClient:
         """Test that SSE error events are properly caught and handled in the client."""
 
         packets = [
-            SSEField(name=SSEFieldType.EVENT, value=SSEEventType.ERROR),
+            SSEField(name="event", value="error"),
         ]
         if comment_value:
-            packets.append(SSEField(name=SSEFieldType.COMMENT, value=comment_value))
-        packets.append(SSEField(name=SSEFieldType.DATA, value="{}"))
+            packets.append(SSEField(name="comment", value=comment_value))
+        packets.append(SSEField(name="data", value="{}"))
 
         mock_error_message = SSEMessage(perf_ns=123456789, packets=packets)
 

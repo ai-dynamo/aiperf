@@ -4,10 +4,18 @@
 """Tests for macOS-specific terminal corruption fixes in cli_runner.py."""
 
 import multiprocessing
+import sys
 from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 from aiperf.config import BenchmarkConfig
 from aiperf.plugin.enums import UIType
+
+pytestmark = pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="macOS-specific tests; rely on `fcntl` and Darwin platform check",
+)
 
 _MINIMAL_CONFIG = {
     "models": ["test-model"],

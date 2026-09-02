@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pydantic models for synthesis and analysis data."""
 
+from typing import Self
+
 from pydantic import Field
-from typing_extensions import Self
 
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.dataset.defaults import InputTokensDefaults

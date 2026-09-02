@@ -14,8 +14,10 @@ from aiperf.common.models.server_metrics_models import (
     GaugeMetricData,
     HistogramMetricData,
     ServerMetricsEndpointInfo,
+    ServerMetricsEndpointSummary,
     ServerMetricsExportData,
     ServerMetricsSummary,
+    TimeRangeFilter,
     UnknownMetricData,
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
@@ -93,7 +95,12 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
         if not self._server_metrics_results:
             return "{}"
 
-        metrics, endpoint_info = self._build_hybrid_metrics()
+        metrics, endpoint_info = self._build_hybrid_metrics(
+            self._server_metrics_results.endpoint_summaries
+        )
+        warmup_metrics, _ = self._build_hybrid_metrics(
+            self._server_metrics_results.warmup_endpoint_summaries
+        )
 
         endpoints_configured = [
             url for url in self._server_metrics_results.endpoints_configured
@@ -101,6 +108,8 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
         endpoints_successful = [
             url for url in self._server_metrics_results.endpoints_successful
         ]
+
+        phase_time_ranges = self._build_phase_time_ranges()
 
         summary = ServerMetricsSummary(
             endpoints_configured=endpoints_configured,
@@ -112,6 +121,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
                 self._server_metrics_results.end_ns / NANOS_PER_SECOND
             ),
             endpoint_info=endpoint_info if endpoint_info else None,
+            phase_time_ranges=phase_time_ranges,
         )
 
         # Serialize benchmark config with exclude_unset=True to only include explicitly set values
@@ -127,6 +137,7 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             benchmark_id=self._server_metrics_results.benchmark_id,
             summary=summary,
             metrics=metrics,
+            warmup_metrics=warmup_metrics or None,
             input_config=input_config,
         )
 
@@ -135,8 +146,37 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             option=orjson.OPT_INDENT_2,
         ).decode()
 
+    def _build_phase_time_ranges(self) -> dict[str, TimeRangeFilter]:
+        """Build per-phase export time ranges, skipping degenerate windows.
+
+        Warmup ``end_ns`` comes from ``ServerMetricsResults.warmup_end_ns``,
+        which is the same (possibly scrape-extended) end used for
+        ``warmup_endpoint_summaries`` aggregation.
+
+        TimeRangeFilter rejects start >= end, and a raise here would drop all
+        server metrics from the export.
+        """
+        results = self._server_metrics_results
+        ranges: dict[str, TimeRangeFilter] = {}
+        if results.start_ns < results.end_ns:
+            ranges["profiling"] = TimeRangeFilter(
+                start_ns=results.start_ns,
+                end_ns=results.end_ns,
+            )
+        if (
+            results.warmup_start_ns is not None
+            and results.warmup_end_ns is not None
+            and results.warmup_start_ns < results.warmup_end_ns
+        ):
+            ranges["warmup"] = TimeRangeFilter(
+                start_ns=results.warmup_start_ns,
+                end_ns=results.warmup_end_ns,
+            )
+        return ranges
+
     def _build_hybrid_metrics(
         self,
+        endpoint_summaries: dict[str, ServerMetricsEndpointSummary] | None,
     ) -> tuple[
         dict[
             str,
@@ -167,10 +207,6 @@ class ServerMetricsJsonExporter(MetricsBaseExporter):
             - metrics dict: Maps metric name to type-specific MetricData with all series
             - endpoint_info dict: Maps endpoint URL to collection metadata (fetch counts, etc.)
         """
-        if not self._server_metrics_results:
-            return {}, None
-
-        endpoint_summaries = self._server_metrics_results.endpoint_summaries
         if not endpoint_summaries:
             self.debug("No server metrics summaries available.")
             return {}, None

@@ -63,16 +63,19 @@ class TestWaitForModelModeModels:
         """With models_ready_delay_seconds>0, the probe sees an empty
         data list on early attempts and must retry until the model appears.
 
-        Uses a 5.0s server-side delay (vs. a 0.5s probe interval) to give
-        a comfortable margin over subprocess startup time, so the first
-        probe reliably lands before the model becomes ready and we observe
-        at least one retry deterministically.
+        Uses a 20s server-side delay (vs. a 0.5s probe interval) to give a
+        comfortable margin over subprocess startup time. On slow Windows
+        VDI, mock_server_factory's spawn + health check takes ~7s before
+        aiperf starts probing — a 5s delay would already be over by then
+        and the probe would succeed on attempt 1, defeating the test. 20s
+        keeps a buffer even on the slowest paths and is still well under
+        the per-test timeout.
         """
         async with mock_server_factory(
             fast=True,
             workers=1,
             default_model="mock-model",
-            models_ready_delay_seconds=5.0,
+            models_ready_delay_seconds=20.0,
         ) as server:
             result = await cli.run(
                 f"""
@@ -86,10 +89,10 @@ class TestWaitForModelModeModels:
                     --workers-max 1
                     --ui simple
                     --wait-for-model-mode models
-                    --wait-for-model-timeout 30
+                    --wait-for-model-timeout 60
                     --wait-for-model-interval 0.5
                 """,
-                timeout=120.0,
+                timeout=180.0,
             )
             assert result.exit_code == 0
             combined = f"{result.stdout}\n{result.stderr}\n{result.log}"
@@ -199,11 +202,16 @@ class TestWaitForModelModeInference:
     ):
         """With inference_ready_delay_seconds>0, the inference endpoint
         returns 503 on early attempts and the probe must retry until the
-        stack starts responding 2xx."""
+        stack starts responding 2xx.
+
+        20s server-side delay (vs. 0.5s probe interval) — see
+        test_models_probe_success_after_retries for the Windows-VDI rationale
+        on why a 5s delay isn't enough to outlast mock_server_factory startup.
+        """
         async with mock_server_factory(
             fast=True,
             workers=1,
-            inference_ready_delay_seconds=5.0,
+            inference_ready_delay_seconds=20.0,
         ) as server:
             result = await cli.run(
                 f"""
@@ -217,10 +225,10 @@ class TestWaitForModelModeInference:
                     --workers-max 1
                     --ui simple
                     --wait-for-model-mode inference
-                    --wait-for-model-timeout 30
+                    --wait-for-model-timeout 60
                     --wait-for-model-interval 0.5
                 """,
-                timeout=120.0,
+                timeout=180.0,
             )
             assert result.exit_code == 0
             combined = f"{result.stdout}\n{result.stderr}\n{result.log}"

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import itertools
+import warnings
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -146,7 +147,7 @@ def detect_sweep_fields(data: dict[str, Any]) -> dict[str, list[Any]]:
             if (
                 isinstance(value, list)
                 and key in MAGIC_LIST_FIELDS
-                and all(isinstance(v, (int, float)) for v in value)
+                and all(isinstance(v, int | float) for v in value)
             ):
                 sweep_fields[f"{prefix}.{key}"] = value
 
@@ -410,7 +411,7 @@ def _expand_scenario_sweep(
     hashable groupings (e.g. pareto-sweep crossing paired ISL/OSL with a
     concurrency list) set ``values`` explicitly.
     """
-    from aiperf.config.sweep import SweepVariation
+    from aiperf.config.sweep import SweepVariation, _is_nested_override
 
     results = []
     for idx, scenario in enumerate(runs):
@@ -446,6 +447,15 @@ def _expand_scenario_sweep(
         variant = {k: v for k, v in variant.items() if k != "sweep"}
         label = scenario.get("name", f"scenario_{idx}")
         values = dict(explicit_values) if explicit_values is not None else scenario_data
+        if scenario.get("name") is None and _is_nested_override(values):
+            warnings.warn(
+                f"sweep run [{idx}]: no 'name:' set and its overrides are "
+                f"nested, so per-run and aggregate artifact directories fall "
+                f"back to the positional name '{label}'. Add a 'name:' "
+                f"(e.g. 'aa-1k') for readable directory names.",
+                UserWarning,
+                stacklevel=2,
+            )
         results.append((variant, SweepVariation(index=idx, label=label, values=values)))
     return results
 
@@ -483,10 +493,9 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
     raise ValueError rather than silently appending a phantom entry.
 
     Special case for ``phases.profiling.<X>``: when no phase named
-    ``profiling`` exists, fall back to the unique non-warmup phase (if
-    exactly one exists). YAML's ``phases: {type: ..}`` shorthand emits
-    a phase named ``default``, but search recipes hard-code the
-    ``profiling`` segment. See ``_find_phase_or_recipe_alias``.
+    ``profiling`` exists, fall back to the unique profiling-kind phase.
+    Legacy pre-kind configs with exactly one non-warmup phase keep the
+    old recipe-friendly fallback. See ``_find_phase_or_recipe_alias``.
     """
     keys = path.split(".")
     current: Any = data
@@ -496,10 +505,8 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
                 current, key, parent_key=keys[i - 1] if i > 0 else ""
             )
             if match is None:
-                names = [item.get("name") for item in current]
-                raise ValueError(
-                    f"sweep path {path!r}: no entry named {key!r} found "
-                    f"(existing: {names}). Add the entry first or fix the typo."
+                _raise_named_list_resolution_error(
+                    path, key, current, parent_key=keys[i - 1] if i > 0 else ""
                 )
             current = match
             continue
@@ -514,10 +521,8 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
             current, last, parent_key=keys[-2] if len(keys) >= 2 else ""
         )
         if match is None:
-            names = [item.get("name") for item in current]
-            raise ValueError(
-                f"sweep path {path!r}: no entry named {last!r} found "
-                f"(existing: {names}). Add the entry first or fix the typo."
+            _raise_named_list_resolution_error(
+                path, last, current, parent_key=keys[-2] if len(keys) >= 2 else ""
             )
         match[last] = value
     elif isinstance(current, dict):
@@ -541,24 +546,75 @@ def _raise_traversal_type_error(
     )
 
 
+def _raise_named_list_resolution_error(
+    path: str, name: str, items: list[dict[str, Any]], *, parent_key: str
+) -> None:
+    names = [item.get("name") for item in items]
+    if parent_key == "phases" and name == "profiling":
+        candidates, _legacy_candidates = _profiling_alias_candidates(items)
+        if len(candidates) > 1:
+            candidate_names = [str(item.get("name")) for item in candidates]
+            suffix = ""
+            prefix = "phases.profiling."
+            if path.startswith(prefix):
+                suffix = "." + path[len(prefix) :]
+            name_example = f"phases.{candidate_names[0]}{suffix}"
+            index_example = f"phases.0{suffix}"
+            raise ValueError(
+                f"sweep path {path!r} is ambiguous: {len(candidates)} "
+                f"profiling phases exist ({', '.join(candidate_names)}). "
+                f"Use an explicit phase name like {name_example!r} or "
+                f"a numeric index like {index_example!r}."
+            )
+    raise ValueError(
+        f"sweep path {path!r}: no entry named {name!r} found "
+        f"(existing: {names}). Add the entry first or fix the typo."
+    )
+
+
+def _profiling_alias_candidates(
+    items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    candidates = []
+    legacy_candidates = []
+    for item in items:
+        item_name = item.get("name")
+        kind = item.get("kind")
+        if kind is None and item_name in {"warmup", "profiling"}:
+            kind = item_name
+        if kind == "profiling":
+            candidates.append(item)
+        elif kind is None and item_name != "warmup":
+            legacy_candidates.append(item)
+    return candidates, legacy_candidates
+
+
 def _find_phase_or_recipe_alias(
     items: list[dict[str, Any]], name: str, *, parent_key: str
 ) -> dict[str, Any] | None:
-    """Resolve `_find_named` with a `phases.profiling` recipe-friendly fallback.
+    """Resolve phase path segments by index, name, then legacy profiling kind.
 
-    When ``name`` is ``profiling`` and the parent segment is ``phases`` and
-    no phase by that name exists, return the unique non-warmup phase if one
-    exists; otherwise return None (caller raises with the existing-names
-    list, same as a plain miss).
+    Resolution order follows the named-phase plan: numeric index, exact unique
+    ``name``, then ``phases.profiling`` as shorthand for the unique profiling
+    kind only when no exact name match exists.
     """
+    if parent_key == "phases" and name.isdigit():
+        index = int(name)
+        if 0 <= index < len(items):
+            return items[index]
+        return None
+
     direct = _find_named(items, name)
     if direct is not None:
         return direct
     if name != "profiling" or parent_key != "phases":
         return None
-    candidates = [item for item in items if item.get("name") != "warmup"]
+
+    candidates, legacy_candidates = _profiling_alias_candidates(items)
     if len(candidates) == 1:
         return candidates[0]
+    if not candidates and len(legacy_candidates) == 1:
+        return legacy_candidates[0]
     return None
 
 

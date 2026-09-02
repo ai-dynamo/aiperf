@@ -34,10 +34,44 @@ class TestDataLoaderLoadRun:
         assert "time_to_first_token" in run.requests.columns
         assert "request_latency" in run.requests.columns
 
-    def test_load_run_nonexistent_path(self) -> None:
-        """Test loading from nonexistent path raises error."""
+    def test_load_run_reads_slice_duration_from_artifacts_config(
+        self,
+        tmp_path: Path,
+        sample_jsonl_data: list[dict[str, Any]],
+        sample_aggregated_data: dict[str, Any],
+    ) -> None:
+        """Test loading slice_duration from the v2 artifacts config shape."""
+        run_dir = tmp_path / "test_run"
+        run_dir.mkdir()
+
+        jsonl_lines = [
+            orjson.dumps(record).decode("utf-8") for record in sample_jsonl_data
+        ]
+        (run_dir / "profile_export.jsonl").write_text("\n".join(jsonl_lines) + "\n")
+
+        input_config = {
+            **sample_aggregated_data["input_config"],
+            "artifacts": {"slice_duration": 60.0},
+        }
+        aggregated = {**sample_aggregated_data, "input_config": input_config}
+        (run_dir / "profile_export_aiperf.json").write_bytes(orjson.dumps(aggregated))
+
+        run = DataLoader().load_run(run_dir)
+
+        assert run.slice_duration == 60.0
+
+    def test_load_run_nonexistent_path(self, tmp_path: Path) -> None:
+        """Test loading from nonexistent path raises error.
+
+        Uses ``tmp_path / "nonexistent" / "path"`` instead of a hard-coded
+        ``"/nonexistent/path"`` so the path is guaranteed not to exist on
+        every platform. (On Windows, ``Path("/nonexistent/path")`` can
+        resolve to drive-relative paths whose parents may exist as
+        directories on the test machine, causing the ``is_dir()`` /
+        ``exists()`` checks in ``load_run`` to take an unexpected branch.)
+        """
         loader = DataLoader()
-        fake_path = Path("/nonexistent/path")
+        fake_path = tmp_path / "nonexistent" / "path"
 
         with pytest.raises(DataLoadError, match="does not exist"):
             loader.load_run(fake_path)
@@ -1121,13 +1155,13 @@ class TestDataLoaderLoadRunWithGPUTelemetry:
         # Verify rich telemetry fields from real data
         expected_fields = [
             "gpu_index",
-            "gpu_utilization",
-            "gpu_power_usage",
-            "gpu_memory_used",
-            "gpu_temperature",
+            "nvidia_gpu_utilization",
+            "nvidia_power_usage",
+            "nvidia_memory_used",
+            "nvidia_temperature",
             "sm_clock_frequency",
             "memory_clock_frequency",
-            "dcgm_url",
+            "telemetry_source_url",
             "gpu_uuid",
             "hostname",
         ]
@@ -1152,10 +1186,10 @@ class TestDataLoaderLoadGPUTelemetryJSONL:
         assert df is not None
         assert len(df) > 0
         assert "timestamp_s" in df.columns
-        assert "gpu_utilization" in df.columns
-        assert "gpu_power_usage" in df.columns
-        assert "gpu_memory_used" in df.columns
-        assert "gpu_temperature" in df.columns
+        assert "nvidia_gpu_utilization" in df.columns
+        assert "nvidia_power_usage" in df.columns
+        assert "nvidia_memory_used" in df.columns
+        assert "nvidia_temperature" in df.columns
 
         # Check relative timestamp conversion
         # Note: First timestamp can be negative if telemetry started before first request
@@ -1270,15 +1304,15 @@ class TestDataLoaderLoadGPUTelemetryJSONL:
         # Verify top-level metadata fields are present
         assert "timestamp_ns" in df.columns
         assert "gpu_index" in df.columns
-        assert "dcgm_url" in df.columns
+        assert "telemetry_source_url" in df.columns
         assert "gpu_uuid" in df.columns
         assert "hostname" in df.columns
 
         # Verify telemetry_data fields are flattened to top level
-        assert "gpu_utilization" in df.columns
-        assert "gpu_power_usage" in df.columns
-        assert "gpu_memory_used" in df.columns
-        assert "gpu_temperature" in df.columns
+        assert "nvidia_gpu_utilization" in df.columns
+        assert "nvidia_power_usage" in df.columns
+        assert "nvidia_memory_used" in df.columns
+        assert "nvidia_temperature" in df.columns
         assert "sm_clock_frequency" in df.columns
         assert "memory_clock_frequency" in df.columns
 

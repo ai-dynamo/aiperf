@@ -212,8 +212,12 @@ class SingleNodeView(VerticalScroll):
     def _extract_gpu_key_from_tag(self, tag: str) -> str:
         """Extract GPU identifier from metric tag including endpoint info.
 
-        Tag format: metric_name_dcgm_http___localhost_9400_metrics_gpu0_uuid
-        Returns: dcgm_http___localhost_9400_metrics_0_uuid
+        Tags use ``_dcgm_`` as a fixed separator between the metric name and
+        the mangled source URL, regardless of collector type. Examples:
+          DCGM:   amd_power_dcgm_http___node_9401_metrics_gpu0_abc123
+          PyNVML: nvidia_power_usage_dcgm_pynvml___localhost_gpu0_abc123
+          AMDSMI: amd_power_dcgm_amdsmi___localhost_gpu0_abc123
+        Returns the portion after ``_dcgm_`` with ``_gpu`` collapsed to ``_``.
         """
         if "_dcgm_" not in tag or "_gpu" not in tag:
             return "unknown"
@@ -225,7 +229,7 @@ class SingleNodeView(VerticalScroll):
         """Extract endpoint, GPU index, UUID, and model name from metric.
 
         Header format: "GPU Power Usage | localhost:9401 | GPU 0 | NVIDIA RTX 6000..."
-        Tag format: metric_name_dcgm_url_gpu0_uuid
+        Tag format: metric_name_telemetry_source_url_gpu0_uuid
         """
         parts = metric.header.split(" | ")
         if len(parts) >= 4:

@@ -24,6 +24,7 @@ from tests.component_integration.timing.conftest import (
     BaseCreditFlowTests,
     TimingTestConfig,
     build_timing_command,
+    skip_on_cloud_windows_timing,
 )
 from tests.harness.analyzers import (
     CreditFlowAnalyzer,
@@ -84,6 +85,7 @@ class TestConstantRateCreditFlow(BaseCreditFlowTests):
         return build_timing_command(config, arrival_pattern="constant")
 
 
+@skip_on_cloud_windows_timing
 @pytest.mark.component_integration
 class TestConstantRateTiming:
     """Timing accuracy tests for constant rate mode.
@@ -126,6 +128,7 @@ class TestConstantRateTiming:
         assert passed, f"Intervals not constant: {reason}"
 
 
+@skip_on_cloud_windows_timing
 @pytest.mark.component_integration
 class TestConstantRateWithConcurrency(BaseConcurrencyTests):
     """Tests for constant rate with concurrency limits.

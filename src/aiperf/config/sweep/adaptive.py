@@ -17,7 +17,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from aiperf.config.base import BaseConfig
 from aiperf.config.loader.dotted_path import _validate_dotted_path
 
-__all__ = ["SLAFilter", "SearchSpaceDimension"]
+__all__ = ["SLAFilter", "SLOTier", "SearchSpaceDimension"]
 
 
 class SLAFilter(BaseConfig):
@@ -45,7 +45,9 @@ class SLAFilter(BaseConfig):
             "RunResult.summary_metrics produced by the run."
         ),
     )
-    stat: Literal["avg", "p50", "p90", "p95", "p99"] = Field(
+    stat: Literal[
+        "avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max"
+    ] = Field(
         default="p95",
         description="Statistic on the metric to compare against the threshold.",
     )
@@ -135,3 +137,30 @@ class SearchSpaceDimension(BaseConfig):
                 f"lo > 0, got lo={self.lo}."
             )
         return self
+
+
+class SLOTier(BaseConfig):
+    """Named group of SLA filters representing one service-level objective.
+
+    Defines a single tier for multi-tier SLO boundary search. Each tier
+    contains one or more SLA filters that must ALL pass for the tier to be
+    considered feasible at a given concurrency level.
+
+    Lives in the config layer (alongside SLAFilter) to avoid circular imports
+    between config and orchestrator packages. Re-exported from
+    ``aiperf.orchestrator.search_planner.multi_tier_models`` for ergonomic
+    orchestrator usage.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(description="Unique tier identifier for output artifacts")
+    filters: list[SLAFilter] = Field(
+        description="SLA filters that must ALL pass for this tier to be feasible",
+        min_length=1,
+    )
+    ordering_rank: int | None = Field(
+        default=None,
+        ge=0,
+        description="Rank in detected monotonic ordering (0=strictest); None if unordered",
+    )

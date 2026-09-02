@@ -33,7 +33,3 @@ class BaseAggregateCounterMetric(
     ) -> MetricValueTypeVarT:
         """Return the value of the counter for this record."""
         return 1  # type: ignore
-
-    def _aggregate_value(self, value: MetricValueTypeVarT) -> None:
-        """Aggregate the metric value."""
-        self._value += value  # type: ignore

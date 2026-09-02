@@ -3,16 +3,21 @@
 import asyncio
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import orjson
 
 from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
 from aiperf.common.models import (
     ErrorDetails,
+    ExtractedPayload,
+    MediaCounts,
     ParsedResponse,
     ParsedResponseRecord,
     RequestRecord,
+    SpecDecodeAcceptanceRecord,
 )
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import (
@@ -20,10 +25,13 @@ from aiperf.common.models.record_models import (
     TokenCounts,
     ToolCallResponseData,
     find_last_non_empty_usage,
+    first_content_chunk_completion_tokens,
 )
+from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
+from aiperf.records.payload_retention import resolve_disable_tokenization
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -42,20 +50,28 @@ class InferenceResultParser(CommunicationMixin):
         )
         self.tokenizers: dict[str, Tokenizer] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
+        # Pod-local tokenizer bundles advertised by the WorkerGroupManager.
+        # Populated in Kubernetes; empty elsewhere, where the configured name
+        # is loaded directly.
+        self._tokenizer_bundles: dict[str, str] = {}
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(run)
         EndpointClass = plugins.get_class(
             PluginType.ENDPOINT, self.model_endpoint.endpoint.type
         )
         self.endpoint = EndpointClass(model_endpoint=self.model_endpoint)
         endpoint_meta = plugins.get_endpoint_metadata(self.model_endpoint.endpoint.type)
-        # Disable tokenization if the endpoint doesn't produce tokens and doesn't tokenize input, or
-        # if the user config is set to use server token counts.
-        self.disable_tokenization: bool = run.cfg.endpoint.use_server_token_count or (
-            not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input
+        # Single source of truth shared with the worker's payload-strip
+        # auto-detector (resolve_strip_record_payload_bytes -> this helper), so
+        # the parser's ISL path and the worker's payload retention can never
+        # disagree about whether client-side tokenization runs.
+        self.disable_tokenization: bool = resolve_disable_tokenization(
+            run.cfg, endpoint_meta
         )
         self.debug(
-            lambda: f"Created endpoint for {self.model_endpoint.endpoint.type}, "
-            f"class: {self.endpoint.__class__.__name__}",
+            lambda: (
+                f"Created endpoint for {self.model_endpoint.endpoint.type}, "
+                f"class: {self.endpoint.__class__.__name__}"
+            ),
         )
 
     @on_init
@@ -81,7 +97,10 @@ class InferenceResultParser(CommunicationMixin):
             for model in self.model_endpoint.models.models:
                 self.tokenizers[model.name] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model.name),
+                    self._tokenizer_source(
+                        model.name,
+                        tokenizer_config.get_tokenizer_name_for_model(model.name),
+                    ),
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,
@@ -97,6 +116,26 @@ class InferenceResultParser(CommunicationMixin):
         }
         self.info(f"Initialized tokenizers: {tokenizer_info} in {duration:.2f} seconds")
 
+    def _tokenizer_source(self, model: str, configured_name: str) -> str:
+        """Prefer a bundle the WorkerGroupManager already downloaded for this pod.
+
+        Every record processor in a pod would otherwise fetch the same
+        tokenizer from the hub independently -- N duplicate downloads, and a
+        hard failure where the WGM's copy is the only obtainable one
+        (air-gapped clusters, gated repos).
+
+        The WGM keys bundles by *tokenizer* name (``_unique_tokenizer_names``:
+        explicit ``cfg.tokenizer.name`` when set, otherwise the model names),
+        so the resolved name is the primary key. Model name is tried second
+        because alias resolution can make ``configured_name`` differ from the
+        model name the WGM used when no explicit tokenizer was configured.
+        """
+        return (
+            self._tokenizer_bundles.get(configured_name)
+            or self._tokenizer_bundles.get(model)
+            or configured_name
+        )
+
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
@@ -104,7 +143,9 @@ class InferenceResultParser(CommunicationMixin):
                 tokenizer_config = self.run.cfg.tokenizer
                 self.tokenizers[model] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
+                    self._tokenizer_source(
+                        model, tokenizer_config.get_tokenizer_name_for_model(model)
+                    ),
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,
@@ -114,17 +155,54 @@ class InferenceResultParser(CommunicationMixin):
     async def parse_request_record(
         self, request_record: RequestRecord
     ) -> ParsedResponseRecord:
-        """Handle an inference results message."""
+        """Handle an inference results message.
+
+        Single-pass payload extraction: decode ``payload_bytes`` once, run it
+        through the endpoint's ``extract_payload_inputs`` hook to yield
+        tokenisable text + multimodal counts, then feed both into downstream
+        scoring (ISL tokeniser + ``MediaCounts`` on the returned
+        ``ParsedResponseRecord``). Consumers of the parsed record never re-parse
+        ``payload_bytes`` -- the metric classes read ``token_counts`` and
+        ``media_counts`` directly.
+        """
         request_info = request_record.request_info
         self.trace_or_debug(
             lambda: f"Received inference results message: {request_record}",
-            lambda: f"Received inference results for credit '{request_info.credit_num}' (id: {request_info.x_request_id})"
-            if request_info
-            else "Received inference results (no request_info)",
+            lambda: (
+                f"Received inference results for credit '{request_info.credit_num}' (id: {request_info.x_request_id})"
+                if request_info
+                else "Received inference results (no request_info)"
+            ),
         )
 
         # Make sure any invalid request records are converted to error records for combined processing.
         request_record.create_error_from_invalid()
+
+        # Classify context-overflow errors per InferenceX AgentX RFC section 7.
+        # Runs unconditionally (cheap substring scan, allowlist-driven) so the
+        # ``context_overflow_count`` metric can aggregate even outside scenario
+        # mode -- useful for diagnostics. The boolean is consumed by
+        # ``ContextOverflowCountMetric`` via ``record.request.context_overflow``.
+        if request_record.has_error and request_record.error is not None:
+            try:
+                request_record.context_overflow = is_context_overflow_response(
+                    body=request_record.error.message,
+                )
+            except Exception:
+                request_record.context_overflow = False
+
+        # One payload decode + walk per record, shared by the ISL tokeniser and
+        # the MediaCounts builder. Both valid and error records go through this.
+        inputs = self._extract_payload_inputs_for_record(request_record)
+        media_counts = (
+            MediaCounts(
+                images=inputs.image_count,
+                audios=inputs.audio_count,
+                videos=inputs.video_count,
+            )
+            if inputs is not None
+            else MediaCounts()
+        )
 
         if request_record.has_error:
             # Even for error records, compute input token count if possible
@@ -134,7 +212,7 @@ class InferenceResultParser(CommunicationMixin):
                 # If token counting fails, we still return the error record with token_counts.input=None.
                 with suppress(Exception):
                     input_token_count = await self.compute_input_token_count(
-                        request_record
+                        request_record, inputs=inputs
                     )
 
             return ParsedResponseRecord(
@@ -143,12 +221,15 @@ class InferenceResultParser(CommunicationMixin):
                 token_counts=TokenCounts(
                     input=input_token_count,
                 ),
+                media_counts=media_counts,
             )
 
         else:
             try:
                 raw_response_count = len(request_record.responses)
-                record = await self.process_valid_record(request_record)
+                record = await self.process_valid_record(
+                    request_record, inputs=inputs, media_counts=media_counts
+                )
 
                 # Check if the parsed record is actually valid (e.g., has content responses)
                 record.create_error_from_invalid()
@@ -163,11 +244,14 @@ class InferenceResultParser(CommunicationMixin):
                             if record.token_counts
                             else None
                         ),
+                        media_counts=media_counts,
                     )
                 else:
                     # Success path: valid record with no errors
                     self.debug(
-                        lambda: f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
+                        lambda: (
+                            f"Received {raw_response_count} response packet(s), token counts: {record.token_counts}"
+                        )
                     )
                     return record
 
@@ -182,7 +266,7 @@ class InferenceResultParser(CommunicationMixin):
                     # If token counting fails, we still return the error record with token_counts.input=None.
                     with suppress(Exception):
                         input_token_count = await self.compute_input_token_count(
-                            request_record
+                            request_record, inputs=inputs
                         )
 
                 return ParsedResponseRecord(
@@ -191,19 +275,57 @@ class InferenceResultParser(CommunicationMixin):
                     token_counts=TokenCounts(
                         input=input_token_count,
                     ),
+                    media_counts=media_counts,
                 )
 
-    async def process_valid_record(
+    def _extract_payload_inputs_for_record(
         self, request_record: RequestRecord
+    ) -> ExtractedPayload | None:
+        """Decode ``request_info.payload_bytes`` once and hand it to the
+        endpoint's single-pass extractor.
+
+        ``payload_bytes`` is the canonical wire body, always JSON-encoded by
+        ``inference_client`` (even for multipart endpoints, whose dict is
+        ``orjson.dumps``-ed onto ``payload_bytes`` before the FormData is built).
+        Returns ``None`` when the payload is absent or not a JSON object --
+        callers then treat ISL as unavailable and use zero-valued
+        ``MediaCounts``.
+        """
+        request_info = request_record.request_info
+        if request_info is None or not request_info.payload_bytes:
+            return None
+        try:
+            payload = orjson.loads(request_info.payload_bytes)
+        except orjson.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return self.endpoint.extract_payload_inputs(payload)
+
+    async def process_valid_record(
+        self,
+        request_record: RequestRecord,
+        *,
+        inputs: ExtractedPayload | None = None,
+        media_counts: MediaCounts | None = None,
     ) -> ParsedResponseRecord:
-        """Process a valid request record."""
+        """Process a valid request record.
+
+        ``inputs`` and ``media_counts`` are passed through from
+        ``parse_request_record`` (single payload decode shared with the token
+        counter). When called directly (tests, other entry points) both default
+        to ``None`` and the tokeniser falls back to a per-call decode.
+        """
         if request_record.model_name is None:
             self.warning(
-                lambda: f"Model name is None, unable to process record: {request_record}"
+                lambda: (
+                    f"Model name is None, unable to process record: {request_record}"
+                )
             )
             return ParsedResponseRecord(
                 request=request_record,
                 responses=[],
+                media_counts=media_counts or MediaCounts(),
             )
 
         resp = self.endpoint.extract_response_data(request_record)
@@ -218,7 +340,7 @@ class InferenceResultParser(CommunicationMixin):
             token_counts = await self._compute_server_token_counts(resp)
         elif not self.disable_tokenization:
             token_counts = await self._compute_client_side_token_counts(
-                request_record, resp
+                request_record, resp, inputs=inputs
             )
         else:
             token_counts = TokenCounts()
@@ -227,51 +349,173 @@ class InferenceResultParser(CommunicationMixin):
             request=request_record,
             responses=resp,
             token_counts=token_counts,
+            media_counts=media_counts or MediaCounts(),
+            spec_decode_acceptance=self._extract_spec_decode_acceptance(resp),
         )
 
-    async def compute_input_token_count(
-        self, request_record: RequestRecord
-    ) -> int | None:
-        """Compute the number of tokens in the input for a given request record.
+    @staticmethod
+    def _extract_spec_decode_acceptance(
+        responses: list[ParsedResponse],
+    ) -> SpecDecodeAcceptanceRecord | None:
+        """Build the engine-neutral acceptance record via adapter auto-detection.
 
-        This includes:
-        - system_message (shared system prompt)
-        - user_context_message (per-conversation user context)
-        - All turns' text content
+        Fast-paths out when no response carried a spec-decode payload (spec
+        decode off, or no verify steps) so the plugin walk only runs for records
+        that actually have stats. Otherwise walks registered adapters in
+        priority order and uses the first whose ``can_adapt`` recognizes the
+        payload -- mirroring custom-dataset-loader auto-detection.
+
+        Suppresses the record when more than one response carried stats (an
+        ``n > 1`` streaming request, where each sequence's stats ride its own
+        finish chunk): the per-request record can't attribute request-level
+        ``completion_tokens`` to a single sequence, so a mixed record is worse
+        than none. ``n > 1`` non-streaming needs no client-side guard: vLLM
+        populates ``metrics.speculative_decoding`` only for single-sequence
+        requests and leaves it null otherwise.
+
+        Counts payloads by truthiness (not ``is not None``) to match the
+        adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as
+        absent at both sites, so it never spuriously trips the n > 1 guard.
         """
-        turns = request_record.turns
-        if turns is None:
-            self.warning(
-                "Turns are not set for request record, unable to calculate input token count"
+        with_stats = [r for r in responses if r.spec_decode_stats]
+        if len(with_stats) != 1:
+            return None
+        for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
+            if AdapterClass.can_adapt(responses):
+                return AdapterClass.adapt(responses)
+        return None
+
+    async def compute_input_token_count(
+        self,
+        request_record: RequestRecord,
+        *,
+        inputs: ExtractedPayload | None = None,
+    ) -> int | None:
+        """Compute the number of input (prompt) tokens for a request record.
+
+        Source of truth is ``request_info.payload_bytes`` -- the exact JSON the
+        endpoint sent on the wire -- decoded once and walked by
+        ``extract_payload_inputs`` into tokenisable ``texts`` (plus a chat-shape
+        ``messages`` view and any ``pretokenised_token_count``). ``turns`` are
+        never read here: on the payload-bytes fast path they are a content-free
+        stub, and the canonical body is the bytes.
+
+        ``system_message`` / ``user_context_message`` are NOT added here -- the
+        endpoint's ``format_payload`` already inlined them into ``payload_bytes``,
+        so re-adding would double-count.
+
+        When ``--apply-chat-template`` is set AND the payload carries a chat
+        ``messages`` array AND the HF tokenizer has a chat template, the templated
+        count (role/header wrapping + generation prompt) is returned; otherwise
+        the bare ``texts`` are encoded with a space separator. Any
+        ``pretokenised_token_count`` (e.g. token-id embeddings input) is added on
+        top. Returns ``None`` when no ``payload_bytes`` is available or the
+        endpoint reports nothing tokenisable.
+        """
+        if inputs is None:
+            inputs = self._extract_payload_inputs_for_record(request_record)
+
+        if inputs is None:
+            if not (
+                request_record.request_info
+                and request_record.request_info.payload_bytes
+            ):
+                self.warning(
+                    "payload_bytes not set on request_info; cannot compute "
+                    "input token count"
+                )
+            return None
+
+        pretokenised = inputs.pretokenised_token_count
+
+        tokenizer = None
+        # Chat-template path: count role/template wrapping when the user opted in
+        # and the payload is chat-shaped. Runs even when ``texts`` is empty (e.g.
+        # an image-only message still contributes role/header tokens).
+        tokenizer_cfg = self.run.cfg.tokenizer
+        if (
+            inputs.messages
+            and tokenizer_cfg is not None
+            and tokenizer_cfg.apply_chat_template
+        ):
+            tokenizer = await self.get_tokenizer(request_record.model_name)
+            templated = await self._compute_chat_template_token_count(
+                tokenizer, inputs.messages
+            )
+            if templated is not None:
+                tool_count = await self._compute_tool_texts_token_count(
+                    tokenizer, inputs
+                )
+                return templated + tool_count + pretokenised
+
+        # Bare-text path: join the extracted texts with a space separator.
+        if inputs.texts:
+            if tokenizer is None:
+                tokenizer = await self.get_tokenizer(request_record.model_name)
+            text_count = await self._compute_token_count(
+                tokenizer, inputs.texts, separator=" "
+            )
+            if text_count is not None:
+                return text_count + pretokenised
+
+        # Pure pre-tokenised input (e.g. token-id embeddings) carries no text.
+        return pretokenised if pretokenised > 0 else None
+
+    async def _compute_tool_texts_token_count(
+        self, tokenizer: Tokenizer, inputs: ExtractedPayload
+    ) -> int:
+        """Count tool-derived text on top of the chat-template count.
+
+        Tool text (replayed ``tool_calls`` / ``function_call`` items and
+        ``tools`` schemas) is absent from the role/content ``messages`` view,
+        so the chat-template path must tokenise it separately; the bare-text
+        path already covers it via ``texts``.
+        """
+        return (
+            await self._compute_token_count(tokenizer, inputs.tool_texts, separator=" ")
+            or 0
+        )
+
+    async def _compute_chat_template_token_count(
+        self,
+        tokenizer: Tokenizer,
+        messages: list[dict[str, Any]],
+    ) -> int | None:
+        """Tokenize ``messages`` through the HF tokenizer's chat template.
+
+        ``messages`` is the chat-shape view produced by ``extract_payload_inputs``
+        from the wire ``payload_bytes`` -- so the count reflects exactly what the
+        server tokenizes (role/header wrapping + generation prompt) rather than a
+        re-render of ``turns``. ``add_generation_prompt=True`` mirrors the server
+        begin-generation suffix. Returns ``None`` (caller falls back to bare-text
+        encoding) when the tokenizer has no chat template configured, is not
+        HF-backed, or rendering fails.
+        """
+        inner = getattr(tokenizer, "_tokenizer", None)
+        apply = getattr(inner, "apply_chat_template", None)
+        if apply is None or not messages:
+            return None
+        # Short-circuit HF tokenizers that explicitly carry no chat template.
+        if getattr(inner, "chat_template", "_unset") is None:
+            return None
+        try:
+            tokens = await asyncio.to_thread(
+                apply,
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort; fall back to bare encode
+            self.debug(
+                lambda exc=exc: (
+                    f"Chat-template tokenization unavailable, "
+                    f"falling back to bare-text encode: {exc!r}"
+                )
             )
             return None
-
-        tokenizer = await self.get_tokenizer(request_record.model_name)
-        prompt_texts: list[str] = []
-
-        # Include system_message if present (shared system prompt)
-        if request_record.request_info and request_record.request_info.system_message:
-            prompt_texts.append(request_record.request_info.system_message)
-
-        # Include user_context_message if present (per-conversation user context)
-        if (
-            request_record.request_info
-            and request_record.request_info.user_context_message
-        ):
-            prompt_texts.append(request_record.request_info.user_context_message)
-
-        # Include all turns' text content
-        for turn in turns:
-            for text in turn.texts:
-                prompt_texts.append("".join(text.contents))
-
-        if not prompt_texts:
+        if not isinstance(tokens, list):
             return None
-
-        # NOTE: We combine all the prompt texts with a space separator to create a single prompt string.
-        # This will get us the most accurate token count for the prompt by avoiding any potential
-        # boundary issues that could occur if we were to tokenize each text individually.
-        return await self._compute_token_count(tokenizer, prompt_texts, separator=" ")
+        return len(tokens)
 
     async def _compute_server_token_counts(
         self, responses: list[ParsedResponse]
@@ -302,10 +546,21 @@ class InferenceResultParser(CommunicationMixin):
                 usage.completion_tokens, reasoning_token_count
             )
 
+        # Only read the first content chunk's count when the user opted into
+        # per-chunk usage. Otherwise a server that volunteers usage on a
+        # content-bearing chunk would change (or delete) inter-token latency with
+        # no flag set -- the opt-in contract the docs describe must be enforced
+        # here, not just at payload-injection time.
+        first_chunk_tokens = (
+            first_content_chunk_completion_tokens(responses)
+            if self.run.cfg.endpoint.per_chunk_usage
+            else None
+        )
         token_counts = TokenCounts(
             input=input_token_count,
             reasoning=reasoning_token_count,
             output=output_token_count,
+            first_content_chunk_tokens=first_chunk_tokens,
         )
 
         # Warn if server provided no usage information
@@ -393,18 +648,28 @@ class InferenceResultParser(CommunicationMixin):
         return len(tokens)
 
     async def _compute_client_side_token_counts(
-        self, request_record: RequestRecord, responses: list[ParsedResponse]
+        self,
+        request_record: RequestRecord,
+        responses: list[ParsedResponse],
+        *,
+        inputs: ExtractedPayload | None = None,
     ) -> TokenCounts:
         """Compute token counts using client-side tokenization.
 
         Args:
             request_record: The request record containing input data
             responses: List of parsed responses from the server
+            inputs: Pre-extracted payload inputs shared with the media-counts
+                path in ``parse_request_record`` (single payload decode).
+                ``None`` triggers a fresh decode inside
+                ``compute_input_token_count``.
 
         Returns:
             TokenCounts populated with client-side tokenized values
         """
-        input_token_count = await self.compute_input_token_count(request_record)
+        input_token_count = await self.compute_input_token_count(
+            request_record, inputs=inputs
+        )
 
         tokenizer = await self.get_tokenizer(request_record.model_name)
         output_texts, reasoning_texts = self._parse_output_and_reasoning_texts(

@@ -71,7 +71,7 @@ class TestRandomGeneratorCanary:
                 "Run test again to validate against reference."
             )
 
-        reference_data = load_json_str(self.REFERENCE_FILE.read_text())
+        reference_data = load_json_str(self.REFERENCE_FILE.read_text(encoding="utf-8"))
         current_data = result.inputs.model_dump()
         self._assert_inputs_match(reference_data, current_data)
 

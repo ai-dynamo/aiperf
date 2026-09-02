@@ -23,6 +23,8 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from aiperf.common.finite import is_finite_value
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation, _set_nested_value
@@ -205,13 +207,67 @@ class OptunaSearchPlanner(SearchPlanner):
                     dim.path, int(dim.lo), int(dim.hi), log=log
                 )
             else:
-                v = trial.suggest_float(dim.path, dim.lo, dim.hi, log=log)
+                # BoTorch -- the default sampler -- suggests numpy.float64, and
+                # optuna only coerces to a native type for int distributions;
+                # FloatDistribution hands the sampler's scalar straight back.
+                # Unconverted it survives into the search history and blows up
+                # orjson.dumps() in write_search_history() with
+                # "Type is not JSON serializable: numpy.float64".
+                v = float(trial.suggest_float(dim.path, dim.lo, dim.hi, log=log))
             values[dim.path] = v
 
-        cfg_dict = self._base.model_dump(mode="json", exclude_none=True)
+        # mode="python" + context={"include_secrets": True} so neither the
+        # when_used="json" credential redactors (api_key / headers) nor the
+        # unconditional _redact_urls serializer fire mid-pipeline. See
+        # smooth_isotonic._mutate_base for the full rationale.
+        cfg_dict = self._base.model_dump(
+            mode="python",
+            exclude_none=True,
+            context={"include_secrets": True},
+        )
         for path, val in values.items():
             _set_nested_value(cfg_dict, path, val)
-        cfg = BenchmarkConfig.model_validate(cfg_dict)
+        try:
+            cfg = BenchmarkConfig.model_validate(cfg_dict)
+        except ValidationError as e:
+            # Only reframe genuine shape mismatches -- a field that doesn't
+            # exist on the PROFILING phase ("extra_forbidden": e.g. injecting
+            # 'rate' onto a concurrency phase) or a required field the base
+            # config never got a chance to seed ("missing"). Ordinary
+            # numeric-bounds violations (e.g. a sampled concurrency=0 against
+            # ge=1) are unrelated to phase shape and should surface as-is --
+            # reframing them as a "shape" problem is actively misleading.
+            # Scoped to errors under "phases" specifically: extra_forbidden
+            # also fires for an unrelated malformed root-level key (e.g. a
+            # search-space path with no "." that never resolves under a
+            # phase at all), which isn't a shape mismatch either.
+            shape_error_types = {"extra_forbidden", "missing"}
+            if not any(
+                err.get("type") in shape_error_types
+                and err.get("loc", ())[:1] == ("phases",)
+                for err in e.errors()
+            ):
+                raise
+            # phases[0] is the warmup phase whenever one exists (warmup is
+            # appended before profiling -- see converter.py's phase-list
+            # assembly and BenchmarkConfig's "order is execution order"
+            # contract), so naming it here would blame the wrong phase's
+            # shape. Match the profiling phase by kind instead, the same
+            # selector BenchmarkConfig.validate_profiling_phase_required
+            # uses (config.py).
+            base_phase_type = next(
+                (p.type for p in self._base.phases if p.kind == "profiling"),
+                self._base.phases[0].type,
+            )
+            raise ValueError(
+                f"--search-space path(s) {sorted(values)} do not fit this "
+                f"benchmark's shape ('{base_phase_type}'). A benchmark has one "
+                "shape before it starts (concurrency, rate, user, or gamma); "
+                "searching a field that belongs to a different shape (e.g. "
+                "'rate' needs --request-rate, 'users' needs "
+                "--user-centric-rate, 'smoothness' needs --arrival-pattern "
+                f"gamma) fails like this. Underlying error: {e}"
+            ) from e
 
         variation = SweepVariation(
             index=self._iter,
@@ -314,7 +370,7 @@ class OptunaSearchPlanner(SearchPlanner):
                 if self._terminator.should_terminate(study=self._study):
                     self._convergence_reason = self._terminator_reason
                     return True
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # Optuna's terminator can raise mid-run when its GP fails to
                 # fit (e.g. degenerate observations); a stop-rule failure is
                 # not a planner failure -- log and fall through to "not
@@ -618,7 +674,7 @@ class OptunaSearchPlanner(SearchPlanner):
             return
         try:
             hv = compute_hypervolume(observed, self._cfg.objectives, ref_point)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(
                 "compute_hypervolume failed at iter %d: %r; skipping plateau update.",
                 self._iter,

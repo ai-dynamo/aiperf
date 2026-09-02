@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.enums import ConversationBranchMode, CreditPhase, PrerequisiteKind
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -29,26 +29,7 @@ from aiperf.common.models import (
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
-
-
-def _mk_conv(
-    cid: str,
-    turns: list[TurnMetadata],
-    branches: list[ConversationBranchInfo],
-) -> ConversationMetadata:
-    return ConversationMetadata(conversation_id=cid, turns=turns, branches=branches)
-
-
-def _mk_source(conversations: list[ConversationMetadata]):
-    cs = MagicMock()
-    cs.dataset_metadata = DatasetMetadata(
-        conversations=conversations,
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
-    cs.get_metadata.side_effect = lambda cid: next(
-        c for c in conversations if c.conversation_id == cid
-    )
-    return cs
+from tests.unit.timing._shared_helpers import _mk_conv, _mk_source
 
 
 def _mk_credit(conv_id: str, corr_id: str, turn_index: int):
@@ -139,10 +120,64 @@ async def test_delayed_join_k5_parent_progresses():
 
 
 @pytest.mark.asyncio
+async def test_breeze_through_applies_between_round_think_time():
+    """Regression: when children drain before the parent reaches a request-free
+    spine gate, the orchestrator must still apply the gate's authored
+    between-round think-time before dispatching the gated turn -- rather than
+    letting the strategy breeze through with no wait."""
+    metadata = _k5_metadata()
+    # Make the gated turn (index 5) a request-free spine gate with a think-time.
+    gate_turn = metadata[0].turns[5]
+    gate_turn.no_request = True
+    gate_turn.delay_ms = 400.0
+
+    cs = _mk_source(metadata)
+
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **kwargs
+    ):
+        s = MagicMock()
+        s.x_correlation_id = f"corr-{child_conversation_id}"
+        return s
+
+    cs.start_branch_child = MagicMock(side_effect=_start)
+
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    slept: list[float] = []
+
+    async def _capture(seconds: float) -> None:
+        slept.append(seconds)
+
+    orch._sleep_think_ms = _capture
+
+    # Turn 0 spawns; both children finish before the parent nears the gate.
+    await orch.intercept(_mk_credit("root", "corr-root", 0))
+    await orch.on_child_leaf_reached("corr-c0")
+    await orch.on_child_leaf_reached("corr-c1")
+
+    # Parent walks turns 1..3 (no gate), then turn 4's return dispatches the
+    # satisfied turn-5 gate -- honoring its 400 ms authored think-time.
+    for t in range(1, 4):
+        await orch.intercept(_mk_credit("root", "corr-root", t))
+    suspended = await orch.intercept(_mk_credit("root", "corr-root", 4))
+
+    assert suspended is True
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert slept == [0.4]  # 400 ms authored think-time honored on the breeze path
+
+
+@pytest.mark.asyncio
 async def test_delayed_join_children_finish_before_parent_arrives():
-    """Children complete before the parent returns from turn 4. When the
-    parent reaches turn 4's return (about to dispatch turn 5), the future
-    gate is already satisfied -> popped -> intercept returns False."""
+    """Children complete before the parent returns from turn 4. This is a
+    NORMAL DAG gate (no request-free think-time), so a gate satisfied before
+    the parent arrives is popped and the parent breezes through the strategy
+    path -> intercept returns False and no dispatch_join_turn fires. (Spine
+    gates, which carry think-time, take the retain-and-dispatch path instead.)"""
     cs = _mk_source(_k5_metadata())
 
     def _start(
@@ -226,6 +261,100 @@ async def test_delayed_join_k1_regression_via_new_architecture():
     await orch.on_child_leaf_reached("corr-c0")
     issuer.dispatch_join_turn.assert_awaited_once()
     assert orch.stats.parents_resumed == 1
+
+
+@pytest.mark.asyncio
+async def test_overlap_branch_dispatches_from_parent_start_not_return() -> None:
+    branch = ConversationBranchInfo(
+        branch_id="root:overlap",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.SPAWN,
+        start_timestamp_ms=0.0,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(
+                timestamp_ms=0.0,
+                api_time_ms=5000.0,
+                branch_ids=[branch.branch_id],
+            ),
+            TurnMetadata(
+                timestamp_ms=6000.0,
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN,
+                        branch_id=branch.branch_id,
+                    )
+                ],
+            ),
+        ],
+        [branch],
+    )
+    root.replay_scope_id = "root"
+    child = _mk_conv("child", [TurnMetadata(timestamp_ms=0.0)], [])
+    cs = _mk_source([root, child])
+    child_session = MagicMock(
+        x_correlation_id="corr-child",
+        metadata=child,
+        effective_root_correlation_id="corr-root",
+    )
+    cs.start_branch_child.return_value = child_session
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    credit = _mk_credit("root", "corr-root", 0)
+    credit.phase = CreditPhase.PROFILING
+    credit.effective_root_correlation_id = "corr-root"
+
+    await orch.on_credit_issued(credit)
+
+    issuer.dispatch_first_turn.assert_awaited_once_with(child_session)
+    assert await orch.intercept(credit) is True
+    issuer.dispatch_first_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_overlap_dispatch_skips_fork_branches() -> None:
+    """FORK branches must not dispatch at credit-issue even when their
+    start_timestamp overlaps the parent turn; they sticky-clone parent
+    context that is only complete after the declaring turn returns.
+    """
+    branch = ConversationBranchInfo(
+        branch_id="root:fork-overlap",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.FORK,
+        start_timestamp_ms=0.0,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(
+                timestamp_ms=0.0,
+                api_time_ms=5000.0,
+                branch_ids=[branch.branch_id],
+            ),
+            TurnMetadata(),
+        ],
+        [branch],
+    )
+    root.replay_scope_id = "root"
+    child = _mk_conv("child", [TurnMetadata(timestamp_ms=0.0)], [])
+    cs = _mk_source([root, child])
+    cs.start_branch_child = MagicMock()
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    credit = _mk_credit("root", "corr-root", 0)
+    credit.phase = CreditPhase.PROFILING
+    credit.effective_root_correlation_id = "corr-root"
+
+    await orch.on_credit_issued(credit)
+
+    cs.start_branch_child.assert_not_called()
+    issuer.dispatch_first_turn.assert_not_awaited()
+    assert orch._overlap_dispatched_branches == set()
 
 
 @pytest.mark.asyncio

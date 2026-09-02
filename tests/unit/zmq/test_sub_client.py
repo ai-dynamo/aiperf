@@ -12,15 +12,12 @@ import zmq
 import zmq.asyncio
 
 from aiperf.common.enums import (
-    CommandResponseStatus,
-    CommandType,
     LifecycleState,
     MessageType,
 )
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import (
-    CommandMessage,
-    CommandResponse,
+    ConnectionProbeMessage,
     HeartbeatMessage,
     Message,
 )
@@ -203,13 +200,13 @@ class TestZMQSubClientMessageHandling:
             callback_called.set()
 
         # Register callback for the FULL targeted topic (not just base message type)
-        targeted_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}service-123"
+        targeted_topic = f"{MessageType.CONNECTION_PROBE}{TOPIC_DELIMITER}service-123"
         client._subscribers[targeted_topic] = [callback]
 
         # Message with targeted topic
-        message = CommandMessage(
+        message = ConnectionProbeMessage(
             service_id="test-service",
-            command=CommandType.SHUTDOWN,
+            target_service_id="service-123",
         )
         topic_bytes = f"{targeted_topic}{TOPIC_END}".encode()
         message_bytes = message.model_dump_json().encode()
@@ -245,50 +242,23 @@ class TestZMQSubClientMessageHandling:
         assert len(msgs1) == 1 and len(msgs2) == 1
 
     @pytest.mark.asyncio
-    async def test_handle_message_deserializes_command_message(
+    async def test_handle_message_deserializes_targeted_message(
         self, mock_zmq_context, create_callback_tracker
     ):
-        """Test that COMMAND messages are deserialized as CommandMessage."""
+        """Test that a targeted message routes to its concrete class."""
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
 
         callback, event, received_messages = create_callback_tracker()
-        client._subscribers[MessageType.COMMAND] = [callback]
+        client._subscribers[MessageType.CONNECTION_PROBE] = [callback]
 
-        message = CommandMessage(
-            service_id="test-service",
-            command=CommandType.SHUTDOWN,
-        )
-        topic_bytes = f"{MessageType.COMMAND}{TOPIC_END}".encode()
+        message = ConnectionProbeMessage(service_id="test-service")
+        topic_bytes = f"{MessageType.CONNECTION_PROBE}{TOPIC_END}".encode()
         message_bytes = message.model_dump_json().encode()
 
         await client._handle_message(topic_bytes, message_bytes)
         await event.wait()
 
-        assert isinstance(received_messages[0], CommandMessage)
-
-    @pytest.mark.asyncio
-    async def test_handle_message_deserializes_command_response(
-        self, mock_zmq_context, create_callback_tracker
-    ):
-        """Test that COMMAND_RESPONSE messages are deserialized as CommandResponse."""
-        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
-
-        callback, event, received_messages = create_callback_tracker()
-        client._subscribers[MessageType.COMMAND_RESPONSE] = [callback]
-
-        message = CommandResponse(
-            service_id="test-service",
-            command=CommandType.SHUTDOWN,
-            command_id="cmd-123",
-            status=CommandResponseStatus.SUCCESS,
-        )
-        topic_bytes = f"{MessageType.COMMAND_RESPONSE}{TOPIC_END}".encode()
-        message_bytes = message.model_dump_json().encode()
-
-        await client._handle_message(topic_bytes, message_bytes)
-        await event.wait()
-
-        assert isinstance(received_messages[0], CommandResponse)
+        assert isinstance(received_messages[0], ConnectionProbeMessage)
 
 
 class TestZMQSubClientWildcardSubscription:
@@ -460,19 +430,14 @@ class TestZMQSubClientBackgroundTask:
 
     @pytest.mark.asyncio
     async def test_background_task_receives_and_handles_message(
-        self, mock_zmq_context, sample_message, wait_for_background_task
+        self, mock_zmq_socket, mock_zmq_context, sample_message, fd_enqueue
     ):
         """Test that background task receives and handles messages."""
         topic_bytes = f"{sample_message.message_type}{TOPIC_END}".encode()
         message_bytes = sample_message.model_dump_json().encode()
 
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.recv_multipart = AsyncMock(
-            side_effect=[[topic_bytes, message_bytes], zmq.Again()]
-        )
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+        # Queue the [topic, payload] multipart message for the FD drain.
+        fd_enqueue(mock_zmq_socket, frames=[topic_bytes, message_bytes])
 
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
 
@@ -484,7 +449,6 @@ class TestZMQSubClientBackgroundTask:
         await client.initialize()
         await client.subscribe(sample_message.message_type, callback)
         await client.start()
-        await wait_for_background_task()
 
         # Wait for callback to be called
         await asyncio.wait_for(callback_called.wait(), timeout=1.0)
@@ -554,19 +518,20 @@ class TestZMQSubClientBackgroundTask:
         await client.stop()
 
     @pytest.mark.asyncio
-    async def test_sub_receiver_stops_on_context_terminated(self, mock_zmq_context):
-        """Test that _sub_receiver breaks on ContextTerminated."""
-        mock_socket = AsyncMock(spec=zmq.asyncio.Socket)
-        mock_socket.bind = Mock()
-        mock_socket.setsockopt = Mock()
-        mock_socket.recv_multipart = AsyncMock(side_effect=zmq.ContextTerminated())
-        mock_zmq_context.socket = Mock(return_value=mock_socket)
+    async def test_sub_receiver_stops_on_context_terminated(
+        self, mock_zmq_socket, mock_zmq_context, fd_enqueue
+    ):
+        """Test that the FD drain swallows ContextTerminated without crashing."""
+        # Queue a ContextTerminated for the very first recv; the FD-driver pump
+        # must catch it and leave the reader installed (no propagation).
+        fd_enqueue(mock_zmq_socket, messages=[zmq.ContextTerminated()])
 
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
         await client.initialize()
 
-        # Call _sub_receiver directly to exercise the except clause
+        # Installs the FdEdgeReader and runs the bootstrap drain, which hits the
+        # queued ContextTerminated and returns gracefully.
         await client._sub_receiver()
 
-        # Should have tried to recv and hit ContextTerminated
-        mock_socket.recv_multipart.assert_called()
+        assert client._fd_reader is not None
+        await client.stop()

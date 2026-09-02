@@ -9,7 +9,14 @@ from aiperf.common import random_generator as rng
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
+from tests.harness.optional_deps import HAS_SOUNDFILE
 from tests.unit.dataset.composer.conftest import make_run
+
+# Audio synthesis needs soundfile/libsndfile, which has no Windows-on-ARM build.
+_needs_soundfile = pytest.mark.skipif(
+    not HAS_SOUNDFILE,
+    reason="soundfile/libsndfile unavailable (e.g. Windows-on-ARM)",
+)
 
 
 class TestSyntheticDatasetComposer:
@@ -131,6 +138,7 @@ class TestSyntheticDatasetComposer:
                 assert isinstance(image, Image)
                 assert image.name == "image_url"
 
+    @_needs_soundfile
     def test_create_dataset_with_audio(self, audio_config, mock_tokenizer):
         """Test dataset creation with audio generation enabled."""
         composer = SyntheticDatasetComposer(
@@ -153,6 +161,7 @@ class TestSyntheticDatasetComposer:
                 audio = turn.audios[0]
                 assert isinstance(audio, Audio)
 
+    @_needs_soundfile
     def test_create_dataset_multimodal(self, multimodal_config, mock_tokenizer):
         """Test dataset creation with both image and audio enabled."""
         composer = SyntheticDatasetComposer(
@@ -243,6 +252,7 @@ class TestSyntheticDatasetComposer:
         # Test subsequent turns have delays
         assert turn.delay == 1500
 
+    @_needs_soundfile
     def test_create_turn_with_all_modalities(self, multimodal_config, mock_tokenizer):
         """Test _create_turn method with text, image, and audio."""
         multimodal_config.conversation_turn_delay_mean = 1500
@@ -398,27 +408,28 @@ class TestSyntheticDatasetComposer:
         assert text_payload.name == "text"
         assert text_payload.contents == ["Generated text content"]
 
-    @patch("aiperf.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt")
     @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_first_turn_with_prefix(
-        self, mock_generate, mock_prefix, prefix_prompt_config, mock_tokenizer
+        self, mock_generate, prefix_prompt_config, mock_tokenizer
     ):
-        """Test _generate_text_payloads for first turn with prefix prompts."""
-        mock_generate.return_value = "User message"
-        mock_prefix.return_value = "Prefix prompt:"
+        """First turn delegates the prefix to the generator via with_prefix.
+
+        The composer no longer joins prefix and body as strings — that seam cost
+        ~0.84 extra tokens per request (AIP-1118). The generator concatenates the
+        token IDs instead, so the composer only signals intent.
+        """
+        mock_generate.return_value = "Prefixed user message"
 
         composer = SyntheticDatasetComposer(
             run=make_run(prefix_prompt_config), tokenizer=mock_tokenizer
         )
 
-        # Test prefix prompt is added to first turn
         turn = Turn()
         text = composer._generate_text_payloads(turn, is_first=True)
         turn.texts.append(text)
 
-        text_payload = turn.texts[0]
-        # Test prefix prompt format ("prefix prompt")
-        assert text_payload.contents == ["Prefix prompt: User message"]
+        assert turn.texts[0].contents == ["Prefixed user message"]
+        assert mock_generate.call_args.kwargs["with_prefix"] is True
 
     @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_subsequent_turn_no_prefix(
@@ -498,10 +509,13 @@ class TestSyntheticDatasetComposer:
         composer = SyntheticDatasetComposer(
             run=make_run(audio_config), tokenizer=mock_tokenizer
         )
+        # The generator records the sampled duration; the composer hoists the
+        # first content's duration onto the turn for RTFx.
+        composer.audio_generator.last_audio_duration_seconds = 3.5
 
         # Test audio payload generation
         turn = Turn()
-        audio = composer._generate_audio_payloads()
+        audio, audio_duration_seconds = composer._generate_audio_payloads()
         turn.audios.append(audio)
 
         # Test correct number of audio payloads based on batch_size
@@ -510,6 +524,7 @@ class TestSyntheticDatasetComposer:
         audio_payload = turn.audios[0]
         assert audio_payload.name == "input_audio"
         assert audio_payload.contents == ["fake_audio_data"]
+        assert audio_duration_seconds == 3.5
 
     # ============================================================================
     # Configuration Variations Tests
@@ -617,6 +632,7 @@ class TestSyntheticDatasetComposer:
         ):
             composer.create_dataset()
 
+    @_needs_soundfile
     def test_reproducibility_with_fixed_seed(self, multimodal_config, mock_tokenizer):
         """Test that dataset generation is reproducible with fixed random seed."""
         multimodal_config.prompt_input_tokens_stddev = 2

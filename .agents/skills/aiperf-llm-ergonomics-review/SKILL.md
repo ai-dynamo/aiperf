@@ -9,10 +9,10 @@ description: Use when reviewing AIPerf code for the SEMANTIC qualities that mech
 
 AIPerf enforces mechanical LLM-ergonomics rules via two tools:
 
-- **`tools/check_ergonomics.py`** — 9 custom AST checks: file-size, function-size, nesting-depth, keyword-only-args, module-state, duplicate-classes, pydantic-fields, stdlib-json, exception-message.
-- **`tools/ruff_baselined.py`** — 9 ruff rules via a grandfathered baseline: PLR0915, PLR0912, C901, TID251, BLE001, S110, S112, ANN201, D103.
+- **`tools/check_ergonomics.py`** — 7 custom AST checks: nesting-depth, keyword-only-args, module-state, duplicate-classes, pydantic-fields, stdlib-json, exception-message.
+- **`tools/ruff_baselined.py`** — 6 ruff rules via a grandfathered baseline: C901, TID251, S110, S112, ANN201, D103.
 
-That's **18 mechanical checks** in total (one overlap: `stdlib-json` in the custom tool ≈ `TID251` in ruff, kept for belt-and-suspenders). Those are the FLOOR — they catch tokens-wasted-on-boilerplate and missing-structure.
+That's **13 mechanical checks** in total (one overlap: `stdlib-json` in the custom tool ≈ `TID251` in ruff, kept for belt-and-suspenders). Those are the FLOOR — they catch tokens-wasted-on-boilerplate and missing-structure.
 
 The CEILING is semantic quality. An exception message can be >3 words and still useless (`"Validation failed: bad input"`). A docstring can exist and still be a restatement of the name. A name can be unique AND hide a synonym conflict. **This skill exists to review the non-mechanical axes with the same rigor that the tools apply to the mechanical ones.**
 
@@ -272,7 +272,7 @@ For every new pattern introduced on this branch:
 
 - `patterns.md` shows `aiperf/foo.py` demonstrating a pattern but this branch changed `foo.py` in a way that breaks the shown example.
 - Reference file now has entries in `tools/ruff_baseline.json` or `tools/ergonomics_baseline.json` (it's grandfathering violations of rules it's supposed to teach) — grep the baselines for the file path.
-- A narrow `# noqa: <RULE>` in the reference file is acceptable if accompanied by a comment explaining why (e.g., `# noqa: BLE001 - fault-tolerant telemetry`). An unexplained `# noqa` in a gold-standard file is a finding.
+- A narrow `# noqa: <RULE>` in the reference file is acceptable if accompanied by a comment explaining why (e.g., `# noqa: S110 - fault-tolerant telemetry cleanup`). An unexplained `# noqa` in a gold-standard file is a finding.
 
 ## Running the axes
 
@@ -389,7 +389,7 @@ HIGH-severity items first, grouped by file to minimize context switches for the 
 |---|---|
 | ...skimming rather than reading each raise site | This skill exists because skimming misses what matters. Slow down. |
 | ...saying "most of these are fine" | Run the checklist literally. Quote the current text; propose a rewrite. |
-| ...flagging things the mechanical tools already catch | Those are not in scope. If you're duplicating BLE001 findings, you're in the wrong document. |
+| ...flagging things the mechanical tools already catch | Those are not in scope. If you're duplicating D103 findings, you're in the wrong document. |
 | ...writing "this could be clearer" | Insufficient. Give the exact rewrite or don't flag it. |
 | ...batching findings across axes | Per-axis isolation is what makes the report scannable for the fixer. |
 | ...editing code | This is REVIEW only. Do not fix during the pass. Findings go to the report; fixes are the user's call. |
@@ -420,7 +420,7 @@ Highest-priority: <one-line summary of the top HIGH finding>
 
 ### Mechanical tooling (AIPerf-local)
 
-- The 18 mechanical checks and their baselines: `tools/check_ergonomics.py`, `tools/ruff_baselined.py`, `tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`.
+- The 13 mechanical checks and their baselines: `tools/check_ergonomics.py`, `tools/ruff_baselined.py`, `tools/ergonomics_baseline.json`, `tools/ruff_baseline.json`.
 - Sibling skill: `aiperf-code-review` for correctness review (different goal — use both sequentially on important PRs).
 
 ### Primary research sources for the 7 axes

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 import orjson
 
-from aiperf.common.finite import scrub_non_finite
+from aiperf.common.finite import is_finite_value, scrub_non_finite
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
 if TYPE_CHECKING:
@@ -73,6 +73,10 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         """
         from aiperf import __version__ as aiperf_version
         from aiperf.common.models.export_models import JsonExportData
+        from aiperf.exporters.aggregate.aggregate_base_exporter import (
+            _build_run_metadata_dict,
+            compute_submission_outcome,
+        )
 
         # Use this exporter's own SCHEMA_VERSION, not JsonExportData.SCHEMA_VERSION,
         # because the aggregate file's per-metric shape evolves independently
@@ -82,6 +86,39 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
             aiperf_version=aiperf_version,
         )
 
+        # Pull scenario-submission inputs out of the aggregate metadata
+        # (see cli_runner / orchestrator: these underscore-prefixed keys are
+        # the carrier from validator+runtime to exporter, and are stripped
+        # before merging the rest of metadata into the output).
+        result_metadata = dict(self._result.metadata)
+        scenario_name = result_metadata.pop("_scenario_name", None)
+        validator_submission_valid = result_metadata.pop(
+            "_validator_submission_valid", None
+        )
+        validator_reasons = result_metadata.pop(
+            "_validator_submission_invalid_reasons", None
+        )
+        _total = result_metadata.pop("_total_responses", 0)
+        total_responses = int(_total) if is_finite_value(_total) else 0
+        _overflow = result_metadata.pop("_context_overflow_count", 0)
+        context_overflow_count = int(_overflow) if is_finite_value(_overflow) else 0
+        was_cancelled = bool(result_metadata.pop("_was_cancelled", False))
+
+        submission_valid, submission_invalid_reasons = compute_submission_outcome(
+            scenario_name=scenario_name,
+            validator_submission_valid=validator_submission_valid,
+            validator_reasons=validator_reasons,
+            total_responses=total_responses,
+            context_overflow_count=context_overflow_count,
+            was_cancelled=was_cancelled,
+        )
+
+        run_metadata = _build_run_metadata_dict(
+            scenario_name=scenario_name,
+            submission_valid=submission_valid,
+            submission_invalid_reasons=submission_invalid_reasons,
+        )
+
         # Add aggregate-specific metadata as extra field
         # (JsonExportData has extra="allow" to support this)
         aggregate_metadata = {
@@ -89,7 +126,8 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
             "num_profile_runs": self._result.num_runs,
             "num_successful_runs": self._result.num_successful_runs,
             "failed_runs": self._result.failed_runs,
-            **self._result.metadata,
+            **result_metadata,
+            **run_metadata,
         }
         export_data.metadata = aggregate_metadata
 

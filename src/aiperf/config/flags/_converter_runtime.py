@@ -52,22 +52,22 @@ def build_artifacts(cli: CLIConfig) -> dict[str, Any]:
         {
             "artifact_directory": "dir",
             "export_http_trace": "trace",
+            "export_outputs_json": "export_outputs_json",
             "show_trace_timing": "show_trace_timing",
         },
     )
     cli_set = cli.model_fields_set
     if "slice_duration" in cli_set and cli.slice_duration is not None:
         artifacts["slice_duration"] = cli.slice_duration
-    # Only JSONL is wired up for per-record export today (no records-CSV
-    # exporter exists). RECORDS/RAW enable it; SUMMARY disables it.
-    if cli.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
-        artifacts["records"] = [ExportFormat.JSONL]
-    elif "export_level" in cli_set and cli.export_level == ExportLevel.SUMMARY:
-        artifacts["records"] = False
-    # Only emit raw when the user explicitly set the level OR the level is
-    # actually RAW (the CLIConfig default is RECORDS, so an unset field
-    # shouldn't noise up the artifacts dict with raw=False).
-    if "export_level" in cli_set or cli.export_level == ExportLevel.RAW:
+    # Only emit records/raw when the user explicitly set --export-level.
+    # The CLIConfig default is RECORDS, but we must not override a YAML
+    # config that set `artifacts.records: false` just because the default
+    # value happens to be RECORDS.
+    if "export_level" in cli_set:
+        if cli.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
+            artifacts["records"] = [ExportFormat.JSONL]
+        elif cli.export_level == ExportLevel.SUMMARY:
+            artifacts["records"] = False
         artifacts["raw"] = cli.export_level == ExportLevel.RAW
     if "profile_export_prefix" in cli_set and cli.profile_export_prefix:
         # If the user passes an absolute path, drop the directory portion so
@@ -94,6 +94,8 @@ def _apply_runtime_basics(runtime_dict: dict[str, Any], cli: CLIConfig) -> None:
         runtime_dict["api_port"] = cli.api_port
     if "api_host" in cli_set:
         runtime_dict["api_host"] = cli.api_host
+    if "stats_interval" in cli_set and cli.stats_interval is not None:
+        runtime_dict["stats_interval"] = cli.stats_interval
 
 
 def _apply_verbosity_and_ui(
@@ -115,6 +117,20 @@ def _apply_verbosity_and_ui(
     elif not ui_set and not is_tty():
         runtime_dict["ui"] = UIType.NONE
 
+    # Dashboard requires a TTY: Textual issues console-setup syscalls that
+    # block forever on Windows when stdout is a pipe (e.g. subprocess.PIPE
+    # from a test harness, ``aiperf ... | tee``, CI capture). Downgrade to
+    # SIMPLE rather than hanging. Applies to every platform — Linux/macOS
+    # don't hang, but a non-TTY dashboard renders nothing useful there either.
+    if runtime_dict.get("ui") == UIType.DASHBOARD and not is_tty():
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "--ui dashboard requires an interactive terminal; "
+            "stdout is not a TTY, falling back to --ui simple"
+        )
+        runtime_dict["ui"] = UIType.SIMPLE
+
 
 def _build_communication(cli: CLIConfig) -> dict[str, Any] | None:
     from aiperf.common.enums import CommunicationType
@@ -134,6 +150,8 @@ def _build_communication(cli: CLIConfig) -> dict[str, Any] | None:
 
 def build_logging_runtime(
     cli: CLIConfig,
+    *,
+    base_api_port: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build (logging, runtime) dicts for AIPerfConfig from a CLIConfig.
 
@@ -146,8 +164,11 @@ def build_logging_runtime(
     Pydantic defaults on ``RuntimeConfig`` / ``LoggingConfig``. Verbose-driven
     log-level/UI promotion still writes (it's a derived effect, not a default).
     """
-    # api_host requires api_port to be set explicitly (or via env).
-    if cli.api_host is not None and cli.api_port is None:
+    # api_host requires api_port to be set explicitly (or via env, or -- when
+    # a config file is in play -- by the file itself: base_api_port says the
+    # YAML already supplies runtime.api_port, so demanding the flag would
+    # reject a supported combination).
+    if cli.api_host is not None and cli.api_port is None and not base_api_port:
         raise ValueError(
             "api_host requires api_port (or AIPERF_API_SERVER_PORT) to be set"
         )

@@ -8,11 +8,13 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 from aiperf.common.enums import MediaType
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     BaseResponseData,
     EmbeddingResponseData,
     ExtractedPayload,
+    Image,
     InferenceServerResponse,
     Media,
     ModelEndpointInfo,
@@ -73,11 +75,63 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Returns:
             List of successfully parsed responses
         """
-        return [
+        if record._parsed_responses_cache is not None:
+            return record._parsed_responses_cache
+
+        parsed_responses = [
             parsed
             for response in record.responses
             if (parsed := self.parse_response(response))
         ]
+        record._parsed_responses_cache = parsed_responses
+        return parsed_responses
+
+    def extract_response_id(self, record: RequestRecord) -> str | None:
+        """Extract server-generated response ID for stateful session chaining.
+
+        Default returns None (stateless). Subclasses implementing stateful protocols
+        (e.g. ResponsesEndpoint) override this.
+        """
+        return None
+
+    def process_responses(
+        self,
+        record: RequestRecord,
+        *,
+        capture_assistant_turn: bool,
+    ) -> tuple[list[ParsedResponse], Turn | None]:
+        """Parse a completed response stream and optionally capture its replay turn.
+
+        The parsed responses are cached on the worker-local record so endpoint
+        replay logic and request timing calculations share the same objects.
+        Endpoint implementations that need raw structured response fields can
+        override this method to collect both representations in one pass.
+        """
+        parsed_responses = self.extract_response_data(record)
+        assistant_turn = (
+            self.build_assistant_turn(record) if capture_assistant_turn else None
+        )
+        return parsed_responses, assistant_turn
+
+    @staticmethod
+    def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
+        """Capture the raw speculative-decoding payload from the response root.
+
+        vLLM nests it at ``metrics.speculative_decoding`` -- on the response body
+        non-streaming, or on the trailing usage chunk (empty ``choices``)
+        streaming -- when the server runs with ``--per-request-spec-decode-metrics``.
+        Captured verbatim and uninterpreted so a ``SpecDecodeAdapterProtocol``
+        owns the engine-specific interpretation downstream; None when absent.
+
+        vLLM populates it only for single-sequence requests (``n == 1``), leaving
+        it ``null`` otherwise, so no client-side ``n > 1`` suppression is needed:
+        a mixed per-request record can never arise here.
+        """
+        metrics = json_obj.get("metrics")
+        if not isinstance(metrics, dict):
+            return None
+        stats = metrics.get("speculative_decoding")
+        return stats if isinstance(stats, dict) else None
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.
@@ -101,8 +155,17 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Returns ``None`` when the record has no replayable assistant content
         (error response, empty body, etc.).
         """
+        return self._build_assistant_turn_from_parsed(
+            self.extract_response_data(record)
+        )
+
+    @staticmethod
+    def _build_assistant_turn_from_parsed(
+        parsed_responses: list[ParsedResponse],
+    ) -> Turn | None:
+        """Build the default text-only assistant turn from parsed responses."""
         output_texts: list[str] = []
-        for response in self.extract_response_data(record):
+        for response in parsed_responses:
             if not response.data:
                 continue
             if isinstance(response.data, ReasoningResponseData):
@@ -130,11 +193,12 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     #
     #   1. iterate ``request_info.turns`` in order
     #   2. if the turn carries ``raw_messages`` (author-provided OpenAI-shape
-    #      entries - ``dag_jsonl``, ``mooncake_trace`` payload mode, or a
-    #      captured live assistant turn), splice them in verbatim
-    #   3. otherwise synthesise a single role/content message from the
-    #      structured ``Turn`` fields (``role``, ``texts``, ``images``,
-    #      ``audios``, ``videos``).
+    #      entries - ``dag_jsonl``, ``mooncake_trace`` payload mode, weka
+    #      delta-encoded traces, or a captured live assistant turn), splice
+    #      them in verbatim - an empty list splices nothing
+    #   3. only when ``raw_messages`` is None, synthesise a single
+    #      role/content message from the structured ``Turn`` fields
+    #      (``role``, ``texts``, ``images``, ``audios``, ``videos``).
     #
     # Only step 3 depends on the endpoint's wire shape - OpenAI chat uses
     # ``{"type": "text"}`` / ``{"type": "image_url"}`` parts, the Responses
@@ -169,12 +233,22 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def build_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
         """Flatten ``turns`` into a wire-ready role/content message array.
 
-        Turns carrying a non-empty ``raw_messages`` extend the array
-        verbatim; every other turn (including those with
-        ``raw_messages=[]``, which would otherwise silently drop the
-        turn) renders through ``_render_turn_message``. The result is
-        ``payload["messages"]`` for chat endpoints, ``payload["input"]``
-        for the Responses API, and any similar shape for plugins.
+        Turns carrying ``raw_messages`` extend the array verbatim; turns
+        with ``raw_messages=None`` render through ``_render_turn_message``.
+        An explicit ``raw_messages=[]`` contributes nothing: it is the
+        zero-new-message delta that delta-encoded trace sources emit when a
+        turn adds no new context (weka's block-aligned pull-back), and
+        synthesising a message for it would put ``content: []`` on the wire,
+        which servers reject. The result is ``payload["messages"]`` for chat
+        endpoints, ``payload["input"]`` for the Responses API, and any
+        similar shape for plugins.
+
+        When a turn sets ``reset_context=True``, any messages already
+        accumulated from prior turns in this call are discarded before
+        that turn's ``raw_messages`` is applied. This expresses a
+        non-monotonic context change in delta-encoded conversations
+        (e.g. weka's mid-segment LCP cut). The flag only applies when the
+        turn carries ``raw_messages``.
 
         Does NOT prepend shared ``system_message`` or
         ``user_context_message`` - those live on ``RequestInfo`` and are
@@ -182,12 +256,42 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         leading ``system`` role in chat; a top-level ``instructions`` field
         in Responses). Callers handle that in their ``format_payload``.
         """
+        return self._flatten_turns(turns)
+
+    def _flatten_turns(
+        self,
+        turns: list[Turn],
+        *,
+        transform_raw_item: Callable[[dict[str, Any]], dict[str, Any] | None]
+        | None = None,
+        render_synthetic: Callable[[Turn], dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Shared flatten-and-merge skeleton for ``build_messages`` overrides.
+
+        ``transform_raw_item`` maps each ``raw_messages`` item to its wire form
+        or returns ``None`` to drop it; ``render_synthetic`` renders a turn whose
+        ``raw_messages`` is None. Both default to identity /
+        ``_render_turn_message``.
+        """
         messages: list[dict[str, Any]] = []
         for turn in turns:
-            if turn.raw_messages:
-                messages.extend(turn.raw_messages)
+            if turn.raw_messages is not None:
+                if turn.reset_context:
+                    messages = []
+                for item in turn.raw_messages:
+                    wire_item = (
+                        transform_raw_item(item)
+                        if transform_raw_item is not None
+                        else item
+                    )
+                    if wire_item is not None:
+                        messages.append(wire_item)
                 continue
-            messages.append(self._render_turn_message(turn))
+            messages.append(
+                render_synthetic(turn)
+                if render_synthetic is not None
+                else self._render_turn_message(turn)
+            )
         return messages
 
     def _render_turn_message(self, turn: Turn) -> dict[str, Any]:
@@ -214,7 +318,8 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         part type names (e.g. ``text`` -> ``input_text`` for Responses API).
         """
         if (
-            len(turn.texts) == 1
+            not Environment.ENDPOINT.FORCE_CONTENT_PARTS
+            and len(turn.texts) == 1
             and len(turn.texts[0].contents) == 1
             and not turn.images
             and not turn.audios
@@ -224,10 +329,19 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
         parts: list[dict[str, Any]] = []
         self._extend_parts(parts, turn.texts, self._render_text_part)
-        self._extend_parts(parts, turn.images, self._render_image_part)
+        self._extend_image_parts(parts, turn.images)
         self._extend_parts(parts, turn.audios, self._render_audio_part)
         self._extend_parts(parts, turn.videos, self._render_video_part)
-        return parts
+        # An empty part list would serialise as ``content: []``, which servers
+        # reject ("message content parts cannot be empty"). Degrade to the
+        # empty string, matching the single-text fast path above.
+        return parts or ""
+
+    def _extend_image_parts(
+        self, parts: list[dict[str, Any]], images: list[Image]
+    ) -> None:
+        """Append rendered image parts for each non-empty content string."""
+        self._extend_parts(parts, images, self._render_image_part)
 
     @staticmethod
     def _extend_parts(
@@ -324,18 +438,27 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         """Make a TextResponseData object from a string or return None if the text is empty."""
         return TextResponseData(text=text) if text else None
 
-    def auto_detect_and_extract(self, json_obj: dict) -> BaseResponseData | None:
+    def auto_detect_and_extract(self, json_obj: Any) -> BaseResponseData | None:
         """Optional utility: Auto-detect response type and extract relevant data.
 
         Tries to extract data in this order: embeddings, rankings, text.
         Endpoints can use this as a fallback or for flexible response handling.
 
+        A JSON body is not necessarily an object: a top-level array (e.g. a
+        reranker returning ``[{"index": 0, "score": 0.98}, ...]``) is valid
+        JSON and reaches this method as a ``list``. Such values are routed
+        through ``convert_to_response_data`` instead of the ``dict``-only
+        probes below, which would raise ``AttributeError``.
+
         Args:
-            json_obj: JSON response object
+            json_obj: JSON response body
 
         Returns:
             Typed response data object or None if not found
         """
+        if not isinstance(json_obj, dict):
+            return self.convert_to_response_data(json_obj)
+
         if data := self.try_extract_embeddings(json_obj):
             return data
 

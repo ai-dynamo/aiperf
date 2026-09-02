@@ -8,7 +8,7 @@ sidebar-title: YAML Configuration Files
 
 ## Overview
 
-AIPerf can be driven entirely from a single YAML file instead of a long string of CLI flags. The YAML format is more readable, easier to version-control, and unlocks features that have no CLI equivalent — sweeps, multi-run aggregation, environment variable substitution, and computed values.
+AIPerf can be driven entirely from a single YAML file instead of a long string of CLI flags. The YAML format is more readable, easier to version-control, and unlocks features that have no CLI equivalent — sweeps, multi-run aggregation, [adaptive scale runs](adaptive-scale.md), environment variable substitution, and computed values.
 
 This tutorial walks through what a config file looks like, how to grow it from a tiny example to a full sweep, and how it compares to running everything through `aiperf profile` flags.
 
@@ -48,7 +48,7 @@ benchmark:
     entries: 500
     prompts: {isl: 512, osl: 128}
   phases:
-    - {name: warmup, type: concurrency, concurrency: 8, requests: 50, exclude_from_results: true}
+    - {name: warmup, type: concurrency, concurrency: 8, requests: 50}
     - {name: profiling, type: concurrency, requests: 500}
   artifacts:
     dir: ./artifacts/my-test
@@ -156,11 +156,54 @@ benchmark:
   datasets:
     - {name: main, type: synthetic, prompts: {isl: 512, osl: 128}}
   phases:
-    - {name: warmup, type: concurrency, concurrency: 4, requests: 50, exclude_from_results: true}
+    - {name: warmup, type: concurrency, concurrency: 4, requests: 50}
     - {name: profiling, type: poisson, rate: 30.0, duration: 120}
 ```
 
-You can mix and match — the loader auto-expands `model:` into a one-element `models:` list, `dataset:` into a one-entry `datasets:` list named `default`, and a flat `phases:` block into a one-element list named `profiling`. The normalized `datasets:` form is future-facing but currently accepts exactly one dataset; multiple datasets are a roadmap item.
+#### What the loader normalizes
+
+You can mix shorthand and named forms in the same config. The loader normalizes them before execution:
+
+| Input form | Normalized form |
+| --- | --- |
+| `model:` | One-element `models:` list. |
+| `dataset:` | One-entry `datasets:` list named `default`. |
+| Flat `phases:` mapping | One profiling phase named `profiling`. |
+
+The normalized `datasets:` form is future-facing but currently accepts exactly one dataset. Multiple datasets are a roadmap item.
+
+#### Phase names and kinds
+
+A phase `name` is the unique workflow identifier. A phase `kind` is the semantic role AIPerf uses for behavior and reporting: `warmup` or `profiling`.
+
+For canonical names, `kind` is optional. A phase named `warmup` defaults to `kind: warmup`, and a phase named `profiling` defaults to `kind: profiling`. For custom names, set `kind` explicitly so AIPerf knows the semantic role.
+
+Named phases are useful for long soaks with multiple profiling windows. See [Multi-Phase Workflows](multi-phase-workflows.md) for a full example, multiple warmup phases, artifacts, sweeps, and seamless transitions.
+
+```yaml
+benchmark:
+  phases:
+    - name: warmup
+      type: concurrency
+      duration: 5m
+    - name: baseline_traffic
+      kind: profiling
+      type: concurrency
+      duration: 30m
+      cancellation: {rate: 5, delay: 0}
+    - name: cancellation_stress
+      kind: profiling
+      type: concurrency
+      duration: 5m
+      cancellation: {rate: 50, delay: 0}
+    - name: recovery_traffic
+      kind: profiling
+      type: concurrency
+      duration: 30m
+      cancellation: {rate: 0, delay: 0}
+```
+
+Phase names must be strict identifiers (`^[A-Za-z_][A-Za-z0-9_-]*$`) and are unique case-insensitively because they are used in sweep paths and artifact directories.
 
 ### Inline datasets
 
@@ -313,7 +356,19 @@ benchmark:
       grace_period: 60             # finish in-flight requests after duration
 ```
 
-Each phase is a complete arrival pattern in its own right, with its own concurrency, duration, and arrival shape (`concurrency`, `constant`, `poisson`, `gamma`, `fixed_schedule`, `user_centric`, ...).
+Each phase is a complete arrival pattern in its own right, with its own
+concurrency, duration, and arrival shape (`concurrency`, `constant`, `poisson`,
+`gamma`, `fixed_schedule`, `user_centric`, ...). Phase `kind` owns result
+semantics: warmup data remains available under that phase, while profiling
+phases contribute to profiling aggregates.
+
+## Adaptive scale in YAML
+
+Adaptive scale is a YAML-only phase feature for single-run boundary discovery. Instead of launching a sweep or separate search trials, AIPerf runs a profiling phase, evaluates SLA windows, ramps up while every SLA filter passes, and then sustains near the discovered boundary.
+
+Configure adaptive scale in the target phase's `adaptive_scale` block and put SLA filters on the phase-level `sla` block. Supported control variables include `concurrency`, `prefill_concurrency`, `request_rate`, and `users`.
+
+See [Adaptive Scale](adaptive-scale.md) for full examples, required fields, SLA metric support, artifact paths, and controller semantics.
 
 ## Sweeps in YAML
 
@@ -345,12 +400,14 @@ benchmark:
       duration: 120
 ```
 
-The `parameters:` keys are dot-paths into the `benchmark:` body. For lists, the second segment is the entry's `name`:
+The `parameters:` keys are dot-paths into the `benchmark:` body. For phase lists, the second segment resolves in this order: numeric index, exact unique phase `name`, then legacy `phases.profiling.*` shorthand for the unique profiling-kind phase when no phase is named `profiling`:
 
-- `phases.profiling.rate` → the phase named `profiling`, field `rate`
+- `phases.cancellation_stress.cancellation.rate` → the phase named `cancellation_stress`, field `cancellation.rate`
+- `phases.1.concurrency` → the second phase, field `concurrency`
+- `phases.profiling.rate` → the phase named `profiling`, or the unique profiling-kind phase when unambiguous
 - `datasets.default.prompts.isl` → the dataset named `default` (the singular `dataset:` shorthand auto-names it `default`)
 
-The 12 most-swept phase fields also have bare-name sugar: `concurrency`, `prefill_concurrency`, `rate`, `requests`, `duration`, `sessions`, `users`, `smoothness`, `grace_period`, `concurrency_ramp`, `prefill_ramp`, `rate_ramp`. Each expands to `phases.profiling.<name>` (resolves to the unique non-warmup phase). The two forms are equivalent — see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields).
+The 12 most-swept phase fields also have bare-name sugar: `concurrency`, `prefill_concurrency`, `rate`, `requests`, `duration`, `sessions`, `users`, `smoothness`, `grace_period`, `concurrency_ramp`, `prefill_ramp`, `rate_ramp`. Each expands to `phases.profiling.<name>` and must still resolve unambiguously. The two forms are equivalent — see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields).
 
 Other sweep modes available in YAML:
 
@@ -416,13 +473,47 @@ aiperf profile --config benchmark.yaml \
   --artifact-dir ./run-2026-05-09
 ```
 
-This loads `benchmark.yaml` as the base, then overrides the *profiling* phase's `concurrency` with `32` and the artifact directory with the new path. (CLI loadgen flags overlay onto the phase named `profiling` — they don't broadcast to every named phase, so multi-phase configs need YAML edits to tweak warmup or other phases.) Useful when most of your config is stable but you want to tweak one knob from a script or CI job.
+This loads `benchmark.yaml` as the base, then overrides the unique profiling phase's `concurrency` with `32` and the artifact directory with the new path. CLI loadgen flags target `kind: profiling` and work only when that target is unambiguous. If a config has multiple profiling phases, set per-phase values in YAML. Useful when most of your config is stable but you want to tweak one knob from a script or CI job.
 
 The precedence order, lowest to highest:
 
 1. Defaults baked into AIPerf
 2. Values in the YAML file
 3. Explicit CLI flags
+
+For Jinja-backed sweeps, this precedence is applied before every variation is
+materialized. An explicit CLI flag that targets a templated field replaces the
+template for every variation, while unrelated templates remain live and render
+against each variation's `sweep.parameters` values. This keeps `aiperf profile
+--config`, `aiperf kube profile --config`, and `aiperf config expand` on the
+same raw-envelope semantics.
+
+The overlay covers endpoint/model selection, the sole dataset and its content
+modifiers, the unique profiling phase (including rate shape, ramps, and request
+cancellation), artifacts, SLOs, telemetry/export integrations, multi-run and
+sweep controls, runtime/logging, tokenizer, accuracy, and scenario locks.
+Explicit false, zero, and empty values still count as overrides; CLI defaults
+that were not passed do not replace YAML values. The one exception is the
+bare-boolean control hooks `--reset-kv-cache` and `--server-profiler`: passing
+them with no sub-flags means "enable this hook", so a YAML-supplied `path`,
+`startPath`, `stopPath`, or `timeoutSeconds` is preserved rather than reset to
+defaults. Pass the matching sub-flag (for example `--reset-kv-cache-path`) to
+change one of those values from the CLI.
+
+`--request-rate` and `--arrival-pattern` do not convert a YAML `user_centric`
+profiling phase into an open-loop one. A `user_centric` phase already carries a
+`rate`, so `--request-rate` sets it in place and the phase keeps its `users`
+count. `--arrival-pattern` is logged as ignored for that phase because
+user-centric load has no arrival distribution, and `--arrival-smoothness` is
+rejected outright. Change the phase `type` in YAML to `poisson`, `gamma`, or
+`constant` if you want open-loop arrivals.
+
+Warmup flags do not rewrite an existing phase list because inserting or
+choosing a warmup phase is ambiguous in an advanced multi-phase workflow. Set
+warmup phases in YAML. Likewise, if more than one phase has `kind: profiling`,
+put phase-local values in YAML so the target is explicit. Command-operation
+flags such as `--config` itself and Kubernetes deployment/manage options are
+consumed by their commands rather than merged into `benchmark:`.
 
 ## Where to go next
 

@@ -11,6 +11,8 @@ from pathlib import Path
 
 import plotly.graph_objects as go
 
+from aiperf.common.constants import IS_WINDOWS_ARM
+from aiperf.common.exceptions import ConfigurationError
 from aiperf.plot.constants import (
     DEFAULT_PLOT_DPI,
     DEFAULT_PLOT_HEIGHT,
@@ -34,7 +36,20 @@ class BasePNGExporter(BaseExporter):
         Args:
             fig: Plotly Figure object
             path: Output file path
+
+        Raises:
+            ConfigurationError: on Windows-on-ARM, where kaleido's bundled
+                browser engine has no working ARM64 build and hard-crashes
+                (access violation) at render time. Guarding here converts that
+                crash into an actionable error.
         """
+        if IS_WINDOWS_ARM:
+            raise ConfigurationError(
+                "PNG plot export requires kaleido, whose browser engine has no "
+                "working Windows-on-ARM build (it crashes at render time). "
+                "Export plots on Linux or WSL, or use the interactive dashboard "
+                "('--dashboard')."
+            )
         fig.write_image(
             str(path),
             width=DEFAULT_PLOT_WIDTH,

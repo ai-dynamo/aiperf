@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -61,7 +61,7 @@ def synthesize(
 
     dist_config = _apply_cli_overrides(dist_config, max_isl=max_isl, max_osl=max_osl)
 
-    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d-%H%M%S")
     run_dir_name = f"{config_name}_{num_sessions}s_seed{seed}_{timestamp}"
     run_dir = Path(output) / run_dir_name
 

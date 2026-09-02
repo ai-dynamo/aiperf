@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import signal
-from unittest.mock import AsyncMock
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -33,6 +34,10 @@ class TestSignalHandlerMixinInitialization:
 class TestSetupSignalHandlers:
     """Test signal handler setup and signal handling."""
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows uses signal.signal() instead of loop.add_signal_handler(); covered by integration test.",
+    )
     @pytest.mark.asyncio
     async def test_setup_signal_handlers(self, signal_handler_instance):
         """Test that setup_signal_handlers registers SIGINT handler."""
@@ -149,6 +154,127 @@ class TestSetupSignalHandlers:
 
         # Task should be removed from set
         assert task not in signal_handler_instance._signal_tasks
+
+
+class TestSetupSignalHandlersWindowsBranch:
+    """Test Bug 4 fix — Windows uses signal.signal() + run_coroutine_threadsafe.
+
+    Linux ProactorEventLoop has no add_signal_handler. We mock IS_WINDOWS to
+    exercise the Windows branch from non-Windows CI.
+    """
+
+    @pytest.mark.asyncio
+    async def test_windows_calls_signal_signal_for_sigint(
+        self, signal_handler_instance
+    ):
+        """On Windows, signal.signal is used instead of loop.add_signal_handler.
+
+        Both SIGINT (Ctrl+C) and SIGBREAK (Ctrl+Break) are registered. We
+        patch SIGBREAK so the test runs identically on POSIX CI.
+        """
+        callback = AsyncMock()
+
+        with (
+            patch("aiperf.controller.system_mixins.IS_WINDOWS", True),
+            patch("aiperf.controller.system_mixins.signal.SIGBREAK", 21, create=True),
+            patch("aiperf.controller.system_mixins.signal.signal") as mock_signal,
+        ):
+            signal_handler_instance.setup_signal_handlers(callback)
+
+        assert mock_signal.call_count == 2
+        registered_signals = {call.args[0] for call in mock_signal.call_args_list}
+        assert registered_signals == {signal.SIGINT, 21}
+        for call in mock_signal.call_args_list:
+            assert callable(call.args[1])
+
+    @pytest.mark.asyncio
+    async def test_windows_skips_sigbreak_when_undefined(self, signal_handler_instance):
+        """When signal.SIGBREAK is missing (POSIX), only SIGINT is registered."""
+        callback = AsyncMock()
+
+        # Remove SIGBREAK to simulate POSIX environment with mocked IS_WINDOWS.
+        import aiperf.controller.system_mixins as sysmix_mod
+
+        original_sigbreak = getattr(sysmix_mod.signal, "SIGBREAK", None)
+        if original_sigbreak is not None:
+            del sysmix_mod.signal.SIGBREAK
+
+        try:
+            with (
+                patch("aiperf.controller.system_mixins.IS_WINDOWS", True),
+                patch("aiperf.controller.system_mixins.signal.signal") as mock_signal,
+            ):
+                signal_handler_instance.setup_signal_handlers(callback)
+
+            assert mock_signal.call_count == 1
+            assert mock_signal.call_args.args[0] == signal.SIGINT
+        finally:
+            if original_sigbreak is not None:
+                sysmix_mod.signal.SIGBREAK = original_sigbreak
+
+    @pytest.mark.asyncio
+    async def test_windows_does_not_call_loop_add_signal_handler(
+        self, signal_handler_instance
+    ):
+        """On Windows, loop.add_signal_handler must NOT be called (it raises NotImplementedError)."""
+        callback = AsyncMock()
+
+        loop = asyncio.get_running_loop()
+        with (
+            patch("aiperf.controller.system_mixins.IS_WINDOWS", True),
+            patch("aiperf.controller.system_mixins.signal.signal"),
+            patch.object(loop, "add_signal_handler") as mock_add_signal,
+        ):
+            signal_handler_instance.setup_signal_handlers(callback)
+
+        mock_add_signal.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_windows_handler_bridges_sync_to_async_via_run_coroutine_threadsafe(
+        self, signal_handler_instance
+    ):
+        """The installed Windows handler is sync; it must schedule the async callback safely.
+
+        Both SIGINT and SIGBREAK should install the SAME handler — they share
+        the graceful-shutdown coroutine. We capture both and assert identity.
+        """
+        callback = AsyncMock()
+        captured_handlers = {}
+
+        def capture_handler(sig, handler):
+            captured_handlers[sig] = handler
+            return None  # signal.signal returns previous handler; not used here
+
+        with (
+            patch("aiperf.controller.system_mixins.IS_WINDOWS", True),
+            patch("aiperf.controller.system_mixins.signal.SIGBREAK", 21, create=True),
+            patch(
+                "aiperf.controller.system_mixins.signal.signal",
+                side_effect=capture_handler,
+            ),
+        ):
+            signal_handler_instance.setup_signal_handlers(callback)
+
+        assert set(captured_handlers.keys()) == {signal.SIGINT, 21}
+        assert captured_handlers[signal.SIGINT] is captured_handlers[21], (
+            "SIGINT and SIGBREAK should install the same handler closure"
+        )
+        captured_handler = captured_handlers[signal.SIGINT]
+        assert captured_handler is not None, "signal.signal was not called"
+
+        # Invoke the captured handler with the (sig, frame) signature.
+        # It should call run_coroutine_threadsafe with a coroutine and the loop.
+        with patch(
+            "aiperf.controller.system_mixins.asyncio.run_coroutine_threadsafe"
+        ) as mock_run:
+            captured_handler(signal.SIGINT, MagicMock())
+
+        mock_run.assert_called_once()
+        coro_arg, _loop_arg = mock_run.call_args.args
+        assert asyncio.iscoroutine(coro_arg), (
+            "Windows handler must schedule an async coroutine, not a sync callable"
+        )
+        coro_arg.close()  # Suppress 'coroutine was never awaited' warning
 
 
 class TestSignalHandlerEdgeCases:

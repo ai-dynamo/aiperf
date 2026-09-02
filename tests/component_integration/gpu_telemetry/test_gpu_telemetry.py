@@ -51,15 +51,19 @@ class TestGPUTelemetryBasic:
         )
 
         # Verify each endpoint has correct GPU data structure
-        for dcgm_url, endpoint_data in endpoints.items():
+        for telemetry_source_url, endpoint_data in endpoints.items():
             assert endpoint_data.gpus is not None
             assert len(endpoint_data.gpus) == 2, (
-                f"Endpoint {dcgm_url}: expected 2 GPUs, got {len(endpoint_data.gpus)}"
+                f"Endpoint {telemetry_source_url}: expected 2 GPUs, got {len(endpoint_data.gpus)}"
             )
 
             # Verify each GPU has valid metrics with all required fields
             # Counter metrics only have avg (delta), not min/max
-            counter_metrics = {"energy_consumption", "xid_errors", "power_violation"}
+            counter_metrics = {
+                "nvidia_energy_consumption",
+                "nvidia_xid_errors",
+                "nvidia_power_violation",
+            }
             for gpu_id, gpu_data in endpoint_data.gpus.items():
                 assert gpu_data.metrics, f"GPU {gpu_id}: no metrics collected"
                 for metric_name, metric_value in gpu_data.metrics.items():

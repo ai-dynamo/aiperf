@@ -3,6 +3,7 @@
 
 import base64
 import io
+import sys
 
 import numpy as np
 import pytest
@@ -16,6 +17,7 @@ from aiperf.config.distributions import NormalDistribution
 from aiperf.dataset.generator import (
     AudioGenerator,
 )
+from aiperf.dataset.generator.audio import import_soundfile
 
 
 def decode_audio(data_uri: str) -> tuple[np.ndarray, int]:
@@ -78,6 +80,17 @@ def test_different_audio_length(expected_audio_length):
     assert abs(actual_length - expected_audio_length) < 0.1, (
         "audio length not as expected"
     )
+
+
+@pytest.mark.parametrize("expected_audio_length", [1.0, 2.5])
+def test_generate_records_sampled_duration(expected_audio_length: float) -> None:
+    """generate() exposes the sampled duration via last_audio_duration_seconds
+    so the composer can hoist it onto Turn.audio_duration_seconds for RTFx."""
+    config = make_config(mean=expected_audio_length, stddev=0.0)
+    gen = AudioGenerator(config)
+    assert gen.last_audio_duration_seconds == 0.0  # unset before any generate()
+    gen.generate()
+    assert abs(gen.last_audio_duration_seconds - expected_audio_length) < 0.1
 
 
 def test_negative_length_raises_error():
@@ -265,3 +278,22 @@ class TestAudioBitDepth:
         assert data_uri.startswith("mp3,")
         audio_data, _ = decode_audio(data_uri)
         assert len(audio_data) > 0
+
+
+class TestSoundfileGuard:
+    """Tests for the lazy soundfile import guard (Windows-on-ARM has no libsndfile)."""
+
+    def test_import_soundfile_returns_module_when_available(self):
+        """On a platform with libsndfile, the helper returns the soundfile module."""
+        assert import_soundfile() is sf
+
+    def test_import_soundfile_missing_raises_configuration_error(self, monkeypatch):
+        """When soundfile/libsndfile cannot load, surface an actionable error.
+
+        Setting ``sys.modules['soundfile'] = None`` forces ``import soundfile``
+        to raise ImportError, simulating the Windows-on-ARM case where the
+        native libsndfile binary is absent.
+        """
+        monkeypatch.setitem(sys.modules, "soundfile", None)
+        with pytest.raises(ConfigurationError, match="libsndfile"):
+            import_soundfile()

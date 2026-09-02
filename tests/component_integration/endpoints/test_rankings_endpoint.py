@@ -25,7 +25,7 @@ class TestRankingsEndpoint:
             f"""
             aiperf profile \
                 --model nvidia/nv-rerank-qa-mistral-4b \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type nim_rankings \
                 --input-file {dataset_path} \
                 --custom-dataset-type single_turn \
@@ -85,7 +85,7 @@ class TestRankingsEndpoint:
             f"""
             aiperf profile \
                 --model nvidia/nv-rerank-qa-mistral-4b \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type nim_rankings \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \

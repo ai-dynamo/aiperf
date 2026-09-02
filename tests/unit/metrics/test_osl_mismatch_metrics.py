@@ -39,7 +39,14 @@ from tests.unit.metrics.conftest import run_simple_metrics_pipeline
 
 
 def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
-    """Create a RequestInfo with a turn that has max_tokens set."""
+    """Create a RequestInfo carrying ``max_tokens`` at the top level.
+
+    The record processor reads ``max_tokens`` directly from ``RequestInfo``
+    now that ``request_info.turns`` is dropped before the ZMQ hop (see
+    ``inference_client._finalize_request_record``); we populate both the
+    scalar and the legacy ``turns[-1].max_tokens`` mirror so tests exercise
+    the production shape end-to-end.
+    """
     turn = Turn(max_tokens=max_tokens)
     return RequestInfo(
         model_endpoint=ModelEndpointInfo(
@@ -53,6 +60,7 @@ def _create_request_info_with_max_tokens(max_tokens: int | None) -> RequestInfo:
             ),
         ),
         turns=[turn],
+        max_tokens=max_tokens,
         turn_index=0,
         credit_num=0,
         credit_phase=CreditPhase.PROFILING,

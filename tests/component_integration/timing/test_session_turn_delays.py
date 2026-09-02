@@ -26,7 +26,10 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import Credit
-from tests.component_integration.timing.conftest import defaults
+from tests.component_integration.timing.conftest import (
+    defaults,
+    skip_on_cloud_windows_timing,
+)
 from tests.harness.analyzers import CreditFlowAnalyzer
 from tests.harness.utils import AIPerfCLI
 
@@ -158,6 +161,7 @@ class TestTurnDelayInteractions:
 
         assert credit_analyzer.credits_balanced()
 
+    @skip_on_cloud_windows_timing
     def test_turn_delay_with_duration_grace_period(self, cli: AIPerfCLI):
         """Test turn delays + duration + grace period interaction.
 

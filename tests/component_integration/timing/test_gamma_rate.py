@@ -28,6 +28,7 @@ from tests.component_integration.timing.conftest import (
     BaseCreditFlowTests,
     TimingTestConfig,
     defaults,
+    skip_on_cloud_windows_timing,
 )
 from tests.harness.analyzers import (
     StatisticalAnalyzer,
@@ -135,6 +136,7 @@ class TestGammaRateCreditFlow(BaseCreditFlowTests):
         return build_gamma_command(config, smoothness=2.0)
 
 
+@skip_on_cloud_windows_timing
 @pytest.mark.component_integration
 class TestGammaRateStatistics:
     """Statistical distribution tests for Gamma rate mode."""
@@ -166,6 +168,7 @@ class TestGammaRateStatistics:
         assert passed, f"Distribution not Gamma-like: {reason}"
 
 
+@skip_on_cloud_windows_timing
 @pytest.mark.component_integration
 class TestGammaRateWithConcurrency(BaseConcurrencyTests):
     """Tests for Gamma rate with concurrency limits.

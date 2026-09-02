@@ -23,6 +23,8 @@ from aiperf.config.sweep.config import (
     SweepVariation,
     ZipSweep,
     _format_dir_name,
+    _is_nested_override,
+    _label_dir_segment,
     _set_nested_value,
     expand_sweep,
 )
@@ -51,6 +53,8 @@ __all__ = [
     "_GridSweepBase",
     "_SamplingSweepBase",
     "_format_dir_name",
+    "_is_nested_override",
+    "_label_dir_segment",
     "_set_nested_value",
     "expand_qmc_sweep",
     "expand_sweep",

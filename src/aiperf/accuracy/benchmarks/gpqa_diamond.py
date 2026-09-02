@@ -55,12 +55,13 @@ import hashlib
 import random
 from typing import TYPE_CHECKING, Any
 
-from datasets import Dataset, load_dataset
-
+from aiperf.accuracy.benchmarks._datasets_compat import load_dataset
 from aiperf.accuracy.models import AccuracyChatMessage, BenchmarkProblem
 from aiperf.common.mixins import AIPerfLoggerMixin
 
 if TYPE_CHECKING:
+    from datasets import Dataset
+
     from aiperf.config.resolution.plan import BenchmarkRun
 
 DATASET_NAME = "Idavidrein/gpqa"

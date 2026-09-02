@@ -29,6 +29,8 @@ A mock server for integration testing and performance benchmarking of LLM applic
 | Endpoint | Description |
 |----------|-------------|
 | [`/v1/chat/completions`](#chat-completions) | OpenAI chat completions (streaming supported) |
+| `/v1/responses` | OpenAI Responses API (non-streaming; `max_output_tokens` recorded as `max_completion_tokens` in JSONL) |
+| `/v1/messages` | Anthropic Messages API (streaming, thinking, tool_use, disjoint cache accounting; requires `anthropic-version` header and `max_tokens`) |
 | [`/v1/completions`](#text-completions) | OpenAI text completions (streaming supported) |
 | [`/v1/embeddings`](#embeddings) | OpenAI embeddings (768-dim) |
 | `/v1/images/generations` | OpenAI-compatible image generation |
@@ -116,6 +118,9 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 | `--models-ready-delay-seconds` | | `0.0` | Delay before `/v1/models` reports loaded models |
 | `--disable-models-endpoint` | | `false` | Return 404 from `/v1/models` to exercise fallback readiness probes |
 | `--inference-ready-delay-seconds` | | `0.0` | Delay before inference endpoints stop returning HTTP 503 |
+| `--anthropic-split-usage` | | `false` | Emit docs-canonical split streaming usage on `/v1/messages` (message_delta carries `output_tokens` only) instead of the modern cumulative shape |
+| `--api-key` | | `None` | API key required for inference endpoints; auth is disabled when unset |
+| `--auth-header-name` | | `Authorization` | Header name checked when `--api-key` is set |
 
 ### Latency Options
 
@@ -208,6 +213,19 @@ export MOCK_SERVER_PORT=8080
 export MOCK_SERVER_FAST=true
 aiperf-mock-server
 ```
+
+### Optional Inference Authentication
+
+```bash
+MOCK_SERVER_API_KEY=<your-mock-api-key> aiperf-mock-server
+
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer <your-mock-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mock-model","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+Use `--auth-header-name X-API-Key` or `MOCK_SERVER_AUTH_HEADER_NAME=X-API-Key` to check a custom header instead of `Authorization`.
 
 ## API Endpoints
 
@@ -388,7 +406,7 @@ Multiple endpoints simulate different LLM backends:
 
 ### Latency Models
 
-**LLM Endpoints** (`/v1/chat/completions`, `/v1/completions`, `/v1/custom-multimodal`):
+**LLM Endpoints** (`/v1/chat/completions`, `/v1/responses`, `/v1/completions`, `/v1/custom-multimodal`):
 - Streaming: TTFT delay before first token, ITL between subsequent tokens
 - Non-streaming: TTFT + (ITL × token_count)
 
@@ -564,8 +582,8 @@ flowchart LR
 | Field | Meaning |
 |---|---|
 | `isl` | Real tokenized length of the assembled prompt (always populated). |
-| `requested_osl` | Resolved OSL cap: `max_completion_tokens or max_tokens` for chat, `max_tokens` for completions, `parameters.max_new_tokens` for TGI. `null` for embeddings/ranking/image retrieval. |
-| `max_tokens` / `max_completion_tokens` | The raw fields the client sent — useful to see which API name-space they used. TGI's `max_new_tokens` is recorded under `max_tokens` so the schema stays uniform. |
+| `requested_osl` | Resolved OSL cap: `max_completion_tokens or max_tokens` for chat, `max_output_tokens` for responses, `max_tokens` for completions, `parameters.max_new_tokens` for TGI. `null` for embeddings/ranking/image retrieval. |
+| `max_tokens` / `max_completion_tokens` | The raw fields the client sent — useful to see which API name-space they used. TGI's `max_new_tokens` is recorded under `max_tokens`; the Responses API's `max_output_tokens` is recorded under `max_completion_tokens`. Both keep the JSONL schema uniform across endpoint types. |
 | `min_tokens` | Floor on generated tokens (vllm/SGLang). |
 | `ignore_eos` | If `true`, server generates exactly `max_tokens`. |
 | `reasoning_effort` | `low`/`medium`/`high` for reasoning models — adds a reasoning budget on top of the main output. |

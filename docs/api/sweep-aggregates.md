@@ -395,6 +395,15 @@ components with `__` (e.g. `concurrency_10__isl_512`). Inner-dir
 naming is asymmetric on purpose: the no-sweep multi-run case uses
 `run_NNNN`, the sweep + INDEPENDENT case uses `trial_NNNN`.
 
+For the per-variation *aggregate* directory, scenario sweeps that omit an
+explicit `values:` block carry nested override dicts (e.g.
+`{"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}`) as the
+variation values. Serializing those into a `{key}_{value}` segment would
+produce an unreadable on-disk path, so when any variation value is
+non-scalar the aggregate dir falls back to the scenario's `variation_label`
+(e.g. `aa-1k`) instead of the `<dir_name>` form. Set an explicit `values:`
+block on the scenario to get the `{leaf_param_name}_{value}` form back.
+
 The sweep-level aggregate path follows a parallel rule:
 
 - REPEATED + multi-run: `<base>/aggregate/sweep_aggregate/`

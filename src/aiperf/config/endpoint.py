@@ -10,7 +10,7 @@ Endpoint - Server connection and API configuration
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -20,14 +20,20 @@ from pydantic import (
     field_serializer,
     model_validator,
 )
-from typing_extensions import Self
 
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
     RequestContentType,
 )
+from aiperf.common.utils import is_truthy_flag
 from aiperf.config.base import BaseConfig
+from aiperf.config.control_hooks import (
+    ResetKvCacheConfig,
+    ServerProfilerConfig,
+    parse_enabled_or_config,
+    require_relative_path,
+)
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
@@ -54,6 +60,7 @@ class EndpointDefaults:
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False
     USE_SERVER_TOKEN_COUNT = False
+    PER_CHUNK_USAGE = False
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
@@ -64,6 +71,7 @@ class EndpointDefaults:
     WAIT_FOR_MODEL_TIMEOUT = 0.0
     WAIT_FOR_MODEL_INTERVAL = 5.0
     WAIT_FOR_MODEL_MODE = "inference"
+    UUID_AND_STRIP = False
 
 
 class TemplateConfig(BaseConfig):
@@ -200,6 +208,8 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    _streaming_explicitly_set: bool = False
+
     transport: Annotated[
         TransportType | None,
         Field(
@@ -237,6 +247,21 @@ class EndpointConfig(BaseConfig):
             description="Use server-reported token counts from response usage field. "
             "When true, trusts usage.prompt_tokens and usage.completion_tokens. "
             "When false, counts tokens locally using configured tokenizer.",
+        ),
+    ]
+
+    per_chunk_usage: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Request per-chunk token usage on streaming responses by "
+            "setting stream_options.continuous_usage_stats. When true, the server "
+            "reports cumulative usage on every chunk (not just the final one), which "
+            "lets inter-token latency subtract the first content chunk's real token "
+            "count instead of assuming one token. Requires a server that supports "
+            "continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. "
+            "Requires use_server_token_count so OSL and the first-chunk count share "
+            "the server source.",
         ),
     ]
 
@@ -317,6 +342,23 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    uuid_and_strip: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.UUID_AND_STRIP,
+            description=(
+                "Enable AIPerf-managed image stripping for vLLM's multimodal processor "
+                "cache. Dataset-authored image UUIDs, including UUID-only cache "
+                "references, always pass through on the chat endpoint; this flag only "
+                "strips repeated content after AIPerf observes it in the same session. "
+                "Automatic stripping supports only single_turn datasets with "
+                "session_id-grouped rows; multi_turn is rejected. The server cache must "
+                "cover the working set, and requests in a session must reach a replica "
+                "that retains earlier UUIDs."
+            ),
+        ),
+    ]
+
     wait_for_model_timeout: Annotated[
         float,
         Field(
@@ -356,6 +398,28 @@ class EndpointConfig(BaseConfig):
             "Only consulted when `--wait-for-model-timeout` is positive.",
         ),
     ]
+
+    reset_kv_cache: Annotated[
+        ResetKvCacheConfig | None,
+        parse_enabled_or_config(ResetKvCacheConfig),
+        Field(
+            default=None,
+            description="When enabled, POST a KV-cache reset once per logical "
+            "benchmark cell before warmup/profiling. Accepts false | true | "
+            "{timeout_seconds?, path?}.",
+        ),
+    ] = None
+
+    server_profiler: Annotated[
+        ServerProfilerConfig | None,
+        parse_enabled_or_config(ServerProfilerConfig),
+        Field(
+            default=None,
+            description="When enabled, start/stop the server profiler around "
+            "each profiling phase. Accepts false | true | "
+            "{timeout_seconds?, start_path?, stop_path?}.",
+        ),
+    ] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -406,6 +470,18 @@ class EndpointConfig(BaseConfig):
                 pass
 
         return data
+
+    @model_validator(mode="after")
+    def _record_streaming_explicit_set_flag(self) -> Self:
+        """Snapshot whether the user explicitly set ``streaming``.
+
+        Scenario validation distinguishes "user explicitly passed
+        --streaming/--no-streaming" (raise on conflict) from "streaming is at
+        default; auto-fill from the scenario spec" (info log). Surface a stable
+        underscore flag for the scenario resolver's defensive ``getattr``.
+        """
+        self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
 
     @model_validator(mode="after")
     def _validate_endpoint_boundaries(self) -> Self:
@@ -467,6 +543,66 @@ class EndpointConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def _validate_uuid_and_strip(self) -> Self:
+        """Require image UUID reuse to use the Chat Completions endpoint."""
+        if self.uuid_and_strip and self.type != EndpointType.CHAT:
+            raise ValueError("--uuid-and-strip requires endpoint type 'chat'")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_per_chunk_usage(self) -> Self:
+        """Require server token counts when per-chunk usage is requested.
+
+        The first content chunk's token count is read only from server-reported
+        per-chunk usage (in the server-token-count path). Without
+        ``--use-server-token-count`` the client-tokenization path never populates
+        it, so ``--per-chunk-usage`` would silently have no effect on inter-token
+        latency."""
+        if self.per_chunk_usage and not self.use_server_token_count:
+            raise ValueError(
+                "--per-chunk-usage requires --use-server-token-count "
+                "(the first-chunk token count comes from server-reported per-chunk usage)"
+            )
+        if self.per_chunk_usage and self.type != EndpointType.CHAT:
+            raise ValueError(
+                "--per-chunk-usage requires endpoint type 'chat' "
+                "(continuous_usage_stats is only injected on the chat endpoint)"
+            )
+        if self.per_chunk_usage and not self.streaming:
+            raise ValueError(
+                "--per-chunk-usage requires --streaming "
+                "(continuous_usage_stats and inter-token latency apply only to "
+                "streaming responses)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_responses_store_requires_server_token_count(self) -> Self:
+        """Require server token counts when Responses stateful storage is requested.
+
+        Passing ``store: true`` via ``--extra-inputs`` opts the Responses API into
+        server-side persistence, which enables ``previous_response_id`` chaining:
+        prior turns live server-side and only the newest turn is sent on the wire.
+        Client-side ISL (the default) then reflects only that newest turn and
+        undercounts the combined prompt the model actually prefills. The true count
+        is only recoverable from the server's ``usage.prompt_tokens``, so require
+        ``--use-server-token-count``.
+        """
+        if (
+            self.type == EndpointType.RESPONSES
+            and is_truthy_flag(self.extra.get("store"))
+            and not self.use_server_token_count
+        ):
+            raise ValueError(
+                "Responses endpoint with --extra-inputs store:true enables "
+                "previous_response_id chaining, which sends only the newest turn "
+                "on the wire; client-side Input Sequence Length would undercount "
+                "the server-side prompt. Add --use-server-token-count so ISL comes "
+                "from the server's usage.prompt_tokens, or remove store:true."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_wait_for_model_coherent(self) -> Self:
         """Reject configurations where probe sub-options are set to non-default
         values without enabling the probe itself (timeout > 0). Catches typos like
@@ -524,5 +660,33 @@ class EndpointConfig(BaseConfig):
                 f"request_content_type={self.request_content_type} is only supported for "
                 f"endpoint types that accept form-data (e.g. image_edit, "
                 f"video_generation); endpoint type {self.type} does not."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_control_hook_paths(self) -> Self:
+        if self.reset_kv_cache is not None:
+            self.reset_kv_cache.path = require_relative_path(
+                self.reset_kv_cache.path, "endpoint.reset_kv_cache.path"
+            )
+        if self.server_profiler is not None:
+            self.server_profiler.start_path = require_relative_path(
+                self.server_profiler.start_path, "endpoint.server_profiler.start_path"
+            )
+            self.server_profiler.stop_path = require_relative_path(
+                self.server_profiler.stop_path, "endpoint.server_profiler.stop_path"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_control_hooks_require_http(self) -> Self:
+        if self.reset_kv_cache is None and self.server_profiler is None:
+            return self
+        # Transport None means auto-detect HTTP from URL — allowed.
+        if self.transport is not None and self.transport != TransportType.HTTP:
+            raise ValueError(
+                "endpoint.reset_kv_cache and endpoint.server_profiler require "
+                "HTTP transport; unsupported transport "
+                f"{self.transport!r}"
             )
         return self

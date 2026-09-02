@@ -76,7 +76,8 @@ class TestBurstGPTTraceIntegration:
 
         assert result.exit_code == 0
         assert result.request_count == len(rows)
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_fixed_schedule_auto_detected(
         self,
@@ -109,4 +110,5 @@ class TestBurstGPTTraceIntegration:
 
         assert result.exit_code == 0
         assert result.request_count == len(rows)
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"

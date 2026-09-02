@@ -43,6 +43,11 @@ def _mk_source(conversations: list[ConversationMetadata]):
     )
     lookup = {c.conversation_id: c for c in conversations}
     cs.get_metadata.side_effect = lambda cid: lookup[cid]
+    # Give each distinct correlation id a stable, DISTINCT sampling ordinal.
+    # An unconstrained MagicMock returns the same object for every id, so two
+    # instances would seed the same think-time stream (see _sample_think_ms).
+    ordinals: dict[str, int] = {}
+    cs.sample_ordinal.side_effect = lambda x: ordinals.setdefault(x, len(ordinals))
     return cs
 
 
@@ -148,3 +153,148 @@ async def test_join_suppressed_when_issuer_returns_false():
 
     assert orch.stats.parents_resumed == 0
     assert orch.stats.joins_suppressed == 1
+
+
+@pytest.mark.asyncio
+async def test_release_blocked_join_applies_think_time_before_dispatch():
+    """A gated turn carrying a per-round think-time sleeps for that duration
+    before its join turn is dispatched (the coordinator's inter-round wait)."""
+    from aiperf.timing.branch_orchestrator import PendingBranchJoin
+
+    issuer = MagicMock()
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=MagicMock(), credit_issuer=issuer)
+
+    slept: list[float] = []
+
+    # The wait now rides the interruptible _sleep_think_ms seam (asyncio.wait_for
+    # on the cleanup event), not asyncio.sleep -- spy on it directly.
+    async def _capture(seconds: float) -> None:
+        slept.append(seconds)
+
+    orch._sleep_think_ms = _capture
+
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="corr-spine",
+        parent_conversation_id="spine",
+        parent_num_turns=3,
+        gated_turn_index=1,
+        parent_delay_ms_on_gated_turn=50.0,
+        parent_no_request_on_gated_turn=True,  # spine gate -> think-time applies
+    )
+    await orch._release_blocked_join(pending)
+
+    assert slept == [0.05]  # 50 ms -> 0.05 s, applied before dispatch
+    issuer.dispatch_join_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_release_blocked_join_no_sleep_when_think_time_zero():
+    from aiperf.timing.branch_orchestrator import PendingBranchJoin
+
+    issuer = MagicMock()
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    orch = BranchOrchestrator(conversation_source=MagicMock(), credit_issuer=issuer)
+
+    slept: list[float] = []
+
+    async def _capture(seconds: float) -> None:
+        slept.append(seconds)
+
+    orch._sleep_think_ms = _capture
+
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="corr-spine",
+        parent_conversation_id="spine",
+        parent_num_turns=3,
+        gated_turn_index=1,
+        parent_delay_ms_on_gated_turn=0.0,
+    )
+    await orch._release_blocked_join(pending)
+
+    assert slept == []
+    issuer.dispatch_join_turn.assert_awaited_once()
+
+
+def _spine_pending(round_idx: int, x: str = "i1", median: float = 200.0):
+    from aiperf.timing.branch_orchestrator import PendingBranchJoin
+
+    return PendingBranchJoin(
+        parent_x_correlation_id=x,
+        parent_conversation_id="spine",
+        parent_num_turns=3,
+        gated_turn_index=round_idx,
+        parent_delay_ms_on_gated_turn=median,
+        parent_no_request_on_gated_turn=True,  # spine gates are request-free
+    )
+
+
+def test_resolve_think_ms_zero_for_normal_dag_join_turn():
+    """Regression: a NORMAL (non-request-free) DAG join turn carrying an authored
+    delay_ms must NOT incur a pre-join think-sleep -- agentx fires such joins
+    immediately. Think-time is exclusive to request-free orchestrator spines."""
+    from aiperf.common.models import ConversationMetadata
+    from aiperf.timing.branch_orchestrator import PendingBranchJoin
+
+    source = _mk_source([ConversationMetadata(conversation_id="spine")])
+    orch = BranchOrchestrator(conversation_source=source, credit_issuer=MagicMock())
+    normal_gate = PendingBranchJoin(
+        parent_x_correlation_id="i1",
+        parent_conversation_id="spine",
+        parent_num_turns=3,
+        gated_turn_index=1,
+        parent_delay_ms_on_gated_turn=200.0,  # authored trace delay
+        parent_no_request_on_gated_turn=False,  # NOT a spine gate
+    )
+    assert orch._resolve_think_ms(normal_gate) == 0.0
+
+
+def test_resolve_think_ms_samples_lognormal_per_instance_round():
+    """A sampled spine draws an independent, reproducible lognormal think-time
+    per (instance, round) around the stamped median."""
+    from aiperf.common.models import ConversationMetadata
+    from aiperf.common.models.dataset_models import ThinkTimeSpec
+
+    source = _mk_source(
+        [
+            ConversationMetadata(
+                conversation_id="spine", think_time=ThinkTimeSpec(sigma=0.5)
+            )
+        ]
+    )
+    orch = BranchOrchestrator(conversation_source=source, credit_issuer=MagicMock())
+
+    v1 = orch._resolve_think_ms(_spine_pending(1))
+    assert v1 > 0.0 and v1 != 200.0  # sampled, not the raw median
+    assert (
+        orch._resolve_think_ms(_spine_pending(1)) == v1
+    )  # reproducible per (instance, round)
+    assert orch._resolve_think_ms(_spine_pending(2)) != v1  # independent per round
+    assert (
+        orch._resolve_think_ms(_spine_pending(1, x="i2")) != v1
+    )  # independent per instance
+
+
+def test_resolve_think_ms_fixed_when_no_distribution():
+    from aiperf.common.models import ConversationMetadata
+
+    source = _mk_source([ConversationMetadata(conversation_id="spine")])
+    orch = BranchOrchestrator(conversation_source=source, credit_issuer=MagicMock())
+    assert orch._resolve_think_ms(_spine_pending(1)) == 200.0
+
+
+def test_resolve_think_ms_clamps_to_max():
+    from aiperf.common.models import ConversationMetadata
+    from aiperf.common.models.dataset_models import ThinkTimeSpec
+
+    source = _mk_source(
+        [
+            ConversationMetadata(
+                conversation_id="spine", think_time=ThinkTimeSpec(sigma=0.5, max_ms=1.0)
+            )
+        ]
+    )
+    orch = BranchOrchestrator(conversation_source=source, credit_issuer=MagicMock())
+    assert (
+        orch._resolve_think_ms(_spine_pending(1)) == 1.0
+    )  # median 200 clamped to max 1

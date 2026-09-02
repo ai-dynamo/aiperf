@@ -1,24 +1,37 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import orjson
 import pytest
 
-from aiperf.common.enums import CreditPhase
-from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.accumulator_protocols import ExportContext
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, CreditPhase
+from aiperf.common.environment import Environment
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
-    MetricRecordsMessage,
+    RecordsMessage,
 )
+from aiperf.common.messages.telemetry_messages import TelemetryRecordsMessage
 from aiperf.common.models import (
     BranchStats,
     CreditPhaseStats,
     MetricResult,
+    PhaseRecordsStats,
     ProcessRecordsResult,
     ProfileResults,
+    TelemetryMetrics,
+    TelemetryRecord,
+    TimesliceResult,
 )
+from aiperf.common.models.error_models import ErrorDetails
 from aiperf.common.models.record_models import MetricRecordMetadata
 from aiperf.common.types import MetricTagT
 from aiperf.credit.messages import (
@@ -28,26 +41,86 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
     CreditsCompleteMessage,
 )
-from aiperf.plugin.enums import TimingMode
-from aiperf.records.records_manager import RecordsManager
+from aiperf.metrics.accumulator import MetricsAccumulator
+from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
+from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
+from aiperf.plugin.enums import AccumulatorType, TimingMode, UIType
+from aiperf.records import records_manager as records_manager_module
+from aiperf.records import records_manager_processing
+from aiperf.records.error_tracker import ErrorTracker
+from aiperf.records.records_manager import ErrorTrackingState, RecordsManager
+from aiperf.records.records_manager_processing import LoadedAnalyzer
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
-from tests.harness import mock_plugin
-
 
 # Helper functions
-def create_mock_records_manager(
-    start_time_ns: int,
-    expected_duration_sec: float | None,
-    grace_period_sec: float = 0.0,
-) -> MagicMock:
-    """Create a mock RecordsManager instance for testing filtering logic."""
-    instance = MagicMock()
-    instance.expected_duration_sec = expected_duration_sec
-    instance.start_time_ns = start_time_ns
-    instance.cli_config.benchmark_grace_period = grace_period_sec
-    instance.debug = MagicMock()
-    return instance
+
+
+def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
+    tracker = RecordsTracker()
+    tracker.update_phase_info(
+        CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=100,
+            requests_end_ns=300,
+            baseline_start_ns=90,
+            baseline_end_ns=310,
+            final_requests_completed=1,
+        )
+    )
+    orphan_tracker = tracker._get_phase_tracker(CreditPhase.PROFILING, None)
+    orphan_tracker.increment_error_records()
+    tracker.update_from_request(
+        MetricRecordMetadata(
+            session_num=1,
+            request_start_ns=101,
+            request_end_ns=110,
+            worker_id="worker",
+            record_processor_id="processor",
+            benchmark_phase=CreditPhase.PROFILING,
+            phase_index=1,
+        ),
+        None,
+    )
+
+    aggregate = tracker.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+
+    assert aggregate.success_records == 1
+    assert aggregate.error_records == 1
+    assert aggregate.baseline_start_ns == 90
+    assert aggregate.baseline_end_ns == 310
+    assert tracker.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
+
+
+def test_indexed_phase_counter_accessors_aggregate_without_creating_orphan() -> None:
+    """Counter reads must observe named phases without creating ``(phase, None)``."""
+    tracker = RecordsTracker()
+    for phase_index, error in (
+        (1, None),
+        (3, ErrorDetails(code=500, type="ServerError", message="failed")),
+    ):
+        tracker.update_from_request(
+            MetricRecordMetadata(
+                session_num=phase_index,
+                request_start_ns=1,
+                request_end_ns=2,
+                worker_id="worker",
+                record_processor_id="processor",
+                benchmark_phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+            ),
+            error,
+        )
+
+    assert tracker.total_records_for_phase(CreditPhase.PROFILING) == 2
+    assert tracker.error_records_for_phase(CreditPhase.PROFILING) == 1
+    assert tracker.total_records_for_phase(CreditPhase.PROFILING, phase_index=1) == 1
+    assert tracker.error_records_for_phase(CreditPhase.PROFILING, phase_index=1) == 0
+    assert (CreditPhase.PROFILING, None) not in tracker._phase_trackers
 
 
 def create_metric_record_data(
@@ -71,166 +144,821 @@ def create_metric_record_data(
     )
 
 
+def _telemetry_record(gpu_index: int = 0) -> TelemetryRecord:
+    return TelemetryRecord(
+        timestamp_ns=1_000_000 + gpu_index,
+        telemetry_source_url="http://localhost:9400/metrics",
+        gpu_index=gpu_index,
+        gpu_uuid=f"GPU-{gpu_index}",
+        gpu_model_name="Test GPU",
+        telemetry_data=TelemetryMetrics(gpu_power_usage=100.0),
+    )
+
+
 class TestRecordsManagerTelemetry:
-    """Test RecordsManager telemetry handling with mocked components."""
+    """Telemetry records route through the unified record dispatcher."""
+
+    @staticmethod
+    def _create_drain_manager() -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._telemetry_state = ErrorTrackingState()
+        manager._telemetry_completion_expected = True
+        manager._telemetry_final_sequence = None
+        manager._telemetry_processed_high_water = 0
+        manager._telemetry_processed_out_of_order = set()
+        manager._telemetry_completion_event = asyncio.Event()
+        manager.error = MagicMock()
+        manager.warning = MagicMock()
+        return manager
 
     @pytest.mark.asyncio
-    async def test_on_telemetry_records_valid(self):
-        """Test handling valid telemetry records."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from aiperf.common.messages import TelemetryRecordsMessage
-        from aiperf.common.models import (
-            TelemetryHierarchy,
-            TelemetryMetrics,
-            TelemetryRecord,
-        )
-
-        # Create sample telemetry records
-        records = [
-            TelemetryRecord(
-                timestamp_ns=1000000,
-                dcgm_url="http://localhost:9400/metrics",
-                gpu_index=0,
-                gpu_uuid="GPU-123",
-                gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(
-                    gpu_power_usage=100.0,
-                ),
-            )
-        ]
-
+    async def test_on_telemetry_records_valid_dispatches_each_record(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._telemetry_state = ErrorTrackingState()
+        manager._dispatch_record = AsyncMock(return_value=[])
+        records = [_telemetry_record(0), _telemetry_record(1)]
         message = TelemetryRecordsMessage(
             service_id="test_service",
             collector_id="test_collector",
-            dcgm_url="http://localhost:9400/metrics",
+            telemetry_source_url="http://localhost:9400/metrics",
             records=records,
             error=None,
         )
 
-        # Mock the hierarchy
-        mock_hierarchy = MagicMock(spec=TelemetryHierarchy)
-        mock_hierarchy.add_record = MagicMock()
-        mock_send_to_processors = AsyncMock()
+        await manager._on_telemetry_records(message)
 
-        # Test the logic directly without instantiating the full service
-        for record in message.records:
-            mock_hierarchy.add_record(record)
-
-        if message.records:
-            await mock_send_to_processors(message.records)
-
-        # Verify behavior
-        assert mock_hierarchy.add_record.call_count == len(records)
-        mock_send_to_processors.assert_called_once_with(records)
+        assert manager._dispatch_record.await_args_list == [
+            ((records[0],),),
+            ((records[1],),),
+        ]
+        assert manager._telemetry_state.error_counts == {}
 
     @pytest.mark.asyncio
-    async def test_on_telemetry_records_invalid(self):
-        """Test handling invalid telemetry records with errors."""
-        from unittest.mock import AsyncMock
+    async def test_on_telemetry_dispatch_errors_are_tracked(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._telemetry_state = ErrorTrackingState()
+        dispatch_error = RuntimeError("telemetry writer failed")
+        manager._dispatch_record = AsyncMock(return_value=[dispatch_error])
 
-        from aiperf.common.messages import TelemetryRecordsMessage
-        from aiperf.common.models import ErrorDetails
-
-        error = ErrorDetails(message="Test error", code=500)
-
-        message = TelemetryRecordsMessage(
-            service_id="test_service",
-            collector_id="test_collector",
-            dcgm_url="http://localhost:9400/metrics",
-            records=[],
-            error=error,
+        await manager._on_telemetry_records(
+            TelemetryRecordsMessage(
+                service_id="test_service",
+                collector_id="test_collector",
+                telemetry_source_url="http://localhost:9400/metrics",
+                records=[_telemetry_record()],
+                error=None,
+            )
         )
 
-        mock_send_to_processors = AsyncMock()
-        error_counts = {}
-
-        # Test the logic: errors should be tracked, not sent to processors
-        if message.error:
-            error_counts[message.error] = error_counts.get(message.error, 0) + 1
-        else:
-            await mock_send_to_processors(message.records)
-
-        # Should not send to processors
-        mock_send_to_processors.assert_not_called()
-
-        # Error should be tracked
-        assert error in error_counts
-        assert error_counts[error] == 1
+        tracked = ErrorDetails.from_exception(dispatch_error)
+        assert manager._telemetry_state.error_counts[tracked] == 1
 
     @pytest.mark.asyncio
-    async def test_send_telemetry_to_results_processors(self):
-        """Test sending telemetry records to processors."""
-        from unittest.mock import AsyncMock, Mock
+    async def test_on_telemetry_records_invalid_tracks_error(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._telemetry_state = ErrorTrackingState()
+        manager._dispatch_record = AsyncMock(return_value=[])
+        error = ErrorDetails(message="Test error", code=500)
 
-        from aiperf.common.models import TelemetryMetrics, TelemetryRecord
+        await manager._on_telemetry_records(
+            TelemetryRecordsMessage(
+                service_id="test_service",
+                collector_id="test_collector",
+                telemetry_source_url="http://localhost:9400/metrics",
+                records=[],
+                error=error,
+            )
+        )
 
-        # Create mock telemetry processor
-        mock_processor = Mock()
-        mock_processor.process_telemetry_record = AsyncMock()
+        assert manager._telemetry_state.error_counts[error] == 1
+        manager._dispatch_record.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_completion_marker_waits_for_every_prior_sequence(self) -> None:
+        manager = self._create_drain_manager()
+        first_dispatch_started = asyncio.Event()
+        release_first_dispatch = asyncio.Event()
+
+        async def dispatch(record: TelemetryRecord) -> list[BaseException]:
+            if record.gpu_index == 0:
+                first_dispatch_started.set()
+                await release_first_dispatch.wait()
+            return []
+
+        manager._dispatch_record = AsyncMock(side_effect=dispatch)
+        first_task = asyncio.create_task(
+            manager._on_telemetry_records(
+                TelemetryRecordsMessage(
+                    service_id="telemetry",
+                    collector_id="collector",
+                    telemetry_source_url="source",
+                    records=[_telemetry_record(0)],
+                    sequence=1,
+                )
+            )
+        )
+        await first_dispatch_started.wait()
+        await manager._on_telemetry_records(
+            TelemetryRecordsMessage(
+                service_id="telemetry",
+                collector_id="collector",
+                telemetry_source_url="source",
+                records=[_telemetry_record(1)],
+                sequence=2,
+            )
+        )
+        await manager._on_telemetry_records(
+            TelemetryRecordsMessage(
+                service_id="telemetry",
+                collector_id="telemetry",
+                telemetry_source_url="",
+                records=[],
+                sequence=2,
+                collection_complete=True,
+            )
+        )
+
+        assert not manager._telemetry_completion_event.is_set()
+        assert manager._telemetry_processed_out_of_order == {2}
+
+        release_first_dispatch.set()
+        await first_task
+        assert manager._telemetry_processed_high_water == 2
+        assert manager._telemetry_completion_event.is_set()
+        assert await manager._await_telemetry_ingest_complete() == []
+
+    @pytest.mark.asyncio
+    async def test_missing_sequence_fails_drain_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manager = self._create_drain_manager()
+        manager._telemetry_final_sequence = 2
+        manager._telemetry_processed_high_water = 1
+        monkeypatch.setattr(Environment.SERVICE, "COMMAND_RESPONSE_TIMEOUT", 0.001)
+
+        errors = await manager._await_telemetry_ingest_complete()
+
+        assert len(errors) == 1
+        # Reported, but explicitly non-fatal: a dead telemetry container must
+        # not suppress the export of an otherwise valid record set.
+        assert errors[0].details == {"stage": "gpu_telemetry_drain", "fatal": False}
+        assert "producer ended at sequence 2" in errors[0].message
+
+
+class TestRecordsManagerMetricRecordDispatchErrors:
+    """Metric-handler failures must surface in the phase error summary rather
+    than being silently dropped while the record is marked processed."""
+
+    def _make_manager(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.debug = MagicMock()
+        manager.error = MagicMock()
+        manager.trace = MagicMock()
+        manager.is_enabled_for = MagicMock(return_value=False)
+        manager._dataset_configured_event = asyncio.Event()
+        manager._dataset_configured_event.set()
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
+        manager._error_tracker = ErrorTracker()
+        manager._complete_credit_phases = set()
+        manager._warned_missing_cache_reporting = False
+        manager._failed_request_threshold = None
+        manager._failed_request_thresholds = {}
+        manager._failed_request_grace_floors = {}
+        manager._failed_request_abort_triggered = False
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
+        return manager
+
+    def _records_message(self) -> RecordsMessage:
+        record = create_metric_record_data(1_000, 2_000)
+        return RecordsMessage(
+            service_id="rp", metadata=record.metadata, records=[record]
+        )
+
+    @pytest.mark.asyncio
+    async def test_metric_dispatch_error_recorded_in_phase_error_summary(self) -> None:
+        manager = self._make_manager()
+        dispatch_error = RuntimeError("metric accumulator failed")
+        manager._dispatch_record = AsyncMock(return_value=[dispatch_error])
+
+        await manager._on_records(self._records_message())
+
+        # Record is still counted, but the handler failure is not swallowed.
+        manager._records_tracker.update_from_request.assert_called_once()
+        summary = manager._error_tracker.get_error_summary_for_phase(
+            CreditPhase.PROFILING
+        )
+        tracked = ErrorDetails.from_exception(dispatch_error)
+        assert any(e.error_details == tracked for e in summary)
+
+    @pytest.mark.asyncio
+    async def test_on_records_tracks_errors_by_phase_index(self) -> None:
+        manager = self._make_manager()
+        dispatch_error = RuntimeError("metric accumulator failed")
+        request_error = ErrorDetails(
+            code=499, type="RequestCancellationError", message="cancelled"
+        )
+        manager._dispatch_record = AsyncMock(return_value=[dispatch_error])
+        message = self._records_message()
+        message.metadata.phase_index = 2
+        message.error = request_error
+
+        await manager._on_records(message)
+
+        indexed_summary = manager._error_tracker.get_error_summary_for_phase(
+            CreditPhase.PROFILING, phase_index=2
+        )
+        indexed_errors = {item.error_details: item.count for item in indexed_summary}
+        assert indexed_errors[request_error] == 1
+        assert indexed_errors[ErrorDetails.from_exception(dispatch_error)] == 1
+
+    @pytest.mark.asyncio
+    async def test_successful_metric_dispatch_records_no_phase_error(self) -> None:
+        manager = self._make_manager()
+        manager._dispatch_record = AsyncMock(return_value=[])
+
+        await manager._on_records(self._records_message())
+
+        assert (
+            manager._error_tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+            == []
+        )
+
+    @pytest.mark.asyncio
+    async def test_context_overflow_skip_counts_as_success_not_error(self) -> None:
+        """AGENTIC_REPLAY overflow skips must advance the success counter and
+        must NOT inflate error_records (which would trip --failed-request-threshold).
+        """
+        manager = self._make_manager()
+        manager._dispatch_record = AsyncMock(return_value=[])
+        record = create_metric_record_data(1_000, 2_000)
+        record.metadata.context_overflow_skip = True
+        message = RecordsMessage(
+            service_id="rp",
+            metadata=record.metadata,
+            records=[record],
+            error=ErrorDetails(code=400, type="ContextOverflow", message="overflow"),
+        )
+
+        await manager._on_records(message)
+
+        assert (
+            manager._skipped_context_overflow_counts_by_phase[CreditPhase.PROFILING]
+            == 1
+        )
+        manager._records_tracker.update_from_request.assert_called_once_with(
+            message.metadata, None
+        )
+        manager._dispatch_record.assert_not_called()
+        assert (
+            manager._error_tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+            == []
+        )
+
+    @pytest.mark.asyncio
+    async def test_warmup_plus_single_profiling_builds_phase_results(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._records_tracker = MagicMock()
+        warmup_tracker = MagicMock()
+        warmup_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            phase_name="warmup",
+            phase_kind="warmup",
+            start_ns=1_000,
+            requests_end_ns=2_000,
+        )
+        profile_tracker = MagicMock()
+        profile_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=3_000,
+            requests_end_ns=4_000,
+        )
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.WARMUP, 0): warmup_tracker,
+            (CreditPhase.PROFILING, 1): profile_tracker,
+        }
+        manager._accumulators = {}
+        manager._metric_record_accumulators = []
+        manager._telemetry_state = ErrorTrackingState()
+        manager._server_metrics_state = ErrorTrackingState()
+        manager._gpu_telemetry_accumulator = None
+        manager._server_metrics_accumulator = None
+        manager._error_tracker = ErrorTracker()
+
+        results = await RecordsManager._build_phase_profile_results(
+            manager, CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert results is not None
+        assert [r.phase_name for r in results] == ["warmup", "load"]
+
+    @staticmethod
+    def _warmup_summary_manager(
+        warmup_overflow: int, base_metrics: list[MetricResult]
+    ) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.was_phase_cancelled = MagicMock(return_value=False)
+        manager._has_records_for_phase = MagicMock(return_value=True)
+        manager._summarize_metric_record_accumulators = AsyncMock(
+            return_value=(list(base_metrics), None, [], None)
+        )
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: warmup_overflow,
+            CreditPhase.PROFILING: 7,
+        }
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_injects_context_overflow_metric(self) -> None:
+        base = [MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0)]
+        manager = self._warmup_summary_manager(warmup_overflow=3, base_metrics=base)
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        overflow = [r for r in results if r.tag == "context_overflow_count"]
+        assert len(overflow) == 1
+        # WARMUP count (3) is surfaced, not the PROFILING count (7).
+        assert overflow[0].avg == 3.0
+        assert overflow[0].count == 1
+        assert overflow[0].unit == "requests"
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_omits_metric_when_no_overflow(self) -> None:
+        base = [MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0)]
+        manager = self._warmup_summary_manager(warmup_overflow=0, base_metrics=base)
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        assert all(r.tag != "context_overflow_count" for r in results)
+
+    @pytest.mark.asyncio
+    async def test_warmup_summary_surfaces_overflow_when_all_requests_skipped(
+        self,
+    ) -> None:
+        """Even at 100% warmup overflow the count is still surfaced.
+
+        Context-overflow skips are recorded as success via
+        ``update_from_request(metadata, None)``, so ``_has_records_for_phase``
+        (which reads the records tracker's ``total_records``, not the metric
+        accumulator) returns True and the injection block is reached even when
+        the metric accumulator collected nothing.
+        """
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.error = MagicMock()
+
+        tracker = RecordsTracker()
+        for i in range(3):
+            tracker.update_from_request(
+                MetricRecordMetadata(
+                    session_num=i,
+                    request_start_ns=1,
+                    request_end_ns=2,
+                    worker_id="w0",
+                    record_processor_id="rp0",
+                    benchmark_phase=CreditPhase.WARMUP,
+                    phase_index=0,
+                    context_overflow_skip=True,
+                ),
+                None,
+            )
+        manager._records_tracker = tracker
+        # Metric accumulator collected nothing (every request was skipped).
+        manager._summarize_metric_record_accumulators = AsyncMock(
+            return_value=([], None, [], None)
+        )
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 3,
+            CreditPhase.PROFILING: 0,
+        }
+
+        results = await RecordsManager._summarize_warmup_metric_records(manager)
+
+        assert results is not None
+        overflow = [r for r in results if r.tag == "context_overflow_count"]
+        assert len(overflow) == 1
+        assert overflow[0].avg == 3.0
+
+    @pytest.mark.asyncio
+    async def test_single_profiling_phase_does_not_build_duplicate_phase_results(
+        self,
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._records_tracker = MagicMock()
+        profile_tracker = MagicMock()
+        profile_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="profiling",
+            phase_kind="profiling",
+            start_ns=1_000,
+            requests_end_ns=2_000,
+        )
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.PROFILING, 0): profile_tracker,
+        }
+
+        results = await RecordsManager._build_phase_profile_results(
+            manager, CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert results is None
+
+    @pytest.mark.asyncio
+    async def test_phase_telemetry_export_uses_baseline_window(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._records_tracker = MagicMock()
+        warmup_tracker = MagicMock()
+        warmup_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            phase_name="warmup",
+            phase_kind="warmup",
+            start_ns=100,
+            requests_end_ns=200,
+        )
+        profile_tracker = MagicMock()
+        profile_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=1_000,
+            requests_end_ns=2_000,
+            baseline_start_ns=900,
+            baseline_end_ns=2_200,
+        )
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.WARMUP, 0): warmup_tracker,
+            (CreditPhase.PROFILING, 1): profile_tracker,
+        }
+        manager._accumulators = {}
+        manager._metric_record_accumulators = []
+        manager._telemetry_state = ErrorTrackingState()
+        manager._server_metrics_state = ErrorTrackingState()
+        manager._error_tracker = ErrorTracker()
+
+        class _CaptureAccumulator:
+            def __init__(self, result) -> None:
+                self.result = result
+                self.contexts: list[ExportContext] = []
+
+            async def export_results(self, ctx: ExportContext):
+                self.contexts.append(ctx)
+                return self.result
+
+        gpu_accumulator = _CaptureAccumulator(SimpleNamespace(endpoints={}))
+        manager._gpu_telemetry_accumulator = gpu_accumulator
+
+        results = await RecordsManager._build_phase_profile_results(
+            manager, CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert results is not None
+        load_result = next(result for result in results if result.phase_name == "load")
+        assert load_result.baseline_start_ns == 900
+        assert load_result.baseline_end_ns == 2_200
+        assert gpu_accumulator.contexts[1].start_ns == 900
+        assert gpu_accumulator.contexts[1].end_ns == 2_200
+        assert gpu_accumulator.contexts[1].is_phase_scoped is True
+        assert load_result.telemetry_results is None
+        assert load_result.server_metrics_results is None
+        assert load_result.telemetry_warnings == []
+        assert load_result.server_metrics_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_root_telemetry_export_uses_bounded_profiling_window(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.debug = MagicMock()
+        manager._telemetry_state = ErrorTrackingState()
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.create_aggregate_stats_for_phase.return_value = (
+            PhaseRecordsStats(
+                phase=CreditPhase.PROFILING,
+                start_ns=1_000,
+                requests_end_ns=2_000,
+            )
+        )
+        manager._gpu_telemetry_accumulator = MagicMock()
+        manager._gpu_telemetry_accumulator.export_results = AsyncMock(return_value=None)
+
+        result = await RecordsManager._process_telemetry_results(manager)
+
+        assert result.results is None
+        ctx = manager._gpu_telemetry_accumulator.export_results.await_args.args[0]
+        assert ctx.start_ns == 1_000
+        assert ctx.end_ns == 2_000 + Environment.GPU.FINAL_SCRAPE_GRACE_NS
+        assert ctx.phase == CreditPhase.PROFILING
+
+    def test_multi_profiling_aggregate_rates_use_active_phase_duration(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        first_tracker = MagicMock()
+        first_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=0,
+            profiling_index=0,
+            phase_name="low",
+            phase_kind="profiling",
+            start_ns=1_000_000_000,
+            requests_end_ns=2_000_000_000,
+        )
+        second_tracker = MagicMock()
+        second_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=2,
+            profiling_index=1,
+            phase_name="storm",
+            phase_kind="profiling",
+            start_ns=7_000_000_000,
+            requests_end_ns=9_000_000_000,
+        )
+        manager._has_multiple_phase_instances = lambda phase: (
+            phase == CreditPhase.PROFILING
+        )
+        manager._records_tracker = MagicMock()
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.PROFILING, 0): first_tracker,
+            (CreditPhase.PROFILING, 2): second_tracker,
+        }
         records = [
-            TelemetryRecord(
-                timestamp_ns=1000000,
-                dcgm_url="http://localhost:9400/metrics",
-                gpu_index=0,
-                gpu_uuid="GPU-123",
-                gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(),
+            MetricResult(
+                tag="benchmark_duration",
+                header="Benchmark Duration",
+                unit="sec",
+                avg=8,
             ),
-            TelemetryRecord(
-                timestamp_ns=1000001,
-                dcgm_url="http://localhost:9400/metrics",
-                gpu_index=1,
-                gpu_uuid="GPU-456",
-                gpu_model_name="Test GPU",
-                telemetry_data=TelemetryMetrics(),
+            MetricResult(
+                tag="request_count", header="Request Count", unit="requests", avg=60
+            ),
+            MetricResult(
+                tag="request_throughput",
+                header="Request Throughput",
+                unit="requests/sec",
+                avg=7.5,
+            ),
+            MetricResult(tag="total_isl", header="Total ISL", unit="tokens", avg=120),
+            MetricResult(tag="total_osl", header="Total OSL", unit="tokens", avg=30),
+            MetricResult(
+                tag="input_token_throughput",
+                header="Input Token Throughput",
+                unit="tokens/sec",
+                avg=15,
+            ),
+            MetricResult(
+                tag="output_token_throughput",
+                header="Output Token Throughput",
+                unit="tokens/sec",
+                avg=3.75,
+            ),
+            MetricResult(
+                tag="total_token_throughput",
+                header="Total Token Throughput",
+                unit="tokens/sec",
+                avg=18.75,
             ),
         ]
 
-        # Test the logic: each record should be sent to processor
-        for record in records:
-            await mock_processor.process_telemetry_record(record)
-
-        # Processor should be called for each record
-        assert mock_processor.process_telemetry_record.call_count == len(records)
-
-    def test_telemetry_hierarchy_add_record(self):
-        """Test that telemetry hierarchy adds records correctly."""
-        from aiperf.common.models import (
-            TelemetryHierarchy,
-            TelemetryMetrics,
-            TelemetryRecord,
+        RecordsManager._adjust_multi_phase_aggregate_rates(
+            manager, CreditPhase.PROFILING, records
         )
 
-        hierarchy = TelemetryHierarchy()
+        by_tag = {result.tag: result for result in records}
+        assert by_tag["benchmark_duration"].avg == 3
+        assert by_tag["request_throughput"].avg == 20
+        assert by_tag["input_token_throughput"].avg == 40
+        assert by_tag["output_token_throughput"].avg == 10
+        assert by_tag["total_token_throughput"].avg == 50
 
-        record = TelemetryRecord(
-            timestamp_ns=1000000,
-            dcgm_url="http://localhost:9400/metrics",
-            gpu_index=0,
-            gpu_uuid="GPU-123",
-            gpu_model_name="Test GPU",
-            telemetry_data=TelemetryMetrics(
-                gpu_power_usage=100.0,
+    def test_multi_warmup_aggregate_rates_use_active_phase_duration(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        first_tracker = MagicMock()
+        first_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            phase_name="prime",
+            phase_kind="warmup",
+            start_ns=1_000_000_000,
+            requests_end_ns=2_000_000_000,
+        )
+        second_tracker = MagicMock()
+        second_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=2,
+            phase_name="settle",
+            phase_kind="warmup",
+            start_ns=7_000_000_000,
+            requests_end_ns=9_000_000_000,
+        )
+        manager._has_multiple_phase_instances = lambda phase: (
+            phase == CreditPhase.WARMUP
+        )
+        manager._records_tracker = MagicMock()
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.WARMUP, 0): first_tracker,
+            (CreditPhase.WARMUP, 2): second_tracker,
+        }
+        records = [
+            MetricResult(
+                tag="benchmark_duration",
+                header="Benchmark Duration",
+                unit="sec",
+                avg=8,
             ),
+            MetricResult(
+                tag="request_count", header="Request Count", unit="requests", avg=24
+            ),
+            MetricResult(
+                tag="request_throughput",
+                header="Request Throughput",
+                unit="requests/sec",
+                avg=3,
+            ),
+            MetricResult(tag="total_isl", header="Total ISL", unit="tokens", avg=96),
+            MetricResult(tag="total_osl", header="Total OSL", unit="tokens", avg=48),
+            MetricResult(
+                tag="input_token_throughput",
+                header="Input Token Throughput",
+                unit="tokens/sec",
+                avg=12,
+            ),
+            MetricResult(
+                tag="output_token_throughput",
+                header="Output Token Throughput",
+                unit="tokens/sec",
+                avg=6,
+            ),
+            MetricResult(
+                tag="total_token_throughput",
+                header="Total Token Throughput",
+                unit="tokens/sec",
+                avg=18,
+            ),
+        ]
+
+        RecordsManager._adjust_multi_phase_aggregate_rates(
+            manager, CreditPhase.WARMUP, records
         )
 
-        # Add record to hierarchy
-        hierarchy.add_record(record)
+        by_tag = {result.tag: result for result in records}
+        assert by_tag["benchmark_duration"].avg == 3
+        assert by_tag["request_throughput"].avg == 8
+        assert by_tag["input_token_throughput"].avg == 32
+        assert by_tag["output_token_throughput"].avg == 16
+        assert by_tag["total_token_throughput"].avg == 48
 
-        # Verify hierarchy structure
-        assert "http://localhost:9400/metrics" in hierarchy.dcgm_endpoints
-        assert "GPU-123" in hierarchy.dcgm_endpoints["http://localhost:9400/metrics"]
+    @pytest.mark.asyncio
+    async def test_realtime_delta_resets_when_phase_index_changes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._records_tracker = MagicMock()
+        manager._records_tracker.create_stats_for_phase.return_value = (
+            PhaseRecordsStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=2,
+                phase_name="storm",
+                phase_kind="profiling",
+                start_ns=0,
+                records_end_ns=1_000_000_000,
+                success_records=1,
+            )
+        )
+        manager._metric_record_accumulators = []
+        manager._prev_realtime_snapshot = (10, 5.0)
+        manager._prev_realtime_phase_index = 1
+        manager._server_metrics_accumulator = None
+        manager.publish = AsyncMock()
+        manager.service_id = "records_manager"
+        manager.run = SimpleNamespace(cfg=SimpleNamespace(ui_type=UIType.NONE))
+
+        async def fake_generate_realtime_metrics(*args, **kwargs):
+            return [
+                MetricResult(
+                    tag="request_throughput",
+                    header="Request Throughput",
+                    unit="requests/sec",
+                    avg=1.0,
+                )
+            ]
+
+        captured: dict[str, object] = {}
+
+        def fake_render(
+            metric_results, phase_stats, prev_snapshot, server_snapshot=None
+        ):
+            captured["prev_snapshot"] = prev_snapshot
+            return "rendered"
+
+        monkeypatch.setattr(
+            records_manager_module,
+            "generate_realtime_metrics",
+            fake_generate_realtime_metrics,
+        )
+        monkeypatch.setattr(
+            records_manager_processing,
+            "filter_display_metrics",
+            lambda metrics: metrics,
+        )
+        monkeypatch.setattr(
+            records_manager_module, "_render_realtime_block", fake_render
+        )
+
+        await manager._report_realtime_metrics(emit_log_block=False)
+
+        assert captured["prev_snapshot"] is None
+        assert manager._prev_realtime_snapshot == (1, 1.0)
+        assert manager._prev_realtime_phase_index == 2
+
+    @pytest.mark.asyncio
+    async def test_disabled_observability_skips_phase_exports(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.run = SimpleNamespace(
+            cfg=SimpleNamespace(
+                gpu_telemetry_disabled=True,
+                server_metrics_disabled=True,
+            )
+        )
+        manager._records_tracker = MagicMock()
+        warmup_tracker = MagicMock()
+        warmup_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.WARMUP,
+            phase_index=0,
+            phase_name="warmup",
+            phase_kind="warmup",
+            start_ns=100,
+            requests_end_ns=200,
+        )
+        profile_tracker = MagicMock()
+        profile_tracker.create_stats.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="load",
+            phase_kind="profiling",
+            start_ns=1_000,
+            requests_end_ns=2_000,
+            baseline_start_ns=900,
+            baseline_end_ns=2_200,
+        )
+        manager._records_tracker._phase_trackers = {
+            (CreditPhase.WARMUP, 0): warmup_tracker,
+            (CreditPhase.PROFILING, 1): profile_tracker,
+        }
+        manager._accumulators = {}
+        manager._metric_record_accumulators = []
+        manager._telemetry_state = ErrorTrackingState()
+        manager._server_metrics_state = ErrorTrackingState()
+        manager._error_tracker = ErrorTracker()
+
+        class _UnexpectedAccumulator:
+            async def export_results(self, ctx: ExportContext):
+                raise AssertionError("disabled observability should not export")
+
+        manager._gpu_telemetry_accumulator = _UnexpectedAccumulator()
+        manager._server_metrics_accumulator = _UnexpectedAccumulator()
+
+        results = await RecordsManager._build_phase_profile_results(
+            manager, CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert results is not None
+        assert results[0].telemetry_results is None
+        assert results[0].server_metrics_results is None
+        assert results[0].telemetry_warnings == []
+        assert results[0].server_metrics_warnings == []
 
 
 class TestRecordsManagerTimeslice:
-    """Test cases for RecordsManager timeslice functionality."""
+    """ProfileResults stores accumulator-backed timeslices."""
 
-    @pytest.mark.asyncio
-    async def test_process_records_result_with_both_records_and_timeslice(self):
-        """Test that ProcessRecordsResult can contain both records and timeslice results."""
+    def _timeslices(self, metric_result: MetricResult) -> list[TimesliceResult]:
+        return [
+            TimesliceResult(
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+                metric_results={metric_result.tag: metric_result},
+            ),
+            TimesliceResult(
+                start_ns=2_000_000_000,
+                end_ns=3_000_000_000,
+                metric_results={metric_result.tag: metric_result},
+            ),
+        ]
 
+    def test_process_records_result_with_both_records_and_timeslices(self) -> None:
         metric_result = MetricResult(
             tag="request_latency",
             header="Request Latency",
@@ -239,30 +967,22 @@ class TestRecordsManagerTimeslice:
             count=10,
         )
 
-        timeslice_results = {
-            0: [metric_result],
-            1: [metric_result],
-        }
-
-        # Create a ProcessRecordsResult with both types of results
         result = ProcessRecordsResult(
             results=ProfileResults(
                 records=[metric_result, metric_result],
-                timeslice_metric_results=timeslice_results,
+                timeslices=self._timeslices(metric_result),
                 completed=2,
-                start_ns=1000000000,
-                end_ns=2000000000,
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
             )
         )
 
         assert result.results.records is not None
         assert len(result.results.records) == 2
-        assert result.results.timeslice_metric_results is not None
-        assert len(result.results.timeslice_metric_results) == 2
+        assert result.results.timeslices is not None
+        assert len(result.results.timeslices) == 2
 
-    @pytest.mark.asyncio
-    async def test_profile_results_serialization_with_timeslice(self):
-        """Test that ProfileResults with timeslice data can be serialized."""
+    def test_profile_results_serialization_with_timeslices(self) -> None:
         metric_result = MetricResult(
             tag="request_latency",
             header="Request Latency",
@@ -270,28 +990,20 @@ class TestRecordsManagerTimeslice:
             avg=100.0,
             count=10,
         )
-
-        timeslice_results = {
-            0: [metric_result],
-            1: [metric_result],
-        }
-
         profile_results = ProfileResults(
             records=[metric_result],
-            timeslice_metric_results=timeslice_results,
+            timeslices=self._timeslices(metric_result),
             completed=1,
-            start_ns=1000000000,
-            end_ns=2000000000,
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
         )
 
-        # Test that it can be converted to dict (for JSON serialization)
         result_dict = profile_results.model_dump()
 
         assert "records" in result_dict
-        assert "timeslice_metric_results" in result_dict
-        assert result_dict["timeslice_metric_results"] is not None
-        assert 0 in result_dict["timeslice_metric_results"]
-        assert 1 in result_dict["timeslice_metric_results"]
+        assert "timeslices" in result_dict
+        assert "timeslice_metric_results" not in result_dict
+        assert len(result_dict["timeslices"]) == 2
 
 
 def _create_credit_phase_stats() -> CreditPhaseStats:
@@ -316,46 +1028,90 @@ def _create_credit_phase_stats() -> CreditPhaseStats:
 
 def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager = RecordsManager.__new__(RecordsManager)
+    manager._dataset_configured_event = asyncio.Event()
+    manager._dataset_configured_event.set()
     manager._records_tracker = MagicMock()
     manager._error_tracker = MagicMock()
     manager._complete_credit_phases = set()
     manager._phase_branch_stats = {}
     manager._latest_branch_stats = None
-    manager._timing_results_processors = []
-    manager._send_timing_to_results_processors = AsyncMock()
-    manager._send_results_to_results_processors = AsyncMock()
+    manager._dispatch_record = AsyncMock(return_value=[])
     manager.info = MagicMock()
     manager.notice = MagicMock()
     manager.debug = MagicMock()
     manager.trace = MagicMock()
-    manager.exception = MagicMock()
     manager.is_enabled_for = MagicMock(return_value=False)
     manager._handle_all_records_received = AsyncMock()
+    manager._publish_processing_stats = AsyncMock()
+    manager._credits_complete_received = False
+    manager._all_records_received_phases = set()
+    manager._warned_missing_cache_reporting = False
+    manager._failed_request_threshold = None
+    manager._failed_request_thresholds = {}
+    manager._failed_request_grace_floors = {}
+    manager._failed_request_abort_triggered = False
+    manager._skipped_context_overflow_counts_by_phase = {
+        CreditPhase.WARMUP: 0,
+        CreditPhase.PROFILING: 0,
+    }
+    # Built via __new__, so TaskManagerMixin.__init__ never ran. The
+    # failed-request self-abort path calls execute_async, which needs `tasks`.
+    manager.tasks = set()
+    manager._cancel_finalize_task = None
+    manager._on_profile_cancel_command = AsyncMock()
     return manager
 
 
 def _metric_records_message(
     phase: CreditPhase = CreditPhase.PROFILING,
-) -> MetricRecordsMessage:
-    return MetricRecordsMessage(
+    phase_index: int | None = None,
+    profiling_index: int | None = None,
+) -> RecordsMessage:
+    metadata = MetricRecordMetadata(
+        session_num=17,
+        conversation_id="conv-2026-05-14-race",
+        turn_index=0,
+        request_start_ns=1_000_000_000,
+        request_end_ns=1_250_000_000,
+        worker_id="worker-a100-03",
+        record_processor_id="record-processor-rp-7f2a",
+        benchmark_phase=phase,
+        phase_index=phase_index,
+        profiling_index=profiling_index,
+    )
+    return RecordsMessage(
         service_id="record-processor-rp-7f2a",
-        metadata=MetricRecordMetadata(
-            session_num=17,
-            conversation_id="conv-2026-05-14-race",
-            turn_index=0,
-            request_start_ns=1_000_000_000,
-            request_end_ns=1_250_000_000,
-            worker_id="worker-a100-03",
-            record_processor_id="record-processor-rp-7f2a",
-            benchmark_phase=phase,
-        ),
-        results=[{"request_latency": 250_000_000}],
+        metadata=metadata,
+        records=[
+            MetricRecordsData(
+                metadata=metadata, metrics={"request_latency": 250_000_000}
+            )
+        ],
     )
 
 
 class TestRecordsManagerTimingDispatch:
     @pytest.mark.asyncio
-    async def test_on_credit_phase_start_forwards_timing_snapshot(self) -> None:
+    async def test_all_records_received_publishes_terminal_progress_once(self) -> None:
+        """A duplicate completion signal must not republish terminal progress."""
+        manager = _create_manager_for_timing_dispatch()
+        progress = MagicMock()
+        overall = MagicMock()
+        manager._records_tracker.create_overall_worker_stats.return_value = overall
+        manager._records_tracker.create_progress_stats_for_phase.return_value = [
+            progress
+        ]
+
+        await manager._handle_all_records_received_once(CreditPhase.PROFILING)
+        await manager._handle_all_records_received_once(CreditPhase.PROFILING)
+
+        manager._publish_processing_stats.assert_awaited_once_with(progress, overall)
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_credit_phase_start_dispatches_timing_snapshot(self) -> None:
         manager = _create_manager_for_timing_dispatch()
         stats = _create_credit_phase_stats()
         message = CreditPhaseStartMessage(
@@ -370,54 +1126,79 @@ class TestRecordsManagerTimingDispatch:
         await manager._on_credit_phase_start(message)
 
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._send_timing_to_results_processors.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
 
     @pytest.mark.asyncio
-    async def test_on_credit_phase_progress_forwards_timing_snapshot(self) -> None:
+    async def test_on_credit_phase_progress_dispatches_timing_snapshot(self) -> None:
         manager = _create_manager_for_timing_dispatch()
         stats = _create_credit_phase_stats()
-        message = CreditPhaseProgressMessage(service_id="timing-manager", stats=stats)
 
-        await manager._on_credit_phase_progress(message)
+        await manager._on_credit_phase_progress(
+            CreditPhaseProgressMessage(service_id="timing-manager", stats=stats)
+        )
 
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._send_timing_to_results_processors.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
 
     @pytest.mark.asyncio
-    async def test_on_credit_phase_sending_complete_forwards_timing_snapshot(
+    async def test_on_credit_phase_sending_complete_dispatches_timing_snapshot(
         self,
     ) -> None:
         manager = _create_manager_for_timing_dispatch()
         stats = _create_credit_phase_stats().model_copy(
             update={"final_requests_sent": 64}
         )
-        message = CreditPhaseSendingCompleteMessage(
-            service_id="timing-manager",
-            stats=stats,
+
+        await manager._on_credit_phase_sending_complete(
+            CreditPhaseSendingCompleteMessage(
+                service_id="timing-manager",
+                stats=stats,
+            )
         )
 
-        await manager._on_credit_phase_sending_complete(message)
-
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._send_timing_to_results_processors.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
 
     @pytest.mark.asyncio
-    async def test_on_credit_phase_complete_forwards_timing_snapshot(self) -> None:
+    async def test_on_credit_phase_complete_dispatches_timing_snapshot(self) -> None:
         manager = _create_manager_for_timing_dispatch()
         stats = _create_credit_phase_stats().model_copy(
             update={"final_requests_completed": 64}
         )
-        message = CreditPhaseCompleteMessage(service_id="timing-manager", stats=stats)
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
         manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
             total_records=64,
             final_requests_completed=64,
         )
 
-        await manager._on_credit_phase_complete(message)
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(service_id="timing-manager", stats=stats)
+        )
 
         manager._records_tracker.update_phase_info.assert_called_once_with(stats)
-        manager._send_timing_to_results_processors.assert_awaited_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
+
+    @pytest.mark.asyncio
+    async def test_on_credit_phase_complete_with_pending_final_count_does_not_raise(
+        self,
+    ) -> None:
+        manager = _create_manager_for_timing_dispatch()
+        stats = _create_credit_phase_stats().model_copy(
+            update={"final_requests_completed": None}
+        )
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = False
+        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
+            total_records=10,
+            final_requests_completed=None,
+        )
+
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(service_id="timing-manager", stats=stats)
+        )
+
+        manager._records_tracker.update_phase_info.assert_called_once_with(stats)
+        manager._dispatch_record.assert_awaited_once_with(stats, warn_if_unrouted=False)
+        manager._handle_all_records_received.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_on_metric_records_records_complete_before_phase_complete_defers_finalization(
@@ -430,9 +1211,9 @@ class TestRecordsManagerTimingDispatch:
             final_requests_completed=64,
         )
 
-        await manager._on_metric_records(_metric_records_message())
+        await manager._on_records(_metric_records_message())
 
-        manager._records_tracker.update_from_record_data.assert_called_once()
+        manager._records_tracker.update_from_request.assert_called_once()
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
         manager._handle_all_records_received.assert_not_awaited()
 
@@ -443,6 +1224,13 @@ class TestRecordsManagerTimingDispatch:
                     update={"final_requests_completed": 64}
                 ),
             )
+        )
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
         )
 
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
@@ -523,7 +1311,14 @@ class TestRecordsManagerTimingDispatch:
         manager._records_tracker.check_and_set_all_records_received_for_phase.reset_mock()
         manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
 
-        await manager._on_metric_records(_metric_records_message())
+        await manager._on_records(_metric_records_message())
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
 
         manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
             CreditPhase.PROFILING
@@ -565,28 +1360,28 @@ class TestRecordsManagerTimingDispatch:
             elif event == "credits_complete":
                 await manager._on_credits_complete(credits_complete)
             else:
-                await manager._on_metric_records(metric_record)
+                await manager._on_records(metric_record)
 
         manager._handle_all_records_received.assert_awaited_once_with(
             CreditPhase.PROFILING
         )
 
     @pytest.mark.asyncio
-    async def test_finalization_runs_when_final_record_arrives_during_phase_complete_timing_fanout(
+    async def test_finalization_runs_when_final_record_arrives_during_phase_complete_dispatch(
         self,
     ) -> None:
         manager = _create_manager_for_timing_dispatch()
         manager._records_tracker = RecordsTracker()
-        timing_fanout_started = asyncio.Event()
-        release_timing_fanout = asyncio.Event()
+        timing_dispatch_started = asyncio.Event()
+        release_timing_dispatch = asyncio.Event()
 
-        async def _block_timing_fanout(stats: CreditPhaseStats) -> None:
-            timing_fanout_started.set()
-            await release_timing_fanout.wait()
+        async def _block_timing_dispatch(record, **_kwargs) -> list[BaseException]:
+            if isinstance(record, CreditPhaseStats):
+                timing_dispatch_started.set()
+                await release_timing_dispatch.wait()
+            return []
 
-        manager._send_timing_to_results_processors = AsyncMock(
-            side_effect=_block_timing_fanout
-        )
+        manager._dispatch_record = AsyncMock(side_effect=_block_timing_dispatch)
         phase_complete_task = asyncio.create_task(
             manager._on_credit_phase_complete(
                 CreditPhaseCompleteMessage(
@@ -597,283 +1392,299 @@ class TestRecordsManagerTimingDispatch:
                 )
             )
         )
-        await timing_fanout_started.wait()
+        await timing_dispatch_started.wait()
 
-        await manager._on_metric_records(_metric_records_message())
+        await manager._on_records(_metric_records_message())
         manager._handle_all_records_received.assert_not_awaited()
 
-        release_timing_fanout.set()
+        release_timing_dispatch.set()
         await phase_complete_task
+
+        manager._handle_all_records_received.assert_not_awaited()
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
 
         manager._handle_all_records_received.assert_awaited_once_with(
             CreditPhase.PROFILING
         )
 
     @pytest.mark.asyncio
-    async def test_send_timing_to_results_processors_ignores_empty_processor_list(
+    async def test_dispatch_errors_still_update_tracker_and_converge_barrier(
         self,
     ) -> None:
-        manager = RecordsManager.__new__(RecordsManager)
-        manager._timing_results_processors = []
-        manager.exception = MagicMock()
+        manager = _create_manager_for_timing_dispatch()
+        manager._dispatch_record = AsyncMock(
+            return_value=[RuntimeError("handler boom")]
+        )
+        manager._complete_credit_phases = {CreditPhase.PROFILING}
+        manager._credits_complete_received = True
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
 
-        await manager._send_timing_to_results_processors(_create_credit_phase_stats())
+        await manager._on_records(_metric_records_message())
 
-        manager.exception.assert_not_called()
+        manager._records_tracker.update_from_request.assert_called_once()
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
 
     @pytest.mark.asyncio
-    async def test_send_timing_to_results_processors_swallows_best_effort_failures(
+    async def test_failed_request_abort_counts_indexed_named_phase_records(
         self,
     ) -> None:
-        """Best-effort timing processors (OTel streaming) log but do not re-raise."""
-        manager = RecordsManager.__new__(RecordsManager)
-        ok_processor = MagicMock()
-        ok_processor.process_result = AsyncMock(return_value=None)
-        ok_processor.is_best_effort = True
-        failing_processor = MagicMock()
-        failing_processor.process_result = AsyncMock(
-            side_effect=RuntimeError("timing failure")
+        """The abort ratio must read indexed records instead of an empty orphan."""
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker = RecordsTracker()
+        manager._failed_request_threshold = 0.2
+        manager._failed_request_grace_floor = 10
+        manager.service_id = "records-manager"
+        manager.warning = MagicMock()
+        manager.publish = AsyncMock()
+        manager.send_command_to_controller = AsyncMock()
+        request_error = ErrorDetails(
+            code=500,
+            type="ServerError",
+            message="inference failed",
         )
-        failing_processor.is_best_effort = True
-        manager._timing_results_processors = [ok_processor, failing_processor]
-        manager.exception = MagicMock()
 
-        await manager._send_timing_to_results_processors(_create_credit_phase_stats())
+        for _ in range(10):
+            message = _metric_records_message(phase_index=4)
+            message.error = request_error
+            await manager._on_records(message)
 
-        ok_processor.process_result.assert_awaited_once()
-        failing_processor.process_result.assert_awaited_once()
-        manager.exception.assert_called_once()
+        assert manager._failed_request_abort_triggered
+        manager.send_command_to_controller.assert_awaited_once()
+        assert (
+            manager.send_command_to_controller.await_args.args[0]
+            == CommandType.PROFILE_CANCEL
+        )
+        assert orjson.loads(
+            manager.send_command_to_controller.await_args.kwargs["payload"]
+        ) == {"origin_service_id": "records-manager"}
+        assert (
+            manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
+            == 10
+        )
+        assert (
+            manager._records_tracker.error_records_for_phase(CreditPhase.PROFILING)
+            == 10
+        )
+        phase_trackers = manager._records_tracker._phase_trackers
+        assert (CreditPhase.PROFILING, None) not in phase_trackers
 
     @pytest.mark.asyncio
-    async def test_send_timing_to_results_processors_reraises_non_best_effort_failures(
-        self,
-    ) -> None:
-        """Non-best-effort timing processors re-raise so bugs surface."""
-        manager = RecordsManager.__new__(RecordsManager)
-        failing_processor = MagicMock()
-        failing_processor.process_result = AsyncMock(
-            side_effect=RuntimeError("strict timing failure")
-        )
-        failing_processor.is_best_effort = False
-        manager._timing_results_processors = [failing_processor]
-        manager.exception = MagicMock()
+    async def test_failed_request_abort_scopes_ratio_to_current_phase(self) -> None:
+        """A fully-failed second phase must abort despite a clean first phase.
 
-        with pytest.raises(RuntimeError, match="strict timing failure"):
-            await manager._send_timing_to_results_processors(
-                _create_credit_phase_stats()
+        ``--failed-request-threshold`` is a per-phase field, so aggregating
+        across every profiling-phase instance lets a large healthy phase mask a
+        later phase that is failing every request.
+        """
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker = RecordsTracker()
+        manager._failed_request_threshold = 0.5
+        manager._failed_request_grace_floor = 10
+        manager.service_id = "records-manager"
+        manager.warning = MagicMock()
+        manager.publish = AsyncMock()
+        manager.send_command_to_controller = AsyncMock()
+        request_error = ErrorDetails(
+            code=500,
+            type="ServerError",
+            message="inference failed",
+        )
+
+        for _ in range(20):
+            await manager._on_records(
+                _metric_records_message(phase_index=0, profiling_index=0)
             )
+        assert not manager._failed_request_abort_triggered
 
-        failing_processor.process_result.assert_awaited_once()
-        manager.exception.assert_called_once()
+        for _ in range(12):
+            message = _metric_records_message(phase_index=1, profiling_index=1)
+            message.error = request_error
+            await manager._on_records(message)
 
-
-class TestRecordsManagerProcessorDispatch:
-    @pytest.mark.asyncio
-    async def test_send_metric_results_to_results_processors_ignores_empty_processor_list(
-        self,
-    ) -> None:
-        manager = RecordsManager.__new__(RecordsManager)
-        manager._metric_results_processors = []
-        manager.exception = MagicMock()
-
-        await manager._send_results_to_results_processors(
-            create_metric_record_data(1_000, 2_000)
+        assert manager._failed_request_abort_triggered
+        manager.send_command_to_controller.assert_awaited_once()
+        assert (
+            manager.send_command_to_controller.await_args.args[0]
+            == CommandType.PROFILE_CANCEL
         )
-
-        manager.exception.assert_not_called()
+        assert orjson.loads(
+            manager.send_command_to_controller.await_args.kwargs["payload"]
+        ) == {"origin_service_id": "records-manager"}
 
     @pytest.mark.asyncio
-    async def test_send_results_to_results_processors_reraises_non_streaming_failures(
-        self,
-    ) -> None:
-        manager = RecordsManager.__new__(RecordsManager)
-        ok_processor = MagicMock()
-        ok_processor.process_result = AsyncMock(return_value=None)
-        ok_processor.is_best_effort = False
-        failing_processor = MagicMock()
-        failing_processor.process_result = AsyncMock(
-            side_effect=RuntimeError("metric processing failed")
-        )
-        failing_processor.is_best_effort = False
-        manager._metric_results_processors = [ok_processor, failing_processor]
-        manager.exception = MagicMock()
-
-        with pytest.raises(RuntimeError, match="metric processing failed"):
-            await manager._send_results_to_results_processors(
-                create_metric_record_data(1_000, 2_000)
+    async def test_failed_request_threshold_read_from_owning_phase(self) -> None:
+        """Each profiling phase contributes its own threshold and grace floor."""
+        thresholds, grace_floors = (
+            records_manager_module.build_failed_request_abort_config(
+                [
+                    SimpleNamespace(failed_request_threshold=None, concurrency=64),
+                    SimpleNamespace(failed_request_threshold=0.5, concurrency=4),
+                ]
             )
-
-        ok_processor.process_result.assert_awaited_once()
-        failing_processor.process_result.assert_awaited_once()
-        manager.exception.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_send_results_to_results_processors_swallows_streaming_failures(
-        self,
-    ) -> None:
-        manager = RecordsManager.__new__(RecordsManager)
-        ok_processor = MagicMock()
-        ok_processor.process_result = AsyncMock(return_value=None)
-        ok_processor.is_best_effort = False
-        # Streaming processor with is_best_effort=True should be swallowed.
-        streaming_processor = MagicMock()
-        streaming_processor.process_result = AsyncMock(
-            side_effect=RuntimeError("otel fanout failure")
-        )
-        streaming_processor.is_best_effort = True
-        manager._metric_results_processors = [ok_processor, streaming_processor]
-        manager.exception = MagicMock()
-
-        # Should NOT raise — streaming processors are best-effort.
-        await manager._send_results_to_results_processors(
-            create_metric_record_data(1_000, 2_000)
         )
 
-        ok_processor.process_result.assert_awaited_once()
-        streaming_processor.process_result.assert_awaited_once()
-        manager.exception.assert_called_once()
+        assert thresholds == {0: None, 1: 0.5}
+        assert grace_floors == {0: 64, 1: 10}
 
     @pytest.mark.asyncio
-    async def test_flush_metric_results_processors_flushes_only_flushable(self) -> None:
-        manager = RecordsManager.__new__(RecordsManager)
-        manager.exception = MagicMock()
-        manager.debug = MagicMock()
-
-        class FakeFlushProtocol:
-            pass
-
-        class FakeFlushable(FakeFlushProtocol):
-            def __init__(self) -> None:
-                self.flush = AsyncMock(return_value=None)
-
-        flushable = FakeFlushable()
-        non_flushable = MagicMock()
-        manager._metric_results_processors = [flushable, non_flushable]
-
-        with patch(
-            "aiperf.records.records_manager.FlushableResultsProcessorProtocol",
-            FakeFlushProtocol,
-        ):
-            await manager._flush_metric_results_processors(force=True)
-
-        flushable.flush.assert_awaited_once_with(force=True)
-        manager.exception.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_flush_metric_results_processors_swallows_best_effort_failures(
+    async def test_trailing_named_warmup_defers_profiling_finalization(
         self,
     ) -> None:
-        """Best-effort flushable processors (telemetry) log but do not re-raise."""
-        manager = RecordsManager.__new__(RecordsManager)
-        manager.exception = MagicMock()
-        manager.debug = MagicMock()
-
-        class FakeFlushProtocol:
-            pass
-
-        class FakeBestEffortFlushable(FakeFlushProtocol):
-            is_best_effort: bool = True
-
-            def __init__(self) -> None:
-                self.flush = AsyncMock(side_effect=RuntimeError("otel flush failed"))
-
-        flushable = FakeBestEffortFlushable()
-        manager._metric_results_processors = [flushable]
-
-        with patch(
-            "aiperf.records.records_manager.FlushableResultsProcessorProtocol",
-            FakeFlushProtocol,
-        ):
-            # Should NOT raise — best-effort contract.
-            await manager._flush_metric_results_processors(force=True)
-
-        flushable.flush.assert_awaited_once_with(force=True)
-        manager.exception.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_flush_metric_results_processors_reraises_non_best_effort_failures(
-        self,
-    ) -> None:
-        """Non-best-effort flushable processors re-raise to surface data-pipeline bugs."""
-        manager = RecordsManager.__new__(RecordsManager)
-        manager.exception = MagicMock()
-        manager.debug = MagicMock()
-
-        class FakeFlushProtocol:
-            pass
-
-        class FakeStrictFlushable(FakeFlushProtocol):
-            is_best_effort: bool = False
-
-            def __init__(self) -> None:
-                self.flush = AsyncMock(
-                    side_effect=RuntimeError("pipeline flush failed")
-                )
-
-        flushable = FakeStrictFlushable()
-        manager._metric_results_processors = [flushable]
-
-        with (
-            patch(
-                "aiperf.records.records_manager.FlushableResultsProcessorProtocol",
-                FakeFlushProtocol,
+        """A ``profiling -> cooldown(warmup)`` run finalizes only after credits complete."""
+        manager = _create_manager_for_timing_dispatch()
+        manager._records_tracker = RecordsTracker()
+        profiling_complete = CreditPhaseCompleteMessage(
+            service_id="timing-manager",
+            stats=_create_credit_phase_stats().model_copy(
+                update={
+                    "phase_index": 0,
+                    "profiling_index": 0,
+                    "phase_name": "measured-load",
+                    "phase_kind": "profiling",
+                    "final_requests_completed": 1,
+                }
             ),
-            pytest.raises(RuntimeError, match="pipeline flush failed"),
-        ):
-            await manager._flush_metric_results_processors(force=True)
+        )
+        cooldown_complete = CreditPhaseCompleteMessage(
+            service_id="timing-manager",
+            stats=_create_credit_phase_stats().model_copy(
+                update={
+                    "phase": CreditPhase.WARMUP,
+                    "phase_index": 1,
+                    "profiling_index": None,
+                    "phase_name": "cooldown",
+                    "phase_kind": "warmup",
+                    "final_requests_completed": 1,
+                }
+            ),
+        )
 
-        flushable.flush.assert_awaited_once_with(force=True)
-        manager.exception.assert_called_once()
+        await manager._on_credit_phase_complete(profiling_complete)
+        await manager._on_records(_metric_records_message(phase_index=0))
 
+        finalized_phases = [
+            awaited.args[0]
+            for awaited in manager._handle_all_records_received.await_args_list
+        ]
+        assert CreditPhase.PROFILING not in finalized_phases
 
-class TestRecordsManagerEfficiencyMetricsSnapshot:
-    """Pin the invariant that `completed` counts request-derived records only.
+        await manager._on_credit_phase_complete(cooldown_complete)
+        await manager._on_records(
+            _metric_records_message(CreditPhase.WARMUP, phase_index=1)
+        )
 
-    `_process_results` snapshots `len(records_results)` BEFORE extending it
-    with `compute_efficiency_metrics` output. If the snapshot is moved or
-    the extend is reordered, `completed` would silently bump by the number
-    of derived aggregates emitted (currently up to 3: total_gpu_power,
-    total_gpu_energy, output_tokens_per_joule).
-    """
+        finalized_phases = [
+            awaited.args[0]
+            for awaited in manager._handle_all_records_received.await_args_list
+        ]
+        assert CreditPhase.PROFILING not in finalized_phases
+
+        await manager._on_credits_complete(
+            CreditsCompleteMessage(service_id="timing-manager")
+        )
+
+        finalized_phases = [
+            awaited.args[0]
+            for awaited in manager._handle_all_records_received.await_args_list
+        ]
+        assert finalized_phases[-1] == CreditPhase.PROFILING
+        assert finalized_phases.count(CreditPhase.PROFILING) == 1
 
     @pytest.mark.asyncio
-    async def test_completed_excludes_efficiency_metrics(self) -> None:
+    async def test_on_records_defers_profiling_finalization_until_credits_complete(
+        self,
+    ) -> None:
+        """Profiling results cannot finalize before the run-level terminal signal."""
+        manager = _create_manager_for_timing_dispatch()
+        manager._complete_credit_phases = {CreditPhase.PROFILING}
+        manager._credits_complete_received = False
+        manager._records_tracker.check_and_set_all_records_received_for_phase.return_value = True
+
+        await manager._on_records(_metric_records_message())
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_not_called()
+        manager._handle_all_records_received.assert_not_awaited()
+
+        manager._credits_complete_received = True
+        await manager._on_records(_metric_records_message())
+
+        manager._records_tracker.check_and_set_all_records_received_for_phase.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._handle_all_records_received.assert_awaited_once_with(
+            CreditPhase.PROFILING
+        )
+
+
+class TestRecordsManagerAnalyzerMetrics:
+    """Pin the invariant that `completed` counts request-derived records only,
+    and that analyzer-injected metrics are merged after the snapshot."""
+
+    @pytest.mark.asyncio
+    async def test_completed_excludes_analyzer_metrics(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)
 
         manager.debug = MagicMock()
         manager.info = MagicMock()
         manager.error = MagicMock()
         manager.exception = MagicMock()
-        manager.is_enabled_for = MagicMock(return_value=False)
         manager.service_id = "records-manager-test"
         manager._latest_branch_stats = None
-        manager._flush_metric_results_processors = AsyncMock()
+        manager._incomplete_reason = None
         manager.publish = AsyncMock()
+        manager._skipped_context_overflow_counts_by_phase = {
+            CreditPhase.WARMUP: 0,
+            CreditPhase.PROFILING: 0,
+        }
 
         manager.run = MagicMock()
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
+        manager.run.cfg.network_latency.enabled = False
 
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
             MetricResult(tag="output_token_count", header="h", unit="tokens", avg=2.0),
         ]
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=request_records)
-        manager._metric_results_processors = [processor]
+        metric_accumulator = MagicMock()
+        metric_accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(
+                results={r.tag: r for r in request_records},
+            )
+        )
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
+        manager._metric_record_accumulators = [metric_accumulator]
+        manager._stream_exporters = {}
+        manager._gpu_telemetry_accumulator = None
+        manager._server_metrics_accumulator = None
 
-        efficiency_metrics = [
+        # An analyzer contributes derived aggregates that must NOT inflate
+        # `completed` (which counts request-derived records only).
+        analyzer_metrics = [
             MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
             MetricResult(tag="total_gpu_energy", header="h", unit="J", avg=1000.0),
             MetricResult(
                 tag="output_tokens_per_joule", header="h", unit="tokens/J", avg=0.002
             ),
         ]
-        accumulator = MagicMock()
-        accumulator.compute_efficiency_metrics = MagicMock(
-            return_value=efficiency_metrics
-        )
-        manager._gpu_telemetry_accumulator = accumulator
+        stub_analyzer = MagicMock()
+        stub_analyzer.analyze = AsyncMock(return_value=analyzer_metrics)
+        manager._analyzers = [
+            LoadedAnalyzer(
+                analyzer=stub_analyzer,
+                required_accumulators=[],
+                required_summaries=[],
+            )
+        ]
+        manager._run_analyzers = RecordsManager._run_analyzers.__get__(manager)
 
         manager._records_tracker = MagicMock()
         manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
@@ -885,14 +1696,17 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
         manager._error_tracker = MagicMock()
         manager._error_tracker.get_error_summary_for_phase.return_value = []
 
+        manager._process_results_lock = asyncio.Lock()
+        manager._processed_results = {}
+        manager._finalize_record_processor_artifacts = AsyncMock()
+        manager._await_telemetry_ingest_complete = AsyncMock(return_value=[])
+
         result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
 
-        assert result.results.completed == len(request_records), (
-            "completed must reflect request-derived records only, not derived aggregates"
-        )
+        assert result.results.completed == len(request_records)
         assert len(result.results.records) == len(request_records) + len(
-            efficiency_metrics
-        ), "records should include both request-derived and efficiency aggregates"
+            analyzer_metrics
+        )
         assert {r.tag for r in result.results.records} == {
             "request_latency",
             "output_token_count",
@@ -900,155 +1714,178 @@ class TestRecordsManagerEfficiencyMetricsSnapshot:
             "total_gpu_energy",
             "output_tokens_per_joule",
         }
+        stub_analyzer.analyze.assert_awaited_once()
+        manager._finalize_record_processor_artifacts.assert_awaited_once()
 
 
-class TestRecordsManagerEfficiencyMetricsDegeneratePhase:
-    """Pin the degenerate "no records flowed" guard around the efficiency block.
-
-    When phase_stats.start_ns or requests_end_ns is None (the phase has no
-    record-derived window), constructing a TimeRangeFilter via two
-    consecutive time.time_ns() fallbacks would yield an effectively
-    zero-width window. Power (a gauge) would then either emit a misleading
-    0.0W result or be silently dropped depending on telemetry sample jitter.
-    The guard must skip the efficiency-metrics block entirely and log a
-    warning naming the phase.
-    """
-
+class TestRecordsManagerArtifactFinalization:
     @pytest.mark.asyncio
-    async def test_none_phase_window_skips_efficiency_metrics_with_warning(
-        self,
-    ) -> None:
+    async def test_profile_cancel_waits_for_artifact_barrier(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)
-
+        manager.service_id = "records-manager-test"
+        manager.warning = MagicMock()
         manager.debug = MagicMock()
         manager.info = MagicMock()
-        manager.warning = MagicMock()
-        manager.error = MagicMock()
-        manager.exception = MagicMock()
-        manager.is_enabled_for = MagicMock(return_value=False)
-        manager.service_id = "records-manager-test"
-        manager._latest_branch_stats = None
-        manager._flush_metric_results_processors = AsyncMock()
-        manager.publish = AsyncMock()
-
-        manager.run = MagicMock()
-        manager.run.cfg.gpu_telemetry_disabled = True
-        manager.run.cfg.server_metrics_disabled = True
-
-        request_records = [
-            MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
-        ]
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=request_records)
-        manager._metric_results_processors = [processor]
-
-        accumulator = MagicMock()
-        accumulator.compute_efficiency_metrics = MagicMock(
-            return_value=[
-                MetricResult(tag="total_gpu_power", header="h", unit="W", avg=0.0)
-            ]
-        )
-        manager._gpu_telemetry_accumulator = accumulator
-
         manager._records_tracker = MagicMock()
-        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
-            start_ns=None,
-            requests_end_ns=None,
-            success_records=0,
-            error_records=0,
+        manager.run = SimpleNamespace(
+            cfg=SimpleNamespace(runtime=SimpleNamespace(service_run_type="kubernetes"))
         )
-        manager._error_tracker = MagicMock()
-        manager._error_tracker.get_error_summary_for_phase.return_value = []
+        manager._process_results_lock = asyncio.Lock()
+        manager._processed_results = {}
+        manager._finalize_record_processor_artifacts = AsyncMock(
+            side_effect=RuntimeError("artifact barrier failed")
+        )
 
-        result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
+        with pytest.raises(RuntimeError, match="artifact barrier failed"):
+            await manager._on_profile_cancel_command(
+                Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
+            )
 
-        accumulator.compute_efficiency_metrics.assert_not_called()
-        manager.warning.assert_called_once()
-        warning_msg = manager.warning.call_args[0][0]
-        assert "Skipping efficiency metrics" in warning_msg
-        assert "start_ns=None" in warning_msg
-        assert "requests_end_ns=None" in warning_msg
+        manager._records_tracker.mark_phase_cancelled.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        manager._finalize_record_processor_artifacts.assert_awaited_once()
 
-        assert {r.tag for r in result.results.records} == {"request_latency"}
+
+class TestMidRunCacheReportingHint:
+    """MetricsAccumulator warns once when usage lacks prompt-cache read tokens."""
+
+    def _accumulator(self) -> MetricsAccumulator:
+        accumulator = MetricsAccumulator.__new__(MetricsAccumulator)
+        accumulator.warning = MagicMock()
+        accumulator._warned_missing_cache_reporting = False
+        return accumulator
+
+    def test_warns_once_on_first_qualifying_record(self) -> None:
+        accumulator = self._accumulator()
+        record_data = SimpleNamespace(metrics={"usage_prompt_tokens": 1024})
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator.warning.assert_called_once_with(CACHE_REPORTING_HINT)
+
+    def test_no_warning_when_cache_reported(self) -> None:
+        accumulator = self._accumulator()
+        record_data = SimpleNamespace(
+            metrics={"usage_prompt_tokens": 1024, "usage_prompt_cache_read_tokens": 0}
+        )
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator.warning.assert_not_called()
+
+    def test_no_warning_when_usage_absent(self) -> None:
+        accumulator = self._accumulator()
+        record_data = SimpleNamespace(metrics={"output_sequence_length": 32})
+        accumulator._maybe_hint_missing_cache_reporting(record_data)
+        accumulator.warning.assert_not_called()
+
+
+class TestRealtimeUpdateGate:
+    def _manager(self) -> RecordsManager:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._previous_realtime_records = None
+        manager._previous_realtime_server_snapshot = None
+        return manager
+
+    def test_first_tick_is_an_update(self) -> None:
+        m = self._manager()
+        assert m._has_realtime_update(0, {}) is True
+
+    def test_record_count_change_triggers_update(self) -> None:
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        assert m._has_realtime_update(11, {"kv_cache_usage_pct": 50.0}) is True
+
+    def test_server_metric_change_triggers_update_even_with_static_records(
+        self,
+    ) -> None:
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        assert m._has_realtime_update(10, {"kv_cache_usage_pct": 72.0}) is True
+
+    def test_no_change_skips_update(self) -> None:
+        m = self._manager()
+        m._previous_realtime_records = 10
+        m._previous_realtime_server_snapshot = {"kv_cache_usage_pct": 50.0}
+        assert m._has_realtime_update(10, {"kv_cache_usage_pct": 50.0}) is False
+
+
+class _DatasetAwareHandler:
+    def __init__(self) -> None:
+        self.metadata = None
+
+    def on_dataset_configured(self, metadata) -> None:
+        self.metadata = metadata
+
+
+class TestRecordsManagerDatasetConfiguredBarrier:
+    @pytest.mark.asyncio
+    async def test_on_dataset_configured_sets_event_and_notifies_handlers(self) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._dataset_configured_event = asyncio.Event()
+        acc = _DatasetAwareHandler()
+        exp = _DatasetAwareHandler()
+        manager._accumulators = {AccumulatorType.METRIC_RESULTS: acc}
+        manager._stream_exporters = {MagicMock(): exp}
+        message = MagicMock()
+        message.metadata = {"task": "accuracy"}
+
+        await manager._on_dataset_configured(message)
+
+        assert manager._dataset_configured_event.is_set()
+        assert acc.metadata == message.metadata
+        assert exp.metadata == message.metadata
 
     @pytest.mark.asyncio
-    async def test_partial_none_phase_window_also_skips(self) -> None:
-        """start_ns set but requests_end_ns None must also skip (and vice versa)."""
+    async def test_on_metric_records_waits_for_dataset_configured(self) -> None:
         manager = RecordsManager.__new__(RecordsManager)
-
-        manager.debug = MagicMock()
-        manager.info = MagicMock()
-        manager.warning = MagicMock()
-        manager.error = MagicMock()
-        manager.exception = MagicMock()
+        manager._dataset_configured_event = asyncio.Event()
         manager.is_enabled_for = MagicMock(return_value=False)
-        manager.service_id = "records-manager-test"
-        manager._latest_branch_stats = None
-        manager._flush_metric_results_processors = AsyncMock()
-        manager.publish = AsyncMock()
-
-        manager.run = MagicMock()
-        manager.run.cfg.gpu_telemetry_disabled = True
-        manager.run.cfg.server_metrics_disabled = True
-
-        processor = MagicMock()
-        processor.summarize = AsyncMock(return_value=[])
-        manager._metric_results_processors = [processor]
-
-        accumulator = MagicMock()
-        manager._gpu_telemetry_accumulator = accumulator
-
         manager._records_tracker = MagicMock()
-        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
-            start_ns=1_000_000_000,
-            requests_end_ns=None,
-            success_records=0,
-            error_records=0,
-        )
         manager._error_tracker = MagicMock()
-        manager._error_tracker.get_error_summary_for_phase.return_value = []
-
-        await manager._process_results(CreditPhase.PROFILING, cancelled=False)
-
-        accumulator.compute_efficiency_metrics.assert_not_called()
-        manager.warning.assert_called_once()
-
-
-class TestRecordsManagerInitialization:
-    def test_otel_post_processor_disabled_logs_info(
-        self,
-        benchmark_run,
-    ) -> None:
-        def _fake_pull_client_init(self, run, **kwargs) -> None:
-            self.run = run
-            self.cfg = run.cfg
-            self.service_id = kwargs.get("service_id") or "records_manager"
-            self.pub_client = MagicMock()
-            self.attach_child_lifecycle = MagicMock()
-            self.debug = MagicMock()
-            self.info = MagicMock()
-            self.error = MagicMock()
-            self.exception = MagicMock()
-
-        class DisabledProcessor:
-            def __init__(self, **kwargs) -> None:
-                raise PostProcessorDisabled("disabled for test")
-
-        with (
-            patch(
-                "aiperf.records.records_manager.PullClientMixin.__init__",
-                new=_fake_pull_client_init,
-            ),
-            mock_plugin(
-                "results_processor",
-                "otel_metrics_streamer",
-                DisabledProcessor,
-            ),
-        ):
-            manager = RecordsManager(run=benchmark_run)
-
-        info_messages = [args[0] for args, _ in manager.info.call_args_list]
-        assert any(
-            "OTel metrics streamer is disabled and will not be used" in message
-            for message in info_messages
+        manager._complete_credit_phases = set()
+        manager._dispatch_record = AsyncMock(
+            side_effect=RuntimeError("REACHED_PROCESSING")
         )
+        manager._warned_missing_cache_reporting = False
+        message = _metric_records_message()
+
+        task = asyncio.create_task(manager._on_records(message))
+        for _ in range(3):
+            await asyncio.sleep(0)
+
+        assert not task.done()
+        manager._dispatch_record.assert_not_called()
+
+        manager._dataset_configured_event.set()
+        with pytest.raises(RuntimeError, match="REACHED_PROCESSING"):
+            await asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_on_metric_records_fails_run_on_config_timeout(
+        self, monkeypatch
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.service_id = "rm-test"
+        manager._dataset_configured_event = asyncio.Event()
+        manager.is_enabled_for = MagicMock(return_value=False)
+        manager.publish = AsyncMock()
+        manager._kill = AsyncMock()
+        manager._dispatch_record = AsyncMock()
+        message = _metric_records_message()
+
+        async def _raise_timeout(coro, *args, **kwargs):
+            coro.close()
+            raise TimeoutError
+
+        monkeypatch.setattr(
+            "aiperf.records.dataset_gate.asyncio.wait_for", _raise_timeout
+        )
+
+        await manager._on_records(message)
+
+        manager._kill.assert_awaited_once()
+        published = manager.publish.await_args.args[0]
+        assert isinstance(published, BaseServiceErrorMessage)
+        # ... and the record is not processed.
+        manager._dispatch_record.assert_not_called()

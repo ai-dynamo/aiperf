@@ -108,6 +108,11 @@ class _LightevalBaseGrader(BaseGrader):
 
     _CORRECTNESS_THRESHOLD = 0.5
 
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if lighteval is missing (see ``BaseGrader.check_available``)."""
+        _require_lighteval()
+
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run=run, **kwargs)
         _require_lighteval()
@@ -159,7 +164,7 @@ class _LightevalBaseGrader(BaseGrader):
             doc = self._build_doc(ground_truth)
             response = ModelResponse(text=[response_text])
             return float(self._metric.compute(doc, response))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _log.debug("lighteval grader exception: %s", exc, exc_info=True)
             return None
 

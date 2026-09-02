@@ -32,10 +32,9 @@ Example Usage:
 from __future__ import annotations
 
 import difflib
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
-from typing_extensions import Self
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.accuracy import (
@@ -70,6 +69,9 @@ from aiperf.config.mlflow import (
 from aiperf.config.models import (
     ModelsAdvanced,
 )
+from aiperf.config.network_latency import (
+    NetworkLatencyConfig,
+)
 from aiperf.config.otel import (
     OTelConfig,
 )
@@ -91,6 +93,9 @@ from aiperf.config.sweep.multi_run import (
 )
 from aiperf.config.tokenizer import (
     TokenizerConfig,
+)
+from aiperf.config.wandb import (
+    WandbConfig,
 )
 
 _logger = AIPerfLogger(__name__)
@@ -315,6 +320,16 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
+    network_latency: Annotated[
+        NetworkLatencyConfig,
+        Field(
+            default_factory=NetworkLatencyConfig,
+            description="Network latency calibration configuration. Probes the endpoint "
+            "RTT during profiling and subtracts the mean from latency metrics, emitted as "
+            "separate network_adjusted_* metrics. Disabled by default.",
+        ),
+    ]
+
     otel: Annotated[
         OTelConfig,
         Field(
@@ -328,6 +343,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Field(
             default_factory=MLflowConfig,
             description="MLflow tracking and artifact-upload configuration.",
+        ),
+    ]
+
+    wandb: Annotated[
+        WandbConfig,
+        Field(
+            default_factory=WandbConfig,
+            description="Weights & Biases run-upload configuration.",
         ),
     ]
 
@@ -362,6 +385,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             default=None,
             description="Accuracy benchmarking configuration. "
             "When set, enables accuracy evaluation alongside performance profiling.",
+        ),
+    ]
+
+    scenario: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Plain data here; the lock is "
+            "applied by the ScenarioResolver step in the pre-bootstrap resolver "
+            "chain (auto-fills defaults, validates, raises ScenarioLockError on "
+            "conflict). Distinct from the sweep ``scenarios`` strategy "
+            "(SweepConfig), which expands hand-picked named runs -- this field "
+            "is a single invariant LOCK, not a sweep.",
+        ),
+    ]
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the resolved scenario outcome. No-op "
+            "without ``scenario``. Plain data; consumed by the ScenarioResolver.",
         ),
     ]
 
@@ -414,24 +461,26 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
     @model_validator(mode="after")
     def validate_phase_names_unique(self) -> Self:
-        """Reject duplicate phase names — they must be unique within the list."""
-        seen: set[str] = set()
+        """Reject duplicate phase names, case-insensitively, within the list."""
+        seen: dict[str, str] = {}
         for phase in self.phases:
-            if phase.name in seen:
+            key = phase.name.lower()
+            if key in seen:
                 raise ValueError(
-                    f"duplicate phase name '{phase.name}' — names must be unique. "
+                    f"duplicate phase name '{phase.name}' conflicts with "
+                    f"'{seen[key]}' — names must be unique case-insensitively. "
                     f"Found names: {[p.name for p in self.phases]}"
                 )
-            seen.add(phase.name)
+            seen[key] = phase.name
         return self
 
     @model_validator(mode="after")
     def validate_profiling_phase_required(self) -> Self:
-        """Require at least one 'profiling' phase — warmup alone is not a benchmark."""
-        if not any(p.name == "profiling" for p in self.phases):
+        """Require at least one profiling-kind phase — warmup alone is not a benchmark."""
+        if not any(p.kind == "profiling" for p in self.phases):
             raise ValueError(
                 "a 'profiling' phase is required; "
-                f"got phases: {[p.name for p in self.phases]}"
+                f"got phases: {[(p.name, p.kind) for p in self.phases]}"
             )
         return self
 
@@ -445,6 +494,38 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "subsequent phase configs."
             )
         return self
+
+    @model_validator(mode="after")
+    def reject_tokenizer_options_on_non_tokenizing_endpoint(self) -> Self:
+        """Reject explicit tokenizer options on endpoints that never tokenize.
+
+        Endpoints that neither tokenize input nor produce token counts (image
+        retrieval, rankings, embeddings) skip tokenizer resolution entirely, so
+        a ``tokenizer:`` block there is silently discarded. Failing loudly turns
+        a misplaced or typo'd option into an actionable error instead of a
+        benchmark that quietly ignored it.
+
+        ``resolved_names`` is excluded because the CLI writes it back after
+        alias resolution; it is never user input.
+        """
+        from aiperf.plugin import plugins
+
+        if self.tokenizer is None:
+            return self
+        explicit = self.tokenizer.model_fields_set - {"resolved_names"}
+        if not explicit:
+            return self
+
+        meta = plugins.get_endpoint_metadata(self.endpoint.type)
+        if meta.produces_tokens or meta.tokenizes_input:
+            return self
+
+        raise ValueError(
+            f"Tokenizer options cannot be used with endpoint type "
+            f"'{self.endpoint.type}': it neither tokenizes input nor produces "
+            f"token counts, so {sorted(explicit)} would be ignored. Remove the "
+            f"tokenizer configuration."
+        )
 
     @model_validator(mode="after")
     def default_tokenizer_when_unset(self) -> Self:
@@ -490,6 +571,231 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             errors = check_phase_dataset_compatibility(phase, ds, phase.name, ds.name)
             if errors:
                 raise ValueError(errors[0])
+        return self
+
+    @model_validator(mode="after")
+    def validate_cache_bust_compatibility(self) -> Self:
+        """Refuse cache-bust when endpoint metadata does not support it.
+
+        Cache-bust markers are minted by every timing strategy and injected by
+        the worker into structured endpoint turns. Endpoint plugins opt in via
+        ``supports_cache_bust`` metadata; timing mode is not a restriction.
+        """
+        from aiperf.common.enums import CacheBustTarget
+        from aiperf.plugin import plugins
+
+        if self.get_cache_bust_target() == CacheBustTarget.NONE:
+            return self
+
+        endpoint_metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        if not endpoint_metadata.supports_cache_bust:
+            raise ValueError(
+                "cache-bust is not supported by endpoint "
+                f"{self.endpoint.type}; select an endpoint whose plugin metadata "
+                "sets supports_cache_bust=true"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_system_prompt_compatibility(self) -> Self:
+        """Reject a verbatim system prompt that would conflict or be silently dropped.
+
+        A custom system prompt is the content-valued replacement for
+        ``prefix_prompts.shared_system_length``: both fill
+        ``Conversation.system_message``. It therefore inherits that field's
+        exclusivity with the prefix pool rather than defining its own rule.
+
+        Endpoints opt into receiving a system message via the
+        ``consumes_system_message`` plugin metadata flag. On the others the text
+        would never reach the wire, so the benchmark would silently measure
+        something other than what was asked for.
+        """
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        if self.get_system_prompt() is None:
+            return self
+
+        prefix_prompts = getattr(self.get_default_dataset(), "prefix_prompts", None)
+        if prefix_prompts is not None:
+            if prefix_prompts.shared_system_length is not None:
+                raise ValueError(
+                    "--system-prompt/--system-prompt-file and "
+                    "--shared-system-prompt-length are mutually exclusive: both fill "
+                    "the system message. Use the first for verbatim text, the second "
+                    "for synthetic filler of a target token length."
+                )
+            if prefix_prompts.pool_size or prefix_prompts.length:
+                raise ValueError(
+                    "--system-prompt/--system-prompt-file and "
+                    "--num-prefix-prompts/--prefix-prompt-length are mutually "
+                    "exclusive, matching --shared-system-prompt-length, which fills "
+                    "the same system-message slot."
+                )
+
+        endpoint_metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        if not endpoint_metadata.consumes_system_message:
+            supported = ", ".join(
+                sorted(
+                    entry.name
+                    for entry, _ in plugins.iter_all(PluginType.ENDPOINT)
+                    if plugins.get_endpoint_metadata(entry.name).consumes_system_message
+                )
+            )
+            raise ValueError(
+                f"--system-prompt/--system-prompt-file is not supported by endpoint "
+                f"type '{self.endpoint.type}' (no system role), so the text would "
+                f"never reach the wire. Supported endpoint types: {supported}."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_warmup_isolation_not_agentic_replay(self) -> Self:
+        """Reject WARMUP_ISOLATION_* targets when timing mode resolves to AGENTIC_REPLAY.
+
+        ``_inject_marker_at_first_user`` mutates Turn objects in-place inside
+        ``session.turn_list``. In agentic replay the same session object spans
+        the WARMUP→PROFILING boundary (the session is never evicted at phase
+        transition), so a Turn mutated with ``[warmup]`` during WARMUP carries
+        that mutation into PROFILING — even though the PROFILING credit has
+        ``cache_bust_marker=None`` and ``_apply_cache_bust`` returns early.
+
+        Resolution logic mirrors ``validate_agentic_cache_warmup``: resolve the
+        scenario's declared timing_mode when a scenario is present (scenario
+        stamps phases post-construction); otherwise inspect the phases directly.
+        """
+        from aiperf.common.enums import CacheBustTarget
+        from aiperf.plugin.enums import TimingMode
+        from aiperf.timing.config import _is_agentic_replay
+
+        target = self.get_cache_bust_target()
+        _WARMUP_ISOLATION = (
+            CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+            CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+        )
+        if target not in _WARMUP_ISOLATION:
+            return self
+
+        profiling_phases = self.get_profiling_phases()
+        is_agentic = False
+        if self.scenario is not None:
+            from aiperf.common.scenario.registry import get_scenario
+
+            is_agentic = (
+                get_scenario(self.scenario).timing_mode == TimingMode.AGENTIC_REPLAY
+            )
+        else:
+            is_agentic = _is_agentic_replay(profiling_phases)
+
+        if is_agentic:
+            raise ValueError(
+                "cache_bust targets warmup_isolation_system and "
+                "warmup_isolation_first_turn are not compatible with agentic_replay "
+                "timing mode: Turn objects mutated during warmup persist into profiling "
+                "sessions. Use cache_bust=none for agentic_replay workloads or one of "
+                "the RID-based targets (system_prefix, first_turn_prefix, etc.) for "
+                "per-trajectory isolation."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_warmup_isolation_system_requires_shared_system_prompt(self) -> Self:
+        """Reject warmup_isolation_system when no system message is statically present.
+
+        ``warmup_isolation_system`` injects ``[warmup]`` into the system message slot
+        during warmup. When no system message exists in the dataset config the marker
+        silently falls through to the user turn, making it indistinguishable from
+        ``warmup_isolation_first_turn``.
+
+        A verbatim ``--system-prompt``/``--system-prompt-file`` satisfies this
+        requirement exactly as ``shared_system_length`` does: both statically
+        guarantee a system message, so the marker has a real slot to land in.
+
+        This check is scoped to synthetic datasets where system-message presence is
+        statically known. File and trace datasets may carry system messages inside
+        their content, which cannot be inspected at config time.
+        """
+        from aiperf.common.enums import CacheBustTarget, DatasetType
+
+        if self.get_cache_bust_target() != CacheBustTarget.WARMUP_ISOLATION_SYSTEM:
+            return self
+
+        dataset = self.get_default_dataset()
+        if dataset.type != DatasetType.SYNTHETIC:
+            return self
+
+        if self.get_system_prompt() is not None:
+            return self
+
+        prefix_prompts = getattr(dataset, "prefix_prompts", None)
+        has_shared_system = (
+            prefix_prompts is not None
+            and getattr(prefix_prompts, "shared_system_length", None) is not None
+        )
+        if not has_shared_system:
+            raise ValueError(
+                "cache_bust=warmup_isolation_system requires a shared system prompt, "
+                "but no shared_system_length or verbatim system prompt is configured "
+                "on the synthetic dataset. "
+                "The marker would silently fall through to the user turn, making it "
+                "indistinguishable from warmup_isolation_first_turn. "
+                "Either set prefix_prompts.shared_system_length (--shared-system-prompt-length), "
+                "pass --system-prompt/--system-prompt-file, "
+                "or switch to cache_bust=warmup_isolation_first_turn."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_agentic_cache_warmup(self) -> Self:
+        """Restrict accelerated cache warmup to the agentic_replay timing mode.
+
+        ``--agentic-cache-warmup-duration`` is consumed solely by
+        ``aiperf.timing.config._build_agentic_warmup_config``, which only runs
+        when the profiling phases resolve to AGENTIC_REPLAY. On any other run
+        the value is silently dropped, so an unguarded flag is a no-op the user
+        cannot see. This guard raises instead.
+
+        A scenario governs the timing_mode: ``apply_scenario`` stamps
+        ``spec.timing_mode`` onto the profiling phases POST-construction, so the
+        phase ``timing_mode`` is not yet set here. Rather than defer (which would
+        leave the flag unchecked -- ``apply_scenario`` never re-runs this gate),
+        we resolve the scenario's declared ``timing_mode`` from its
+        :class:`ScenarioSpec` and reject when it is not AGENTIC_REPLAY. When no
+        scenario is present the phases are final, so we resolve them with the
+        same ``_is_agentic_replay``/``_phase_timing_mode`` logic the timing
+        builder uses (explicit ``timing_mode`` override, else the phase-type
+        mapping) and reject the flag when nothing resolves to AGENTIC_REPLAY.
+        """
+        from aiperf.plugin.enums import TimingMode
+        from aiperf.timing.config import _is_agentic_replay
+
+        profiling_phases = self.get_profiling_phases()
+        if not any(
+            getattr(phase, "agentic_cache_warmup_duration", None) is not None
+            for phase in profiling_phases
+        ):
+            return self
+
+        if self.scenario is not None:
+            from aiperf.common.scenario.registry import get_scenario
+
+            scenario_timing_mode = get_scenario(self.scenario).timing_mode
+            if scenario_timing_mode != TimingMode.AGENTIC_REPLAY:
+                raise ValueError(
+                    "--agentic-cache-warmup-duration requires the agentic_replay "
+                    f"timing mode; scenario {self.scenario!r} locks "
+                    f"timing_mode={scenario_timing_mode}."
+                )
+            return self
+
+        if not _is_agentic_replay(profiling_phases):
+            raise ValueError(
+                "--agentic-cache-warmup-duration requires the agentic_replay "
+                "timing mode (set today by --scenario inferencex-agentx-mvp); "
+                "the profiling phase(s) are not agentic_replay."
+            )
         return self
 
 
@@ -689,6 +995,41 @@ class AIPerfConfig(BaseConfig):
         return new_data
 
     @model_validator(mode="after")
+    def _reject_scenario_with_sweep(self) -> Self:
+        """Reject a parameter sweep when a fixed-spec scenario is locked.
+
+        A ``--scenario`` lock describes ONE fixed configuration; a sweep would
+        fan it into N variations with diverging settings, each individually
+        satisfying the lock while collectively falsifying the "one scenario =
+        one spec" contract. This is the v2 successor to the v1
+        ``validate_scenario`` check that rejected a list-shaped ``--concurrency``
+        (a parameter sweep): in v2 list-shaped magic-list flags are hoisted to a
+        top-level ``sweep:`` block by the CLI converter
+        (``_promote_magic_lists_to_sweep_block``) BEFORE this config is built, so
+        the rejection lives here at the envelope level where ``scenario`` (under
+        ``benchmark``) and ``sweep`` are sibling concerns -- not in
+        ``apply_scenario``, which only ever sees one already-expanded variation.
+
+        ``benchmark.unsafe_override`` downgrades the hard error to a warning,
+        matching how the scenario resolver treats every other invariant
+        violation.
+        """
+        if self.benchmark.scenario is None or self.sweep is None:
+            return self
+        message = (
+            f"scenario {self.benchmark.scenario!r} does not support parameter "
+            "sweeps; "
+            "a scenario locks one fixed configuration, so a sweep would "
+            "multiply it into diverging runs. Pass a single value for each "
+            "swept flag (e.g. one --concurrency value, not a list) or drop "
+            "the sweep / --scenario."
+        )
+        if self.benchmark.unsafe_override:
+            _logger.warning("Scenario violation (override active): %s", message)
+            return self
+        raise ValueError(message)
+
+    @model_validator(mode="after")
     def validate_sweep_no_dashboard_ui(self) -> Self:
         """Reject Dashboard UI when a sweep is active (live UI doesn't multiplex).
 
@@ -710,6 +1051,24 @@ class AIPerfConfig(BaseConfig):
                 "results would overwrite each other in the live console. "
                 "Use --ui simple or --ui none with --concurrency <list> / "
                 "any sweep configuration."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_adaptive_search_not_nested_with_adaptive_scale(self) -> Self:
+        """Reject nested adaptive loops: adaptive_search outside adaptive_scale."""
+        if self.sweep is None or self.sweep.type != "adaptive_search":
+            return self
+        adaptive_phases = [
+            phase.name
+            for phase in self.benchmark.phases
+            if getattr(phase, "adaptive_scale", False)
+        ]
+        if adaptive_phases:
+            raise ValueError(
+                "adaptive_search sweeps cannot be combined with adaptive_scale "
+                f"phases: {adaptive_phases}. Use either the outer adaptive_search "
+                "sweep or per-phase adaptive_scale, not both."
             )
         return self
 

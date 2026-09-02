@@ -37,6 +37,8 @@ Example Usage:
 Schema Version: 2.0.0
 """
 
+from typing import Any
+
 from aiperf.config.artifacts import (
     ArtifactsConfig,
     OutputDefaults,
@@ -74,6 +76,7 @@ from aiperf.config.dataset import (
     ImageConfig,
     PrefixPromptConfig,
     PromptConfig,
+    PromptSelectionConfig,
     PublicDataset,
     RankingsConfig,
     SynthesisConfig,
@@ -101,6 +104,7 @@ from aiperf.config.loader import (
     dump_config,
     load_benchmark_plan,
     load_config,
+    load_config_from_mapping,
     load_config_from_string,
     merge_configs,
     save_config,
@@ -199,6 +203,37 @@ from aiperf.config.types import (
     SequenceDistributionEntry,
     validate_probability_distribution,
 )
+from aiperf.config.wandb import (
+    WandbConfig,
+)
+
+# Kubernetes-only config models, resolved on first attribute access. Importing
+# them eagerly pulls aiperf.config.deployment and aiperf.config.kube -- and
+# through them aiperf.kubernetes.enums -- into all 10 service processes of every
+# local multiprocessing run, which never touch them. Direct submodule imports
+# (the form every real consumer uses) are unaffected.
+_LAZY_EXPORTS = {
+    "DeploymentConfig": "aiperf.config.deployment",
+    "PodTemplateConfig": "aiperf.config.deployment",
+    "SchedulingConfig": "aiperf.config.deployment",
+    "KubeManageOptions": "aiperf.config.kube",
+    "KubeOptions": "aiperf.config.kube",
+    "SecretMountConfig": "aiperf.config.kube",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve a Kubernetes-only config export on first access, then cache it."""
+    module_path = _LAZY_EXPORTS.get(name)
+    if module_path is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    module = importlib.import_module(module_path)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "AIPerfConfig",
@@ -221,6 +256,7 @@ __all__ = [
     "ConstantPhase",
     "ConvergenceConfig",
     "DatasetConfig",
+    "DeploymentConfig",
     "Distribution",
     "DualBindCommunicationConfig",
     "ENV_VAR_PATTERN",
@@ -238,6 +274,8 @@ __all__ = [
     "InputDefaults",
     "InputTokensDefaults",
     "IpcCommunicationConfig",
+    "KubeManageOptions",
+    "KubeOptions",
     "LatinHypercubeSweep",
     "LogNormalDistribution",
     "LoggingConfig",
@@ -257,8 +295,10 @@ __all__ = [
     "PhaseType",
     "PhaseTypeStr",
     "PoissonPhase",
+    "PodTemplateConfig",
     "PrefixPromptConfig",
     "PromptConfig",
+    "PromptSelectionConfig",
     "PublicDataset",
     "RampConfig",
     "RankingsConfig",
@@ -269,6 +309,8 @@ __all__ = [
     "SamplingDimension",
     "SamplingDistribution",
     "ScenarioSweep",
+    "SchedulingConfig",
+    "SecretMountConfig",
     "SequenceDistributionEntry",
     "ServerMetricsConfig",
     "ServerMetricsDiscoveryConfig",
@@ -287,6 +329,7 @@ __all__ = [
     "VIDEO_AUDIO_CODEC_MAP",
     "VideoAudioConfig",
     "VideoConfig",
+    "WandbConfig",
     "ZMQDualBindConfig",
     "ZMQDualBindProxyConfig",
     "ZMQIPCConfig",
@@ -300,6 +343,7 @@ __all__ = [
     "dump_config",
     "load_benchmark_plan",
     "load_config",
+    "load_config_from_mapping",
     "load_config_from_string",
     "merge_configs",
     "parse_file",

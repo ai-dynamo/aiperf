@@ -8,6 +8,8 @@ import pytest
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Image, Text
+from aiperf.config import BenchmarkRun
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import SingleTurn
 from aiperf.dataset.loader.single_turn import SingleTurnDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
@@ -938,3 +940,130 @@ def test_single_turn_loader_propagates_extra_to_turn(tmp_path, default_cfg):
     conversations = loader.convert_to_conversations(loader.load_dataset())
     turn = conversations[0].turns[0]
     assert turn.extra_body == {"vendor_a": 1, "vendor_b": "x"}
+
+
+class TestSingleTurnImageUUIDs:
+    """Tests for image cache UUID validation and load-time stripping."""
+
+    def test_image_uuid_validation(self):
+        with pytest.raises(ValueError, match="image_uuids length"):
+            SingleTurn(images=["a.png", "b.png"], image_uuids=["uuid-a"])
+
+        with pytest.raises(ValueError, match="singular image"):
+            SingleTurn(image="a.png", image_uuids=["uuid-a"])
+
+        with pytest.raises(ValueError, match="use Image.uuids"):
+            SingleTurn(
+                images=[Image(contents=["a.png"])],
+                image_uuids=["uuid-a"],
+            )
+
+        with pytest.raises(ValueError, match=r"Image\.uuids length"):
+            Image(contents=["a.png", "b.png"], uuids=["uuid-a"])
+
+        with pytest.raises(ValueError, match="must not contain empty strings"):
+            SingleTurn(images=["a.png"], image_uuids=[""])
+
+        with pytest.raises(ValueError, match="must not contain empty strings"):
+            Image(contents=["a.png"], uuids=[""])
+
+    def test_uuid_only_inputs_normalize_empty_contents(self):
+        single_turn = SingleTurn(image_uuids=["uuid-a", "uuid-b"])
+        image = Image(uuids=["uuid-a", "uuid-b"])
+
+        assert single_turn.images == ["", ""]
+        assert image.contents == ["", ""]
+
+    def test_cache_only_uuid_passes_without_prior_content(self):
+        loader = SingleTurnDatasetLoader(filename="unused", run=self._strip_run())
+        data = {"session": [SingleTurn(image_uuids=["uuid-a"])]}
+
+        image = loader.convert_to_conversations(data)[0].turns[0].images[0]
+
+        assert image.contents == [""]
+        assert image.uuids == ["uuid-a"]
+
+    def test_cache_only_uuid_passes_when_strip_disabled(self, default_cfg):
+        loader = SingleTurnDatasetLoader(
+            filename="unused", run=make_run_from_cli(default_cfg)
+        )
+        conversation = loader.convert_to_conversations(
+            {"session": [SingleTurn(image_uuids=["uuid-a"])]}
+        )
+        image = conversation[0].turns[0].images[0]
+
+        assert image.contents == [""]
+        assert image.uuids == ["uuid-a"]
+
+    def test_dedup_only_strips_uuids_seen_in_earlier_turns(self):
+        repeated = SingleTurn(
+            images=["https://example.com/a.png", "https://example.com/a.png", ""],
+            image_uuids=["uuid-a", "uuid-a", "uuid-prewarmed"],
+        )
+        later = SingleTurn(
+            images=[
+                "https://example.com/a.png",
+                "https://example.com/b.png",
+                "https://example.com/prewarmed.png",
+            ],
+            image_uuids=["uuid-a", "uuid-b", "uuid-prewarmed"],
+        )
+        loader = SingleTurnDatasetLoader(filename="unused", run=self._strip_run())
+
+        conversations = loader.convert_to_conversations(
+            {
+                "session-a": [repeated, later],
+                "session-b": [repeated.model_copy(deep=True)],
+            }
+        )
+
+        session_a = conversations[0].turns
+        session_b = conversations[1].turns
+        assert session_a[0].images[0].contents == [
+            "https://example.com/a.png",
+            "https://example.com/a.png",
+            "",
+        ]
+        assert session_a[1].images[0].contents == [
+            "",
+            "https://example.com/b.png",
+            "https://example.com/prewarmed.png",
+        ]
+        assert session_a[1].images[0].uuids == [
+            "uuid-a",
+            "uuid-b",
+            "uuid-prewarmed",
+        ]
+        assert session_b[0].images[0].contents == [
+            "https://example.com/a.png",
+            "https://example.com/a.png",
+            "",
+        ]
+
+    def test_dedup_is_disabled_by_default(self, default_cfg):
+        loader = SingleTurnDatasetLoader(
+            filename="unused", run=make_run_from_cli(default_cfg)
+        )
+        turns = loader.convert_to_conversations(
+            {
+                "session": [
+                    SingleTurn(
+                        images=["https://example.com/a.png"],
+                        image_uuids=["uuid-a"],
+                    ),
+                    SingleTurn(
+                        images=["https://example.com/a.png"],
+                        image_uuids=["uuid-a"],
+                    ),
+                ]
+            }
+        )[0].turns
+
+        assert turns[0].images[0].contents == ["https://example.com/a.png"]
+        assert turns[1].images[0].contents == ["https://example.com/a.png"]
+
+    @staticmethod
+    def _strip_run() -> BenchmarkRun:
+        return make_run_from_cli(
+            CLIConfig(model_names=["test-model"], uuid_and_strip=True)
+        )

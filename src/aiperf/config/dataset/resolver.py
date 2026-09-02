@@ -10,6 +10,9 @@ to work.
 
 from __future__ import annotations
 
+import functools
+import gzip
+import zlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -19,6 +22,42 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
+
+# FileDataset fields consumed only by the baseten_trace loader. The
+# convert-time guard can reject them only when --custom-dataset-type is
+# explicit; with an auto-detected format they would otherwise silently
+# no-op (e.g. --replay-speedup on a mooncake JSONL replays at recorded
+# speed), so warn once the resolved format is known.
+_BASETEN_ONLY_REPLAY_FIELDS = (
+    "trace_session_sample_ratio",
+    "replay_speedup",
+    "max_idle_gap_cap_seconds",
+    "open_loop_replay",
+    "open_loop_strict",
+    "omit_kv_hints",
+    "force_min_tokens",
+)
+
+
+def _warn_ignored_baseten_only_fields(
+    name: str, ds: object, dataset_type: object
+) -> None:
+    """Warn when baseten_trace-only replay knobs are set on another loader."""
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if dataset_type is None or dataset_type == CustomDatasetType.BASETEN_TRACE:
+        return
+    fields_set = getattr(ds, "model_fields_set", set())
+    ignored = [
+        f
+        for f in _BASETEN_ONLY_REPLAY_FIELDS
+        if f in fields_set and getattr(ds, f) is not None
+    ]
+    if ignored:
+        _logger.warning(
+            f"Dataset '{name}' resolved to {dataset_type}, which ignores the "
+            f"baseten_trace-only replay option(s): {', '.join(ignored)}."
+        )
 
 
 @dataclass(slots=True)
@@ -35,6 +74,31 @@ class _DatasetResolution:
     is_forking: dict[str, bool] = field(default_factory=dict)
 
 
+@functools.cache
+def _implicit_timing_types() -> frozenset[object]:
+    """Formats whose loader always produces timing the generic probe can't see.
+
+    * ``sagemaker_data_capture`` nests it under ``eventMetadata.inferenceTime``.
+    * ``burst_gpt_trace`` is CSV; the loader enforces a ``Timestamp`` column at
+      load time (``BurstGPTTraceDatasetLoader._REQUIRED_COLUMNS``).
+    * ``baseten_trace`` is Parquet.
+    * ``tracelab`` nests it under ``timing_events[]`` and may be gzipped; the
+      loader derives an absolute submission time for every round it keeps.
+
+    Built lazily: ``CustomDatasetType`` members are registered from plugins.yaml.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    return frozenset(
+        {
+            CustomDatasetType.SAGEMAKER_DATA_CAPTURE,
+            CustomDatasetType.BURST_GPT_TRACE,
+            CustomDatasetType.BASETEN_TRACE,
+            CustomDatasetType.TRACELAB,
+        }
+    )
+
+
 class DatasetResolver:
     """Resolve file-based dataset paths, detect types, timing, and sampling."""
 
@@ -46,12 +110,17 @@ class DatasetResolver:
         ``fixed_schedule`` validation, and counts records/sessions. Raises
         ``FileNotFoundError`` when a file dataset path does not exist.
         """
-        from aiperf.config.dataset import FileDataset
+        from aiperf.config.dataset import FileDataset, PublicDataset
+        from aiperf.plugin import plugins
 
         acc = _DatasetResolution()
         format_map = self._build_format_map()
 
         for ds in run.cfg.datasets:
+            if isinstance(ds, PublicDataset):
+                metadata = plugins.get_public_dataset_loader_metadata(ds.dataset)
+                acc.has_timing[ds.name] = metadata.has_timing_data
+                continue
             if not isinstance(ds, FileDataset):
                 continue
             self._resolve_one(name=ds.name, ds=ds, format_map=format_map, acc=acc)
@@ -65,6 +134,7 @@ class DatasetResolver:
         if acc.types:
             run.resolved.dataset_types = acc.types
             run.resolved.dataset_sampling_strategies = acc.sampling
+        if acc.has_timing:
             run.resolved.dataset_has_timing_data = acc.has_timing
         if acc.total_records:
             run.resolved.dataset_total_records = acc.total_records
@@ -117,6 +187,7 @@ class DatasetResolver:
             acc.has_timing[name] = self._check_timing_data(
                 str(resolved), first_record, dataset_type
             )
+        _warn_ignored_baseten_only_fields(name, ds, dataset_type)
 
         # 3. Count records and sessions (for validation and fixed_schedule)
         if not resolved.is_dir():
@@ -156,6 +227,7 @@ class DatasetResolver:
         if dataset_type is not None:
             acc.types[name] = dataset_type
             acc.sampling[name] = DatasetResolver._resolve_sampling(ds, dataset_type)
+        _warn_ignored_baseten_only_fields(name, ds, dataset_type)
 
         # Count records (sum across pools if multi-pool).
         if isinstance(records, dict):
@@ -209,18 +281,13 @@ class DatasetResolver:
         from aiperf.common.enums import DatasetFormat
         from aiperf.plugin.enums import CustomDatasetType
 
-        return {
-            str(DatasetFormat.SINGLE_TURN): CustomDatasetType.SINGLE_TURN,
-            str(DatasetFormat.MULTI_TURN): CustomDatasetType.MULTI_TURN,
-            str(DatasetFormat.MOONCAKE_TRACE): CustomDatasetType.MOONCAKE_TRACE,
-            str(DatasetFormat.RANDOM_POOL): CustomDatasetType.RANDOM_POOL,
-            str(DatasetFormat.BAILIAN_TRACE): CustomDatasetType.BAILIAN_TRACE,
-            str(DatasetFormat.BURST_GPT_TRACE): CustomDatasetType.BURST_GPT_TRACE,
-            str(DatasetFormat.DAG_JSONL): CustomDatasetType.DAG_JSONL,
-            str(
-                DatasetFormat.SAGEMAKER_DATA_CAPTURE
-            ): CustomDatasetType.SAGEMAKER_DATA_CAPTURE,
-        }
+        mapping: dict[str, object] = {}
+        for fmt in DatasetFormat:
+            try:
+                mapping[str(fmt)] = CustomDatasetType(str(fmt))
+            except ValueError:
+                continue
+        return mapping
 
     @staticmethod
     def _read_first_jsonl_record(file_path: str) -> dict | None:
@@ -243,8 +310,10 @@ class DatasetResolver:
         """
         import orjson
 
+        from aiperf.common.utils import open_text_maybe_gzip
+
         try:
-            with open(file_path, encoding="utf-8") as f:
+            with open_text_maybe_gzip(file_path) as f:
                 for line in f:
                     if line := line.strip():
                         try:
@@ -252,7 +321,7 @@ class DatasetResolver:
                         except orjson.JSONDecodeError:
                             return None
                         return parsed if isinstance(parsed, dict) else None
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, EOFError, gzip.BadGzipFile, zlib.error):
             return None
         return None
 
@@ -308,35 +377,33 @@ class DatasetResolver:
         """Check whether the first record carries timing information.
 
         Most trace formats expose ``timestamp`` or ``delay`` at the top level,
-        but sagemaker_data_capture nests its timing under
-        ``eventMetadata.inferenceTime``. We branch per-loader so fixed_schedule
-        validation accepts every format whose loader actually produces timing.
+        and the generic probe below reads it off the first record. The formats
+        in :func:`_implicit_timing_types` carry it somewhere that probe cannot
+        see, so they are accepted by type instead.
         """
-        from aiperf.plugin.enums import CustomDatasetType
-
-        if dataset_type == CustomDatasetType.SAGEMAKER_DATA_CAPTURE:
-            return True
-        if dataset_type == CustomDatasetType.BURST_GPT_TRACE:
-            # BurstGPT is CSV; the loader enforces a ``Timestamp`` column at
-            # load time (see ``BurstGPTTraceDatasetLoader._REQUIRED_COLUMNS``),
-            # so the dataset cannot load without timing.
+        if dataset_type in _implicit_timing_types():
             return True
 
         record = first_record
         if record is None:
             from pathlib import Path
 
-            from aiperf.common.utils import load_json_str
+            from aiperf.common.utils import load_json_str, open_text_maybe_gzip
 
             if Path(file_path).is_dir():
                 return False
             try:
-                with open(file_path) as f:
+                with open_text_maybe_gzip(file_path) as f:
                     for line in f:
                         if line := line.strip():
                             record = load_json_str(line)
                             break
-            except (OSError, ValueError):
+            except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+                _logger.warning(
+                    f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
+                )
+                return False
+            except (OSError, UnicodeDecodeError, ValueError):
                 return False
 
         if record is None:
@@ -354,22 +421,37 @@ class DatasetResolver:
         """
         from aiperf.plugin.enums import CustomDatasetType
 
+        if dataset_type == CustomDatasetType.BASETEN_TRACE:
+            from aiperf.dataset.loader.baseten_trace import (
+                count_baseten_parquet_records_and_sessions,
+            )
+
+            return count_baseten_parquet_records_and_sessions(file_path)
+
         is_multi_turn = dataset_type in (
             CustomDatasetType.MULTI_TURN,
             CustomDatasetType.BAILIAN_TRACE,
+            CustomDatasetType.TRACELAB,
         )
+        from aiperf.common.utils import open_text_maybe_gzip
+
         record_count = 0
         session_ids: set[str] = set()
 
         try:
-            with open(file_path) as f:
+            with open_text_maybe_gzip(file_path) as f:
                 for line in f:
                     if not (line := line.strip()):
                         continue
                     record_count += 1
                     if is_multi_turn:
                         _add_session_id(line, session_ids)
-        except OSError:
+        except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+            _logger.warning(
+                f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
+            )
+            return 0, 0
+        except (OSError, UnicodeDecodeError):
             return 0, 0
 
         if is_multi_turn and session_ids:
@@ -464,11 +546,11 @@ def _collect_dag_session_and_fork_ids(file_path: str) -> tuple[set[str], set[str
     ``pre_session_spawns``. Anything in ``referenced_ids`` is NOT a root and
     must not be sampled standalone.
     """
-    from aiperf.common.utils import load_json_str
+    from aiperf.common.utils import load_json_str, open_text_maybe_gzip
 
     all_ids: set[str] = set()
     referenced_ids: set[str] = set()
-    with open(file_path) as f:
+    with open_text_maybe_gzip(file_path) as f:
         for raw in f:
             if not (line := raw.strip()):
                 continue

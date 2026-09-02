@@ -34,7 +34,7 @@ class TestZMQPullClientInitialization:
         ):
             client = ZMQPullClient(address="tcp://127.0.0.1:5555", bind=False)
 
-            assert client.semaphore.effective_slots == 10
+            assert client._max_inflight == 10
 
     def test_init_with_custom_concurrency(self, mock_zmq_context):
         """Test initialization with custom max_pull_concurrency."""
@@ -42,7 +42,7 @@ class TestZMQPullClientInitialization:
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=5
         )
 
-        assert client.semaphore.effective_slots == 5
+        assert client._max_inflight == 5
 
 
 class TestZMQPullClientCallbackRegistration:
@@ -133,11 +133,10 @@ class TestZMQPullClientBackgroundTask:
             await wait_for_background_task()
 
     @pytest.mark.asyncio
-    async def test_background_task_releases_semaphore_on_timeout(
+    async def test_background_task_idle_on_no_data(
         self, pull_test_helper, wait_for_background_task
     ):
-        """Test that background task releases semaphore on timeout."""
-        # Explicitly raise zmq.Again to simulate timeout for this test
+        """FD drain stays idle (no in-flight) when recv yields no data."""
         async with pull_test_helper.create_client(
             auto_start=True,
             max_pull_concurrency=5,
@@ -145,8 +144,8 @@ class TestZMQPullClientBackgroundTask:
         ) as client:
             await wait_for_background_task()
 
-            # Semaphore should still have its original value (releases after timeout)
-            assert client.semaphore.stats.release_count == 1
+            # Nothing was delivered, so no credits are in flight.
+            assert client._inflight == 0
 
     @pytest.mark.asyncio
     async def test_background_task_handles_exception_gracefully(
@@ -177,11 +176,13 @@ class TestZMQPullClientBackgroundTask:
 
 
 class TestZMQPullClientConcurrency:
-    """Test concurrency control with semaphore."""
+    """Test FD-drain flow control via the _inflight counter."""
 
     @pytest.mark.asyncio
-    async def test_semaphore_limits_concurrent_processing(self, mock_zmq):
-        """Test that semaphore limits concurrent message processing."""
+    async def test_inflight_processes_multiple_messages(
+        self, mock_zmq_socket, mock_zmq_context, fd_enqueue
+    ):
+        """The FD drain delivers all queued messages (bounded by _max_inflight)."""
         messages = [
             HeartbeatMessage(
                 service_id="test-service",
@@ -191,9 +192,7 @@ class TestZMQPullClientConcurrency:
             )
             for i in range(10)
         ]
-
-        for message in messages:
-            await mock_zmq.recv_queue.put(message.to_json_bytes())
+        fd_enqueue(mock_zmq_socket, messages=[m.to_json_bytes() for m in messages])
 
         client = ZMQPullClient(
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=3
@@ -204,9 +203,8 @@ class TestZMQPullClientConcurrency:
 
         async def slow_callback(msg: Message) -> None:
             processing.append(msg.request_id)
-            if len(processing) >= 3:  # At least 3 messages processed
+            if len(processing) >= 3:
                 done_event.set()
-            # Simulate slow processing (mocked to instant yield)
             await asyncio.sleep(0.1)
 
         client.register_pull_callback(MessageType.HEARTBEAT, slow_callback)
@@ -214,18 +212,20 @@ class TestZMQPullClientConcurrency:
         await client.initialize()
         await client.start()
 
-        # Wait for at least some messages to be processed
         await asyncio.wait_for(done_event.wait(), timeout=1.0)
 
         await client.stop()
 
-        # At least some messages should have been processed
-        assert len(processing) > 0
+        # max_pull_concurrency=3 bounds the drain, and done_event fires once the
+        # third callback starts, so at least the inflight cap's worth is delivered.
+        assert len(processing) >= 3
 
     @pytest.mark.asyncio
-    async def test_semaphore_released_after_processing(self, sample_message, mock_zmq):
-        """Test that semaphore is released after message processing."""
-        await mock_zmq.recv_queue.put(sample_message.to_json_bytes())
+    async def test_inflight_released_after_processing(
+        self, mock_zmq_socket, mock_zmq_context, sample_message, fd_enqueue
+    ):
+        """_inflight returns to 0 once a delivered message finishes processing."""
+        fd_enqueue(mock_zmq_socket, messages=[sample_message.to_json_bytes()])
 
         client = ZMQPullClient(
             address="tcp://127.0.0.1:5555", bind=False, max_pull_concurrency=5
@@ -234,7 +234,6 @@ class TestZMQPullClientConcurrency:
         done_event = asyncio.Event()
 
         async def callback(msg: Message) -> None:
-            # Simulate processing with mocked time
             await asyncio.sleep(0.01)
             done_event.set()
 
@@ -243,8 +242,9 @@ class TestZMQPullClientConcurrency:
         await client.initialize()
         await client.start()
 
-        # Wait for processing to complete (using mocked time)
-        await done_event.wait()
+        await asyncio.wait_for(done_event.wait(), timeout=1.0)
+        # Let the _process_message_fd finally-block run (_inflight -= 1).
+        await asyncio.sleep(0)
 
-        assert client.semaphore.stats.release_count == 1
-        assert client.semaphore.stats.wait_count == 0
+        assert client._inflight == 0
+        await client.stop()

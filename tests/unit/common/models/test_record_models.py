@@ -4,16 +4,23 @@
 import pytest
 from pydantic import BaseModel, Field, SerializeAsAny
 
-from aiperf.common.enums import SSEFieldType
-from aiperf.common.models import MetricResult, ProfileResults, SSEMessage
+from aiperf.common.messages import InferenceResultsMessage
+from aiperf.common.models import (
+    MetricResult,
+    ProfileResults,
+    RequestRecord,
+    SSEField,
+    SSEMessage,
+    TimesliceResult,
+)
 from aiperf.common.models.export_models import JsonMetricResult
 
 
 class TestProfileResults:
     """Test cases for ProfileResults model."""
 
-    def test_profile_results_with_timeslice_metric_results(self):
-        """Test ProfileResults can store timeslice metric results."""
+    def test_profile_results_timeslices_preserves_metric_lookup(self) -> None:
+        """Test ProfileResults stores accumulator-backed timeslices."""
         metric_result = MetricResult(
             tag="request_latency",
             header="Request Latency",
@@ -21,47 +28,40 @@ class TestProfileResults:
             avg=100.0,
             count=10,
         )
-
-        timeslice_results = {
-            0: [metric_result],
-            1: [metric_result],
-        }
-
-        profile_results = ProfileResults(
-            records=[metric_result],
-            timeslice_metric_results=timeslice_results,
-            completed=1,
-            start_ns=1000000000,
-            end_ns=2000000000,
-        )
-
-        assert profile_results.timeslice_metric_results is not None
-        assert 0 in profile_results.timeslice_metric_results
-        assert 1 in profile_results.timeslice_metric_results
-        assert len(profile_results.timeslice_metric_results[0]) == 1
-        assert len(profile_results.timeslice_metric_results[1]) == 1
-
-    def test_profile_results_without_timeslice_metric_results(self):
-        """Test ProfileResults works without timeslice metric results."""
-        metric_result = MetricResult(
-            tag="request_latency",
-            header="Request Latency",
-            unit="ms",
-            avg=100.0,
-            count=10,
-        )
+        timeslices = [
+            TimesliceResult(
+                start_ns=1_000_000_000,
+                end_ns=2_000_000_000,
+                metric_results=[metric_result],
+            ),
+            TimesliceResult(
+                start_ns=2_000_000_000,
+                end_ns=3_000_000_000,
+                metric_results=[metric_result],
+            ),
+        ]
 
         profile_results = ProfileResults(
             records=[metric_result],
+            timeslices=timeslices,
             completed=1,
-            start_ns=1000000000,
-            end_ns=2000000000,
+            start_ns=1_000_000_000,
+            end_ns=3_000_000_000,
         )
 
-        assert profile_results.timeslice_metric_results is None
+        assert profile_results.timeslices is not None
+        assert len(profile_results.timeslices) == 2
+        assert (
+            profile_results.timeslices[0].metric_results["request_latency"]
+            is metric_result
+        )
+        assert (
+            profile_results.timeslices[1].metric_results["request_latency"]
+            is metric_result
+        )
 
-    def test_profile_results_with_empty_timeslice_dict(self):
-        """Test ProfileResults with empty timeslice results dict."""
+    def test_profile_results_no_timeslices_defaults_to_none(self) -> None:
+        """Test ProfileResults works without timeslice results."""
         metric_result = MetricResult(
             tag="request_latency",
             header="Request Latency",
@@ -72,16 +72,34 @@ class TestProfileResults:
 
         profile_results = ProfileResults(
             records=[metric_result],
-            timeslice_metric_results={},
             completed=1,
-            start_ns=1000000000,
-            end_ns=2000000000,
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
         )
 
-        assert profile_results.timeslice_metric_results is not None
-        assert len(profile_results.timeslice_metric_results) == 0
+        assert profile_results.timeslices is None
 
-    def test_profile_results_with_multiple_timeslices_and_metrics(self):
+    def test_profile_results_empty_timeslices_preserves_empty_list(self) -> None:
+        """Test ProfileResults with empty timeslice list."""
+        metric_result = MetricResult(
+            tag="request_latency",
+            header="Request Latency",
+            unit="ms",
+            avg=100.0,
+            count=10,
+        )
+
+        profile_results = ProfileResults(
+            records=[metric_result],
+            timeslices=[],
+            completed=1,
+            start_ns=1_000_000_000,
+            end_ns=2_000_000_000,
+        )
+
+        assert profile_results.timeslices == []
+
+    def test_profile_results_multiple_timeslices_maps_metrics_by_tag(self) -> None:
         """Test ProfileResults with multiple timeslices containing multiple metrics."""
         latency_result = MetricResult(
             tag="request_latency",
@@ -99,25 +117,84 @@ class TestProfileResults:
             count=1,
         )
 
-        timeslice_results = {
-            0: [latency_result, throughput_result],
-            1: [latency_result, throughput_result],
-            2: [latency_result, throughput_result],
-        }
+        timeslices = [
+            TimesliceResult(
+                start_ns=1_000_000_000 + i * 1_000_000_000,
+                end_ns=2_000_000_000 + i * 1_000_000_000,
+                metric_results=[latency_result, throughput_result],
+            )
+            for i in range(3)
+        ]
 
         profile_results = ProfileResults(
             records=[latency_result, throughput_result],
-            timeslice_metric_results=timeslice_results,
+            timeslices=timeslices,
             completed=2,
-            start_ns=1000000000,
-            end_ns=3000000000,
+            start_ns=1_000_000_000,
+            end_ns=4_000_000_000,
         )
 
-        assert profile_results.timeslice_metric_results is not None
-        assert len(profile_results.timeslice_metric_results) == 3
-        for i in range(3):
-            assert i in profile_results.timeslice_metric_results
-            assert len(profile_results.timeslice_metric_results[i]) == 2
+        assert profile_results.timeslices is not None
+        assert len(profile_results.timeslices) == 3
+        for timeslice in profile_results.timeslices:
+            assert set(timeslice.metric_results) == {
+                "request_latency",
+                "request_throughput",
+            }
+
+
+class TestRecordDataStrictRouting:
+    """RecordData routes by record_type and raises on an unregistered value.
+
+    ``strict_routing=True`` replaces AutoRoutedModel's base-class fallback: the
+    base RecordData has no standalone shape, so an unknown record_type must fail
+    loudly instead of degrading to a bare instance with every typed field dropped.
+    """
+
+    def test_unknown_record_type_raises(self) -> None:
+        from aiperf.common.models.record_models import RecordData
+
+        with pytest.raises(ValueError, match="Unknown record_type 'does_not_exist'"):
+            RecordData.from_json({"record_type": "does_not_exist"})
+
+    def test_registered_record_type_routes_to_subclass(self) -> None:
+        # Importing the module registers the subclass via __init_subclass__.
+        from aiperf.accuracy.models import AccuracyRecordsData
+        from aiperf.common.enums import CreditPhase
+        from aiperf.common.models.record_models import RecordData
+
+        original = AccuracyRecordsData(
+            session_num=0,
+            worker_id="w1",
+            benchmark_phase=CreditPhase.PROFILING,
+            timestamp_ns=1_000,
+            grader_name="multiple_choice",
+            passed=True,
+            confidence=1.0,
+            expected="A",
+            actual="A",
+            explanation="ok",
+        )
+
+        routed = RecordData.from_json(original.model_dump())
+
+        assert isinstance(routed, AccuracyRecordsData)
+        assert routed.expected == "A"
+        assert routed.grader_name == "multiple_choice"
+
+    def test_strict_routing_raises_with_empty_lookup_table(self) -> None:
+        # Even when NO subclass is registered (producing module not imported yet),
+        # a strict hierarchy must raise rather than silently degrade to the base.
+        from aiperf.common.models.auto_routed_model import AutoRoutedModel
+
+        class _StrictRoot(AutoRoutedModel):
+            discriminator_field = "kind"
+            strict_routing = True
+            kind: str
+
+        assert _StrictRoot._model_lookup_table == {}  # nothing registered
+        with pytest.raises(ValueError, match="Unknown kind 'nope'"):
+            _StrictRoot.from_json({"kind": "nope"})
 
 
 class TestSSEMessageDataclass:
@@ -128,9 +205,11 @@ class TestSSEMessageDataclass:
         msg = SSEMessage.parse("data: hello\nevent: message", perf_ns=42)
         assert msg.perf_ns == 42
         assert len(msg.packets) == 2
-        assert msg.packets[0].name == SSEFieldType.DATA
+        assert msg.packets[0].name == "data"
+        assert type(msg.packets[0].name) is str
         assert msg.packets[0].value == "hello"
-        assert msg.packets[1].name == SSEFieldType.EVENT
+        assert msg.packets[1].name == "event"
+        assert type(msg.packets[1].name) is str
         assert msg.packets[1].value == "message"
 
     def test_parse_returns_sse_message_instance(self) -> None:
@@ -162,12 +241,46 @@ class TestSSEMessageDataclass:
         assert len(restored.responses[0].packets) == 2
         assert restored.responses[0].packets[0].value == "roundtrip"
 
+    def test_inference_results_message_roundtrip_preserves_string_names(self) -> None:
+        """SSE field names remain strings across the inference-results IPC boundary."""
+        message = InferenceResultsMessage(
+            service_id="worker",
+            record=RequestRecord(
+                responses=[
+                    SSEMessage(
+                        perf_ns=123,
+                        packets=[SSEField(name="data", value="roundtrip")],
+                    )
+                ]
+            ),
+        )
+
+        restored = InferenceResultsMessage.from_json(message.to_json_bytes())
+        response = restored.record.responses[0]
+
+        assert isinstance(response, SSEMessage)
+        field_name = response.packets[0].name
+        assert field_name == "data"
+        assert type(field_name) is str
+
     def test_parse_get_text_and_get_json(self) -> None:
         """Protocol methods work on dataclass instances."""
         msg = SSEMessage.parse('data: {"key": "value"}', perf_ns=1)
         assert msg.get_text() == '{"key": "value"}'
         json_obj = msg.get_json()
         assert json_obj == {"key": "value"}
+
+    def test_get_text_and_json_with_additional_field(self) -> None:
+        """Protocol methods retain the generic path for multi-field messages."""
+        msg = SSEMessage.parse('data: {"key": "value"}\nevent: message', perf_ns=1)
+        assert msg.get_text() == '{"key": "value"}'
+        assert msg.get_json() == {"key": "value"}
+
+    def test_extract_data_content_combines_multiple_data_fields(self) -> None:
+        """Multiple data fields remain newline-delimited in the generic path."""
+        msg = SSEMessage.parse("data: first\ndata: second", perf_ns=1)
+
+        assert msg.extract_data_content() == "first\nsecond"
 
 
 class TestMetricResultSumField:
@@ -253,8 +366,8 @@ class TestMetricResultToJsonResult:
     def test_unknown_tag_keeps_count(self) -> None:
         """Tags from other registries (e.g. GPU telemetry) keep count as-is."""
         result = MetricResult(
-            tag="gpu_power_usage",
-            header="GPU Power Usage",
+            tag="nvidia_power_usage",
+            header="NVIDIA GPU Power Usage",
             unit="W",
             avg=250.0,
             count=42,

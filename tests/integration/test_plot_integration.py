@@ -140,7 +140,7 @@ class TestPlotIntegration:
         # Check summary file was created
         summary_path = plot_dir / "summary.txt"
         assert summary_path.exists(), "Plot summary.txt was not created"
-        summary_content = summary_path.read_text()
+        summary_content = summary_path.read_text(encoding="utf-8")
         assert "Generated" in summary_content
         assert "plots:" in summary_content
 

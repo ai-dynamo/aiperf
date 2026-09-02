@@ -16,12 +16,26 @@ from typing import Generic, TypeVar
 
 import aiohttp
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
 from aiperf.common.redact import redact_url
 from aiperf.transports.http_defaults import AioHttpDefaults
+
+# Response Content-Type prefixes for routing/rejecting metrics payloads. Matched
+# against the lowercased header value, which may carry `; version=...; charset=...`.
+JSON_CONTENT_TYPE_PREFIX = "application/json"
+OPENMETRICS_CONTENT_TYPE_PREFIX = "application/openmetrics-text"
+
+# A stalling endpoint (headers sent, then no chunk delivery) is bounded by
+# `sock_read` rather than the collection cadence, so scrapes can pile up
+# in-flight when the read timeout dwarfs the interval between them. This
+# multiplier only flags configurations far outside that relationship -
+# it stays above the built-in defaults' own ratio (~90x) so it doesn't
+# fire on an unmodified install.
+READ_TIMEOUT_TO_INTERVAL_WARN_RATIO = 100
 
 # `create_tcp_connector` is exposed as a module attribute via __getattr__ to
 # break a circular import at module-load time:
@@ -156,11 +170,17 @@ class FetchResult:
         is_duplicate: True if response content hash matches previous fetch,
                      indicating metrics haven't changed. Callers can skip parsing
                      when True to save CPU on repetitive data.
+        content_type: Lowercased HTTP `Content-Type` header from the response
+                     (e.g. "application/openmetrics-text; version=1.0.0" for
+                     vLLM's Rust frontend), or None when absent. Callers use it
+                     to route between the OpenMetrics and classic Prometheus
+                     exposition parsers.
     """
 
     text: str | None
     trace_timing: HttpTraceTiming
     is_duplicate: bool = False
+    content_type: str | None = None
 
 
 # Type variables for records returned by collectors
@@ -275,19 +295,50 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         """
         return self._collection_interval
 
+    def _warn_if_read_timeout_far_exceeds_collection_interval(self) -> None:
+        """Warn when the scrape read timeout dwarfs the collection cadence.
+
+        `sock_read` bounds each inter-chunk gap, not the total scrape, so a
+        stalling endpoint can only ever delay a given scrape by up to
+        ``METRICS_SCRAPE_READ_TIMEOUT``. When that timeout is far above the
+        interval at which new scrapes are issued, a single stall can leave
+        many scrapes in flight simultaneously. This is a sanity check, not a
+        hard failure - it never blocks initialization.
+        """
+        read_timeout = Environment.HTTP.METRICS_SCRAPE_READ_TIMEOUT
+        if (
+            read_timeout
+            > self._collection_interval * READ_TIMEOUT_TO_INTERVAL_WARN_RATIO
+        ):
+            self.warning(
+                lambda: (
+                    f"METRICS_SCRAPE_READ_TIMEOUT ({read_timeout}s) for {self._display_url} "
+                    f"is more than {READ_TIMEOUT_TO_INTERVAL_WARN_RATIO}x the collection "
+                    f"interval ({self._collection_interval}s). A stalling metrics endpoint "
+                    f"could leave many scrapes in flight at once. Consider lowering "
+                    f"AIPERF_HTTP_METRICS_SCRAPE_READ_TIMEOUT or raising the collection "
+                    f"interval."
+                )
+            )
+
     @on_init
     async def _initialize_http_client(self) -> None:
         """Initialize the aiohttp client session with trace config.
 
         Called automatically during initialization phase.
         Creates an aiohttp ClientSession with appropriate timeout settings.
-        Uses connect timeout only (no total timeout) to allow long-running scrapes.
+        No total timeout, so a large exposition payload is never truncated, but
+        `sock_read` bounds the gap between response chunks: a connect-only
+        timeout cannot detect a server that sends headers and then stalls, and
+        the completion path awaits scrapes inline.
         Configures TraceConfig to capture HTTP timing events for precise correlation.
         Uses create_tcp_connector to apply standard socket settings including IP version.
         """
+        self._warn_if_read_timeout_far_exceeds_collection_interval()
         timeout = aiohttp.ClientTimeout(
             total=None,  # No total timeout for ongoing scrapes
             connect=self._reachability_timeout,  # Fast connection timeout only
+            sock_read=Environment.HTTP.METRICS_SCRAPE_READ_TIMEOUT,
         )
         trace_config = self._create_trace_config()
         self._connector = _resolve_create_tcp_connector()()
@@ -440,7 +491,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             # Fall back to GET if HEAD is not supported
             async with session.get(self._endpoint_url) as response:
                 return response.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError):
+        except (TimeoutError, aiohttp.ClientError):
             return False
 
     @background_task(immediate=True, interval=lambda self: self.collection_interval)
@@ -577,7 +628,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
                 # serve a JSON iteration-stats array at /metrics, which the
                 # Prometheus parser cannot interpret. Reject up front so the
                 # caller can auto-disable instead of looping on parse errors.
-                if content_type.startswith("application/json"):
+                if content_type.startswith(JSON_CONTENT_TYPE_PREFIX):
                     raise IncompatibleMetricsEndpointError(
                         f"endpoint {self._display_url!r} returned non-Prometheus "
                         f"content-type {content_type!r}; expected text/plain "
@@ -595,7 +646,10 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             is_duplicate = response_hash == self._last_response_hash
             self._last_response_hash = response_hash
             return FetchResult(
-                text=text, trace_timing=timing, is_duplicate=is_duplicate
+                text=text,
+                trace_timing=timing,
+                is_duplicate=is_duplicate,
+                content_type=content_type or None,
             )
         except (aiohttp.ClientConnectionError, RuntimeError) as e:
             if self.stop_requested or session.closed:

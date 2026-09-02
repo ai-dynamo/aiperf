@@ -53,9 +53,9 @@ class LocalSubprocessExecutor(RunExecutor):
             if result.returncode != 0:
                 return self._failure_from_subprocess(result, run.label, artifacts_path)
 
-            summary_metrics = self._extract_summary_metrics(run)
+            summary_metrics, was_cancelled = self._extract_summary_metrics(run)
             return self._build_result_from_metrics(
-                summary_metrics, run.label, artifacts_path
+                summary_metrics, run.label, artifacts_path, was_cancelled
             )
         except Exception as e:
             logger.exception(f"Error executing run {run.label}")
@@ -97,18 +97,47 @@ class LocalSubprocessExecutor(RunExecutor):
     ) -> subprocess.CompletedProcess[str]:
         """Run the benchmark subprocess runner and return its completed-process.
 
-        The api_key is forwarded via ``AIPERF_INJECTED_API_KEY`` rather
-        than written into ``run_config.json`` (which would be redacted by
-        the field_serializer anyway). ``subprocess_runner.main`` consumes
-        and unsets the variable before invoking the benchmark, so neither
-        the subprocess's own children nor any logging path sees it.
+        Three credential-bearing fields are forwarded out-of-band via env
+        vars rather than written into ``run_config.json`` (which redacts
+        them via the EndpointConfig field_serializers anyway):
+
+        * ``AIPERF_INJECTED_API_KEY`` — ``endpoint.api_key``
+        * ``AIPERF_INJECTED_HEADERS`` — sensitive entries of ``endpoint.headers``
+          (Authorization, X-API-Key, …)
+        * ``AIPERF_INJECTED_ENDPOINT_URLS`` — full ``endpoint.urls`` list,
+          forwarded only when at least one URL carries userinfo
+          (``user:pass@host``) that ``redact_url`` would strip
+
+        ``subprocess_runner.main`` consumes and unsets all three variables
+        before invoking the benchmark, so neither the subprocess's own
+        children nor any logging path sees them.
+
+        Internal injection env vars are popped from the copied parent env
+        before being conditionally re-set, so a stale value the parent
+        shell happened to carry (e.g. from a prior aiperf invocation, or
+        set by a CI wrapper) cannot leak into a run whose own config has
+        no api_key / no sensitive headers / no userinfo URLs.
         """
         import os
 
+        from aiperf.common.redact import extract_sensitive_headers, redact_url
+
         env = os.environ.copy()
+        # Clear any stale AIPERF_INJECTED_* the parent shell may carry —
+        # see method docstring above. Must precede the conditional set
+        # so an unset field on this run does not inherit a prior value.
+        env.pop("AIPERF_INJECTED_API_KEY", None)
+        env.pop("AIPERF_INJECTED_HEADERS", None)
+        env.pop("AIPERF_INJECTED_ENDPOINT_URLS", None)
         api_key = run.cfg.endpoint.api_key
         if api_key is not None:
             env["AIPERF_INJECTED_API_KEY"] = api_key
+        sensitive_headers = extract_sensitive_headers(run.cfg.endpoint.headers)
+        if sensitive_headers:
+            env["AIPERF_INJECTED_HEADERS"] = orjson.dumps(sensitive_headers).decode()
+        urls = list(run.cfg.endpoint.urls)
+        if any(redact_url(url) != url for url in urls):
+            env["AIPERF_INJECTED_ENDPOINT_URLS"] = orjson.dumps(urls).decode()
         # No timeout - SystemController handles benchmark duration internally.
         # stdin/stdout pass through so Textual can detect TTY and render live dashboard.
         # -u forces unbuffered output for live dashboard rendering.
@@ -150,6 +179,7 @@ class LocalSubprocessExecutor(RunExecutor):
         summary_metrics: dict[str, JsonMetricResult],
         label: str,
         artifacts_path: Path,
+        was_cancelled: bool = False,
     ) -> RunResult:
         """Classify success/failure from extracted summary metrics."""
         if not summary_metrics:
@@ -162,6 +192,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                was_cancelled=was_cancelled,
             )
 
         request_count_metric = summary_metrics.get("request_count")
@@ -178,6 +209,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 success=False,
                 error=error_msg,
                 artifacts_path=artifacts_path,
+                was_cancelled=was_cancelled,
             )
 
         return RunResult(
@@ -185,19 +217,25 @@ class LocalSubprocessExecutor(RunExecutor):
             success=True,
             summary_metrics=summary_metrics,
             artifacts_path=artifacts_path,
+            was_cancelled=was_cancelled,
         )
 
     def _extract_summary_metrics(
         self, run: BenchmarkRun
-    ) -> dict[str, JsonMetricResult]:
-        """Extract run-level summary statistics from artifacts.
+    ) -> tuple[dict[str, JsonMetricResult], bool]:
+        """Extract run-level summary metrics + the ``was_cancelled`` flag.
 
         Reads the summary JSON file (or its ``.zst`` variant) at the path
         computed by :attr:`ArtifactsConfig.profile_export_json_file`, which
         honors ``--profile-export-prefix`` and falls back to the historical
         ``profile_export_aiperf.json`` default when no prefix is set.
 
-        Returns empty dict if the file is missing or unparsable.
+        A run that exits 0 after a graceful Ctrl+C still writes its export file
+        (with partial metrics) and marks it ``was_cancelled: true``; scenario
+        submissions must treat such runs as invalid, so the top-level flag is
+        surfaced alongside the metrics from the same parse.
+
+        Returns ``({}, False)`` if the file is missing or unparsable.
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
@@ -210,7 +248,7 @@ class LocalSubprocessExecutor(RunExecutor):
             json_file = zst_file
         elif not json_file.exists():
             logger.warning(f"Profile export file not found: {json_file}")
-            return {}
+            return {}, False
 
         try:
             raw = json_file.read_bytes()
@@ -225,8 +263,8 @@ class LocalSubprocessExecutor(RunExecutor):
             for field_name, field_value in data.items():
                 if isinstance(field_value, dict) and "unit" in field_value:
                     metrics[field_name] = JsonMetricResult(**field_value)
-            return metrics
+            return metrics, bool(data.get("was_cancelled", False))
 
         except (OSError, ValueError, orjson.JSONDecodeError) as e:
             logger.warning(f"Error extracting metrics from {json_file}: {e}")
-            return {}
+            return {}, False

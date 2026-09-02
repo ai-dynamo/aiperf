@@ -11,7 +11,6 @@ from aiperf.metrics.types.output_token_count import (
     TotalOutputTokensMetric,
 )
 from tests.unit.metrics.conftest import (
-    create_metric_array,
     create_record,
     run_simple_metrics_pipeline,
 )
@@ -76,7 +75,7 @@ class TestTotalOutputTokensMetric:
         """Test that TotalOutputTokensMetric correctly sums all output token counts"""
         metric = TotalOutputTokensMetric()
         metric_results = MetricResultsDict()
-        metric_results[OutputTokenCountMetric.tag] = create_metric_array(values)
+        metric_results[OutputTokenCountMetric.tag] = sum(values)
 
         result = metric.derive_value(metric_results)
         assert result == expected_sum

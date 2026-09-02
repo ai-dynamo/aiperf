@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
-from typing import Generic
+from typing import ClassVar, Generic
 
 from aiperf.common.enums import MetricType, MetricValueTypeVarT
 from aiperf.metrics.base_metric import BaseMetric
@@ -29,6 +29,16 @@ class BaseDerivedMetric(
     """
 
     type = MetricType.DERIVED
+
+    timeslice_derivable: ClassVar[bool] = True
+    """Whether the derive formula is meaningful within a single time slice.
+
+    Set False for metrics anchored to a run-global reference (e.g. the replay
+    send-lag family, anchored to the run's least-late request): re-deriving
+    them per slice would re-anchor each slice at its own reference and erase
+    the run-wide signal. The timeslice processor skips deriving these per
+    slice; run-level derivation is unaffected.
+    """
 
     def derive_value(self, metric_results: MetricResultsDict) -> MetricValueTypeVarT:
         """Derive the metric value."""

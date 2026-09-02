@@ -137,13 +137,13 @@ def run_validate() -> None:
     all_passed = True
     for label, errors, fmt in checks:
         if errors:
-            console.print(f"[red]✗[/red] {label}")
+            console.print(f"[red](FAIL)[/red] {label}")
             for cat, items in errors.items():
                 for line in fmt(cat, items):
                     console.print(f"    {line}")
             all_passed = False
         else:
-            console.print(f"[green]✓[/green] {label}")
+            console.print(f"[green](OK)[/green] {label}")
 
     color = "green" if all_passed else "red"
     msg = "All checks passed" if all_passed else "Validation failed"

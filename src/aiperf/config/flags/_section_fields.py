@@ -23,15 +23,24 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "model_names",
         "model_selection_strategy",
         "request_content_type",
+        "reset_kv_cache",
+        "reset_kv_cache_path",
+        "reset_kv_cache_timeout_seconds",
+        "server_profiler",
+        "server_profiler_start_path",
+        "server_profiler_stop_path",
+        "server_profiler_timeout_seconds",
         "session_header",
         "streaming",
         "timeout_seconds",
         "transport",
         "endpoint_type",
         "url_selection_strategy",
+        "per_chunk_usage",
         "urls",
         "use_legacy_max_tokens",
         "use_server_token_count",
+        "uuid_and_strip",
         "wait_for_model_interval",
         "wait_for_model_mode",
         "wait_for_model_timeout",
@@ -42,7 +51,9 @@ INPUT_FIELDS: frozenset[str] = frozenset(
     {
         # ----- top-level input flat fields -----
         "custom_dataset_type",
+        "dataset_filters",
         "dataset_sampling_strategy",
+        "allow_dataset_wrap",
         "extra_inputs",
         "input_file",
         "fixed_schedule",
@@ -52,8 +63,12 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "goodput",
         "headers",
         "hf_dataset_subset",
+        "hf_weka_dataset",
+        "ignore_trace_delays",
+        "max_context_length",
         "public_dataset",
         "random_seed",
+        "use_think_time_only",
         # ----- conversation modality -----
         "conversation_num",
         "conversation_num_dataset_entries",
@@ -63,7 +78,9 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "conversation_turn_delay_stddev",
         "conversation_turn_delay_ratio",
         # ----- prompt modality -----
+        "cache_bust",
         "prompt_batch_size",
+        "prompt_corpus",
         "prompt_input_tokens_mean",
         "prompt_input_tokens_stddev",
         "prompt_input_tokens_block_size",
@@ -73,6 +90,8 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "prompt_prefix_length",
         "prompt_prefix_shared_system_length",
         "prompt_prefix_user_context_length",
+        "prompt_random_corpus_style",
+        "prompt_random_range_ratio",
         "prompt_sequence_distribution",
         # ----- image modality -----
         "image_width_mean",
@@ -82,6 +101,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "image_batch_size",
         "image_format",
         "image_source",
+        "image_source_sampling",
         # ----- audio modality -----
         "audio_batch_size",
         "audio_length_mean",
@@ -127,6 +147,7 @@ OUTPUT_FIELDS: frozenset[str] = frozenset(
         "auto_plot",
         "export_http_trace",
         "export_level",
+        "export_outputs_json",
         "plot_required",
         "profile_export_prefix",
         "show_trace_timing",
@@ -136,6 +157,7 @@ OUTPUT_FIELDS: frozenset[str] = frozenset(
 
 TOKENIZER_FIELDS: frozenset[str] = frozenset(
     {
+        "apply_chat_template",
         "tokenizer_name",
         "tokenizer_revision",
         "trust_remote_code",
@@ -148,8 +170,10 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "arrival_smoothness",
         "benchmark_duration",
         "benchmark_grace_period",
+        "burst_phase_starts",
         "concurrency",
         "concurrency_ramp_duration",
+        "failed_request_threshold",
         "num_users",
         "prefill_concurrency",
         "prefill_concurrency_ramp_duration",
@@ -158,6 +182,11 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "request_count",
         "request_rate",
         "request_rate_ramp_duration",
+        "request_rate_series",
+        "system_idle_gap_cap_seconds",
+        "trace_idle_gap_cap_seconds",
+        "trajectory_start_max_ratio",
+        "trajectory_start_min_ratio",
         "user_centric_rate",
         "warmup_arrival_pattern",
         "warmup_concurrency",
@@ -216,6 +245,7 @@ SWEEPING_FIELDS: frozenset[str] = frozenset(
         "search_random_seed",
         "search_recipe",
         "search_sla",
+        "search_sla_tier",
         "search_space",
         "search_stat",
         "search_style",
@@ -237,5 +267,16 @@ ACCURACY_FIELDS: frozenset[str] = frozenset(
         "accuracy_system_prompt",
         "accuracy_tasks",
         "accuracy_verbose",
+    }
+)
+
+# Scenario-lock fields land on the top-level BenchmarkConfig body (not a
+# nested section), so they are NOT part of the seven-way partition checked by
+# test_section_fields_partition_cli_config. Grouped here for symmetry; the
+# converter reads them off ``cli.model_fields_set`` directly.
+SCENARIO_FIELDS: frozenset[str] = frozenset(
+    {
+        "scenario",
+        "unsafe_override",
     }
 )

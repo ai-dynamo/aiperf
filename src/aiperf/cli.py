@@ -4,6 +4,21 @@
 
 from cyclopts import App
 
+from aiperf.common.event_loop import configure_event_loop_policy_for_platform
+
+# Must run before any subcommand's asyncio.run()/uvloop.run() call ever
+# constructs an event loop -- setting the policy later has no effect on a
+# loop that already exists. This is the single top-level entrypoint for the
+# `aiperf` console script (see pyproject.toml [project.scripts]) and
+# `python -m aiperf`, so every subcommand routed through `app` below
+# (including nested calls like `aiperf profile`'s preflight/multi-run/
+# single-run paths) is covered by this one call. See
+# aiperf.common.event_loop for the full rationale and the other process
+# entrypoints (aiperf.sweep_controller.main,
+# aiperf.orchestrator.subprocess_runner) that must call it independently
+# because they are launched via `python -m`, never through this module.
+configure_event_loop_policy_for_platform()
+
 
 def _get_help_text() -> str:
     """Generate help text with installed plugin information."""
@@ -29,11 +44,15 @@ app.register_install_completion_command()
 
 # Register all CLI commands (lazily loaded at invocation time)
 # NOTE: The order here determines the order they will appear in docs/cli-options.md
+app.command("aiperf.cli_commands.analyze:app", name="analyze")
 app.command("aiperf.cli_commands.analyze_trace:app", name="analyze-trace")
+app.command("aiperf.cli_commands.chat:app", name="chat")
 app.command("aiperf.cli_commands.config:app", name="config")
+app.command("aiperf.cli_commands.kube:app", name="kube")
 app.command("aiperf.cli_commands.profile:app", name="profile")
 app.command("aiperf.cli_commands.plot:app", name="plot")
 app.command("aiperf.cli_commands.plugins:app", name="plugins")
+app.command("aiperf.cli_commands.proxy:app", name="proxy")
 app.command("aiperf.cli_commands.service:app", name="service")
 app.command("aiperf.cli_commands.speed_bench_report:app", name="speed-bench-report")
 app.command("aiperf.cli_commands.synthesize:app", name="synthesize")

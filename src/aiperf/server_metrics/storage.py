@@ -3,14 +3,13 @@
 
 import logging
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import NamedTuple, Self
 
 import numpy as np
 from numpy.typing import NDArray
-from typing_extensions import Self
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import PrometheusMetricType
+from aiperf.common.enums import CreditPhase, PrometheusMetricType
 from aiperf.common.models import (
     MetricFamily,
     MetricSample,
@@ -77,7 +76,9 @@ class ServerMetricsTimeSeries:
         self.first_fetch_ns: int = 0
         self.last_fetch_ns: int = 0
         self._total_fetch_count: int = 0
+        self._fetch_timestamps_ns: list[int] = []
         self._fetch_latencies_ns: list[int] = []
+        self._fetch_latency_records_ns: list[tuple[int, int]] = []
 
     @property
     def _update_intervals_ns(self) -> list[int]:
@@ -105,7 +106,12 @@ class ServerMetricsTimeSeries:
             for i in range(1, len(sorted_timestamps))
         ]
 
-    def append_snapshot(self, record: ServerMetricsRecord) -> None:
+    def append_snapshot(
+        self,
+        record: ServerMetricsRecord,
+        *,
+        storage_phase_index: int | None = None,
+    ) -> None:
         """Append all metrics from a ServerMetricsRecord.
 
         Extracts gauge, counter, and histogram metrics from the record and
@@ -134,8 +140,12 @@ class ServerMetricsTimeSeries:
         if timestamp_ns > self.last_fetch_ns:
             self.last_fetch_ns = timestamp_ns
         self._total_fetch_count += 1
+        self._fetch_timestamps_ns.append(timestamp_ns)
         if record.endpoint_latency_ns is not None:
             self._fetch_latencies_ns.append(record.endpoint_latency_ns)
+            self._fetch_latency_records_ns.append(
+                (timestamp_ns, record.endpoint_latency_ns)
+            )
 
         # Track unique updates (only for non-duplicates) for metadata/statistics
         # But store ALL samples (including duplicates) for consistent timeslice boundaries
@@ -162,7 +172,16 @@ class ServerMetricsTimeSeries:
                     self.metrics[key] = ServerMetricEntry.from_metric_family(
                         metric_family
                     )
-                self.metrics[key].data.append(timestamp_ns, sample)
+                self.metrics[key].data.append(
+                    timestamp_ns,
+                    sample,
+                    phase=record.benchmark_phase,
+                    phase_index=(
+                        record.phase_index
+                        if storage_phase_index is None
+                        else storage_phase_index
+                    ),
+                )
 
     def __len__(self) -> int:
         """Number of unique metric updates (excluding duplicates).
@@ -211,7 +230,12 @@ class ServerMetricsHierarchy:
     def __init__(self) -> None:
         self.endpoints: dict[str, ServerMetricsTimeSeries] = {}
 
-    def add_record(self, record: ServerMetricsRecord) -> None:
+    def add_record(
+        self,
+        record: ServerMetricsRecord,
+        *,
+        storage_phase_index: int | None = None,
+    ) -> None:
         """Add server metrics record to hierarchical storage.
 
         Automatically creates new endpoints as needed. Descriptions are stored
@@ -222,7 +246,10 @@ class ServerMetricsHierarchy:
         if url not in self.endpoints:
             self.endpoints[url] = ServerMetricsTimeSeries()
 
-        self.endpoints[url].append_snapshot(record)
+        self.endpoints[url].append_snapshot(
+            record,
+            storage_phase_index=storage_phase_index,
+        )
 
 
 # =============================================================================
@@ -230,6 +257,19 @@ class ServerMetricsHierarchy:
 # =============================================================================
 
 _INITIAL_CAPACITY = 256
+
+_PHASE_NONE = np.int8(0)
+_PHASE_WARMUP = np.int8(1)
+_PHASE_PROFILING = np.int8(2)
+_PHASE_INDEX_NONE = np.int32(-1)
+
+
+def _phase_code(phase: CreditPhase | None) -> np.int8:
+    if phase == CreditPhase.WARMUP:
+        return _PHASE_WARMUP
+    if phase == CreditPhase.PROFILING:
+        return _PHASE_PROFILING
+    return _PHASE_NONE
 
 
 class ScalarTimeSeries:
@@ -270,9 +310,18 @@ class ScalarTimeSeries:
     def __init__(self) -> None:
         self._timestamps: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int64)
         self._values: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
+        self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
+        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
         self._size: int = 0
 
-    def append(self, timestamp_ns: int, sample: MetricSample) -> None:
+    def append(
+        self,
+        timestamp_ns: int,
+        sample: MetricSample,
+        *,
+        phase: CreditPhase | None = None,
+        phase_index: int | None = None,
+    ) -> None:
         """Append a sample, maintaining sorted order by timestamp.
 
         Optimized for the common case where data arrives in chronological order
@@ -303,14 +352,30 @@ class ScalarTimeSeries:
             new_cap = len(self._values) * 2
             new_ts = np.empty(new_cap, dtype=np.int64)
             new_val = np.empty(new_cap, dtype=np.float64)
+            new_phase_codes = np.empty(new_cap, dtype=np.int8)
+            new_phase_indices = np.empty(new_cap, dtype=np.int32)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_val[: self._size] = self._values[: self._size]
-            self._timestamps, self._values = new_ts, new_val
+            new_phase_codes[: self._size] = self._phase_codes[: self._size]
+            new_phase_indices[: self._size] = self._phase_indices[: self._size]
+            self._timestamps, self._values, self._phase_codes, self._phase_indices = (
+                new_ts,
+                new_val,
+                new_phase_codes,
+                new_phase_indices,
+            )
+
+        phase_code = _phase_code(phase)
+        concrete_phase_index = (
+            _PHASE_INDEX_NONE if phase_index is None else np.int32(phase_index)
+        )
 
         # Fast path: in-order append (99.9% of cases)
         if self._size == 0 or timestamp_ns >= self._timestamps[self._size - 1]:
             self._timestamps[self._size] = timestamp_ns
             self._values[self._size] = sample.value
+            self._phase_codes[self._size] = phase_code
+            self._phase_indices[self._size] = concrete_phase_index
             self._size += 1
             return
 
@@ -323,10 +388,18 @@ class ScalarTimeSeries:
         # Shift elements right by 1 to make room (O(k) when inserting near end)
         self._timestamps[idx + 1 : self._size + 1] = self._timestamps[idx : self._size]
         self._values[idx + 1 : self._size + 1] = self._values[idx : self._size]
+        self._phase_codes[idx + 1 : self._size + 1] = self._phase_codes[
+            idx : self._size
+        ]
+        self._phase_indices[idx + 1 : self._size + 1] = self._phase_indices[
+            idx : self._size
+        ]
 
         # Insert at correct position
         self._timestamps[idx] = timestamp_ns
         self._values[idx] = sample.value
+        self._phase_codes[idx] = phase_code
+        self._phase_indices[idx] = concrete_phase_index
         self._size += 1
 
     @property
@@ -351,6 +424,14 @@ class ScalarTimeSeries:
             View of underlying storage (no copy).
         """
         return self._values[: self._size]
+
+    def get_phase_mask(self, phase: CreditPhase | None) -> NDArray[np.bool_]:
+        """Return a boolean mask selecting samples recorded in ``phase``."""
+        return self._phase_codes[: self._size] == _phase_code(phase)
+
+    def get_phase_index_mask(self, phase_index: int) -> NDArray[np.bool_]:
+        """Return a mask selecting one concrete named phase instance."""
+        return self._phase_indices[: self._size] == phase_index
 
     def __len__(self) -> int:
         """Number of stored samples.
@@ -492,12 +573,22 @@ class HistogramTimeSeries:
         self._timestamps: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int64)
         self._sums: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
         self._counts: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
+        self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
+        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
         self._size: int = 0
         self._bucket_les: tuple[str, ...] | None = None
         self._bucket_counts: np.ndarray | None = None
+        self._bucket_schema_mismatch_warned = False
         self._logger = logging.getLogger(__name__)
 
-    def append(self, timestamp_ns: int, sample: MetricSample) -> None:
+    def append(
+        self,
+        timestamp_ns: int,
+        sample: MetricSample,
+        *,
+        phase: CreditPhase | None = None,
+        phase_index: int | None = None,
+    ) -> None:
         """Append a histogram sample, maintaining sorted order by timestamp.
 
         Optimized for chronological data arrival (99.9% of cases) with O(1)
@@ -538,20 +629,9 @@ class HistogramTimeSeries:
         expected_bucket_keys = set(self._bucket_les)
 
         if sample_bucket_keys != expected_bucket_keys:
-            missing_in_sample = expected_bucket_keys - sample_bucket_keys
-            extra_in_sample = sample_bucket_keys - expected_bucket_keys
-
-            if missing_in_sample:
-                self._logger.warning(
-                    f"Histogram bucket schema mismatch: sample is missing buckets {sorted(missing_in_sample)}. "
-                    f"Missing buckets will be filled with 0.0. Expected schema: {self._bucket_les}"
-                )
-
-            if extra_in_sample:
-                self._logger.warning(
-                    f"Histogram bucket schema mismatch: sample has unexpected buckets {sorted(extra_in_sample)}. "
-                    f"Extra buckets will be ignored. Expected schema: {self._bucket_les}"
-                )
+            self._warn_on_bucket_schema_mismatch(
+                sample_bucket_keys, expected_bucket_keys
+            )
 
         # Convert dict to row (order matches _bucket_les, 0.0 for missing buckets)
         bucket_row = np.array([sample.buckets.get(le, 0.0) for le in self._bucket_les])
@@ -562,21 +642,34 @@ class HistogramTimeSeries:
             new_ts = np.empty(new_cap, dtype=np.int64)
             new_sums = np.empty(new_cap, dtype=np.float64)
             new_counts = np.empty(new_cap, dtype=np.float64)
+            new_phase_codes = np.empty(new_cap, dtype=np.int8)
+            new_phase_indices = np.empty(new_cap, dtype=np.int32)
             new_buckets = np.empty((new_cap, len(self._bucket_les)), dtype=np.float64)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_sums[: self._size] = self._sums[: self._size]
             new_counts[: self._size] = self._counts[: self._size]
+            new_phase_codes[: self._size] = self._phase_codes[: self._size]
+            new_phase_indices[: self._size] = self._phase_indices[: self._size]
             new_buckets[: self._size] = self._bucket_counts[: self._size]
             self._timestamps = new_ts
             self._sums = new_sums
             self._counts = new_counts
+            self._phase_codes = new_phase_codes
+            self._phase_indices = new_phase_indices
             self._bucket_counts = new_buckets
+
+        phase_code = _phase_code(phase)
+        concrete_phase_index = (
+            _PHASE_INDEX_NONE if phase_index is None else np.int32(phase_index)
+        )
 
         # Fast path: in-order append (99.9% of cases)
         if self._size == 0 or timestamp_ns >= self._timestamps[self._size - 1]:
             self._timestamps[self._size] = timestamp_ns
             self._sums[self._size] = sample.sum or 0.0
             self._counts[self._size] = sample.count or 0.0
+            self._phase_codes[self._size] = phase_code
+            self._phase_indices[self._size] = concrete_phase_index
             self._bucket_counts[self._size] = bucket_row
             self._size += 1
             return
@@ -590,6 +683,12 @@ class HistogramTimeSeries:
         self._timestamps[idx + 1 : self._size + 1] = self._timestamps[idx : self._size]
         self._sums[idx + 1 : self._size + 1] = self._sums[idx : self._size]
         self._counts[idx + 1 : self._size + 1] = self._counts[idx : self._size]
+        self._phase_codes[idx + 1 : self._size + 1] = self._phase_codes[
+            idx : self._size
+        ]
+        self._phase_indices[idx + 1 : self._size + 1] = self._phase_indices[
+            idx : self._size
+        ]
         self._bucket_counts[idx + 1 : self._size + 1] = self._bucket_counts[
             idx : self._size
         ]
@@ -598,8 +697,37 @@ class HistogramTimeSeries:
         self._timestamps[idx] = timestamp_ns
         self._sums[idx] = sample.sum or 0.0
         self._counts[idx] = sample.count or 0.0
+        self._phase_codes[idx] = phase_code
+        self._phase_indices[idx] = concrete_phase_index
         self._bucket_counts[idx] = bucket_row
         self._size += 1
+
+    def _warn_on_bucket_schema_mismatch(
+        self, sample_bucket_keys: set[str], expected_bucket_keys: set[str]
+    ) -> None:
+        if self._bucket_schema_mismatch_warned:
+            return
+
+        missing_in_sample = expected_bucket_keys - sample_bucket_keys
+        extra_in_sample = sample_bucket_keys - expected_bucket_keys
+        mismatch_details: list[str] = []
+
+        if missing_in_sample:
+            mismatch_details.append(
+                f"Histogram bucket schema mismatch: sample is missing buckets {sorted(missing_in_sample)}. "
+                "Missing buckets will be filled with 0.0."
+            )
+        if extra_in_sample:
+            mismatch_details.append(
+                f"Histogram bucket schema mismatch: sample has unexpected buckets {sorted(extra_in_sample)}. "
+                "Extra buckets will be ignored."
+            )
+
+        self._logger.warning(
+            f"{' '.join(mismatch_details)} Expected schema: {self._bucket_les}. "
+            "Further schema mismatch warnings for this histogram series will be suppressed."
+        )
+        self._bucket_schema_mismatch_warned = True
 
     def get_bucket_dict(self, idx: int) -> dict[str, float]:
         """Get bucket snapshot at index as dict for percentile estimation.
@@ -661,6 +789,14 @@ class HistogramTimeSeries:
         """
         return self._counts[: self._size]
 
+    def get_phase_mask(self, phase: CreditPhase | None) -> NDArray[np.bool_]:
+        """Return a boolean mask selecting samples recorded in ``phase``."""
+        return self._phase_codes[: self._size] == _phase_code(phase)
+
+    def get_phase_index_mask(self, phase_index: int) -> NDArray[np.bool_]:
+        """Return a mask selecting one concrete named phase instance."""
+        return self._phase_indices[: self._size] == phase_index
+
     @property
     def bucket_les(self) -> tuple[str, ...]:
         """Sorted bucket boundary strings (e.g., ('0.01', '0.1', '+Inf')).
@@ -694,7 +830,7 @@ class HistogramTimeSeries:
 
     def get_indices_for_filter(
         self, time_filter: TimeRangeFilter | None
-    ) -> tuple[int | None, int]:
+    ) -> tuple[int | None, int | None]:
         """Get (reference_idx, final_idx) indices for time-filtered histogram processing.
 
         For histogram metrics (cumulative counters), we need:
@@ -712,7 +848,8 @@ class HistogramTimeSeries:
         Returns:
             Tuple of (reference_idx, final_idx) where:
             - reference_idx: Index of last sample < start_ns, or None if none exists
-            - final_idx: Index of last sample <= end_ns, or last index if no end bound
+            - final_idx: Index of last sample <= end_ns, last index if no end bound,
+              or None if end_ns is before the first sample
         """
         reference_idx = None
         final_idx = self._size - 1
@@ -730,7 +867,7 @@ class HistogramTimeSeries:
                 insert_pos = int(
                     np.searchsorted(timestamps, time_filter.end_ns, side="right")
                 )
-                final_idx = insert_pos - 1 if insert_pos > 0 else self._size - 1
+                final_idx = insert_pos - 1 if insert_pos > 0 else None
 
         return reference_idx, final_idx
 
@@ -757,6 +894,8 @@ class HistogramTimeSeries:
             Empty array if fewer than 2 samples or all intervals have zero duration.
         """
         ref_idx, final_idx = self.get_indices_for_filter(time_filter)
+        if final_idx is None:
+            return np.array([], dtype=np.float64)
         start_idx = ref_idx if ref_idx is not None else 0
 
         ts = self.timestamps[start_idx : final_idx + 1]

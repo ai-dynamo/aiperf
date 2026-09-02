@@ -260,6 +260,39 @@ async def test_cell_callback_fires_with_minimal_cell_when_recipe_has_no_pareto_a
     assert cell["_cell_results"] == cell_results
 
 
+def test_fire_cell_callback_variation_key_hashable_for_nested_dict_values(
+    tmp_path: Path,
+):
+    """Scenario sweeps put nested override dicts in ``variation.values``.
+
+    The orchestrator used to build the per-cell ``variation_key`` inline as
+    ``(label, tuple(sorted(variation.values.items())))`` -- a third copy of
+    the construction the sweep-aggregate fix centralized. That tuple embeds
+    the unhashable nested dict, so any consumer that dict/set-keys the key
+    hits ``TypeError: unhashable type: 'dict'``. AIP-956: the key handed to
+    the callback must stay hashable.
+    """
+    received: list[tuple] = []
+
+    def hook(variation_key, cell):
+        received.append((variation_key, cell))
+
+    nested = {"benchmark": {"dataset": {"prompts": {"isl": {"mean": 1000}}}}}
+    var = _make_variation(nested, label="aa-1k")
+    orch = MultiRunOrchestrator(tmp_path, cell_callback=hook)
+
+    # No pareto_axes -> minimal-cell branch, isolating the key construction.
+    with patch("aiperf.cli_runner._pareto._aggregate_one_cell", return_value=None):
+        orch._fire_cell_callback(MagicMock(), var, [])
+
+    assert len(received) == 1, "callback must fire even for nested-dict values"
+    key, _cell = received[0]
+    try:
+        hash(key)
+    except TypeError:
+        pytest.fail(f"variation_key handed to cell_callback is unhashable: {key!r}")
+
+
 @pytest.mark.asyncio
 async def test_cell_callback_exception_does_not_break_sweep(tmp_path: Path):
     """A buggy callback must not surface its exception into the sweep loop."""

@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 
-from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.models import Conversation
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -42,7 +44,7 @@ class TestCompletionsEndpoint:
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
-            "prompt": ["Hello, world!"],
+            "prompt": "Hello, world!",
             "model": "test-model",
             "stream": False,
         }
@@ -61,13 +63,59 @@ class TestCompletionsEndpoint:
         request_info = create_request_info(model_endpoint=model_endpoint, turns=turns)
         payload = endpoint.format_payload(request_info)
         expected_payload = {
-            "prompt": ["Hello, world!"],
+            "prompt": "Hello, world!",
             "model": "test-model",
             "stream": True,
             "max_tokens": 50,
             "ignore_eos": True,
+            # Requested on every streaming run so vLLM emits the trailing
+            # usage chunk that carries per-request metrics.
+            "stream_options": {"include_usage": True},
         }
         assert payload == expected_payload
+
+    def test_format_payload_extra_body_overrides_endpoint_extra(self, model_endpoint):
+        endpoint = CompletionsEndpoint(model_endpoint)
+        model_endpoint.endpoint.extra = [
+            ("hash_ids", [9, 9]),
+            ("block_size", 128),
+            ("temperature", 0.7),
+        ]
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            texts=["second"],
+            extra_body={"hash_ids": [1, 2], "block_size": 64},
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["hash_ids"] == [1, 2]
+        assert payload["block_size"] == 64
+        assert payload["temperature"] == 0.7
+
+    @pytest.mark.parametrize(
+        "credit_phase",
+        [
+            param(CreditPhase.PROFILING, id="profiling"),
+            param(CreditPhase.WARMUP, id="warmup"),
+        ],
+    )  # fmt: skip
+    def test_format_payload_extra_body_prompt_overrides_in_every_phase(
+        self, model_endpoint, credit_phase
+    ):
+        """Extra body merges last and wins in all credit phases, warmup included."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            texts=["recorded"],
+            credit_phase=credit_phase,
+            extra_body={"prompt": "overridden", "hash_ids": [1, 2]},
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["prompt"] == "overridden"
+        assert payload["hash_ids"] == [1, 2]
 
     @pytest.mark.parametrize(
         "streaming,use_server_token_count,user_extra,expected_stream_options",
@@ -76,12 +124,16 @@ class TestCompletionsEndpoint:
             (True, True, None, {"include_usage": True}),
             # Don't add when not streaming
             (False, True, None, None),
-            # Don't add when flag disabled
-            (True, False, None, None),
-            # Don't add when neither enabled
+            # Add for any streaming run, even without server token counts:
+            # vLLM only emits the metrics-bearing trailing usage chunk when
+            # include_usage is set, and per-request spec-decode metrics ride it.
+            (True, False, None, {"include_usage": True}),
+            # Don't add when not streaming
             (False, False, None, None),
             # Preserve user's include_usage=False
             (True, True, [("stream_options", {"include_usage": False})], {"include_usage": False}),
+            # Preserve the opt-out without server token counts too
+            (True, False, [("stream_options", {"include_usage": False})], {"include_usage": False}),
             # Merge with user's other options
             (True, True, [("stream_options", {"continuous_updates": True})], {"continuous_updates": True, "include_usage": True}),
         ],
@@ -111,3 +163,68 @@ class TestCompletionsEndpoint:
         else:
             assert "stream_options" in payload
             assert payload["stream_options"] == expected_stream_options
+
+    def test_format_payload_does_not_mutate_endpoint_extra(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """Auto-adding include_usage must not write back into endpoint.extra.
+
+        The payload merge aliases the shared config dict, so an in-place edit
+        would rewrite the author's config mid-run and leak into every
+        subsequent request.
+        """
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.use_server_token_count = False
+        model_endpoint.endpoint.extra = [
+            ("stream_options", {"continuous_updates": True})
+        ]
+
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream_options"] == {
+            "continuous_updates": True,
+            "include_usage": True,
+        }
+        assert model_endpoint.endpoint.extra == [
+            ("stream_options", {"continuous_updates": True})
+        ]
+
+    def test_format_payload_stream_override_suppresses_stream_options(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """extra_body may turn streaming off; stream_options must follow it.
+
+        A server rejects stream_options when stream is false, so the injection
+        decision reads the merged payload rather than the endpoint config.
+        """
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        turns[-1].extra_body = {"stream": False}
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream"] is False
+        assert "stream_options" not in payload
+
+    def test_format_payload_explicit_null_stream_options_still_injects(
+        self,
+        model_endpoint: ModelEndpointInfo,
+        sample_conversations: dict[str, Conversation],
+    ) -> None:
+        """An explicit null parses from the CLI; treat it as absent, not as opt-out."""
+        endpoint = CompletionsEndpoint(model_endpoint)
+        turns = [sample_conversations["session_1"].turns[0]]
+        model_endpoint.endpoint.streaming = True
+        model_endpoint.endpoint.extra = [("stream_options", None)]
+        request_info = create_request_info(turns=turns, model_endpoint=model_endpoint)
+        payload = endpoint.format_payload(request_info)
+
+        assert payload["stream_options"] == {"include_usage": True}

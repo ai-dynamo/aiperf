@@ -5,11 +5,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from aiperf.accuracy.models import GradingResult
+from aiperf.accuracy.models import (
+    AccuracyRecordsData,
+    GradingResult,
+)
 from aiperf.common.exceptions import PostProcessorDisabled
+from aiperf.common.hooks import on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import MetricRecordMetadata, ParsedResponseRecord
-from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    ToolCallResponseData,
+)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 
@@ -54,7 +61,18 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         grader_cls = plugins.get_class(PluginType.ACCURACY_GRADER, grader_name)
         self.grader: BaseGrader = grader_cls(run=run)
 
+        self._grader_name = grader_name
+        self._verbose = acc_cfg.verbose
         self._ground_truths: list[str] | None = None
+        self._tasks: list[str] | None = None
+
+    @on_stop
+    async def _close_grader(self) -> None:
+        # Graceful shutdown: release the grader's resources (e.g. the LCB
+        # code-execution worker subprocess and its process group). The abrupt
+        # os._exit force-kill path — where @on_stop never runs — is handled
+        # worker-side by a death-pipe watcher.
+        await self.grader.aclose()
 
     def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
         """Receive ground-truth answers from the DatasetConfiguredNotification.
@@ -63,20 +81,25 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
         Builds the ordered list of ground-truth answers from ConversationMetadata
         so that process_record can grade without re-loading the benchmark.
         """
-        self._ground_truths = [
-            c.accuracy_ground_truth
-            for c in metadata.conversations
-            if c.accuracy_ground_truth is not None
+        # Build ground-truth and task lists from the SAME graded conversations so
+        # they stay index-aligned. Filtering tasks independently (dropping the
+        # label-less ones) would shift the modulo and mismap records to the wrong
+        # task whenever only some conversations carry an accuracy_task label. A
+        # graded conversation with no task label keeps a None entry here.
+        graded = [
+            c for c in metadata.conversations if c.accuracy_ground_truth is not None
         ]
+        self._ground_truths = [c.accuracy_ground_truth for c in graded]
+        self._tasks = [c.accuracy_task for c in graded]
 
     async def process_record(
         self, record: ParsedResponseRecord, metadata: MetricRecordMetadata
-    ) -> MetricRecordDict:
+    ) -> AccuracyRecordsData:
         """Grade a single response against its corresponding benchmark problem.
 
         Maps ``metadata.session_num % len(_ground_truths)`` to the ground-truth
-        answer, runs the configured grader, and returns a MetricRecordDict
-        containing ``accuracy.correct`` and ``accuracy.unparsed``.
+        answer, runs the configured grader, and returns a typed
+        ``AccuracyRecordsData`` that flows on the dedicated ``accuracy`` channel.
 
         Raises:
             RuntimeError: if on_dataset_configured was not called before processing.
@@ -86,26 +109,109 @@ class AccuracyRecordProcessor(AIPerfLifecycleMixin):
                 "AccuracyRecordProcessor: dataset not configured; "
                 "on_dataset_configured must be called before process_record"
             )
-        record_metrics = MetricRecordDict()
 
         ground_truth = self._ground_truths[
             metadata.session_num % len(self._ground_truths)
         ]
-        response_text = self._extract_response_text(record)
+        model_output, model_thinking = self._extract_output_and_thinking(record)
+        response_text = model_output
 
         result: GradingResult = await self.grader.grade(response_text, ground_truth)
 
-        record_metrics["accuracy.correct"] = 1.0 if result.correct else 0.0
-        record_metrics["accuracy.unparsed"] = 1.0 if result.unparsed else 0.0
+        task = (
+            self._tasks[metadata.session_num % len(self._tasks)]
+            if self._tasks
+            else None
+        )
 
-        return record_metrics
+        self._log_grading_detail(metadata.session_num, response_text, result)
+
+        return AccuracyRecordsData(
+            session_num=metadata.session_num,
+            conversation_id=metadata.conversation_id,
+            x_request_id=metadata.x_request_id,
+            worker_id=metadata.worker_id,
+            benchmark_phase=metadata.benchmark_phase,
+            timestamp_ns=metadata.request_end_ns,
+            task=task,
+            grader_name=self._grader_name,
+            passed=result.correct,
+            unparsed=result.unparsed,
+            confidence=result.confidence,
+            expected=result.ground_truth,
+            actual=result.extracted_answer,
+            explanation=result.reasoning,
+            model_output=model_output,
+            model_thinking=model_thinking,
+        )
+
+    def _log_grading_detail(
+        self, session_num: int, response_text: str, result: GradingResult
+    ) -> None:
+        """Surface per-problem grading diagnostics.
+
+        Every grader fills in ``reasoning`` (why a response was graded
+        correct/unparsed) and ``extracted_answer``, but only ``correct`` and
+        ``unparsed`` reach the metrics. Without this, a run reporting 100%
+        unparsed gives no clue whether the response was empty, the answer
+        format didn't match, or grading raised an exception (e.g. LCB's
+        sandboxed execution failing to fork from the daemon record processor).
+
+        Emits at info level under ``--accuracy-verbose`` (the flag's
+        documented "per-problem grading details") and always at debug, so the
+        reason is recoverable from logs without re-running.
+        """
+        if not self._verbose and not self.is_debug_enabled:
+            return
+
+        def _detail() -> str:
+            preview = response_text.strip().replace("\n", "\\n")[:200]
+            return (
+                f"[accuracy] session={session_num} correct={result.correct} "
+                f"unparsed={result.unparsed} reason={result.reasoning!r} "
+                f"extracted={result.extracted_answer[:120]!r} "
+                f"response_len={len(response_text)} response_preview={preview!r}"
+            )
+
+        if self._verbose:
+            self.info(_detail)
+        else:
+            self.debug(_detail)
 
     @staticmethod
-    def _extract_response_text(record: ParsedResponseRecord) -> str:
-        parts: list[str] = []
+    def _extract_output_and_thinking(
+        record: ParsedResponseRecord,
+    ) -> tuple[str, str | None]:
+        """Split the response into visible answer content and reasoning/thinking.
+
+        ``model_output`` is the answer channel (``TextResponseData.text``,
+        ``ReasoningResponseData.content``, or ``ToolCallResponseData`` content +
+        ``tool_call_text``); ``model_thinking`` is the concatenated
+        ``reasoning_content`` from any ``ReasoningResponseData`` chunks, or None
+        when the model emitted no separate reasoning channel. For reasoning models
+        this splits the two channels: grading scores only ``model_output``
+        (the final answer content) so that CoT preamble does not poison
+        exact-match and similar graders; ``model_thinking`` is exported separately.
+        """
+        output_parts: list[str] = []
+        thinking_parts: list[str] = []
+        fallback_parts: list[str] = []
         for resp in record.content_responses:
-            if resp.data:
-                text = resp.data.get_text()
-                if text:
-                    parts.append(text)
-        return "".join(parts)
+            data = resp.data
+            if data is None:
+                continue
+            if isinstance(data, ReasoningResponseData):
+                if data.reasoning:
+                    thinking_parts.append(data.reasoning)
+                    fallback_parts.append(data.reasoning)
+                if data.content:
+                    output_parts.append(data.content)
+            elif isinstance(data, ToolCallResponseData):
+                if data.content:
+                    output_parts.append(data.content)
+                output_parts.append(data.tool_call_text)
+            else:
+                output_parts.append(data.get_text())
+        thinking = "".join(thinking_parts) if thinking_parts else None
+        model_output = "".join(output_parts) or "".join(fallback_parts)
+        return model_output, thinking

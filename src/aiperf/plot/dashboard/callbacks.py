@@ -81,6 +81,7 @@ from aiperf.plot.dashboard.utils import (
     resolve_single_run_column_name,
     runs_to_dataframe,
 )
+from aiperf.plot.exceptions import DataUnavailableError
 from aiperf.plot.metric_names import (
     get_all_metric_display_names,
     get_gpu_metrics,
@@ -4102,7 +4103,7 @@ def register_multi_run_plot_edit_callbacks(app: dash.Dash, runs: list):
     def hide_plot_close_modal(n_clicks):
         """Hide plot - close modal after state update."""
         if n_clicks:
-            print("🚪 Closing modal after hide")
+            print("Closing modal after hide")
             return False
         raise PreventUpdate
 
@@ -4935,7 +4936,17 @@ def _generate_singlerun_figure(
             HandlerClass = plugins.get_class(PluginType.PLOT, spec.plot_type)
             handler = HandlerClass(plot_generator=plot_gen, logger=None)
             available_metrics = _build_available_metrics_dict(plot_specs)
-            fig = handler.create_plot(spec, run, available_metrics)
+            try:
+                fig = handler.create_plot(spec, run, available_metrics)
+            except (DataUnavailableError, KeyError) as e:
+                # Expected when this run lacks the data the plot needs (e.g.
+                # streaming-only metrics like time_to_first_token in a
+                # non-streaming run). Skip the plot (return None -> the grid
+                # drops it) instead of rendering an error tile.
+                _logger.debug(
+                    f"Skipping plot '{plot_id}': required data not available ({e!r})"
+                )
+                return None
 
             config_title = config.get("title")
             if config_title and config_title != spec.title:
@@ -5040,7 +5051,7 @@ def _render_single_run_plots(
             )
             children.append(container)
         else:
-            _logger.warning(f"Plot '{plot_id}' generation returned None. Skipping.")
+            _logger.debug(f"Plot '{plot_id}' generation returned None. Skipping.")
 
     # Add "+ Create Custom Plot" button at end
     children.append(

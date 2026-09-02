@@ -28,8 +28,28 @@ from aiperf.common.path_safety import safe_read_template_path
 from aiperf.config.flags._converter_endpoint import (
     _endpoint_template_fallback,
     _endpoint_template_from_extra,
+    build_endpoint,
 )
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import EndpointType
+
+
+def _try_symlink_or_skip(link: Path, target: Path) -> None:
+    """Create a symlink, or pytest.skip if the platform forbids it.
+
+    Windows requires Admin or Developer Mode to create symlinks (WinError
+    1314 otherwise). GHA windows-latest has neither. Only skip on permission
+    or operation-not-supported errors; re-raise other OSError values so they
+    surface as test failures rather than silent skips.
+    """
+    import errno
+
+    try:
+        link.symlink_to(target)
+    except OSError as e:
+        if e.errno in (errno.EPERM, errno.EACCES, errno.ENOSYS):
+            pytest.skip(f"symlink creation not permitted on this platform: {e}")
+        raise
 
 
 class TestEndpointTemplateFromExtraPathSafety:
@@ -61,7 +81,7 @@ class TestEndpointTemplateFromExtraPathSafety:
         target = tmp_path / "target.json"
         target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
         link = tmp_path / "link.json"
-        link.symlink_to(target)
+        _try_symlink_or_skip(link, target)
         endpoint: dict = {}
         extra: dict = {"payload_template": str(link)}
 
@@ -108,7 +128,7 @@ class TestEndpointTemplateFallbackPathSafety:
         target = tmp_path / "target.json"
         target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
         link = tmp_path / "link.json"
-        link.symlink_to(target)
+        _try_symlink_or_skip(link, target)
         endpoint: dict = {
             "type": EndpointType.TEMPLATE,
             "extra": {"payload_template": str(link)},
@@ -216,7 +236,7 @@ class TestSafeReadTemplatePathSymlinkedParent:
         target = real_dir / "tmpl.json"
         target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
         link_dir = tmp_path / "link_dir"
-        link_dir.symlink_to(real_dir)
+        _try_symlink_or_skip(link_dir, real_dir)
         file_via_link = link_dir / "tmpl.json"
 
         # Sanity: the leaf is NOT a symlink, but the parent IS.
@@ -254,3 +274,25 @@ class TestSafeReadTemplatePathDecodeFailures:
         bad.write_bytes(b"\xff\xfe binary template body")
 
         assert safe_read_template_path(str(bad)) is None
+
+
+class TestEndpointFieldPropagation:
+    """Regression: fields set on CLIConfig must reach the endpoint config.
+
+    A field can be wired on CLIConfig, the endpoint model, and the converter map
+    yet still be silently dropped if it is missing from ``ENDPOINT_FIELDS`` (which
+    ``build_endpoint`` intersects against ``model_fields_set``). These tests
+    exercise the full CLI-to-endpoint hop so such a gap fails loudly.
+    """
+
+    def test_per_chunk_usage_propagates_to_endpoint(self) -> None:
+        cli = CLIConfig(per_chunk_usage=True, use_server_token_count=True)
+        endpoint = build_endpoint(cli)
+
+        assert endpoint["per_chunk_usage"] is True
+        assert endpoint["use_server_token_count"] is True
+
+    def test_per_chunk_usage_absent_when_not_set(self) -> None:
+        endpoint = build_endpoint(CLIConfig())
+
+        assert "per_chunk_usage" not in endpoint

@@ -9,7 +9,11 @@ from unittest.mock import Mock, patch
 import pytest
 from PIL import Image
 
-from aiperf.common.enums import ImageFormat, ImageSource
+from aiperf.common.enums import (
+    ImageFormat,
+    ImageSource,
+    ImageSourceSamplingStrategy,
+)
 from aiperf.config.dataset.content import ImageConfig
 from aiperf.config.distributions import NormalDistribution
 from aiperf.dataset.generator import ImageGenerator
@@ -31,6 +35,7 @@ def make_image_config(
     image_format: ImageFormat = ImageFormat.PNG,
     source: ImageSource | Path = ImageSource.ASSETS,
     batch_size: int = 1,
+    source_sampling: ImageSourceSamplingStrategy = ImageSourceSamplingStrategy.RANDOM_WITH_REPLACEMENT,
 ) -> ImageConfig:
     """Build a v2 ImageConfig from mean/stddev parameters.
 
@@ -47,6 +52,7 @@ def make_image_config(
         format=image_format,
         source=source,
         batch_size=batch_size,
+        source_sampling=source_sampling,
     )
 
 
@@ -223,7 +229,7 @@ class TestImageGenerator:
         assert image1 != image2
 
     def test_create_from_file_success(self, base_config, mock_file_system):
-        """Test successful loading and sampling of source images."""
+        """Test successful indexing and lazy sampling of source images."""
         mocks = mock_file_system
         mocks["mock_glob"].return_value = [
             "/path/image1.jpg",
@@ -237,10 +243,12 @@ class TestImageGenerator:
         mocks["mock_glob"].assert_called_once()
         glob_call_path = mocks["mock_glob"].call_args[0][0]
         assert "source_images" in glob_call_path and glob_call_path.endswith("*")
-        assert mocks["mock_open"].call_count == 3
+        assert len(generator._source_image_paths) == 3
+        mocks["mock_open"].assert_not_called()
 
         result = generator._create_from_source_images(10, 10)
         assert result == mocks["mock_image"]
+        mocks["mock_open"].assert_called_once()
 
     def test_file_mode_no_images_found_raises(self, base_config, mock_file_system):
         """Test error handling when no source images are found."""
@@ -260,10 +268,11 @@ class TestImageGenerator:
         generator = ImageGenerator(base_config)
 
         mocks["mock_glob"].assert_called_once()
-        mocks["mock_open"].assert_called_once_with("/path/single_image.jpg")
+        mocks["mock_open"].assert_not_called()
 
         result = generator._create_from_source_images(10, 10)
         assert result == mocks["mock_image"]
+        mocks["mock_open"].assert_called_once_with(Path("/path/single_image.jpg"))
 
     def test_generate_integration_with_real_image(self):
         """Integration test with noise mode producing a decodable image."""
@@ -371,7 +380,7 @@ class TestImageGeneratorNoiseMode:
 
     def test_init_noise_mode_skips_disk(self, noise_config):
         generator = ImageGenerator(noise_config)
-        assert not hasattr(generator, "_source_images")
+        assert not hasattr(generator, "_source_image_paths")
 
     def test_generate_noise_returns_valid_data_url(self, noise_config):
         generator = ImageGenerator(noise_config)
@@ -421,6 +430,89 @@ class TestImageGeneratorCustomDirectory:
         result = generator.generate()
         assert result.startswith("data:image/png;base64,")
 
+    def test_custom_directory_shuffle_cycle_uses_pool_once(self, tmp_path):
+        colors = {
+            "blue.png": (0, 0, 255),
+            "green.png": (0, 128, 0),
+            "red.png": (255, 0, 0),
+        }
+        for filename, color in colors.items():
+            Image.new("RGB", (5, 5), color=color).save(tmp_path / filename)
+
+        config = ImageConfig(
+            batch_size=1,
+            width=ImageWidthConfig(mean=5, stddev=0),
+            height=ImageHeightConfig(mean=5, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+            source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
+        )
+        generator = ImageGenerator(config)
+
+        first_cycle = [
+            generator._create_from_source_images(5, 5).getpixel((0, 0))
+            for _ in range(len(colors))
+        ]
+        next_image = generator._create_from_source_images(5, 5).getpixel((0, 0))
+
+        assert sorted(first_cycle) == sorted(colors.values())
+        assert next_image in colors.values()
+
+    def test_custom_directory_sequential_cycle_uses_sorted_order_and_wraps(
+        self, tmp_path
+    ):
+        colors = {
+            "blue.png": (0, 0, 255),
+            "green.png": (0, 128, 0),
+            "red.png": (255, 0, 0),
+        }
+        for filename, color in colors.items():
+            Image.new("RGB", (5, 5), color=color).save(tmp_path / filename)
+
+        config = ImageConfig(
+            batch_size=1,
+            width=ImageWidthConfig(mean=5, stddev=0),
+            height=ImageHeightConfig(mean=5, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+            source_sampling=ImageSourceSamplingStrategy.SEQUENTIAL_CYCLE,
+        )
+        generator = ImageGenerator(config)
+
+        sampled = [
+            generator._create_from_source_images(5, 5).getpixel((0, 0))
+            for _ in range(len(colors) + 1)
+        ]
+
+        assert sampled == [
+            colors["blue.png"],
+            colors["green.png"],
+            colors["red.png"],
+            colors["blue.png"],
+        ]
+
+    def test_source_sampling_rejects_noise_source(self):
+        with pytest.raises(ValueError, match="requires image source"):
+            ImageConfig(
+                batch_size=1,
+                width=ImageWidthConfig(mean=5, stddev=0),
+                height=ImageHeightConfig(mean=5, stddev=0),
+                source=ImageSource.NOISE,
+                source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
+            )
+
+    def test_source_sampling_rejects_noise_source_even_when_images_disabled(
+        self,
+    ) -> None:
+        with pytest.raises(ValueError, match="requires image source"):
+            ImageConfig(
+                batch_size=0,
+                width=ImageWidthConfig(mean=5, stddev=0),
+                height=ImageHeightConfig(mean=5, stddev=0),
+                source=ImageSource.NOISE,
+                source_sampling=ImageSourceSamplingStrategy.SHUFFLE_CYCLE,
+            )
+
     def test_custom_directory_skips_non_image_files(self, tmp_path):
         """Non-image entries (text, subdirs) must be skipped, not crash generation."""
         img = Image.new("RGB", (5, 5), color="red")
@@ -436,7 +528,7 @@ class TestImageGeneratorCustomDirectory:
             source=tmp_path,
         )
         generator = ImageGenerator(config)
-        assert len(generator._source_images) == 1
+        assert generator._source_image_paths == [tmp_path / "valid.png"]
         result = generator.generate()
         assert result.startswith("data:image/png;base64,")
 
@@ -452,6 +544,25 @@ class TestImageGeneratorCustomDirectory:
         )
         with pytest.raises(ValueError, match="No source images found"):
             ImageGenerator(config)
+
+    def test_custom_directory_unreadable_candidate_is_retired_lazily(self, tmp_path):
+        (tmp_path / "corrupt.jpg").write_bytes(b"not actually an image")
+        Image.new("RGB", (5, 5), color="red").save(tmp_path / "valid.png")
+
+        config = ImageConfig(
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+            source_sampling=ImageSourceSamplingStrategy.SEQUENTIAL_CYCLE,
+        )
+        generator = ImageGenerator(config)
+
+        result = generator.generate()
+
+        assert result.startswith("data:image/png;base64,")
+        assert generator._available_source_image_indexes == [1]
 
     def test_custom_directory_not_found_raises(self):
         config = ImageConfig(

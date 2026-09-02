@@ -20,6 +20,7 @@ class TestLoaderEntriesRegistered:
         [
             ("raw_payload", "RawPayloadDatasetLoader"),
             ("inputs_json", "InputsJsonPayloadLoader"),
+            ("tracelab", "TraceLabTraceDatasetLoader"),
         ],
     )
     def test_loader_resolves(self, loader_name: str, expected_cls: str):

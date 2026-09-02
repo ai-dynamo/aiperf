@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
     from aiperf.credit.issuer import CreditIssuer
+    from aiperf.credit.messages import CreditReturn, FirstToken
     from aiperf.credit.structs import Credit
     from aiperf.timing.config import CreditPhaseConfig
     from aiperf.timing.conversation_source import ConversationSource
@@ -64,7 +65,9 @@ class TimingStrategyProtocol(Protocol):
         """
         ...
 
-    async def handle_credit_return(self, credit: Credit) -> None:
+    async def handle_credit_return(
+        self, credit: Credit, *, error: str | None = None
+    ) -> None:
         """Handle credit return: dispatch next turn if applicable.
 
         Called when a worker completes a turn. Determines if a subsequent turn
@@ -76,8 +79,30 @@ class TimingStrategyProtocol(Protocol):
         (e.g., is_final_turn).
 
         Args:
-            credit: Completed credit with conversation/turn info
+            credit: Completed credit with conversation/turn info.
+            error: Free-form error message string from the worker's transport
+                or server error path. ``None`` on success / cancellation.
+                Most strategies ignore this; ``AgenticReplayStrategy`` uses it
+                to terminate trajectories early on context-overflow errors.
         """
+        ...
+
+
+@runtime_checkable
+class CreditResultAwareStrategyProtocol(Protocol):
+    """Optional hook for strategies that need full credit result status."""
+
+    async def handle_credit_result(self, credit_return: CreditReturn) -> None:
+        """Observe a returned credit including error/cancellation status."""
+        ...
+
+
+@runtime_checkable
+class FirstTokenAwareStrategyProtocol(Protocol):
+    """Optional hook for strategies that need TTFT samples."""
+
+    async def handle_first_token(self, first_token: FirstToken) -> None:
+        """Observe a first-token event including TTFT."""
         ...
 
 

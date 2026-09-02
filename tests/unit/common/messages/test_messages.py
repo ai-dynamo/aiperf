@@ -8,17 +8,16 @@ import pytest
 
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.messages import (
+    ConnectionProbeMessage,
     ErrorMessage,
     HeartbeatMessage,
-    ShutdownCommand,
-    StatusMessage,
 )
 from aiperf.common.models import ErrorDetails
 from aiperf.plugin.enums import ServiceType
 
 
-def test_status_message():
-    message = StatusMessage(
+def test_heartbeat_message():
+    message = HeartbeatMessage(
         state=LifecycleState.RUNNING,
         service_id="test",
         service_type=ServiceType.WORKER,
@@ -26,7 +25,7 @@ def test_status_message():
         request_id="test",
     )
     assert message.model_dump(exclude_none=True) == {
-        "message_type": MessageType.STATUS,
+        "message_type": MessageType.HEARTBEAT,
         "state": LifecycleState.RUNNING,
         "service_id": "test",
         "service_type": ServiceType.WORKER,
@@ -34,10 +33,10 @@ def test_status_message():
         "request_id": "test",
     }
     assert json.loads(message.model_dump_json(exclude_none=True)) == json.loads(
-        '{"message_type":"status","state":"running","service_id":"test","service_type":"worker","request_ns":1234567890,"request_id":"test"}'
+        '{"message_type":"heartbeat","state":"running","service_id":"test","service_type":"worker","request_ns":1234567890,"request_id":"test"}'
     )
 
-    message = StatusMessage(
+    message = HeartbeatMessage(
         state=LifecycleState.INITIALIZED,
         request_ns=1234567890,
         request_id=None,
@@ -45,28 +44,40 @@ def test_status_message():
         service_type=ServiceType.WORKER,
     )
     assert message.model_dump(exclude_none=True) == {
-        "message_type": MessageType.STATUS,
+        "message_type": MessageType.HEARTBEAT,
         "state": LifecycleState.INITIALIZED,
         "service_id": "test",
         "service_type": ServiceType.WORKER,
         "request_ns": 1234567890,
     }
     assert json.loads(message.model_dump_json(exclude_none=True)) == json.loads(
-        '{"message_type":"status","state":"initialized","service_id":"test","service_type":"worker","request_ns":1234567890}'
+        '{"message_type":"heartbeat","state":"initialized","service_id":"test","service_type":"worker","request_ns":1234567890}'
     )
 
 
 class TestBaseStatusMessageTimestamp:
-    """Tests for BaseStatusMessage default_factory timestamp behavior."""
+    """Tests for BaseHeartbeatMessage default_factory timestamp behavior."""
 
     def test_request_ns_differs_between_instances(self):
         """Each instance gets its own timestamp via default_factory, not a shared class-level value."""
-        msg1 = StatusMessage(
+        import sys
+        import time
+
+        msg1 = HeartbeatMessage(
             state=LifecycleState.RUNNING,
             service_id="svc-1",
             service_type=ServiceType.WORKER,
         )
-        msg2 = StatusMessage(
+        # Windows ``time.time_ns()`` has ~16ms granularity (system clock tick);
+        # back-to-back calls can collapse to the same value. Spin without
+        # blocking until the clock advances, so we get monotonic separation
+        # without violating the no-blocking-sleep rule.
+        if sys.platform == "win32":
+            start_ns = msg1.request_ns
+            deadline_ns = time.time_ns() + 100_000_000  # 100ms upper bound
+            while time.time_ns() == start_ns and time.time_ns() < deadline_ns:
+                pass
+        msg2 = HeartbeatMessage(
             state=LifecycleState.RUNNING,
             service_id="svc-2",
             service_type=ServiceType.WORKER,
@@ -88,7 +99,7 @@ class TestBaseStatusMessageTimestamp:
 
     def test_explicit_request_ns_not_overwritten(self):
         """Explicitly provided request_ns is preserved."""
-        msg = StatusMessage(
+        msg = HeartbeatMessage(
             state=LifecycleState.RUNNING,
             service_id="svc",
             service_type=ServiceType.WORKER,
@@ -102,7 +113,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_returns_bytes(self):
         """Test that to_json_bytes() returns bytes type."""
-        message = ShutdownCommand(
+        message = ConnectionProbeMessage(
             service_id="test-service",
             request_id="test-request",
         )
@@ -112,7 +123,7 @@ class TestMessageToJsonBytes:
     def test_to_json_bytes_excludes_none_fields(self):
         """Test that to_json_bytes() automatically excludes None fields."""
         # Create message with some None fields
-        message = StatusMessage(
+        message = HeartbeatMessage(
             state=LifecycleState.RUNNING,
             service_id="test",
             service_type=ServiceType.WORKER,
@@ -130,7 +141,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_includes_non_none_fields(self):
         """Test that to_json_bytes() includes all non-None fields."""
-        message = StatusMessage(
+        message = HeartbeatMessage(
             state=LifecycleState.INITIALIZED,
             service_id="test-service",
             service_type=ServiceType.WORKER_MANAGER,
@@ -141,7 +152,7 @@ class TestMessageToJsonBytes:
         json_bytes = message.to_json_bytes()
         parsed = orjson.loads(json_bytes)
 
-        assert parsed["message_type"] == "status"
+        assert parsed["message_type"] == "heartbeat"
         assert parsed["state"] == "initialized"
         assert parsed["service_id"] == "test-service"
         assert parsed["service_type"] == "worker_manager"
@@ -170,7 +181,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_equivalent_to_model_dump_json(self):
         """Test that to_json_bytes() produces equivalent output to model_dump_json(exclude_none=True)."""
-        message = ShutdownCommand(
+        message = ConnectionProbeMessage(
             service_id="controller",
             request_id="shutdown-001",
         )
@@ -248,7 +259,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_multiple_messages_independence(self):
         """Test that to_json_bytes() calls don't interfere with each other."""
-        msg1 = ShutdownCommand(service_id="service-1", request_id="req-1")
+        msg1 = ConnectionProbeMessage(service_id="service-1", request_id="req-1")
         msg2 = HeartbeatMessage(
             service_id="service-2",
             service_type=ServiceType.WORKER,
@@ -263,7 +274,7 @@ class TestMessageToJsonBytes:
         assert bytes1 != bytes2
 
         # Each should deserialize to correct type
-        restored1 = ShutdownCommand.from_json(bytes1)
+        restored1 = ConnectionProbeMessage.from_json(bytes1)
         restored2 = HeartbeatMessage.from_json(bytes2)
 
         assert restored1.service_id == "service-1"
@@ -271,7 +282,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_uses_orjson(self):
         """Test that to_json_bytes() output is valid orjson format."""
-        message = StatusMessage(
+        message = HeartbeatMessage(
             state=LifecycleState.RUNNING,
             service_id="test",
             service_type=ServiceType.WORKER,
@@ -287,7 +298,7 @@ class TestMessageToJsonBytes:
 
     def test_to_json_bytes_empty_optional_fields(self):
         """Test to_json_bytes() with minimal required fields only."""
-        message = ShutdownCommand(
+        message = ConnectionProbeMessage(
             service_id="minimal",
             # request_id omitted (None by default)
         )
@@ -303,15 +314,7 @@ class TestMessageToJsonBytes:
     @pytest.mark.parametrize(
         "message_type,kwargs",
         [
-            (ShutdownCommand, {"service_id": "test"}),
-            (
-                StatusMessage,
-                {
-                    "service_id": "test",
-                    "service_type": ServiceType.WORKER,
-                    "state": LifecycleState.RUNNING,
-                },
-            ),
+            (ConnectionProbeMessage, {"service_id": "test"}),
             (
                 HeartbeatMessage,
                 {
@@ -335,6 +338,38 @@ class TestMessageToJsonBytes:
         restored = message_type.from_json(json_bytes)
         assert restored.message_type == message.message_type
 
+    def test_console_group_survives_to_json_bytes_but_not_public_dump(self):
+        """Reversion guard (db058ce39): MetricResult.console_group is stripped
+        from public dumps but MUST survive the cross-process bus. to_json_bytes()
+        passes context={'include_internal': True}; a plain model_dump_json() (the
+        public/exporter shape) must still drop it. If the opt-in is dropped, an
+        analyzer-injected console_group never reaches the console exporter (a
+        separate process)."""
+        from aiperf.common.enums import MetricConsoleGroup
+        from aiperf.common.messages import RealtimeMetricsMessage
+        from aiperf.common.models import MetricResult
+
+        result = MetricResult(
+            tag="custom_injected_tag",
+            header="Custom",
+            unit="tokens",
+            avg=1.0,
+            console_group=MetricConsoleGroup.USAGE,
+        )
+        message = RealtimeMetricsMessage(
+            service_id="records-manager",
+            service_type=ServiceType.RECORDS_MANAGER,
+            metrics=[result],
+        )
+
+        # IPC path keeps console_group.
+        ipc = orjson.loads(message.to_json_bytes())
+        assert ipc["metrics"][0]["console_group"] == MetricConsoleGroup.USAGE
+
+        # Public path (user-facing exports / REST) strips it.
+        public = json.loads(message.model_dump_json(exclude_none=True))
+        assert "console_group" not in public["metrics"][0]
+
 
 class TestMessageStringRepresentation:
     """Test suite for Message.__str__() method (uses model_dump_json with exclude_none)."""
@@ -344,7 +379,7 @@ class TestMessageStringRepresentation:
         [
             # Test None field exclusion
             (
-                StatusMessage(
+                HeartbeatMessage(
                     state=LifecycleState.RUNNING,
                     service_id="test",
                     service_type=ServiceType.WORKER,

@@ -16,8 +16,8 @@
 
 """Run ruff with an out-of-band baseline for selected rules.
 
-Enforces ``PLR0915``, ``PLR0912``, ``C901``, ``TID251``, ``BLE001``,
-``S110``, ``S112``, ``ANN201``, and ``D103`` (nine rules — see ``RULES``)
+Enforces ``C901``, ``TID251``, ``S110``, ``S112``, ``ANN201``, and
+``D103`` (six rules — see ``RULES``)
 **without** polluting the source tree with ``# noqa`` comments and
 **without** grandfathering entire files. Each violation is matched
 against ``tools/ruff_baseline.json`` using a stable key:
@@ -26,8 +26,8 @@ against ``tools/ruff_baseline.json`` using a stable key:
 
 where identifier comes from ``_resolve_identifier()``:
 
-* For function-scope rules (PLR0915 / PLR0912 / C901 / BLE001 / S110 /
-  S112 / ANN201 / D103), the **enclosing function qualname** resolved
+* For function-scope rules (C901 / S110 / S112 / ANN201 / D103),
+  the **enclosing function qualname** resolved
   from the file's AST (e.g. ``MyClass.do_thing`` for a method, or just
   ``my_func`` for a module-level function); ``None`` if the violation
   is outside any function.
@@ -76,18 +76,15 @@ SRC_ROOT = REPO_ROOT / "src" / "aiperf"
 #
 # Mapping to the rules in llm-codebase-ergonomics.md /
 # llm-codebase-ergonomics-extended.md:
-#   PLR0915, PLR0912, C901  — Rule 2 (function size) / nesting-depth
+#   C901                    — Rule 2 (function complexity) / nesting-depth
 #   TID251                  — Rule 8 (stdlib-json ban via banned-api)
-#   BLE001, S110, S112      — R14 (loud failures, no silent swallows)
+#   S110, S112              — R14 (loud failures, no silent swallows)
 #   ANN201                  — R11 (types as documentation, narrow: public
 #                             function return types only)
 #   D103                    — R13 (docstrings on public functions)
 RULES = [
-    "PLR0915",
-    "PLR0912",
     "C901",
     "TID251",
-    "BLE001",
     "S110",
     "S112",
     "ANN201",

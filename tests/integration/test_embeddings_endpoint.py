@@ -21,7 +21,7 @@ class TestEmbeddingsEndpoint:
             f"""
             aiperf profile \
                 --model nomic-ai/nomic-embed-text-v1.5 \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type embeddings \
                 --request-count {defaults.request_count} \

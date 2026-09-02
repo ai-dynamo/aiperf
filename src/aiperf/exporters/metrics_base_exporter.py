@@ -7,9 +7,12 @@ from collections.abc import Iterable
 
 import aiofiles
 
+from aiperf.common.enums import MetricFlags
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
 from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.metrics.metric_registry import MetricRegistry
 
 
 class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
@@ -27,9 +30,15 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
     def _prepare_metrics(
         self, metric_results: Iterable[MetricResult]
     ) -> dict[str, MetricResult]:
-        """Build a dict of metrics keyed by tag for export.
+        """Build a dict of metrics keyed by tag for export, dropping INTERNAL /
+        EXPERIMENTAL metrics.
 
-        Metrics are already filtered and in display units from summarize().
+        INTERNAL and EXPERIMENTAL metrics are computed (they may be dependencies
+        of other metrics) but excluded from file exports unless the dev-mode show
+        flags are set -- mirroring the console exporter's ``exclude_flags``.
+        The accumulator summary engine does NOT pre-filter, so the file exporters must. Tags not
+        in ``MetricRegistry`` (dynamically injected, e.g. derived latency) are
+        kept.
 
         Args:
             metric_results: Metric results from summarize()
@@ -37,7 +46,22 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         Returns:
             dict of metrics ready for export
         """
-        return {metric.tag: metric for metric in metric_results}
+        prepared: dict[str, MetricResult] = {}
+        for metric in metric_results:
+            metric_class = MetricRegistry.get_class_or_none(metric.tag)
+            if metric_class is not None:
+                if (
+                    metric_class.has_flags(MetricFlags.INTERNAL)
+                    and not Environment.DEV.SHOW_INTERNAL_METRICS
+                ):
+                    continue
+                if (
+                    metric_class.has_flags(MetricFlags.EXPERIMENTAL)
+                    and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS
+                ):
+                    continue
+            prepared[metric.tag] = metric
+        return prepared
 
     @abstractmethod
     def _generate_content(self) -> str:

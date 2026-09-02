@@ -1,10 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 from pytest import approx
 
-from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
 from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
@@ -47,8 +45,6 @@ class TestGoodRequestFractionMetric:
     def test_all_errors_zero_fraction(self):
         metric = GoodRequestFractionMetric()
         results = MetricResultsDict()
-        results[GoodRequestCountMetric.tag] = 0
-        results[RequestCountMetric.tag] = 0
         results[ErrorRequestCountMetric.tag] = 10
         assert metric.derive_value(results) == approx(0.0)
 
@@ -59,12 +55,11 @@ class TestGoodRequestFractionMetric:
         results[RequestCountMetric.tag] = 0
         assert metric.derive_value(results) == 0.0
 
-    def test_missing_good_count_raises(self):
+    def test_missing_good_count_reports_zero(self):
         metric = GoodRequestFractionMetric()
         results = MetricResultsDict()
         results[RequestCountMetric.tag] = 20
-        with pytest.raises(NoMetricValue):
-            metric.derive_value(results)
+        assert metric.derive_value(results) == 0.0
 
     def test_registered_in_metric_registry(self):
         from aiperf.metrics.metric_registry import MetricRegistry
@@ -72,8 +67,22 @@ class TestGoodRequestFractionMetric:
         cls = MetricRegistry.get_class("good_request_fraction")
         assert cls is GoodRequestFractionMetric
 
-    def test_required_metrics_declared(self):
-        assert GoodRequestFractionMetric.required_metrics == {
-            GoodRequestCountMetric.tag,
-            RequestCountMetric.tag,
-        }
+    def test_counter_dependencies_are_optional(self):
+        assert GoodRequestFractionMetric.required_metrics is None
+        assert GoodRequestFractionMetric.optional_metrics == frozenset(
+            {
+                GoodRequestCountMetric.tag,
+                RequestCountMetric.tag,
+                ErrorRequestCountMetric.tag,
+            }
+        )
+
+    def test_registry_orders_optional_counters_before_fraction(self):
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        order = MetricRegistry.create_dependency_order_for(
+            [GoodRequestFractionMetric.tag]
+        )
+        fraction_index = order.index(GoodRequestFractionMetric.tag)
+        for tag in GoodRequestFractionMetric.optional_metrics:
+            assert order.index(tag) < fraction_index

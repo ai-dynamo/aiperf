@@ -20,7 +20,7 @@ class TestImageEditEndpoint:
             f"""
             aiperf profile \
                 --model black-forest-labs/FLUX.2-klein-4B \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type image_edit \
                 --image-batch-size 1 \
                 --image-width-mean 64 \
@@ -45,7 +45,7 @@ class TestImageEditEndpoint:
             f"""
             aiperf profile \
                 --model black-forest-labs/FLUX.2-klein-4B \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type image_edit \
                 --image-batch-size 1 \
                 --image-width-mean 64 \

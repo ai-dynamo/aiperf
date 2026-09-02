@@ -27,36 +27,15 @@ from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
-    DatasetMetadata,
     TurnMetadata,
     TurnPrerequisite,
 )
-from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import (
     BranchOrchestrator,
     PendingBranchJoin,
     PrereqState,
 )
-
-
-def _mk_conv(
-    cid: str,
-    turns: list[TurnMetadata],
-    branches: list[ConversationBranchInfo],
-) -> ConversationMetadata:
-    return ConversationMetadata(conversation_id=cid, turns=turns, branches=branches)
-
-
-def _mk_source(conversations: list[ConversationMetadata]):
-    cs = MagicMock()
-    cs.dataset_metadata = DatasetMetadata(
-        conversations=conversations,
-        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
-    )
-    cs.get_metadata.side_effect = lambda cid: next(
-        c for c in conversations if c.conversation_id == cid
-    )
-    return cs
+from tests.unit.timing._shared_helpers import _mk_conv, _mk_issuer, _mk_source
 
 
 def _mk_credit(conv_id: str, corr_id: str, turn_index: int):
@@ -108,14 +87,6 @@ def _fan_in_metadata() -> list[ConversationMetadata]:
         _mk_conv(cid, [TurnMetadata()], []) for cid in ("a1", "a2", "b1", "b2", "b3")
     ]
     return [root, *children]
-
-
-def _mk_issuer():
-    issuer = MagicMock()
-    issuer.dispatch_first_turn = AsyncMock(return_value=True)
-    issuer.dispatch_join_turn = AsyncMock(return_value=True)
-    issuer.abort_session = AsyncMock()
-    return issuer
 
 
 def _mk_start(cs):
@@ -558,3 +529,126 @@ async def test_fan_in_child_to_join_entry_points_at_single_gate_per_child():
     assert orch._child_to_join["corr-a1"][0].gated_turn_index == 5
     assert orch._child_to_join["corr-b1"][0].prereq_key == "SPAWN_JOIN:root:2:B"
     assert orch._child_to_join["corr-b1"][0].gated_turn_index == 5
+
+
+@pytest.mark.asyncio
+async def test_snapshot_annotations_preserves_multi_consumer_gate_memberships():
+    """Handoff snapshot must keep every gate a multi-consumer child feeds,
+    not only the first entry (otherwise seed_snapshot vacates the rest).
+    """
+    branch = ConversationBranchInfo(
+        branch_id="root:0",
+        child_conversation_ids=["c1"],
+        mode=ConversationBranchMode.SPAWN,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(branch_ids=["root:0"]),
+            TurnMetadata(
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0"
+                    )
+                ]
+            ),
+            TurnMetadata(
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0"
+                    )
+                ]
+            ),
+        ],
+        [branch],
+    )
+    cs = _mk_source([root, _mk_conv("c1", [TurnMetadata()], [])])
+    _mk_start(cs)
+    issuer = _mk_issuer()
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    assert len(orch._child_to_join["corr-c1"]) == 2
+
+    blocked, children = orch.snapshot_annotations()
+    assert children["corr-c1"] == [("root:0", 1), ("root:0", 2)]
+    assert blocked["corr-root"] == 1
+
+
+@pytest.mark.asyncio
+async def test_seed_snapshot_re_registers_all_multi_gate_memberships():
+    """seed_snapshot must restore every join_gate_memberships entry so a
+    multi-consumer child gates both parent turns after phase handoff.
+    """
+    from aiperf.timing.trajectory_source import ConversationState
+
+    branch = ConversationBranchInfo(
+        branch_id="root:0",
+        child_conversation_ids=["c1"],
+        mode=ConversationBranchMode.SPAWN,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(branch_ids=["root:0"]),
+            TurnMetadata(
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0"
+                    )
+                ]
+            ),
+            TurnMetadata(
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN, branch_id="root:0"
+                    )
+                ]
+            ),
+        ],
+        [branch],
+    )
+    child = _mk_conv("c1", [TurnMetadata(), TurnMetadata()], [])
+    cs = _mk_source([root, child])
+    issuer = _mk_issuer()
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    orch.seed_snapshot(
+        (
+            ConversationState(
+                conversation_id="root",
+                x_correlation_id="corr-root",
+                next_turn_index=1,
+                waiting_on_children=True,
+                join_target_turn_index=1,
+                root_correlation_id="corr-root",
+            ),
+            ConversationState(
+                conversation_id="c1",
+                x_correlation_id="corr-c1",
+                next_turn_index=0,
+                agent_depth=1,
+                parent_correlation_id="corr-root",
+                root_correlation_id="corr-root",
+                branch_id="root:0",
+                join_target_turn_index=1,
+                join_gate_memberships=(("root:0", 1), ("root:0", 2)),
+                branch_mode=ConversationBranchMode.SPAWN,
+            ),
+        )
+    )
+
+    entries = orch._child_to_join["corr-c1"]
+    assert [(e.prereq_key, e.gated_turn_index) for e in entries] == [
+        ("SPAWN_JOIN:root:0", 1),
+        ("SPAWN_JOIN:root:0", 2),
+    ]
+    assert orch._active_joins["corr-root"].gated_turn_index == 1
+    assert 2 in orch._future_joins["corr-root"]
+    assert (
+        orch._active_joins["corr-root"].outstanding["SPAWN_JOIN:root:0"].expected == 1
+    )
+    assert (
+        orch._future_joins["corr-root"][2].outstanding["SPAWN_JOIN:root:0"].expected
+        == 1
+    )

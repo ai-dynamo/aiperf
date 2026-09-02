@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import time
 import uuid
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+import zmq
+
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
+    CacheBustTarget,
     CommAddress,
     CommandType,
     ConversationBranchMode,
+    MemoryMapFormat,
     MessageType,
+    WorkerStartupState,
 )
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
@@ -26,11 +36,12 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
-    CommandMessage,
     DatasetConfiguredNotification,
+    DatasetDownloadedNotification,
     ErrorMessage,
     InferenceResultsMessage,
     WorkerHealthMessage,
+    WorkerStartupStateMessage,
 )
 from aiperf.common.messages.dataset_messages import (
     ConversationRequestMessage,
@@ -39,36 +50,514 @@ from aiperf.common.messages.dataset_messages import (
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
     Conversation,
+    DatasetClientMetadata,
+    DatasetMetadata,
     ErrorDetails,
+    ExitErrorInfo,
+    MemoryMapClientMetadata,
     ModelEndpointInfo,
+    ParsedResponse,
     ProcessHealth,
+    RecordContext,
     RequestInfo,
     RequestRecord,
     SSEMessage,
+    Text,
+    Turn,
     WorkerTaskStats,
+)
+from aiperf.common.models.record_models import find_last_non_empty_usage
+from aiperf.common.pod_lifecycle_structs import (
+    GroupDatasetReady,
+    GroupDatasetStateQuery,
+    GroupDatasetStateSnapshot,
+    GroupManagerToPeerMessage,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
+    _send_group_peer_hello_with_retry,
 )
 from aiperf.common.protocols import (
     PushClientProtocol,
     RequestClientProtocol,
     StreamingDealerClientProtocol,
+    StreamingPushClientProtocol,
+)
+from aiperf.common.scenario.context_overflow import is_context_overflow_response
+from aiperf.config.adaptive_scale_phase import (
+    sla_filters_require_first_token_observation,
 )
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
     FirstToken,
     RouterToWorkerMessage,
-    WorkerReady,
+    TimePong,
+    WorkerConnected,
+    WorkerDispatchable,
     WorkerShutdown,
 )
 from aiperf.credit.structs import Credit, CreditContext
+from aiperf.dataset.memory_map_utils import (
+    apply_max_tokens_to_wire_payload,
+    turn_from_payload_turn,
+)
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType
+from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
+from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
+from aiperf.workers.return_channel_probe import probe_return_channel
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.transports.base_transports import FirstTokenCallback
+
+
+def _phase_needs_first_token_callback(phase) -> bool:
+    if phase.prefill_concurrency is not None:
+        return True
+    return bool(
+        getattr(phase, "adaptive_scale", False)
+        and sla_filters_require_first_token_observation(phase.sla)
+    )
+
+
+_logger = AIPerfLogger(__name__)
+
+
+def _credit_task_key(credit: Credit) -> tuple[str, int | None, int]:
+    """Composite in-flight tracking key for a credit.
+
+    ``Credit.id`` is only unique within one phase's dispatch sequence, so a
+    bare-int key lets a later phase's credit clobber a still-in-flight task
+    from the draining prior phase under seamless overlap. Same key shape as
+    ``StickyCreditRouter.WorkerLoad.active_credit_ids``.
+    """
+    return (credit.phase, credit.phase_index, credit.id)
+
+
+def _error_message(error: str | ErrorDetails | None) -> str | None:
+    """Extract the human error text for overflow substring matching.
+
+    ``credit_context.error`` usually holds an ``ErrorDetails``; read its
+    ``.message`` rather than the model's ``__str__`` repr (which embeds
+    ``code=``/``type=``/``cause=`` noise and would silently break substring
+    matching if the repr ever changed). Used only for classification -- the
+    wire ``CreditReturn.error`` still carries the full ``str(ErrorDetails)`` so
+    no diagnostic detail (code/type/cause) is dropped downstream.
+    """
+    if error is None:
+        return None
+    return error.message if isinstance(error, ErrorDetails) else str(error)
+
+
+def _is_terminal_context_overflow(
+    credit: Credit, credit_context: CreditContext
+) -> bool:
+    """Whether this credit return ends the conversation via context overflow.
+
+    A context-overflow error on a non-final, non-cancelled turn is terminal:
+    agentic_replay recycles the lane and issues no further (final/cancel) credit
+    for the session, so the worker must treat it as a terminal disposition.
+    Mirrors the strategy's own ``terminal_overflow`` classification, applied to
+    the same error body the worker returns on the credit.
+    """
+    if credit.is_final_turn or credit_context.cancelled:
+        return False
+    body = _error_message(credit_context.error)
+    return body is not None and is_context_overflow_response(body=body)
+
+
+def _apply_cache_bust_to_system_message(
+    system_message: str | None, marker: str, target: CacheBustTarget
+) -> str | None:
+    """Apply marker to the structured system_message string.
+
+    Returns the modified string, or `None` if the input was None — the caller
+    is then expected to fall back to mutating raw_messages.
+    """
+    if not marker or target == CacheBustTarget.NONE or system_message is None:
+        return system_message
+    if target in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+    ):
+        return marker + system_message
+    if target == CacheBustTarget.SYSTEM_SUFFIX:
+        return system_message + marker
+    return system_message
+
+
+def _content_has_marker_at_edge(
+    content: object, marker: str, *, is_prefix: bool
+) -> bool:
+    """Whether ``content`` already carries ``marker`` at the prefix/suffix edge.
+
+    The injection helpers run once per credit and several paths mutate a turn
+    object shared across the session's turns (delta-mode ``turn_list[0]``, and
+    the unconditional every-credit first-user mark used for seeded resumes), so
+    re-injecting the constant per-session marker must not stack it. This check
+    is exact (the per-session marker is constant; a fresh recycled play sees
+    pristine content and injects its own marker). Handles plain-string and
+    OpenAI multimodal list-of-parts content.
+    """
+    if isinstance(content, str):
+        return content.startswith(marker) if is_prefix else content.endswith(marker)
+    if isinstance(content, list) and content:
+        marker_part = {"type": "text", "text": marker.strip()}
+        return content[0 if is_prefix else -1] == marker_part
+    return False
+
+
+def _inject_marker_into_raw_messages(
+    raw_messages: list[dict], marker: str, *, is_prefix: bool
+) -> None:
+    """Mutate the first system-role message's content in-place.
+
+    No-op when raw_messages is empty or the first message is not a system role.
+    For multimodal content (``content`` is a list of parts), the marker is
+    inserted as a new ``{"type": "text", "text": marker}`` part at the start
+    (prefix) or end (suffix) of the parts list. Idempotent via
+    :func:`_content_has_marker_at_edge`.
+    """
+    if not raw_messages or not marker:
+        return
+    first = raw_messages[0]
+    if not isinstance(first, dict) or first.get("role") != "system":
+        return
+    content = first.get("content", "")
+    if _content_has_marker_at_edge(content, marker, is_prefix=is_prefix):
+        return
+    if isinstance(content, str):
+        raw_messages[0] = {
+            **first,
+            "content": (marker + content) if is_prefix else (content + marker),
+        }
+        return
+    if isinstance(content, list):
+        marker_part = {"type": "text", "text": marker.strip()}
+        new_content = [marker_part, *content] if is_prefix else [*content, marker_part]
+        raw_messages[0] = {**first, "content": new_content}
+        return
+    _logger.warning(
+        f"cache-bust: cannot inject marker into raw_messages[0].content of "
+        f"type {type(content).__name__}; marker dropped"
+    )
+
+
+def _inject_marker_into_first_user_turn(
+    raw_messages: list[dict], marker: str, *, is_prefix: bool
+) -> None:
+    """Mutate the first user-role message's content in-place.
+
+    No-op when raw_messages is empty. For multimodal content (``content`` is
+    a list of parts), the marker is inserted as a new
+    ``{"type": "text", "text": marker}`` part at the start (prefix) or end
+    (suffix) of the parts list. Idempotent via
+    :func:`_content_has_marker_at_edge` — FIRST_TURN_* injection runs every
+    credit (to mark seeded turn 0 on mid-trajectory resumes), so repeated calls
+    on the same shared turn must not stack the marker.
+    """
+    if not raw_messages or not marker:
+        return
+    for idx, msg in enumerate(raw_messages):
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            content = msg.get("content", "")
+            if _content_has_marker_at_edge(content, marker, is_prefix=is_prefix):
+                return
+            if isinstance(content, str):
+                raw_messages[idx] = {
+                    **msg,
+                    "content": (marker + content) if is_prefix else (content + marker),
+                }
+                return
+            if isinstance(content, list):
+                marker_part = {"type": "text", "text": marker.strip()}
+                new_content = (
+                    [marker_part, *content] if is_prefix else [*content, marker_part]
+                )
+                raw_messages[idx] = {**msg, "content": new_content}
+                return
+            _logger.warning(
+                f"cache-bust: cannot inject marker into first user-turn content "
+                f"of type {type(content).__name__}; marker dropped"
+            )
+            return
+
+
+def _find_effective_raw_system(turn_list: list[Turn]) -> list[dict] | None:
+    """Return the ``raw_system`` block list the endpoint will actually send.
+
+    Mirrors ``base_endpoint._latest_turn_attr``: walks ``turn_list`` from the
+    end and returns the first non-None ``raw_system``. Only ``MessagesEndpoint``
+    reads this field, and there it OUTRANKS both the conversation-level
+    ``system_message`` string and any system-role ``raw_messages`` entry — so a
+    ``SYSTEM_*`` marker written to either of those would be silently dropped
+    from the wire whenever a turn carries ``raw_system``.
+    """
+    for turn in reversed(turn_list):
+        if turn.raw_system is not None:
+            return turn.raw_system
+    return None
+
+
+def _inject_marker_into_raw_system(
+    raw_system: list[dict], marker: str, *, is_prefix: bool
+) -> None:
+    """Insert the marker as a text block at the edge of a ``raw_system`` list.
+
+    ``raw_system`` is a list of vendor content blocks (not role/content
+    messages), so the marker becomes its own ``{"type": "text", ...}`` block
+    rather than being spliced into an existing block's text — that leaves any
+    neighbouring block's ``cache_control`` breakpoint attached to the same
+    bytes it was authored against. Idempotent via
+    :func:`_content_has_marker_at_edge`.
+    """
+    if not marker:
+        return
+    if _content_has_marker_at_edge(raw_system, marker, is_prefix=is_prefix):
+        return
+    marker_block = {"type": "text", "text": marker.strip()}
+    if is_prefix:
+        raw_system.insert(0, marker_block)
+    else:
+        raw_system.append(marker_block)
+
+
+def _find_first_system_message(turn_list: list[Turn]) -> list[dict] | None:
+    """Return the raw_messages list whose first dict has ``role == "system"``, or None.
+
+    Walks ``turn_list`` forward and returns the first ``raw_messages`` whose
+    leading dict is a system-role message. Used by cache-bust system-target
+    injection so it works for both single-turn message-array mode (system
+    lives in ``turn_list[-1]``, which is also ``turn_list[0]``) and
+    accumulating delta mode (system in ``turn_list[0]``, deltas in
+    ``turn_list[1..]``).
+    """
+    for turn in turn_list:
+        raw = turn.raw_messages
+        if raw and isinstance(raw[0], dict) and raw[0].get("role") == "system":
+            return raw
+    return None
+
+
+def _find_first_user_turn(turn_list: list[Turn]) -> Turn | None:
+    """Return the first turn whose payload carries the conversation's initial
+    user message, or None.
+
+    Walks ``turn_list`` forward. A turn qualifies when it has any
+    ``raw_messages`` entry with ``role == "user"``, or when ``texts`` is
+    non-empty (synthetic-Turn path). If no turn matches but at least one turn
+    has neither ``raw_messages`` nor ``texts`` (truly empty synthetic Turn,
+    e.g. before any prompt has been generated), returns that first empty
+    turn so a marker-only-text seed path still resolves.
+    """
+    empty_synthetic: Turn | None = None
+    for turn in turn_list:
+        if turn.raw_messages:
+            for msg in turn.raw_messages:
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    return turn
+        elif turn.texts:
+            return turn
+        elif empty_synthetic is None:
+            empty_synthetic = turn
+    return empty_synthetic
+
+
+def _inject_marker_into_first_user_text(
+    turn: Turn, marker: str, *, is_prefix: bool
+) -> None:
+    """Mutate the first ``Text.contents[0]`` on a structured Turn (synthetic-Turn path).
+
+    Used as a fallback when ``Turn.raw_messages`` is None and the endpoint
+    formatter would synthesise the user message from ``Turn.texts``. If the
+    Turn has no ``texts`` entries, prepends one whose content is the marker
+    alone (becomes the entire turn body — fine because there was nothing else
+    to merge with).
+    """
+    if not marker:
+        return
+    # Seed with the full marker (including ``\n\n``) so
+    # ``_content_has_marker_at_edge`` idempotency matches the string path.
+    # Multimodal list-of-parts injection still uses ``marker.strip()`` when
+    # comparing/inserting text parts.
+    if not turn.texts:
+        turn.texts = [Text(contents=[marker])]
+        return
+    first = turn.texts[0]
+    if not first.contents:
+        first.contents = [marker]
+        return
+    existing = first.contents[0]
+    if _content_has_marker_at_edge(existing, marker, is_prefix=is_prefix):
+        return
+    first.contents[0] = (marker + existing) if is_prefix else (existing + marker)
+
+
+def _inject_marker_at_first_user(
+    turn_list: list[Turn], marker: str, *, is_prefix: bool
+) -> None:
+    """Inject ``marker`` at the first user turn (raw_messages or texts).
+
+    Wraps the lookup + dispatch shared by SYSTEM_* fallback (sub-path 3
+    in :func:`_apply_cache_bust`) and the FIRST_TURN_* path. No-op when
+    there is no user-bearing turn at all.
+    """
+    user_turn = _find_first_user_turn(turn_list)
+    if user_turn is None:
+        return
+    if user_turn.raw_messages:
+        _inject_marker_into_first_user_turn(
+            user_turn.raw_messages, marker, is_prefix=is_prefix
+        )
+    else:
+        _inject_marker_into_first_user_text(user_turn, marker, is_prefix=is_prefix)
+
+
+def _apply_cache_bust(
+    session: UserSession,
+    credit: Credit,
+    system_message: str | None,
+) -> str | None:
+    """Dispatch cache-bust marker injection for a single credit.
+
+    Mutates the appropriate turn's ``raw_messages`` (or ``texts``) in-place
+    when the marker attaches to the trace's pre-rendered messages. Returns
+    the (possibly modified) ``system_message`` string for the caller to
+    forward into request building.
+
+    The system / first-user lookups walk ``turn_list`` forward rather than
+    indexing ``[-1]``, so this works under both ``MESSAGE_ARRAY_WITH_RESPONSES``
+    (single-turn ``turn_list``) and ``DELTAS_WITH_RESPONSES`` (accumulating
+    ``turn_list`` where the system role lives in ``turn_list[0]`` and later
+    deltas start with the prior assistant response).
+
+    Injection targets the *effective wire prefix* (see
+    :func:`_effective_prefix_turns`): the slice of ``turn_list`` that
+    ``build_messages`` actually emits. A ``reset_context`` turn makes
+    ``build_messages`` discard every prior turn, so the effective prefix begins
+    at the last such turn — which may sit mid-history (seeded on a resume,
+    never dispatched as the current turn), not just at ``turn_list[-1]``.
+    Marking the discarded turn 0 instead would leave the real prefix unmarked
+    and let recycled plays warm the server's cache on identical post-reset
+    bytes. ``SYSTEM_*`` targets are handled in
+    :func:`_apply_system_target_cache_bust`.
+    """
+    marker = credit.cache_bust_marker
+    target = credit.cache_bust_target
+
+    if not marker or target == CacheBustTarget.NONE:
+        return system_message
+
+    # FORK children share the parent's KV cache by design: they seed turn_list
+    # from the parent (the SAME Turn objects) and must send the parent's exact
+    # prefix to hit its cache. The parent already injected its marker into those
+    # shared turns, so the child inherits it for free — re-busting here would
+    # diverge the child's prefix from the parent's (cache miss) AND mutate the
+    # parent's shared, read-only Turn objects (stacking markers). So cache-bust
+    # is a no-op for FORK children. SPAWN children start fresh (no shared turns)
+    # and root sessions own their prefix, so both are busted normally.
+    if (
+        session.parent_correlation_id is not None
+        and session.branch_mode == ConversationBranchMode.FORK
+    ):
+        return system_message
+
+    is_prefix = target in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.FIRST_TURN_PREFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+        CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+    )
+    prefix_turns = _effective_prefix_turns(session)
+
+    if target in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.SYSTEM_SUFFIX,
+        CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
+    ):
+        return _apply_system_target_cache_bust(
+            prefix_turns,
+            all_turns=session.turn_list,
+            system_message=system_message,
+            marker=marker,
+            target=target,
+            is_prefix=is_prefix,
+        )
+
+    # Mark the effective prefix's opening user turn every credit (idempotent).
+    # Unconditional rather than turn_index==0-gated so a seeded mid-trajectory
+    # resume (turn_list back-filled with turns 0..k_i at a credit whose
+    # turn_index > 0) still marks the true wire prefix.
+    _inject_marker_at_first_user(prefix_turns, marker, is_prefix=is_prefix)
+    return system_message
+
+
+def _apply_system_target_cache_bust(
+    prefix_turns: list[Turn],
+    *,
+    all_turns: list[Turn],
+    system_message: str | None,
+    marker: str,
+    target: CacheBustTarget,
+    is_prefix: bool,
+) -> str | None:
+    """Inject a ``SYSTEM_PREFIX`` / ``SYSTEM_SUFFIX`` / ``WARMUP_ISOLATION_SYSTEM`` marker for one credit.
+
+    ``prefix_turns`` is the effective wire prefix slice (see
+    :func:`_effective_prefix_turns`). Four sub-paths, ordered to match how the
+    endpoint resolves the system field on the wire — marking a lower-precedence
+    carrier would leave the bytes that actually ship unchanged:
+      1. ``raw_system`` present on any turn: it outranks both ``system_message``
+         and system-role ``raw_messages`` in ``MessagesEndpoint``, so the marker
+         goes there. Resolved over ``all_turns`` (not the prefix slice) because
+         ``_latest_turn_attr`` ignores ``reset_context``.
+      2. Conversation-level ``system_message`` present: marker applied every
+         turn (string mutation re-applied per credit). Unaffected by
+         ``reset_context`` — the ``system_message`` rides on ``RequestInfo`` and
+         is re-emitted every turn independent of ``build_messages``' reset.
+      3. ``raw_messages`` first dict has ``role=="system"``: marker injected
+         into the first system message of the prefix slice.
+      4. No system anywhere -> first-user-turn fallback: marker injected
+         into the first user turn every credit (idempotent), matching
+         ``FIRST_TURN_*`` semantics so a seeded mid-trajectory resume still
+         marks the prefix.
+
+    Returns the (possibly modified) ``system_message``.
+    """
+    raw_system_blocks = _find_effective_raw_system(all_turns)
+    if raw_system_blocks is not None:
+        _inject_marker_into_raw_system(raw_system_blocks, marker, is_prefix=is_prefix)
+        return system_message
+    if system_message is not None:
+        return _apply_cache_bust_to_system_message(system_message, marker, target)
+    raw_system = _find_first_system_message(prefix_turns)
+    if raw_system is not None:
+        _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)
+    else:
+        _inject_marker_at_first_user(prefix_turns, marker, is_prefix=is_prefix)
+    return system_message
+
+
+def _effective_prefix_turns(session: UserSession) -> list[Turn]:
+    """The ``turn_list`` slice that forms the wire prefix for cache-bust.
+
+    ``base_endpoint.build_messages`` restarts the message array at every
+    ``reset_context`` turn that carries ``raw_messages`` (discarding everything
+    before it), so the effective prefix begins at the *last* such turn in
+    ``turn_list`` — not turn 0, and not merely ``turn_list[-1]``: a reset can
+    sit mid-history (e.g. seeded into a mid-trajectory resume, where it is never
+    dispatched as the current turn). Returns the slice from that turn to the
+    end, or the whole ``turn_list`` when there is no reset.
+    """
+    turns = session.turn_list
+    for i in range(len(turns) - 1, -1, -1):
+        if turns[i].reset_context and turns[i].raw_messages is not None:
+            return turns[i:]
+    return turns
 
 
 class Worker(BaseComponentService, ProcessHealthMixin):
@@ -152,7 +641,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self.task_stats: WorkerTaskStats = WorkerTaskStats()
 
-        self.credit_tasks: dict[int, asyncio.Task] = {}
+        # Keyed by (phase, phase_index, credit.id): Credit.id is only unique
+        # within a phase's dispatch sequence, so under seamless phase overlap
+        # the same bare id recurs while the prior phase is still draining.
+        # Mirrors StickyCreditRouter.WorkerLoad.active_credit_ids.
+        self.credit_tasks: dict[tuple[str, int | None, int], asyncio.Task] = {}
+
+        # Worker clocks are not the controller's clock once workers live in
+        # their own pods; every credit receipt is an offset sample.
+        self.clock_offset_tracker = ClockOffsetTracker(
+            logger_name=self.service_id,
+            window_size=Environment.WORKER.CLOCK_OFFSET_WINDOW_SIZE,
+            min_samples=Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
+        )
+        self._is_kubernetes = (
+            self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        self._tracks_clock_offset = self._is_kubernetes
+        self._clock_probe_lock = asyncio.Lock()
+        self._startup_state: WorkerStartupState | None = None
+        # Kubernetes: the pod index this container runs in. Dataset-downloaded
+        # notifications from other pods name files this container cannot see.
+        self._pod_index: str | None = os.environ.get("AIPERF_POD_INDEX")
+        self._pending_dataset_metadata: DatasetMetadata | None = None
 
         self.inference_results_push_client: PushClientProtocol = (
             self.comms.create_push_client(
@@ -165,6 +676,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.inference_client: InferenceClient = InferenceClient(
             model_endpoint=self.model_endpoint,
             service_id=self.service_id,
+            strip_record_payload_bytes=resolve_strip_record_payload_bytes(
+                self.run.cfg, self.model_endpoint
+            ),
         )
         self.attach_child_lifecycle(self.inference_client)
         self.debug(
@@ -185,26 +699,87 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         self.credit_dealer_client.register_receiver(self._on_credit_message)
 
+        # Group-managed (Kubernetes) only: request channel to this pod's
+        # WorkerGroupManager, used to poll pod-local dataset state when the
+        # dataset broadcasts were missed.
+        self.pod_lifecycle_dealer_client: StreamingDealerClientProtocol | None = None
+        if self._is_group_managed_mode():
+            self.pod_lifecycle_dealer_client = (
+                self.comms.create_streaming_dealer_client(
+                    address=CommAddress.GROUP_LIFECYCLE,
+                    identity=self.service_id,
+                    bind=False,
+                    decode_type=GroupManagerToPeerMessage,
+                )
+            )
+            self.pod_lifecycle_dealer_client.register_receiver(
+                self._on_pod_lifecycle_message
+            )
+
+        # Dual-channel returns: CreditReturn/FirstToken go out a dedicated typed
+        # PUSH -> router PULL fan-in instead of back on the bidirectional credit
+        # DEALER, so the dispatch DEALER is receive-only (no shared-FD send/recv
+        # contention). WorkerConnected/Dispatchable/Shutdown still go on the DEALER so the
+        # ROUTER registers/tracks identity. Returns carry worker_id in-message
+        # since PUSH/PULL has no ZMQ envelope identity.
+        self.credit_return_push_client: StreamingPushClientProtocol = (
+            self.comms.create_streaming_push_client(
+                CommAddress.CREDIT_RETURN,
+                bind=False,
+                socket_ops={zmq.IMMEDIATE: 1},
+            )
+        )
+        # Duck-typed: only the streaming PUSH client currently buffers
+        # undelivered frames and can report a drop; the protocol doesn't
+        # declare this hook since no other client type buffers. The client
+        # has no access to this service's exit-error mechanism itself, so
+        # without this wiring a dropped backlog is only ever a log line.
+        if hasattr(self.credit_return_push_client, "on_backlog_dropped"):
+            self.credit_return_push_client.on_backlog_dropped = (
+                self._on_credit_return_backlog_dropped
+            )
+
         self.memory_usage_before_profiling: float | None = None
 
-        self.session_manager: UserSessionManager = UserSessionManager()
+        self.session_manager: UserSessionManager = UserSessionManager(
+            max_sessions=Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
+        )
 
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
 
-        # Only send FirstToken messages when prefill concurrency limiting is active.
-        # Detecting first token requires parsing each SSE chunk, so skip this overhead
-        # when the orchestrator doesn't need TTFT events for slot management.
-        # ``prefill_concurrency`` lives per-phase (warmup phases produce
-        # results-excluded entries alongside profiling ones), so probe every
-        # phase to decide whether prefill-concurrency limiting is active
-        # anywhere in the run.
+        # Dispatchability gate. The worker announces WorkerConnected as soon as
+        # its return path is up. In group-managed (Kubernetes) mode it defers
+        # WorkerDispatchable until a pod-local dataset is actually open: the
+        # dataset arrives via two one-shot broadcasts (DATASET_CONFIGURED then
+        # DATASET_DOWNLOADED), and a pod whose containers subscribe after those
+        # fire would otherwise sit in the routing pool failing every credit.
+        # _dataset_state_retry_task polls the pod's WorkerGroupManager so a
+        # missed broadcast self-heals instead of wedging the run.
+        #
+        # Locally there is no such deferral -- both announcements go out at
+        # @on_start, because credits cannot arrive before PROFILE_CONFIGURE,
+        # which itself blocks on _dataset_configured_event. The event below
+        # exists so the transition is sent exactly once on either path.
+        self._worker_ready_event = asyncio.Event()
+        self._worker_ready_lock = asyncio.Lock()
+        self._dataset_state_retry_task: asyncio.Task[None] | None = None
+        self._latest_pod_dataset_state: GroupDatasetStateSnapshot | None = None
+        # True when the mmap dataset ships pre-encoded per-turn payload bytes
+        # (PAYLOAD_BYTES format); enables the verbatim-replay fast path.
+        self._is_payload_bytes: bool = False
+
+        # Detecting first token requires parsing each SSE chunk, so only enable
+        # FirstToken messages when a downstream consumer needs them.
         self._prefill_concurrency_enabled: bool = any(
-            getattr(phase, "prefill_concurrency", None) is not None
-            for phase in self.run.cfg.phases
+            _phase_needs_first_token_callback(phase) for phase in self.run.cfg.phases
         )
+
+        # One-shot warning gate so cache-bust diagnostics don't spam logs at
+        # high concurrency — the misconfiguration is the same for every credit.
+        self._cache_bust_warning_shown: bool = False
 
         # Only used as a fallback when dataset client is not initialized
         # or was not available when the credit was dropped. Must be created here
@@ -218,8 +793,399 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Send WorkerReady to announce presence."""
-        await self.credit_dealer_client.send(WorkerReady(worker_id=self.service_id))
+        """Announce connectivity, then dispatchability -- deferred under Kubernetes.
+
+        The startup-state transitions are what a Kubernetes controller watches
+        to distinguish "worker pod still coming up" from "worker pod wedged";
+        in single-node mode they are two extra bus publishes at startup.
+
+        WorkerConnected and WorkerDispatchable are separate messages so the
+        router can distinguish "identity registered" from "in the routing
+        pool". In group-managed (Kubernetes) mode the pod-local dataset does
+        not exist yet at this point, and a worker without a dataset fails
+        every credit routed to it, so dispatchability is deferred until the
+        dataset opens. Locally both are sent here, because credits cannot
+        reach a worker before PROFILE_CONFIGURE, which itself blocks on
+        ``_dataset_configured_event``.
+        """
+        await self._publish_startup_state(WorkerStartupState.STARTING)
+        await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
+
+        if self._tracks_clock_offset:
+            # Fire-and-forget: the baseline RTT is a diagnostic, so it must never
+            # sit on the readiness path. It previously ran before the worker
+            # announced itself, to keep pings from queueing behind real credits
+            # and inflating the measurement. On a real multi-pod cluster the
+            # credit ROUTER is not echoing yet at that point, so every probe
+            # timed out and the worker blocked for the whole budget -- long
+            # enough for service registration to time out and the pod to fail.
+            # A slightly inflated baseline is worth far less than a worker that
+            # starts, so the probe runs behind WorkerConnected and its failure
+            # is inert. It sits above the group-managed branch because
+            # _tracks_clock_offset is Kubernetes-only, which is exactly the
+            # branch that returns early.
+            self.execute_async(self._measure_baseline_rtt())
+
+        if self._is_group_managed_mode():
+            if self.pod_lifecycle_dealer_client is not None:
+                await _send_group_peer_hello_with_retry(
+                    self.pod_lifecycle_dealer_client,
+                    service_id=self.service_id,
+                    service_type=str(self.service_type),
+                    pod_index=self._pod_index,
+                    logger=self,
+                )
+            await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
+            self._ensure_group_dataset_state_retry()
+            await self._complete_group_startup_flow()
+            self.debug(
+                "Group-managed mode: deferring WorkerDispatchable until "
+                "group-local dataset state is ready"
+            )
+            return
+
+        await self._mark_worker_ready()
+
+    def _is_group_managed_mode(self) -> bool:
+        """Check if a WorkerGroupManager owns this worker's startup lifecycle."""
+        return self._is_kubernetes
+
+    async def _on_pod_lifecycle_message(
+        self, message: GroupManagerToPeerMessage
+    ) -> None:
+        """Handle group-local lifecycle messages from the WorkerGroupManager."""
+        if isinstance(message, GroupDatasetReady):
+            if message.pod_index != self._pod_index or not message.success:
+                return
+            await self._open_dataset_client(
+                MemoryMapClientMetadata(
+                    data_file_path=Path(message.data_file_path),
+                    index_file_path=Path(message.index_file_path),
+                    conversation_count=message.conversation_count,
+                    total_size_bytes=message.total_size_bytes,
+                    format=message.mmap_format,
+                ),
+                mark_ready=False,
+            )
+            await self._apply_group_default_context_mode(message)
+            await self._mark_worker_ready()
+        elif isinstance(message, GroupDatasetStateSnapshot):
+            self._latest_pod_dataset_state = message
+            await self._complete_group_startup_flow(message)
+        elif isinstance(message, GroupPeerCommand):
+            await self._handle_pod_peer_command(message)
+
+    async def _handle_pod_peer_command(self, message: GroupPeerCommand) -> None:
+        """Run a group-local lifecycle command and acknowledge it.
+
+        Mirrors the pattern in RecordProcessorService._handle_pod_peer_command.
+        The WGM blocks on an ack from every registered peer, so an unanswered
+        command stalls the whole pod for the full PROFILE_CONFIGURE_TIMEOUT.
+        """
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        if message.command == str(CommandType.PROFILE_CONFIGURE):
+            await asyncio.wait_for(
+                self._dataset_configured_event.wait(),
+                timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+            )
+        elif message.command == str(CommandType.SHUTDOWN):
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            await self.stop()
+            return
+        elif message.command == str(CommandType.ABORT):
+            self.error(
+                f"Received ABORT from WorkerGroupManager; force-exiting "
+                f"{self.service_id} so kubelet restarts this container"
+            )
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            os._exit(1)
+        else:
+            self.warning(f"Unknown group-local command: {message.command}")
+            return
+        await self.pod_lifecycle_dealer_client.send(
+            GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+        )
+
+    async def _apply_group_default_context_mode(
+        self, message: GroupDatasetReady
+    ) -> None:
+        """Apply the context mode carried by the group-local push."""
+        context_mode = message.default_context_mode
+        if context_mode is None:
+            snapshot = await self._query_pod_dataset_state()
+            context_mode = snapshot.default_context_mode if snapshot else None
+        if context_mode is not None:
+            self.session_manager.set_default_context_mode(context_mode)
+
+    async def _query_pod_dataset_state(self) -> GroupDatasetStateSnapshot | None:
+        """Fetch the current group-local dataset state from the WorkerGroupManager.
+
+        ``request`` is part of ``StreamingDealerClientProtocol``, so it is not
+        feature-detected: a transport that cannot round-trip this query cannot
+        recover a missed dataset broadcast at all, and silently degrading to
+        ``None`` here would turn that into an unexplained startup hang.
+        """
+        if self.pod_lifecycle_dealer_client is None:
+            return None
+        try:
+            response = await self.pod_lifecycle_dealer_client.request(
+                GroupDatasetStateQuery(
+                    rid=uuid.uuid4().hex,
+                    service_id=self.service_id,
+                ),
+                timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
+            )
+        except TimeoutError:
+            return None
+        if not isinstance(response, GroupDatasetStateSnapshot):
+            return None
+        self._latest_pod_dataset_state = response
+        return response
+
+    def _ensure_group_dataset_state_retry(self) -> None:
+        """Start the dataset-state retry loop if one is not already running."""
+        if not self._is_group_managed_mode() or self._worker_ready_event.is_set():
+            return
+        if (
+            self._dataset_state_retry_task is None
+            or self._dataset_state_retry_task.done()
+        ):
+            self._dataset_state_retry_task = self.execute_async(
+                self._retry_group_dataset_state_until_ready()
+            )
+
+    async def _retry_group_dataset_state_until_ready(self) -> None:
+        """Poll group-local dataset state until this worker becomes dispatchable.
+
+        This is what makes a missed dataset broadcast recoverable: the pod's
+        WorkerGroupManager is the authority on whether the dataset is on local
+        disk, so ask it rather than waiting forever for a one-shot publish.
+        """
+        while not self.stop_requested and not self._worker_ready_event.is_set():
+            await self._complete_group_startup_flow()
+            if self._worker_ready_event.is_set():
+                return
+            await asyncio.sleep(Environment.DATASET.STATE_POLL_INTERVAL)
+
+    async def _complete_group_startup_flow(
+        self,
+        snapshot: GroupDatasetStateSnapshot | None = None,
+    ) -> None:
+        """Make the worker dispatchable once group-local dataset state is ready."""
+        if not self._is_group_managed_mode() or self._worker_ready_event.is_set():
+            return
+
+        async with self._worker_ready_lock:
+            if self._worker_ready_event.is_set():
+                return
+
+            # The broadcast path already opened the dataset; nothing to recover.
+            if self._dataset_configured_event.is_set():
+                await self._mark_worker_ready_locked()
+                return
+
+            current_snapshot = snapshot or await self._query_pod_dataset_state()
+            if current_snapshot is None or not current_snapshot.ready:
+                self._ensure_group_dataset_state_retry()
+                return
+
+            if not self._dataset_configured_event.is_set():
+                await self._open_dataset_client(
+                    MemoryMapClientMetadata(
+                        data_file_path=Path(current_snapshot.data_file_path),
+                        index_file_path=Path(current_snapshot.index_file_path),
+                        conversation_count=current_snapshot.conversation_count,
+                        total_size_bytes=current_snapshot.total_size_bytes,
+                        format=current_snapshot.mmap_format,
+                    ),
+                    mark_ready=False,
+                )
+            if current_snapshot.default_context_mode is not None:
+                self.session_manager.set_default_context_mode(
+                    current_snapshot.default_context_mode
+                )
+            await self._mark_worker_ready_locked()
+
+    async def _mark_worker_ready(self) -> None:
+        """Send the dispatchable transition exactly once."""
+        async with self._worker_ready_lock:
+            await self._mark_worker_ready_locked()
+
+    async def _mark_worker_ready_locked(self) -> None:
+        """Send the dispatchable transition exactly once, holding the ready lock."""
+        if self._worker_ready_event.is_set():
+            return
+        await self._await_return_channel_ready()
+        await self.credit_dealer_client.send(
+            WorkerDispatchable(worker_id=self.service_id)
+        )
+        await self._publish_startup_state(WorkerStartupState.READY)
+        self._worker_ready_event.set()
+        retry_task = self._dataset_state_retry_task
+        if retry_task is not None and retry_task is not asyncio.current_task():
+            retry_task.cancel()
+
+    async def _await_return_channel_ready(self) -> None:
+        """Gate dispatchability on the credit-RETURN channel being live.
+
+        Credits are dispatched on the DEALER and returned on a separate PUSH
+        fan-in. Only the DEALER is exercised before this point (WorkerConnected
+        rides it, and the clock probe is both fire-and-forget and Kubernetes
+        only), so without this the worker can enter the routing pool with a dead
+        PUSH side and stall every credit routed to it until a run-level timeout.
+
+        Degrades open on budget expiry rather than refusing to become
+        dispatchable: the PUSH client parks unsendable returns in an unbounded
+        backlog and drains them on reconnect, so a late-connecting return
+        channel costs latency, whereas never announcing costs the whole run.
+        """
+        if await probe_return_channel(
+            self.credit_return_push_client,
+            worker_id=self.service_id,
+            budget=Environment.WORKER.RETURN_PROBE_BUDGET,
+            retry_delay=Environment.WORKER.RETURN_PROBE_RETRY_DELAY,
+        ):
+            return
+        self.warning(
+            f"Credit-return channel still has no peer after "
+            f"{Environment.WORKER.RETURN_PROBE_BUDGET}s; announcing "
+            "dispatchability anyway. Returns are buffered and drained on "
+            "reconnect, so credits routed before then complete late rather "
+            "than being lost."
+        )
+
+    def _on_credit_return_backlog_dropped(self, dropped_count: int) -> None:
+        """Surface a silent credit-return drop through the exit-error mechanism.
+
+        ``credit_return_push_client`` discards its undelivered backlog on stop
+        (LINGER=0). A log line alone never reaches the CLI exit code or run
+        summary, so a transient stall on the PULL side near shutdown could
+        otherwise drop an arbitrary number of credit returns with no
+        operator-visible signal -- meaning final counts/metrics could be
+        silently wrong.
+        """
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    message=(
+                        f"Dropped {dropped_count} undelivered credit-return "
+                        "frames on shutdown; final counts/metrics may be "
+                        "incomplete."
+                    ),
+                    type="CreditReturnBacklogDropped",
+                ),
+                operation="Stop",
+                service_id=self.service_id,
+            )
+        )
+
+    async def _measure_baseline_rtt(self) -> None:
+        """Probe credit-channel RTT under a hard total time budget.
+
+        Launched fire-and-forget from the startup path, so it runs concurrently
+        with the dispatchability handshake and its pings can end up queued
+        behind real credits, slightly inflating the baseline. The ROUTER learns
+        this DEALER's identity from the ping itself, so no prior registration
+        is needed.
+
+        The budget bounds the whole sequence, so a router that never echoes
+        cannot outlive the service registration window. Within the budget the
+        probes retry on a short per-probe timeout, because on a real cluster the
+        credit ROUTER is routinely not echoing yet when the worker container
+        starts; a single long probe would burn the budget before it is. On
+        expiry the worker proceeds with whatever RTTs already landed (possibly
+        none), which costs a diagnostic, not correctness.
+
+        Serialized against itself: the periodic re-measurement can fire while a
+        startup probe is still burning its budget, and two concurrent rounds
+        would fight over the tracker's single in-flight pong slot and cross their
+        sequence numbers.
+        """
+        budget = Environment.WORKER.CLOCK_PROBE_BUDGET
+        probe_timeout = Environment.WORKER.CLOCK_PROBE_TIMEOUT
+        async with self._clock_probe_lock:
+            try:
+                await asyncio.wait_for(
+                    self.clock_offset_tracker.measure_baseline_rtt(
+                        send_ping=self.credit_dealer_client.send,
+                        probe_count=Environment.WORKER.CLOCK_PROBE_COUNT,
+                        timeout=probe_timeout,
+                        max_attempts=max(1, int(budget / probe_timeout)),
+                    ),
+                    timeout=budget,
+                )
+            except TimeoutError:
+                self.warning(
+                    f"Clock-offset RTT probe exceeded its "
+                    f"{Environment.WORKER.CLOCK_PROBE_BUDGET}s budget; announcing "
+                    "readiness without a baseline RTT (offset tracking still runs "
+                    "off credit receipts)"
+                )
+
+    @background_task(
+        immediate=False,
+        interval=Environment.WORKER.CLOCK_REMEASURE_INTERVAL,
+    )
+    async def _clock_remeasure_task(self) -> None:
+        """Re-probe credit-channel RTT so the transit estimate does not go stale.
+
+        The offset itself re-measures on every credit receipt, but the one-way
+        transit term subtracted from it comes from a probe round that, without
+        this task, ran exactly once at startup. A controller restart or a route
+        change then leaves every exported timestamp biased by an unknown delta
+        for the remainder of the run. Re-probing on a cadence bounds that to one
+        interval.
+
+        Skipped outside Kubernetes, where both clocks are the same clock and no
+        correction is meaningful. Failures are inert: the previous baseline
+        stays in place.
+        """
+        if not self._tracks_clock_offset:
+            return
+        await self._measure_baseline_rtt()
+
+    async def _publish_startup_state(self, state: WorkerStartupState) -> None:
+        """Publish a worker startup-state transition, skipping repeats."""
+        if self._startup_state == state:
+            return
+        self._startup_state = state
+        await self.publish(
+            WorkerStartupStateMessage(
+                service_id=self.service_id,
+                startup_state=state,
+                pod_index=self._pod_index,
+            )
+        )
+
+    @on_message(MessageType.DATASET_DOWNLOADED_NOTIFICATION)
+    async def _on_dataset_downloaded(self, msg: DatasetDownloadedNotification) -> None:
+        """Open the dataset once this pod's WorkerGroupManager has materialized it.
+
+        Kubernetes only. Notifications from other pods are ignored: their files
+        live in a different emptyDir that this container cannot see.
+        """
+        if not self._is_kubernetes:
+            return
+        if msg.pod_index != self._pod_index or not msg.success:
+            return
+        if self._pending_dataset_metadata is None:
+            self.warning(
+                "Dataset download notification arrived before the dataset "
+                "configuration; ignoring. Recovery comes from the group "
+                "dataset-state poll (_retry_group_dataset_state_until_ready), "
+                "which asks this pod's WorkerGroupManager directly: in "
+                "Kubernetes mode DatasetConfiguredNotification only records "
+                "the pending metadata and does NOT open the client"
+            )
+            return
+        await self._open_dataset_client(msg.client_metadata)
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured(self, msg: DatasetConfiguredNotification) -> None:
@@ -229,24 +1195,73 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         The factory auto-extracts client_type from client_metadata, leveraging
         the discriminated union pattern for type-safe routing. This allows new
         storage backends (S3, Redis, etc.) to work without modifying Worker code.
+
+        In Kubernetes mode the paths in this message name files on the
+        *controller* pod, and this pod's copy does not exist yet: the
+        WorkerGroupManager starts its HTTP download when this same message
+        arrives. Record the dataset-level settings now and wait for
+        DatasetDownloadedNotification to open the mmap.
+        """
+        self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
+        self._pending_dataset_metadata = msg.metadata
+        if self._is_kubernetes:
+            self.debug(
+                "Kubernetes mode: deferring dataset open until pod-local download"
+            )
+            return
+        await self._open_dataset_client(msg.client_metadata)
+
+    async def _open_dataset_client(
+        self, client_metadata: DatasetClientMetadata, mark_ready: bool = True
+    ) -> None:
+        """Build and initialize the dataset client store for the given metadata.
+
+        Args:
+            client_metadata: Storage-backend-specific metadata for the client.
+            mark_ready: Whether to latch the dispatchable transition here. Callers
+                that already hold ``_worker_ready_lock`` must pass False:
+                ``_mark_worker_ready`` re-acquires that lock and
+                :class:`asyncio.Lock` is not reentrant, so leaving it True would
+                deadlock the worker's startup permanently.
         """
         ClientStoreClass = plugins.get_class(
-            PluginType.DATASET_CLIENT_STORE, msg.client_metadata.client_type
+            PluginType.DATASET_CLIENT_STORE, client_metadata.client_type
         )
-        self._dataset_client = ClientStoreClass(client_metadata=msg.client_metadata)
+        self._dataset_client = ClientStoreClass(client_metadata=client_metadata)
         await self._dataset_client.initialize()
-        self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
+        if isinstance(client_metadata, MemoryMapClientMetadata):
+            self._is_payload_bytes = (
+                client_metadata.format == MemoryMapFormat.PAYLOAD_BYTES
+            )
+            if (
+                self._is_payload_bytes
+                and self.run.cfg.get_cache_bust_target() != CacheBustTarget.NONE
+            ):
+                raise RuntimeError(
+                    "cache-bust is incompatible with PAYLOAD_BYTES fast path; "
+                    "loader should have skipped preformat "
+                    "(see DatasetManager._preformat_payloads)"
+                )
         self._dataset_configured_event.set()
         self.debug(
-            lambda: (
-                f"Dataset client initialized: type={msg.client_metadata.client_type}"
-            )
+            lambda: f"Dataset client initialized: type={client_metadata.client_type}"
         )
+        # A worker in group-managed mode is held out of the routing pool until
+        # a dataset is open. This is the broadcast path reaching that point;
+        # the poll in _retry_group_dataset_state_until_ready is the fallback
+        # for when the broadcast was missed. Both converge on the same latch,
+        # which is idempotent.
+        if self._is_group_managed_mode() and mark_ready:
+            await self._mark_worker_ready()
 
     @on_stop
     async def _send_worker_shutdown_message(self) -> None:
         """Send WorkerShutdown to announce shutdown."""
         try:
+            # Both sends are inside the guard: by @on_stop the bus may already
+            # be torn down, and a failed shutdown announcement must not turn a
+            # clean stop into an exception.
+            await self._publish_startup_state(WorkerStartupState.SHUTTING_DOWN)
             await self.credit_dealer_client.send(
                 WorkerShutdown(worker_id=self.service_id)
             )
@@ -274,6 +1289,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             service_id=self.service_id,
             health=health,
             task_stats=self.task_stats,
+            pod_index=self._pod_index,
         )
 
     async def _on_credit_message(self, message: RouterToWorkerMessage) -> None:
@@ -283,6 +1299,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 self._schedule_credit_drop_task(message)
             case CancelCredits():
                 await self._on_cancel_credits_message(message)
+            case TimePong():
+                self.clock_offset_tracker.handle_pong(message)
             case _:
                 self.warning(
                     f"Unknown credit message type: {message.__class__.__name__}"
@@ -296,13 +1314,25 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         ensure the credit is returned. It does not wait for it to actually execute.
         """
         drop_perf_ns = time.perf_counter_ns()
+        # Each credit carries the controller's issue timestamp, making every
+        # receipt a clock-offset sample (controller_time = worker_time -
+        # offset), read back by ``_send_inference_result_message`` onto
+        # ``RequestRecord.clock_offset_ns``. Still gated on Kubernetes mode:
+        # only there can the worker clock differ from the controller's. In
+        # local mode the two ARE the same clock, so every sample would be pure
+        # network transit - correcting by it would inject error rather than
+        # remove it - and the sample costs a deque append plus a window min()
+        # on the credit hot path. Local records therefore carry None, which is
+        # the honest "no correction applies" answer.
+        if self._tracks_clock_offset:
+            self.clock_offset_tracker.update(credit.issued_at_ns)
         credit_context = CreditContext(
             credit=credit,
             drop_perf_ns=drop_perf_ns,
         )
 
         task = self.execute_async(self._on_credit_drop_message_task(credit_context))
-        self.credit_tasks[credit.id] = task
+        self.credit_tasks[_credit_task_key(credit)] = task
         task.add_done_callback(
             lambda t, ctx=credit_context: self._on_credit_drop_message_task_done(t, ctx)
         )
@@ -319,7 +1349,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         credit_id = credit_context.credit.id
 
         # Always remove from tracking dict when task completes
-        self.credit_tasks.pop(credit_id, None)
+        self.credit_tasks.pop(_credit_task_key(credit_context.credit), None)
 
         # The finally block handles normal/error returns. This callback only needs
         # to return credits for tasks that were cancelled before they started executing.
@@ -347,8 +1377,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             cancelled=credit_context.cancelled,
             first_token_sent=credit_context.first_token_sent,
             error=str(credit_context.error) if credit_context.error else None,
+            request_latency_ns=credit_context.request_latency_ns,
+            inter_token_latency_ns=credit_context.inter_token_latency_ns,
+            output_sequence_length=credit_context.output_sequence_length,
+            worker_id=self.service_id,
         )
-        self.execute_async(self.credit_dealer_client.send(credit_return))
+        self.execute_async(self.credit_return_push_client.send(credit_return))
         credit_context.returned = True
 
         # Explicitly clear references to help refcounting (GC is disabled on workers)
@@ -360,15 +1394,22 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug(
             lambda: f"Received cancel credits message: credit_ids={message.credit_ids}"
         )
-        for credit_id in message.credit_ids:
-            if task := self.credit_tasks.get(credit_id):
+        # CancelCredits carries bare ids while credit_tasks is keyed by
+        # (phase, phase_index, id), so match on the id component. Router-side
+        # cancellation is global (``cancel_all_credits`` snapshots every
+        # in-flight credit regardless of phase), so cancelling every phase
+        # holding that id preserves the existing contract.
+        cancelled_ids: set[int] = set()
+        for key, task in list(self.credit_tasks.items()):
+            if key[2] in message.credit_ids:
+                cancelled_ids.add(key[2])
                 task.cancel()
-            else:
-                self.debug(
-                    lambda id=credit_id: (
-                        f"Task for credit {id} not found (already completed?)"
-                    )
+        for credit_id in message.credit_ids - cancelled_ids:
+            self.debug(
+                lambda id=credit_id: (
+                    f"Task for credit {id} not found (already completed?)"
                 )
+            )
 
     async def _on_credit_drop_message_task(self, credit_context: CreditContext) -> None:
         """Handle incoming credit from TimingManager via StickyCreditRouter.
@@ -387,6 +1428,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         try:
             if not self.inference_client:
                 raise NotInitializedError("Inference server client not initialized.")
+            # Defensive: no_request credits are normally short-circuited at the
+            # router and never reach a worker; this guarantees no HTTP even if one
+            # ever arrives here. The finally block emits a normal CreditReturn.
+            if credit_context.credit.no_request:
+                return
             await self._process_credit(credit_context)
         except Exception as e:
             self.exception(
@@ -396,14 +1442,47 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.debug(lambda: f"Credit {credit_context.credit.id} cancelled")
             credit_context.cancelled = True
         finally:
+            # Lockstep: a credit returned as completed MUST be accompanied by a
+            # record, or the RecordsManager completion barrier (which has no
+            # timeout) hangs waiting for it. If processing failed before any
+            # record was emitted, forward an error record now. Cancelled credits
+            # are excluded from the barrier target, so they need no record.
+            #
+            # The emit MUST NOT abort the credit return below: if it raised, the
+            # finally would exit early, ``returned`` would stay False, and the
+            # done callback would return the credit as completed anyway (no
+            # record emitted) -- the exact lockstep break this guards against.
+            # Contain the failure and always proceed to return the credit.
+            #
+            # A no_request virtual orchestrator credit legitimately produces no
+            # record (it sends no HTTP request) and is excluded from the billable
+            # request count, so — like a cancelled credit — it must be exempt from
+            # the lockstep failure-record emit, else it returns with a spurious
+            # error and the records barrier waits for a record that never comes.
+            if (
+                not credit_context.cancelled
+                and not credit_context.record_emitted
+                and not credit_context.credit.no_request
+            ):
+                try:
+                    await self._emit_credit_failure_record(credit_context)
+                except Exception as e:
+                    self.exception(
+                        f"Failed to emit lockstep failure record for credit "
+                        f"{credit_context.credit.id}: {e!r}"
+                    )
             # ALWAYS return the credit here to ensure accurate tracking
             credit_return = CreditReturn(
                 credit=credit_context.credit,
                 cancelled=credit_context.cancelled,
                 first_token_sent=credit_context.first_token_sent,
                 error=str(credit_context.error) if credit_context.error else None,
+                request_latency_ns=credit_context.request_latency_ns,
+                inter_token_latency_ns=credit_context.inter_token_latency_ns,
+                output_sequence_length=credit_context.output_sequence_length,
+                worker_id=self.service_id,
             )
-            await self.credit_dealer_client.send(credit_return)
+            await self.credit_return_push_client.send(credit_return)
             # Mark as returned AFTER send succeeds
             # If send fails/cancelled, done callback will retry
             # Router idempotency guard handles duplicates
@@ -411,104 +1490,406 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             # Note: Don't null credit_context.credit here - done callback needs
             # credit.id for cleanup. Done callback handles all reference clearing.
 
+    async def _emit_credit_failure_record(self, credit_context: CreditContext) -> None:
+        """Forward an error record for a credit whose processing failed before
+        any record was emitted.
+
+        Mirrors the conversation-retrieval error path so the records-side count
+        stays in lockstep with the credit the worker is about to return as
+        completed; without it the RecordsManager completion barrier (no timeout)
+        hangs waiting for a record that never arrives.
+        """
+        credit = credit_context.credit
+        err = credit_context.error
+        if isinstance(err, ErrorDetails):
+            error = err
+        elif isinstance(err, str) and err:
+            error = ErrorDetails(message=err, type="CreditProcessingError", code=500)
+        else:
+            error = ErrorDetails(
+                message="Credit processing failed before a record was produced",
+                type="CreditProcessingError",
+                code=500,
+            )
+        await self._send_inference_result_message(
+            RequestRecord(
+                request_info=RecordContext(
+                    conversation_id=credit.conversation_id,
+                    turn_index=credit.turn_index,
+                    credit_num=credit.id,
+                    credit_phase=credit.phase,
+                    phase_index=credit.phase_index,
+                    profiling_index=credit.profiling_index,
+                    phase_name=credit.phase_name,
+                    phase_kind=credit.phase_kind,
+                    x_request_id=str(uuid.uuid4()),
+                    x_correlation_id=credit.x_correlation_id,
+                    agent_depth=credit.agent_depth,
+                    parent_correlation_id=credit.parent_correlation_id,
+                ),
+                model_name=self.model_endpoint.primary_model_name,
+                timestamp_ns=time.time_ns(),
+                start_perf_ns=time.perf_counter_ns(),
+                end_perf_ns=time.perf_counter_ns(),
+                error=error,
+            )
+        )
+        # Surface the error on the credit so the subsequent CreditReturn carries
+        # it and increment_returned(..., errored=...) counts it. Without this the
+        # forwarded error record would not be reflected in the phase-complete
+        # request_errors log line.
+        credit_context.error = error
+        credit_context.record_emitted = True
+
     async def _process_credit(self, credit_context: CreditContext) -> None:
         """Process a credit (1 credit = 1 request).
 
-        Flow:
-        1. Generate UUID for x_request_id (X-Request-ID header)
-        2. Check session cache using x_correlation_id:
-           - Cache hit: Reuse session (enables conversation caching on inference server)
-           - Cache miss: Retrieve conversation from DatasetManager, create new session
-        3. Advance session to current turn index
-        4. Process the turn (send request, collect response)
-        5. On error: Set error in pre-created result
-        6. Finally: Evict session from cache if this is the final turn
+        Orchestrates error handling and session eviction for both paths:
+        - **Payload bytes fast path**: pre-encoded bytes from mmap, bypasses
+          session/conversation deserialization entirely.
+        - **Normal path**: session-based conversation handling with turn
+          accumulation and response storage.
 
-        Session Lifecycle:
-        - First turn: Session created and cached under x_correlation_id
-        - Subsequent turns: Session retrieved from cache (sticky routing ensures same worker)
-        - Final turn: Session evicted from cache to free memory
+        Credit return is guaranteed by the caller (_on_credit_drop_message_task).
         """
         x_request_id = str(uuid.uuid4())
         x_correlation_id = credit_context.credit.x_correlation_id
         credit = credit_context.credit
 
-        # First token callback - only needed when prefill concurrency is enabled
-        # Sends FirstToken to router for prefill concurrency slot release
-        # Returns True when meaningful content is found to stop looking for first token
-        first_token_callback = None
-        if self._prefill_concurrency_enabled:
-
-            async def first_token_callback(ttft_ns: int, message: SSEMessage) -> bool:
-                # Use endpoint to check if message has meaningful content
-                parsed = self.inference_client.endpoint.parse_response(message)
-                if parsed is None or parsed.data is None:
-                    return False  # Keep looking for meaningful content
-
-                # Meaningful content found - send FirstToken to router
-                await self.credit_dealer_client.send(
-                    FirstToken(
-                        credit_id=credit.id,
-                        phase=credit.phase,
-                        ttft_ns=ttft_ns,
-                    )
-                )
-                # Track that FirstToken was sent so CreditReturn can report it
-                credit_context.first_token_sent = True
-                return True  # Stop looking, first token found
+        first_token_callback = self._make_first_token_callback(credit_context)
 
         try:
-            session = self.session_manager.get(x_correlation_id)
-            if session is None:
-                _conversation = await self._retrieve_conversation(
-                    conversation_id=credit_context.credit.conversation_id,
-                    credit_context=credit_context,
-                )
-                # Store url_index from first turn so all turns hit the same backend
-                session = self.session_manager.create_and_store(
-                    x_correlation_id,
-                    _conversation,
-                    credit_context.credit.num_turns,
-                    url_index=credit_context.credit.url_index,
-                )
-                self._pin_parent_if_fork_child(credit, x_correlation_id)
-                self._seed_from_parent_if_fork_child(credit, x_correlation_id)
-
-            session.advance_turn(credit_context.credit.turn_index)
-
-            self.task_stats.total += 1
-            request_info: RequestInfo = self._create_request_info(
-                session=session,
-                credit_context=credit_context,
-                x_request_id=x_request_id,
-                system_message=session.conversation.system_message,
-                user_context_message=session.conversation.user_context_message,
-            )
-            record: RequestRecord = await self.inference_client.send_request(
-                request_info, first_token_callback=first_token_callback
-            )
-            await self._send_inference_result_message(record)
-
-            # Copy request-level errors to credit context for CreditReturn tracking
-            if record.error is not None:
-                credit_context.error = record.error
-
-            if session.should_store_response() and (
-                resp_turn := self.inference_client.endpoint.build_assistant_turn(record)
+            if await self._try_payload_bytes_fast_path(
+                credit_context, x_request_id, first_token_callback
             ):
-                session.store_response(resp_turn)
+                return
+
+            # Normal path: session-based conversation handling (cache-bust
+            # marker injection, DAG fork/spawn seeding, response accumulation).
+            await self._process_credit_with_session(
+                credit_context, x_request_id, x_correlation_id, first_token_callback
+            )
 
         except asyncio.CancelledError:
-            # Mark cancelled before re-raising so finally can evict session
             credit_context.cancelled = True
             raise
         except Exception as e:
             credit_context.error = ErrorDetails.from_exception(e)
             self.exception(f"Error processing credit: {e!r}")
         finally:
-            # Evict session on final turn OR if cancelled (no retry expected)
-            if credit_context.credit.is_final_turn or credit_context.cancelled:
-                self._release_and_evict_for_terminal(credit, x_correlation_id)
+            self._handle_terminal_disposition(credit, credit_context, x_correlation_id)
+
+    def _make_first_token_callback(
+        self, credit_context: CreditContext
+    ) -> FirstTokenCallback | None:
+        """Build first-token callback when prefill concurrency limiting is active.
+
+        Detecting first token requires parsing each SSE chunk, so this overhead
+        is skipped when the orchestrator doesn't need TTFT events for slot management.
+
+        Returns:
+            Callback that sends FirstToken to the router on meaningful content,
+            or None when prefill concurrency is disabled.
+        """
+        if not self._prefill_concurrency_enabled:
+            return None
+
+        credit = credit_context.credit
+
+        async def on_first_token(ttft_ns: int, message: SSEMessage) -> bool:
+            parsed = self.inference_client.endpoint.parse_response(message)
+            if parsed is None or parsed.data is None:
+                return False
+
+            await self.credit_return_push_client.send(
+                FirstToken(
+                    credit_id=credit.id,
+                    phase=credit.phase,
+                    phase_index=credit.phase_index,
+                    ttft_ns=ttft_ns,
+                )
+            )
+            credit_context.first_token_sent = True
+            return True
+
+        return on_first_token
+
+    async def _process_credit_with_session(
+        self,
+        credit_context: CreditContext,
+        x_request_id: str,
+        x_correlation_id: str,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> None:
+        """Normal credit path: session-based conversation handling.
+
+        Flow:
+        1. Check session cache using x_correlation_id:
+           - Cache hit: Reuse session (enables conversation caching on inference server)
+           - Cache miss: Retrieve conversation from DatasetManager, create new session
+        2. Advance session to current turn index
+        3. Build RequestInfo from session state and send request
+        4. Store assistant response in session for multi-turn accumulation
+
+        Session Lifecycle:
+        - First turn: Session created and cached under x_correlation_id
+        - Subsequent turns: Retrieved from cache (sticky routing ensures same worker)
+        - Final turn: Evicted by caller (_process_credit) in its finally block
+        """
+        credit = credit_context.credit
+        session = self.session_manager.get(x_correlation_id)
+        if session is None:
+            _conversation = await self._retrieve_conversation_for_session(
+                credit_context=credit_context,
+            )
+            session = self.session_manager.create_and_store(
+                x_correlation_id,
+                _conversation,
+                credit.num_turns,
+                url_index=credit.url_index,
+                parent_correlation_id=credit.parent_correlation_id,
+                branch_mode=credit.branch_mode,
+            )
+            self._pin_parent_if_fork_child(credit, x_correlation_id)
+            self._seed_from_parent_if_fork_child(credit, x_correlation_id)
+
+        session.advance_turn(credit.turn_index)
+
+        system_message = _apply_cache_bust(
+            session,
+            credit,
+            session.conversation.system_message,
+        )
+        self._maybe_warn_cache_bust_silent_drop(session, credit)
+
+        request_info = self._create_request_info(
+            session=session,
+            credit_context=credit_context,
+            x_request_id=x_request_id,
+            system_message=system_message,
+            user_context_message=session.conversation.user_context_message,
+        )
+        record: RequestRecord = await self._execute_request(
+            credit_context, request_info, first_token_callback
+        )
+
+        self._finalize_session_response(session, credit_context, record)
+
+    async def _try_payload_bytes_fast_path(
+        self,
+        credit_context: CreditContext,
+        x_request_id: str,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> bool:
+        """Serve the credit from pre-encoded mmap payload bytes when possible.
+
+        Payload bytes fast path: stream pre-encoded bytes from the mmap
+        verbatim, bypassing session/conversation deserialization and
+        per-request payload formatting entirely. Skipped for DAG descendants
+        (agent_depth > 0), whose turn accumulation needs session state, and for
+        credits carrying a ``max_tokens_override``: the override cannot be
+        reflected in the pre-encoded bytes, so serving them verbatim would send
+        the baked-in cap while the enriched metric turn reports the override,
+        yielding a spurious OSL mismatch. Those defer to the session path, which
+        formats the payload with the override applied.
+
+        Returns:
+            True when the request was fully handled (sent + result emitted);
+            False when the caller should take the normal session path.
+        """
+        credit = credit_context.credit
+        if (
+            not self._is_payload_bytes
+            or self._dataset_client is None
+            or credit.agent_depth != 0
+            or credit.max_tokens_override is not None
+        ):
+            return False
+        payload_turn = await self._dataset_client.get_payload_turn(
+            credit.conversation_id, credit.turn_index
+        )
+        if payload_turn is None:
+            return False
+
+        self.task_stats.total += 1
+        request_info = self._create_request_info(
+            credit_context=credit_context,
+            x_request_id=x_request_id,
+            payload_bytes=payload_turn.payload_bytes,
+            # Scalars only — payload_bytes carries the wire body; enrichment
+            # reads max_tokens / timestamp off this turn for OSL-mismatch and
+            # schedule-lag metrics.
+            turns=[
+                Turn(
+                    role="user",
+                    max_tokens=payload_turn.max_tokens,
+                    timestamp=payload_turn.timestamp,
+                )
+            ],
+        )
+        record = await self.inference_client.send_request(
+            request_info, first_token_callback=first_token_callback
+        )
+        self._populate_response_metrics(credit_context, record)
+        await self._send_inference_result_message(record)
+        credit_context.record_emitted = True
+        if record.error is not None:
+            credit_context.error = record.error
+        return True
+
+    def _process_responses_for_record(
+        self,
+        record: RequestRecord,
+        *,
+        capture_assistant_turn: bool,
+    ) -> tuple[list[ParsedResponse], Turn | None]:
+        """Process responses while preserving protocol-only third-party endpoints.
+
+        The fallback supports ``EndpointProtocol`` implementations that do not
+        inherit ``BaseEndpoint`` and therefore lack its optional replay helpers.
+        """
+        endpoint = self.inference_client.endpoint
+        process_responses = getattr(endpoint, "process_responses", None)
+        if callable(process_responses):
+            return process_responses(
+                record, capture_assistant_turn=capture_assistant_turn
+            )
+
+        parsed_responses = endpoint.extract_response_data(record)
+        build_assistant_turn = getattr(endpoint, "build_assistant_turn", None)
+        assistant_turn = (
+            build_assistant_turn(record)
+            if capture_assistant_turn and callable(build_assistant_turn)
+            else None
+        )
+        return parsed_responses, assistant_turn
+
+    def _finalize_session_response(
+        self,
+        session: UserSession,
+        credit_context: CreditContext,
+        record: RequestRecord,
+    ) -> None:
+        """Store the assistant turn (when retained) and populate metrics from a
+        single response-processing pass, shared with the payload-bytes path."""
+        parsed_responses, assistant_turn = self._process_responses_for_record(
+            record,
+            capture_assistant_turn=session.should_store_response(),
+        )
+        if assistant_turn is not None:
+            session.store_response(assistant_turn)
+        # Response-ID chaining is only coherent for the mode that captures live
+        # responses and accumulates genuine deltas (DELTAS_WITHOUT_RESPONSES).
+        # In the *_WITH_RESPONSES modes ``turns[-1]`` already carries the full
+        # authored history, so chaining would double the context on the wire.
+        # A failed turn may still emit a ``response.created`` id for a partial or
+        # aborted response; chaining onto it would corrupt the server context, so
+        # keep the last good id (from a prior successful turn) instead.
+        if (
+            not record.has_error
+            and session.should_store_response()
+            and (
+                extract_response_id := getattr(
+                    self.inference_client.endpoint, "extract_response_id", None
+                )
+            )
+        ):
+            session.store_response_id(extract_response_id(record))
+        self._populate_response_metrics(credit_context, record, parsed_responses)
+
+    def _populate_response_metrics(
+        self,
+        credit_context: CreditContext,
+        record: RequestRecord,
+        parsed_responses: list[ParsedResponse] | None = None,
+    ) -> None:
+        """Derive latency/OSL/ITL from ``record`` onto ``credit_context``.
+
+        Shared by the normal session path and the payload-bytes fast path so
+        both emit identical CreditReturn timing fields from the same record.
+        """
+        if parsed_responses is None:
+            parsed_responses = self.inference_client.endpoint.extract_response_data(
+                record
+            )
+        content_perf_ns = self._content_response_perf_ns_for_record(
+            record, parsed_responses
+        )
+        credit_context.request_latency_ns = self._request_latency_ns_for_record(
+            record, content_perf_ns
+        )
+        credit_context.output_sequence_length = (
+            self._output_sequence_length_for_responses(parsed_responses)
+        )
+        credit_context.inter_token_latency_ns = self._inter_token_latency_ns_for_record(
+            record,
+            content_perf_ns,
+            parsed_responses,
+            credit_context.output_sequence_length,
+        )
+
+    def _content_response_perf_ns_for_record(
+        self,
+        record: RequestRecord,
+        parsed_responses: list[ParsedResponse] | None = None,
+    ) -> list[int]:
+        """Return perf timestamps for parsed responses with meaningful content."""
+        if parsed_responses is None:
+            parsed_responses = self.inference_client.endpoint.extract_response_data(
+                record
+            )
+        return [parsed.perf_ns for parsed in parsed_responses if parsed.data]
+
+    def _request_latency_ns_for_record(
+        self, record: RequestRecord, content_perf_ns: list[int] | None = None
+    ) -> int | None:
+        """Return the same latency sample used by RequestLatencyMetric."""
+        if content_perf_ns is None:
+            content_perf_ns = self._content_response_perf_ns_for_record(record)
+        if not content_perf_ns:
+            return None
+        final_response_perf_ns = content_perf_ns[-1]
+        if final_response_perf_ns < record.start_perf_ns:
+            return None
+        return final_response_perf_ns - record.start_perf_ns
+
+    def _output_sequence_length_for_responses(
+        self, parsed_responses: list[ParsedResponse]
+    ) -> int | None:
+        usage = find_last_non_empty_usage(parsed_responses)
+        if usage is None or usage.completion_tokens is None:
+            return None
+        return usage.completion_tokens
+
+    def _inter_token_latency_ns_for_record(
+        self,
+        record: RequestRecord,
+        content_perf_ns: list[int] | None = None,
+        parsed_responses: list[ParsedResponse] | None = None,
+        output_sequence_length: int | None = None,
+    ) -> float | None:
+        """Return ITL using the records-pipeline output sequence formula."""
+        if parsed_responses is None:
+            parsed_responses = self.inference_client.endpoint.extract_response_data(
+                record
+            )
+        if content_perf_ns is None:
+            content_perf_ns = self._content_response_perf_ns_for_record(
+                record, parsed_responses
+            )
+        if output_sequence_length is None:
+            output_sequence_length = self._output_sequence_length_for_responses(
+                parsed_responses
+            )
+        if len(content_perf_ns) < 2 or output_sequence_length is None:
+            return None
+        if output_sequence_length < 2:
+            return None
+        request_latency_ns = content_perf_ns[-1] - record.start_perf_ns
+        ttft_ns = content_perf_ns[0] - record.start_perf_ns
+        if request_latency_ns < 0 or ttft_ns < 0:
+            return None
+        return (request_latency_ns - ttft_ns) / (output_sequence_length - 1)
 
     def _pin_parent_if_fork_child(self, credit: Credit, x_correlation_id: str) -> None:
         """FORK child seed: pin the parent so its session stays resident in
@@ -552,6 +1933,22 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             x_correlation_id, credit.parent_correlation_id
         )
 
+    def _handle_terminal_disposition(
+        self, credit: Credit, credit_context: CreditContext, x_correlation_id: str
+    ) -> None:
+        """Evict on final turn, cancellation, or terminal context overflow.
+
+        Context overflow on a non-final, non-cancelled turn is terminal for
+        agentic_replay (lane recycled, no final/cancel credit follows), so it
+        must take the same eviction path.
+        """
+        if (
+            credit.is_final_turn
+            or credit_context.cancelled
+            or _is_terminal_context_overflow(credit, credit_context)
+        ):
+            self._release_and_evict_for_terminal(credit, x_correlation_id)
+
     def _release_and_evict_for_terminal(
         self, credit: Credit, x_correlation_id: str
     ) -> None:
@@ -561,10 +1958,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         defer eviction: children arrive on the orchestrator's intercept
         path AFTER this credit return runs, so ``evict_if_unpinned``
         cannot find any pin to honor here. Setting ``pending_fork_eviction``
-        signals ``release_fork_child`` to auto-evict the moment the last
-        child joins.
+        hands the collection decision to the session manager, which ends the
+        deferral once every declared FORK child has joined (whichever of
+        ``release_fork_child`` / ``evict_if_unpinned`` observes that last).
 
-        Non-FORK and non-parent sessions evict immediately.
+        This is worker-local bookkeeping only. The timing manager's
+        ``StickyCreditRouter`` runs in a different process and keeps its own
+        refcount; nothing here races it.
+
+        Every path goes through ``evict_if_unpinned`` so an in-flight FORK
+        pin is honored even on a session whose ``is_fork_parent`` stamp is
+        False (a parent created from a conversation whose ``branches`` were
+        already stripped still gets pinned by arriving children, and a hard
+        ``evict`` would drop the history out from under them).
         """
         if (
             credit.parent_correlation_id is not None
@@ -572,60 +1978,142 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         ):
             self.session_manager.release_fork_child(credit.parent_correlation_id)
         cur_session = self.session_manager.get(x_correlation_id)
-        if cur_session is not None and cur_session.is_fork_parent:
-            if credit.has_forks:
-                cur_session.pending_fork_eviction = True
-            self.session_manager.evict_if_unpinned(x_correlation_id)
-        else:
-            self.session_manager.evict(x_correlation_id)
+        if cur_session is not None and cur_session.is_fork_parent and credit.has_forks:
+            cur_session.pending_fork_eviction = True
+        self.session_manager.evict_if_unpinned(x_correlation_id)
+
+    def _maybe_warn_cache_bust_silent_drop(
+        self,
+        session: UserSession,
+        credit: Credit,
+    ) -> None:
+        """Emit a one-shot warning if cache-bust was requested but had nowhere
+        to land on this credit (an empty ``session.turn_list``).
+
+        Rate-limited to once per worker via ``self._cache_bust_warning_shown`` —
+        the misconfiguration is identical for every credit, so a single
+        actionable line beats N-thousand duplicates at scale.
+        """
+        if self._cache_bust_warning_shown:
+            return
+        target = credit.cache_bust_target
+        marker = credit.cache_bust_marker
+        if not marker or target == CacheBustTarget.NONE:
+            return
+        if not session.turn_list:
+            self._cache_bust_warning_shown = True
+            self.warning(
+                f"cache-bust target={target.value} requested but session.turn_list "
+                f"is empty — marker NOT injected (further occurrences suppressed)."
+            )
+
+    async def _execute_request(
+        self,
+        credit_context: CreditContext,
+        request_info: RequestInfo,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> RequestRecord:
+        """Send request, record result, and propagate errors to credit context.
+
+        Metrics/response storage are handled once by the caller
+        (``_finalize_session_response``) from a single response-processing pass.
+        """
+        self.task_stats.total += 1
+        record = await self.inference_client.send_request(
+            request_info, first_token_callback=first_token_callback
+        )
+        await self._send_inference_result_message(record)
+        credit_context.record_emitted = True
+        if record.error is not None:
+            credit_context.error = record.error
+        return record
 
     def _create_request_info(
         self,
         *,
         x_request_id: str,
-        session: UserSession,
         credit_context: CreditContext,
+        session: UserSession | None = None,
         system_message: str | None = None,
         user_context_message: str | None = None,
+        payload_bytes: bytes | None = None,
+        turns: list[Turn] | None = None,
     ) -> RequestInfo:
-        """Create RequestInfo for inference request with session state and credit metadata.
+        """Create RequestInfo for inference request.
 
-        Consolidates all information needed by InferenceClient and endpoints to:
-        - Format the request payload (model, parameters, conversation history)
-        - Set HTTP headers (X-Request-ID, X-Correlation-ID, auth)
-        - Track request timing (drop_perf_ns for credit drop latency)
-        - Handle cancellation (cancel_after_ns if specified)
+        When ``session`` is provided (normal path), conversation state comes from
+        the session. When omitted (raw payload fast path), fields are taken
+        directly from the credit.
+
+        When ``session`` is provided (normal path), conversation state comes
+        from the session. When omitted (payload-bytes fast path), fields are
+        taken directly from the credit.
 
         Args:
             x_request_id: Unique ID for this request (X-Request-ID header)
-            session: Session containing conversation history and current turn index
             credit_context: Context with credit metadata (num, phase, timestamps)
+            session: Session with conversation history (None for raw payload path)
             system_message: Optional shared system message to prepend to first turn
             user_context_message: Optional per-conversation user context message
+            payload_bytes: Pre-encoded payload bytes from mmap (raw payload path)
+            turns: Explicit turns list (raw payload fast path with image metadata).
+                   Takes precedence over session-derived turns when provided.
 
         Returns:
             RequestInfo with all data needed to send inference request
         """
         credit = credit_context.credit
+        if turns is None:
+            turns = session.turn_list if session else []
+        if credit.max_tokens_override is not None and turns:
+            last_turn = turns[-1]
+            update: dict[str, Any] = {"max_tokens": credit.max_tokens_override}
+            # A verbatim raw_payload dict is shipped as-is by inference_client,
+            # so Turn.max_tokens alone is ignored on the wire; rewrite the wire
+            # cap too or the recorded (baked-in) value would be sent instead.
+            if isinstance(last_turn.raw_payload, dict):
+                update["raw_payload"] = apply_max_tokens_to_wire_payload(
+                    last_turn.raw_payload, credit.max_tokens_override
+                )
+            turns = [*turns[:-1], last_turn.model_copy(update=update)]
+        source_turn = turns[-1] if turns else None
         return RequestInfo(
             model_endpoint=self.model_endpoint,
             credit_num=credit.id,
             credit_phase=credit.phase,
+            phase_index=credit.phase_index,
+            profiling_index=credit.profiling_index,
+            phase_name=credit.phase_name,
+            phase_kind=credit.phase_kind,
             cancel_after_ns=credit.cancel_after_ns,
             x_request_id=x_request_id,
-            x_correlation_id=session.x_correlation_id,
-            conversation_id=session.conversation.session_id,
-            turn_index=session.turn_index,
-            turns=session.turn_list,
+            x_correlation_id=session.x_correlation_id
+            if session
+            else credit.x_correlation_id,
+            conversation_id=session.conversation.session_id
+            if session
+            else credit.conversation_id,
+            turn_index=session.turn_index if session else credit.turn_index,
+            source_trace_id=source_turn.source_trace_id if source_turn else None,
+            source_outer_idx=source_turn.source_outer_idx if source_turn else None,
+            source_inner_idx=source_turn.source_inner_idx if source_turn else None,
+            source_kind=source_turn.source_kind if source_turn else None,
+            turns=turns,
+            previous_response_id=session.previous_response_id if session else None,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,
             user_context_message=user_context_message,
             is_final_turn=credit.is_final_turn,
+            url_index=session.url_index if session else credit.url_index,
+            payload_bytes=payload_bytes,
             agent_depth=credit.agent_depth,
             parent_correlation_id=credit.parent_correlation_id,
-            # Use session's url_index to ensure all turns hit the same backend
-            url_index=session.url_index,
+            root_correlation_id=credit.effective_root_correlation_id,
+            cache_bust_marker=credit.cache_bust_marker,
+            cache_bust_target=credit.cache_bust_target
+            if credit.cache_bust_marker is not None
+            else None,
         )
 
     async def _retrieve_conversation(
@@ -659,6 +2147,43 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             conversation_id, credit_context
         )
 
+    async def _retrieve_conversation_for_session(
+        self,
+        *,
+        credit_context: CreditContext,
+    ) -> Conversation:
+        """Retrieve a Conversation suitable for session-based processing.
+
+        In the PAYLOAD_BYTES memory-map format the client's ``get_conversation``
+        path raises because the full authoring shape is not persisted — only
+        the per-turn payload bytes. For session-mode processing we reconstruct
+        a minimal ``Conversation`` from per-turn payload bytes so
+        ``session_manager`` can still advance turns.
+        """
+        conversation_id = credit_context.credit.conversation_id
+        num_turns = credit_context.credit.num_turns
+
+        if self._is_payload_bytes and self._dataset_client is not None:
+            turns: list[Turn] = []
+            for turn_index in range(num_turns):
+                payload_turn = await self._dataset_client.get_payload_turn(
+                    conversation_id, turn_index
+                )
+                if payload_turn is None:
+                    turns.append(Turn(role="user"))
+                    continue
+                turns.append(turn_from_payload_turn(payload_turn))
+            return Conversation(
+                session_id=conversation_id,
+                turns=turns,
+                context_mode=self.session_manager.default_context_mode,
+            )
+
+        return await self._retrieve_conversation(
+            conversation_id=conversation_id,
+            credit_context=credit_context,
+        )
+
     async def _request_conversation_from_dataset_manager(
         self, conversation_id: str, credit_context: CreditContext
     ) -> Conversation:
@@ -680,16 +2205,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             error = conversation_response.error
             await self._send_inference_result_message(
                 RequestRecord(
-                    request_info=RequestInfo(
-                        model_endpoint=self.model_endpoint,
+                    request_info=RecordContext(
                         conversation_id=conversation_id,
                         turn_index=0,
-                        turns=[],
                         credit_num=credit_context.credit.id,
                         credit_phase=credit_context.credit.phase,
+                        phase_index=credit_context.credit.phase_index,
+                        profiling_index=credit_context.credit.profiling_index,
+                        phase_name=credit_context.credit.phase_name,
+                        phase_kind=credit_context.credit.phase_kind,
                         x_request_id=str(uuid.uuid4()),
                         x_correlation_id=credit_context.credit.x_correlation_id,
-                        drop_perf_ns=credit_context.drop_perf_ns,
+                        agent_depth=credit_context.credit.agent_depth,
+                        parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.model_endpoint.primary_model_name,
                     timestamp_ns=time.time_ns(),
@@ -698,6 +2226,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     error=error,
                 )
             )
+            credit_context.record_emitted = True
             raise ValueError(f"Failed to retrieve conversation response: {error}")
 
         return conversation_response.conversation
@@ -713,10 +2242,43 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         2. Wrap record in InferenceResultsMessage
         3. Push to RecordProcessor via PUSH socket (fire-and-forget)
 
-        Note: Uses execute_async() to avoid blocking on network I/O.
+        Note: Uses execute_async() so the ZMQ NOBLOCK send does not block the
+        credit-return path. The ZMQ layer drains in-flight push tasks on socket
+        shutdown (bounded by AIPERF_ZMQ_PUSH_DRAIN_TIMEOUT), so records are not
+        lost when the worker process exits.
         """
         # All records will flow through here to be sent to the inference results push client.
         self.task_stats.task_finished(record.valid)
+
+        # Single egress point, so every record - success, error, and cancelled -
+        # carries the correction current at emit time once its minimum sample count
+        # establishes a reliable estimate. Do NOT rewrite timestamp_ns here: it
+        # anchors all exported timestamps and was set pre-request, so correcting
+        # it in place would also shift it by the request latency.
+        #
+        # Stamps ``correction_ns``, NOT the raw ``offset_ns``: the raw min-filtered
+        # sample is ``clock_skew + min_transit``, so applying it would shift every
+        # exported timestamp one one-way hop earlier than true controller time and
+        # understate credit_to_start_latency by exactly the hop that metric exists
+        # to measure. ``correction_ns`` subtracts the pre-flight one-way estimate
+        # when one was measured, and degrades to the raw offset when it was not.
+        #
+        # Gated on the same flag that gates sampling in _schedule_credit_drop_task:
+        # with no samples the correction is None, so outside Kubernetes this only
+        # ever wrote the field's own default of None. Skipping it keeps local
+        # records byte-identical while dropping a property call and an attribute
+        # store from the per-record egress path.
+        #
+        # Deliberately NOT gated on ``is_calibrated``. Every record here descends
+        # from a credit, and every credit receipt is a sample, so a correction
+        # always exists by this point -- but the calibration threshold is several
+        # samples, so gating on it stamped None onto the first few records of each
+        # worker and a correction onto the rest. That mixes corrected and
+        # uncorrected timestamps inside a single exported artifact, which is worse
+        # than a slightly noisier early estimate: consumers cannot tell the two
+        # apart, and the mixed rows are exactly the ones at the start of the run.
+        if self._tracks_clock_offset:
+            record.clock_offset_ns = self.clock_offset_tracker.correction_ns
 
         msg = InferenceResultsMessage(
             service_id=self.service_id,
@@ -725,7 +2287,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.execute_async(self.inference_results_push_client.push(msg))
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _on_profile_configure_command(self, message: CommandMessage) -> None:
+    async def _on_profile_configure_command(self, message: Command) -> None:
         """Configure the worker."""
         self.debug("Waiting for dataset to be configured before starting profiling")
         await asyncio.wait_for(

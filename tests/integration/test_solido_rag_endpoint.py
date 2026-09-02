@@ -21,7 +21,7 @@ class TestSolidoRAGEndpoint:
             f"""
             aiperf profile \
                 --model rag-model \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type solido_rag \
                 --request-count {defaults.request_count} \

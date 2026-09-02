@@ -20,8 +20,12 @@ Covers former bugs in ``aiperf.config.flags._converter_profiling``:
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import ClassVar
+
 import pytest
 
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.flags._converter_profiling import build_profiling
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import ArrivalPattern, PhaseType
@@ -46,18 +50,36 @@ def _make_user(
 
 
 class TestArrivalSmoothnessGating:
-    def test_smoothness_without_gamma_raises_clear_error(self):
-        """--arrival-smoothness with default poisson pattern must error."""
+    def test_smoothness_without_explicit_pattern_auto_promotes_to_gamma(self):
+        """v1 parity: --request-rate + --arrival-smoothness (or --vllm-burstiness)
+        with NO explicit --arrival-pattern auto-promotes to gamma instead of
+        falling through to poisson and being hard-rejected. The cutover dropped
+        this auto-promote, making --vllm-burstiness unusable on its own."""
         loadgen = CLIConfig(
             request_rate=100.0,
             arrival_smoothness=1.5,
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
-        with pytest.raises(ValueError, match="--arrival-smoothness"):
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["smoothness"] == 1.5
+        assert prof["rate"] == 100.0
+
+    def test_explicit_poisson_pattern_with_smoothness_raises(self):
+        """An EXPLICIT non-gamma pattern + smoothness still errors clearly (the
+        auto-promote only fires when the pattern was not user-supplied)."""
+        loadgen = CLIConfig(
+            request_rate=100.0,
+            arrival_pattern=ArrivalPattern.POISSON,
+            arrival_smoothness=1.5,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="arrival-pattern gamma"):
             build_profiling(user)
 
-    def test_smoothness_with_constant_pattern_raises(self):
+    def test_smoothness_with_constant_pattern_raises(self) -> None:
         """--arrival-smoothness with --arrival-pattern constant must error."""
         loadgen = CLIConfig(
             request_rate=100.0,
@@ -69,7 +91,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="arrival-pattern gamma"):
             build_profiling(user)
 
-    def test_smoothness_without_request_rate_raises(self):
+    def test_smoothness_without_request_rate_raises(self) -> None:
         """Concurrency-mode (no rate) with --arrival-smoothness must error."""
         loadgen = CLIConfig(
             arrival_smoothness=1.5,
@@ -80,7 +102,7 @@ class TestArrivalSmoothnessGating:
         with pytest.raises(ValueError, match="--arrival-smoothness"):
             build_profiling(user)
 
-    def test_smoothness_with_gamma_succeeds(self):
+    def test_smoothness_with_gamma_succeeds(self) -> None:
         """Valid combination: --arrival-pattern gamma + --arrival-smoothness."""
         loadgen = CLIConfig(
             request_rate=100.0,
@@ -94,7 +116,7 @@ class TestArrivalSmoothnessGating:
         assert prof["smoothness"] == 1.5
         assert prof["rate"] == 100.0
 
-    def test_gamma_without_smoothness_succeeds(self):
+    def test_gamma_without_smoothness_succeeds(self) -> None:
         """--arrival-pattern gamma without --arrival-smoothness is allowed
         (smoothness is optional on GammaPhase)."""
         loadgen = CLIConfig(
@@ -114,28 +136,28 @@ class TestArrivalSmoothnessGating:
 
 
 class TestFixedScheduleOffsetGating:
-    def test_start_offset_without_fixed_schedule_raises(self):
+    def test_start_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(request_rate=100.0, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_start_offset=1000)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_end_offset_without_fixed_schedule_raises(self):
+    def test_end_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(request_rate=100.0, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_end_offset=2000)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_auto_offset_without_fixed_schedule_raises(self):
+    def test_auto_offset_without_fixed_schedule_raises(self) -> None:
         loadgen = CLIConfig(concurrency=4, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_auto_offset=True)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
         with pytest.raises(ValueError, match="--fixed-schedule"):
             build_profiling(user)
 
-    def test_offsets_in_concurrency_mode_raises(self):
+    def test_offsets_in_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(concurrency=2, request_count=10)
         input_cfg = CLIConfig(fixed_schedule_start_offset=500)
         user = _make_user(loadgen=loadgen, input_cfg=input_cfg)
@@ -144,7 +166,7 @@ class TestFixedScheduleOffsetGating:
         ):
             build_profiling(user)
 
-    def test_offsets_with_fixed_schedule_succeed(self):
+    def test_offsets_with_fixed_schedule_succeed(self) -> None:
         """Valid combination: --fixed-schedule + offsets all together."""
         loadgen = CLIConfig(concurrency=4)
         input_cfg = CLIConfig(
@@ -160,7 +182,7 @@ class TestFixedScheduleOffsetGating:
         # Existing convention: start_offset present => auto_offset defaults False.
         assert prof["auto_offset"] is False
 
-    def test_fixed_schedule_without_offsets_succeeds(self):
+    def test_fixed_schedule_without_offsets_succeeds(self) -> None:
         """--fixed-schedule alone (no offsets) is fine."""
         loadgen = CLIConfig(concurrency=4)
         input_cfg = CLIConfig(fixed_schedule=True)
@@ -177,7 +199,7 @@ class TestFixedScheduleOffsetGating:
 
 
 class TestGracePeriodRequiresDuration:
-    def test_grace_period_without_duration_raises(self):
+    def test_grace_period_without_duration_raises(self) -> None:
         loadgen = CLIConfig(benchmark_grace_period=30, request_count=10, concurrency=1)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -185,7 +207,7 @@ class TestGracePeriodRequiresDuration:
         ):
             build_profiling(user)
 
-    def test_grace_period_with_duration_succeeds(self):
+    def test_grace_period_with_duration_succeeds(self) -> None:
         loadgen = CLIConfig(
             benchmark_duration=60.0, benchmark_grace_period=30, concurrency=1
         )
@@ -201,7 +223,7 @@ class TestGracePeriodRequiresDuration:
 
 
 class TestNumUsersRequiresUserCentric:
-    def test_num_users_with_concurrency_mode_raises(self):
+    def test_num_users_with_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(num_users=5, request_count=10, concurrency=1)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -209,7 +231,7 @@ class TestNumUsersRequiresUserCentric:
         ):
             build_profiling(user)
 
-    def test_num_users_with_request_rate_raises(self):
+    def test_num_users_with_request_rate_raises(self) -> None:
         loadgen = CLIConfig(num_users=5, request_rate=100.0, request_count=10)
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
@@ -217,7 +239,7 @@ class TestNumUsersRequiresUserCentric:
         ):
             build_profiling(user)
 
-    def test_num_users_with_user_centric_succeeds(self):
+    def test_num_users_with_user_centric_succeeds(self) -> None:
         """``--user-centric-rate`` resolves to USER_CENTRIC; --num-users flows through."""
         loadgen = CLIConfig(
             user_centric_rate=10.0,
@@ -237,20 +259,1092 @@ class TestNumUsersRequiresUserCentric:
 
 
 class TestRateRampRequiresRequestRate:
-    def test_rate_ramp_with_concurrency_mode_raises(self):
+    def test_rate_ramp_with_concurrency_mode_raises(self) -> None:
         loadgen = CLIConfig(
             request_rate_ramp_duration=30, request_count=10, concurrency=1
         )
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
-            ValueError, match="--request-rate-ramp-duration.*rate-controlled"
+            ValueError, match=r"--request-rate-ramp-duration.*rate-controlled"
         ):
             build_profiling(user)
 
-    def test_rate_ramp_with_request_rate_succeeds(self):
+    def test_rate_ramp_with_request_rate_succeeds(self) -> None:
         loadgen = CLIConfig(
             request_rate=100.0, request_rate_ramp_duration=30, request_count=10
         )
         user = _make_user(loadgen=loadgen)
         prof = build_profiling(user)
         assert prof.get("rate_ramp") == {"duration": 30}
+
+
+# ---------------------------------------------------------------------------
+# AGENTIC_REPLAY auto-warmup grace routing
+# ---------------------------------------------------------------------------
+
+
+class TestAgenticWarmupGracePeriodRouting:
+    def test_agentic_warmup_grace_routes_onto_profiling_phase(self):
+        """--agentic-warmup-grace-period is an AGENTIC_REPLAY route: it lands on
+        the profiling phase dict (the agentic auto-warmup reads it from there),
+        unlike --warmup-grace-period which feeds the user-declared warmup phase
+        and requires --warmup-duration."""
+        loadgen = CLIConfig(
+            concurrency=8,
+            request_count=10,
+            agentic_warmup_grace_period=30.0,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["agentic_warmup_grace_period"] == 30.0
+
+    def test_agentic_warmup_grace_absent_when_unset(self):
+        """Unset --agentic-warmup-grace-period leaves the profiling phase dict
+        without the key (so the warmup barrier defaults to infinite)."""
+        loadgen = CLIConfig(concurrency=8, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert "agentic_warmup_grace_period" not in prof
+
+    def test_agentic_warmup_grace_does_not_require_duration(self):
+        """Unlike grace_period (the profiling tail), the agentic warmup grace is
+        not duration-gated -- it applies to a CONCURRENCY_BURST warmup with no
+        duration, so it must route without a duration set."""
+        loadgen = CLIConfig(
+            concurrency=8,
+            request_count=10,
+            agentic_warmup_grace_period=0.0,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["agentic_warmup_grace_period"] == 0.0
+
+
+class TestSystemIdleGapCapRouting:
+    def test_system_idle_gap_cap_routes_onto_profiling_phase(self) -> None:
+        loadgen = CLIConfig(
+            concurrency=8,
+            request_count=10,
+            system_idle_gap_cap_seconds=10.0,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["system_idle_gap_cap_seconds"] == 10.0
+
+    def test_system_idle_gap_cap_absent_when_unset(self) -> None:
+        loadgen = CLIConfig(concurrency=8, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert "system_idle_gap_cap_seconds" not in prof
+
+
+class TestAdaptiveScaleCliRemoval:
+    REMOVED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "adaptive_scale",
+            "adaptive_sustain_duration",
+            "adaptive_assessment_period",
+            "adaptive_scale_control",
+            "adaptive_control_variable",
+            "adaptive_control_min",
+            "adaptive_control_max",
+            "adaptive_scale_sla",
+        }
+    )
+
+    def test_removed_adaptive_scale_cli_fields_are_not_on_cli_config(self) -> None:
+        assert self.REMOVED_FIELDS.isdisjoint(CLIConfig.model_fields)
+
+    def test_removed_adaptive_scale_cli_fields_are_not_loadgen_routes(self) -> None:
+        from aiperf.config.flags._section_fields import LOADGEN_FIELDS
+
+        assert self.REMOVED_FIELDS.isdisjoint(LOADGEN_FIELDS)
+
+    def test_build_profiling_does_not_emit_adaptive_scale_from_cli(self) -> None:
+        user = _make_user(
+            loadgen=CLIConfig(
+                concurrency=8,
+                benchmark_duration=60,
+                request_count=100,
+            )
+        )
+
+        prof = build_profiling(user)
+
+        assert self.REMOVED_FIELDS.isdisjoint(prof)
+        assert "adaptive_scale" not in prof
+
+
+class TestAdaptiveScaleValidation:
+    def test_adaptive_scale_rejects_concurrency_ramp(
+        self: TestAdaptiveScaleValidation,
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(
+            ValueError, match="adaptive_scale cannot be combined with concurrency_ramp"
+        ):
+            ConcurrencyPhase.model_validate(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 600,
+                    "concurrency": 200,
+                    "concurrency_ramp": 30,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 120,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 30000,
+                        }
+                    ],
+                }
+            )
+
+    def test_nested_adaptive_scale_yaml_lowers_to_flat_phase_fields(
+        self: TestAdaptiveScaleValidation,
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "sla": {
+                    "request_latency": {"p95": {"lt": 30000}},
+                    "itl": {"p95": {"le": 100}},
+                    "goodput": {"avg": {"ge": 20}},
+                },
+                "adaptive_scale": {
+                    "enabled": True,
+                    "min_concurrency": 2,
+                    "max_concurrency": 200,
+                    "window": 30,
+                    "minCompletedRequests": 3,
+                    "sustain_duration": 120,
+                    "strategy": {
+                        "type": "ramp_until_fail",
+                        "step_policy": "sla_margin",
+                        "base_step": 10,
+                        "max_step_multiplier": 4,
+                    },
+                },
+            }
+        )
+
+        assert phase.adaptive_scale is True
+        assert phase.adaptive_control_min == 2
+        assert phase.adaptive_control_max == 200
+        assert phase.adaptive_assessment_period == 30
+        assert phase.adaptive_min_completed_requests == 3
+        assert phase.adaptive_sustain_duration == 120
+        assert phase.adaptive_scale_strategy_type == "ramp_until_fail"
+        assert phase.adaptive_scale_step_policy == "sla_margin"
+        assert phase.adaptive_scale_base_step == 10
+        assert phase.adaptive_scale_max_step_multiplier == 4
+        assert [sla.metric_tag for sla in phase.sla] == [
+            "request_latency",
+            "itl",
+            "goodput",
+        ]
+
+    @pytest.mark.parametrize(
+        ("phase_data", "match"),
+        [
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "adaptive_scale requires duration",
+                id="missing-duration",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "adaptive_scale requires adaptive_sustain_duration",
+                id="missing-sustain",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                },
+                "adaptive_scale requires sla filters",
+                id="missing-sla",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "adaptive_control_min": 8,
+                    "adaptive_control_max": 8,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "control.max must be > control.min",
+                id="bad-bounds",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "adaptive_control_min": 1.5,
+                    "adaptive_control_max": 8,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "control.min must be an integer",
+                id="non-integer-min",
+            ),
+            pytest.param(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": True,
+                    "adaptive_sustain_duration": 10,
+                    "adaptive_control_min": 9,
+                    "adaptive_control_max": 10,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                },
+                "control.min must be <= concurrency",
+                id="min-exceeds-concurrency",
+            ),
+        ],
+    )
+    def test_adaptive_scale_validation_errors(
+        self: TestAdaptiveScaleValidation, phase_data: dict, match: str
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(ValueError, match=match):
+            ConcurrencyPhase.model_validate(phase_data)
+
+    @pytest.mark.parametrize(
+        ("block", "match"),
+        [
+            pytest.param(
+                {"enabled": "maybe"}, "enabled must be a boolean", id="bad-enabled"
+            ),
+            pytest.param(
+                {"control": "bad"}, "control must be a mapping", id="bad-control"
+            ),
+            pytest.param(
+                {"strategy": "bad"}, "strategy must be a mapping", id="bad-strategy"
+            ),
+            pytest.param({"sla": "bad"}, "sla must be a mapping or list", id="bad-sla"),
+        ],
+    )
+    def test_nested_adaptive_scale_rejects_invalid_blocks(
+        self: TestAdaptiveScaleValidation, block: dict, match: str
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        with pytest.raises(ValueError, match=match):
+            ConcurrencyPhase.model_validate(
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 60,
+                    "concurrency": 8,
+                    "adaptive_scale": block,
+                    "adaptive_sustain_duration": 10,
+                    "sla": [
+                        {
+                            "metric_tag": "request_latency",
+                            "stat": "p95",
+                            "op": "le",
+                            "threshold": 100,
+                        }
+                    ],
+                }
+            )
+
+    def test_nested_adaptive_scale_string_false_disables_phase(
+        self: TestAdaptiveScaleValidation,
+    ) -> None:
+        from aiperf.config.phases import ConcurrencyPhase
+
+        phase = ConcurrencyPhase.model_validate(
+            {
+                "name": "profiling",
+                "type": "concurrency",
+                "duration": 600,
+                "concurrency": 200,
+                "adaptive_scale": {"enabled": "false"},
+            }
+        )
+
+        assert phase.adaptive_scale is False
+
+
+class TestRateSeries:
+    def test_rate_series_without_request_rate_succeeds(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7},{"time_s":120,"qps":40}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        prof = build_profiling(user)
+
+        assert prof["type"] == PhaseType.CONSTANT
+        assert "rate" not in prof
+        assert prof["rate_series"]["points"][1] == {"time_s": 60.0, "qps": 7.0}
+
+    def test_rate_series_with_request_rate_raises(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":60,"qps":10}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            request_rate=100.0,
+            request_rate_series=json_path,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match=r"request-rate.*request-rate-series"):
+            build_profiling(user)
+
+    def test_rate_series_with_user_centric_rate_raises(self, tmp_path: Path) -> None:
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":5},{"time_s":60,"qps":10}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            user_centric_rate=100.0,
+            request_rate_series=json_path,
+            num_users=4,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+
+        with pytest.raises(ValueError, match="user-centric-rate"):
+            build_profiling(user)
+
+
+# ---------------------------------------------------------------------------
+# BUG 5 (NVBugs 6656707) — --search-space keywords must auto-infer phase shape
+# ---------------------------------------------------------------------------
+
+
+class TestSearchSpacePhaseShapeInference:
+    def test_bare_rate_keyword_infers_poisson_phase(self) -> None:
+        """--search-space 'rate:...' with no --request-rate must not crash;
+        it should auto-switch to a rate-controlled (poisson default) phase,
+        seeding 'rate' from the search-space dimension's own lower bound."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 1.0
+
+    def test_dotted_rate_path_infers_poisson_phase(self) -> None:
+        """Full dotted path form ('phases.profiling.rate') resolves the same
+        as the bare alias."""
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 1.0
+
+    def test_rate_search_space_respects_explicit_arrival_pattern(self) -> None:
+        """--arrival-pattern gamma + --search-space 'rate:...' should still
+        pick GAMMA, not the POISSON default."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            arrival_pattern=ArrivalPattern.GAMMA,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["rate"] == 1.0
+
+    def test_rate_ramp_keyword_with_request_rate_stays_poisson(self) -> None:
+        """--request-rate supplies the base rate; 'rate_ramp' alone in
+        search-space just needs a companion rate source, per the bug
+        report's documented workaround."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:1,60:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
+
+    def test_rate_ramp_keyword_alone_raises_clear_error(self) -> None:
+        """'rate_ramp' layers a ramp on top of a base rate -- it cannot
+        supply that base rate itself. Without --request-rate or a 'rate'
+        search-space dimension, this must fail with a clear error, not a
+        raw Pydantic 'rate-controlled phases require rate or rate_series'."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:1,60:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_alone_raises_clear_error(self) -> None:
+        """'rate_series' is a piecewise-linear schedule, not a scalar the
+        planner can sample between two bounds -- it must never be treated
+        as a searchable numeric dimension, regardless of companion flags."""
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_with_request_rate_still_raises(self) -> None:
+        """A --request-rate companion doesn't change anything -- 'rate_series'
+        itself still can't be a scalar search dimension (it was previously
+        treated as equivalent to 'rate', which silently masked the fact
+        that a sampled float would later crash writing into a
+        RateSeriesConfig-typed field)."""
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_with_request_rate_series_still_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """Even the documented --request-rate-series companion doesn't make
+        the schedule itself searchable as a number -- this combo was
+        already reachable before this PR (via the pre-existing
+        request_rate_series-sets-a-rate-controlled-type logic) and already
+        crashed once a sampled float reached the planner; now it's rejected
+        immediately and clearly instead."""
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
+
+    def test_rate_keyword_with_request_rate_series_raises_mutual_exclusion_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Searching 'rate' (a valid scalar dimension on its own) while
+        --request-rate-series already supplies a fixed schedule passes
+        config conversion cleanly if left unchecked -- prof["rate_series"]
+        is already set, so the seed step's has_base_rate short-circuit
+        skips seeding prof["rate"] without complaint. But the planner
+        still samples 'rate' every trial and injects it into a phase dict
+        that already has rate_series, violating RatePhaseConfig's mutual
+        exclusion at the first trial instead of failing clearly here."""
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            build_profiling(user)
+
+    def test_smoothness_keyword_with_request_rate_infers_gamma_phase(self) -> None:
+        """--search-space 'smoothness:...' auto-switches to gamma, but still
+        needs a base rate from somewhere -- --request-rate supplies it."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["rate"] == 10.0
+
+    def test_smoothness_keyword_alone_raises_clear_error(self) -> None:
+        """'smoothness' alone (no --request-rate, no 'rate' in search-space)
+        auto-switches the *type* to gamma but has no base rate to seed --
+        must fail with a clear error, not a raw Pydantic crash."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
+    def test_users_keyword_infers_user_centric_phase(self) -> None:
+        """--user-centric-rate supplies the shared base rate; 'users' in
+        search-space self-seeds the user count from its own lower bound."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 1
+        assert prof["rate"] == 10.0
+
+    def test_users_keyword_alone_raises_clear_error(self) -> None:
+        """'users' alone (no --user-centric-rate, no 'rate' in search-space)
+        auto-switches the *type* to user-centric and self-seeds 'users', but
+        has no base rate to seed -- must fail with a clear error."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
+    def test_users_and_rate_together_infers_user_centric_with_both_seeded(
+        self,
+    ) -> None:
+        """'users' and 'rate' are compatible, not a conflict: UserCentricPhase
+        subclasses RatePhaseConfig, so it legitimately has both fields.
+        Searching them together fully self-seeds a user-centric shape with
+        no companion flags needed at all."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "rate:1,100:real"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 1
+        assert prof["rate"] == 1.0
+
+    def test_users_and_smoothness_together_raises_clear_conflict_error(self) -> None:
+        """This IS a genuine, unresolvable conflict: no phase type has both
+        a 'users' field (UserCentricPhase-only) and a 'smoothness' field
+        (GammaPhase-only)."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "smoothness:0.5,2.0:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only have one shape"):
+            build_profiling(user)
+
+    def test_explicit_user_centric_rate_and_smoothness_raises_clear_conflict_error(
+        self,
+    ) -> None:
+        """The same conflict as 'users'+'smoothness', but triggered via an
+        explicit --user-centric-rate instead of a 'users' search-space
+        dimension -- either way the phase resolves to USER_CENTRIC, which
+        still has no 'smoothness' field. Previously only the 'users'-in-
+        search-space trigger was checked, so this combo built a
+        USER_CENTRIC phase that would only fail later, at the planner."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only have one shape"):
+            build_profiling(user)
+
+    def test_rate_nan_lower_bound_raises_clear_error(self) -> None:
+        """A NaN lower bound bypasses 'rate_lo <= 0' (NaN comparisons are
+        always False), so it must be explicitly rejected with
+        math.isfinite() rather than silently seeding prof["rate"] = nan."""
+        loadgen = CLIConfig(
+            search_space=["rate:nan,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_users_nan_lower_bound_raises_clear_error(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:nan,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_smoothness_negative_lower_bound_raises_clear_error(self) -> None:
+        """'smoothness' isn't seeded into prof at config-build time (it's
+        optional, only ever written by the planner once trials start), so
+        it needs its own bound check independent of the seeding logic --
+        GammaPhase.smoothness has the same gt=0 constraint 'rate' has."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:-5,-1:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_rate_ramp_negative_lower_bound_raises_clear_error(self) -> None:
+        """Same as smoothness: 'rate_ramp' isn't seeded at config-build
+        time either, but RampConfig.duration has gt=0.0."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:-50,-10:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_smoothness_with_explicit_non_gamma_arrival_pattern_raises_clear_error(
+        self,
+    ) -> None:
+        """'smoothness' only auto-promotes the phase to GAMMA when
+        --arrival-pattern is unset; an explicit non-gamma pattern wins
+        instead, leaving 'smoothness' with nowhere to land (only GammaPhase
+        has that field). Must fail clearly at config time, not at trial 0
+        with a raw Pydantic extra_forbidden."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            arrival_pattern=ArrivalPattern.POISSON,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only supported with --arrival-pattern"):
+            build_profiling(user)
+
+    def test_smoothness_with_explicit_constant_arrival_pattern_raises_clear_error(
+        self,
+    ) -> None:
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only supported with --arrival-pattern"):
+            build_profiling(user)
+
+    def test_search_space_path_with_leading_whitespace_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """The real parser (parse_search_space) doesn't strip whitespace --
+        ' rate' and 'rate' are different paths to it, and ' rate' is
+        accepted as a literal (broken) path rather than resolved as the
+        'rate' alias. This helper must match that exactly: stripping the
+        path here would silently reshape the benchmark for a dimension the
+        real parser treats as something else entirely."""
+        loadgen = CLIConfig(
+            search_space=[" rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_search_space_kind_with_leading_whitespace_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """'rate:1,100: int' (space before kind) is REJECTED by the real
+        parser (kind must be exactly 'int' or 'real'). This helper must
+        not silently normalize ' int' to 'int' and proceed as if the
+        dimension were well-formed -- skip it and let the real parser
+        report the actual grammar error."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100: int"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_trace_auto_promote_conflict_message_mentions_search_space(
+        self, tmp_path: Path
+    ) -> None:
+        """When 'rate' was seeded from --search-space (not an explicit
+        --request-rate flag), the trace auto-promote conflict error must
+        not tell the user to "drop the conflicting flags" -- there is no
+        flag to drop, only a --search-space dimension."""
+        trace_path = tmp_path / "trace.jsonl"
+        trace_path.write_text(
+            '{"timestamp": 0, "input_length": 100, "output_length": 50}\n'
+            '{"timestamp": 100, "input_length": 120, "output_length": 60}\n',
+            encoding="utf-8",
+        )
+        # Built directly (not via _make_user's two-CLIConfig merge) since
+        # input_file's validator only accepts a literal str, and
+        # _make_user's model_dump()/reconstruct round-trip turns it back
+        # into a Path first.
+        user = CLIConfig(
+            url="http://localhost:8000/test",
+            model_names=["test-model"],
+            search_space=["rate:1,100:real"],
+            input_file=str(trace_path),
+            custom_dataset_type="mooncake_trace",
+            request_count=10,
+        )
+        with pytest.raises(ValueError, match="--search-space dimensions"):
+            build_profiling(user)
+
+    def test_explicit_request_rate_still_wins_without_search_space(self) -> None:
+        """Regression guard: explicit --request-rate path (no search-space)
+        is unaffected by the new inference logic."""
+        loadgen = CLIConfig(request_rate=50.0, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 50.0
+
+    def test_concurrency_search_space_keyword_unaffected(self) -> None:
+        """'concurrency' is already valid on every phase type incl. the
+        default -- must keep resolving to PhaseType.CONCURRENCY."""
+        loadgen = CLIConfig(
+            search_space=["concurrency:1,1000:int"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+
+    def test_smoothness_search_space_with_gamma_and_explicit_smoothness_flag(
+        self,
+    ) -> None:
+        """--search-space 'smoothness:...' combined with an explicit
+        --arrival-smoothness flag under gamma still succeeds normally (the
+        two features are independent; this just proves no interaction bug)."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            arrival_pattern=ArrivalPattern.GAMMA,
+            arrival_smoothness=1.0,
+            request_rate=50.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["smoothness"] == 1.0
+
+    def test_bare_rate_keyword_produces_a_fully_valid_benchmark_config(self) -> None:
+        """End-to-end proof, not just build_profiling()'s dict: the seeded
+        phase actually passes full BenchmarkConfig/Pydantic validation."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        cfg = BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "profiling", "type": "synthetic"}],
+                "phases": [{"name": "profiling", **prof}],
+            }
+        )
+        assert cfg.phases[0].type == PhaseType.POISSON
+
+    def test_users_and_rate_together_produces_a_fully_valid_benchmark_config(
+        self,
+    ) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "rate:1,100:real"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        cfg = BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "profiling", "type": "synthetic"}],
+                "phases": [{"name": "profiling", **prof}],
+            }
+        )
+        assert cfg.phases[0].type == PhaseType.USER_CENTRIC
+
+    def test_rate_lower_bound_zero_raises_clear_error(self) -> None:
+        """A zero/negative --search-space 'rate' lower bound must not
+        silently seed an invalid value and crash with a raw Pydantic
+        'greater than' error -- it should fail clearly at seed time."""
+        loadgen = CLIConfig(
+            search_space=["rate:0,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_users_lower_bound_zero_raises_clear_error(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:0,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_users_real_kind_raises_clear_error(self) -> None:
+        """'users:1.5,50:real' must not silently truncate 1.5 -> 1 (a value
+        below the user's own declared lower bound) as the seed -- the number
+        of simulated users can only ever be a whole number, so a ':real'
+        kind for 'users' must fail clearly instead."""
+        loadgen = CLIConfig(
+            search_space=["users:1.5,50:real"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_default_kind_is_real_and_still_raises(self) -> None:
+        """Omitting ':kind' defaults to 'real' (matching
+        SearchSpaceDimension's own default) -- 'users' without an explicit
+        ':int' suffix must also raise, not silently pass."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_real_kind_with_explicit_num_users_still_raises(self) -> None:
+        """An explicit --num-users must not bypass ':int'-kind validation
+        for a 'users' search-space dimension. Before this was fixed, an
+        already-set prof["users"] (from --num-users) short-circuited the
+        seed function entirely, letting 'users:1.5,50:real' silently reach
+        the search planner as a real-valued dimension for a field that
+        requires an integer."""
+        loadgen = CLIConfig(
+            search_space=["users:1.5,50:real"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_lower_bound_zero_with_explicit_num_users_still_raises(
+        self,
+    ) -> None:
+        """Same bypass check for the bound validation: an explicit
+        --num-users must not let an out-of-bounds 'users' search-space
+        lower bound go unvalidated."""
+        loadgen = CLIConfig(
+            search_space=["users:0,50:int"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_users_explicit_num_users_wins_over_search_space_lower_bound(
+        self,
+    ) -> None:
+        """When --num-users is explicit AND 'users' is validly searched
+        (:int kind, valid bound), the explicit --num-users value is kept
+        rather than overwritten by the search-space lower bound -- the
+        search-space dimension is still validated, just not used as the
+        seed when an explicit value already exists."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 5
+
+    def test_rate_negative_bound_with_explicit_request_rate_still_raises(
+        self,
+    ) -> None:
+        """An explicit --request-rate must not bypass bound validation for a
+        'rate' search-space dimension -- mirrors the analogous --num-users
+        fix. Before this was fixed, `--request-rate 10 --search-space
+        "rate:-5,100"` skipped the rate_lo <= 0 check entirely (since
+        prof["rate"] was already set from --request-rate), letting a
+        negative rate reach the planner and crash mid-search once sampled,
+        instead of failing clearly at config-build time."""
+        loadgen = CLIConfig(
+            search_space=["rate:-5,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_rate_explicit_request_rate_wins_over_search_space_lower_bound(
+        self,
+    ) -> None:
+        """When --request-rate is explicit AND 'rate' is validly searched
+        (positive bound), the explicit --request-rate value is kept rather
+        than overwritten by the search-space lower bound -- the dimension
+        is still validated, just not used as the seed when an explicit
+        value already exists."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
+
+    def test_search_space_extra_kind_segment_is_skipped_not_misreported(
+        self,
+    ) -> None:
+        """'users:1,50:int:log' has an extra ':'-separated segment (a
+        malformed grammar the real parser will reject with its own error).
+        This lightweight helper must skip it rather than misparse
+        'int:log' as the kind and report the wrong complaint (e.g. telling
+        a user who wrote ':int' that they wrote ':real')."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int:log"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        # The malformed dimension is invisible to shape inference (skipped),
+        # so with no other search-space field this falls through to
+        # whatever --user-centric-rate alone would produce: USER_CENTRIC
+        # type, but no 'users' seed and no ':int'-kind complaint about a
+        # dimension this helper never parsed.
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+
+    def test_warmup_path_search_space_dimension_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """A dotted path targeting a non-profiling phase (e.g. warmup) must
+        not be mistaken for a profiling-phase field by its trailing segment
+        alone -- it should be ignored by shape inference entirely."""
+        loadgen = CLIConfig(
+            search_space=["phases.warmup.rate:1,10:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_nested_cancellation_rate_path_ignored_for_shape_inference(self) -> None:
+        """'phases.profiling.cancellation.rate' is the request-cancellation
+        rate (an unrelated CancellationConfig sub-field), not the phase's
+        own 'rate'. Matching by trailing path segment alone previously
+        misclassified this as a phase-shape-selecting 'rate' dimension,
+        wrongly switching the phase to POISSON and seeding prof["rate"]
+        from the cancellation-rate range."""
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.cancellation.rate:1,50:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof

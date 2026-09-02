@@ -25,10 +25,9 @@ Discriminator rules (checked in order):
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Self
 
 from pydantic import ConfigDict, Discriminator, Field, Tag, model_validator
-from typing_extensions import Self
 
 from aiperf.config.base import BaseConfig
 

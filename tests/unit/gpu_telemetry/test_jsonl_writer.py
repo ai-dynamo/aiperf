@@ -43,20 +43,20 @@ def sample_telemetry_record() -> TelemetryRecord:
     """Create a sample TelemetryRecord with all fields populated."""
     return make_telemetry_record(
         timestamp_ns=1_000_000_000,
-        dcgm_url="http://node1:9401/metrics",
+        telemetry_source_url="http://node1:9401/metrics",
         gpu_index=0,
         gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
         gpu_model_name="NVIDIA RTX 6000 Ada Generation",
         pci_bus_id="00000000:02:00.0",
         device="nvidia0",
         hostname="node1",
-        gpu_power_usage=75.5,
-        energy_consumption=1000.0,
-        gpu_utilization=85.0,
-        gpu_memory_used=15.26,
-        gpu_temperature=70.0,
-        xid_errors=None,
-        power_violation=0.0,
+        nvidia_power_usage=75.5,
+        nvidia_energy_consumption=1000.0,
+        nvidia_gpu_utilization=85.0,
+        nvidia_memory_used=15.26,
+        nvidia_temperature=70.0,
+        nvidia_xid_errors=None,
+        nvidia_power_violation=0.0,
     )
 
 
@@ -65,20 +65,20 @@ def sample_telemetry_record_partial() -> TelemetryRecord:
     """Create a sample TelemetryRecord with some fields None."""
     return make_telemetry_record(
         timestamp_ns=2_000_000_000,
-        dcgm_url="http://node2:9401/metrics",
+        telemetry_source_url="http://node2:9401/metrics",
         gpu_index=1,
         gpu_uuid="GPU-a1b2c3d4-e5f6-7890-abcd-1234567890ab",
         gpu_model_name="NVIDIA H100 80GB HBM3",
         pci_bus_id=None,
         device=None,
         hostname="node2",
-        gpu_power_usage=150.0,
-        energy_consumption=None,
-        gpu_utilization=95.0,
-        gpu_memory_used=70.0,
-        gpu_temperature=85.0,
-        xid_errors=None,
-        power_violation=None,
+        nvidia_power_usage=150.0,
+        nvidia_energy_consumption=None,
+        nvidia_gpu_utilization=95.0,
+        nvidia_memory_used=70.0,
+        nvidia_temperature=85.0,
+        nvidia_xid_errors=None,
+        nvidia_power_violation=None,
     )
 
 
@@ -219,12 +219,12 @@ class TestGPUTelemetryJSONLWriterProcessing:
         record = TelemetryRecord.model_validate(record_dict)
 
         assert record.timestamp_ns == 1_000_000_000
-        assert record.dcgm_url == "http://node1:9401/metrics"
+        assert record.telemetry_source_url == "http://node1:9401/metrics"
         assert record.gpu_index == 0
         assert record.gpu_uuid == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record.gpu_model_name == "NVIDIA RTX 6000 Ada Generation"
-        assert record.telemetry_data.gpu_power_usage == 75.5
-        assert record.telemetry_data.gpu_utilization == 85.0
+        assert record.telemetry_data.nvidia_power_usage == 75.5
+        assert record.telemetry_data.nvidia_gpu_utilization == 85.0
 
     @pytest.mark.asyncio
     async def test_process_telemetry_record_with_partial_data(
@@ -249,8 +249,8 @@ class TestGPUTelemetryJSONLWriterProcessing:
         assert record.timestamp_ns == 2_000_000_000
         assert record.pci_bus_id is None
         assert record.device is None
-        assert record.telemetry_data.energy_consumption is None
-        assert record.telemetry_data.power_violation is None
+        assert record.telemetry_data.nvidia_energy_consumption is None
+        assert record.telemetry_data.nvidia_power_violation is None
 
     @pytest.mark.asyncio
     async def test_process_multiple_telemetry_records(
@@ -268,8 +268,8 @@ class TestGPUTelemetryJSONLWriterProcessing:
             make_telemetry_record(
                 timestamp_ns=1_000_000_000 + i * 1_000_000,
                 gpu_uuid="GPU-test-uuid",
-                gpu_power_usage=100.0 + i,
-                gpu_utilization=80.0 + i,
+                nvidia_power_usage=100.0 + i,
+                nvidia_gpu_utilization=80.0 + i,
             )
             for i in range(5)
         ]
@@ -327,7 +327,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
             for i in range(batch_size * 2):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    gpu_power_usage=100.0 + i,
+                    nvidia_power_usage=100.0 + i,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -352,7 +352,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
                 gpu_index=i,
                 gpu_uuid=f"GPU-{i}",
                 gpu_model_name=f"GPU {i}",
-                gpu_power_usage=100.0 + i,
+                nvidia_power_usage=100.0 + i,
             )
             for i in range(4)
         ]
@@ -382,7 +382,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
 
         records = [
             make_telemetry_record(
-                dcgm_url=f"http://node{i}:9401/metrics",
+                telemetry_source_url=f"http://node{i}:9401/metrics",
                 gpu_uuid=f"GPU-node{i}",
                 hostname=f"node{i}",
             )
@@ -394,11 +394,11 @@ class TestGPUTelemetryJSONLWriterProcessing:
                 await processor.process_telemetry_record(record)
 
         lines = processor.output_file.read_text().splitlines()
-        dcgm_urls = [orjson.loads(line)["dcgm_url"] for line in lines]
+        source_urls = [orjson.loads(line)["telemetry_source_url"] for line in lines]
 
-        assert "http://node0:9401/metrics" in dcgm_urls
-        assert "http://node1:9401/metrics" in dcgm_urls
-        assert "http://node2:9401/metrics" in dcgm_urls
+        assert "http://node0:9401/metrics" in source_urls
+        assert "http://node1:9401/metrics" in source_urls
+        assert "http://node2:9401/metrics" in source_urls
 
     @pytest.mark.asyncio
     async def test_records_written_count(
@@ -418,7 +418,7 @@ class TestGPUTelemetryJSONLWriterProcessing:
             for i in range(10):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    gpu_power_usage=100.0 + i,
+                    nvidia_power_usage=100.0 + i,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -478,7 +478,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
             record = TelemetryRecord.model_validate(record_dict)
 
             assert isinstance(record.timestamp_ns, int)
-            assert isinstance(record.dcgm_url, str)
+            assert isinstance(record.telemetry_source_url, str)
             assert isinstance(record.gpu_index, int)
             assert isinstance(record.gpu_uuid, str)
             assert isinstance(record.gpu_model_name, str)
@@ -506,7 +506,9 @@ class TestGPUTelemetryJSONLWriterFileFormat:
 
         # Check all metadata fields
         assert record.timestamp_ns == sample_telemetry_record.timestamp_ns
-        assert record.dcgm_url == sample_telemetry_record.dcgm_url
+        assert (
+            record.telemetry_source_url == sample_telemetry_record.telemetry_source_url
+        )
         assert record.gpu_index == sample_telemetry_record.gpu_index
         assert record.gpu_uuid == sample_telemetry_record.gpu_uuid
         assert record.gpu_model_name == sample_telemetry_record.gpu_model_name
@@ -516,16 +518,16 @@ class TestGPUTelemetryJSONLWriterFileFormat:
 
         # Check telemetry data fields
         assert (
-            record.telemetry_data.gpu_power_usage
-            == sample_telemetry_record.telemetry_data.gpu_power_usage
+            record.telemetry_data.nvidia_power_usage
+            == sample_telemetry_record.telemetry_data.nvidia_power_usage
         )
         assert (
-            record.telemetry_data.gpu_utilization
-            == sample_telemetry_record.telemetry_data.gpu_utilization
+            record.telemetry_data.nvidia_gpu_utilization
+            == sample_telemetry_record.telemetry_data.nvidia_gpu_utilization
         )
         assert (
-            record.telemetry_data.gpu_memory_used
-            == sample_telemetry_record.telemetry_data.gpu_memory_used
+            record.telemetry_data.nvidia_memory_used
+            == sample_telemetry_record.telemetry_data.nvidia_memory_used
         )
 
     @pytest.mark.asyncio
@@ -551,7 +553,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         # Verify None values are not present in the serialized dict
         assert "pci_bus_id" not in record_dict
         assert "device" not in record_dict
-        assert "energy_consumption" not in record_dict["telemetry_data"]
+        assert "nvidia_energy_consumption" not in record_dict["telemetry_data"]
 
     @pytest.mark.asyncio
     async def test_timestamp_precision(
@@ -597,7 +599,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
 
         # Check all required metadata fields
         assert "timestamp_ns" in record_dict
-        assert "dcgm_url" in record_dict
+        assert "telemetry_source_url" in record_dict
         assert "gpu_index" in record_dict
         assert "gpu_uuid" in record_dict
         assert "gpu_model_name" in record_dict
@@ -624,7 +626,7 @@ class TestGPUTelemetryJSONLWriterFileFormat:
         record_dict = orjson.loads(lines[0])
 
         # Verify hierarchical keys are present
-        assert record_dict["dcgm_url"] == "http://node1:9401/metrics"
+        assert record_dict["telemetry_source_url"] == "http://node1:9401/metrics"
         assert record_dict["gpu_uuid"] == "GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc"
         assert record_dict["timestamp_ns"] == 1_000_000_000
 
@@ -695,8 +697,8 @@ class TestGPUTelemetryJSONLWriterLifecycle:
             for i in range(Environment.RECORD.EXPORT_BATCH_SIZE * 2):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    gpu_power_usage=100.0 + i,
-                    gpu_utilization=80.0,
+                    nvidia_power_usage=100.0 + i,
+                    nvidia_gpu_utilization=80.0,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -715,7 +717,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
             record = TelemetryRecord.model_validate_json(line)
             assert record.timestamp_ns == 1_000_000_000 + i
             assert record.gpu_uuid == "GPU-test"
-            assert record.telemetry_data.gpu_power_usage == 100.0 + i
+            assert record.telemetry_data.nvidia_power_usage == 100.0 + i
 
     @pytest.mark.asyncio
     async def test_file_handle_lifecycle(
@@ -761,7 +763,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
             for i in range(num_records):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    gpu_power_usage=100.0 + i,
+                    nvidia_power_usage=100.0 + i,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -785,7 +787,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
             for i in range(processor._batch_size * 3):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    gpu_power_usage=100.0 + i,
+                    nvidia_power_usage=100.0 + i,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -813,7 +815,7 @@ class TestGPUTelemetryJSONLWriterLifecycle:
             for i in range(5):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    gpu_power_usage=100.0 + i,
+                    nvidia_power_usage=100.0 + i,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -878,12 +880,12 @@ class TestGPUTelemetryJSONLWriterIntegration:
             for i in range(num_records):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    dcgm_url=f"http://node{i % 3}:9401/metrics",
+                    telemetry_source_url=f"http://node{i % 3}:9401/metrics",
                     gpu_index=i % 4,
                     gpu_uuid=f"GPU-{i}",
                     hostname=f"node{i % 3}",
-                    gpu_power_usage=100.0 + i,
-                    gpu_utilization=80.0,
+                    nvidia_power_usage=100.0 + i,
+                    nvidia_gpu_utilization=80.0,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -912,7 +914,7 @@ class TestGPUTelemetryJSONLWriterIntegration:
             for i in range(total_records):
                 record = make_telemetry_record(
                     timestamp_ns=1_000_000_000 + i,
-                    gpu_power_usage=100.0 + i,
+                    nvidia_power_usage=100.0 + i,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -943,8 +945,8 @@ class TestGPUTelemetryJSONLWriterIntegration:
                         gpu_index=gpu_idx,
                         gpu_uuid=f"GPU-{gpu_idx}",
                         gpu_model_name=f"GPU {gpu_idx}",
-                        gpu_power_usage=100.0 + gpu_idx,
-                        gpu_utilization=80.0 + cycle,
+                        nvidia_power_usage=100.0 + gpu_idx,
+                        nvidia_gpu_utilization=80.0 + cycle,
                     )
                     await processor.process_telemetry_record(record)
 
@@ -1012,3 +1014,26 @@ class TestGPUTelemetryJSONLWriterErrorHandling:
                         await processor.process_telemetry_record(record)
 
         assert call_count == 3
+
+
+class TestStreamExporterProtocolAliases:
+    """``StreamExporterProtocol``-compatible aliases delegate correctly."""
+
+    @pytest.mark.asyncio
+    async def test_process_record_alias_and_finalize_flush(
+        self,
+        run_telemetry_export,
+        sample_telemetry_record,
+    ):
+        writer = GPUTelemetryJSONLWriter(
+            service_id="records-manager",
+            run=run_telemetry_export,
+        )
+        async with aiperf_lifecycle(writer):
+            await writer.process_record(sample_telemetry_record)
+            await writer.finalize()
+
+        lines = writer.output_file.read_text().strip().splitlines()
+        assert len(lines) == 1
+        payload = orjson.loads(lines[0])
+        assert payload["timestamp_ns"] == sample_telemetry_record.timestamp_ns

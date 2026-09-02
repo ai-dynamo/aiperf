@@ -167,6 +167,38 @@ class TestEstimatedPercentilesIntegration:
         # Counter reset - percentile estimates should be None
         assert result.stats is None or result.stats.p50_estimate is None
 
+    def test_compute_histogram_stats_counter_reset_clamps_scalar_stats_non_negative(
+        self,
+    ):
+        """Scalar histogram stats must never go negative after a server restart.
+
+        A restart makes the cumulative count/sum drop below the reference snapshot,
+        producing negative raw deltas. The counter path already clamps these; the
+        histogram scalar path must too (regression for F5).
+        """
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "latency",
+            [
+                (0, hist({"1.0": 1000.0, "+Inf": 2000.0}, 500.0, 2000.0)),
+                # Server restart: cumulative count and sum both drop.
+                (NANOS_PER_SECOND, hist({"1.0": 50.0, "+Inf": 100.0}, 25.0, 100.0)),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "latency"), make_time_filter()
+        )
+
+        assert result is not None
+        assert result.stats is not None
+        assert result.stats.count is not None and result.stats.count >= 0
+        assert result.stats.sum is None or result.stats.sum >= 0
+        assert result.stats.avg is None or result.stats.avg >= 0
+        assert result.stats.count_rate is None or result.stats.count_rate >= 0
+        assert result.stats.sum_rate is None or result.stats.sum_rate >= 0
+
 
 # =============================================================================
 # Edge Case Tests
@@ -295,3 +327,29 @@ class TestEdgeCasesNumericalStability:
 
         # All zeros should result in empty or zero sums
         assert all(v == 0.0 for v in sums.values()) or len(sums) == 0
+
+
+class TestHistogramStatsWindowGuards:
+    """Guards for time filters that exclude every histogram sample."""
+
+    def test_histogram_stats_none_when_filter_ends_before_first_sample(self):
+        """A window ending before the first sample yields no stats (final_idx None)."""
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "ttft",
+            [
+                (10 * NANOS_PER_SECOND, hist({"0.5": 0.0, "+Inf": 0.0}, 0.0, 0.0)),
+                (
+                    20 * NANOS_PER_SECOND,
+                    hist({"0.5": 50.0, "+Inf": 100.0}, 70.0, 100.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "ttft"),
+            make_time_filter(start_ns=0, end_ns=5 * NANOS_PER_SECOND),
+        )
+
+        assert result is None

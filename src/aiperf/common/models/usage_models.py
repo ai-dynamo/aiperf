@@ -99,6 +99,28 @@ class Usage(dict):
     CACHE_MISS_TOP_LEVEL_KEYS: ClassVar[list[str]] = [
         "prompt_cache_miss_tokens",  # DeepSeek
     ]
+    # Vendors with DISJOINT input accounting. Anthropic (and Bedrock serving
+    # Claude) report input_tokens as ONLY the uncached remainder; the true
+    # prompt total is input + cache_read + cache_creation. Every other vendor
+    # reports SUBSET accounting: the prompt field is already the total and
+    # cached tokens are a subset of it (OpenAI prompt_tokens_details.cached_tokens,
+    # DeepSeek hit+miss, Gemini cachedContentTokenCount, Cohere cached_tokens).
+    # `prompt_tokens` re-totalizes the disjoint shapes so the property means
+    # the same thing — "tokens the server processed as input" — for every
+    # vendor. Gated on the vendor-specific cache key names (NOT the generic
+    # cache-read synonyms) so subset vendors are never double-counted.
+    DISJOINT_INPUT_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "input_tokens",  # Anthropic (Cohere shares the key but never the cache keys below)
+            "inputTokens",  # AWS Bedrock (Claude models)
+        }
+    )
+    DISJOINT_CACHE_KEYS: ClassVar[list[str]] = [
+        "cache_read_input_tokens",  # Anthropic
+        "cache_creation_input_tokens",  # Anthropic
+        "cacheReadInputTokens",  # AWS Bedrock
+        "cacheWriteInputTokens",  # AWS Bedrock
+    ]
     REASONING_TOP_LEVEL_KEYS: ClassVar[list[str]] = [
         "thoughtsTokenCount",  # Gemini
     ]
@@ -174,13 +196,55 @@ class Usage(dict):
 
     @property
     def prompt_tokens(self) -> int | None:
-        """Get prompt/input token count from API usage dict.
+        """Get TOTAL prompt/input token count from API usage dict.
 
         Recognized synonyms (in order): prompt_tokens (OpenAI/vLLM/DeepSeek/
         Mistral), input_tokens (Anthropic/Cohere meta.tokens),
         promptTokenCount (Gemini), inputTokens (AWS Bedrock).
+
+        Anthropic and Bedrock report disjoint accounting — their input field
+        is only the uncached remainder, with cache reads/writes reported
+        separately — so when the resolved synonym is a DISJOINT_INPUT_KEYS
+        member and any of that vendor's cache keys are present, the cache
+        counts are added back to produce the same "tokens the server
+        processed as input" semantic every other vendor reports. The raw
+        uncached remainder stays available via `prompt_uncached_tokens`.
         """
-        return self._first_present(self.PROMPT_TOKENS_KEYS)
+        for key in self.PROMPT_TOKENS_KEYS:
+            if key not in self:
+                continue
+            value = self[key]
+            if (
+                key in self.DISJOINT_INPUT_KEYS
+                and isinstance(value, int)
+                and any(k in self for k in self.DISJOINT_CACHE_KEYS)
+            ):
+                cache = sum(
+                    v
+                    for k in self.DISJOINT_CACHE_KEYS
+                    if isinstance(v := self.get(k), int)
+                )
+                return value + cache
+            return value
+        return None
+
+    @property
+    def prompt_uncached_tokens(self) -> int | None:
+        """Get the uncached prompt-token remainder for disjoint-accounting vendors.
+
+        Anthropic/Bedrock only: the raw input field value — tokens processed
+        as input that were neither served from cache nor written to it. For
+        these vendors this is the cache-miss count. Returns None for subset
+        vendors (derive misses there as prompt_tokens - prompt_cache_read_tokens).
+        """
+        for key in self.PROMPT_TOKENS_KEYS:
+            if key in self:
+                if key in self.DISJOINT_INPUT_KEYS and any(
+                    k in self for k in self.DISJOINT_CACHE_KEYS
+                ):
+                    return self[key]
+                return None
+        return None
 
     @property
     def completion_tokens(self) -> int | None:
@@ -299,9 +363,10 @@ class Usage(dict):
 
         DeepSeek surfaces this directly as top-level prompt_cache_miss_tokens
         — they bill cache hits and misses at different rates so the split is
-        first-class. Other vendors do not surface a separate miss count
-        (you can derive it from prompt_tokens - prompt_cache_read_tokens
-        on those, but the API doesn't report it as its own field).
+        first-class. Subset-accounting vendors do not surface a separate miss
+        count (derive it there as prompt_tokens - prompt_cache_read_tokens).
+        For disjoint-accounting vendors (Anthropic/Bedrock) the miss count is
+        the raw input field — read it via `prompt_uncached_tokens`.
         """
         return self._first_present(self.CACHE_MISS_TOP_LEVEL_KEYS)
 

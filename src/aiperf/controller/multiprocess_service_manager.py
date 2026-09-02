@@ -2,17 +2,32 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import multiprocessing
+import os
 import uuid
+from collections import Counter
 from multiprocessing import Process
-from multiprocessing.context import ForkProcess, SpawnProcess
+from multiprocessing.context import SpawnProcess
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.types import ServiceTypeT
+
+if IS_WINDOWS:
+    # Windows multiprocessing has no fork context — ``ForkProcess`` is
+    # undefined on ``multiprocessing.context`` there. Define a stub so the
+    # type union below evaluates at class-definition time without the
+    # import raising. The stub is never instantiated on Windows because
+    # spawn is the only start method available there; it exists purely
+    # so Pydantic's annotation resolution doesn't NameError.
+    class ForkProcess:  # type: ignore[no-redef]
+        pass
+else:
+    from multiprocessing.context import ForkProcess
 from aiperf.controller.base_service_manager import BaseServiceManager
 
 
@@ -21,7 +36,14 @@ class MultiProcessRunInfo(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    process: Process | SpawnProcess | ForkProcess | None = Field(default=None)
+    process: Process | SpawnProcess | ForkProcess | None = Field(
+        default=None,
+        description=(
+            "The multiprocessing Process handle for the spawned service. "
+            "Subclass varies by start method: ``ForkProcess`` on Linux "
+            "fork-context, ``SpawnProcess`` on Windows/macOS spawn-context."
+        ),
+    )
     service_type: ServiceTypeT = Field(
         ...,
         description="Type of service running in the process",
@@ -68,6 +90,9 @@ class MultiProcessServiceManager(BaseServiceManager):
                     "service_id": service_id,
                     "run": self.run,
                     "log_queue": self.log_queue,
+                    # Controller PID for the child's PR_SET_PDEATHSIG guard, so a
+                    # hard-killed controller cannot orphan its service processes.
+                    "controller_pid": os.getpid(),
                 },
                 daemon=True,
             )
@@ -144,70 +169,148 @@ class MultiProcessServiceManager(BaseServiceManager):
         """
         self.debug("Waiting for all required services to register...")
 
-        # Get the set of required service types for checking completion
-        required_types = set(self.required_services.keys())
+        # Wait for every service we've actually spawned, not just the ones in
+        # required_services. Optional services (GPU telemetry, server metrics,
+        # API) are started via run_service() and tracked in multi_process_info
+        # but never added to required_services. On slow targets (Windows VDI
+        # multiprocessing.spawn) those optional services register hundreds of
+        # ms after the core ones — if we only waited on required_services, the
+        # PROFILE_CONFIGURE would fan out before the optionals had
+        # subscribed, leaving them un-configured and their data missing from
+        # the final export.
+        #
+        # Count replicas per type, not per-type presence: a replicated
+        # service (e.g. RECORD_PROCESSOR, scaled with worker count) has
+        # multiple multi_process_info entries sharing one service_type. A
+        # replica that registers after the first can otherwise miss
+        # DatasetManager's one-shot DatasetConfiguredNotification and hang
+        # until DATASET.CONFIGURATION_TIMEOUT.
+        required_counts: Counter[ServiceTypeT] = Counter(
+            info.service_type for info in self.multi_process_info
+        ) or Counter(self.required_services)
 
         # TODO: Can this be done better by using asyncio.Event()?
 
         async def _wait_for_registration():
             while not stop_event.is_set():
-                # Get all registered service types from the id map
-                registered_types = {
+                registered_counts = Counter(
                     service_info.service_type
                     for service_info in self.service_id_map.values()
                     if service_info.registration_status
                     == ServiceRegistrationStatus.REGISTERED
-                }
+                )
 
-                # Check if all required types are registered
-                if required_types.issubset(registered_types):
+                if all(
+                    registered_counts[service_type] >= count
+                    for service_type, count in required_counts.items()
+                ):
                     return
 
-                for process in self.multi_process_info:
-                    if not process.process or not process.process.is_alive():
-                        raise AIPerfError(
-                            f"Service process {process.service_id} died before registering"
-                        )
+                self._reap_dead_processes_during_registration(required_counts)
 
                 # Wait a bit before checking again
                 await asyncio.sleep(0.5)
 
         try:
             await asyncio.wait_for(_wait_for_registration(), timeout=timeout_seconds)
-        except asyncio.TimeoutError as e:
-            # Log which services didn't register in time
-            registered_types_set = set(
+        except TimeoutError as e:
+            registered_counts = Counter(
                 service_info.service_type
                 for service_info in self.service_id_map.values()
                 if service_info.registration_status
                 == ServiceRegistrationStatus.REGISTERED
             )
 
-            for service_type in required_types:
-                if service_type not in registered_types_set:
+            for service_type, count in required_counts.items():
+                registered = registered_counts[service_type]
+                if registered < count:
                     self.error(
-                        f"Service {service_type} failed to register within timeout"
+                        f"Service {service_type} failed to fully register within "
+                        f"timeout ({registered}/{count} replicas registered)"
                     )
 
             raise AIPerfError("Some services failed to register within timeout") from e
 
+    def get_service_liveness(self, service_id: str) -> bool | None:
+        """Answer liveness from the real ``multiprocessing.Process`` handle.
+
+        Local runs have authoritative ground truth that the heartbeat watchdog
+        would otherwise only guess at. ``None`` is returned for services this
+        manager did not spawn (nothing to consult), and a missing process
+        handle counts as dead -- the spawn call failed before producing one,
+        matching ``_reap_dead_processes_during_registration``.
+        """
+        for info in self.multi_process_info:
+            if info.service_id == service_id:
+                return info.process is not None and info.process.is_alive()
+        return None
+
+    def _reap_dead_processes_during_registration(
+        self, required_counts: "Counter[ServiceTypeT]"
+    ) -> None:
+        """Reap dead processes mid-registration: required dying is fatal,
+        optional dying gets a warning and is dropped from the wait set.
+
+        Without this differentiation, an optional service crashing during
+        init (e.g. GPU telemetry missing a DCGM endpoint) would kill the
+        entire benchmark. ``process is None`` is treated as dead — a None
+        process means the spawn call failed before producing a handle.
+
+        Mutates ``required_counts`` (decrements the expected replica count
+        for optional dead types) and ``self.multi_process_info`` (removes
+        optional dead entries) so the caller's wait loop can converge.
+
+        Raises:
+            AIPerfError: if any required service has died.
+        """
+        for info in list(self.multi_process_info):
+            is_dead = info.process is None or not info.process.is_alive()
+            if not is_dead:
+                continue
+            exit_code = info.process.exitcode if info.process else None
+            if info.service_type in self.required_services:
+                raise AIPerfError(
+                    f"Required service {info.service_id} died before "
+                    f"registering (exit code {exit_code})"
+                )
+            self.warning(
+                f"Optional service {info.service_id!r} exited before "
+                f"registering (exit code {exit_code}); continuing "
+                f"benchmark without it."
+            )
+            required_counts[info.service_type] -= 1
+            self.multi_process_info.remove(info)
+
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
-        """Wait for a process to terminate with timeout handling."""
+        """Force-kill a service process that is still alive after bus shutdown.
+
+        Children install ``signal.SIG_IGN`` for SIGTERM in
+        ``bootstrap_and_run_service`` (to avoid C-extension teardown SIGSEGVs).
+        Graceful exit is exclusively via the ``SHUTDOWN`` command on the control
+        bus; by the time we reach here that path has already been given its
+        delivery grace. ``Process.terminate()`` (SIGTERM) is therefore a
+        no-op on POSIX, and waiting ``TASK_CANCEL_TIMEOUT_SHORT`` (~2s) on
+        ``join()`` *before* ``kill()`` only burns wall-clock per process.
+        Go straight to ``kill()`` (SIGKILL on POSIX; ``TerminateProcess``
+        on Windows, where ``kill``/``terminate`` are equivalent), then
+        ``join()`` to reap so the child does not linger as a zombie.
+        """
         if not info.process or not info.process.is_alive():
             return
 
-        info.process.terminate()
+        self.warning(
+            f"Service {info.service_type} process (pid: {info.process.pid}) "
+            "still alive after bus shutdown grace; killing (SIGKILL / "
+            "TerminateProcess — children ignore SIGTERM)"
+        )
+        info.process.kill()
         await asyncio.to_thread(
             info.process.join, timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT
         )
         if info.process.is_alive():
             self.warning(
-                f"Service {info.service_type} process (pid: {info.process.pid}) did not terminate gracefully, killing"
-            )
-            info.process.kill()
-        else:
-            self.debug(
-                lambda: f"Service {info.service_type} process stopped (pid: {info.process.pid})"
+                f"Service {info.service_type} process (pid: {info.process.pid}) "
+                "still alive after kill()+join timeout"
             )
 
     async def wait_for_all_services_start(

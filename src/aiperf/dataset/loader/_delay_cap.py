@@ -8,6 +8,8 @@ typo doesn't silently hang the run for hours/days.
 
 from __future__ import annotations
 
+import math
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 
 # Threshold (ms) above which an UNCAPPED delay triggers a load-time warning.
@@ -24,9 +26,14 @@ def clamp_inter_turn_delay_ms(
 
     Returns the input unchanged when either value is ``None`` or when the
     delay is already at or below the cap. Negative values pass through
-    unchanged.
+    unchanged. Non-finite values (NaN / ±Inf) map to ``None`` (absent delay),
+    matching timestamp scrubbing elsewhere.
     """
-    if delay_ms is None or cap_seconds is None:
+    if delay_ms is None:
+        return None
+    if not math.isfinite(delay_ms):
+        return None
+    if cap_seconds is None:
         return delay_ms
     cap_ms = cap_seconds * 1000.0
     if delay_ms > cap_ms:
@@ -51,6 +58,7 @@ class DelayCapTracker:
         "cap_seconds",
         "capped_count",
         "max_observed_ms",
+        "non_finite_count",
         "uncapped_huge_count",
     )
 
@@ -59,19 +67,25 @@ class DelayCapTracker:
         self.cap_seconds = cap_seconds
         self.capped_count = 0
         self.max_observed_ms = 0.0
+        self.non_finite_count = 0
         self.uncapped_huge_count = 0
 
     def clamp(self, delay_ms: float | None) -> float | None:
         """Return ``delay_ms`` clamped to the cap, updating counters.
 
-        Returns ``None`` when ``delay_ms`` is ``None``. When ``cap_seconds``
-        is ``None`` the input passes through unchanged but ``max_observed_ms``
-        and ``uncapped_huge_count`` still update so :meth:`log_summary` can
+        Returns ``None`` when ``delay_ms`` is ``None``. Non-finite values
+        (NaN / ±Inf) map to ``None`` and increment ``non_finite_count`` so
+        :meth:`log_summary` can warn. When ``cap_seconds`` is ``None`` the
+        input passes through unchanged but ``max_observed_ms`` and
+        ``uncapped_huge_count`` still update so :meth:`log_summary` can
         warn about absurd uncapped delays. Negative values pass through
         unchanged (matching :func:`clamp_inter_turn_delay_ms`) and do not
         count toward any tracker.
         """
         if delay_ms is None:
+            return None
+        if not math.isfinite(delay_ms):
+            self.non_finite_count += 1
             return None
         if delay_ms < 0:
             return delay_ms
@@ -91,12 +105,18 @@ class DelayCapTracker:
         """Zero per-load counters (cap value untouched)."""
         self.capped_count = 0
         self.max_observed_ms = 0.0
+        self.non_finite_count = 0
         self.uncapped_huge_count = 0
 
     def log_summary(self, *, logger_name: str) -> None:
         """Emit one log line if either the clamp fired or a huge uncapped
         delay was observed; otherwise no-op."""
         log = AIPerfLogger(logger_name)
+        if self.non_finite_count > 0:
+            log.warning(
+                f"Scrubbed {self.non_finite_count:,} non-finite inter-turn "
+                f"delay(s) to None (NaN/Inf)"
+            )
         if self.cap_seconds is not None and self.capped_count > 0:
             log.info(
                 f"Capped {self.capped_count:,} inter-turn delays exceeding "

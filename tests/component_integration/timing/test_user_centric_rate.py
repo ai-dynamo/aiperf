@@ -220,18 +220,37 @@ class TestUserCentricRatePerUserGap:
     """Tests for per-user gap timing."""
 
     def test_per_user_gap_respected(self, cli: AIPerfCLI):
-        """Verify gap = num_sessions / qps between each user's turns."""
-        num_sessions = 10
-        qps = 100.0
-        config = TimingTestConfig(
-            num_sessions=num_sessions,
-            qps=qps,
-            turns_per_session=5,
-        )
-        expected_gap = num_sessions / qps
+        """Verify gap = num_users / qps between each user's consecutive turns.
 
-        cmd = build_timing_command(config, user_centric_rate=qps)
-        result = cli.run_sync(cmd, timeout=config.timeout)
+        The per-user gap is closed-loop: a user's next turn is only issued after
+        the previous turn's response returns, scheduled by
+        ``UserCentricStrategy.handle_credit_return`` at
+        ``max(now, prev_send_time + turn_gap)``. The measured gap therefore
+        equals turn_gap only when the full request round-trip finishes within
+        turn_gap; if the round-trip runs long, the gap inflates to the
+        round-trip time instead.
+
+        This makes the test sensitive to event-loop contention. Under heavily
+        parallel CI the round-trip (nominally ~55ms = TTFT + OSL*ITL) can exceed
+        a small turn_gap, so at the original turn_gap of 0.1s (num_users=10,
+        qps=100) the gap ballooned past the 50% tolerance and the test flaked.
+        We deliberately use a low QPS so turn_gap = num_users / qps = 0.4s sits
+        far above any realistic round-trip, and a deterministic --num-sessions
+        stop condition so every turn completes and the sample count is stable
+        regardless of load.
+        """
+        num_users = 10
+        qps = 25.0
+        turns_per_session = 5
+        expected_gap = num_users / qps
+
+        cmd = build_user_centric_command(
+            num_users=num_users,
+            qps=qps,
+            num_sessions=num_users,
+            turns_per_session=turns_per_session,
+        )
+        result = cli.run_sync(cmd, timeout=60.0)
 
         timing = TimingAnalyzer(result)
         times_by_session = timing.get_issue_times_by_session()

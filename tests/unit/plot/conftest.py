@@ -17,6 +17,14 @@ import matplotlib.figure
 import pytest
 
 from aiperf.plot.core.mode_detector import ModeDetector
+from tests.harness.optional_deps import IS_WINDOWS_ARM
+
+# The plotly/matplotlib/kaleido visualization stack hard-crashes the interpreter
+# (Windows fatal exception: access violation) at test runtime on Windows-on-ARM
+# (observed on CPython 3.12/3.13). PNG/figure rendering has no working ARM
+# backend, so the plot test subtree is skipped there rather than crashing the
+# whole xdist run.
+collect_ignore_glob = ["test_*.py"] if IS_WINDOWS_ARM else []
 
 logging.getLogger("choreographer").setLevel(logging.WARNING)
 logging.getLogger("kaleido").setLevel(logging.WARNING)

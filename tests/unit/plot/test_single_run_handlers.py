@@ -7,11 +7,13 @@ Tests for single-run plot handlers.
 Tests for handler classes in aiperf.plot.handlers.single_run_handlers module.
 """
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
+from aiperf.plot.core.data_loader import RunData, RunMetadata
 from aiperf.plot.core.plot_generator import PlotGenerator
 from aiperf.plot.core.plot_specs import DataSource, MetricSpec, PlotSpec, PlotType
 from aiperf.plot.exceptions import PlotGenerationError
@@ -417,7 +419,9 @@ class TestDualAxisHandler:
                 name="throughput_tokens_per_sec", axis="y", source=DataSource.REQUESTS
             ),
             MetricSpec(
-                name="gpu_utilization", axis="y2", source=DataSource.GPU_TELEMETRY
+                name="nvidia_gpu_utilization",
+                axis="y2",
+                source=DataSource.GPU_TELEMETRY,
             ),
         ]
         spec.primary_style = "area"
@@ -431,7 +435,7 @@ class TestDualAxisHandler:
         """Test can_handle returns True when GPU telemetry is available."""
         mock_run = MagicMock()
         mock_run.gpu_telemetry = pd.DataFrame(
-            {"timestamp_s": [1, 2], "gpu_utilization": [80, 85]}
+            {"timestamp_s": [1, 2], "nvidia_gpu_utilization": [80, 85]}
         )
 
         result = handler.can_handle(sample_spec, mock_run)
@@ -456,6 +460,133 @@ class TestDualAxisHandler:
 
         result = handler.can_handle(sample_spec, mock_run)
         assert result is False
+
+    @pytest.fixture
+    def legacy_spec(self):
+        """A dual-axis spec whose y2 metric uses the legacy gpu_utilization name."""
+        spec = MagicMock()
+        spec.name = "dual-axis-legacy"
+        spec.plot_type = PlotType.DUAL_AXIS
+        spec.metrics = [
+            MetricSpec(name="timestamp_s", axis="x", source=DataSource.REQUESTS),
+            MetricSpec(
+                name="throughput_tokens_per_sec", axis="y", source=DataSource.REQUESTS
+            ),
+            MetricSpec(
+                name="gpu_utilization", axis="y2", source=DataSource.GPU_TELEMETRY
+            ),
+        ]
+        return spec
+
+    def test_can_handle_true_with_legacy_gpu_utilization_spec(
+        self, handler, legacy_spec
+    ):
+        """Legacy gpu_utilization specs remain handleable when telemetry exists."""
+        mock_run = MagicMock()
+        mock_run.gpu_telemetry = pd.DataFrame(
+            {"timestamp_s": [1, 2], "gpu_utilization": [80, 85]}
+        )
+
+        assert handler.can_handle(legacy_spec, mock_run) is True
+
+    def test_prepares_legacy_gpu_utilization_via_metric_prep(self, handler):
+        """A legacy gpu_utilization metric still routes through METRIC_PREP_FUNCTIONS.
+
+        Guards the namespacing back-compat contract: the prep map keeps a
+        gpu_utilization entry so existing plot specs that predate the nvidia_*
+        rename keep producing data. Dropping that entry (or the aggregate
+        fallback) would regress legacy plot configs while can_handle stays green.
+        """
+        assert "gpu_utilization" in DualAxisHandler.METRIC_PREP_FUNCTIONS
+
+        mock_run = MagicMock()
+        mock_run.gpu_telemetry = pd.DataFrame(
+            {"timestamp_s": [1, 2], "gpu_utilization": [80.0, 85.0]}
+        )
+
+        result = handler._prepare_metric_data(
+            "gpu_utilization", DataSource.GPU_TELEMETRY, mock_run
+        )
+
+        assert "gpu_utilization" in result.columns
+        assert result["gpu_utilization"].tolist() == [80.0, 85.0]
+
+    def _dual_axis_spec(self):
+        spec = MagicMock()
+        spec.title = "Output Token Throughput with GPU Utilization"
+        spec.x_label = None
+        spec.y_label = None
+        spec.primary_style = None
+        spec.secondary_style = None
+        spec.supplementary_col = None
+        spec.metrics = [
+            MetricSpec(name="timestamp_s", axis="x", source=DataSource.REQUESTS),
+            MetricSpec(
+                name="throughput_tokens_per_sec", axis="y", source=DataSource.REQUESTS
+            ),
+            MetricSpec(
+                name="nvidia_gpu_utilization",
+                axis="y2",
+                source=DataSource.GPU_TELEMETRY,
+            ),
+        ]
+        return spec
+
+    def _run_with_gpu(self, gpu_df):
+        return RunData(
+            metadata=RunMetadata(
+                run_name="t", run_path=Path("."), duration_seconds=None
+            ),
+            requests=None,
+            aggregated={},
+            gpu_telemetry=gpu_df,
+        )
+
+    def test_amd_run_resolves_labels_gfx_activity_and_warns(self, handler):
+        """An AMD-only run resolves y2 to amd_gfx_activity, labels it as such, and
+        carries the vendor-semantics warning subtitle."""
+        spec = self._dual_axis_spec()
+        run = self._run_with_gpu(
+            pd.DataFrame({"timestamp_s": [1, 2], "amd_gfx_activity": [60.0, 70.0]})
+        )
+        available = {
+            "display_names": {"amd_gfx_activity": "AMD GFX Activity"},
+            "units": {"amd_gfx_activity": "%"},
+        }
+        nonempty = pd.DataFrame({"timestamp_s": [1, 2], "v": [1.0, 2.0]})
+
+        with patch.object(
+            handler, "_prepare_metric_data", return_value=nonempty
+        ) as prep:
+            handler.create_plot(spec, run, available)
+
+        assert "amd_gfx_activity" in [c.args[0] for c in prep.call_args_list]
+        kwargs = handler.plot_generator.create_dual_axis_plot.call_args.kwargs
+        assert kwargs["y2_metric"] == "amd_gfx_activity"
+        assert kwargs["y2_label"] == "AMD GFX Activity (%)"
+        assert kwargs["subtitle"] and "vendor" in kwargs["subtitle"].lower()
+
+    def test_nvidia_run_keeps_nvidia_label_and_warns(self, handler):
+        """An NVIDIA run keeps the nvidia_gpu_utilization series + warning subtitle."""
+        spec = self._dual_axis_spec()
+        run = self._run_with_gpu(
+            pd.DataFrame(
+                {"timestamp_s": [1, 2], "nvidia_gpu_utilization": [80.0, 85.0]}
+            )
+        )
+        available = {
+            "display_names": {"nvidia_gpu_utilization": "NVIDIA GPU Utilization"},
+            "units": {"nvidia_gpu_utilization": "%"},
+        }
+        nonempty = pd.DataFrame({"timestamp_s": [1, 2], "v": [1.0, 2.0]})
+
+        with patch.object(handler, "_prepare_metric_data", return_value=nonempty):
+            handler.create_plot(spec, run, available)
+
+        kwargs = handler.plot_generator.create_dual_axis_plot.call_args.kwargs
+        assert kwargs["y2_metric"] == "nvidia_gpu_utilization"
+        assert kwargs["y2_label"] == "NVIDIA GPU Utilization (%)"
+        assert kwargs["subtitle"]
 
 
 class TestScatterWithPercentilesHandler:

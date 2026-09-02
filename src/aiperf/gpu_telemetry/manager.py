@@ -5,19 +5,23 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.base_component_service import BaseComponentService
-from aiperf.common.enums import CommAddress, CommandType
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import (
+    CommAddress,
+    CommandType,
+    make_result_producer_capability,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_init, on_stop
 from aiperf.common.messages import (
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileConfigureCommand,
+    PhaseBaselineRequestMessage,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
+from aiperf.common.mixins import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
@@ -37,7 +41,7 @@ class _CollectorCandidate:
     kwargs: dict[str, Any]
 
 
-class GPUTelemetryManager(BaseComponentService):
+class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
     """Coordinates multiple TelemetryDataCollector instances for GPU telemetry collection.
 
     The GPUTelemetryManager coordinates multiple TelemetryDataCollector instances
@@ -55,6 +59,10 @@ class GPUTelemetryManager(BaseComponentService):
         run: BenchmarkRun carrying the BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance
     """
+
+    extra_capabilities: ClassVar[tuple[str, ...]] = (
+        make_result_producer_capability("telemetry"),
+    )
 
     def __init__(
         self,
@@ -113,6 +121,13 @@ class GPUTelemetryManager(BaseComponentService):
 
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
+        # Records and the terminal marker share one PUSH socket and one lock.
+        # Closing admission under that lock makes the marker a causal boundary:
+        # every accepted record is queued before it and none can follow it.
+        self._records_push_lock = asyncio.Lock()
+        self._telemetry_records_closed = False
+        self._completion_marker_sent = False
+        self._telemetry_sequence = 0
 
     @staticmethod
     def _normalize_dcgm_url(url: str) -> str:
@@ -167,9 +182,7 @@ class GPUTelemetryManager(BaseComponentService):
         pass
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the telemetry collectors but don't start them yet.
 
         Creates collector instances based on the configured collector type,
@@ -256,7 +269,7 @@ class GPUTelemetryManager(BaseComponentService):
             except RuntimeError as e:
                 failure_reason = str(e)
                 self.error(f"GPU Telemetry: {e}")
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
+            except Exception as e:  # fault-tolerant telemetry
                 failure_reason = f"{collector_name} configuration failed: {e}"
                 self.error(
                     f"GPU Telemetry: Failed to configure {collector_name} collector: {e}"
@@ -272,7 +285,7 @@ class GPUTelemetryManager(BaseComponentService):
         self.info(f"GPU Telemetry: Capturing baseline metrics from {source_identifier}")
         try:
             await collector.initialize()
-        except (Exception, asyncio.CancelledError) as e:  # noqa: BLE001
+        except (Exception, asyncio.CancelledError) as e:
             self.warning(
                 f"GPU Telemetry: Failed to initialize {source_identifier} during "
                 f"baseline capture, disabling collector: {e!r}"
@@ -284,7 +297,7 @@ class GPUTelemetryManager(BaseComponentService):
         try:
             await collector.collect_and_process_metrics()
             self.debug(f"GPU Telemetry: Captured baseline from {source_identifier}")
-        except Exception as e:  # noqa: BLE001 - baseline scrape best-effort
+        except Exception as e:  # baseline scrape best-effort
             self.warning(
                 f"GPU Telemetry: Failed to capture baseline from {source_identifier} "
                 f"(collector remains enabled): {e}"
@@ -313,7 +326,7 @@ class GPUTelemetryManager(BaseComponentService):
             reason = failure_reason or (
                 f"{self._collector_type} not available or no GPUs found"
                 if is_local
-                else "no DCGM endpoints reachable"
+                else "no telemetry sources reachable"
             )
             await self._send_telemetry_status(
                 enabled=False,
@@ -330,8 +343,21 @@ class GPUTelemetryManager(BaseComponentService):
             endpoints_reachable=reachable_endpoints,
         )
 
+    async def collect_baseline(self, message: PhaseBaselineRequestMessage) -> None:
+        """Capture a one-shot telemetry scrape for a phase boundary."""
+        if self._telemetry_disabled or not self._collectors:
+            return
+        errors: list[str] = []
+        for telemetry_source_url, collector in list(self._collectors.items()):
+            try:
+                await collector.collect_and_process_metrics()
+            except Exception as exc:  # one failed endpoint should not skip others
+                errors.append(f"{telemetry_source_url}: {type(exc).__name__}: {exc}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Start all telemetry collectors.
 
         Initializes and starts each configured collector.
@@ -341,17 +367,20 @@ class GPUTelemetryManager(BaseComponentService):
             message: Profile start command from SystemController
         """
         if not self._collectors:
-            # Telemetry disabled status already sent in _profile_configure_command, only shutdown here
+            # Telemetry disabled status was sent during configuration. Its
+            # records completion marker must be sent before scheduling teardown:
+            # the service may be reaped before the delayed shutdown runs.
+            await self._send_collection_complete_marker()
             self._shutdown_task = self.execute_async(self._delayed_shutdown())
             return
 
         started_count = 0
-        for source_url, collector in self._collectors.items():
+        for telemetry_source_url, collector in self._collectors.items():
             try:
                 await collector.start()
                 started_count += 1
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
-                self.error(f"Failed to start collector for {source_url}: {e}")
+            except Exception as e:  # fault-tolerant telemetry
+                self.error(f"Failed to start collector for {telemetry_source_url}: {e}")
 
         if started_count == 0:
             self.warning("No GPU telemetry collectors successfully started")
@@ -365,9 +394,7 @@ class GPUTelemetryManager(BaseComponentService):
             return
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all telemetry collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
@@ -377,36 +404,40 @@ class GPUTelemetryManager(BaseComponentService):
             message: Profile cancel command from SystemController
         """
         await self._stop_all_collectors()
+        await self._send_collection_complete_marker()
 
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Trigger final scrape when profiling completes.
 
         Ensures GPU telemetry captures final state for accurate counter deltas.
         This final scrape provides the end-point values needed for metrics like
-        energy_consumption which are computed as (final - baseline).
+        nvidia_energy_consumption and amd_energy_consumption, which are computed
+        as (final - baseline).
 
         Args:
             message: Profile complete command from SystemController
         """
         if not self._collectors:
             self.debug("GPU Telemetry: Already stopped, skipping final scrape")
+            await self._send_collection_complete_marker()
             return
 
         self.info("GPU Telemetry: Profiling complete, capturing final metrics...")
 
-        for dcgm_url, collector in list(self._collectors.items()):
+        for telemetry_source_url, collector in list(self._collectors.items()):
             try:
                 await collector.collect_and_process_metrics()
-                self.debug(f"GPU Telemetry: Captured final state from {dcgm_url}")
+                self.debug(
+                    f"GPU Telemetry: Captured final state from {telemetry_source_url}"
+                )
             except Exception as e:
                 self.warning(
-                    f"GPU Telemetry: Failed to capture final state from {dcgm_url}: {e}"
+                    f"GPU Telemetry: Failed to capture final state from {telemetry_source_url}: {e}"
                 )
 
         await self._stop_all_collectors()
+        await self._send_collection_complete_marker()
 
     @on_stop
     async def _telemetry_manager_stop(self) -> None:
@@ -425,6 +456,7 @@ class GPUTelemetryManager(BaseComponentService):
         has time to be published and transmitted to the SystemController.
         """
         await asyncio.sleep(Environment.GPU.SHUTDOWN_DELAY)
+        await self._send_collection_complete_marker()
         await asyncio.shield(self.stop())
 
     async def _stop_all_collectors(self) -> None:
@@ -441,11 +473,11 @@ class GPUTelemetryManager(BaseComponentService):
         if not self._collectors:
             return
 
-        for source_url, collector in self._collectors.items():
+        for telemetry_source_url, collector in self._collectors.items():
             try:
                 await collector.stop()
-            except Exception as e:  # noqa: BLE001 - fault-tolerant telemetry
-                self.error(f"Failed to stop collector for {source_url}: {e}")
+            except Exception as e:  # fault-tolerant telemetry
+                self.error(f"Failed to stop collector for {telemetry_source_url}: {e}")
 
     async def _on_telemetry_records(
         self, records: list[TelemetryRecord], collector_id: str
@@ -464,19 +496,67 @@ class GPUTelemetryManager(BaseComponentService):
             return
 
         try:
-            dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            message = TelemetryRecordsMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                dcgm_url=dcgm_url,
-                records=records,
-                error=None,
-            )
-
-            await self.records_push_client.push(message)
+            async with self._records_push_lock:
+                if self._telemetry_records_closed:
+                    self.debug(
+                        "GPU Telemetry: Ignoring a collector callback after the "
+                        "completion boundary"
+                    )
+                    return
+                telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
+                sequence = self._telemetry_sequence + 1
+                message = TelemetryRecordsMessage(
+                    service_id=self.service_id,
+                    collector_id=collector_id,
+                    telemetry_source_url=telemetry_source_url,
+                    records=records,
+                    error=None,
+                    sequence=sequence,
+                )
+                await self.records_push_client.push(message)
+                self._telemetry_sequence = sequence
 
         except Exception as e:
             self.error(f"Failed to send telemetry records: {e}")
+
+    async def _send_collection_complete_marker(self) -> None:
+        """Close record admission and queue an in-band completion marker.
+
+        The command response travels over PUB/SUB and can overtake telemetry on
+        the records PUSH/PULL socket. This marker shares the records socket, so
+        RecordsManager can wait for a causal boundary before finalizing its
+        JSONL stream exporters.
+
+        Best-effort: several callers are shutdown paths, so a dead push
+        transport must not turn a clean teardown into an exception. Both the
+        closed-admission flag and the sent-flag are only latched on success,
+        leaving a later caller free to retry. Records/errors that arrive
+        while this call is in flight still see admission open, since the
+        flag flip and the push happen under the same lock they check.
+        ``CancelledError`` is not an ``Exception`` and so still propagates.
+        """
+        async with self._records_push_lock:
+            if self._completion_marker_sent:
+                return
+            try:
+                await self.records_push_client.push(
+                    TelemetryRecordsMessage(
+                        service_id=self.service_id,
+                        collector_id=self.service_id,
+                        telemetry_source_url="",
+                        records=[],
+                        error=None,
+                        sequence=self._telemetry_sequence,
+                        collection_complete=True,
+                    )
+                )
+            except Exception as e:
+                self.warning(
+                    f"GPU Telemetry: Failed to send collection-complete marker: {e!r}"
+                )
+                return
+            self._telemetry_records_closed = True
+            self._completion_marker_sent = True
 
     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
         """Async callback for receiving telemetry errors from collectors.
@@ -490,16 +570,26 @@ class GPUTelemetryManager(BaseComponentService):
         """
 
         try:
-            dcgm_url = self._collector_id_to_url.get(collector_id, "")
-            error_message = TelemetryRecordsMessage(
-                service_id=self.service_id,
-                collector_id=collector_id,
-                dcgm_url=dcgm_url,
-                records=[],
-                error=error,
-            )
+            async with self._records_push_lock:
+                if self._telemetry_records_closed:
+                    self.debug(
+                        "GPU Telemetry: Ignoring a collector error after the "
+                        "completion boundary"
+                    )
+                    return
+                telemetry_source_url = self._collector_id_to_url.get(collector_id, "")
+                sequence = self._telemetry_sequence + 1
+                error_message = TelemetryRecordsMessage(
+                    service_id=self.service_id,
+                    collector_id=collector_id,
+                    telemetry_source_url=telemetry_source_url,
+                    records=[],
+                    error=error,
+                    sequence=sequence,
+                )
 
-            await self.records_push_client.push(error_message)
+                await self.records_push_client.push(error_message)
+                self._telemetry_sequence = sequence
 
         except Exception as e:
             self.error(f"Failed to send telemetry error message: {e}")
@@ -519,9 +609,9 @@ class GPUTelemetryManager(BaseComponentService):
 
         Args:
             enabled: Whether telemetry collection is enabled/available
-            reason: Optional human-readable reason for status (e.g., "no DCGM endpoints reachable")
-            endpoints_configured: List of DCGM endpoint URLs in configured scope for display
-            endpoints_reachable: List of DCGM endpoint URLs that are accessible
+            reason: Optional human-readable reason for status
+            endpoints_configured: Telemetry source URLs in configured scope for display
+            endpoints_reachable: Telemetry source URLs that are accessible
         """
         try:
             status_message = TelemetryStatusMessage(

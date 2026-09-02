@@ -11,7 +11,7 @@ allow-direct-references = true
 
 [project]
 name = "aiperf"
-version = "0.11.0"
+version = "0.13.0"
 description = "AIPerf is a package for performance testing of AI models"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -19,15 +19,19 @@ license-files = ["LICENSE", "ATTRIBUTIONS.md"]
 authors = [
     { name = "NVIDIA Inc.", email = "sw-dl-dynamo@nvidia.com" },
 ]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "aiofiles~=24.1.0",
-  "async-timeout>=4.0.0; python_version < '3.11'",
-  "aiohttp~=3.13.3",
+  "aiohttp>=3.14.3,<4",
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
-  "datasets>=3.0",
+  "filelock>=3.13", # Cross-process populate lock for the mmap dataset cache
+  # datasets pulls pyarrow (its Arrow core), which has no Windows-on-ARM wheel
+  # (apache/arrow#47195). Excluded on win_arm64 so the base install works there;
+  # HF-backed --public-dataset is gated on that platform, but synthetic /
+  # --input-file datasets (incl. SPEED-Bench) don't need it.
+  "datasets>=3.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
   "huggingface-hub>=0.34.0,<2.0",
   "jinja2~=3.1.5", # NOTE: Versions prior to 3.1.5 have vuln exploits
   "jmespath~=1.0.1",
@@ -46,7 +50,10 @@ dependencies = [
   "prometheus_client~=0.23.1",
   "protobuf>=4", # Loose on purpose: required by some HF tokenizers (e.g. T5/LLaMA SentencePiece converters); let it co-resolve with transformers/grpc/etc.
   "psutil~=7.0.0",
-  "pyarrow>=18.0.0",
+  # pyarrow ships no Windows-on-ARM wheel (apache/arrow#47195) and source-builds
+  # fail there, so it's excluded on win_arm64; the parquet exporter self-disables
+  # when it's absent. Required on every platform that has wheels.
+  "pyarrow>=18.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
   "pydantic>=2.10.0,<3.0.0",
   "pydantic-settings>=2.10.0,<3.0.0",
   "pyzmq~=26.4.0",
@@ -66,6 +73,10 @@ dependencies = [
   "uvloop>=0.22.1; platform_system != 'Windows'",
   "zstandard>=0.25.0",
   "crick~=0.0.8",
+  "kubernetes_asyncio>=32.0,<33.0",
+  "kopf>=1.42.0",
+  "aiosqlite>=0.19.0",
+  "python-multipart>=0.0.22",
 ]
 
 # CLI Entrypoints
@@ -80,23 +91,35 @@ aiperf = "aiperf.plugin:plugins.yaml"
 mlflow = [
   "mlflow>=3.10.0,<4.0.0",
 ]
+wandb = [
+  "wandb>=0.19.0,<1.0.0",
+]
 otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
 test = [
   "httpx>=0.27.0",
-  "hypothesis>=6.0.0",
+  # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
+  # build and no sdist, so it can't install on Windows-on-ARM. Cap it there to
+  # the last pure-Python release (6.155.x); leave it unconstrained elsewhere.
+  "hypothesis>=6.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
+  "hypothesis>=6.0.0,<6.156; platform_system == 'Windows' and platform_machine == 'ARM64'",
   "jsonschema>=4.0.0",
   "looptime>=0.5",
   "pytest>=7.0.0",
   "pytest-asyncio",
   "pytest-cov",
+  "pytest-rerunfailures>=15.0",
+  "pytest-timeout>=2.0.0",
   "pytest-xdist>=3.8.0",
-  "trustme>=1.0.0",
+  # trustme pulls cryptography, which has no Windows-on-ARM wheel and
+  # source-builds against openssl-sys (fails on win-arm). Only the TLS
+  # transport tests use it; they are collect-ignored there.
+  "trustme>=1.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
 ]
 dev = [
-  "aiperf[mlflow,otel,test]",
+  "aiperf[mlflow,otel,test,wandb]",
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",
@@ -147,6 +170,14 @@ required-environments = [
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.ruff]
 # Base settings for ruff
 line-length = 88
@@ -172,23 +203,25 @@ select = [
 # can have some lines that are slightly over due to the way formatting works
 ignore = ["E501"]
 
-# LLM-ergonomics rules (PLR0915, PLR0912, C901, TID251) are deliberately
-# NOT in `select` above. They are enforced out-of-band via
+# LLM-ergonomics rules (C901, TID251, S110, S112, ANN201, D103) are
+# deliberately NOT in `select` above. They are enforced out-of-band via
 # ``tools/ruff_baselined.py``, which filters ruff's output through
 # ``tools/ruff_baseline.json`` (keyed on (rule, file, function-name)). This
 # avoids per-line ``# noqa`` noise and per-file exemptions while still
 # catching NEW violations in files that already have grandfathered ones.
 # The threshold/config blocks below are kept so that ``ruff check --select
-# PLR0915,...`` (invoked by the wrapper and available for ad-hoc runs)
+# C901,...`` (invoked by the wrapper and available for ad-hoc runs)
 # honors the project's tunings.
-
-[tool.ruff.lint.pylint]
-# Match tools/check_ergonomics.py thresholds.
-max-statements = 50  # function-size proxy (custom tool targets 80 lines)
-max-branches = 12    # nesting proxy (custom tool targets depth 5)
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+# dev/kube.py inserts the project root into sys.path before importing
+# `dev.versions`, so that it runs identically under `uv run`, `./dev/kube.py`,
+# and `python dev/kube.py`. Every import below that block is necessarily
+# module-level-but-not-at-top.
+"dev/kube.py" = ["E402"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Enforced ONLY via the wrapper (``tools/ruff_baselined.py`` passes
@@ -214,12 +247,25 @@ markers = [
     "ffmpeg: marks tests that require ffmpeg to be installed (deselected by default)",
     "stress: marks tests as stress tests that generate high load (deselected by default)",
     "slow: marks tests as slow (>= 3s, deselected by default; opt in with -m slow)",
+    "ui_e2e: marks tests as browser-based end-to-end UI tests (requires playwright chromium, deselected by default)",
+    "ui: marks tests as fast operator dashboard UI tests (static/Node-based, no browser)",
     "component_integration: marks tests as component integration tests",
     "statistical: marks tests requiring statistical validation with large samples, and may not be stable by default",
     "server_unit: marks tests as unit tests for the mock server",
     "fern: marks tests that validate Fern documentation (requires fern CLI)",
     "network: marks tests that require network access",
     "requires_deepeval: tests that need the real deepeval install (i.e. the [accuracy] extras) — skipped when only the fake-deepeval harness is registered",
+    "looptime: marks tests that use virtual event-loop time",
+    "k8s: marks tests requiring a Kubernetes cluster",
+    "k8s_slow: marks k8s tests that are known to be slow",
+    "gpu: marks tests requiring a GPU Kubernetes cluster (deselected by default)",
+    "vllm: marks tests requiring a vLLM server (deselected by default)",
+    "dynamo: marks tests requiring a Dynamo deployment (deselected by default)",
+    "trtllm: marks tests requiring a TRT-LLM server (deselected by default)",
+    "sglang: marks tests requiring an SGLang server (deselected by default)",
+    "k8s_audit: marks Kubernetes operator-vs-bare-pod correctness audit tests",
+    "k8s_disruptive: marks tests that make cluster-wide mutations (e.g. CRD deletion); skipped by default, opt-in with --k8s-allow-disruptive",
+    "k8s_needs_toxiproxy: marks tests that require toxiproxy infrastructure; skipped when toxiproxy is not deployed",
 ]
 # Better console output
 console_output_style = "progress"
@@ -228,7 +274,7 @@ verbosity_assertions = 2
 # Deselect performance, ffmpeg, stress, statistical, component_integration, integration, server_unit, fern, and slow tests by default
 # To run them: pytest -m performance, pytest -m ffmpeg, pytest -m stress, pytest -m statistical, pytest -m slow
 # IDE note: When running a specific test file/function from IDE, markers are often bypassed
-addopts = "--strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow'"
+addopts = "-p no:base_url --strict-markers -m 'not performance and not ffmpeg and not stress and not statistical and not component_integration and not integration and not server_unit and not fern and not slow and not ui_e2e and not gpu'"
 # Filter out known warnings from third-party libraries and test infrastructure
 filterwarnings = [
     "ignore:.*torch.jit.script.*:DeprecationWarning",
@@ -250,5 +296,8 @@ filterwarnings = [
 ]
 
 [tool.codespell]
-skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/config/schema/aiperf-config.schema.json"
-ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency"
+skip = "*.pyc,*build*,tests/unit/transports/test_aiohttp_sse.py,tests/integration/assets/canary_reference_inputs.json,src/aiperf/server_metrics/units.py,src/aiperf/api/static/dashboard.html,src/aiperf/operator/ui/vendor/*,src/aiperf/api/static-v2/vendor/*,src/aiperf/api/static/vendor/*,tests/_js_cache/*,src/aiperf/config/schema/aiperf-config.schema.json"
+# "unparseable" is an accepted English variant and the established spelling
+# across ~20 test names, param ids, and docstrings here; "okat" is the JS
+# identifier `okAt` (timestamp of last ok poll), not a misspelling of "okay".
+ignore-words-list = "timeslice,timeslices,optiona,disjointness,concurency,strat,clen,anull,aks,ot,genrate,bu,anumber,datas,unparseable,okat"

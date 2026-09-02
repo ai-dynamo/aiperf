@@ -49,7 +49,12 @@ __all__ = [
 
 _DIAGNOSIS_STAT_NAMES: tuple[str, ...] = (
     "avg",
+    "p1",
+    "p5",
+    "p10",
+    "p25",
     "p50",
+    "p75",
     "p90",
     "p95",
     "p99",

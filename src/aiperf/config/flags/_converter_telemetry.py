@@ -198,6 +198,56 @@ def build_server_metrics(cli: CLIConfig) -> dict[str, Any]:
     return server_metrics
 
 
+def build_network_latency(cli: CLIConfig) -> dict[str, Any]:
+    """Translate the network-latency CLI flags into the network-latency dict.
+
+    ``--network-latency-automatic`` actively probes the endpoint RTT;
+    ``--network-latency-mean`` supplies a fixed mean RTT and implicitly enables
+    adjustment without probing. The two are mutually exclusive (automatic means
+    measure it, mean means set it). The ``--network-latency-ping-interval`` flag
+    only applies to automatic mode. When neither is requested the section stays
+    disabled and no adjusted metrics are emitted.
+    """
+    cli_set = cli.model_fields_set
+    mean_set = (
+        "network_latency_mean" in cli_set and cli.network_latency_mean is not None
+    )
+    interval_set = "network_latency_ping_interval" in cli_set
+
+    if mean_set and cli.network_latency_automatic:
+        raise ValueError(
+            "Cannot use both --network-latency-automatic and --network-latency-mean together. "
+            "Automatic measures the RTT; mean sets it directly."
+        )
+
+    if mean_set:
+        if interval_set:
+            raise ValueError(
+                "--network-latency-ping-interval only applies with --network-latency-automatic, "
+                "not with --network-latency-mean."
+            )
+        return {"enabled": True, "mean_ms": cli.network_latency_mean}
+
+    if not cli.network_latency_automatic:
+        if interval_set:
+            raise ValueError(
+                "--network-latency-ping-interval only applies when --network-latency-automatic "
+                "is set (or --network-latency-mean is provided)."
+            )
+        return {"enabled": False}
+
+    # ``mean_ms: None`` is load-bearing, not a redundant default: automatic mode
+    # is encoded as the *absence* of a mean (``NetworkLatencyConfig.should_probe``),
+    # and in the YAML+CLI path this dict is deep-merged onto the config file. An
+    # omitted key would leave a YAML ``meanMs`` in place and silently disable the
+    # probing the flag asked for -- the exact combination the CLI rejects as
+    # mutually exclusive above.
+    network_latency: dict[str, Any] = {"enabled": True, "mean_ms": None}
+    if interval_set and cli.network_latency_ping_interval is not None:
+        network_latency["ping_interval"] = cli.network_latency_ping_interval
+    return network_latency
+
+
 def _normalize_otel_metrics_url(url: str) -> str:
     """Normalize OTel collector URL to an OTLP/HTTP metrics endpoint.
 
@@ -289,13 +339,23 @@ def _resolve_stream_domains(value: Any) -> tuple[bool, bool]:
     )
 
 
-def build_otel(cli: CLIConfig) -> dict[str, Any]:
-    """Translate OTel CLI flags into the first-class OTel config dict."""
+def build_otel(cli: CLIConfig, *, base_metrics_url: bool = False) -> dict[str, Any]:
+    """Translate OTel CLI flags into the first-class OTel config dict.
+
+    ``base_metrics_url`` says a YAML config file already supplies
+    ``otel.metrics_url``. Without it, ``-f base.yaml --gen-ai-provider X``
+    is rejected for missing a flag whose value the config file provides --
+    the same shape as ``build_mlflow``'s ``base_tracking_uri``.
+    """
     otel: dict[str, Any] = {}
     cli_set = cli.model_fields_set
 
     if "otel_url" in cli_set and cli.otel_url is not None:
         otel["metrics_url"] = _normalize_otel_metrics_url(cli.otel_url)
+    elif base_metrics_url:
+        # The config file owns metrics_url; emit only the overrides so the
+        # deep-merge leaves it in place.
+        pass
     else:
         # ``--stream`` and ``--gen-ai-provider`` are OTel-only secondary
         # flags: they only take effect when ``--otel-url`` is set. Refuse
@@ -381,13 +441,18 @@ def _apply_mlflow_secondary_fields(out: dict[str, Any], cli: CLIConfig) -> None:
         out["parent_run_id"] = cli.mlflow_parent_run_id
 
 
-def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
+def build_mlflow(cli: CLIConfig, *, base_tracking_uri: bool = False) -> dict[str, Any]:
     """Translate MLflow CLI flags into the first-class MLflow config dict.
 
     Ports v1 ``_validate_mlflow_config``: refuses secondary MLflow flags
     without ``--mlflow-tracking-uri``, rejects empty strings on
     tracking_uri/experiment/artifact_glob entries, and normalizes
     whitespace on tracking_uri/experiment/run_name/artifact_globs.
+
+    ``base_tracking_uri`` says a YAML config file already supplies
+    ``mlflow.tracking_uri``. Without it, ``-f base.yaml --mlflow-experiment X``
+    would be rejected for missing a flag whose value the config file already
+    provides -- the same shape as ``build_wandb``'s ``base_enabled``.
     """
     # Normalize artifact-glob entries first so an "empty glob" error
     # surfaces before the missing-tracking-uri error.
@@ -398,16 +463,67 @@ def build_mlflow(cli: CLIConfig) -> dict[str, Any]:
         secondary_present = any(
             key in cli.model_fields_set for key in _MLFLOW_SECONDARY_FIELDS
         )
-        if secondary_present:
+        if not secondary_present:
+            return {}
+        if not base_tracking_uri:
             raise ValueError(
                 "--mlflow-experiment, --mlflow-run-name, --mlflow-tag, "
                 "--mlflow-artifact-glob, and --mlflow-parent-run-id require "
                 "--mlflow-tracking-uri to be set."
             )
-        return {}
+        # The config file owns tracking_uri; emit only the overrides so the
+        # deep-merge leaves it in place.
+        from_yaml_base: dict[str, Any] = {}
+        _apply_mlflow_secondary_fields(from_yaml_base, cli)
+        if artifact_globs is not None:
+            from_yaml_base["artifact_globs"] = artifact_globs
+        return from_yaml_base
 
     out: dict[str, Any] = {"tracking_uri": tracking_uri}
     _apply_mlflow_secondary_fields(out, cli)
     if artifact_globs is not None:
         out["artifact_globs"] = artifact_globs
+    return out
+
+
+_WANDB_SECONDARY_FIELDS = (
+    "wandb_entity",
+    "wandb_run_name",
+    "wandb_tags",
+)
+
+
+def build_wandb(cli: CLIConfig, *, base_enabled: bool = False) -> dict[str, Any]:
+    """Translate Weights & Biases CLI flags into the wandb config dict.
+
+    Refuses secondary wandb flags without ``--wandb-project`` and rejects an
+    empty project name. ``base_enabled`` relaxes the project requirement for
+    the YAML+CLI overlay path: when the base config already enables wandb,
+    secondary flags alone emit a partial override dict (e.g.
+    ``-f base.yaml --wandb-run-name rerun``).
+    """
+    cli_set = cli.model_fields_set
+    out: dict[str, Any] = {}
+    if "wandb_project" in cli_set and cli.wandb_project is not None:
+        project = cli.wandb_project.strip()
+        if not project:
+            raise ValueError("--wandb-project cannot be empty.")
+        out["project"] = project
+    elif not base_enabled:
+        if any(key in cli_set for key in _WANDB_SECONDARY_FIELDS):
+            raise ValueError(
+                "--wandb-entity, --wandb-run-name, and --wandb-tag require "
+                "--wandb-project to be set."
+            )
+        return {}
+
+    if "wandb_entity" in cli_set and cli.wandb_entity is not None:
+        entity = cli.wandb_entity.strip()
+        if not entity:
+            raise ValueError("--wandb-entity cannot be empty when set.")
+        out["entity"] = entity
+    if "wandb_run_name" in cli_set and cli.wandb_run_name is not None:
+        out["run_name"] = cli.wandb_run_name.strip() or None
+    if "wandb_tags" in cli_set:
+        out["tags"] = cli.wandb_tags
     return out

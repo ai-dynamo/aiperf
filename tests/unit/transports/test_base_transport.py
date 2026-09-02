@@ -6,6 +6,8 @@ import pytest
 
 from aiperf import __version__ as aiperf_version
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.environment import Environment
+from aiperf.common.models import Turn
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -151,6 +153,148 @@ class TestBaseTransport:
         assert headers["Authorization"] == "Bearer token123"
         assert headers["Custom-Header"] == "custom-value"
         assert headers["User-Agent"] == AIPERF_USER_AGENT
+
+    def test_build_headers_dynamo_session_header_root_has_no_parent(
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Root session emits X-Dynamo-Session-ID but no parent header."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
+        assert "X-Dynamo-Parent-Session-ID" not in headers
+
+    def test_build_headers_dynamo_session_header_root_strips_parent_from_every_layer(
+        self,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A root request removes a parent header injected by any merge layer."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+
+        class ConflictingTransport(FakeTransport):
+            def get_transport_headers(
+                self, request_info: RequestInfo
+            ) -> dict[str, str]:
+                return {
+                    "X-Dynamo-Session-ID": "transport-session",
+                    "X-Dynamo-Parent-Session-ID": "transport-parent",
+                }
+
+        transport = ConflictingTransport(model_endpoint=request_info.model_endpoint)
+        request_info.endpoint_headers = {
+            "x-dynamo-session-id": "endpoint-session",
+            "x-dynamo-parent-session-id": "endpoint-parent",
+        }
+        request_info.turns = [
+            Turn(
+                extra_headers={
+                    "X-Dynamo-Session-Id": "turn-session",
+                    "X-Dynamo-Parent-Session-Id": "turn-parent",
+                }
+            )
+        ]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
+        assert not any(k.lower() == "x-dynamo-parent-session-id" for k in headers)
+        assert sum(k.lower() == "x-dynamo-session-id" for k in headers) == 1
+
+    def test_build_headers_dynamo_session_header_child_wins_over_every_layer(
+        self,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A child request keeps derived session + parent over every merge layer."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+
+        class ConflictingTransport(FakeTransport):
+            def get_transport_headers(
+                self, request_info: RequestInfo
+            ) -> dict[str, str]:
+                return {
+                    "X-Dynamo-Session-ID": "transport-session",
+                    "X-Dynamo-Parent-Session-ID": "transport-parent",
+                }
+
+        transport = ConflictingTransport(model_endpoint=request_info.model_endpoint)
+        request_info.parent_correlation_id = "parent-correlation-id"
+        request_info.endpoint_headers = {
+            "x-dynamo-session-id": "endpoint-session",
+            "x-dynamo-parent-session-id": "endpoint-parent",
+        }
+        request_info.turns = [
+            Turn(
+                extra_headers={
+                    "X-Dynamo-Session-Id": "turn-session",
+                    "X-Dynamo-Parent-Session-Id": "turn-parent",
+                }
+            )
+        ]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
+        assert headers["X-Dynamo-Parent-Session-ID"] == "parent-correlation-id"
+        assert sum(k.lower() == "x-dynamo-session-id" for k in headers) == 1
+        assert sum(k.lower() == "x-dynamo-parent-session-id" for k in headers) == 1
+
+    def test_build_headers_dynamo_session_header_child_adds_parent(
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Subagent child also emits X-Dynamo-Parent-Session-ID."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+        request_info.parent_correlation_id = "parent-correlation-id"
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
+        assert headers["X-Dynamo-Parent-Session-ID"] == "parent-correlation-id"
+
+    def test_build_headers_dynamo_session_header_disabled_by_default(
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+    ) -> None:
+        """With the flag off, neither Dynamo header is emitted, even with a parent."""
+        request_info.parent_correlation_id = "parent-correlation-id"
+
+        headers = transport.build_headers(request_info)
+
+        assert "X-Dynamo-Session-ID" not in headers
+        assert "X-Dynamo-Parent-Session-ID" not in headers
+
+    def test_build_headers_dynamo_session_header_not_overwritten_by_extra_headers(
+        self,
+        transport: FakeTransport,
+        request_info: RequestInfo,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Derived Dynamo headers win over endpoint/extra headers when enabled."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID", True
+        )
+        request_info.endpoint_headers = {"X-Dynamo-Session-ID": "override"}
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Dynamo-Session-ID"] == "test-correlation-id"
 
     def test_build_headers_transport_headers_override(self, request_info):
         """Test that transport headers can override endpoint headers."""
@@ -371,14 +515,27 @@ class TestSessionHeader:
         )
 
     def test_default_sends_x_correlation_id(self):
-        """Without --session-header, X-Correlation-ID is used as before."""
+        """Default requests send correlation and additive affinity headers."""
         transport = self._make_transport()
         request_info = self._make_request_info(transport)
 
         headers = transport.build_headers(request_info)
 
         assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert headers["X-Session-Affinity"] == "conv-uuid-123"
         assert "X-Session-ID" not in headers
+
+    def test_turn_headers_preserve_external_session_identity(self):
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+        request_info.turns = [
+            Turn(extra_headers={"x-dynamo-session-id": "source-session-1"})
+        ]
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert headers["x-dynamo-session-id"] == "source-session-1"
 
     def test_session_header_replaces_x_correlation_id(self):
         """With --session-header, the configured name is used instead of X-Correlation-ID."""
@@ -447,6 +604,85 @@ class TestSessionHeader:
         assert headers["Authorization"] == "Bearer tok"
         assert headers["X-Custom"] == "val"
         assert "X-Correlation-ID" not in headers
+
+    def test_x_session_id_from_correlation_id_is_additive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID sends X-Session-ID
+        ALONGSIDE X-Correlation-ID (both headers) -- distinct from
+        --session-header, which renames the single header. A router may
+        require both for session affinity."""
+        monkeypatch.setattr(Environment.HTTP, "X_SESSION_ID_FROM_CORRELATION_ID", True)
+        transport = self._make_transport()  # no --session-header
+        request_info = self._make_request_info(transport)
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert headers["X-Session-ID"] == "conv-uuid-123"  # ADDED, not renamed
+
+    def test_env_knob_off_by_default_sends_only_correlation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(Environment.HTTP, "X_SESSION_ID_FROM_CORRELATION_ID", False)
+        transport = self._make_transport()
+        headers = transport.build_headers(self._make_request_info(transport))
+        assert headers["X-Correlation-ID"] == "conv-uuid-123"
+        assert "X-Session-ID" not in headers
+
+    def test_build_headers_can_alias_correlation_id_as_smg_routing_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Opt-in SGLang Model Gateway affinity header: X-SMG-Routing-Key
+        aliases the stable X-Correlation-ID so a session's requests co-locate."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", True
+        )
+        transport = self._make_transport()
+        headers = transport.build_headers(self._make_request_info(transport))
+
+        assert headers["X-SMG-Routing-Key"] == "conv-uuid-123"
+
+    def test_smg_routing_key_off_by_default(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", False
+        )
+        transport = self._make_transport()
+        headers = transport.build_headers(self._make_request_info(transport))
+        assert "X-SMG-Routing-Key" not in headers
+
+    def test_session_id_authoritative_over_endpoint_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The derived X-Session-ID wins over a caller-supplied --header of the
+        same (case-insensitive) name, so session affinity cannot be silently
+        broken by endpoint headers."""
+        monkeypatch.setattr(Environment.HTTP, "X_SESSION_ID_FROM_CORRELATION_ID", True)
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+        request_info.endpoint_headers = {"x-session-id": "endpoint-override"}
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-Session-ID"] == "conv-uuid-123"
+        assert "x-session-id" not in headers
+
+    def test_smg_routing_key_authoritative_over_endpoint_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The derived X-SMG-Routing-Key wins over a caller-supplied --header of
+        the same (case-insensitive) name."""
+        monkeypatch.setattr(
+            Environment.HTTP, "X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", True
+        )
+        transport = self._make_transport()
+        request_info = self._make_request_info(transport)
+        request_info.endpoint_headers = {"x-smg-routing-key": "endpoint-override"}
+
+        headers = transport.build_headers(request_info)
+
+        assert headers["X-SMG-Routing-Key"] == "conv-uuid-123"
+        assert "x-smg-routing-key" not in headers
 
 
 class TestTransportMetadata:

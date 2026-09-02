@@ -17,6 +17,8 @@ from dataclasses import dataclass
 
 from aiperf.common.enums import CreditPhase
 
+PhaseRuntimeKey = int | CreditPhase
+
 
 @dataclass(slots=True)
 class ConcurrencyStats:
@@ -209,14 +211,14 @@ class GlobalPhaseConcurrencyLimiter:
         """Initialize as disabled with empty phase limits and a global limit of 0."""
         self._enabled = False
         self._global_limit = DynamicConcurrencyLimit()
-        self._phase_limits: dict[CreditPhase, DynamicConcurrencyLimit] = {}
+        self._phase_limits: dict[PhaseRuntimeKey, DynamicConcurrencyLimit] = {}
 
     @property
     def enabled(self) -> bool:
         """Whether concurrency limiting is enabled for this limiter."""
         return self._enabled
 
-    def configure_for_phase(self, phase: CreditPhase, limit: int | None) -> None:
+    def configure_for_phase(self, phase: PhaseRuntimeKey, limit: int | None) -> None:
         """Configure limits for a new phase.
 
         Args:
@@ -234,7 +236,7 @@ class GlobalPhaseConcurrencyLimiter:
         self._global_limit.set_limit(limit)
 
     async def acquire(
-        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
     ) -> bool:
         """Acquire a concurrency slot.
 
@@ -283,7 +285,7 @@ class GlobalPhaseConcurrencyLimiter:
             raise
 
     def try_acquire(
-        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
     ) -> bool:
         """Try to acquire a concurrency slot without blocking.
 
@@ -322,7 +324,7 @@ class GlobalPhaseConcurrencyLimiter:
 
         return True
 
-    def release(self, phase: CreditPhase) -> None:
+    def release(self, phase: PhaseRuntimeKey) -> None:
         """Release a concurrency slot.
 
         Args:
@@ -337,7 +339,7 @@ class GlobalPhaseConcurrencyLimiter:
         self._global_limit.release()
         self._phase_limits[phase].release()
 
-    def slot_available(self, phase: CreditPhase) -> bool:
+    def slot_available(self, phase: PhaseRuntimeKey) -> bool:
         """Check if a slot is available without blocking.
 
         Args:
@@ -353,7 +355,7 @@ class GlobalPhaseConcurrencyLimiter:
             not self._global_limit.locked() and not self._phase_limits[phase].locked()
         )
 
-    def get_held_slots(self, phase: CreditPhase) -> int:
+    def get_held_slots(self, phase: PhaseRuntimeKey) -> int:
         """Get the number of slots currently held for a specific phase.
 
         Args:
@@ -374,7 +376,7 @@ class GlobalPhaseConcurrencyLimiter:
         """Global concurrency stats across all phases."""
         return self._global_limit.stats
 
-    def get_phase_stats(self, phase: CreditPhase) -> ConcurrencyStats | None:
+    def get_phase_stats(self, phase: PhaseRuntimeKey) -> ConcurrencyStats | None:
         """Get stats for a specific phase.
 
         Args:
@@ -411,7 +413,7 @@ class ConcurrencyManager:
 
     def configure_for_phase(
         self,
-        phase: CreditPhase,
+        phase: PhaseRuntimeKey,
         concurrency: int | None,
         prefill_concurrency: int | None,
     ) -> None:
@@ -431,7 +433,7 @@ class ConcurrencyManager:
         self._session_limiter.configure_for_phase(phase, concurrency)
         self._prefill_limiter.configure_for_phase(phase, prefill_concurrency)
 
-    def session_slot_available(self, phase: CreditPhase) -> bool:
+    def session_slot_available(self, phase: PhaseRuntimeKey) -> bool:
         """Check if a session slot is available without blocking.
 
         Returns True when concurrency limiting is disabled (no limit configured).
@@ -441,7 +443,7 @@ class ConcurrencyManager:
         return self._session_limiter.slot_available(phase)
 
     async def acquire_session_slot(
-        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
     ) -> bool:
         """Acquire a session concurrency slot.
 
@@ -461,7 +463,7 @@ class ConcurrencyManager:
         return await self._session_limiter.acquire(phase, can_proceed_fn)
 
     def try_acquire_session_slot(
-        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
     ) -> bool:
         """Try to acquire a session concurrency slot without blocking.
 
@@ -481,7 +483,7 @@ class ConcurrencyManager:
             return can_proceed_fn()
         return self._session_limiter.try_acquire(phase, can_proceed_fn)
 
-    def release_session_slot(self, phase: CreditPhase) -> None:
+    def release_session_slot(self, phase: PhaseRuntimeKey) -> None:
         """Release a session concurrency slot.
 
         Called when a session ends (final turn completed or cancelled) or during
@@ -494,7 +496,7 @@ class ConcurrencyManager:
             self._session_limiter.release(phase)
 
     async def acquire_prefill_slot(
-        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
     ) -> bool:
         """Acquire a prefill concurrency slot.
 
@@ -518,7 +520,7 @@ class ConcurrencyManager:
         return await self._prefill_limiter.acquire(phase, can_proceed_fn)
 
     def try_acquire_prefill_slot(
-        self, phase: CreditPhase, can_proceed_fn: Callable[[], bool]
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
     ) -> bool:
         """Try to acquire a prefill concurrency slot without blocking.
 
@@ -538,7 +540,7 @@ class ConcurrencyManager:
             return can_proceed_fn()
         return self._prefill_limiter.try_acquire(phase, can_proceed_fn)
 
-    def release_prefill_slot(self, phase: CreditPhase) -> None:
+    def release_prefill_slot(self, phase: PhaseRuntimeKey) -> None:
         """Release a prefill concurrency slot.
 
         Called when TTFT is received (normal path) or when a credit is returned
@@ -550,7 +552,7 @@ class ConcurrencyManager:
         if self._prefill_limiter.enabled:
             self._prefill_limiter.release(phase)
 
-    def release_stuck_slots(self, phase: CreditPhase) -> tuple[int, int]:
+    def release_stuck_slots(self, phase: PhaseRuntimeKey) -> tuple[int, int]:
         """Release all stuck slots for a phase during force-completion.
 
         Called when cancel drain timeout expires and credits will never return.
@@ -577,7 +579,7 @@ class ConcurrencyManager:
         return session_released, prefill_released
 
     def get_session_stats(
-        self, phase: CreditPhase | None = None
+        self, phase: PhaseRuntimeKey | None = None
     ) -> ConcurrencyStats | None:
         """Get session concurrency stats.
 
@@ -593,7 +595,7 @@ class ConcurrencyManager:
             return self._session_limiter.get_phase_stats(phase)
         return self._session_limiter.global_stats
 
-    def set_session_limit(self, phase: CreditPhase, limit: int) -> None:
+    def set_session_limit(self, phase: PhaseRuntimeKey, limit: int) -> None:
         """Set session concurrency limit for both global and phase.
 
         Args:
@@ -606,7 +608,7 @@ class ConcurrencyManager:
         if phase in self._session_limiter._phase_limits:
             self._session_limiter._phase_limits[phase].set_limit(limit)
 
-    def set_prefill_limit(self, phase: CreditPhase, limit: int) -> None:
+    def set_prefill_limit(self, phase: PhaseRuntimeKey, limit: int) -> None:
         """Set prefill concurrency limit for both global and phase.
 
         Args:

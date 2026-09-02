@@ -226,6 +226,18 @@ class TestHighCPUWarning:
         assert worker_info.status == WorkerStatus.HIGH_LOAD
         assert worker_manager.warning.call_count == 1
 
+        # Force a clock tick before the second update — Windows time.time_ns()
+        # has ~16ms granularity, so back-to-back updates can collapse to the
+        # same nanosecond. Spin without blocking until the clock advances.
+        import sys
+        import time
+
+        if sys.platform == "win32":
+            start_ns = first_timestamp
+            deadline_ns = time.time_ns() + 100_000_000  # 100ms upper bound
+            while time.time_ns() == start_ns and time.time_ns() < deadline_ns:
+                pass
+
         # Simulate time passing by manually updating the worker_info timestamp
         # (the actual implementation uses time.time_ns() internally)
         worker_manager._update_worker_status(

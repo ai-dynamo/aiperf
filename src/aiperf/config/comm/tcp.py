@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, Self
 
 from pydantic import Field, model_validator
-from typing_extensions import Self
 
 from aiperf.config.comm.base import BaseZMQCommunicationConfig, BaseZMQProxyConfig
 from aiperf.plugin.enums import CommunicationBackend
@@ -133,6 +132,15 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
             description="Port for credit return router (ROUTER-DEALER credit returns)",
         ),
     ] = 5668
+    credit_return_push_pull_port: Annotated[
+        int,
+        Field(
+            default=5669,
+            ge=1,
+            le=65535,
+            description="Port for credit return PUSH/PULL fan-in channel",
+        ),
+    ] = 5669
     control_port: Annotated[
         int,
         Field(
@@ -142,6 +150,15 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
             description="Port for control channel (ROUTER-DEALER)",
         ),
     ] = 5667
+    group_lifecycle_port: Annotated[
+        int,
+        Field(
+            default=5670,
+            ge=1,
+            le=65535,
+            description="Port for group-local lifecycle channel (WorkerGroupManager coordination)",
+        ),
+    ] = 5670
     dataset_manager_proxy_config: Annotated[  # type: ignore
         ZMQTCPProxyConfig,
         Field(
@@ -184,6 +201,11 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
         return f"tcp://{self.host}:{self.credit_return_router_port}"
 
     @property
+    def credit_return_push_pull_address(self) -> str:
+        """Get the credit-return PUSH/PULL fan-in address."""
+        return f"tcp://{self.host}:{self.credit_return_push_pull_port}"
+
+    @property
     def control_address(self) -> str:
         """Get the control channel address."""
         return f"tcp://{self.host}:{self.control_port}"
@@ -191,4 +213,4 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     @property
     def group_lifecycle_address(self) -> str:
         """Get the group-local lifecycle channel address."""
-        return f"tcp://{self.host}:{self.control_port + 1}"
+        return f"tcp://{self.host}:{self.group_lifecycle_port}"

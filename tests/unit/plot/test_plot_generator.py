@@ -179,6 +179,179 @@ class TestPlotGenerator:
         assert "Time to First Token" in fig.layout.xaxis.title.text
         assert "Inter Token Latency" in fig.layout.yaxis.title.text
 
+    def test_scatter_line_connects_all_points_in_concurrency_groups(
+        self, plot_generator: PlotGenerator
+    ) -> None:
+        """Test non-Pareto scatter_line plots connect every point in a group."""
+        df = pd.DataFrame(
+            {
+                "model": ["model-a", "model-b", "model-c", "model-d", "model-e"],
+                "concurrency": [50, 50, 50, 50, 50],
+                "time_to_first_token": [52000, 6000, 18000, 34000, 44000],
+                "request_throughput": [25, 123, 88, 61, 42],
+            }
+        )
+
+        fig = plot_generator.create_scatter_line_plot(
+            df=df,
+            x_metric="time_to_first_token",
+            y_metric="request_throughput",
+            label_by="model",
+            group_by="concurrency",
+        )
+
+        main_trace = fig.data[1]
+        assert main_trace.mode == "lines+markers+text"
+        assert main_trace.name == "50"
+        assert list(main_trace.x) == [6000, 18000, 34000, 44000, 52000]
+        assert list(main_trace.y) == [123, 88, 61, 42, 25]
+
+    def test_configured_concurrency_groups_use_clean_legend_names(
+        self, plot_generator: PlotGenerator
+    ) -> None:
+        """Test labels and groups stay distinct for custom multi-run plots."""
+        df = pd.DataFrame(
+            {
+                "model": ["model-a", "model-b"] * 3,
+                "concurrency": [1, 1, 10, 10, 50, 50],
+                "request_latency": [9000, 4000, 16000, 5000, 52000, 6000],
+                "output_token_throughput_per_gpu": [3, 7, 16, 56, 25, 123],
+            }
+        )
+
+        fig = plot_generator.create_pareto_plot(
+            df=df,
+            x_metric="request_latency",
+            y_metric="output_token_throughput_per_gpu",
+            label_by="model",
+            group_by="concurrency",
+        )
+
+        legend_traces = [trace for trace in fig.data if trace.showlegend]
+        assert [trace.name for trace in legend_traces] == ["1", "10", "50"]
+        assert [list(trace.text) for trace in legend_traces] == [
+            ["model-b", "model-a"],
+            ["model-b", "model-a"],
+            ["model-b", "model-a"],
+        ]
+
+    def test_pareto_plot_concurrency_groups_only_connect_frontier(
+        self, plot_generator: PlotGenerator
+    ) -> None:
+        """Test concurrency-grouped Pareto plots still connect only frontier points."""
+        df = pd.DataFrame(
+            {
+                "model": ["model-a", "model-b", "model-c", "model-d", "model-e"],
+                "concurrency": [50, 50, 50, 50, 50],
+                "request_latency": [52000, 6000, 18000, 34000, 44000],
+                "output_token_throughput_per_gpu": [25, 80, 123, 61, 42],
+            }
+        )
+
+        fig = plot_generator.create_pareto_plot(
+            df=df,
+            x_metric="request_latency",
+            y_metric="output_token_throughput_per_gpu",
+            label_by="model",
+            group_by="concurrency",
+        )
+
+        main_line_trace = fig.data[1]
+        assert main_line_trace.mode == "lines"
+        assert main_line_trace.name is None
+        assert list(main_line_trace.x) == [6000, 18000]
+        assert list(main_line_trace.y) == [80, 123]
+        assert len(fig.layout.annotations) == 1
+        pareto_note = fig.layout.annotations[0]
+        assert (
+            pareto_note.text
+            == "Lines connect Pareto frontier points only; other points remain markers."
+        )
+        assert pareto_note.y == 0
+        assert pareto_note.yshift == -65
+        assert fig.layout.margin.b >= 120
+
+    def test_pareto_plot_experiment_group_only_connects_frontier(
+        self, plot_generator: PlotGenerator
+    ) -> None:
+        """Test classification-style experiment groups stay true Pareto plots."""
+        df = pd.DataFrame(
+            {
+                "model": ["model-a", "model-b", "model-c", "model-d", "model-e"],
+                "experiment_group": ["concurrency_50"] * 5,
+                "request_latency": [52000, 6000, 18000, 34000, 44000],
+                "output_token_throughput_per_gpu": [25, 80, 123, 61, 42],
+            }
+        )
+
+        fig = plot_generator.create_pareto_plot(
+            df=df,
+            x_metric="request_latency",
+            y_metric="output_token_throughput_per_gpu",
+            label_by="model",
+            group_by="experiment_group",
+        )
+
+        main_line_trace = fig.data[1]
+        assert main_line_trace.mode == "lines"
+        assert list(main_line_trace.x) == [6000, 18000]
+        assert list(main_line_trace.y) == [80, 123]
+
+    def test_pareto_plot_swept_request_rate_only_connects_frontier(
+        self, plot_generator: PlotGenerator
+    ) -> None:
+        """Test other swept groupings also preserve Pareto-frontier connectors."""
+        df = pd.DataFrame(
+            {
+                "model": ["model-a", "model-b", "model-c", "model-d", "model-e"] * 2,
+                "request_rate": [5] * 5 + [25] * 5,
+                "request_latency": [52000, 6000, 18000, 34000, 44000] * 2,
+                "output_token_throughput_per_gpu": [25, 80, 123, 61, 42] * 2,
+            }
+        )
+
+        fig = plot_generator.create_pareto_plot(
+            df=df,
+            x_metric="request_latency",
+            y_metric="output_token_throughput_per_gpu",
+            label_by="model",
+            group_by="request_rate",
+        )
+
+        main_lines = [
+            trace
+            for trace in fig.data
+            if trace.mode == "lines" and not trace.showlegend and trace.line.width == 3
+        ]
+        assert [list(trace.x) for trace in main_lines] == [[6000, 18000], [6000, 18000]]
+        assert [list(trace.y) for trace in main_lines] == [[80, 123], [80, 123]]
+
+    def test_pareto_plot_default_model_groups_only_connect_frontier(
+        self, plot_generator: PlotGenerator
+    ) -> None:
+        """Test default Pareto grouping preserves frontier-only connector lines."""
+        df = pd.DataFrame(
+            {
+                "model": ["model-a"] * 5,
+                "concurrency": [10, 20, 30, 40, 50],
+                "request_latency": [52000, 6000, 18000, 34000, 44000],
+                "output_token_throughput_per_gpu": [25, 80, 123, 61, 42],
+            }
+        )
+
+        fig = plot_generator.create_pareto_plot(
+            df=df,
+            x_metric="request_latency",
+            y_metric="output_token_throughput_per_gpu",
+            label_by="concurrency",
+            group_by="model",
+        )
+
+        main_line_trace = fig.data[1]
+        assert main_line_trace.mode == "lines"
+        assert list(main_line_trace.x) == [6000, 18000]
+        assert list(main_line_trace.y) == [80, 123]
+
     def test_create_time_series_scatter(self, plot_generator, single_run_df):
         """Test time series scatter plot creation."""
         fig = plot_generator.create_time_series_scatter(
@@ -569,6 +742,42 @@ class TestTimeSeriesHistogram:
         assert marker.color == LIGHT_MODE_PRIMARY_COLOR
 
 
+class TestTimesliceScatter:
+    """Tests for create_timeslice_scatter method."""
+
+    @pytest.fixture
+    def timeslice_df(self):
+        """Create sample timeslice summary DataFrame for testing."""
+        return pd.DataFrame(
+            {
+                "Timeslice": [0, 1, 2],
+                "avg": [100.0, 120.0, 110.0],
+                "std": [10.0, 12.0, 11.0],
+            }
+        )
+
+    def test_std_legend_trace_does_not_affect_x_axis(
+        self, plot_generator, timeslice_df
+    ):
+        """Test std legend proxy does not add sentinel values to the data range."""
+        fig = plot_generator.create_timeslice_scatter(
+            df=timeslice_df,
+            x_col="Timeslice",
+            y_col="avg",
+            metric_name="Time to First Token",
+            average_value=110.0,
+            average_std=8.0,
+        )
+
+        std_legend_trace = next(
+            trace for trace in fig.data if trace.name == "±1 Timeslice Std"
+        )
+
+        assert list(std_legend_trace.x) == [None]
+        assert list(std_legend_trace.y) == [None]
+        assert -999999 not in list(std_legend_trace.x)
+
+
 class TestDualAxisPlots:
     """Tests for dual-axis plotting functions."""
 
@@ -610,6 +819,25 @@ class TestDualAxisPlots:
 
         assert fig.data[0].line.shape == "hv"
         assert fig.data[1].fill == "tozeroy"
+
+    def test_gpu_dual_axis_plot_subtitle_in_title(self, plot_generator, gpu_metrics_df):
+        """A subtitle is rendered under the title text."""
+        throughput_df = gpu_metrics_df[["timestamp_s", "throughput"]].copy()
+        gpu_df = gpu_metrics_df[["timestamp_s", "gpu_utilization"]].copy()
+
+        fig = plot_generator.create_dual_axis_plot(
+            df_primary=throughput_df,
+            df_secondary=gpu_df,
+            x_col_primary="timestamp_s",
+            x_col_secondary="timestamp_s",
+            y1_metric="throughput",
+            y2_metric="gpu_utilization",
+            title="Throughput with GPU Utilization",
+            subtitle="not comparable across vendors",
+        )
+
+        assert "Throughput with GPU Utilization" in fig.layout.title.text
+        assert "not comparable across vendors" in fig.layout.title.text
 
     def test_gpu_dual_axis_plot_custom_labels(self, plot_generator, gpu_metrics_df):
         """Test GPU dual-axis plot with custom labels."""

@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 import logging
 import time
+import zlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from aiperf_mock_server.models import (
+    AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -16,6 +20,7 @@ from aiperf_mock_server.models import (
     ImageGenerationRequest,
     RankingRequest,
     RequestT,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
     flatten_completion_prompt_token_ids,
@@ -273,12 +278,20 @@ def _calculate_budget(
 
 
 def _generate_reasoning_tokens(
-    request: ChatCompletionRequest | CompletionRequest | TGIGenerateRequest,
+    request: ChatCompletionRequest
+    | CompletionRequest
+    | TGIGenerateRequest
+    | AnthropicMessagesRequest,
     prompt_tokens: list[str],
     prompt_token_count: int,
     max_tokens: int | None,
 ) -> _ReasoningResult:
     """Generate reasoning tokens if model supports it, managing budget."""
+    if isinstance(request, AnthropicMessagesRequest):
+        return _generate_anthropic_thinking_tokens(
+            request, prompt_tokens, prompt_token_count, max_tokens
+        )
+
     # Only chat completions support reasoning (per OpenAI API spec)
     if not isinstance(request, ChatCompletionRequest):
         return _ReasoningResult(
@@ -316,6 +329,38 @@ def _generate_reasoning_tokens(
     )
 
 
+def _generate_anthropic_thinking_tokens(
+    request: AnthropicMessagesRequest,
+    prompt_tokens: list[str],
+    prompt_token_count: int,
+    max_tokens: int | None,
+) -> _ReasoningResult:
+    """Generate thinking tokens for an Anthropic Messages request.
+
+    Anthropic thinking is opt-in per request via the ``thinking`` param
+    (``{"type": "enabled", "budget_tokens": N}``) — not by model name like
+    the OpenAI reasoning path. ``budget_tokens`` caps thinking output, and
+    the real API requires it to be strictly less than ``max_tokens``, so at
+    least one token is always reserved for the text block that follows.
+    """
+    thinking = request.thinking if isinstance(request.thinking, dict) else {}
+    budget_tokens = thinking.get("budget_tokens")
+    if not isinstance(budget_tokens, int) or budget_tokens <= 0:
+        return _ReasoningResult(
+            token_count=0, content_tokens=[], remaining_budget=max_tokens
+        )
+
+    total_budget = (
+        max_tokens if max_tokens is not None else max(prompt_token_count * 2, 16)
+    )
+    actual_thinking_tokens = min(budget_tokens, max(total_budget - 1, 0))
+    return _ReasoningResult(
+        token_count=actual_thinking_tokens,
+        content_tokens=_cycle_tokens_reversed(prompt_tokens, actual_thinking_tokens),
+        remaining_budget=total_budget - actual_thinking_tokens,
+    )
+
+
 def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
     """Extract text and max_tokens from request."""
     if isinstance(request, ChatCompletionRequest):
@@ -331,8 +376,13 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return text, None
     elif isinstance(request, ImageGenerationRequest):
         return request.prompt, None
+    elif isinstance(request, AnthropicMessagesRequest):
+        text = _extract_chat_messages(request.messages)
+        return text, request.max_output_tokens
     elif isinstance(request, SolidoRAGRequest):
         return " ".join(request.query), None
+    elif isinstance(request, ResponsesRequest):
+        return request.prompt_text, request.max_output_tokens
     else:
         raise ValueError(f"Unsupported request type: {type(request)}")
 
@@ -367,6 +417,16 @@ def _extract_osl_fingerprint(request: RequestT) -> dict[str, object]:
         fp["max_tokens"] = request.max_tokens
         fp["min_tokens"] = request.min_tokens
         fp["ignore_eos"] = request.ignore_eos
+    elif isinstance(request, ResponsesRequest):
+        # OpenAI Responses calls it `max_output_tokens` — recorded under
+        # `max_completion_tokens` because both name the same semantic (the
+        # OSL cap) and keeping the JSONL schema uniform is more useful than
+        # preserving the API name-space. The endpoint field on each row
+        # tells consumers which API the cap came from.
+        fp["max_completion_tokens"] = request.max_output_tokens
+        fp["min_tokens"] = request.min_tokens
+        fp["ignore_eos"] = request.ignore_eos
+        fp["reasoning_effort"] = request.reasoning_effort
     return fp
 
 
@@ -431,11 +491,18 @@ def _calculate_variable_token_count(
 
 
 def _generate_seed(prompt_tokens: list[str]) -> int:
-    """Generate deterministic seed from prompt tokens."""
+    """Generate a deterministic seed from prompt tokens.
+
+    Uses crc32 rather than ``hash()``: string hashing is salted per-process
+    via PYTHONHASHSEED, so ``hash()`` made mock-server output lengths vary
+    across CI jobs. When the salted seed landed exactly on the max_tokens
+    budget (~1/1000 jobs), tests asserting ``finish_reason == "stop"`` flaked
+    with ``"length"``. crc32 is stable across processes and platforms.
+    """
     if not prompt_tokens:
         return 0
     sample = prompt_tokens[:5]
-    return hash(tuple(sample)) % 1000
+    return zlib.crc32("\x1f".join(sample).encode()) % 1000
 
 
 def _cycle_tokens(
@@ -471,6 +538,31 @@ def _cycle_tokens_reversed(prompt_tokens: list[str], num_tokens: int) -> list[st
         num_tokens,
         offset=len(CORPUS_TOKENS) // 2 if CORPUS_TOKENS else 0,
     )
+
+
+@contextmanager
+def _prompt_generator_rng(seed: int | None) -> Iterator[None]:
+    """Provide PromptGenerator's required global RNG in standalone-server mode.
+
+    Normal AIPerf processes initialize the RNG during bootstrap, but the mock
+    server imports PromptGenerator directly. Preserve an existing owner when
+    tests or an embedding process already initialized it; otherwise keep the
+    temporary initialization scoped to corpus loading.
+    """
+    from aiperf.common import random_generator as rng
+    from aiperf.common.exceptions import InvalidStateError
+
+    initialized_here = False
+    try:
+        rng.derive("mock_server.corpus.initialization_probe")
+    except InvalidStateError:
+        rng.init(seed)
+        initialized_here = True
+    try:
+        yield
+    finally:
+        if initialized_here:
+            rng.reset()
 
 
 def _load_corpus() -> tuple[str, ...] | None:
@@ -522,13 +614,26 @@ def _load_corpus() -> tuple[str, ...] | None:
                 trust_remote_code=server_config.tokenizer_trust_remote_code,
                 revision=server_config.tokenizer_revision,
             )
-            generator = PromptGenerator(config=PromptConfig(), tokenizer=tokenizer)
+            with _prompt_generator_rng(server_config.random_seed):
+                generator = PromptGenerator(
+                    prompts=PromptConfig(),
+                    prefix_prompts=None,
+                    tokenizer=tokenizer,
+                )
 
-            # Fast batch conversion, replace BPE space marker (Ġ) with actual space
-            raw_tokens = tokenizer._tokenizer.convert_ids_to_tokens(
-                generator._tokenized_corpus
+            # Decode through the public wrapper's batched call so both Hugging
+            # Face and the built-in tiktoken adapter produce the text
+            # fragments streamed by the mock server, without paying decode()
+            # overhead once per token.
+            token_ids = generator._tokenized_corpus
+            unique_token_ids = list(dict.fromkeys(token_ids))
+            decoded_tokens = tokenizer.decode_batch(
+                [[token_id] for token_id in unique_token_ids]
             )
-            tokens = tuple(tok.replace("Ġ", " ") for tok in raw_tokens)
+            decoded_by_id = dict(zip(unique_token_ids, decoded_tokens, strict=True))
+            tokens = tuple(decoded_by_id[token_id] for token_id in token_ids)
+        except TypeError:
+            raise
         except Exception as e:
             logger.warning(
                 f"Tokenizer failed ({e}), falling back to character-based chunking"

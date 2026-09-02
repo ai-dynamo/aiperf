@@ -3,6 +3,7 @@
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.models import ParsedResponse, TextResponse, TextResponseData
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
@@ -257,3 +258,113 @@ class TestBaseEndpointAbstractMethods:
 
         with pytest.raises(TypeError):
             IncompleteEndpoint(model_endpoint=test_model_endpoint)
+
+
+class TestBuildMessagesResetContext:
+    """Byte-critical: build_messages must honor Turn.reset_context.
+
+    weka emits reset_context=True at a mid-segment LCP cut, where the prior
+    accumulated message array is discarded rather than extended. Main's model
+    has the field; this verifies build_messages acts on it.
+    """
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="http://localhost:8000/v1/test"
+        )
+        return create_endpoint_with_mock_transport(MockEndpoint, model_endpoint)
+
+    def test_extend_when_reset_context_false(self, endpoint):
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(raw_messages=[{"role": "user", "content": "C"}]),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["A", "B", "C"]
+
+    def test_reset_context_discards_prior_messages(self, endpoint):
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(
+                raw_messages=[{"role": "user", "content": "RESET"}],
+                reset_context=True,
+            ),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["RESET"]
+
+    def test_reset_context_resumes_accumulation_after_reset(self, endpoint):
+        """Mid-sequence reset [A, B, RESET, C] -> [RESET, C]: accumulation
+        resumes normally on turns following the reset, not just clears."""
+        from aiperf.common.models import Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(
+                raw_messages=[{"role": "user", "content": "RESET"}],
+                reset_context=True,
+            ),
+            Turn(raw_messages=[{"role": "assistant", "content": "C"}]),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["RESET", "C"]
+
+    def test_reset_context_without_raw_messages_is_noop(self, endpoint):
+        """reset_context only fires for turns carrying raw_messages. A synthetic
+        turn (raw_messages=None) with the flag set must NOT discard prior
+        turns; it renders and appends normally."""
+        from aiperf.common.models import Text, Turn
+
+        turns = [
+            Turn(raw_messages=[{"role": "user", "content": "A"}]),
+            Turn(raw_messages=[{"role": "assistant", "content": "B"}]),
+            Turn(role="user", texts=[Text(contents=["C"])], reset_context=True),
+        ]
+        messages = endpoint.build_messages(turns)
+        assert [m["content"] for m in messages] == ["A", "B", "C"]
+
+
+class TestRenderTurnContent:
+    """Tests for _render_turn_content scalar vs. parts selection."""
+
+    @pytest.fixture
+    def endpoint(self):
+        model_endpoint = create_model_endpoint(
+            EndpointType.CHAT, base_url="http://localhost:8000/v1/test"
+        )
+        return create_endpoint_with_mock_transport(MockEndpoint, model_endpoint)
+
+    def test_single_text_emits_scalar_by_default(self, endpoint):
+        """Default: single-text turn produces a plain string, not a parts list."""
+        from aiperf.common.models import Text, Turn
+
+        turn = Turn(role="user", texts=[Text(contents=["hello"])])
+        content = endpoint._render_turn_content(turn)
+        assert content == "hello"
+
+    def test_force_content_parts_emits_parts_array(self, endpoint, monkeypatch):
+        """FORCE_CONTENT_PARTS=True: single-text turn produces a parts list."""
+        from aiperf.common.models import Text, Turn
+
+        monkeypatch.setattr(Environment.ENDPOINT, "FORCE_CONTENT_PARTS", True)
+        turn = Turn(role="user", texts=[Text(contents=["hello"])])
+        content = endpoint._render_turn_content(turn)
+        assert content == [{"type": "text", "text": "hello"}]
+
+    def test_endpoint_settings_env_var(self, monkeypatch):
+        """AIPERF_ENDPOINT_FORCE_CONTENT_PARTS=true populates _EndpointSettings."""
+        from aiperf.common.environment import (
+            _EndpointSettings,  # type: ignore[attr-defined]
+        )
+
+        monkeypatch.setenv("AIPERF_ENDPOINT_FORCE_CONTENT_PARTS", "true")
+        settings = _EndpointSettings()
+        assert settings.FORCE_CONTENT_PARTS is True

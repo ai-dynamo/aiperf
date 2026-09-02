@@ -287,7 +287,7 @@ class TestParameterSweep:
                 )
 
         # Verify sweep CSV format (wide-format per sweep-aggregates.md)
-        csv_content = sweep_csv.read_text()
+        csv_content = sweep_csv.read_text(encoding="utf-8")
         lines = csv_content.strip().split("\n")
 
         # Check header - wide format has parameter columns + metric columns with suffixes
@@ -578,7 +578,7 @@ class TestParameterSweep:
                 )
 
         # Verify sweep CSV format (wide-format per sweep-aggregates.md)
-        csv_content = sweep_csv.read_text()
+        csv_content = sweep_csv.read_text(encoding="utf-8")
         lines = csv_content.strip().split("\n")
 
         # Check header - wide format has parameter columns + metric columns with suffixes
@@ -1418,7 +1418,7 @@ class TestParameterSweep:
                         )
 
             # Validate CSV content and format
-            csv_content = agg_csv.read_text()
+            csv_content = agg_csv.read_text(encoding="utf-8")
             csv_lines = csv_content.strip().split("\n")
             assert len(csv_lines) > 1, "CSV must have header and data rows"
 
@@ -1601,7 +1601,7 @@ class TestParameterSweep:
                 )
 
         # Validate sweep aggregate CSV content and format (wide-format per sweep-aggregates.md)
-        csv_content = sweep_csv.read_text()
+        csv_content = sweep_csv.read_text(encoding="utf-8")
         csv_lines = csv_content.strip().split("\n")
         assert len(csv_lines) > 1, "Sweep CSV must have header and data rows"
 
@@ -1700,7 +1700,7 @@ class TestParameterSweep:
                         )
 
             # Validate CSV content
-            csv_content = agg_csv.read_text()
+            csv_content = agg_csv.read_text(encoding="utf-8")
             csv_lines = csv_content.strip().split("\n")
             assert len(csv_lines) > 1, "CSV must have header and data rows"
 
@@ -1786,7 +1786,7 @@ class TestParameterSweep:
                 assert "concurrency" in params
 
         # Validate sweep aggregate CSV content
-        csv_content = sweep_csv.read_text()
+        csv_content = sweep_csv.read_text(encoding="utf-8")
         csv_lines = csv_content.strip().split("\n")
         assert len(csv_lines) > 1, "Sweep CSV must have header and data rows"
 
@@ -2858,7 +2858,7 @@ class TestParameterSweep:
         # per-cell view) rather than one entry per individual trial; see
         # commit e4f2b3a75 ("feat(plot): support sweep aggregate dirs ...")
         # which made trials>1 sweeps load via the aggregate/ tree.
-        log_content = plot_log.read_text()
+        log_content = plot_log.read_text(encoding="utf-8")
         assert "Found 3 unique run directories" in log_content, (
             "Plot should detect 3 aggregate cells (one per concurrency value)"
         )

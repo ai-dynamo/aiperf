@@ -38,8 +38,9 @@ class TestZMQPubClientPublish:
 
         await client.publish(sample_message)
 
-        mock_zmq_socket.send_multipart.assert_called_once()
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        # PUB FD path frames the message as two sync sends: topic + payload.
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
+        assert len(sent_parts) == 2
 
         # First part is topic
         topic = sent_parts[0].decode()
@@ -61,7 +62,7 @@ class TestZMQPubClientPublish:
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
         assert topic == f"{MessageType.HEARTBEAT}{TOPIC_END}"
@@ -76,16 +77,18 @@ class TestZMQPubClientPublish:
 
         message = TargetedServiceMessage(
             service_id="test-service",
-            message_type=MessageType.COMMAND,
+            message_type=MessageType.CONNECTION_PROBE,
             target_service_id="service-123",
         )
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
-        expected_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}service-123{TOPIC_END}"
+        expected_topic = (
+            f"{MessageType.CONNECTION_PROBE}{TOPIC_DELIMITER}service-123{TOPIC_END}"
+        )
         assert topic == expected_topic
 
     @pytest.mark.asyncio
@@ -98,16 +101,18 @@ class TestZMQPubClientPublish:
 
         message = TargetedServiceMessage(
             service_id="test-service",
-            message_type=MessageType.COMMAND,
+            message_type=MessageType.CONNECTION_PROBE,
             target_service_type="WORKER",
         )
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
-        expected_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}WORKER{TOPIC_END}"
+        expected_topic = (
+            f"{MessageType.CONNECTION_PROBE}{TOPIC_DELIMITER}WORKER{TOPIC_END}"
+        )
         assert topic == expected_topic
 
     @pytest.mark.asyncio
@@ -121,13 +126,13 @@ class TestZMQPubClientPublish:
         # Can only provide one of target_service_id or target_service_type
         message = TargetedServiceMessage(
             service_id="test-service",
-            message_type=MessageType.COMMAND,
+            message_type=MessageType.CONNECTION_PROBE,
             target_service_id="service-123",
         )
 
         await client.publish(message)
 
-        sent_parts = mock_zmq_socket.send_multipart.call_args[0][0]
+        sent_parts = [c.args[0] for c in mock_zmq_socket._sync_send.call_args_list]
         topic = sent_parts[0].decode()
 
         # Should use service_id in topic
@@ -177,8 +182,8 @@ class TestZMQPubClientTopicDetermination:
         [
             MessageType.HEARTBEAT,
             MessageType.ERROR,
-            MessageType.COMMAND,
-            MessageType.COMMAND_RESPONSE,
+            MessageType.CONNECTION_PROBE,
+            MessageType.RECORDS,
         ],
     )  # fmt: skip
     def test_determine_topic_for_various_message_types(
@@ -198,12 +203,15 @@ class TestZMQPubClientTopicDetermination:
 
         message = TargetedServiceMessage(
             service_id="test-service",
-            message_type=MessageType.COMMAND,
+            message_type=MessageType.CONNECTION_PROBE,
             target_service_id="svc-456",
         )
         topic = client._determine_topic(message)
 
-        assert topic == f"{MessageType.COMMAND}{TOPIC_DELIMITER}svc-456{TOPIC_END}"
+        assert (
+            topic
+            == f"{MessageType.CONNECTION_PROBE}{TOPIC_DELIMITER}svc-456{TOPIC_END}"
+        )
 
     def test_determine_topic_with_service_type(self, mock_zmq_context):
         """Test topic determination with service type."""
@@ -211,12 +219,15 @@ class TestZMQPubClientTopicDetermination:
 
         message = TargetedServiceMessage(
             service_id="test-service",
-            message_type=MessageType.COMMAND,
+            message_type=MessageType.CONNECTION_PROBE,
             target_service_type="PROCESSOR",
         )
         topic = client._determine_topic(message)
 
-        assert topic == f"{MessageType.COMMAND}{TOPIC_DELIMITER}PROCESSOR{TOPIC_END}"
+        assert (
+            topic
+            == f"{MessageType.CONNECTION_PROBE}{TOPIC_DELIMITER}PROCESSOR{TOPIC_END}"
+        )
 
 
 class TestZMQPubClientEdgeCases:
@@ -238,4 +249,5 @@ class TestZMQPubClientEdgeCases:
         for msg in messages:
             await client.publish(msg)
 
-        assert mock_zmq_socket.send_multipart.call_count == 5
+        # Two sync sends (topic + payload) per publish.
+        assert mock_zmq_socket._sync_send.call_count == 5 * 2

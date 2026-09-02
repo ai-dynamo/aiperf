@@ -12,17 +12,20 @@ from aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
     Message,
+    ResponsesRequest,
 )
 from aiperf_mock_server.request_recorder import (
     RequestRecorder,
     _build_summary,
     _compute_shape_80,
+    _encode_request_prompt_ids,
     _histogram,
     _print_summary,
     _render_histogram,
     _render_vocab_lines,
     _vocab_distribution,
 )
+from aiperf_mock_server.utils import _create_request_id
 from pytest import param
 
 
@@ -1269,3 +1272,45 @@ class TestPrintSummaryVocab:
         assert lines[isl_hist_idx - 1] == ""
         assert lines[vocab_idx - 1] == ""
         assert lines[vocab_idx - 2] == ""
+
+
+class TestResponsesRequestRecorderDispatch:
+    """`ResponsesRequest` flows through `_create_request_id` and
+    `_encode_request_prompt_ids`, so the recorder can produce a coherent
+    JSONL row for a `/v1/responses` request once handlers start passing it
+    in (subsequent commit).
+    """
+
+    def test_create_request_id_uses_resp_prefix(self):
+        req = ResponsesRequest(model="m", input="hi")
+        rid = _create_request_id(req)
+        assert rid.startswith("resp-")
+
+    def test_encode_request_prompt_ids_tokenizes_flattened_prompt(self):
+        tok = _FakeTokenizer(vocab_size=100, encodings={"hello world": [1, 2, 3]})
+        req = ResponsesRequest(model="m", input="hello world", max_output_tokens=64)
+        ids, mode = _encode_request_prompt_ids(tok, req)
+        assert ids == [1, 2, 3]
+        assert mode == "tokenizer_call"
+
+    def test_encode_request_prompt_ids_walks_content_blocks(self):
+        """ResponsesRequest with a content-block list flows through
+        `prompt_text` → `_encode_texts_with_tokenizer_call`. The flattener
+        joins multi-part content with `\\n`, matching the original
+        `_extract_responses_prompt` behavior."""
+        tok = _FakeTokenizer(vocab_size=100, encodings={"hello\nworld": [9, 9, 9]})
+        req = ResponsesRequest(
+            model="m",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hello"},
+                        {"type": "input_text", "text": "world"},
+                    ],
+                }
+            ],
+        )
+        ids, mode = _encode_request_prompt_ids(tok, req)
+        assert ids == [9, 9, 9]
+        assert mode == "tokenizer_call"

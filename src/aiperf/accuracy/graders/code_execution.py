@@ -21,23 +21,27 @@ Wiring into aiperf:
     the generated code in a sandbox.
 
 Process model:
-    ``codegen_metrics`` uses a ``ProcessPoolExecutor`` with
-    ``num_process_evaluate=8`` workers under the hood. Those forks
-    happen inside the record-processor service, not in aiperf's HTTP
-    worker pool. Per-grade fork latency is ~50–200 ms on Linux plus
-    the actual code-execution time (capped by ``timeout=6``).
+    ``codegen_metrics`` forks a ``ProcessPoolExecutor`` internally,
+    which a multithreaded daemon (the record processor) cannot do
+    safely. Rather than run it in-process, the grader delegates each
+    grade to a dedicated single-threaded worker subprocess
+    (``_codegen_worker``) via ``CodegenGradingWorker``, keeping the
+    fork-based sandbox out of the daemon. See issue #1145.
 
 Reference: ``lighteval/tasks/tasks/lcb/main.py:CodegenMetric``
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from aiperf.accuracy.graders._codegen_worker_client import (
+    CodegenGradingWorker,
+    CodegenWorkerError,
+)
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
 
@@ -48,26 +52,21 @@ _log = logging.getLogger(__name__)
 
 try:
     from lighteval.tasks.tasks.lcb.codegen_metrics import (
-        codegen_metrics,
         extract_code,
+        translate_private_test_cases,
     )
 
     _HAS_LIGHTEVAL_LCB = True
 except ImportError:  # pragma: no cover
     _HAS_LIGHTEVAL_LCB = False
-    codegen_metrics = None  # type: ignore[assignment]
     extract_code = None  # type: ignore[assignment]
+    translate_private_test_cases = None  # type: ignore[assignment]
 
 
 _MISSING_LIGHTEVAL_HINT = (
     "lighteval is not installed; the code_execution grader cannot "
     "run. Install with: uv pip install 'aiperf[accuracy]'."
 )
-
-# Lighteval's CodegenMetric defaults — reproduced here so the grader
-# behaves identically to the recipe.
-_LCB_PASS_AT_K = (1,)
-_LCB_NUM_PROCESSES = 8
 
 
 class CodeExecutionGrader(BaseGrader):
@@ -78,19 +77,26 @@ class CodeExecutionGrader(BaseGrader):
     ``_build_ground_truth``: a JSON object with ``starter_code``,
     ``public_test_cases``, ``private_test_cases``, and ``metadata``
     fields. We rebuild the lighteval-shaped sample
-    (``inputs``/``outputs``/``fn_name``) from the payload and call
-    lighteval's ``codegen_metrics`` with a 6-second per-test timeout.
+    (``inputs``/``outputs``/``fn_name``) from the payload and delegate
+    to the out-of-process grading worker, which runs lighteval's
+    ``codegen_metrics``.
 
     Returns ``correct=True`` when pass@1 == 1.0 (every test case
     passed), else ``correct=False``. ``unparsed=True`` when the
-    grader couldn't extract code from the response or lighteval
-    raised an exception during execution.
+    grader couldn't extract code from the response or the worker
+    raised a ``CodegenWorkerError`` during execution.
     """
+
+    @classmethod
+    def check_available(cls) -> None:
+        """Raise if lighteval is missing (see ``BaseGrader.check_available``)."""
+        if not _HAS_LIGHTEVAL_LCB:
+            raise RuntimeError(_MISSING_LIGHTEVAL_HINT)
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run=run, **kwargs)
-        if not _HAS_LIGHTEVAL_LCB:
-            raise RuntimeError(_MISSING_LIGHTEVAL_HINT)
+        self.check_available()
+        self._worker = CodegenGradingWorker()
 
     def extract_answer(self, response_text: str, **kwargs: Any) -> str:
         """Return the code block lighteval would extract from the response.
@@ -101,7 +107,7 @@ class CodeExecutionGrader(BaseGrader):
         """
         try:
             return str(extract_code(response_text) or "")
-        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
+        except Exception as exc:  # pragma: no cover - defensive
             _log.debug("extract_code raised: %s", exc, exc_info=True)
             return ""
 
@@ -138,19 +144,13 @@ class CodeExecutionGrader(BaseGrader):
         generated_code = [[snippet]]
 
         try:
-            # ``codegen_metrics`` is synchronous and spins up a
-            # ProcessPoolExecutor internally — pushing it to a worker
-            # thread keeps the event loop free for other concurrent
-            # grade() calls during a benchmark run.
-            metrics, _ = await asyncio.to_thread(
-                codegen_metrics,
+            metrics = await self._worker.grade_codegen(
                 evaluation_sample,
                 generated_code,
-                k_list=list(_LCB_PASS_AT_K),
-                num_process_evaluate=_LCB_NUM_PROCESSES,
+                timeout=_derive_grade_timeout(len(inputs)),
             )
-        except Exception as exc:  # noqa: BLE001
-            _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
+        except CodegenWorkerError as exc:
+            _log.debug("codegen grading worker failed: %s", exc)
             return _grading_failure(
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
             )
@@ -173,6 +173,27 @@ class CodeExecutionGrader(BaseGrader):
             extracted_answer=snippet,
             ground_truth="<lcb test cases>",
         )
+
+    async def aclose(self) -> None:
+        """Terminate the grading worker and its process group on graceful stop.
+
+        The abrupt ``os._exit`` force-kill path (where this never runs) is handled
+        worker-side by a death-pipe watcher; see ``_codegen_worker.py``.
+        """
+        await self._worker.aclose()
+
+
+def _derive_grade_timeout(num_cases: int) -> float:
+    """Client-side wall-clock ceiling for one grade. lighteval caps a problem at
+    ``(6 + 1) * num_cases + 5`` seconds internally; add a margin and hard-cap so a
+    single wedged worker cannot stall the run, without firing on merely slow ones.
+    The cap is configurable via ``AIPERF_ACCURACY_LCB_GRADE_TIMEOUT_MAX_S``."""
+    from aiperf.common.environment import Environment
+
+    return min(
+        Environment.ACCURACY.LCB_GRADE_TIMEOUT_MAX_S,
+        7.0 * max(num_cases, 1) + 5.0 + 30.0,
+    )
 
 
 def _extract_pass_at_1(metrics: dict[str, Any]) -> float | None:
@@ -234,7 +255,7 @@ def _payload_to_test_cases(
         raise TypeError(f"expected dict payload, got {type(payload).__name__}")
 
     public_cases = _parse_test_cases(payload.get("public_test_cases", ""))
-    private_cases = _parse_test_cases(payload.get("private_test_cases", ""))
+    private_cases = _decode_private_test_cases(payload.get("private_test_cases", ""))
     all_cases = public_cases + private_cases
     if not all_cases:
         # A payload with zero test cases is unambiguously malformed:
@@ -276,6 +297,45 @@ def _parse_test_cases(raw: Any) -> list[dict[str, Any]]:
     raise TypeError(
         f"test cases must be a JSON string or list, got {type(raw).__name__}"
     )
+
+
+def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
+    """Decode LCB's ``private_test_cases`` field.
+
+    The upstream LCB dataset stores ``private_test_cases`` as a
+    base64 → zlib → pickle → json blob to keep the on-disk size
+    reasonable (the private cases can be much larger than the public
+    ones). ``translate_private_test_cases`` in
+    ``lighteval.tasks.tasks.lcb.codegen_metrics`` is the canonical
+    decoder; the trt-llm/lighteval LCB task calls it the same way
+    (``private_test_cases =
+    translate_private_test_cases(line["private_test_cases"])``).
+
+    For string inputs we try the encoded decode first to match the
+    production data path. If decoding raises (the string is plain
+    JSON — the legacy shape used by older fixtures and in-process
+    callers), fall back to the same JSON-string handling
+    ``_parse_test_cases`` uses for the public side so existing
+    consumers don't break. Already-deserialized lists are passed
+    through verbatim.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if (
+        isinstance(raw, str | bytes | bytearray)
+        and translate_private_test_cases is not None
+    ):
+        try:
+            return translate_private_test_cases(raw)
+        except Exception:  # graceful fallback to legacy plain-JSON shape
+            _log.debug(
+                "translate_private_test_cases couldn't decode raw private_test_cases; "
+                "falling back to plain JSON parse",
+                exc_info=True,
+            )
+    return _parse_test_cases(raw)
 
 
 def _grading_failure(

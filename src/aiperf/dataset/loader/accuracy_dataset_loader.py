@@ -11,9 +11,11 @@ OpenAI-compatible messages in Turn.raw_messages.
 The problem ordering is deterministic: Conversation i corresponds to
 BenchmarkProblem i. Each Conversation carries accuracy_ground_truth and
 accuracy_task so that DatasetManager can propagate them through
-ConversationMetadata inside DatasetConfiguredNotification. Processors
-(AccuracyRecordProcessor, AccuracyResultsProcessor) receive these values
-from the notification instead of independently re-loading the benchmark.
+ConversationMetadata inside DatasetConfiguredNotification. The ground truth is
+read by AccuracyRecordProcessor, which stamps the per-conversation task label
+onto each graded record so AccuracyAccumulator can bucket by task. Processors
+receive these values from the notification instead of independently re-loading
+the benchmark.
 The session_num % len(conversations) mapping handles both single-pass and
 multi-pass (num_requests > dataset size) runs and is only valid when the
 dataset is sampled sequentially; DatasetManager enforces that invariant and
@@ -124,6 +126,14 @@ class AccuracyDatasetLoader:
                 if problem.metadata
                 else DEFAULT_GENERATION_SIZE
             )
+            # Benchmarks that need a server-side stop (e.g. MMLU non-CoT uses
+            # ``["\n"]`` for lighteval parity) declare it in metadata; ride it
+            # through the OpenAI-style ``extra_body["stop"]``. Empty/absent =>
+            # no stop (e.g. CoT, which must not truncate the reasoning).
+            stop_sequence = (
+                problem.metadata.get("stop_sequence") if problem.metadata else None
+            )
+            extra_body = {"stop": stop_sequence} if stop_sequence else None
 
             prompt_text = (
                 f"{system_prompt}\n\n{problem.prompt}"
@@ -135,6 +145,7 @@ class AccuracyDatasetLoader:
                 role="user",
                 raw_messages=messages,
                 max_tokens=gen_size,
+                extra_body=extra_body,
                 texts=[Text(contents=[prompt_text])],
             )
 

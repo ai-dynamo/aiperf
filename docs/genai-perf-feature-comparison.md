@@ -110,7 +110,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Dataset Entries** | `--num-dataset-entries --num-prompts` | ✅ | ✅ | GenAI-Perf and AIPerf both accept this flag. In AIPerf it is collapsed with `--num-sessions / --conversation-num / --num-conversations` into a single conversation count; GenAI-Perf keeps `--num-dataset-entries` and `--num-sessions` distinct (see [Session Configuration](#sessionconversation-configuration-multi-turn)). |
 | **Public Dataset** | `--public-dataset` | ❌ | ✅ | sharegpt, aimo, mmstar, vision_arena, llava_onevision, speed_bench_* (50+ subsets), librispeech, voxpopuli, gigaspeech, ami, spgispeech, instruct_coder, blazedit_5k, blazedit_10k, ... |
 | **HuggingFace Subset Override** | `--hf-subset` | ❌ | ✅ | Override the HF subset/config for HF-backed public datasets |
-| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace,bailian_trace,burst_gpt_trace,sagemaker_data_capture}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
+| **Custom Dataset Type** | `--custom-dataset-type`<br/>`{single_turn,multi_turn,random_pool,mooncake_trace,bailian_trace,baseten_trace,burst_gpt_trace,sagemaker_data_capture}` | ❌ | ✅ | GenAI-Perf infers dataset type from input file format |
 | **Dataset Sampling Strategy** | `--dataset-sampling-strategy`<br/>`{sequential,random,shuffle}` | ❌ | ✅ | Controls how entries are drawn during benchmarking |
 | **Fixed Schedule** | `--fixed-schedule` | ✅ | ✅ | |
 | **Fixed Schedule Auto Offset** | `--fixed-schedule-auto-offset` | ❌ | ✅ | |
@@ -245,7 +245,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 |---------|------------|------------|---------|-------|
 | **Input Tokens Mean** | `--synthetic-input-tokens-mean`<br/>`--isl` | ✅ | ✅ | |
 | **Input Tokens Stddev** | `--synthetic-input-tokens-stddev` | ✅ | ✅ | |
-| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br/>`--isl-block-size` | ❌ | ✅ | Used for `mooncake_trace` hash_id blocks |
+| **Input Tokens Block Size** | `--prompt-input-tokens-block-size`<br/>`--isl-block-size` | ❌ | ✅ | Used for trace `hash_ids` block alignment (`mooncake_trace`, `bailian_trace`, `baseten_trace`) |
 
 ---
 
@@ -313,7 +313,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Video Width/Height** | `--video-width --video-height` | ❌ | ✅ | Resolution in pixels (both or neither) |
 | **Video Synth Type** | `--video-synth-type`<br/>`{moving_shapes,grid_clock,noise}` | ❌ | ✅ | Synthetic content generator |
 | **Video Format** | `--video-format`<br/>`{webm,mp4}` | ❌ | ✅ | Container format |
-| **Video Codec** | `--video-codec` | ❌ | ✅ | Any FFmpeg-supported codec (libvpx-vp9, libx264, h264_nvenc, ...) |
+| **Video Codec** | `--video-codec` | ❌ | ✅ | Any codec the local FFmpeg supports (libvpx-vp9 default; the AIPerf container ships VP8/VP9 only) |
 | **Embedded Audio Track** | `--video-audio-num-channels --video-audio-sample-rate --video-audio-codec --video-audio-depth` | ❌ | ✅ | Optional audio mux for video clips |
 | **Download Video Content** | `--download-video-content` | ❌ | ✅ | Include video download time in request latency |
 

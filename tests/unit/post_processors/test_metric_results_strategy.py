@@ -11,7 +11,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import CreditPhaseStats
 from aiperf.post_processors.strategies.metric_results import MetricResultsStrategy
-from tests.unit.post_processors.conftest import create_metric_records_message
+from tests.unit.post_processors.conftest import create_metric_records_data
 
 
 @dataclass
@@ -74,9 +74,7 @@ class TestMetricResultsStrategy:
         strategy = MetricResultsStrategy(
             _MetricStrategyContext(attributes={}, coerced_values={})
         )
-        metric_record = create_metric_records_message(
-            results=[{"request_latency_ns": 1}]
-        ).to_data()
+        metric_record = create_metric_records_data(results=[{"request_latency_ns": 1}])
         timing_stats = CreditPhaseStats(phase=CreditPhase.PROFILING)
 
         assert strategy.supports(metric_record) is True
@@ -93,7 +91,7 @@ class TestMetricResultsStrategy:
             },
         )
         strategy = MetricResultsStrategy(context)
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[
                 {
                     "request_latency": 123_000_000,
@@ -101,7 +99,7 @@ class TestMetricResultsStrategy:
                     "ignored_metric": [],
                 }
             ]
-        ).to_data()
+        )
 
         await strategy.process(metric_record)
 

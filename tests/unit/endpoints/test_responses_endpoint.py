@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import orjson
 import pytest
 from pytest import param
 
@@ -12,7 +13,12 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    RequestRecord,
+    TextResponse,
+    TextResponseData,
+)
 from aiperf.common.models.usage_models import Usage
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -451,6 +457,7 @@ class TestResponsesEndpoint:
         assert payload["input"][1]["role"] == "assistant"
         assert payload["input"][2]["content"] == "Third"
         assert payload["model"] == "m3"
+        assert "previous_response_id" not in payload
 
     def test_format_payload_filters_empty_multimodal_content(
         self, endpoint, model_endpoint
@@ -471,16 +478,20 @@ class TestResponsesEndpoint:
         assert len(text_parts) == 2
         assert len(image_parts) == 1
 
-    def test_format_payload_single_text_empty_contents_produces_empty_list(
+    def test_format_payload_single_text_empty_contents_produces_empty_string(
         self, endpoint, model_endpoint
     ):
-        """Single text with empty contents list falls through to multimodal branch."""
+        """Empty contents degrade to ``""``, never ``[]``.
+
+        Servers reject ``content: []`` ("message content parts cannot be
+        empty"), so the multimodal branch falls back to the empty string.
+        """
         turn = Turn(texts=[Text(contents=[])], model="test-model")
         request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
 
         payload = endpoint.format_payload(request_info)
 
-        assert payload["input"][0]["content"] == []
+        assert payload["input"][0]["content"] == ""
 
     def test_format_payload_explicit_role(self, endpoint, model_endpoint):
         """Explicit turn role is used instead of default 'user'."""
@@ -909,3 +920,286 @@ class TestResponsesExtraBody:
         )
         payload = responses_endpoint.format_payload(request_info)
         assert "vendor_x" not in payload
+
+
+class TestResponsesBuildMessagesResetContext:
+    """ResponsesEndpoint.build_messages must honor reset_context (discard prior
+    accumulated turns) like BaseEndpoint.build_messages, so pre-reset items
+    never reach the wire for endpoint=responses."""
+
+    @pytest.fixture
+    def endpoint(self):
+        return create_endpoint_with_mock_transport(
+            ResponsesEndpoint, create_model_endpoint(EndpointType.RESPONSES)
+        )
+
+    def test_reset_context_discards_prior_turns(self, endpoint):
+        turns = [
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "OLD"}],
+            ),
+            Turn(
+                role="assistant",
+                raw_messages=[
+                    {"type": "message", "role": "assistant", "content": "OLD reply"}
+                ],
+            ),
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "FRESH"}],
+                reset_context=True,
+            ),
+        ]
+        msgs = endpoint.build_messages(turns)
+        assert [m["content"] for m in msgs] == ["FRESH"]
+
+    def test_non_reset_turns_extend(self, endpoint):
+        turns = [
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "A"}],
+            ),
+            Turn(
+                role="user",
+                raw_messages=[{"type": "message", "role": "user", "content": "B"}],
+            ),
+        ]
+        msgs = endpoint.build_messages(turns)
+        assert [m["content"] for m in msgs] == ["A", "B"]
+
+
+class TestResponsesStatefulChaining:
+    """ResponsesEndpoint must extract response ID from server responses and thread
+    it as `previous_response_id` on subsequent turns while sending only the latest turn."""
+
+    @pytest.fixture
+    def endpoint(self) -> ResponsesEndpoint:
+        return create_endpoint_with_mock_transport(
+            ResponsesEndpoint, create_model_endpoint(EndpointType.RESPONSES)
+        )
+
+    @pytest.fixture
+    def store_endpoint(self) -> ResponsesEndpoint:
+        return create_endpoint_with_mock_transport(
+            ResponsesEndpoint,
+            create_model_endpoint(EndpointType.RESPONSES, extra=[("store", True)]),
+        )
+
+    def test_extract_response_id_store_requested_response_omits_store_returns_id(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": "resp_no_echo",
+                                "object": "response",
+                                "status": "completed",
+                            },
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert store_endpoint.extract_response_id(record) == "resp_no_echo"
+
+    def test_extract_response_id_streaming_created_returns_id(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.created",
+                            "response": {
+                                "id": "resp_b6c65395f4fb8c7d",
+                                "object": "response",
+                                "status": "in_progress",
+                                "store": True,
+                            },
+                        }
+                    ).decode(),
+                ),
+                TextResponse(
+                    perf_ns=2,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.output_text.delta",
+                            "delta": "Hello",
+                        }
+                    ).decode(),
+                ),
+            ]
+        )
+        assert endpoint.extract_response_id(record) == "resp_b6c65395f4fb8c7d"
+
+    def test_extract_response_id_stream_ends_in_failure_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.created",
+                            "response": {
+                                "id": "resp_aborted",
+                                "object": "response",
+                                "status": "in_progress",
+                                "store": True,
+                            },
+                        }
+                    ).decode(),
+                ),
+                TextResponse(
+                    perf_ns=2,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.failed",
+                            "response": {
+                                "id": "resp_aborted",
+                                "object": "response",
+                                "status": "failed",
+                                "store": True,
+                            },
+                        }
+                    ).decode(),
+                ),
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
+    def test_extract_response_id_non_streaming_returns_id(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "id": "resp_non_stream_456",
+                            "object": "response",
+                            "status": "completed",
+                            "store": True,
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) == "resp_non_stream_456"
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            param("failed", id="failed"),
+            param("incomplete", id="incomplete"),
+        ],
+    )  # fmt: skip
+    def test_extract_response_id_non_streaming_failure_status_returns_none(
+        self, store_endpoint: ResponsesEndpoint, status: str
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "id": "resp_aborted_non_stream",
+                            "object": "response",
+                            "status": status,
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert store_endpoint.extract_response_id(record) is None
+
+    def test_extract_response_id_no_id_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.output_text.delta",
+                            "delta": "Hello",
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
+    def test_extract_response_id_store_false_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": "resp_not_stored",
+                                "object": "response",
+                                "status": "completed",
+                                "store": False,
+                            },
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
+    def test_extract_response_id_store_absent_returns_none(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "id": "resp_no_store_field",
+                            "object": "response",
+                            "status": "completed",
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
+    def test_format_payload_turn1_with_previous_response_id_sends_only_latest(
+        self, endpoint: ResponsesEndpoint
+    ) -> None:
+        turn0 = Turn(
+            role="user",
+            texts=[Text(contents=["First message"])],
+        )
+        turn1 = Turn(
+            role="user",
+            texts=[Text(contents=["Second message"])],
+        )
+        request_info = create_request_info(
+            model_endpoint=endpoint.model_endpoint,
+            turns=[turn0, turn1],
+            previous_response_id="resp_b6c65395f4fb8c7d",
+        )
+        payload = endpoint.format_payload(request_info)
+        assert payload["previous_response_id"] == "resp_b6c65395f4fb8c7d"
+        assert len(payload["input"]) == 1
+        assert payload["input"][0]["content"] == "Second message"

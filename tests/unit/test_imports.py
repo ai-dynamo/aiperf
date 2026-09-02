@@ -13,10 +13,28 @@ from pathlib import Path
 
 import pytest
 
+from tests.harness.optional_deps import unsupported_test_module_names
+
 # Root directories
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC_DIR = REPO_ROOT / "src"
 TESTS_DIR = REPO_ROOT / "tests"
+
+# Dependencies declared in pyproject with an environment marker, hence
+# intentionally absent on some platforms (no Windows-on-ARM wheel for pyarrow
+# or datasets). A module that fails to import *only* because one of these is
+# missing is an expected environmental skip, not a code defect, so the sweep
+# treats it as a skip rather than a failure. Modules needing the non-importable
+# soundfile/plotly native stacks self-skip via ``pytest.importorskip`` /
+# module-level ``pytest.skip`` and are caught by the ``pytest.skip.Exception``
+# branch below.
+_MARKER_GATED_DEPS = {"datasets", "pyarrow"}
+
+# Opt-in test-only extras. ``playwright`` backs the browser-driven UI e2e
+# suites (``tests/ui_e2e``), which are marked ``e2e`` and deselected by
+# default; install it with
+# ``uv pip install playwright && uv run playwright install chromium``.
+_OPTIONAL_TEST_DEPS = {"playwright"}
 
 
 def discover_modules(
@@ -114,6 +132,16 @@ def import_modules(modules: list[str]) -> dict[str, Exception]:
             importlib.import_module(module_path)
         except pytest.skip.Exception:
             continue
+        except ImportError as e:
+            if not isinstance(e, ModuleNotFoundError):
+                failures[module_path] = e
+                continue
+            # Expected when an environment-marker-gated optional dep is absent
+            # on this platform (e.g. datasets/pyarrow on Windows-on-ARM).
+            missing = e.name or ""
+            if missing.split(".")[0] in _MARKER_GATED_DEPS | _OPTIONAL_TEST_DEPS:
+                continue
+            failures[module_path] = e
         except Exception as e:
             failures[module_path] = e
     return failures
@@ -129,11 +157,23 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
     REPO_ROOT,
     TESTS_DIR,
     exclude_names={"conftest.py", "test_imports.py"},
-    exclude_dirs={"ci"},
+    # aiperf_mock_amdsmi is the fake amdsmi bindings package; it raises OSError
+    # on import unless AIPERF_MOCK_AMDSMI is set (the dormancy gate), so it is
+    # intentionally non-importable here. It has dedicated coverage in
+    # tests/unit/gpu_telemetry/test_fake_amdsmi_module.py.
+    exclude_dirs={".venv", "ci", "aiperf_mock_amdsmi"},
 )
 
 AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
-TEST_MODULES = sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
+# Test modules that directly import a no-Windows-on-ARM-wheel native dep are
+# excluded from the sweep: the soundfile importers raise OSError (not caught by
+# the ModuleNotFoundError rule above), and the rest are already known-skipped.
+_UNSUPPORTED_TEST_MODULES = unsupported_test_module_names(TESTS_DIR, "tests")
+TEST_MODULES = [
+    m
+    for m in sorted_leaves_first(_TEST_MODULES_WITH_DEPTH)
+    if m not in _UNSUPPORTED_TEST_MODULES
+]
 
 
 # =============================================================================
@@ -233,3 +273,7 @@ class TestImportOrder:
         for modules in [_AIPERF_MODULES_WITH_DEPTH, _TEST_MODULES_WITH_DEPTH]:
             for module, _ in modules:
                 assert "__pycache__" not in module, f"Found pycache in: {module}"
+
+    def test_no_virtualenv_modules(self) -> None:
+        """Virtual environments nested in tests are never import targets."""
+        assert not any(".venv" in module.split(".") for module in TEST_MODULES)

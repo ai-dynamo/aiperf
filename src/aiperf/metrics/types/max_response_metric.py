@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from aiperf.common.enums import MetricConsoleGroup, MetricFlags, MetricTimeUnit
+from aiperf.common.enums import (
+    AggregationKind,
+    MetricConsoleGroup,
+    MetricFlags,
+    MetricTimeUnit,
+)
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.metrics import BaseAggregateMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
@@ -23,6 +28,7 @@ class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
     unit = MetricTimeUnit.NANOSECONDS
     flags = MetricFlags.NO_INDIVIDUAL_RECORDS | MetricFlags.INTERNAL
     console_group = MetricConsoleGroup.NONE
+    aggregation_kind = AggregationKind.MAX
     required_metrics = {
         RequestLatencyMetric.tag,
     }
@@ -41,8 +47,3 @@ class MaxResponseTimestampMetric(BaseAggregateMetric[int]):
         request_latency: int = record_metrics.get_or_raise(RequestLatencyMetric)  # type: ignore
         final_response_ts = record.timestamp_ns + request_latency
         return final_response_ts
-
-    def _aggregate_value(self, value: int) -> None:
-        """Aggregate the metric value. For this metric, we just take the max of the values from the different processes."""
-        if value > self._value:
-            self._value = value

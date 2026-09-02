@@ -39,14 +39,30 @@ def _profile(dataset: str | None = None, model: str | None = "test-model") -> di
     """Construct a minimal profile export with the fields the report reads.
 
     Mirrors the v2 ``BenchmarkConfig`` dump: model names live under
-    ``models.items[].name`` and the public dataset enum under
-    ``datasets[].dataset``.
+    ``models.items[].name``. This helper writes the file/custom-dataset
+    selector ``datasets[].format`` (e.g. SPEED-Bench); use ``_public_profile``
+    for the public-dataset ``datasets[].dataset`` shape.
     """
     input_config: dict = {}
     if model is not None:
         input_config["models"] = {"items": [{"name": model}]}
     if dataset is not None:
         input_config["datasets"] = [{"name": "main", "type": "file", "format": dataset}]
+    return {"input_config": input_config}
+
+
+def _public_profile(dataset: str, model: str | None = "test-model") -> dict:
+    """Construct a profile export for a public dataset run.
+
+    Public datasets serialize their selector under ``datasets[].dataset``
+    (not ``format``), e.g. the spec_al_* HuggingFace acceptance-length
+    benchmarks selected with ``--public-dataset``.
+    """
+    input_config: dict = {
+        "datasets": [{"name": "main", "type": "public", "dataset": dataset}]
+    }
+    if model is not None:
+        input_config["models"] = {"items": [{"name": model}]}
     return {"input_config": input_config}
 
 
@@ -82,6 +98,17 @@ class TestExtractCategory:
 
     def test_extract_category_missing_input_config_returns_none(self):
         assert extract_category({}) is None
+
+    def test_extract_category_public_dataset_selector_returns_suffix(self):
+        # Public datasets serialize under `dataset`, not `format`.
+        assert extract_category(_public_profile(dataset="spec_al_gsm8k")) == "gsm8k"
+
+    def test_extract_category_spec_al_prefix_on_format_key(self):
+        # The spec_al_ prefix is recognized regardless of which selector key holds it.
+        assert extract_category(_profile(dataset="spec_al_mtbench")) == "mtbench"
+
+    def test_extract_category_non_spec_al_public_dataset_returns_none(self):
+        assert extract_category(_public_profile(dataset="sharegpt")) is None
 
 
 class TestExtractModel:
@@ -227,6 +254,13 @@ class TestDetectColumns:
 
     def test_detect_columns_empty_results_returns_empty_list(self):
         assert detect_columns({}) == []
+
+    def test_detect_columns_spec_al_returns_curated_order(self):
+        # spec_al benchmarks render math -> chat -> code, not alphabetically.
+        results = {
+            "model-a": {"mbpp": 1.0, "gsm8k": 2.0, "mtbench": 3.0, "humaneval": 4.0},
+        }
+        assert detect_columns(results) == ["gsm8k", "mtbench", "humaneval", "mbpp"]
 
 
 class TestFindRunDirs:
@@ -397,6 +431,27 @@ class TestBuildReport:
         report = build_report(run_dirs, metric_type="accept_rate")
 
         assert report == {"m1": {"coding": 0.8}}
+
+    def test_build_report_spec_al_public_datasets_per_category(self, tmp_path: Path):
+        # spec_al_* runs serialize their selector under `dataset`; the report
+        # must label and assemble them just like speed_bench_* file runs.
+        _write_run_dir(
+            tmp_path,
+            "run_gsm8k",
+            _public_profile(dataset="spec_al_gsm8k", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 4.2}),
+        )
+        _write_run_dir(
+            tmp_path,
+            "run_mtbench",
+            _public_profile(dataset="spec_al_mtbench", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 3.7}),
+        )
+
+        run_dirs = find_run_dirs([tmp_path])
+        report = build_report(run_dirs, metric_type="accept_length")
+
+        assert report == {"m1": {"gsm8k": 4.2, "mtbench": 3.7}}
 
     def test_build_report_skips_run_dir_without_profile_file(self, tmp_path: Path):
         # build_report can be called with run dirs lacking profile_export_aiperf.json

@@ -196,11 +196,11 @@ def write_if_changed(path: Path, content: str) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if path.exists():
-        existing = path.read_text()
+        existing = path.read_text(encoding="utf-8")
         if existing == content:
             return False
 
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     return True
 
 
@@ -333,7 +333,7 @@ def run(generator_class: type[Generator], args: list[str] | None = None) -> int:
     for gen_file in result.files:
         if parsed.check:
             if gen_file.path.exists():
-                existing = gen_file.path.read_text()
+                existing = gen_file.path.read_text(encoding="utf-8")
                 if existing == gen_file.content:
                     print_up_to_date(f"{gen_file.path.name} is up-to-date")
                 else:

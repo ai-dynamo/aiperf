@@ -7,7 +7,15 @@ import pytest
 
 from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
 from aiperf.common.enums import MetricFlags, MetricType
+from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
+from aiperf.metrics.types.replay_sched_lag_metrics import (
+    ReplaySchedDegradedMetric,
+    ReplaySchedLagP50Metric,
+    ReplaySchedLagP90Metric,
+    ReplaySchedLagP99Metric,
+    ReplaySendScheduleOffsetMetric,
+)
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
@@ -109,6 +117,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.SUPPORTS_VIDEO_ONLY
             | MetricFlags.PRODUCES_VIDEO_ONLY
             | MetricFlags.STREAMING_ONLY
+            | MetricFlags.FIXED_SCHEDULE_ONLY
             | MetricFlags.GOODPUT
             | MetricFlags.EXPERIMENTAL
         )
@@ -137,6 +146,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
                 | MetricFlags.STREAMING_ONLY
+                | MetricFlags.FIXED_SCHEDULE_ONLY
                 | MetricFlags.GOODPUT,
             ),
             # Test exclude_error_metrics=True
@@ -149,6 +159,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
                 | MetricFlags.STREAMING_ONLY
+                | MetricFlags.FIXED_SCHEDULE_ONLY
                 | MetricFlags.ERROR_ONLY
                 | MetricFlags.GOODPUT,
             ),
@@ -162,6 +173,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
                 | MetricFlags.STREAMING_ONLY
+                | MetricFlags.FIXED_SCHEDULE_ONLY
                 | MetricFlags.GOODPUT,
             ),
         ],
@@ -237,6 +249,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.SUPPORTS_VIDEO_ONLY
             | MetricFlags.PRODUCES_VIDEO_ONLY
             | MetricFlags.STREAMING_ONLY
+            | MetricFlags.FIXED_SCHEDULE_ONLY
             | MetricFlags.GOODPUT
             | MetricFlags.EXPERIMENTAL,
             MetricType.RECORD,
@@ -331,3 +344,68 @@ class TestBaseMetricsProcessor:
             BaseMetricsProcessor(mock_run)._setup_metrics(MetricType.RECORD)
 
         GoodReqCountClass.set_slos.assert_not_called()
+
+
+@pytest.fixture
+def fixed_schedule_run():
+    """BenchmarkRun whose profiling phase replays a fixed schedule."""
+    import uuid
+
+    from aiperf.config import BenchmarkConfig, BenchmarkRun
+
+    cfg = BenchmarkConfig.model_validate(
+        {
+            "models": ["test-model"],
+            "endpoint": {
+                "type": EndpointType.COMPLETIONS,
+                "urls": ["http://localhost:8000/v1"],
+                "streaming": False,
+            },
+            "datasets": [{"name": "default", "type": "synthetic"}],
+            "phases": [{"name": "profiling", "type": "fixed_schedule"}],
+        }
+    )
+    return BenchmarkRun(
+        benchmark_id=uuid.uuid4().hex,
+        cfg=cfg,
+        artifact_dir=cfg.artifacts.dir,
+        random_seed=None,
+        variables={},
+    )
+
+
+class TestFixedScheduleOnlyGating:
+    """The replay sched-lag family must activate only for fixed-schedule runs.
+
+    Turn timestamps reach records under every timing mode (a timestamped
+    trace swept with --no-fixed-schedule still stamps them), so the
+    applicability filter has to gate on the run's timing mode.
+    """
+
+    REPLAY_SCHED_TAGS = frozenset(
+        {
+            ReplaySendScheduleOffsetMetric.tag,
+            ReplaySchedLagP50Metric.tag,
+            ReplaySchedLagP90Metric.tag,
+            ReplaySchedLagP99Metric.tag,
+            ReplaySchedDegradedMetric.tag,
+        }
+    )
+
+    def test_replay_sched_family_inactive_on_non_fixed_schedule_run(
+        self, mock_run
+    ) -> None:
+        processor = BaseMetricsProcessor(mock_run)
+
+        applicable = set(MetricRegistry.tags_applicable_to(*processor.get_filters()))
+
+        assert not (applicable & self.REPLAY_SCHED_TAGS)
+
+    def test_replay_sched_family_active_on_fixed_schedule_run(
+        self, fixed_schedule_run
+    ) -> None:
+        processor = BaseMetricsProcessor(fixed_schedule_run)
+
+        applicable = set(MetricRegistry.tags_applicable_to(*processor.get_filters()))
+
+        assert applicable >= self.REPLAY_SCHED_TAGS

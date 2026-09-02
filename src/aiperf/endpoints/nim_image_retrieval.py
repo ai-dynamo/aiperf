@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.models import ParsedResponse
+from aiperf.common.models import ExtractedPayload, ParsedResponse
 from aiperf.common.models.record_models import (
     ImageRetrievalResponseData,
     InferenceServerResponse,
@@ -15,6 +15,18 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 
 class ImageRetrievalEndpoint(BaseEndpoint):
     """NIM Image Retrieval endpoint."""
+
+    def extract_payload_inputs(self, payload: dict[str, Any]) -> ExtractedPayload:
+        """NIM image-retrieval ``input`` is a flat list of image parts
+        (``{"type": "image_url", "url": ...}``) - no role wrapper. Count
+        them directly; there are no text fragments to tokenise."""
+        result = ExtractedPayload()
+        input_items = payload.get("input")
+        if isinstance(input_items, list):
+            for part in input_items:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    result.image_count += 1
+        return result
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format payload for an image retrieval request."""

@@ -49,6 +49,11 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
         InputsFile structures (``data`` key holding a list).
         """
         if data is not None:
+            # Type-dispatch plugins feed arbitrary first-record shapes here;
+            # guard against non-dict inputs (list, string, scalar) so
+            # auto-detection falls through cleanly instead of AttributeError.
+            if not isinstance(data, dict):
+                return False
             if is_speed_bench_row(data):
                 return False
             if not isinstance(data.get("messages"), list):
@@ -156,7 +161,11 @@ def _dir_has_raw_payload_jsonl(directory: Path) -> bool:
                     return isinstance(record, dict) and isinstance(
                         record.get("messages"), list
                     )
-        except (orjson.JSONDecodeError, OSError):
+        except ValueError:
+            # Narrow: only malformed JSON is skipped (orjson.JSONDecodeError is a
+            # ValueError subclass). OSError/PermissionError
+            # from an unreadable file must propagate so can_load fails loud
+            # instead of silently misclassifying the directory.
             continue
     return False
 

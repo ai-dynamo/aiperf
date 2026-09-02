@@ -10,9 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config import BenchmarkConfig
 from aiperf.config.gpu_telemetry import GpuTelemetryConfig
+from aiperf.config.phases import ConcurrencyPhase
 from aiperf.config.resolution.plan import BenchmarkRun, ResolvedConfig
 from aiperf.config.resolution.resolvers import (
     ArtifactDirResolver,
@@ -21,11 +23,15 @@ from aiperf.config.resolution.resolvers import (
     ConfigResolverChain,
     DatasetResolver,
     GpuMetricsResolver,
+    ScenarioResolver,
     TimingResolver,
     TokenizerResolver,
+    _describe_phase,
+    _describe_rate_phase,
     build_default_resolver_chain,
 )
 from aiperf.config.tokenizer import TokenizerConfig
+from aiperf.plugin.enums import PhaseType
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -236,6 +242,68 @@ class TestArtifactDirResolver:
         ArtifactDirResolver().resolve(real_run)
         assert (real_dir / "input_config.json").exists()
 
+    @pytest.mark.parametrize(
+        "supply_run_meta,expected_job_name,expected_epoch",
+        [
+            param(False, "real", None, id="local_derives_meta_from_artifact_dir"),
+            param(True, "bench-job", "1714069323", id="supplied_meta_wins"),
+        ],
+    )  # fmt: skip
+    def test_resolve_user_files_context_prefers_supplied_run_meta(
+        self, tmp_path, supply_run_meta, expected_job_name, expected_epoch
+    ):
+        """``BenchmarkRun.run_meta`` overrides path-derived identity when set.
+
+        The Kubernetes launcher freezes a RunMeta into the serialized run
+        because every pod's artifact dir is the fixed ``/results`` mount. Local
+        runs leave it None and must keep deriving from the resolved dir.
+        """
+        from aiperf.config.loader import load_config_from_string
+        from aiperf.config.user_files import RunMeta
+
+        yaml_str = """
+            benchmark:
+              artifacts:
+                user_files:
+                  - path: notes.md
+                    format: text
+                    content: "{{ job_name }}|{{ epoch }}"
+              models:
+                - test/model
+              endpoint:
+                type: chat
+                urls: ["http://localhost:8000"]
+              datasets:
+                - name: default
+                  type: synthetic
+                  entries: 10
+                  prompts:
+                    isl: 32
+                    osl: 16
+              phases:
+                - name: profiling
+                  type: concurrency
+                  requests: 10
+                  concurrency: 1
+        """
+        run_dir = tmp_path / "real"
+        cfg = load_config_from_string(yaml_str)
+        cfg.benchmark.artifacts.dir = run_dir
+        run = _make_run(cfg.benchmark, artifact_dir=run_dir)
+        if supply_run_meta:
+            run.run_meta = RunMeta(
+                epoch="1714069323", job_name="bench-job", namespace="bench-ns"
+            )
+
+        ArtifactDirResolver().resolve(run)
+
+        job_name, epoch = (run_dir / "notes.md").read_text().split("|")
+        assert job_name == expected_job_name
+        if expected_epoch is None:
+            assert epoch.isdigit()
+        else:
+            assert epoch == expected_epoch
+
     def test_user_centric_default_artifact_name_uses_current_fields(self, tmp_path):
         config = BenchmarkConfig(
             models=["test-model"],
@@ -264,6 +332,42 @@ class TestArtifactDirResolver:
         ArtifactDirResolver().resolve(run)
 
         assert "user_centric-users2-qps1.0" in run.artifact_dir.name
+
+    def test_resolve_purges_stale_output_fragments(self, minimal_config, tmp_path):
+        """Stale fragment files from a prior failed run are removed at resolve time."""
+        target = tmp_path / "artifacts"
+        target.mkdir()
+        fragments_dir = target / "output_fragments"
+        fragments_dir.mkdir()
+        stale = fragments_dir / "output_fragments_old_service_id.jsonl"
+        stale.write_text('{"session_num": 999}\n')
+
+        minimal_config.artifacts.export_outputs_json = True
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run)
+
+        assert not stale.exists()
+
+    def test_resolve_skips_fragment_purge_when_export_disabled(
+        self, minimal_config, tmp_path
+    ):
+        """Fragment directory is left alone when export_outputs_json is False."""
+        target = tmp_path / "artifacts"
+        target.mkdir()
+        fragments_dir = target / "output_fragments"
+        fragments_dir.mkdir()
+        stale = fragments_dir / "output_fragments_old_service_id.jsonl"
+        stale.write_text('{"session_num": 999}\n')
+
+        minimal_config.artifacts.export_outputs_json = False
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run)
+
+        assert stale.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -691,6 +795,27 @@ class TestTimingResolver:
         with pytest.raises(ValueError, match="could not verify timing data"):
             TimingResolver().resolve(run)
 
+    def test_fixed_schedule_accepts_timed_public_dataset(self, tmp_path):
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "public",
+                    "dataset": "exgentic",
+                    "entries": 1,
+                }
+            ],
+            phases=[{"name": "profiling", "type": "fixed_schedule"}],
+        )
+        run = _make_run(config, artifact_dir=tmp_path)
+
+        DatasetResolver().resolve(run)
+        TimingResolver().resolve(run)
+
+        assert run.resolved.dataset_has_timing_data == {"main": True}
+
     def test_single_phase_with_duration(self, run_with_config):
         TimingResolver().resolve(run_with_config)
         assert run_with_config.resolved.total_expected_duration == 60.0
@@ -705,17 +830,21 @@ class TestBuildDefaultResolverChain:
     def test_returns_chain_with_all_resolvers(self):
         chain = build_default_resolver_chain()
         assert isinstance(chain, ConfigResolverChain)
-        assert len(chain._resolvers) == 6
+        assert len(chain._resolvers) == 7
 
     def test_resolver_order(self):
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
+        # ScenarioResolver sits AFTER DatasetResolver (needs resolved
+        # dataset_types for the loader-identity check) and BEFORE TimingResolver
+        # (locks per-phase timing_mode / duration before the duration sum).
         assert types == [
             ArtifactDirResolver,
             TokenizerResolver,
             GpuMetricsResolver,
             CommConfigResolver,
             DatasetResolver,
+            ScenarioResolver,
             TimingResolver,
         ]
 
@@ -754,6 +883,16 @@ class TestDeriveRunMeta:
         assert meta.job_name == "myjob"
         assert meta.namespace == ""
 
+    def test_operator_uid_suffixed_run_key_is_operator_layout(
+        self, _clear_namespace_env
+    ):
+        """A 16-digit uid-suffixed run key is the shape the operator emits today."""
+        from aiperf.config.resolution.resolvers import _derive_run_meta
+
+        meta = _derive_run_meta(Path("/artifacts/myns/myjob/1714000000123456"))
+        assert meta.epoch == "1714000000123456"
+        assert meta.job_name == "myjob"
+
     def test_local_layout(self, _clear_namespace_env):
         """Non-epoch leaf -> local layout: epoch=wall-clock, job_name=leaf."""
         from aiperf.config.resolution.resolvers import _derive_run_meta
@@ -769,7 +908,7 @@ class TestDeriveRunMeta:
         """A local path like /tmp/bench/42 must NOT be misread as operator layout."""
         from aiperf.config.resolution.resolvers import _derive_run_meta
 
-        # 42 is too short to match EPOCH_RE (^\d{9,11}$|^legacy$).
+        # 42 is too short to match EPOCH_RE (^\d{9,10}(\d{6})?$) or "legacy".
         meta = _derive_run_meta(Path("/tmp/bench/42"))
         assert meta.job_name == "42"  # leaf used as job_name, NOT parent.
         # epoch is wall-clock seconds, not "42".
@@ -796,3 +935,37 @@ class TestDeriveRunMeta:
         monkeypatch.setenv("AIPERF_NAMESPACE", "")
         meta = _derive_run_meta(Path("/tmp/bench"))
         assert meta.namespace == ""
+
+
+class TestRatePhaseDescriptor:
+    """The artifact-dir descriptor for rate phases (poisson/gamma/constant) must
+    read the v2 phase field `rate` (NOT the v1 `request_rate`, which v2 renamed),
+    or the `request_rate{N}` slug token is silently dropped from the run dir."""
+
+    def _rate_phase(self, request_rate: float = 25.0):
+        from aiperf.config.flags.cli_config import CLIConfig
+        from aiperf.config.flags.converter import convert_cli_to_aiperf
+
+        cfg = convert_cli_to_aiperf(
+            CLIConfig(model_names=["m"], request_rate=request_rate, request_count=20)
+        )
+        return next(
+            p
+            for p in cfg.benchmark.phases
+            if not getattr(p, "exclude_from_results", False)
+        )
+
+    def test_rate_appears_in_descriptor(self):
+        phase = self._rate_phase(25.0)
+        assert phase.rate == 25.0
+        assert "request_rate25.0" in _describe_phase(phase)
+
+    def test_describe_rate_phase_stray_rate_attr_on_non_rate_phase_omits_rate(self):
+        """The descriptor must delegate to get_phase_rate (isinstance-gated):
+        a rate-shaped attribute on a non-rate phase type must not render a
+        request_rate slug token, as raw getattr probing would."""
+        phase = ConcurrencyPhase(
+            name="profiling", type=PhaseType.CONCURRENCY, concurrency=4, requests=10
+        )
+        object.__setattr__(phase, "rate", 7.5)
+        assert _describe_rate_phase(phase) == "concurrency4"

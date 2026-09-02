@@ -43,6 +43,15 @@ QUALITATIVE_CATEGORIES = [
 
 THROUGHPUT_TIERS = ["low_entropy", "mixed", "high_entropy"]
 
+# spec_al_* acceptance-length benchmarks, in a curated order so the report
+# columns read math -> chat -> code rather than alphabetically.
+SPEC_AL_BENCHMARKS = ["gsm8k", "math500", "mtbench", "humaneval", "mbpp"]
+
+# Dataset-selector prefixes that mark an acceptance-length benchmark run. The
+# category is the selector value with the prefix stripped (e.g.
+# "speed_bench_coding" -> "coding", "spec_al_gsm8k" -> "gsm8k").
+CATEGORY_PREFIXES = ("speed_bench_", "spec_al_")
+
 # Server metric names that represent acceptance length, in priority order.
 # Different engines expose this under different names.
 ACCEPT_LENGTH_METRICS = [
@@ -108,11 +117,14 @@ def load_server_metrics(run_dir: Path) -> dict | None:
 
 
 def extract_category(profile: dict) -> str | None:
-    """Extract the SPEED-Bench category from the input config.
+    """Extract the acceptance-length benchmark category from the input config.
 
-    The exporter writes ``input_config`` as a dump of the v2 ``BenchmarkConfig``,
-    so the public dataset enum lives on ``datasets[].dataset``. Returns the
-    suffix of the first entry whose value starts with ``speed_bench_``.
+    The exporter writes ``input_config`` as a dump of the v2 ``BenchmarkConfig``.
+    Custom/file datasets (e.g. SPEED-Bench) serialize their selector under
+    ``datasets[].format``; public datasets (e.g. the spec_al_* HuggingFace
+    benchmarks) serialize it under ``datasets[].dataset``. Returns the suffix of
+    the first entry whose selector starts with a recognized prefix
+    (see ``CATEGORY_PREFIXES``).
     """
     try:
         datasets = profile["input_config"]["datasets"]
@@ -123,9 +135,12 @@ def extract_category(profile: dict) -> str | None:
     for entry in datasets:
         if not isinstance(entry, dict):
             continue
-        name = entry.get("format")
-        if isinstance(name, str) and name.startswith("speed_bench_"):
-            return name.removeprefix("speed_bench_")
+        name = entry.get("format") or entry.get("dataset")
+        if not isinstance(name, str):
+            continue
+        for prefix in CATEGORY_PREFIXES:
+            if name.startswith(prefix):
+                return name.removeprefix(prefix)
     return None
 
 
@@ -294,6 +309,8 @@ def detect_columns(results: dict[str, dict[str, float | None]]) -> list[str]:
         return [c for c in QUALITATIVE_CATEGORIES if c in all_cats]
     if all_cats <= set(THROUGHPUT_TIERS):
         return [c for c in THROUGHPUT_TIERS if c in all_cats]
+    if all_cats <= set(SPEC_AL_BENCHMARKS):
+        return [c for c in SPEC_AL_BENCHMARKS if c in all_cats]
     return sorted(all_cats)
 
 
@@ -331,12 +348,12 @@ def print_table(
         from rich.table import Table
 
         title_map = {
-            "accept_length": "SPEED-Bench Acceptance Length Report",
-            "accept_rate": "SPEED-Bench Acceptance Rate Report",
-            "throughput": "SPEED-Bench Throughput Report (tokens/sec)",
+            "accept_length": "Acceptance Length Report",
+            "accept_rate": "Acceptance Rate Report",
+            "throughput": "Throughput Report (tokens/sec)",
         }
         table = Table(
-            title=title_map.get(metric_type, "SPEED-Bench Report"),
+            title=title_map.get(metric_type, "Speculative Decoding Report"),
             show_header=True,
             header_style="bold magenta",
         )

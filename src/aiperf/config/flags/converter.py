@@ -37,8 +37,10 @@ from aiperf.config.flags._converter_runtime import (
 from aiperf.config.flags._converter_telemetry import (
     build_gpu_telemetry,
     build_mlflow,
+    build_network_latency,
     build_otel,
     build_server_metrics,
+    build_wandb,
 )
 from aiperf.config.flags._converter_warmup import build_warmup
 from aiperf.config.sweep import MAGIC_LIST_FIELDS
@@ -234,7 +236,7 @@ def _lookup_recipe_class(cli: CLIConfig) -> Any | None:
 
     try:
         return get_class(PluginType.SEARCH_RECIPE, cli.search_recipe)
-    except Exception:  # noqa: BLE001 - missing recipe will surface as a clearer error downstream
+    except Exception:  # missing recipe will surface as a clearer error downstream
         return None
 
 
@@ -510,8 +512,8 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
 
     phases: list[dict[str, Any]] = []
     if (warmup := build_warmup(cli)) is not None:
-        phases.append({"name": "warmup", **warmup})
-    phases.append({"name": "profiling", **prof})
+        phases.append({"name": "warmup", "kind": "warmup", **warmup})
+    phases.append({"name": "profiling", "kind": "profiling", **prof})
 
     ds = build_dataset(cli)
 
@@ -519,8 +521,10 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     artifacts = build_artifacts(cli)
     gpu_telemetry = build_gpu_telemetry(cli)
     server_metrics = build_server_metrics(cli)
+    network_latency = build_network_latency(cli)
     otel = build_otel(cli)
     mlflow = build_mlflow(cli)
+    wandb = build_wandb(cli)
     logging_dict, runtime_dict = build_logging_runtime(cli)
 
     nested: dict[str, Any] = {
@@ -536,8 +540,10 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
         "artifacts": artifacts,
         "gpu_telemetry": gpu_telemetry,
         "server_metrics": server_metrics,
+        "network_latency": network_latency,
         "otel": otel,
         "mlflow": mlflow,
+        "wandb": wandb,
     }
     if logging_dict:
         nested["logging"] = logging_dict
@@ -553,6 +559,7 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     artifacts["plot_required"] = plot_required
 
     _assemble_optional(nested, cli, recipe_output=recipe_output)
+    _apply_scenario_fields(nested, cli)
     _apply_recipe_sweep_parameters(nested, recipe_output, cli)
     _apply_recipe_scenarios(nested, recipe_output, cli)
     sweep_type = getattr(cli, "sweep_type", "grid")
@@ -561,6 +568,22 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     _apply_parameter_sweep_meta_to_sweep(nested, cli)
 
     return _wrap_under_envelope(nested)
+
+
+def _apply_scenario_fields(nested: dict[str, Any], cli: CLIConfig) -> None:
+    """Write the scenario-lock fields onto the benchmark body.
+
+    ``scenario`` / ``unsafe_override`` are plain data on ``BenchmarkConfig``
+    (the lock is applied later by ``ScenarioResolver``). They are NOT envelope
+    keys, so ``_wrap_under_envelope`` moves them under ``benchmark:``. Only
+    written when the user explicitly set them, to keep ``model_fields_set``
+    clean for downstream "was this set?" checks.
+    """
+    set_fields = cli.model_fields_set
+    if "scenario" in set_fields:
+        nested["scenario"] = cli.scenario
+    if "unsafe_override" in set_fields:
+        nested["unsafe_override"] = cli.unsafe_override
 
 
 def _apply_parameter_sweep_meta_to_sweep(

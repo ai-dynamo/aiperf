@@ -1,0 +1,22 @@
+flowchart TD
+    DCGM["DCGM Collector\nnvidia_power_usage\nnvidia_energy_consumption"]
+    PYNVML["pynvml Collector\nnvidia_power_usage"]
+    AMDSMI["amdsmi Collector\namd_power\namd_energy_consumption"]
+
+    DCGM --> ACC
+    PYNVML --> ACC
+    AMDSMI --> ACC
+
+    ACC["GPUTelemetryAccumulator\npartitioned by platform"]
+    MSUM["MetricsAccumulator summary\ntotal_osl · request_count\nrequest_throughput · goodput\nrequest_latency"]
+
+    ACC -->|"available_platforms()\ntotal_power_watts(platform=p)\ntotal_energy_joules(platform=p)"| EEA
+    MSUM --> EEA
+
+    EEA["EnergyEfficiencyAnalyzer\nanalyzer plugin · SummaryContext\nfan-out per vendor via _VENDOR_METRICS"]
+
+    EEA --> NV["nvidia_total_gpu_power\nnvidia_total_gpu_energy\nnvidia_average_gpu_power\n... (12 metrics)"]
+    EEA --> AMD["amd_total_gpu_power\namd_total_gpu_energy\namd_average_gpu_power\n... (12 metrics)"]
+
+    NV --> CNVIDIA["Console: GPU Power Efficiency (NVIDIA)"]
+    AMD --> CAMD["Console: GPU Power Efficiency (AMD)"]

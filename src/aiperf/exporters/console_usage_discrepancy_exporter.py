@@ -61,27 +61,12 @@ class ConsoleUsageDiscrepancyExporter(AIPerfLoggerMixin):
 
     def _get_discrepancy_metric(self) -> MetricResult | None:
         """Extract the discrepancy metric from results."""
-        return next(
-            (
-                r
-                for r in self._results.records
-                if r.tag == UsageDiscrepancyCountMetric.tag
-            ),
-            None,
-        )
+        return self._results.get(UsageDiscrepancyCountMetric.tag)
 
     def _get_total_records(self) -> int:
         """Get the total number of valid records from results."""
-        return int(
-            next(
-                (
-                    r.avg
-                    for r in self._results.records
-                    if r.tag == RequestCountMetric.tag
-                ),
-                0,
-            )
-        )
+        metric = self._results.get(RequestCountMetric.tag)
+        return int(metric.avg) if metric and metric.avg else 0
 
     def _create_warning_text(
         self, discrepancy_count: int, total_records: int, percentage: float
@@ -89,12 +74,12 @@ class ConsoleUsageDiscrepancyExporter(AIPerfLoggerMixin):
         """Create the formatted warning text with details and recommendations."""
         return f"""\
 [bold]{discrepancy_count:,} of {total_records:,} requests ({percentage:.1f}%) show a difference exceeding {self._threshold:g}% between:[/bold]
-  • API-reported usage tokens (from 'usage' field)
-  • Client-computed token counts (from tokenization)
+  - API-reported usage tokens (from 'usage' field)
+  - Client-computed token counts (from tokenization)
 
 [bold]Possible Causes:[/bold]
-  • Different tokenization methods (API vs client)
-  • API special tokens or preprocessing
+  - Different tokenization methods (API vs client)
+  - API special tokens or preprocessing
 
 [bold]Investigation Steps:[/bold]
   1. Review [cyan]profile_export.jsonl[/cyan] for per-request [cyan]usage_*_diff_pct[/cyan] values

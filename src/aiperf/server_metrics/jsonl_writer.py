@@ -81,6 +81,14 @@ class ServerMetricsJSONLWriter(
         slim_record = record.to_slim()
         await self.buffered_write(slim_record)
 
+    async def process_record(self, record: ServerMetricsRecord) -> None:
+        """``StreamExporterProtocol``-compatible alias for ``process_server_metrics_record``."""
+        await self.process_server_metrics_record(record)
+
+    async def finalize(self) -> None:
+        """Flush any buffered data at end-of-run (``StreamExporterProtocol``)."""
+        await self.flush_buffer()
+
     async def summarize(self) -> list[MetricResult]:
         """Summarize result. Not used for this processor"""
         return []

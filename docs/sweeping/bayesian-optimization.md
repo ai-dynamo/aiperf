@@ -6,16 +6,14 @@
 
 > **New users start here:** [Search Recipes](search-recipes.md) bundle the BO knobs below into named presets such as `--search-recipe max-throughput-ttft-sla --ttft-sla-ms 200`. The 1D-saturation case (max-passing-concurrency under an SLA) is covered in [1D SLA saturation](#1d-sla-saturation-max-concurrency-under-sla-and-max-goodput-under-slo) below. Use the explicit `--search-*` flags documented on this page when no recipe matches your workflow.
 
-> **Kubernetes execution — *coming soon*.** Every `--search-*` flag
-> documented below is designed to work unchanged under cluster execution
-> via the `AIPerfSweep` CRD + `aiperf kube sweep` CLI. The cluster-side
-> path is finalized on the upcoming K8s integration branch but not yet
-> on `main`. When it ships, BO will run inside an in-cluster
-> `sweep-controller` pod that creates one child `AIPerfJob` CR per
-> iteration; `search_history.json` and `sweep_aggregate/` artifacts are
-> served via the operator's results API instead of being written to the
-> local artifacts directory. Until then, run BO with `aiperf profile`
-> locally.
+> **Kubernetes execution.** The same `--search-*` flags work with
+> `aiperf kube sweep -f <config.yaml>`; unlike `aiperf profile`,
+> `kube sweep` requires a base config file. The CLI writes the adaptive
+> search into an `AIPerfSweep` CR, and the in-cluster `sweep-controller`
+> runs the same planner and orchestrator while creating child `AIPerfJob`
+> CRs for each proposed point and trial. Epoch-scoped `search_history.json`
+> and `sweep_aggregate/` artifacts are published through the sweep results
+> API.
 
 `aiperf profile --search-space ... --search-metric ... --search-direction ... --search-max-iterations ...` runs an adaptive outer loop instead of a grid sweep. Each iteration the planner asks Optuna for the next point in the search space, runs `--num-profile-runs` benchmarks at it, scores the configured objective, and feeds the result back to the optimizer.
 
@@ -84,6 +82,57 @@ This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-plann
 | `--optuna-sampler SAMPLER` | no | Only consulted with `--search-planner=optuna`. `botorch` (implicit default) / `gp` / `tpe`. The implicit BoTorch default falls back to TPE when the optional stack is unavailable; explicit `botorch` raises. |
 | `--optuna-acquisition ACQ` | no | BoTorch acquisition override. Only consulted with `--search-planner=optuna --optuna-sampler=botorch`. Single-objective: `qnei` (Letham 2019) or `qlognei` (Ament 2023) for noisy-EI; `logei`/`qlogei` are the explicit defaults. Multi-objective: `qehvi`, `qnehvi`, or `qlognehvi` (Daulton 2021). The cross-field validator on `AdaptiveSearchSweep` requires the choice to match `len(objectives)`: single-objective acquisitions reject `len(objectives) > 1`, multi-objective acquisitions reject `len(objectives) == 1`. The `bayesian` preset auto-selects `qlognei` (single-obj) or `qlognehvi` (multi-obj) based on `len(objectives)`. See [Multi-objective Pareto BO](#multi-objective-pareto-bo). |
 | `--optuna-terminator MODE` | no | Posterior-regret stopping: `regret` (Makarova 2022 `RegretBoundEvaluator`) or `emmr` (Ishibashi 2023). Only consulted with `--search-planner=optuna`. Layered on top of three-signal convergence; `convergence_reason` becomes `posterior_regret_bound` or `emmr` when it fires. |
+
+The shape-inference, seeding, and rejection rules below are enforced when
+`--search-space` is parsed on the CLI conversion path (`convert_cli_to_aiperf`).
+A `search_space:` entry under a YAML `sweep:` block goes through a
+different code path that doesn't apply the same validation, so a
+config-file sweep can still hit the underlying crashes these rules
+prevent -- prefer `--search-space` on the CLI until config-file sweeps get
+equivalent validation.
+
+A benchmark has one "shape" before it starts: `concurrency` ("send as many
+requests as possible"), `rate` ("send N requests per second"), `user`
+("simulate N users"), or `gamma` ("send requests with a particular
+bumpy/smooth pattern"). Searching a shape-specific field --
+`rate`/`rate_ramp` (rate shape), `smoothness` (gamma shape), or `users`
+(user shape) -- automatically switches the base benchmark to a compatible
+shape, the same as passing the matching CLI flag (`--request-rate`,
+`--arrival-pattern gamma`, `--user-centric-rate`) would. Fields from the
+same shape combine freely — e.g. searching `users` and `rate` together
+fully auto-seeds a user shape, since a user-shaped benchmark has both
+fields (it shares the rate machinery with the rate shape). Searching
+fields from two mutually-exclusive shapes (e.g. `users` and `smoothness`
+together — no shape has both) is rejected with a clear error.
+
+`rate_series` is a piecewise-linear rate schedule, not a single number, so
+it's not a valid dimension to sweep -- `--search-space "rate_series:..."`
+is rejected at config time, with or without a companion
+`--request-rate-series`. Pass `--request-rate-series` as a fixed schedule
+instead, or search `rate`/`rate_ramp` for a scalar rate to sweep.
+
+`rate_ramp` and `smoothness` modulate an existing rate rather than
+supplying one, so searching either alone still requires a base rate from
+somewhere -- pass `--request-rate` (or `--user-centric-rate` for a user
+shape), or add a `rate` dimension to the same `--search-space`. Without
+one, AIPerf errors at config time with a message explaining what's
+missing, rather than searching `rate_ramp`/`smoothness` in a vacuum.
+`users` is a partial exception: it self-seeds the user count from
+its own search range, but a user-shaped benchmark still needs the same base
+rate as the rate shapes (users share a global request rate), so searching
+`users` alone also requires `--request-rate`, `--user-centric-rate`, or a
+`rate` dimension -- same requirement, same error, just for a different
+field. A `users` dimension must also use `:int` kind (e.g.
+`users:1,50:int`) -- the omitted-kind default of `:real` is rejected, since
+the number of simulated users can only ever be a whole number.
+
+`smoothness` auto-selects the gamma shape only when `--arrival-pattern` is
+left unset. An explicit non-gamma `--arrival-pattern` (`poisson` or
+`constant`) wins instead and is rejected at config time if `smoothness` is
+also being searched, the same way `--arrival-smoothness` is rejected
+against an explicit non-gamma pattern -- drop `--arrival-pattern` to let
+`smoothness` auto-select gamma, or pass `--arrival-pattern gamma`
+explicitly.
 
 ### Search space grammar
 
@@ -277,7 +326,7 @@ sweep:
     - {metric: output_token_throughput, stat: avg, direction: maximize}
     - {metric: time_to_first_token, stat: p99, direction: minimize, threshold: 250.0}
   outcome_constraints:
-    - {metric: request_error_rate, op: "<=", bound: 0.01}
+    - {metric: request_error_rate, op: "<=", bound: 1.0}
   max_iterations: 30
 ```
 
@@ -445,16 +494,18 @@ The four issue-named SLA flags are sugar over the generic `--search-sla` syntax.
 | `--ttft-sla-ms` | `time_to_first_token` | `p95` | `lt` | Streaming required |
 | `--tpot-sla-ms` (a.k.a. `--itl-sla-ms`) | `inter_token_latency` | `p95` | `lt` | Streaming required; TPOT == ITL in AIPerf metric tags |
 | `--e2e-sla-ms` | `request_latency` | `p99` | `lt` | |
-| `--error-rate-sla` | `request_error_rate` | `p99` | `lt` | Fraction in `[0, 1]` |
-| `--search-sla "TAG:STAT:OP:THRESHOLD"` | any | any of `{avg, p50, p90, p95, p99}` | any of `{lt, le, gt, ge}` | Repeatable; format is strict colon-delimited 4-tuple |
+| `--error-rate-sla` | `request_error_rate` | `avg` | `lt` | Fraction in `(0, 1)`; converted to percentage points for comparison |
+| `--search-sla "TAG:STAT:OP:THRESHOLD"` | any | any of `{avg, p50, p90, p95, p99}` | any of `{lt, le, gt, ge}` | Repeatable; threshold uses the metric's native unit; format is strict colon-delimited 4-tuple |
+
+Generic `--search-sla` thresholds use each metric's native unit. In particular, `request_error_rate` is exported in percentage points, so `request_error_rate:avg:lt:1` means an average error rate below 1%. This differs from the recipe-specific `--error-rate-sla`, which accepts a fraction (`0.01` means 1%) and converts it to percentage points.
 
 ```bash
-# Compose: TTFT p95 < 200ms AND error rate p99 < 1%, on the explicit
+# Compose: TTFT p95 < 200ms AND average error rate < 1%, on the explicit
 # --search-space path (no recipe).
 aiperf profile --model my-model --streaming \
   --search-space "concurrency:1,1000:int" \
   --search-sla "time_to_first_token:p95:lt:200" \
-  --search-sla "request_error_rate:p99:lt:0.01" \
+  --search-sla "request_error_rate:avg:lt:1" \
   --search-metric output_token_throughput --search-direction maximize \
   --search-max-iterations 30
 ```

@@ -3,15 +3,15 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import ClassVar, Self
 
 from pydantic import Field, SerializeAsAny, model_validator
-from typing_extensions import Self
 
-from aiperf.common.enums import PrometheusMetricType
+from aiperf.common.enums import CreditPhase, PrometheusMetricType
 from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetailsCount
+from aiperf.common.types import PhaseKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,18 +106,18 @@ class MetricSample(AIPerfBaseModel):
         default=None,
         description="Metric labels (excluding histogram special labels). None if no labels.",
     )
-    value: float | None = Field(
+    value: FiniteFloat | None = Field(
         default=None, description="Simple metric value (counter/gauge)"
     )
-    buckets: dict[str, float] | None = Field(
+    buckets: dict[str, FiniteFloat] | None = Field(
         default=None,
         description='Histogram bucket upper bounds (le="less than or equal") to counts. Keys are strings like "0.01", "0.1", "1.0"',
     )
-    sum: float | None = Field(
+    sum: FiniteFloat | None = Field(
         default=None,
         description="Sum of all observed values (for histogram only)",
     )
-    count: float | None = Field(
+    count: FiniteFloat | None = Field(
         default=None,
         description="Total number of observations (for histogram only)",
     )
@@ -198,6 +198,25 @@ class SlimRecord(AIPerfBaseModel):
         default=None,
         description="Wall-clock timestamp in nanoseconds when first response byte received from server",
     )
+    benchmark_phase: CreditPhase | None = Field(
+        default=None,
+        description="Benchmark phase active when this scrape was collected. "
+        "None for setup/baseline scrapes outside a timing phase.",
+    )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index of the concrete phase."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-facing name of the concrete phase."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Semantic kind of the concrete phase."
+    )
 
 
 class ServerMetricsRecord(AIPerfBaseModel):
@@ -210,6 +229,8 @@ class ServerMetricsRecord(AIPerfBaseModel):
     requests by capturing when the server actually generated the metrics, not just when
     the client received the full response.
     """
+
+    record_type: ClassVar[str] = "server_metrics"
 
     endpoint_url: str = Field(
         description="Source Prometheus metrics endpoint URL (e.g., 'http://localhost:8081/metrics')"
@@ -238,6 +259,33 @@ class ServerMetricsRecord(AIPerfBaseModel):
         default=False,
         description="True if this record's metrics are identical to the previous fetch from this endpoint",
     )
+    benchmark_phase: CreditPhase | None = Field(
+        default=None,
+        description="Benchmark phase active when this scrape was collected. "
+        "None for setup/baseline scrapes outside a timing phase.",
+    )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index of the concrete phase."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-facing name of the concrete phase."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Semantic kind of the concrete phase."
+    )
+    phase_instance_id: int | None = Field(
+        default=None,
+        ge=0,
+        description="Monotonic per-run identifier of the phase *occurrence* this "
+        "scrape belongs to. Distinguishes two same-named instances of a phase "
+        "that carries no absolute phase_index (a synthesized warmup that runs "
+        "again after profiling). None for scrapes collected outside any phase.",
+    )
 
     def to_slim(self) -> SlimRecord:
         """Convert to slim record.
@@ -246,7 +294,8 @@ class ServerMetricsRecord(AIPerfBaseModel):
         so they will be include in the final export, but not in the JSONL records.
 
         Returns:
-            ServerMetricsSlimRecord with only timestamp and slim samples (flat structure)
+            SlimRecord carrying the same timing and phase identity with flat
+            per-family sample lists instead of full MetricFamily objects
         """
         slim_metrics = {
             name: family.samples
@@ -261,6 +310,11 @@ class ServerMetricsRecord(AIPerfBaseModel):
             metrics=slim_metrics,
             request_sent_ns=self.request_sent_ns,
             first_byte_ns=self.first_byte_ns,
+            benchmark_phase=self.benchmark_phase,
+            phase_index=self.phase_index,
+            profiling_index=self.profiling_index,
+            phase_name=self.phase_name,
+            phase_kind=self.phase_kind,
         )
 
 
@@ -392,6 +446,14 @@ class ServerMetricsSummary(AIPerfBaseModel):
     endpoint_info: dict[str, ServerMetricsEndpointInfo] | None = Field(
         default=None,
         description="Per-endpoint collection metadata keyed by normalized endpoint identifier",
+    )
+    phase_time_ranges: dict[str, TimeRangeFilter] | None = Field(
+        default=None,
+        description=(
+            "Nanosecond time ranges used for phase-scoped server metric aggregation. "
+            "The warmup range end matches the aggregation window (may extend past "
+            "credit-phase complete to include the end-of-warmup scrape)."
+        ),
     )
 
 
@@ -631,7 +693,7 @@ class ServerMetricsExportData(AIPerfBaseModel):
     """
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.0"
+    SCHEMA_VERSION: ClassVar[str] = "1.1"
 
     schema_version: str = Field(
         default=SCHEMA_VERSION,
@@ -647,6 +709,11 @@ class ServerMetricsExportData(AIPerfBaseModel):
         "None for legacy exports.",
     )
     summary: ServerMetricsSummary
+    metrics_phase: CreditPhase = Field(
+        default=CreditPhase.PROFILING,
+        description="Benchmark phase represented by the top-level metrics field. "
+        "Kept as profiling for backward compatibility.",
+    )
     metrics: SerializeAsAny[
         dict[
             str,
@@ -658,6 +725,22 @@ class ServerMetricsExportData(AIPerfBaseModel):
     ] = Field(
         default_factory=dict,
         description="Metrics keyed by name, each with type-specific series stats",
+    )
+    warmup_metrics: (
+        SerializeAsAny[
+            dict[
+                str,
+                GaugeMetricData
+                | CounterMetricData
+                | HistogramMetricData
+                | UnknownMetricData,
+            ]
+        ]
+        | None
+    ) = Field(
+        default=None,
+        description="Server metrics aggregated only over the warmup phase. "
+        "Absent when no warmup phase ran or no warmup server metrics were collected.",
     )
     input_config: dict = Field(
         default_factory=dict,
@@ -704,9 +787,30 @@ class ServerMetricsResults(AIPerfBaseModel):
         description="Unique identifier for this benchmark run (UUID), shared across all export formats. "
         "None for legacy exports created before this field was added.",
     )
+    phase: CreditPhase | None = Field(
+        default=None, description="Semantic runtime phase for a phase-scoped result."
+    )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index for a phase-scoped result."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Profiling-kind index for a phase-scoped result.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-facing name for a phase-scoped result."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Semantic kind for a phase-scoped result."
+    )
     endpoint_summaries: dict[str, ServerMetricsEndpointSummary] | None = Field(
         default=None,
         description="Pre-computed endpoint summaries ready for export (sent over ZMQ)",
+    )
+    warmup_endpoint_summaries: dict[str, ServerMetricsEndpointSummary] | None = Field(
+        default=None,
+        description="Pre-computed endpoint summaries for warmup-phase server metrics.",
     )
     start_ns: int = Field(
         description="Start time of server metrics collection in nanoseconds"
@@ -722,6 +826,21 @@ class ServerMetricsResults(AIPerfBaseModel):
         default_factory=list,
         description="List of server metrics endpoint URLs that successfully provided data",
     )
+    warmup_start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Start of the warmup server-metrics aggregation window.",
+    )
+    warmup_end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Inclusive end of the warmup server-metrics aggregation window. "
+            "May extend past the warmup credit-phase complete timestamp to "
+            "include the dedicated end-of-warmup scrape; matches "
+            "phase_time_ranges['warmup'] and warmup_endpoint_summaries."
+        ),
+    )
     error_summary: list[ErrorDetailsCount] = Field(
         default_factory=list,
         description="A list of the unique error details and their counts",
@@ -730,6 +849,10 @@ class ServerMetricsResults(AIPerfBaseModel):
     aggregation_time_filter: TimeRangeFilter | None = Field(
         default=None,
         description="Time filter for aggregation, excluding warmup periods",
+    )
+    phase_results: list[Self] = Field(
+        default_factory=list,
+        description="Exact server-metric summaries for each concrete named phase.",
     )
 
 

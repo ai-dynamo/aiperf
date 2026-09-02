@@ -448,7 +448,11 @@ class TestBenchmarkRunSerialization:
         restored = self._round_trip(original)
 
         assert isinstance(restored.artifact_dir, Path)
-        assert str(restored.artifact_dir) == "/data/benchmarks/run-42"
+        # Compare via Path equality, not raw string: Windows normalizes
+        # forward-slash input to backslash separators, so the literal string
+        # "/data/benchmarks/run-42" only matches on POSIX. Path("/data/...")
+        # is platform-correct on both.
+        assert restored.artifact_dir == Path("/data/benchmarks/run-42")
 
     def test_json_round_trip_with_all_phase_types(self) -> None:
         cfg_kwargs = {

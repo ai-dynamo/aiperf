@@ -55,7 +55,8 @@ pip install aiperf
 Optional integrations:
 - `pip install "aiperf[mlflow]"` enables MLflow uploads and live telemetry streaming
 - `pip install "aiperf[otel]"` enables OpenTelemetry metric streaming
-- `pip install "aiperf[mlflow,otel]"` installs both extras
+- `pip install "aiperf[wandb]"` enables Weights & Biases result uploads
+- `pip install "aiperf[mlflow,otel,wandb]"` installs all telemetry extras
 
 To run a simple benchmark against your Ollama server:
 
@@ -132,6 +133,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Getting Started
 - [Basic Tutorial](docs/tutorial.md) - Profile Qwen3-0.6B with vLLM
 - [Comprehensive Benchmarking Guide](docs/comprehensive-llm-benchmarking.md) - 5 real-world use cases
+- [Interactive Chat Sanity Checks](docs/tutorials/interactive-chat.md) - Talk to an endpoint with `aiperf chat` and see per-turn TTFT/TPS/ITL
 - [YAML Configuration Files](docs/tutorials/yaml-config.md) - Drive AIPerf from a config file instead of CLI flags
 - [Sampling Distributions in YAML Configs](docs/tutorials/yaml-distributions.md) - Fixed, Normal, Log-normal, Multimodal, and Empirical shapes for ISL/OSL/turns/etc.
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless
@@ -142,8 +144,11 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md) - Dual request control
 - [Arrival Patterns](docs/tutorials/arrival-patterns.md) - Constant, Poisson, gamma traffic
 - [Prefill Concurrency](docs/tutorials/prefill-concurrency.md) - Memory-safe long-context benchmarking
+- [Adaptive Scale](docs/tutorials/adaptive-scale.md) - Single-run SLA boundary discovery and sustain
 - [Gradual Ramping](docs/tutorials/ramping.md) - Smooth ramp-up of concurrency and request rate
 - [Warmup Phase](docs/tutorials/warmup.md) - Eliminate cold-start effects
+- [Benchmark Control Hooks](docs/tutorials/benchmark-control-hooks.md) - KV-cache reset and server profiler around profiling phases
+- [Control Hooks by Server](docs/tutorials/control-hooks-by-server.md) - vLLM, SGLang, and TensorRT-LLM path mappings
 - [User-Centric Timing](docs/tutorials/user-centric-timing.md) - Per-user rate limiting for KV cache benchmarking
 - [Request Cancellation](docs/tutorials/request-cancellation.md) - Timeout and resilience testing
 - [Multi-URL Load Balancing](docs/tutorials/multi-url-load-balancing.md) - Distribute across servers
@@ -151,6 +156,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ### Workloads and Data
 - [Trace Benchmarking](docs/benchmark-modes/trace-replay.md) - Deterministic workload replay
 - [Bailian Traces](docs/tutorials/bailian-trace.md) - Bailian production trace replay
+- [Baseten Traces](docs/tutorials/baseten-trace.md) - Baseten Parquet production trace replay
 - [BurstGPT Traces](docs/tutorials/burst-gpt-trace.md) - BurstGPT real-world bursty traffic trace replay
 - [SageMaker Data Capture](docs/tutorials/sagemaker-data-capture.md) - Replay production traffic from SageMaker endpoints
 - [Custom Prompt Benchmarking](docs/tutorials/custom-prompt-benchmarking.md) - Send exact prompts as-is
@@ -163,12 +169,16 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [VisionArena Dataset](docs/tutorials/vision-arena.md) - Profile with real-world vision conversations from Chatbot Arena
 - [LLaVA-OneVision Dataset](docs/tutorials/llava-onevision.md) - Profile with diverse multimodal instruction-following data
 - [SPEED-Bench Dataset](docs/tutorials/speed-bench.md) - Profile speculative decoding with SPEED-Bench
+- [Per-Request Spec-Decode Metrics](docs/tutorials/spec-decode-metrics.md) - Inline per-request acceptance length, draft rate, and pooled histogram from a normal profile run
 - [InstructCoder Dataset](docs/tutorials/instruct-coder.md) - Profile with InstructCoder code generation dataset
 - [SpecBench Dataset](docs/tutorials/spec-bench.md) - Profile with SpecBench speculative decoding dataset
 - [Blazedit Dataset](docs/tutorials/blazedit.md) - Profile with Blazedit code editing dataset
 - [ASR Datasets](docs/tutorials/asr.md) - Profile ASR models with LibriSpeech, VoxPopuli, GigaSpeech, AMI, and SPGISpeech
 - [Synthetic Dataset Generation](docs/tutorials/synthetic-dataset.md) - Generate synthetic datasets
 - [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
+- [Weka Traces](docs/tutorials/weka-trace.md) - Replay real agentic coding sessions with KV-cache-aware Weka traces
+- [TraceLab Traces](docs/tutorials/tracelab-trace.md) - Replay the public TraceLab corpus of real agentic coding sessions
+- [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis AgentX-MVP submission benchmark (`--scenario inferencex-agentx-mvp`)
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
 - [Sequence Distributions](docs/tutorials/sequence-distributions.md) - Mixed ISL/OSL pairings
@@ -192,11 +202,22 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [SGLang Video Generation](docs/tutorials/sglang-video-generation.md) - Video generation benchmarking
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
+### Kubernetes
+- [Kubernetes Benchmark Recipes](recipes/README.md) - Validated model and engine workload manifests
+- [Getting Started on Kubernetes](docs/kubernetes/getting-started.md) - Install operator, run first benchmark, retrieve results
+- [Deploy from Source Checkout](docs/kubernetes/source-checkout-deploy.md) - Build and push AIPerf, Helm install, run on a real cluster
+- [Kubernetes Configuration](docs/kubernetes/configuration.md) - CRD fields, CLI flags, Helm chart, config patterns
+- [Monitoring and Troubleshooting](docs/kubernetes/monitoring.md) - Watch, debug, logs, and common issues
+- [Production Deployments](docs/kubernetes/production.md) - CI/CD, Kueue, secrets, GitOps, multi-tenant
+- [AI Agent Debugging Guide](docs/kubernetes/ai-debugging-guide.md) - Machine-parseable diagnostics and decision trees for AI agents
+- [Parameter Sweeps on Kubernetes](docs/tutorials/sweeps.md#running-sweeps-on-kubernetes) - grid/scenarios sweeps, multi-run trials, adaptive convergence on cluster
+
 ### Analysis and Monitoring
 - [Timeslice Metrics](docs/tutorials/timeslices.md) - Per-timeslice performance analysis
 - [Goodput](docs/tutorials/goodput.md) - SLO-based throughput measurement
 - [Parameter Sweeps](docs/tutorials/sweeps.md) - YAML reference for grid/zip/scenarios sweeps + multi-run, with picker for choosing a sweep mode
 - [Adaptive Search](docs/tutorials/adaptive-search.md) - Bayesian-optimization walkthrough (single-objective + multi-objective Pareto)
+- [Adaptive Scale](docs/tutorials/adaptive-scale.md) - Single-run SLA boundary discovery and sustain
 - [Search Recipes](docs/sweeping/search-recipes.md) - Named recipe catalog including `pareto-sweep`, `max-throughput-ttft-sla`, `max-concurrency-under-sla`
 - [HTTP Trace Metrics](docs/tutorials/http-trace-metrics.md) - DNS, TCP/TLS, TTFB timing
 - [Multi-Run Confidence](docs/tutorials/multi-run-confidence.md) - Confidence intervals across repeated runs
@@ -205,6 +226,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Auto-Plot After Profile](docs/tutorials/auto-plot.md) - Run `aiperf plot` automatically after `aiperf profile`
 - [GPU Telemetry](docs/tutorials/gpu-telemetry.md) - DCGM metrics collection
 - [OTel + MLflow Live Telemetry](docs/tutorials/otel-mlflow.md) - Stream metrics to OTel and MLflow in real time
+- [Weights & Biases Export](docs/tutorials/wandb.md) - Upload results tables and artifacts to wandb
 - [Server Metrics](docs/server-metrics/server-metrics.md) - Prometheus-compatible metrics
 
 ## Documentation

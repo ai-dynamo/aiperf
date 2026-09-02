@@ -59,7 +59,7 @@ class TestServerMetricsFormatSelection:
     """Test server metrics format selection configuration."""
 
     def test_default_includes_json_and_csv_only(self, tmp_path):
-        """Test that default config enables JSON and CSV (not JSONL due to file size)."""
+        """Test that default config keeps JSONL opt-in for fixed runs."""
         config = CLIConfig(
             model_names=["test-model"],
             endpoint_type=EndpointType.CHAT,
@@ -283,7 +283,7 @@ class TestAllExportersEnabled:
     def test_default_config_enables_json_and_csv_only(
         self, tmp_path, mock_server_metrics_results
     ):
-        """Test default config enables JSON and CSV (JSONL excluded due to file size)."""
+        """Test default config keeps JSONL opt-in for fixed runs."""
         config = CLIConfig(
             model_names=["test-model"],
             endpoint_type=EndpointType.CHAT,
@@ -298,13 +298,13 @@ class TestAllExportersEnabled:
             server_metrics_results=mock_server_metrics_results,
         )
 
-        # JSON and CSV should initialize without exceptions
+        # JSON and CSV should initialize without exceptions.
         json_exporter = ServerMetricsJsonExporter(exporter_config=exporter_config)
         csv_exporter = ServerMetricsCsvExporter(exporter_config=exporter_config)
 
         assert json_exporter is not None
         assert csv_exporter is not None
 
-        # JSONL should be disabled by default
+        # JSONL remains opt-in for non-adaptive runs.
         with pytest.raises(PostProcessorDisabled, match="format not selected"):
             ServerMetricsJSONLWriter(run=make_run_from_cli(config))

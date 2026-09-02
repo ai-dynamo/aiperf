@@ -33,20 +33,20 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
         required_flags, disallowed_flags = MetricFlags.NONE, MetricFlags.NONE
         # Disable metrics that are not applicable to the endpoint type
         from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PhaseType
 
         endpoint_metadata = plugins.get_endpoint_metadata(self.run.cfg.endpoint.type)
-        if not endpoint_metadata.produces_tokens:
-            disallowed_flags |= MetricFlags.PRODUCES_TOKENS_ONLY
-        if not endpoint_metadata.tokenizes_input:
-            disallowed_flags |= MetricFlags.TOKENIZES_INPUT_ONLY
-        if not endpoint_metadata.supports_audio:
-            disallowed_flags |= MetricFlags.SUPPORTS_AUDIO_ONLY
-        if not endpoint_metadata.supports_images:
-            disallowed_flags |= MetricFlags.SUPPORTS_IMAGE_ONLY
-        if not endpoint_metadata.supports_videos:
-            disallowed_flags |= MetricFlags.SUPPORTS_VIDEO_ONLY
-        if not endpoint_metadata.produces_videos:
-            disallowed_flags |= MetricFlags.PRODUCES_VIDEO_ONLY
+        capability_flags = (
+            ("produces_tokens", MetricFlags.PRODUCES_TOKENS_ONLY),
+            ("tokenizes_input", MetricFlags.TOKENIZES_INPUT_ONLY),
+            ("supports_audio", MetricFlags.SUPPORTS_AUDIO_ONLY),
+            ("supports_images", MetricFlags.SUPPORTS_IMAGE_ONLY),
+            ("supports_videos", MetricFlags.SUPPORTS_VIDEO_ONLY),
+            ("produces_videos", MetricFlags.PRODUCES_VIDEO_ONLY),
+        )
+        for capability, flag in capability_flags:
+            if not getattr(endpoint_metadata, capability):
+                disallowed_flags |= flag
         if not self.run.cfg.endpoint.streaming:
             disallowed_flags |= MetricFlags.STREAMING_ONLY
         if self.run.cfg.endpoint.use_server_token_count:
@@ -55,6 +55,15 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             disallowed_flags |= MetricFlags.USAGE_DIFF_ONLY
         if not Environment.DEV.MODE and not Environment.DEV.SHOW_EXPERIMENTAL_METRICS:
             disallowed_flags |= MetricFlags.EXPERIMENTAL
+        if not any(
+            phase.type == PhaseType.FIXED_SCHEDULE
+            for phase in self.run.cfg.get_profiling_phases()
+        ):
+            # Turn timestamps can reach records in any timing mode (e.g. a
+            # timestamped trace replayed with --no-fixed-schedule), but
+            # schedule-fidelity metrics are only meaningful when dispatch
+            # actually follows the schedule.
+            disallowed_flags |= MetricFlags.FIXED_SCHEDULE_ONLY
 
         # NOTE: We don't filter out INTERNAL metrics here, because they are often required for other metrics
 
@@ -103,6 +112,12 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
 
         if not self.run.cfg.slos:
             disallowed_flags |= MetricFlags.GOODPUT
+
+        accuracy_cfg = self.run.cfg.accuracy
+        if accuracy_cfg is not None and accuracy_cfg.enabled:
+            # In accuracy mode max_tokens is a generation ceiling, not a target,
+            # so metrics that assume otherwise (OSL-mismatch) are just noise.
+            disallowed_flags |= MetricFlags.DISABLE_ON_ACCURACY
 
         metrics: list[BaseMetric] = []
         applicable_tags = MetricRegistry.tags_applicable_to(

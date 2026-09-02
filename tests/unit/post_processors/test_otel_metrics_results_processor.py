@@ -21,7 +21,7 @@ from aiperf.post_processors.otel_metrics_results_processor import (
     OTelMetricsResultsProcessor,
 )
 from tests.unit.conftest import make_run_from_cli
-from tests.unit.post_processors.conftest import create_metric_records_message
+from tests.unit.post_processors.conftest import create_metric_records_data
 
 
 @pytest.fixture
@@ -178,7 +178,7 @@ class TestOTelMetricsResultsProcessor:
         assert processor._mlflow_live_enabled is True
 
     @pytest.mark.asyncio
-    async def test_process_result_records_histogram_values_by_metric(
+    async def test_process_record_records_histogram_values_by_metric(
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
@@ -188,7 +188,7 @@ class TestOTelMetricsResultsProcessor:
         )
         fake_queue = _setup_fanout_processor(processor)
 
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[
                 {
                     "request_latency_ns": 123_000_000,
@@ -196,8 +196,8 @@ class TestOTelMetricsResultsProcessor:
                     "tokens_per_response": [1, 2, 3],
                 }
             ]
-        ).to_data()
-        await processor.process_result(metric_record)
+        )
+        await processor.process_record(metric_record)
 
         histogram_events = [
             e for e in fake_queue.events if e.get("type") == "histogram_record"
@@ -212,7 +212,7 @@ class TestOTelMetricsResultsProcessor:
             assert "attributes" in event["payload"]  # type: ignore[operator]
 
     @pytest.mark.asyncio
-    async def test_process_result_skips_metrics_when_metrics_telemetry_disabled(
+    async def test_process_record_skips_metrics_when_metrics_telemetry_disabled(
         self,
         tmp_artifact_dir,
     ) -> None:
@@ -233,10 +233,10 @@ class TestOTelMetricsResultsProcessor:
         )
         fake_queue = _setup_fanout_processor(processor)
 
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[{"request_latency_ns": 123_000_000}]
-        ).to_data()
-        await processor.process_result(metric_record)
+        )
+        await processor.process_record(metric_record)
 
         histogram_events = [
             e for e in fake_queue.events if e.get("type") == "histogram_record"
@@ -244,7 +244,7 @@ class TestOTelMetricsResultsProcessor:
         assert histogram_events == []
 
     @pytest.mark.asyncio
-    async def test_process_result_skips_timing_when_timing_telemetry_disabled(
+    async def test_process_record_skips_timing_when_timing_telemetry_disabled(
         self,
         tmp_artifact_dir,
     ) -> None:
@@ -278,7 +278,7 @@ class TestOTelMetricsResultsProcessor:
             cancelled_sessions=0,
             total_session_turns=1,
         )
-        await processor.process_result(timing_stats)
+        await processor.process_record(timing_stats)
 
         counter_events = [
             e for e in fake_queue.events if e.get("type") == "counter_add"
@@ -290,7 +290,7 @@ class TestOTelMetricsResultsProcessor:
         assert up_down_events == []
 
     @pytest.mark.asyncio
-    async def test_process_result_records_timing_counters_and_gauge_like_metrics(
+    async def test_process_record_records_timing_counters_and_gauge_like_metrics(
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
@@ -316,7 +316,7 @@ class TestOTelMetricsResultsProcessor:
             grace_period_timeout_triggered=False,
             was_cancelled=False,
         )
-        await processor.process_result(timing_stats)
+        await processor.process_record(timing_stats)
 
         counter_events = [
             e for e in fake_queue.events if e.get("type") == "counter_add"
@@ -353,7 +353,7 @@ class TestOTelMetricsResultsProcessor:
         assert "aiperf.timing.phase.was_cancelled" not in up_down_by_name
 
     @pytest.mark.asyncio
-    async def test_process_result_timing_uses_delta_values_for_cumulative_counters(
+    async def test_process_record_timing_uses_delta_values_for_cumulative_counters(
         self,
         cfg_otel: BenchmarkConfig,
     ) -> None:
@@ -395,8 +395,8 @@ class TestOTelMetricsResultsProcessor:
             grace_period_timeout_triggered=False,
             was_cancelled=False,
         )
-        await processor.process_result(first_stats)
-        await processor.process_result(second_stats)
+        await processor.process_record(first_stats)
+        await processor.process_record(second_stats)
 
         counter_events = [
             e for e in fake_queue.events if e.get("type") == "counter_add"
@@ -547,7 +547,7 @@ class TestOTelMetricsResultsProcessor:
         assert processor._fanout_process is None
 
     @pytest.mark.asyncio
-    async def test_process_result_fanout_emits_metric_and_timing_events(
+    async def test_process_record_fanout_emits_metric_and_timing_events(
         self,
         cfg_otel_mlflow: BenchmarkConfig,
     ) -> None:
@@ -557,10 +557,10 @@ class TestOTelMetricsResultsProcessor:
         )
         fake_queue = _setup_fanout_processor(processor)
 
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[{"request_latency_ns": 123_000_000, "request_count": 1}]
-        ).to_data()
-        await processor.process_result(metric_record)
+        )
+        await processor.process_record(metric_record)
 
         timing_stats = CreditPhaseStats(
             phase=CreditPhase.PROFILING,
@@ -575,7 +575,7 @@ class TestOTelMetricsResultsProcessor:
             cancelled_sessions=0,
             total_session_turns=9,
         )
-        await processor.process_result(timing_stats)
+        await processor.process_record(timing_stats)
 
         event_types = [str(event.get("type")) for event in fake_queue.events]
         assert "histogram_record" in event_types
@@ -697,9 +697,9 @@ class TestOTelMetricsResultsProcessor:
             service_id="records-manager",
             run=cfg_otel,
         )
-        metric_record = create_metric_records_message(
+        metric_record = create_metric_records_data(
             results=[{"request_latency_ns": 123_000_000}]
-        ).to_data()
+        )
 
         attributes = processor.build_record_attributes(metric_record)
         assert attributes["aiperf.worker.id"] == metric_record.metadata.worker_id

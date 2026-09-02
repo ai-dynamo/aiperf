@@ -358,15 +358,18 @@ class TestCustomDatasetComposerInferType:
     def test_infer_with_filename_parameter(self, create_cfg_and_composer):
         """Test inference with filename parameter for file path."""
         _, composer = create_cfg_and_composer()
+        # Close the NamedTemporaryFile *before* unlink — Windows holds a lock
+        # on the file while it's open, so unlinking inside the ``with`` block
+        # raises PermissionError [WinError 32].
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as temp_file:
             temp_path = Path(temp_file.name)
-            try:
-                data = {"text": "Hello"}
-                result = composer._infer_type(data, filename=temp_path)
-                # Should infer SingleTurn (file, not directory)
-                assert result == CustomDatasetType.SINGLE_TURN
-            finally:
-                temp_path.unlink()
+        try:
+            data = {"text": "Hello"}
+            result = composer._infer_type(data, filename=temp_path)
+            # Should infer SingleTurn (file, not directory)
+            assert result == CustomDatasetType.SINGLE_TURN
+        finally:
+            temp_path.unlink()
 
 
 class TestCustomDatasetComposerInferDatasetType:
@@ -429,6 +432,32 @@ class TestCustomDatasetComposerInferDatasetType:
 
             result = composer._infer_dataset_type(temp_dir)
             assert result == CustomDatasetType.RANDOM_POOL
+
+    def test_infer_from_parquet_file(self, create_cfg_and_composer, tmp_path):
+        """Test inferring Baseten trace type from a Parquet file."""
+        # Local skip (not module-level) so the mooncake/bailian/speed_bench
+        # detection coverage above still runs on platforms without pyarrow.
+        pa = pytest.importorskip("pyarrow")
+        pq = pytest.importorskip("pyarrow.parquet")
+        parquet_path = tmp_path / "trace.parquet"
+        pq.write_table(
+            pa.Table.from_pylist(
+                [
+                    {
+                        "timestamp_start_unix_ms": 1000,
+                        "prompt": "hello",
+                        "input_tokens": 10,
+                        "output_tokens": 4,
+                    }
+                ]
+            ),
+            parquet_path,
+        )
+        _, composer = create_cfg_and_composer()
+
+        result = composer._infer_dataset_type(str(parquet_path))
+
+        assert result == CustomDatasetType.BASETEN_TRACE
 
 
 class TestDetectionPriorityAndAmbiguity:

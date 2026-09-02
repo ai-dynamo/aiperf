@@ -108,12 +108,16 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ) -> list[Conversation]:
         """Convert single turn data to conversation objects.
 
+        When `endpoint.uuid_and_strip` is set, images repeated in later turns
+        of a conversation keep their UUID but drop their payload.
+
         Args:
             data: A dictionary mapping session_id to list of SingleTurn objects.
 
         Returns:
             A list of conversations.
         """
+        uuid_and_strip = self.run.cfg.endpoint.uuid_and_strip
         conversations = []
         for session_id, single_turns in data.items():
             conversation = Conversation(
@@ -139,5 +143,29 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                         extra_body=single_turn.extra,
                     )
                 )
+            if uuid_and_strip:
+                self._dedup_repeated_images_inplace(conversation)
             conversations.append(conversation)
         return conversations
+
+    @staticmethod
+    def _dedup_repeated_images_inplace(conversation: Conversation) -> None:
+        """Drop image bytes for repeated UUIDs within one conversation.
+
+        Images repeated within one turn retain their payload because the server
+        resolves that request's cache misses before populating its cache. Only
+        UUIDs whose content AIPerf observed in an earlier turn are stripped.
+        Explicit cache-only references pass through regardless of local history.
+        """
+        seen: set[str] = set()
+        for turn in conversation.turns:
+            new_uuids: set[str] = set()
+            for image in turn.images:
+                if not image.uuids:
+                    continue
+                for i, uuid in enumerate(image.uuids):
+                    if uuid in seen:
+                        image.contents[i] = ""
+                    elif image.contents[i]:
+                        new_uuids.add(uuid)
+            seen.update(new_uuids)

@@ -6,9 +6,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-from typing_extensions import Self
+from typing import TYPE_CHECKING, Self
 
 from aiperf.orchestrator.jsonl_loader import DEFAULT_JSONL_FILENAME, load_single_metric
 from aiperf.orchestrator.models import RunResult

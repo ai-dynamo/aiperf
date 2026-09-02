@@ -68,11 +68,54 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "transport": "transport",
     "use_legacy_max_tokens": "use_legacy_max_tokens",
     "use_server_token_count": "use_server_token_count",
+    "per_chunk_usage": "per_chunk_usage",
     "connection_reuse_strategy": "connection_reuse",
     "download_video_content": "download_video_content",
     "request_content_type": "request_content_type",
     "session_header": "session_header",
+    "uuid_and_strip": "uuid_and_strip",
 }
+
+
+def _maybe_build_reset_kv_cache(cli: CLIConfig) -> dict[str, Any] | None:
+    ep_set = cli.model_fields_set & ENDPOINT_FIELDS
+    enabled = cli.reset_kv_cache or any(
+        name in ep_set
+        for name in (
+            "reset_kv_cache_timeout_seconds",
+            "reset_kv_cache_path",
+        )
+    )
+    if not enabled:
+        return None
+    out: dict[str, Any] = {}
+    if cli.reset_kv_cache_timeout_seconds is not None:
+        out["timeout_seconds"] = cli.reset_kv_cache_timeout_seconds
+    if cli.reset_kv_cache_path is not None:
+        out["path"] = cli.reset_kv_cache_path
+    return out
+
+
+def _maybe_build_server_profiler(cli: CLIConfig) -> dict[str, Any] | None:
+    ep_set = cli.model_fields_set & ENDPOINT_FIELDS
+    enabled = cli.server_profiler or any(
+        name in ep_set
+        for name in (
+            "server_profiler_timeout_seconds",
+            "server_profiler_start_path",
+            "server_profiler_stop_path",
+        )
+    )
+    if not enabled:
+        return None
+    out: dict[str, Any] = {}
+    if cli.server_profiler_timeout_seconds is not None:
+        out["timeout_seconds"] = cli.server_profiler_timeout_seconds
+    if cli.server_profiler_start_path is not None:
+        out["start_path"] = cli.server_profiler_start_path
+    if cli.server_profiler_stop_path is not None:
+        out["stop_path"] = cli.server_profiler_stop_path
+    return out
 
 
 def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
@@ -97,8 +140,15 @@ def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
         extra = dict(cli.extra_inputs)
         _endpoint_template_from_extra(endpoint, extra)
         endpoint["extra"] = extra
-
     _endpoint_template_fallback(endpoint)
+
+    reset = _maybe_build_reset_kv_cache(cli)
+    if reset is not None:
+        endpoint["reset_kv_cache"] = reset
+    profiler = _maybe_build_server_profiler(cli)
+    if profiler is not None:
+        endpoint["server_profiler"] = profiler
+
     return endpoint
 
 

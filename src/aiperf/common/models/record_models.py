@@ -7,35 +7,50 @@ import sys
 import time
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Annotated, Any, AnyStr, Protocol, runtime_checkable
+from typing import Annotated, Any, AnyStr, ClassVar, Protocol, runtime_checkable
 
 import orjson
 from pydantic import (
     ConfigDict,
     Field,
+    NonNegativeInt,
     PlainSerializer,
+    PrivateAttr,
     RootModel,
+    SerializationInfo,
     SerializeAsAny,
     field_validator,
+    model_serializer,
 )
 from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import STAT_KEYS
-from aiperf.common.enums import CreditPhase, MetricValueTypeT, SSEFieldType
+from aiperf.common.enums import (
+    CacheBustTarget,
+    CreditPhase,
+    MetricConsoleGroup,
+    MetricValueTypeT,
+)
 from aiperf.common.exceptions import InvalidInferenceResultError
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.dataset_models import Turn
 from aiperf.common.models.error_models import ErrorDetails, ErrorDetailsCount
-from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.models.export_models import JsonMetricResult, TelemetryExportData
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.server_metrics_models import ServerMetricsResults
+from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
-from aiperf.common.types import JsonObject, MetricTagT, TimeSliceT
+from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
 _logger = AIPerfLogger(__name__)
+_SSE_COMMENT_FIELD_NAME = "comment"
+_SSE_DATA_FIELD_NAME = "data"
+_SSE_DATA_PREFIX = "data:"
 
 
 class MetricResult(JsonMetricResult):
@@ -59,6 +74,28 @@ class MetricResult(JsonMetricResult):
         default=None,
         description="The sum of all the metric values across all records",
     )
+    console_group: MetricConsoleGroup | None = Field(
+        default=None,
+        description="Optional console-grouping override for analyzer-injected results "
+        "whose tags are not in MetricRegistry. The registered metric class's "
+        "`console_group` ClassVar is the source of truth for everything else; this "
+        "field is only consulted by the console exporter when a tag isn't registered. "
+        "Dropped from every public dump (CSV / JSON exports / REST API); only IPC "
+        "passes `context={'include_internal': True}` to keep it across process boundaries.",
+    )
+
+    @model_serializer(mode="wrap")
+    def _drop_internal_fields(self, handler, info: SerializationInfo) -> dict[str, Any]:
+        """Strip internal-only fields (`console_group`) from every dump unless
+        the caller opts in with ``context={'include_internal': True}`` -- i.e.
+        cross-process IPC. User-facing CSV/JSON/REST exports never set the
+        flag, so they always see the public shape."""
+        data = handler(self)
+        if isinstance(data, dict) and not (
+            info.context and info.context.get("include_internal")
+        ):
+            data.pop("console_group", None)
+        return data
 
     def to_display_unit(self) -> MetricResult:
         """Convert the metric result to its display unit."""
@@ -94,6 +131,30 @@ class MetricResult(JsonMetricResult):
         return result
 
 
+class RecordData(AIPerfBaseModel):
+    """Base for typed records that travel on the generic ``RecordsMessage`` envelope.
+
+    Subclasses declare a SERIALIZED ``record_type`` discriminator (a ``Literal``
+    field, not a ClassVar) so AutoRoutedModel can reconstruct the concrete type
+    on the receiving side of the ZMQ boundary. A ClassVar discriminator would not
+    serialize, so the receiver would see bare dicts and fail to route them. This
+    mirrors the ``BaseTraceData`` / ``trace_type`` discriminated-union pattern.
+
+    ``RecordData.from_json(dict)`` routes to the registered subclass by its
+    ``record_type`` value; ``getattr(instance, "record_type")`` returns the field
+    value, so the records-manager routing table keys off instances unchanged.
+    """
+
+    discriminator_field: ClassVar[str] = "record_type"
+    # The base RecordData has no standalone shape (typed fields live on subclasses),
+    # so an unregistered record_type must raise rather than silently degrade.
+    strict_routing: ClassVar[bool] = True
+
+    record_type: str = Field(
+        description="Discriminator: the record_type channel this record routes on.",
+    )
+
+
 class MetricValue(AIPerfBaseModel):
     """The value of a metric converted to display units for export."""
 
@@ -125,6 +186,36 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The index of the turn in the conversation (if applicable). This can be used to lookup the original request data from the inputs.json file.",
     )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
+    )
     credit_issued_ns: int | None = Field(
         default=None,
         description="Wall clock timestamp (time.time_ns) when the credit was issued by the rate limiter. "
@@ -155,6 +246,20 @@ class MetricRecordMetadata(AIPerfBaseModel):
         ...,
         description="The benchmark phase of the record, either warmup or profiling.",
     )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
+    )
     was_cancelled: bool = Field(
         default=False,
         description="Whether the request was cancelled during execution.",
@@ -163,6 +268,18 @@ class MetricRecordMetadata(AIPerfBaseModel):
         default=None,
         description="The wall clock timestamp of the request cancellation time measured as time.time_ns(), if applicable. "
         "This is only applicable to requests that were cancelled.",
+    )
+    context_overflow_skip: bool = Field(
+        default=False,
+        description="True iff the record was classified as a context-overflow event "
+        "AND the active scenario uses AGENTIC_REPLAY timing. Set on the worker side "
+        "by ``RecordProcessor`` and consumed by ``RecordsManager``: the record still "
+        "increments ``total_records`` (so the records-side counter stays in lockstep "
+        "with the credit-side ``final_requests_completed`` and the completion barrier "
+        "converges), but it is skipped from the error tracker, the per-record "
+        "accumulators (latency/throughput/etc.), and the stream exporters. Net effect: "
+        "the overflow event doesn't show up in any user-facing metric, while the run "
+        "still terminates cleanly.",
     )
     agent_depth: int = Field(
         default=0,
@@ -174,6 +291,134 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this record's session via a "
         "DAG subagent fork. None for root sessions. Use to group sibling branches of the same DAG.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. Stable "
+        "across the whole tree (root + every descendant subagent at any depth); equals x_correlation_id "
+        "for a root session. Groups every record of one agentic session (root + subagents) under a single "
+        "lane and lets analysis reconstruct exactly-N session-tree concurrency.",
+    )
+
+
+class TimesliceResult(AIPerfBaseModel):
+    """Per-timeslice results: window bounds + metric results.
+
+    Combines ``start_ns`` / ``end_ns`` / ``is_complete`` with the metric
+    results computed for that slice. Stored in chronological order in
+    :attr:`ProfileResults.timeslices`; position in the parent list is the
+    slice's chronological index, matching the ``BaseTimeslice`` wire shape.
+
+    ``is_complete`` is ``None`` for fully-closed windows (space-efficient
+    default matching ``BaseTimeslice``) and ``False`` for the trailing
+    partial window when the benchmark stopped before the next slice
+    boundary. Partial slices should be excluded from aggregate statistics
+    to avoid skewing rate calculations.
+
+    Metric results are keyed by metric tag for direct lookup. The
+    JSON/CSV exporters flatten them to per-tag fields in the wire format.
+    """
+
+    start_ns: int = Field(
+        ge=0,
+        description="Timeslice start timestamp in nanoseconds",
+    )
+    end_ns: int = Field(
+        ge=0,
+        description="Timeslice end timestamp in nanoseconds",
+    )
+    is_complete: bool | None = Field(
+        default=None,
+        description="False for partial timeslices (typically the final slice). "
+        "None for complete timeslices covering the full configured duration.",
+    )
+    metric_results: dict[MetricTagT, MetricResult] = Field(
+        default_factory=dict,
+        description="Metric results computed for this timeslice's window, "
+        "keyed by metric tag.",
+    )
+
+    @field_validator("metric_results", mode="before")
+    @classmethod
+    def _coerce_metric_results(cls, value: Any) -> Any:
+        """Accept ``list[MetricResult]`` for ergonomic construction and rekey
+        by ``tag``. Existing dict input passes through unchanged."""
+        if isinstance(value, list):
+            return {r.tag: r for r in value}
+        return value
+
+
+class PhaseProfileResults(AIPerfBaseModel):
+    """Metric summary for one concrete named phase."""
+
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str = Field(description="User-provided unique phase name.")
+    phase_kind: PhaseKind = Field(
+        description="Phase semantic kind: warmup or profiling."
+    )
+    records: list[MetricResult] = Field(
+        default_factory=list, description="Metric results scoped to this phase."
+    )
+    start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase start time in nanoseconds, when available.",
+    )
+    end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase request completion time in nanoseconds, when available.",
+    )
+    baseline_start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase START baseline request publish time in nanoseconds, when available.",
+    )
+    baseline_end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Phase END baseline request publish time in nanoseconds, when available.",
+    )
+    was_cancelled: bool = Field(
+        default=False, description="Whether this phase was cancelled early."
+    )
+    successful_request_count: int = Field(
+        default=0, ge=0, description="Successful records for this phase."
+    )
+    error_request_count: int = Field(
+        default=0, ge=0, description="Errored records for this phase."
+    )
+    error_summary: list[ErrorDetailsCount] = Field(
+        default_factory=list,
+        description="A list of the unique phase error details and their counts",
+    )
+    telemetry_results: TelemetryExportData | None = Field(
+        default=None,
+        description="GPU telemetry summary scoped to this concrete phase.",
+    )
+    server_metrics_results: ServerMetricsResults | None = Field(
+        default=None,
+        description="Server metrics summary scoped to this concrete phase.",
+    )
+    telemetry_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal telemetry warnings for phase artifact export.",
+    )
+    server_metrics_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal server metrics warnings for phase artifact export.",
+    )
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description="DAG branch orchestration counters scoped to this concrete "
+        "phase. None when the phase did not use a branch orchestrator.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -182,9 +427,17 @@ class ProfileResults(AIPerfBaseModel):
     records: list[MetricResult] | None = Field(
         ..., description="The records of the profile results"
     )
-    timeslice_metric_results: dict[TimeSliceT, list[MetricResult]] | None = Field(
+    warmup_records: list[MetricResult] | None = Field(
         default=None,
-        description="The timeslice metric results of the profile (if using timeslice mode)",
+        description="Metric results computed only from warmup-phase records. "
+        "Top-level records remain profiling-only.",
+    )
+    timeslices: list[TimesliceResult] | None = Field(
+        default=None,
+        description="Per-timeslice results in chronological order. Each entry "
+        "bundles the slice's window bounds (start_ns, end_ns, is_complete) "
+        "with its metric results. Position in the list is the slice's "
+        "chronological index. Produced by the MetricsAccumulator engine.",
     )
     total_expected: int | None = Field(
         default=None,
@@ -202,6 +455,19 @@ class ProfileResults(AIPerfBaseModel):
     was_cancelled: bool = Field(
         default=False,
         description="Whether the profile run was cancelled early",
+    )
+    is_complete: bool = Field(
+        default=True,
+        description="Whether every expected record was aggregated into these "
+        "results. False when the run was finalized without them -- e.g. the "
+        "record-stall watchdog gave up waiting, or result finalization failed "
+        "outright. Metrics in an incomplete result are computed over a subset "
+        "of the run and must not be compared against complete runs.",
+    )
+    incomplete_reason: str | None = Field(
+        default=None,
+        description="Human-readable explanation of why the results are "
+        "incomplete. None when ``is_complete`` is True.",
     )
     successful_request_count: int = Field(
         default=0,
@@ -223,6 +489,28 @@ class ProfileResults(AIPerfBaseModel):
         "None for non-DAG runs; a populated snapshot for DAG-shaped "
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
+    )
+    context_overflow_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of AGENTIC_REPLAY context-overflow records skipped from "
+        "normal metric accumulation and stream export, retained only for "
+        "aggregate runtime submission validation.",
+    )
+    phase_records: list[PhaseProfileResults] | None = Field(
+        default=None,
+        description="Internal per-phase metric summaries used for phase artifacts.",
+    )
+    pooled_spec_decode_acceptance_histogram: (
+        dict[NonNegativeInt, NonNegativeInt] | None
+    ) = Field(
+        default=None,
+        description="Run-level pooled speculative-decoding acceptance histogram "
+        "for this phase: accepted-draft count j mapped to the total number of "
+        "verify steps that accepted exactly j draft tokens, summed elementwise "
+        "across every request. Its counts sum to ``total_spec_decode_steps``. "
+        "None when spec decode is off; forwarded to the aggregate JSON export and "
+        "the dedicated console histogram line.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -307,7 +595,7 @@ class SSEField:
     was the #1 memory allocator.
     """
 
-    name: SSEFieldType | str
+    name: str
     """The name of the field. e.g. 'data', 'event', 'id', 'retry', 'comment'."""
 
     value: str | None = None
@@ -415,6 +703,21 @@ class SSEMessage:
         if isinstance(raw_message, bytes):
             raw_message = raw_message.decode("utf-8")
 
+        if (
+            "\n" not in raw_message
+            and "\r" not in raw_message
+            and raw_message.startswith(_SSE_DATA_PREFIX)
+        ):
+            return cls(
+                perf_ns=perf_ns,
+                packets=[
+                    SSEField(
+                        name=_SSE_DATA_FIELD_NAME,
+                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(),
+                    )
+                ],
+            )
+
         message = cls(perf_ns=perf_ns)
         for line in raw_message.splitlines():
             if not (line := line.strip()):
@@ -447,11 +750,11 @@ class SSEMessage:
 
             if field_name == "":
                 # Field name is empty, so this is a comment
-                field_name = SSEFieldType.COMMENT
+                field_name = _SSE_COMMENT_FIELD_NAME
 
             # Spec says strip only one leading space; we strip() all whitespace
             # to normalize inconsistent servers for downstream exact comparisons
-            # (e.g. "[DONE]", SSEEventType.ERROR).
+            # (e.g. "[DONE]", "error").
             message.packets.append(
                 SSEField(name=field_name.strip(), value=value.strip())
             )
@@ -466,10 +769,13 @@ class SSEMessage:
         Returns:
             str: The combined data contents of the SSE message, joined by newlines.
         """
+        if len(self.packets) == 1 and self.packets[0].name == _SSE_DATA_FIELD_NAME:
+            return self.packets[0].value or ""
+
         return "\n".join(
             packet.value
             for packet in self.packets
-            if packet.name == SSEFieldType.DATA and packet.value
+            if packet.name == _SSE_DATA_FIELD_NAME and packet.value
         )
 
     def get_raw(self) -> Any | None:
@@ -486,7 +792,10 @@ class SSEMessage:
         """Get the JSON representation of the response."""
         data_content = None
         try:
-            data_content = self.get_text()
+            if len(self.packets) == 1 and self.packets[0].name == _SSE_DATA_FIELD_NAME:
+                data_content = self.packets[0].value
+            else:
+                data_content = self.get_text()
             if data_content in ("", None, "[DONE]"):
                 return None
             return load_json_str(data_content)
@@ -537,6 +846,20 @@ class RecordContext(AIPerfBaseModel):
         ...,
         description="The type of credit phase (either warmup or profiling)",
     )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
+    )
     conversation_id: str = Field(
         ...,
         description="The ID of the conversation (if applicable).",
@@ -544,6 +867,36 @@ class RecordContext(AIPerfBaseModel):
     turn_index: int = Field(
         ...,
         description="The index of the turn in the conversation (if applicable).",
+    )
+    source_trace_id: str | None = Field(
+        default=None,
+        description=(
+            "Original trace/conversation id that produced this reconstructed "
+            "request, when provided by the dataset loader."
+        ),
+    )
+    source_outer_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index of the original top-level source request within "
+            "source_trace_id, when provided by the dataset loader."
+        ),
+    )
+    source_inner_idx: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Zero-based index within the nested source request list identified "
+            "by source_outer_idx, when provided by the dataset loader."
+        ),
+    )
+    source_kind: str | None = Field(
+        default=None,
+        description=(
+            "Loader-specific source classification for this request, when "
+            "provided by the dataset loader."
+        ),
     )
     x_request_id: str = Field(
         ...,
@@ -572,6 +925,14 @@ class RecordContext(AIPerfBaseModel):
         description="The x_correlation_id of the parent session that spawned this session via a DAG "
         "subagent fork. None for root sessions. Sourced from the originating Credit.",
     )
+    root_correlation_id: str | None = Field(
+        default=None,
+        description="The x_correlation_id of the depth-0 root of this record's session TREE. "
+        "Stable across the whole tree (root + every descendant subagent at any depth); equals "
+        "x_correlation_id for a root session. Sourced from the originating Credit. Use to group "
+        "every record of one agentic session (root + subagents) and to reconstruct exactly-N "
+        "session-tree concurrency in analysis.",
+    )
 
     # --- Hoisted metric inputs (avoid shipping full Turn structs) -------------
 
@@ -593,23 +954,30 @@ class RecordContext(AIPerfBaseModel):
         "record-enrichment time so the record processor reads it directly off the record without "
         "the full ``turns`` list on the wire. None for non-ASR requests.",
     )
-
-    # --- Records-pipeline reads (read by inference_result_parser, raw_record_writer) ----
-
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="The actual turns of the request. This will include assistant turns as well as user turns in multi-turn conversations. "
-        "Read by the records pipeline (``inference_result_parser``, ``raw_record_writer_processor``) for response parsing and raw export.",
-    )
-    system_message: str | None = Field(
+    scheduled_send_ms: FiniteFloat | None = Field(
         default=None,
-        description="Optional shared system message to prepend to the first turn. "
-        "Extracted from conversation.system_message at request time. Read by the records pipeline.",
+        description="Absolute schedule timestamp (ms, schedule-relative) from the "
+        "dispatched turn's ``Turn.timestamp``. Populated at record-enrichment time "
+        "so fixed-schedule replay lag metrics can read it off the slim record "
+        "without the full ``turns`` list on the wire. None for delay-scheduled "
+        "continuation turns and non-fixed-schedule datasets.",
     )
-    user_context_message: str | None = Field(
+
+    # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
+
+    cache_bust_marker: str | None = Field(
         default=None,
-        description="Optional per-conversation user context message to prepend to the first turn. "
-        "Extracted from conversation.user_context_message at request time. Read by the records pipeline.",
+        description="Pre-rendered cache-bust marker text for this request, "
+        "sourced from ``Credit.cache_bust_marker``. Already includes whitespace "
+        "boundaries. None when the cache-bust feature is disabled or no marker "
+        "applied to this request. Exported in the raw JSONL so a replay tool "
+        "can correlate the inserted bytes with the originating session.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected for this request, sourced "
+        "from ``Credit.cache_bust_target``. None when cache-bust is disabled. "
+        "Pairs with ``cache_bust_marker`` for raw-JSONL provenance.",
     )
 
 
@@ -628,6 +996,29 @@ class RequestInfo(RecordContext):
     model_endpoint: ModelEndpointInfo = Field(
         ...,
         description="The model endpoint that the request was sent to.",
+    )
+    turns: list[Turn] = Field(
+        default_factory=list,
+        description="The actual turns of the request, consumed by "
+        "``format_payload`` to build the wire body. Lives on ``RequestInfo`` "
+        "(not ``RecordContext``) so the full Turn list never crosses the "
+        "ZMQ hop to the record processor — only the canonical "
+        "``payload_bytes`` travel.",
+    )
+    system_message: str | None = Field(
+        default=None,
+        description="Optional shared system message extracted from "
+        "``Conversation.system_message`` at request time. Consumed by the "
+        "endpoint's ``format_payload`` (or top-level ``instructions`` on the "
+        "Responses API) and inlined into ``payload_bytes`` before transport; "
+        "lives on ``RequestInfo`` because the record processor reads only "
+        "``payload_bytes`` downstream.",
+    )
+    user_context_message: str | None = Field(
+        default=None,
+        description="Optional per-conversation user context message extracted "
+        "from ``Conversation.user_context_message`` at request time. Same "
+        "inlining contract as ``system_message``.",
     )
     endpoint_headers: dict[str, str] = Field(
         default_factory=dict,
@@ -659,10 +1050,20 @@ class RequestInfo(RecordContext):
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
     )
+    previous_response_id: str | None = Field(
+        default=None,
+        description="Response ID from the previous turn (e.g. 'resp_<hash>') "
+        "used for stateful chaining in the Responses API.",
+    )
 
 
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
+
+    _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
+    """Memoized endpoint-final parsed responses, local to this process and never
+    serialized. Populated by endpoint response processing and treated as read-only.
+    Records are single-pass; responses must be complete before memoization."""
 
     request_info: RecordContext | None = Field(
         default=None,
@@ -701,8 +1102,8 @@ class RequestRecord(AIPerfBaseModel):
         description="The HTTP status code of the response.",
     )
     # TODO: Maybe we could improve this with subclassing the responses to allow for more specific types.
-    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how we handle
-    #       the CommandMessage and CommandResponse classes for an example.
+    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how
+    #       AutoRoutedModel handles nested discriminators for an example.
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
@@ -713,6 +1114,15 @@ class RequestRecord(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    context_overflow: bool = Field(
+        default=False,
+        description="True iff this request's error response was classified "
+        "as a server-side context-overflow event by "
+        "``aiperf.common.scenario.is_context_overflow_response`` "
+        "(InferenceX AgentX scenario, RFC section 7). Set on the worker side at "
+        "response-parsing time; consumed by the ``ContextOverflowCountMetric`` "
+        "aggregate counter.",
     )
     credit_drop_latency: int | None = Field(
         default=None,
@@ -725,16 +1135,54 @@ class RequestRecord(AIPerfBaseModel):
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
     )
+    clock_offset_ns: int | None = Field(
+        default=None,
+        description="Estimated offset between this worker's wall clock and the "
+        "controller's, in nanoseconds, at the moment the record was emitted. "
+        "Sign convention is worker-minus-controller, so a worker clock running "
+        "ahead of the controller is positive and the correction SUBTRACTS: "
+        "``controller_time = worker_time - clock_offset_ns``. This is "
+        "``ClockOffsetTracker.correction_ns``: the min-filtered one-way sample "
+        "(``received - issued``, i.e. skew PLUS transit) less the pre-flight "
+        "one-way transit estimate, falling back to the raw sample when no "
+        "baseline RTT could be measured. None outside "
+        "Kubernetes mode, where both clocks are the same clock and no "
+        "correction is meaningful. Signed, so no bounds apply. Measured in the "
+        "tracker's anchored clock domain (a wall-clock anchor advanced by "
+        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
+        "so an NTP step mid-run leaves the correction carrying that step as "
+        "residual error - bounded by the step size, typically sub-millisecond.",
+    )
+
+    @property
+    def controller_timestamp_ns(self) -> int:
+        """``timestamp_ns`` mapped into the controller's clock frame.
+
+        The one conversion from worker time to controller time:
+        ``controller_time = worker_time - clock_offset_ns``. Returns
+        ``timestamp_ns`` unchanged when no offset was measured (every
+        non-Kubernetes run, and a Kubernetes worker before its clock-offset
+        tracker calibrates), so callers need no mode check.
+
+        Use this wherever a wall-clock timestamp is compared or exported
+        against anything produced outside this worker's pod - credit issue
+        times, replay schedule zero, or another pod's records. The raw
+        ``timestamp_ns`` stays untouched as the provenance record.
+
+        Example:
+            >>> record = RequestRecord(timestamp_ns=1_000_000_500, clock_offset_ns=500)
+            >>> record.controller_timestamp_ns
+            1000000000
+        """
+        if self.clock_offset_ns is None:
+            return self.timestamp_ns
+        return self.timestamp_ns - self.clock_offset_ns
+
     trace_data: SerializeAsAny[BaseTraceData] | None = Field(
         default=None,
         description="Comprehensive trace data captured via a trace config. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
-    )
-    turns: list[Turn] = Field(
-        default_factory=list,
-        description="Deep copy of the request turns. This is a copy of the turns from request_info, "
-        "made to avoid mutating the original session data when stripping multimodal content.",
     )
 
     @field_validator("trace_data", mode="before")
@@ -1013,6 +1461,29 @@ def find_last_non_empty_usage(responses: list[ParsedResponse]) -> Usage | None:
     return None
 
 
+def first_content_chunk_completion_tokens(
+    responses: list[ParsedResponse],
+) -> int | None:
+    """Return the cumulative ``completion_tokens`` reported on the first content
+    chunk (the chunk whose arrival defines TTFT).
+
+    Requires per-chunk (``continuous_usage_stats``) usage: it walks forward to the
+    first response carrying content (``data`` is not None) and reads its usage's
+    ``completion_tokens``. This is deliberately the raw completion count
+    (reasoning included), matching ``OutputSequenceLengthMetric`` -- OSL is
+    ``output + reasoning`` = ``completion_tokens`` -- so inter-token latency
+    subtracts operands in the same unit. Because per-chunk usage is cumulative,
+    that value is the number of tokens delivered through the first content chunk.
+    Returns ``None`` when no content chunk carries usage (e.g. the server only
+    reports the final total), so callers fall back to assuming one token in the
+    first chunk.
+    """
+    for response in responses:
+        if response.data and response.usage:
+            return response.usage.completion_tokens
+    return None
+
+
 @dataclass(slots=True)
 class ParsedResponse:
     """Parsed response from a inference client."""
@@ -1052,6 +1523,12 @@ class ParsedResponse:
     metadata: dict[str, Any] = field(default_factory=dict)
     """Additional metadata from the response useful for analysis (rate limits, content filters, etc.)."""
 
+    spec_decode_stats: dict[str, Any] | None = None
+    """Raw speculative-decoding payload captured from the response root (e.g.
+    vLLM's ``metrics.speculative_decoding``), or None when absent. Left
+    uninterpreted here; a ``SpecDecodeAdapterProtocol`` converts it into the
+    engine-neutral ``SpecDecodeAcceptanceRecord`` at record-assembly time."""
+
     def __post_init__(self) -> None:
         # Coerce raw dicts to Usage, since dataclass __init__ doesn't run
         # Pydantic validation like BaseModel did.
@@ -1072,6 +1549,37 @@ class TokenCounts:
     reasoning: int | None = None
     """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
 
+    first_content_chunk_tokens: int | None = None
+    """The number of tokens delivered in the first content chunk -- the chunk whose
+    arrival defines TTFT -- taken from the server's per-chunk usage (cumulative
+    ``completion_tokens`` at that chunk). Inter-token latency subtracts this from the
+    decode-token count rather than assuming exactly one token arrived first, which
+    corrects the TPS/user inflation a server produces when it bundles multiple tokens
+    into the first streamed chunk (e.g. TRT-LLM ``stream-interval``). ``None`` unless
+    ``--per-chunk-usage`` is set and the server reports per-chunk usage; inter-token
+    latency then falls back to assuming one token in the first chunk."""
+
+
+@dataclass(slots=True)
+class MediaCounts:
+    """Multimodal content-part counts for a record.
+
+    Computed once by ``InferenceResultParser`` at parse time via the endpoint's
+    ``extract_payload_inputs`` hook (which walks the wire payload's message-array
+    shape) and stashed on ``ParsedResponseRecord`` so record-metric classes
+    (``NumImagesMetric`` et al.) never re-parse ``payload_bytes`` per metric per
+    record. Zero-valued when the payload carries no recognised media parts.
+    """
+
+    images: int = 0
+    """Count of image content parts in the wire payload."""
+
+    audios: int = 0
+    """Count of audio content parts in the wire payload."""
+
+    videos: int = 0
+    """Count of video content parts in the wire payload."""
+
 
 @dataclass
 class ParsedResponseRecord:
@@ -1088,6 +1596,17 @@ class ParsedResponseRecord:
 
     token_counts: TokenCounts | None = None
     """The token counts for the response. None if the token counts could not be calculated."""
+
+    media_counts: MediaCounts = field(default_factory=MediaCounts)
+    """Multimodal content-part counts derived once from the wire payload (images/audios/videos)."""
+
+    spec_decode_acceptance: SpecDecodeAcceptanceRecord | None = None
+    """Engine-neutral per-request speculative-decoding acceptance record, filled
+    by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
+    stats. ``None`` when: spec decode is off or the request had no verify steps
+    (no payload); the request produced multiple sequences (``n > 1``, which is
+    suppressed); no registered adapter recognized the payload; or the payload
+    was malformed and the adapter rejected it."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
@@ -1107,8 +1626,17 @@ class ParsedResponseRecord:
 
     @cached_property
     def timestamp_ns(self) -> int:
-        """Get the wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns)."""
-        return self.request.timestamp_ns
+        """Wall-clock request timestamp in the CONTROLLER's frame, in nanoseconds.
+
+        Clock-offset corrected (see ``RequestRecord.controller_timestamp_ns``),
+        because every consumer of this value compares it across pods or against
+        controller-produced times: benchmark start/end are folded to the min and
+        max over all workers, and replay lag is measured against the timing
+        manager's schedule zero. Identical to the raw ``request.timestamp_ns``
+        outside Kubernetes mode. DO NOT USE FOR LATENCY CALCULATIONS
+        (perf-counter deltas own that).
+        """
+        return self.request.controller_timestamp_ns
 
     # TODO: How do we differentiate the end of the request vs the time of the last response?
     #       Which one should we use for the latency metrics?
@@ -1200,6 +1728,13 @@ class MetricRecordInfo(AIPerfBaseModel):
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
     )
+    spec_decode_acceptance: SpecDecodeAcceptanceRecord | None = Field(
+        default=None,
+        description="Engine-neutral per-request speculative-decoding acceptance "
+        "record (histogram, per-step counts, and aggregate tallies) carried into "
+        "the records trace at --export-level records. None when spec decode is off "
+        "or the request had no verify steps.",
+    )
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
@@ -1217,9 +1752,20 @@ class RawRecordInfo(AIPerfBaseModel):
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
     )
-    payload: dict[str, Any] = Field(
-        ...,
-        description="The raw request payload sent to the server.",
+    payload: dict[str, Any] | None = Field(
+        default=None,
+        description="The raw request payload sent to the server. Exactly one "
+        "of ``payload`` or ``payload_bytes`` is populated per record — "
+        "``payload_bytes`` is preferred by the JSONL writer (bytes are "
+        "spliced as a JSON fragment without a loads+dumps round-trip).",
+    )
+    payload_bytes: bytes | None = Field(
+        default=None,
+        exclude=True,
+        description="Canonical pre-encoded JSON bytes of the request body, "
+        "inherited from ``RequestInfo.payload_bytes``. Spliced directly into "
+        "the JSONL line via ``orjson.Fragment`` to avoid the pointless "
+        "decode-then-encode round-trip ``payload: dict`` would require.",
     )
     request_headers: dict[str, str] | None = Field(
         default=None,
@@ -1240,4 +1786,18 @@ class RawRecordInfo(AIPerfBaseModel):
     error: ErrorDetails | None = Field(
         default=None,
         description="The error details if the request failed.",
+    )
+    cache_bust_marker: str | None = Field(
+        default=None,
+        description="Cache-bust marker text injected into the wire payload for "
+        "this request, copied from the originating ``Credit``. None when the "
+        "cache-bust feature is disabled. Surfaced here so raw-JSONL consumers "
+        "can correlate inserted bytes with the originating session without "
+        "re-parsing ``payload``.",
+    )
+    cache_bust_target: CacheBustTarget | None = Field(
+        default=None,
+        description="Where the marker was injected (``system_prefix``, "
+        "``system_suffix``, ``first_turn_prefix``, or ``first_turn_suffix``). "
+        "None when cache-bust is disabled.",
     )

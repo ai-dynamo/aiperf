@@ -32,7 +32,7 @@ __all__ = [
 
 # Type aliases for format arrays.
 # Narrow to what the codebase actually emits: MetricsJsonExporter writes the
-# summary JSON, RecordExportResultsProcessor writes the records JSONL. No YAML
+# summary JSON, RecordExportJSONLWriter writes the records JSONL. No YAML
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
 RecordsExportFormat = Literal["jsonl"]
@@ -57,11 +57,13 @@ class OutputDefaults:
     )
     PROFILE_EXPORT_JSONL_FILE = Path("profile_export.jsonl")
     PROFILE_EXPORT_RAW_JSONL_FILE = Path("profile_export_raw.jsonl")
+    PROFILE_EXPORT_CONSOLE_TXT_FILE = Path("profile_export_console.txt")
     PROFILE_EXPORT_GPU_TELEMETRY_JSONL_FILE = Path("gpu_telemetry_export.jsonl")
     SERVER_METRICS_EXPORT_JSONL_FILE = Path("server_metrics_export.jsonl")
     SERVER_METRICS_EXPORT_JSON_FILE = Path("server_metrics_export.json")
     SERVER_METRICS_EXPORT_CSV_FILE = Path("server_metrics_export.csv")
     SERVER_METRICS_EXPORT_PARQUET_FILE = Path("server_metrics_export.parquet")
+    NETWORK_LATENCY_EXPORT_JSONL_FILE = Path("profile_export_network_latency.jsonl")
     EXPORT_LEVEL = ExportLevel.RECORDS
     EXPORT_HTTP_TRACE = False
     SHOW_TRACE_TIMING = False
@@ -219,7 +221,20 @@ class ArtifactsConfig(BaseConfig):
             )
         if self.slice_duration is not None and self.slice_duration <= 0:
             raise ValueError("slice_duration must be > 0")
+        if self.export_outputs_json and self.prefix is not None:
+            self._check_outputs_json_collision()
         return self
+
+    def _check_outputs_json_collision(self) -> None:
+        """Reject prefix values that collide with the outputs.json path."""
+        if self.profile_export_json_file.resolve() == self.outputs_json_file.resolve():
+            base = self._base()
+            raise ValueError(
+                f"--profile-export-prefix resolves to '{base}' which produces "
+                f"'{base}.json', colliding with --export-outputs-json "
+                f"(also '{OutputDefaults.OUTPUTS_JSON_FILE.name}'). "
+                f"Use a different prefix."
+            )
 
     # ==========================================================================
     # COMPUTED FILE PATH PROPERTIES
@@ -234,9 +249,11 @@ class ArtifactsConfig(BaseConfig):
         "_server_metrics.jsonl",
         "_server_metrics.json",
         "_server_metrics.csv",
+        "_network_latency.jsonl",
         "_gpu_telemetry.jsonl",
         "_timeslices.csv",
         "_timeslices.json",
+        "_console.txt",
         "_raw.jsonl",
         ".parquet",
         ".csv",
@@ -313,6 +330,13 @@ class ArtifactsConfig(BaseConfig):
         return self.dir / name
 
     @property
+    def profile_export_console_txt_file(self) -> Path:
+        """Path for the plain-text console output capture file."""
+        base = self._base()
+        name = f"{base}_console.txt" if base else "profile_export_console.txt"
+        return self.dir / name
+
+    @property
     def profile_export_gpu_telemetry_jsonl_file(self) -> Path:
         """Path for the GPU telemetry JSONL export file."""
         base = self._base()
@@ -324,6 +348,24 @@ class ArtifactsConfig(BaseConfig):
         """Path for the server metrics JSONL export file."""
         base = self._base()
         name = f"{base}_server_metrics.jsonl" if base else "server_metrics_export.jsonl"
+        return self.dir / name
+
+    @property
+    def accuracy_export_jsonl_file(self) -> Path:
+        """Path for the per-record accuracy JSONL export file."""
+        base = self._base()
+        name = f"{base}_accuracy.jsonl" if base else "accuracy_export.jsonl"
+        return self.dir / name
+
+    @property
+    def network_latency_export_jsonl_file(self) -> Path:
+        """Path for the per-sample network latency RTT probe JSONL export file."""
+        base = self._base()
+        name = (
+            f"{base}_network_latency.jsonl"
+            if base
+            else "profile_export_network_latency.jsonl"
+        )
         return self.dir / name
 
     @property

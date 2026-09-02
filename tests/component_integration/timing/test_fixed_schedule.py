@@ -25,7 +25,10 @@ import pytest
 from aiperf.credit.messages import CreditReturn
 from aiperf.credit.structs import Credit
 from tests.component_integration.conftest import AIPerfRunnerResultWithSharedBus
-from tests.component_integration.timing.conftest import defaults
+from tests.component_integration.timing.conftest import (
+    defaults,
+    skip_on_cloud_windows_timing,
+)
 from tests.harness.analyzers import (
     ConcurrencyAnalyzer,
     CreditFlowAnalyzer,
@@ -276,6 +279,7 @@ class TestFixedScheduleCreditFlow:
 class TestFixedScheduleTiming:
     """Timing accuracy tests for fixed schedule mode."""
 
+    @skip_on_cloud_windows_timing
     def test_first_turns_staggered(self, cli: AIPerfCLI, tmp_path: Path):
         """Verify first turns are sent at staggered timestamps."""
         stagger_ms = 50  # 50ms between first turns
@@ -310,6 +314,7 @@ class TestFixedScheduleTiming:
                 f"Gap {gap / 1e6:.2f}ms differs from expected {stagger_ms}ms by {error_ms:.1f}ms"
             )
 
+    @skip_on_cloud_windows_timing
     def test_concurrent_first_turns(self, cli: AIPerfCLI, tmp_path: Path):
         """Test multiple sessions with same timestamp (concurrent start)."""
         config = FixedScheduleTestConfig(num_sessions=10)

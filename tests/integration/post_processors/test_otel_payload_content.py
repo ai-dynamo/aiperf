@@ -50,7 +50,7 @@ class _DecodingOTLPSinkHandler(BaseHTTPRequestHandler):
             try:
                 request.ParseFromString(body)
                 self.server.exports.append(request)  # type: ignore[attr-defined]
-            except Exception as exc:  # noqa: BLE001 - surface parse errors to the test
+            except Exception as exc:  # surface parse errors to the test
                 self.server.decode_errors.append(repr(exc))  # type: ignore[attr-defined]
         self.send_response(200)
         self.end_headers()

@@ -4,7 +4,7 @@
 -->
 # AIPerf
 
-Python 3.10+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
+Python 3.11+ async AI benchmarking tool for measuring LLM inference server performance. 10 services communicate via ZMQ message bus.
 
 **Reference documentation:**
 - [`docs/architecture.md`](docs/architecture.md) - Three-plane architecture, core components, credit system, data flow, communication patterns
@@ -36,12 +36,18 @@ Python 3.10+ async AI benchmarking tool for measuring LLM inference server perfo
 - Use mermaid diagrams instead of ASCII art in markdown files.
 - Do not create markdown files to document code changes or decisions.
 - Do not over-comment code. Removing code is fine without adding comments to explain why.
+- Multi-line docstrings are permitted. Use them when the behavior is non-obvious.
 - No emojis in code or comments.
-- Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
+- Hide a metric from the console table with `console_group = MetricConsoleGroup.NONE`; group it into a separate section with `MetricConsoleGroup.{USAGE,CACHE,PREDICTION,AUDIO,REASONING,SPEC_DECODE,GPU_POWER_EFFICIENCY_NVIDIA,GPU_POWER_EFFICIENCY_AMD}`. Default is `DEFAULT`. See `docs/metrics-reference.md` "Metric Console Group Reference".
+- Platform-conditional code MUST branch on `IS_WINDOWS` / `IS_MACOS` / `IS_LINUX` from `aiperf.common.constants`, never on `platform.system()` directly. The constants are evaluated once at import time, are uniformly greppable, and produce smaller diffs. See `src/aiperf/common/bootstrap.py` and `src/aiperf/config/comm/ipc.py` for canonical examples.
 
 ## NaN/Inf Discipline
 
 Numeric metric values crossing a serialization boundary or feeding a numerical algorithm must be finite or explicitly `None`. Use `aiperf.common.finite` (`FiniteFloat`, `scrub_non_finite`, `nan_safe_mean`/`std`, `is_finite_value`). Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py` reject new violations and ratchet existing debt to zero via baseline files. See [`docs/dev/patterns.md`](docs/dev/patterns.md) § "NaN/Inf Discipline Pattern" and [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) for the full contract.
+
+## CLI Flag Routing Under `--config`
+
+A CLI flag passed alongside `--config` MUST either change the resolved config or raise an error naming the flag — never be silently ignored, which for a benchmarking tool means publishing numbers that do not match what was asked for. `CLIConfig` is the source of truth, structurally: `resolve_config` receives a `CLIConfig` and a path and nothing else, so a flag reaches `AIPerfConfig` only by being a field on it. Every field must be classified in `src/aiperf/config/flags/_config_flag_routing.py` as `ROUTED_UNDER_CONFIG`, `UNROUTED_UNDER_CONFIG`, `EXEMPT_FROM_CONFIG_ROUTING`, or one of the conditional sets (`COMPANION_ROUTED`, `MAGIC_LIST_ONLY_UNDER_CONFIG`). Adding a flag without classifying it fails `test_every_cli_config_field_is_classified`; claiming a flag is routed when nothing routes it fails `test_routed_field_never_silently_no_ops`. Prefer routing the flag (check whether a builder already exists) over listing it as unrouted. See [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) § "CLI flag routing under `--config`".
 
 ## Build and Test Commands
 
@@ -96,6 +102,39 @@ Hooks: `check-ast`, `debug-statements`, `detect-private-key`, `check-added-large
 
 See `docs/dev/patterns.md` § "Adding a New CLI Flag". CLIConfig is flat; never add a nested config class.
 
+## Kubernetes
+
+The Kubernetes operator and CLI layer live in `src/aiperf/operator/`, `src/aiperf/kubernetes/`, and `src/aiperf/cli_commands/kube/`. Key patterns:
+
+- **kopf handlers** — The operator entry point is `src/aiperf/operator/main.py`. All `@kopf.on.*` decorators live there; handler bodies are decorator-free functions in `src/aiperf/operator/handlers/{create,cleanup,completion,lifecycle,monitor}.py`. Raise `kopf.PermanentError` to stop retrying, `kopf.TemporaryError(..., delay=N)` to retry after delay — generic exceptions retry forever. kopf calls handlers with a fixed kwarg set (`body, spec, name, namespace, patch, uid, **_: Any`); these signatures are baselined against `keyword-only-args` because kopf owns the calling convention.
+- **kubernetes_asyncio access** — Always use `async with k8s_client() as api:` from `aiperf.kubernetes.client`; never instantiate `ApiClient()` directly. The helper handles in-cluster-or-kubeconfig fallback and closure.
+- **`aiperf kube` CLI** — Subcommands live in `src/aiperf/cli_commands/kube/` and are registered in `_app.py`. Composite flags (`namespace`, `kubeconfig`, `kube-context`) pass via `KubeManageOptions` from `aiperf.config.kube`.
+- **FastAPI routers** — Two patterns: module-level `router = APIRouter(...)` in `src/aiperf/api/routers/*.py`, and factory `create_xxx_router(deps...) -> APIRouter` in `src/aiperf/operator/routers/jobs.py` when the router closes over live state.
+- **Shellouts** — Always `aiperf.kubernetes.subproc.run_command(...)` / `check_command` / `start_streaming_process` + `terminate_process`; never `asyncio.create_subprocess_exec` directly. 60 s default timeout.
+- **CLI user output** — All kube-CLI output goes through `from aiperf.kubernetes import console as kube_console`; never `print` or `rich.print`. Last-benchmark persistence (`save_last_benchmark`) lives there too — do not roll your own `last_X.json`.
+- **`--output text|json`** — Read-only CLI checks (preflight, validate) expose `Literal["text", "json"]`; in JSON mode, wrap the work in `kube_console.machine_readable_stdout()` and emit via `kube_console.emit_raw(orjson.dumps(..., option=OPT_INDENT_2).decode())`. Result dataclasses own the `to_dict()` schema.
+- **Machine-readable stdout** — Every JSON/YAML payload goes through `kube_console.emit_raw`, never `kube_console.console.print`: Rich hard-wraps lines wider than the resolved console width (80 without a tty) and the break lands mid-token, so a long image reference makes the document unparseable under redirection. `machine_readable_stdout()` retargets the `aiperf.kube` handlers to stderr rather than filtering by level, so no future log record can prepend text to stdout. Human-facing log text (`kube logs`, controller log streaming) stays on `console.print` but must pass `soft_wrap=True`. See `docs/dev/patterns.md` § "Machine-Readable Kube CLI Output Pattern".
+- **Benchmark diagnosis** — `aiperf kube watch` and its `WatchOrchestrator`/`WatchRenderer` split were removed; the salvaged detectors live in `src/aiperf/kubernetes/benchmark_diagnosis.py` and are consumed by `aiperf kube debug`. Tunables are `AIPERF_K8S_DIAGNOSIS_*`.
+- **CRD generator** — Both CRDs (`deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml` and `crd-aiperfsweep.yaml`) are auto-generated from `AIPerfJobSpec` / `AIPerfSweepSpec` Pydantic models by `tools/generate_crd.py`. Do NOT hand-edit the YAML; run `uv run python tools/generate_crd.py` and verify with `--check`. User-facing validation rule catalog in `docs/kubernetes/crd-validation.md`.
+- **Durable completion claim** — Exactly-once completion work is gated by `await try_claim_completion(...)` in `operator/client_cache.py` — a JSON-patch with a `test` op, so concurrent ticks race atomically on the apiserver. The in-process `_shutdown_sent` set is only a fast path; the CR annotation is authoritative.
+- **Serialized Kubernetes run config** — Every service container reads the same controller-rendered `BenchmarkRun` through `aiperf.kubernetes.serialized_run.read_serialized_run_json`; never independently resolve `CLIConfig` inside `aiperf service`, because seeds, synthesized defaults, and artifact identity must remain identical across pods. Work the resolver chain would have done must therefore ride inside the serialized run or be rendered from it: `artifacts.user_files` is materialized by `aiperf.kubernetes.user_files.materialize_serialized_run_user_files` in the `system_controller` container only (the sole container owning the run directory), against the `BenchmarkRun.run_meta` identity the operator freezes at create time.
+- **Endpoint credential transport** — Serialized `BenchmarkRun` and ConfigMap data remain secret-free. Redact endpoint credentials before persistence, inject them only through Secret-backed `AIPERF_INJECTED_API_KEY`, `AIPERF_INJECTED_HEADERS`, or `AIPERF_INJECTED_ENDPOINT_URLS`, and use `aiperf.common.endpoint_credentials` for validation and rehydration.
+- **Operator metrics** — Wrap **only** kopf reconcile handlers with `@track_handler("name")` (between the `@kopf.*` decorator and the function); never instrument helper functions.
+- **`ServiceRunType.KUBERNETES`** is a generated plugin enum member: it is declared in `src/aiperf/plugin/plugins.yaml` and emitted into `src/aiperf/plugin/enums.py` by `make generate-all-plugin-files`. Never hand-edit `src/aiperf/plugin/enums.py`.
+- **Operator-namespace fallback** — code that needs the chart-default operator namespace MUST import `DEFAULT_OPERATOR_NAMESPACE` from `aiperf.kubernetes.constants`, never hardcode `"aiperf-system"`. Callers with cluster API access should still prefer `find_operator_namespace` (cluster-wide pod-label search).
+- **Dual-channel credit readiness** — credit dispatch rides the DEALER (`CommAddress.CREDIT_ROUTER`) but credit *returns* ride a separate PUSH/PULL fan-in (`CommAddress.CREDIT_RETURN`). A worker MUST pass `probe_return_channel` (`aiperf.workers.return_channel_probe`) before announcing `WorkerDispatchable`, otherwise a dead PUSH side is invisible and every credit routed there stalls until the run timeout. Any new startup signal must not assume the DEALER proves both directions. See `docs/dev/kubernetes-flow.md` § "Dual-Channel Credit Readiness Gate".
+
+For complete implementation details see `docs/dev/kubernetes-flow.md`.
+
+## Parameter Sweeping (Kubernetes)
+
+In-process sweeps and adaptive search are documented in main's `docs/sweeping/` tutorials. The Kubernetes-side path is:
+
+- **Cluster sweep** — `AIPerfSweep` CRD + `operator/handlers/sweep/`. The k8s operator owns the cluster-wide cardinality contract: one `AIPerfJob` (and one controller pod) per variation; each child pod sees a single-config plan. Best for parallelism across nodes and restart durability.
+- **Adaptive outer loop (BO) under the operator** — the sweep-controller pod in `sweep_controller/main.py` instantiates the same `BayesianSearchPlanner` plugin the in-process path uses; the K8s executor creates one `AIPerfJob` per iteration. kopf-side handlers stay BO-agnostic.
+- **Mutual-exclusion gate** — when `AIPERF_OPERATOR_MANAGED=1` is set in a controller pod, `cli_runner._reject_in_process_sweep_under_operator` hard-fails any `plan.is_sweep` to keep both layers from sweeping at once.
+- **Mode dispatch** — `MultiRunOrchestrator.execute` dispatches on `plan.is_adaptive_search`, then on the grid sweep's iteration order (`_plan_iteration_order(plan)` → `SweepMode.REPEATED`/`INDEPENDENT`). The k8s sweep_controller's children-manifest walk in `sweep_controller/main.py` mirrors the same idx → (var,trial) derivation.
+
 ## Testing Conventions
 
 - `@pytest.mark.asyncio` for async tests, `@pytest.mark.parametrize` for data-driven
@@ -125,7 +164,8 @@ Feature branches use `<username>/feature-name` format, forked from `main`. One P
 - macOS child processes close terminal FDs to prevent Textual UI corruption.
 - Plugin priority resolves conflicts: higher wins, external beats built-in at equal priority.
 - Decorators: `@on_init`, `@on_start`, `@on_stop`, `@on_message`, `@on_command`, `@background_task`, `@on_pull_message`, `@on_request`.
-- Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_and_wait_for_response()` for sync.
+- Communication: `publish()` for broadcast, `@on_message` to subscribe, `send_command_to_controller()` (services) / `_send_control_command*()` (controller) for commands on the DEALER/ROUTER control channel.
+- **Control channel** — commands, registration, heartbeats, and lifecycle status ride a DEALER/ROUTER socket at `CommAddress.CONTROL` carrying `msgspec` structs from `aiperf.common.control_structs`, not the pub/sub event bus. `@on_command` handlers take a `Command` and decode `message.payload` with `orjson`. Returning `None` sends `CommandAck`; a value sends `CommandOk`; no matching hook sends `CommandUnhandled`, which callers may treat as a failure. The event bus still carries every other message type. See `docs/dev/patterns.md` § "Control Channel Command Pattern".
 - `AIPerfLifecycleMixin` for standalone components: `CREATED` -> `INITIALIZING` -> `INITIALIZED` -> `STARTING` -> `RUNNING` -> `STOPPING` -> `STOPPED`; `FAILED` terminal.
 - `dag_jsonl` input type: conversation DAG benchmarks (fork + spawn modes). See `docs/benchmark-modes/dag.md` for abstractions and authoring.
 - Validator gate convention: unsupported constructs raise `NotImplementedError` with a leading `"<loc>: <reason>"` prefix where `<loc>` identifies the conversation/turn (e.g. `"conversation 'foo' turn 3: ..."`). New validators must follow this shape.
@@ -179,6 +219,11 @@ When making changes, update the appropriate documentation files using the table 
 | Dev setup, make targets, pre-commit | `CONTRIBUTING.md` |
 | Contribution process, DCO | `CONTRIBUTING.md` |
 | New services, message types, plugin types | `docs/architecture.md` + `docs/dev/patterns.md` |
+| Kubernetes operator, handlers, CR lifecycle | `docs/dev/kubernetes-flow.md` |
+| Kubernetes deployment, Helm chart, cluster setup | `docs/kubernetes/getting-started.md` + `docs/kubernetes/configuration.md` + `docs/kubernetes/production.md` + `docs/kubernetes/workflow.md` |
+| Kube preflight checks / validate / debug | `docs/kubernetes/preflight.md` + `docs/kubernetes/validate.md` + `docs/kubernetes/debug-command.md` |
+| Operator HTTP API / web dashboard | `docs/kubernetes/results-api.md` + `docs/kubernetes/dashboard-ui.md` |
+| Sweeps on Kubernetes | `docs/tutorials/sweeps.md#running-sweeps-on-kubernetes` |
 | Tutorials and feature guides | `docs/tutorials/` + `README.md` tutorial index |
 
 **A feature is incomplete until documentation is updated.**

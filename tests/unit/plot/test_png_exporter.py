@@ -792,6 +792,72 @@ class TestMultiRunPNGExporter:
         assert df["concurrency"].tolist() == [1, 4]
         assert df["request_latency"].tolist() == [100.0, 150.0]  # p50 values
 
+    def test_concurrency_group_legend_uses_metadata_not_run_name(
+        self, multi_run_exporter, tmp_path: Path
+    ) -> None:
+        """Regression: run-name prefixes must not leak into concurrency legends."""
+        models = ["Qwen/Qwen3-32B-FP8", "Llama-3.3-70B-Instruct-FP8-dynamic"]
+        runs = []
+        for concurrency in [1, 10, 50]:
+            for index, model in enumerate(models):
+                safe_model = model.replace("/", "_")
+                runs.append(
+                    RunData(
+                        metadata=RunMetadata(
+                            run_name=f"{safe_model}-openai-chat-concurrency{concurrency}",
+                            run_path=tmp_path
+                            / f"{safe_model}-openai-chat-concurrency{concurrency}",
+                            model=model,
+                            concurrency=concurrency,
+                        ),
+                        requests=None,
+                        aggregated={
+                            "request_latency": {
+                                "avg": 1000.0 * concurrency + index,
+                                "unit": "ms",
+                            },
+                            "output_token_throughput_per_gpu": {
+                                "avg": 100.0 / concurrency + index,
+                                "unit": "tokens/s/gpu",
+                            },
+                        },
+                        timeslices=None,
+                        slice_duration=None,
+                    )
+                )
+
+        df = multi_run_exporter._runs_to_dataframe(
+            runs, {"display_names": {}, "units": {}}
+        )
+        spec = PlotSpec(
+            name="pareto_by_concurrency",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency", source=DataSource.AGGREGATED, axis="x"
+                ),
+                MetricSpec(
+                    name="output_token_throughput_per_gpu",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                ),
+            ],
+            title="Pareto by Concurrency",
+            filename="pareto_by_concurrency.png",
+            label_by="model",
+            group_by="concurrency",
+        )
+
+        fig = multi_run_exporter._create_plot_from_spec(
+            spec, df, {"display_names": {}, "units": {}}
+        )
+
+        legend_traces = [trace for trace in fig.data if trace.showlegend]
+        assert [trace.name for trace in legend_traces] == ["1", "10", "50"]
+        assert all(
+            "openai-chat-concurrency" not in trace.name for trace in legend_traces
+        )
+
 
 class TestSingleRunPNGExporter:
     """Tests for SingleRunPNGExporter class."""
@@ -961,6 +1027,74 @@ class TestSingleRunPNGExporter:
         assert skip_warnings, "expected a WARNING for the skipped plot"
         assert "gpu_telemetry" in skip_warnings[0].message
         assert "gpu_utilization_and_throughput" in skip_warnings[0].message
+
+    def test_export_skips_missing_column_without_error(
+        self, single_run_exporter, sample_available_metrics, tmp_path, caplog
+    ):
+        """Non-streaming data: the requests table exists but lacks streaming-only
+        columns (e.g. time_to_first_token). The plot needing the missing column is
+        skipped with a WARNING (not ERROR), and plots whose columns are present
+        still render."""
+        ttft_spec = PlotSpec(
+            name="ttft_over_time",
+            plot_type=PlotType.SCATTER,
+            metrics=[
+                MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="time_to_first_token", source=DataSource.REQUESTS, axis="y"
+                ),
+            ],
+            title="TTFT",
+            filename="ttft_over_time.png",
+        )
+        latency_spec = PlotSpec(
+            name="latency_over_time",
+            plot_type=PlotType.SCATTER,
+            metrics=[
+                MetricSpec(name="request_number", source=DataSource.REQUESTS, axis="x"),
+                MetricSpec(
+                    name="request_latency", source=DataSource.REQUESTS, axis="y"
+                ),
+            ],
+            title="Latency",
+            filename="latency_over_time.png",
+        )
+        # Non-streaming requests: request_latency present, time_to_first_token absent.
+        run = RunData(
+            metadata=RunMetadata(
+                run_name="r", run_path=tmp_path / "r", model="m", concurrency=1
+            ),
+            requests=pd.DataFrame(
+                {
+                    "request_end_ns": pd.to_datetime(
+                        [1_000_000_000_000 + i * 500_000_000 for i in range(5)],
+                        unit="ns",
+                        utc=True,
+                    ),
+                    "request_latency": [900.0 + i * 10 for i in range(5)],
+                }
+            ),
+            aggregated={},
+            timeslices=None,
+        )
+
+        with caplog.at_level("DEBUG"):
+            generated = single_run_exporter.export(
+                run, sample_available_metrics, [ttft_spec, latency_spec]
+            )
+
+        filenames = {f.name for f in generated}
+        assert "latency_over_time.png" in filenames
+        assert "ttft_over_time.png" not in filenames
+        # The missing column is a skip (WARNING), never an ERROR.
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]
+        assert [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "Skipping" in r.message
+            and "ttft_over_time" in r.message
+        ]
 
     def test_per_request_to_dataframe(self, sample_single_run_data):
         """Test conversion of per-request data to DataFrame."""
@@ -2154,10 +2288,14 @@ class TestDualAxisHandler:
     def test_metric_prep_registry(self, dual_axis_handler):
         """Test that the metric preparation registry contains expected functions."""
         assert "throughput_tokens_per_sec" in dual_axis_handler.METRIC_PREP_FUNCTIONS
+        assert "nvidia_gpu_utilization" in dual_axis_handler.METRIC_PREP_FUNCTIONS
         assert "gpu_utilization" in dual_axis_handler.METRIC_PREP_FUNCTIONS
 
         assert callable(
             dual_axis_handler.METRIC_PREP_FUNCTIONS["throughput_tokens_per_sec"]
+        )
+        assert callable(
+            dual_axis_handler.METRIC_PREP_FUNCTIONS["nvidia_gpu_utilization"]
         )
         assert callable(dual_axis_handler.METRIC_PREP_FUNCTIONS["gpu_utilization"])
 
@@ -2585,3 +2723,29 @@ class TestPlotSpecListValidation:
         )
 
         assert spec.label_by is None
+
+
+class TestPngExportWindowsArmGuard:
+    """The kaleido PNG path hard-crashes (access violation) on Windows-on-ARM,
+    so ``_export_figure`` must raise an actionable error there instead."""
+
+    def test_export_figure_raises_configuration_error_on_windows_arm(
+        self, single_run_exporter, tmp_path, monkeypatch
+    ):
+        import plotly.graph_objects as go
+
+        from aiperf.common.exceptions import ConfigurationError
+
+        monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", True)
+        with pytest.raises(ConfigurationError, match="Windows-on-ARM"):
+            single_run_exporter._export_figure(go.Figure(), tmp_path / "x.png")
+
+    def test_export_figure_writes_when_not_windows_arm(
+        self, single_run_exporter, tmp_path, monkeypatch
+    ):
+        import plotly.graph_objects as go
+
+        monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
+        out = tmp_path / "x.png"
+        single_run_exporter._export_figure(go.Figure(), out)
+        assert out.exists()

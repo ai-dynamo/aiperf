@@ -19,6 +19,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Time to First Token (TTFT)](#time-to-first-token-ttft)
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
     - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
+    - [Decode Duration](#decode-duration)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
@@ -46,6 +47,15 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
     - [Total Reasoning Tokens](#total-reasoning-tokens)
+  - [Speculative Decoding Metrics](#speculative-decoding-metrics)
+    - [Acceptance Length](#acceptance-length)
+    - [Token-Weighted Acceptance Length](#token-weighted-acceptance-length)
+    - [Draft Acceptance Rate](#draft-acceptance-rate)
+    - [Overall Draft Acceptance Rate](#overall-draft-acceptance-rate)
+    - [Accepted per Verified](#accepted-per-verified)
+    - [Spec Decode Steps](#spec-decode-steps)
+    - [Accepted / Draft Token Counts](#accepted--draft-token-counts)
+    - [Pooled Acceptance Histogram](#pooled-acceptance-histogram)
   - [Usage Field Metrics](#usage-field-metrics)
     - [Usage Prompt Tokens](#usage-prompt-tokens)
     - [Usage Completion Tokens](#usage-completion-tokens)
@@ -82,6 +92,13 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [OSL Mismatch Metrics](#osl-mismatch-metrics)
     - [OSL Mismatch Diff %](#osl-mismatch-diff-)
     - [OSL Mismatch Count](#osl-mismatch-count)
+  - [Replay Schedule Lag Metrics](#replay-schedule-lag-metrics)
+    - [Replay Send Schedule Offset](#replay-send-schedule-offset)
+    - [Replay Schedule Lag p50 / p90 / p99](#replay-schedule-lag-p50--p90--p99)
+    - [Replay Schedule Degraded](#replay-schedule-degraded)
+  - [Agentic / Trace Metrics](#agentic--trace-metrics)
+    - [Theoretical Prefix Cache Hit](#theoretical-prefix-cache-hit)
+    - [Context Overflow Count](#context-overflow-count)
   - [Goodput Metrics](#goodput-metrics)
     - [Good Request Count](#good-request-count)
     - [Good Request Fraction](#good-request-fraction)
@@ -94,9 +111,13 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
     - [Error Request Count](#error-request-count)
+    - [Request Error Rate](#request-error-rate)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
+  - [Network Latency Calibration Metrics](#network-latency-calibration-metrics)
+    - [Network RTT](#network-rtt)
+    - [Network-Adjusted Latency Metrics](#network-adjusted-latency-metrics)
   - [HTTP Trace Metrics](#http-trace-metrics)
     - [HTTP Blocked](#http-blocked)
     - [HTTP DNS Lookup](#http-dns-lookup)
@@ -117,6 +138,14 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total GPU Energy](#total-gpu-energy)
     - [Output Tokens per Joule](#output-tokens-per-joule)
     - [Energy per User](#energy-per-user)
+    - [Average GPU Power](#average-gpu-power)
+    - [Energy per Output Token](#energy-per-output-token)
+    - [Energy per Total Token](#energy-per-total-token)
+    - [Energy per Request](#energy-per-request)
+    - [Performance per Watt](#performance-per-watt)
+    - [Output Tokens per Second per Watt](#output-tokens-per-second-per-watt)
+    - [Goodput per Watt](#goodput-per-watt)
+    - [Energy Delay Product](#energy-delay-product)
 - [Metric Flags Reference](#metric-flags-reference)
 
 ---
@@ -252,6 +281,27 @@ ttfo_ms = ttfo_ns / 1e6
 
 ---
 
+### Decode Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Measures the client-observed wall-clock interval between the first and final non-empty streamed content responses. Unlike ITL, this metric is not normalized by the number of generated tokens.
+
+**Formula:**
+```python
+decode_duration_ns = request_latency_ns - time_to_first_token_ns
+
+decode_duration_ms = decode_duration_ns / 1e6
+```
+
+**Notes:**
+- This is an end-to-end client observation. It includes response delivery and client-observed gaps after TTFT; it does not isolate server kernel execution time.
+- Compare Decode Duration with Output Sequence Length when early stopping or a generation-length change is possible.
+- A run can have similar Decode Duration but a much higher ITL if it produces fewer output tokens.
+- Requires valid `time_to_first_token` and `request_latency` metrics.
+
+---
+
 ### Inter Token Latency (ITL)
 
 **Type:** [Record Metric](#record-metrics)
@@ -260,6 +310,7 @@ Measures the average time between consecutive tokens during generation, excludin
 
 **Formula:**
 ```python
+# Default (all runs): assume one token in the first chunk.
 # Calculate in nanoseconds, then convert to seconds
 inter_token_latency_ns = (request_latency_ns - time_to_first_token_ns) / (output_sequence_length - 1)
 
@@ -271,7 +322,12 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 ```
 
 **Notes:**
-- Requires at least 2 non-empty response chunks and valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics.
+- By default the divisor is `output_sequence_length - 1`, which is exact for servers that stream one token per chunk. This is the formula every run uses unless `--per-chunk-usage` is enabled.
+- **Opt-in first-chunk correction (`--per-chunk-usage`).** The decode window (`request_latency - time_to_first_token`) covers only the tokens that arrive *after* the first content chunk. When a server bundles several tokens into the first streamed chunk (for example TRT-LLM's `stream-interval`), assuming a single token over-counts the decode tokens and inflates Output Token Throughput Per User (`1 / ITL`). Passing `--per-chunk-usage` (which also requires `--use-server-token-count`, a `chat` endpoint, and `--streaming`) makes the server report cumulative per-chunk usage via `stream_options.continuous_usage_stats`; the divisor then becomes `output_sequence_length - tokens_in_first_content_chunk`, where that count is the server-reported cumulative `completion_tokens` (reasoning included, matching OSL which is `output + reasoning = completion`) through the first content chunk. Requires a server that honors `continuous_usage_stats` (e.g. vLLM, TRT-LLM); otherwise the divisor stays `output_sequence_length - 1`.
+- Requires an output sequence length of at least 2, plus valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics. If the first-chunk count is inconsistent with OSL (>= OSL), the divisor degrades to `output_sequence_length - 1` and a one-time warning is logged rather than dropping the metric.
+- ITL is generated-token-normalized decode duration. It is not the total wall-clock decode duration.
+- Compare runs at equivalent output lengths, or inspect Decode Duration and Output Sequence Length alongside ITL.
+- Streaming chunks can contain multiple tokens. ITL uses token count, while ICL uses chunk arrival timestamps.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
 
 ---
@@ -507,15 +563,17 @@ total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of images in the request, summed across all turns. This is the foundation metric used by Image Throughput and Image Latency.
+The number of logical image references in the wire request. This is the foundation metric used by Image Throughput and Image Latency.
 
 **Formula:**
 ```python
-num_images = sum(len(image.contents) for turn in request.turns for image in turn.images)
+num_images = count_image_content_parts(wire_payload)
 ```
 
 **Notes:**
 - Requires at least one image in at least one turn.
+- Counts UUID cache-only references as logical images even when their URL is empty.
+- Does not measure uploaded image bytes or cache misses.
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
 ---
@@ -662,6 +720,131 @@ total_reasoning_tokens = sum(r.reasoning_token_count for r in records if r.valid
 
 ---
 
+## Speculative Decoding Metrics
+
+> [!NOTE]
+> All metrics in this section read only the engine-neutral per-request
+> [`SpecDecodeAcceptanceRecord`](reference/spec-decode-acceptance.md) attached to
+> each record. They are fully engine-agnostic: any engine whose adapter fills the
+> record lights them up unchanged, and none of them branch on the engine. When
+> spec decode is off (or a request had no verify steps) the record is absent and
+> every metric here drops out cleanly -- nothing is shown or exported.
+
+<!-- -->
+
+> [!IMPORTANT]
+> Acceptance length can be **concurrency / batch-size dependent for adaptive
+> drafters** (DSpark, vLLM's dynamic speculative decoding), which tune the number
+> of draft tokens per step -- or disable speculation -- as load rises. For
+> fixed-length drafters (a fixed-`k` draft model, Medusa, classic or dynamic-tree
+> EAGLE) the per-token acceptance rate is a property of the draft/target model
+> pair and the context, so acceptance length is essentially load-invariant. Either
+> way these metrics report at the run's offered load; when the drafter is adaptive,
+> cross-run comparisons are only meaningful with concurrency held fixed.
+
+These metrics render in a dedicated `Spec Decode` console section (`console_group = MetricConsoleGroup.SPEC_DECODE`), followed by a one-line pooled acceptance histogram. Notation: `j` = accepted draft tokens in a step, `l` = proposed draft tokens in a step; the always-accepted bonus token adds the `+1`.
+
+### Acceptance Length
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** ratio · larger is better
+
+Per-request mean tokens emitted per verify step, including the always-accepted bonus token (the `j + 1` acceptance length).
+
+**Formula:**
+```python
+spec_decode_acceptance_length = 1 + num_accepted_draft_tokens / num_spec_steps
+```
+
+**Notes:**
+- Averages per-request means equally. Compare against [Token-Weighted Acceptance Length](#token-weighted-acceptance-length), which weights by verify steps. The two can diverge when requests differ in how many verify steps they run and that step count correlates with per-request acceptance -- e.g. a few long, high-acceptance requests pull the token-weighted value above the equal-per-request mean. They coincide when every request runs a similar number of steps.
+
+---
+
+### Token-Weighted Acceptance Length
+
+**Type:** [Derived Metric](#derived-metrics) · **Unit:** ratio · larger is better
+
+Run-level acceptance length weighting every verify step equally rather than every request.
+
+**Formula:**
+```python
+spec_decode_token_weighted_acceptance_length = 1 + sum(num_accepted_draft_tokens) / sum(num_spec_steps)
+```
+
+**Notes:**
+- Reported **alongside** the per-request-mean acceptance length and clearly labeled, because the two answer different questions (per-request vs per-step weighting).
+
+---
+
+### Draft Acceptance Rate
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** % · larger is better
+
+Per-request fraction of proposed draft tokens that were accepted, as a percentage. Draft-only -- excludes the bonus token.
+
+**Formula:**
+```python
+spec_decode_draft_acceptance_rate = 100 * num_accepted_draft_tokens / num_draft_tokens
+```
+
+---
+
+### Overall Draft Acceptance Rate
+
+**Type:** [Derived Metric](#derived-metrics) · **Unit:** % · larger is better
+
+Run-level (draft-volume-weighted) draft acceptance rate: summed accepted drafts over summed proposed drafts across the whole run, so large and small requests contribute in proportion to their draft volume.
+
+**Formula:**
+```python
+spec_decode_overall_draft_acceptance_rate = 100 * sum(num_accepted_draft_tokens) / sum(num_draft_tokens)
+```
+
+---
+
+### Accepted per Verified
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** ratio · larger is better
+
+Per-request emitted tokens over verified tokens: accepted drafts plus one bonus per step, over proposed drafts plus one bonus per step.
+
+**Formula:**
+```python
+spec_decode_accepted_per_verified = (num_accepted_draft_tokens + num_spec_steps) / (num_draft_tokens + num_spec_steps)  # = (j + 1) / (l + 1)
+```
+
+---
+
+### Spec Decode Steps
+
+**Type:** [Record Metric](#record-metrics) · **Unit:** count
+
+Per-request number of speculative verification steps (`num_spec_steps`). Equals the sum of the request's acceptance-histogram counts. The run-level `total_spec_decode_steps` is its sum across requests.
+
+---
+
+### Accepted / Draft Token Counts
+
+**Type:** [Record Metrics](#record-metrics) · **Unit:** tokens · `console_group = NONE`
+
+`spec_decode_accepted_draft_tokens` (`num_accepted_draft_tokens`) and `spec_decode_draft_tokens` (`num_draft_tokens`) travel per request and sum into `total_accepted_draft_tokens` / `total_draft_tokens`. They are exported to JSON/CSV/JSONL but hidden from the console to keep the section compact.
+
+---
+
+### Pooled Acceptance Histogram
+
+**Type:** dedicated reducer (outside the metric registry)
+
+The per-request `acceptance_histogram {j: steps}` pooled elementwise across the run into a single `{j: total_steps}` -- verify steps bucketed by accepted-draft count over the whole run. AIPerf's metric accumulator handles scalars and lists but not dicts, so this one aggregate is pooled by a dedicated per-phase reducer in the accumulator and rides on `ProfileResults.pooled_spec_decode_acceptance_histogram`.
+
+- **Console:** a one-line row beneath the Spec Decode table showing the % of steps per bucket, capped to buckets `0 .. 7` with any `j >= 8` folded into a trailing `>=8` bucket.
+- **Aggregate JSON** (`profile_export_aiperf.json`): the full `{j: count}` object under `pooled_spec_decode_acceptance_histogram` (no cap).
+- **CSV:** the scalar metrics carry the CSV; the structured histogram is JSON-only.
+
+**Reconciliation:** the pooled bucket counts sum to `total_spec_decode_steps`, which equals the sum of every request's `num_spec_steps`.
+
+---
+
 ## Usage Field Metrics
 
 > [!NOTE]
@@ -757,6 +940,7 @@ usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from 
 - Taken from the API response `usage` object, not computed by AIPerf.
 - OpenAI surfaces cache reads as `prompt_tokens_details.cached_tokens` (or `input_tokens_details.cached_tokens`); writes are transparent and not reported.
 - Anthropic surfaces cache reads at the top level as `cache_read_input_tokens`; writes are reported separately as [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens).
+- **Self-hosted servers gate this behind a flag:** vLLM needs `--enable-prompt-tokens-details` and SGLang needs `--enable-cache-report` (both default off); TRT-LLM emits `cached_tokens` by default. Without the flag these metrics read all-None even when the server is caching — see [Vendor Usage Field Reference](reference/vendor-usage-fields.md).
 - For streaming responses, uses the last non-None value reported.
 
 ---
@@ -1265,6 +1449,126 @@ osl_mismatch_count = sum(1 for r in records if diff_tokens > threshold_tokens)
 
 ---
 
+## Replay Schedule Lag Metrics
+
+> [!NOTE]
+> These metrics report how faithfully a fixed-schedule trace replay delivered its offered (recorded) request schedule. The whole family is `FIXED_SCHEDULE_ONLY`: it is computed only when the profiling phase type is `fixed_schedule`, and stays inactive under any other timing mode even when the dataset carries turn timestamps (e.g. a timestamped trace swept with `--no-fixed-schedule`). The metrics are **not displayed in console output** but are available in exports; a warning is logged when the run is flagged degraded.
+
+Note that an explicit `--fixed-schedule` flag is not required for the family to activate: a timestamped `--custom-dataset-type` trace (a top-level `timestamp` field in the first record of JSONL traces such as `mooncake_trace` and `bailian_trace`, or a `timestamp_start_unix_ms` column in `baseten_trace` Parquet) auto-promotes the profiling phase to `fixed_schedule`, so these metrics then appear in profile exports. Pass `--no-fixed-schedule` to keep the user-selected timing mode, which also deactivates the family.
+
+Every absolutely-scheduled turn carries its intended send time (`Turn.timestamp`, ms relative to the schedule zero), and the worker stamps `RequestRecord.timestamp_ns` (wall clock) when the request is dispatched to the transport. The wall-clock instant of the schedule zero is not recorded, so lag is reported **relative to the least-late request** of the run (`lag = offset - min(offset)`).
+
+The derived family is computed once over the whole run and is **excluded from `--slice-duration` timeslice exports**: re-deriving it per slice would re-anchor each slice at its own least-late request and erase the cumulative schedule drift these metrics exist to expose.
+
+**What this cannot measure:**
+- A constant delay applied uniformly to every request (the least-late request defines zero).
+- Lag of delay-scheduled continuation turns (back-pressure replay fires them relative to the prior turn's completion; they carry no absolute intended time and are excluded).
+- True wire time (`timestamp_ns` is stamped worker-side at transport dispatch, before the TCP write).
+
+### Replay Send Schedule Offset
+
+**Type:** [Record Metric](#record-metrics)
+
+Internal building block: the raw per-request send offset. Values are epoch-scale nanoseconds; only differences between them are meaningful.
+
+**Formula:**
+```python
+replay_send_schedule_offset = record.timestamp_ns - turn.timestamp * 1e6
+```
+
+**Notes:**
+- `INTERNAL`: hidden from output unless `AIPERF_DEV_SHOW_INTERNAL_METRICS` is enabled.
+- Skipped for records whose dispatched turn has no absolute schedule timestamp.
+
+---
+
+### Replay Schedule Lag p50 / p90 / p99
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Percentiles of the anchored send lag across the run, in milliseconds. Schedule degradation (event-loop stalls, worker saturation, queue buildup) shows up as growing lag percentiles.
+
+**Formula:**
+```python
+lag_ms = (offsets - offsets.min()) / 1e6
+replay_sched_lag_p50 = percentile(lag_ms, 50)
+replay_sched_lag_p90 = percentile(lag_ms, 90)
+replay_sched_lag_p99 = percentile(lag_ms, 99)
+```
+
+---
+
+### Replay Schedule Degraded
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Boolean (0/1) signal that the replay could not keep up with the offered schedule: anchored send-lag p99 exceeded 500 ms. When degraded, a warning with the lag percentiles is logged at most once per run (the first time the run is flagged); the metric value itself is re-derived on every summarize tick.
+
+**Formula:**
+```python
+replay_sched_degraded = 1 if percentile(lag_ms, 99) > 500.0 else 0
+```
+
+---
+
+## Agentic / Trace Metrics
+
+> [!NOTE]
+> These metrics appear for agentic/WEKA trace replay workloads. Theoretical
+> prefix-cache accounting requires a loader that stamps per-turn block counts
+> (e.g. `weka_trace`). Context-overflow counting applies whenever the runtime
+> classifier tags an error as context overflow.
+
+### Theoretical Prefix Cache Hit
+
+**Type:** Accumulator summary (not a record/aggregate metric plugin)
+
+Ideal infinite-cache prefix hit rate implied by the trace's hash_id block
+overlap, as stamped by the WEKA loader. Emitted by
+`TheoreticalPrefixCacheAccumulator` on the `metric_records` channel.
+
+**Formula:**
+```python
+theoretical_prefix_cache_hit = 100.0 * sum(hit_blocks) / sum(total_blocks)
+```
+
+**Export fields:**
+- `avg` / `current`: hit rate percent
+- `sum`: cumulative hit blocks (numerator)
+- `count`: cumulative total blocks (denominator)
+
+**Notes:**
+- Phase-scoped via `export_results(ctx)` so warmup blocks do not leak into
+  profiling (and vice versa).
+- Only appears when at least one conversation turn carries both
+  `theoretical_prefix_cache_hit_blocks` and
+  `theoretical_prefix_cache_total_blocks`.
+
+---
+
+### Context Overflow Count
+
+**Type:** [Aggregate Metric](#aggregate-metrics)
+
+Number of requests whose error body was classified as a context-length /
+context-overflow rejection. Used by the InferenceX AgentX scenario to flip
+`submission_valid=false` when the overflow rate exceeds 1%.
+
+**Formula:**
+```python
+context_overflow_count = sum(1 if request.context_overflow else 0)
+```
+
+**Notes:**
+- Marked `ERROR_ONLY` / `NO_INDIVIDUAL_RECORDS` (aggregate signal only).
+- Under `--scenario inferencex-agentx-mvp`, matching overflows may take the
+  records-side skip path (`context_overflow_skip`) and land in the
+  `skipped_context_overflow_count` side channel instead of normal error
+  metrics; the aggregate exporter still merges both into the overflow rate
+  denominator (`request_count + error_request_count + skipped_context_overflow_count`).
+
+---
+
 ## Goodput Metrics
 
 > [!NOTE]
@@ -1306,7 +1610,7 @@ good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
 
 **Unit:** `RATIO` (0.0–1.0)
 
-**Required upstream metrics:** `good_request_count`, `request_count`. `error_request_count` is included in the denominator when present (it is `ERROR_ONLY` and absent on clean runs).
+**Required upstream metrics:** None. Each counter may legitimately be absent: valid-request counters on an all-error run, and `error_request_count` on a clean run.
 
 **Notes:**
 - Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
@@ -1440,6 +1744,22 @@ error_request_count = sum(1 for r in records if not r.valid)
 
 ---
 
+### Request Error Rate
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The percentage of completed requests that ended in error.
+
+**Formula:**
+```python
+request_error_rate = 100.0 * error_request_count / (request_count + error_request_count)
+```
+
+**Notes:**
+- Omitted only when both successful and error counts are zero.
+
+---
+
 ### Minimum Request Timestamp
 
 **Type:** [Aggregate Metric](#aggregate-metrics)
@@ -1480,6 +1800,67 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 **Notes:**
 - Uses wall-clock timestamps representing real calendar time.
 - Used as the denominator for throughput calculations; represents the effective measurement window.
+
+---
+
+## Network Latency Calibration Metrics
+
+These metrics appear only when network latency calibration is enabled (with
+`--network-latency-automatic` or `--network-latency-mean`). They make benchmark runs
+taken from different client network locations comparable by removing the client-to-endpoint
+network round-trip from the reported latencies.
+
+With `--network-latency-automatic`, AIPerf opens a fresh TCP connection to the endpoint
+host:port on an interval throughout profiling (`--network-latency-ping-interval`, default 1s)
+and records the handshake RTT. The handshake is one network round-trip with no server compute,
+so it isolates the network leg and is immune to server load. Each probe is written to
+`profile_export_network_latency.jsonl`. The **mean** RTT over successful probes is then
+subtracted from the request-start-anchored latency metrics. Alternatively, a fixed mean RTT
+can be supplied with `--network-latency-mean <ms>` to skip probing (the two flags are
+mutually exclusive). The chosen RTT is logged at run completion.
+
+Subtracting a constant from a distribution shifts the mean and every percentile by that
+constant and leaves the standard deviation unchanged, so the adjustment is applied to the
+aggregated results (clamped at 0). The raw metrics are always preserved.
+
+### Network RTT
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The mean network RTT that was subtracted from the adjusted latency metrics (single value).
+
+**Notes:**
+- Measured via TCP handshakes throughout the run, or supplied directly via `--network-latency-mean`.
+- Full per-probe samples and per-target statistics are written to `profile_export_network_latency.jsonl`.
+
+---
+
+### Network-Adjusted Latency Metrics
+
+**Type:** [Derived Metric](#derived-metrics)
+
+Non-destructive, RTT-corrected variants of the request-start-anchored latency metrics:
+
+| Metric | Tag | Source metric |
+|---|---|---|
+| Network-Adjusted Request Latency | `network_adjusted_request_latency` | Request Latency |
+| Network-Adjusted Time to First Token | `network_adjusted_time_to_first_token` | Time to First Token (TTFT) |
+| Network-Adjusted Time to First Output Token | `network_adjusted_time_to_first_output_token` | Time to First Output Token (TTFO) |
+
+**Formula:**
+```python
+# nanoseconds, applied to every aggregated statistic (avg, min, max, p1..p99)
+network_adjusted_ns = max(0, source_metric_ns - mean_network_rtt_ns)
+```
+
+**Notes:**
+- Only metrics whose interval starts at the client request-send timestamp are adjusted.
+  Time to Second Token (second_response - first_response), Inter Token Latency (ITL), and
+  Inter Chunk Latency (ICL) are intentionally **not** adjusted: they are intra-stream gaps
+  that do not include the connection RTT (and for ITL the RTT cancels in
+  `(request_latency - ttft)`), so they are already network-invariant.
+- Values are clamped at 0; if the subtracted RTT exceeds some measured latencies a warning
+  is logged (the RTT may be larger than the true network leg).
 
 ---
 
@@ -1739,9 +2120,14 @@ http_req_chunks_received = trace.response_chunks_count
 ## GPU Power Efficiency Metrics
 
 > [!NOTE]
-> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector (DCGM, pynvml, or amdsmi) to expose the relevant signal (`gpu_power_usage` and/or `energy_consumption`). They are computed once per profiling phase by `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the standard derivation walk — see the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern).
+> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector to expose the relevant signal. They are computed **per vendor**, once per profiling phase, by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category. Each metric exists in an NVIDIA variant (tag prefix `nvidia_`, from `nvidia_power_usage` / `nvidia_energy_consumption`, populated by the DCGM and pynvml collectors) and an AMD variant (tag prefix `amd_`, from `amd_power` / `amd_energy_consumption`, populated by the amdsmi collector). A mixed NVIDIA+AMD run reports both, each summing only its own vendor's GPUs.
 
-Each metric's header surfaces the number of GPUs that contributed valid data (e.g. `Total GPU Power (8 GPUs)`), so a partial-cohort run (where one or more GPUs failed to report) is distinguishable from a full run. Tags are emitted in this order when present: `total_gpu_power`, `total_gpu_energy`, `output_tokens_per_joule`, `energy_per_user`. Each tag is independently omitted when its underlying signal is unavailable.
+> [!NOTE]
+> Each vendor's metrics render in their own console section — `GPU Power Efficiency (NVIDIA)` (`console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA`) and `GPU Power Efficiency (AMD)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD`) — separate from the main metrics table. A section is omitted entirely when no GPU of that vendor reported.
+
+**Energy source.** Per-vendor total GPU energy is taken from the vendor's energy counter delta when available (`source = dcgm_counter` for NVIDIA; `source = power_integration` fallback for amdsmi when only the power gauge is exposed), and the time-averaged fleet power is derived from it as `total_gpu_energy / profiling_duration_s`. If neither signal is present the family is skipped for that vendor.
+
+The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `nvidia_energy_per_user` only appears for concurrency runs; `nvidia_goodput_per_watt` only when goodput SLOs are configured). NVIDIA tags: `nvidia_energy_delay_product`, `nvidia_performance_per_watt`, `nvidia_output_tps_per_watt`, `nvidia_goodput_per_watt`, `nvidia_average_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_total_gpu_power`, `nvidia_energy_per_total_token`, `nvidia_energy_per_output_token`, `nvidia_energy_per_request`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`. AMD tags follow the same pattern with the `amd_` prefix.
 
 ### Total GPU Power
 
@@ -1751,10 +2137,14 @@ Sum of average GPU power across all reporting GPUs during the profiling phase, i
 
 **Formula:**
 ```python
-# Per GPU: average of gpu_power_usage gauge samples in the profiling window
+# Vendor source fields:
+#   NVIDIA: nvidia_power_usage   (pynvml / DCGM collectors)
+#   AMD:    amd_power             (amdsmi collector)
+#
+# Per GPU: average of the vendor power gauge samples in the profiling window
 # (warmup excluded). Summed across all GPUs that reported valid samples.
 total_gpu_power_w = sum(
-    avg(gpu_power_usage[start_ns:end_ns])
+    avg(vendor_power_field[start_ns:end_ns])
     for gpu in reporting_gpus
 )
 ```
@@ -1763,7 +2153,7 @@ total_gpu_power_w = sum(
 - Unit: watts (`W`).
 - Time-filtered to the profiling-phase window; warmup samples are excluded.
 - Power is a gauge, so the window stays bounded — post-bench idle samples don't drag the average down.
-- Omitted when no GPU reports `gpu_power_usage` in the window.
+- Omitted when no GPU reports `nvidia_power_usage` (NVIDIA) or `amd_power` (AMD) in the window.
 
 ---
 
@@ -1775,12 +2165,16 @@ Sum of energy consumed across all reporting GPUs during the profiling phase, in 
 
 **Formula:**
 ```python
-# Per GPU: delta of the energy_consumption monotonic counter over the
-# profiling window, widened on the end by FINAL_SCRAPE_GRACE_NS so the
-# trailing scrape that lands just after requests_end_ns is captured.
+# Vendor source fields:
+#   NVIDIA: nvidia_energy_consumption   (pynvml / DCGM collectors, in megajoules)
+#   AMD:    amd_energy_consumption       (amdsmi collector, in megajoules)
+#
+# Per GPU: delta of the vendor energy monotonic counter over the profiling
+# window, widened on the end by FINAL_SCRAPE_GRACE_NS so the trailing scrape
+# that lands just after requests_end_ns is captured.
 grace_ns = Environment.GPU.FINAL_SCRAPE_GRACE_NS  # default 666_000_000 (~666 ms)
 total_gpu_energy_j = sum(
-    delta(energy_consumption[start_ns : end_ns + grace_ns])
+    delta(vendor_energy_field[start_ns : end_ns + grace_ns])
     for gpu in reporting_gpus
 )
 # Negative deltas are clamped to 0 to handle counter resets (DCGM restart).
@@ -1790,7 +2184,7 @@ total_gpu_energy_j = sum(
 - Unit: joules (`J`). Source samples are reported in megajoules and converted via `EnergyMetricUnit.MEGAJOULE.joules`.
 - The end-of-window grace is bounded (not open-ended) so cooldown samples and any subsequent-phase samples cannot leak into the delta. Tune via `AIPERF_GPU_FINAL_SCRAPE_GRACE_NS` if you also tune `AIPERF_GPU_COLLECTION_INTERVAL` — keep grace at roughly `2x` the collection cadence.
 - Per-GPU deltas use the nearest non-NaN baseline and the nearest non-NaN final sample; arrays containing transient NaN sensor failures still yield a meaningful delta.
-- Omitted when no GPU reports `energy_consumption` in the window.
+- Omitted when no GPU reports `nvidia_energy_consumption` (NVIDIA) or `amd_energy_consumption` (AMD) in the window.
 
 ---
 
@@ -1802,14 +2196,14 @@ Inference energy efficiency: number of output tokens produced per joule of GPU e
 
 **Formula:**
 ```python
-output_tokens_per_joule = total_output_tokens / total_gpu_energy
+output_tokens_per_joule = total_osl / total_gpu_energy
 ```
 
 **Notes:**
 - Unit: `tokens/J`.
 - Flagged `LARGER_IS_BETTER | PRODUCES_TOKENS_ONLY`.
-- Numerator comes from the request records (`total_output_tokens`); denominator comes from the GPU telemetry counter delta above. The header reports the energy-side GPU count, since that's the cohort the metric depends on.
-- Omitted when `total_output_tokens` is absent from the records or aggregate `total_gpu_energy` is zero.
+- Numerator is total output tokens (`total_osl` from the metrics summary); denominator comes from the GPU telemetry counter delta (or integrated power) above.
+- Omitted when `total_osl` is absent from the summary or aggregate `total_gpu_energy` is zero.
 
 ---
 
@@ -1829,9 +2223,123 @@ energy_per_user_j = total_gpu_energy / concurrency
 **Notes:**
 - Unit: `joules/user`.
 - Flagged `MetricFlags.NONE` — smaller-is-better is the default for unflagged metrics.
-- Denominator is the profiling phase's configured `concurrency`. The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
-- Header reports the energy-side GPU count (the same cohort `total_gpu_energy` reports), e.g. `Energy per User (8 GPUs)`.
+- Denominator is the profiling phase's configured `concurrency` (`run.cfg.get_profiling_phases()[0].concurrency`). The resolver defaults this to `1` when `--concurrency` isn't specified in concurrency-mode runs, so the metric is emitted in the common case.
 - Omitted when concurrency is unset (e.g. pure `--request-rate` mode) or aggregate GPU energy is unavailable.
+
+---
+
+### Average GPU Power
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Time-averaged total GPU power over the profiling window, in watts (`W`) — the fleet power that actually produced `total_gpu_energy`. Under the DCGM counter path this is derived from energy; under power integration it equals `total_gpu_power`.
+
+**Formula:**
+```python
+# dcgm_counter source:
+average_gpu_power_w = total_gpu_energy / profiling_duration_s
+# power_integration source:
+average_gpu_power_w = total_gpu_power
+```
+
+---
+
+### Energy per Output Token
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+The primary energy-efficiency metric: GPU energy spent per output token, in millijoules per token (`mJ/token`). Lower is better. Normalizes across model sizes, hardware, and batch sizes.
+
+**Formula:**
+```python
+energy_per_output_token_mj = total_gpu_energy * 1000 / total_osl
+```
+
+---
+
+### Energy per Total Token
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+GPU energy per total (input + output) token, in `mJ/token`. Captures combined prefill + decode cost; useful when comparing systems with different input/output ratios.
+
+**Formula:**
+```python
+energy_per_total_token_mj = total_gpu_energy * 1000 / (total_isl + total_osl)
+```
+
+---
+
+### Energy per Request
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+GPU energy consumed per request, in joules per request (`joules/request`).
+
+**Formula:**
+```python
+energy_per_request_j = total_gpu_energy / request_count
+```
+
+---
+
+### Performance per Watt
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Request throughput per watt of GPU power draw, in `requests/sec/W`. Higher is better — the standard HPC/MLPerf efficiency metric, enabling apples-to-apples comparison across GPU SKUs and power envelopes.
+
+**Formula:**
+```python
+performance_per_watt = request_throughput / average_gpu_power
+```
+
+---
+
+### Output Tokens per Second per Watt
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Output-token throughput per watt of GPU power draw, in `tokens/sec/W`. Higher is better — the token-level companion to `performance_per_watt`, insensitive to request size.
+
+**Formula:**
+```python
+output_tps_per_watt = output_token_throughput / average_gpu_power
+```
+
+**Notes:**
+- Flagged `LARGER_IS_BETTER | PRODUCES_TOKENS_ONLY`.
+- Omitted when `output_token_throughput` is absent or average power is zero.
+
+---
+
+### Goodput per Watt
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+SLO-passing request throughput (goodput) per watt of GPU power draw, in `good-req/s/W`. Higher is better — measures efficient work that actually met its latency SLOs, not raw throughput.
+
+**Formula:**
+```python
+goodput_per_watt = goodput / average_gpu_power
+```
+
+**Notes:**
+- Flagged `LARGER_IS_BETTER`.
+- Only meaningful when goodput SLOs are configured (`--goodput`); omitted otherwise or when average power is zero.
+
+---
+
+### Energy Delay Product
+
+**Type:** [Derived Metric](#derived-metrics) (externally injected)
+
+Joint energy-and-latency figure of merit, in joule-seconds (`J*s`). Lower is better — penalizes both slow-but-efficient and fast-but-wasteful configurations, useful for finding the Pareto-optimal operating point.
+
+**Formula:**
+```python
+energy_delay_product = energy_per_request * mean_request_latency_s
+```
 
 ---
 
@@ -1920,6 +2428,9 @@ The `console_group` class attribute on a metric controls which console table the
 | <a id="group-prediction"></a>`MetricConsoleGroup.PREDICTION` | Speculative prediction token metrics (accepted/rejected). |
 | <a id="group-audio"></a>`MetricConsoleGroup.AUDIO` | Audio token metrics (prompt/completion). |
 | <a id="group-reasoning"></a>`MetricConsoleGroup.REASONING` | Reasoning token metrics. |
+| <a id="group-spec-decode"></a>`MetricConsoleGroup.SPEC_DECODE` | Speculative-decoding acceptance metrics (acceptance length, draft acceptance rate, accepted-per-verified, spec-decode steps). Rendered in a dedicated `Spec Decode` section, followed by a one-line pooled accepted-draft histogram from a separate exporter. |
+| <a id="group-gpu-power-efficiency-nvidia"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA` | NVIDIA cross-GPU power efficiency totals (`nvidia_total_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (NVIDIA)` section instead of the main table. |
+| <a id="group-gpu-power-efficiency-amd"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD` | AMD cross-GPU power efficiency totals (`amd_total_gpu_power`, `amd_total_gpu_energy`, `amd_output_tokens_per_joule`, `amd_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (AMD)` section instead of the main table. |
 
 Set as a class attribute on a `BaseMetric` subclass:
 

@@ -191,6 +191,15 @@ class TestConsoleOSLMismatchExporter:
         output = await self._get_export_output(exporter)
         assert "Output Sequence Length Mismatch Warning" not in output
 
+    async def test_results_none_no_crash(self, mock_cfg):
+        """results=None must no-op rather than AttributeError on .get()."""
+        exporter = ConsoleOSLMismatchExporter(create_exporter_config(None, mock_cfg))
+        output = await self._get_export_output(exporter)
+        assert output == ""
+        assert exporter._get_mismatch_metric() is None
+        assert exporter._get_total_records() == 0
+        assert exporter._get_avg_diff() is None
+
     async def test_formatting_with_large_numbers(self, mock_cfg):
         """Test that large numbers are formatted with commas."""
         with patch(
@@ -206,3 +215,37 @@ class TestConsoleOSLMismatchExporter:
             output = await self._get_export_output(exporter)
             assert "2,500 of 10,000 requests" in output
             assert "(25.0%)" in output
+
+    async def test_warning_content_is_cp1252_encodable(self, mock_cfg):
+        """Regression: warning content must encode in Windows cp1252.
+
+        When aiperf is launched as a subprocess with PIPE'd stdout on Windows,
+        sys.stdout's encoding is cp1252 (not utf-8). A non-cp1252 char in this
+        panel previously raised UnicodeEncodeError, which aborted
+        SystemController._stop_system_controller and hung the parent until
+        pytest's 450s timeout (U+2192 -> at line 107).
+
+        Checks the warning text *content* only. Rich's panel border falls
+        back to ASCII when rendering to a non-terminal stream (which is the
+        production case for aiperf parent stdout under subprocess.PIPE),
+        so the border is not what we control here.
+        """
+        with patch(
+            "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
+            20.0,
+        ):
+            exporter = ConsoleOSLMismatchExporter(
+                create_exporter_config(
+                    self._create_profile_results(count=25, total_records=100),
+                    mock_cfg,
+                )
+            )
+            warning_text = exporter._create_warning_text(
+                mismatch_count=25,
+                total_records=100,
+                percentage=25.0,
+                avg_diff=66.7,
+            )
+            # `strict` matches Windows' default behavior; `replace` would mask
+            # the very failure mode this test exists to catch.
+            warning_text.encode("cp1252", errors="strict")

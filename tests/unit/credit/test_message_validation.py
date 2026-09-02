@@ -7,11 +7,19 @@ import time
 
 import msgspec
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.messages import (
+    CancelCredits,
     CreditReturn,
     FirstToken,
+    RouterToWorkerMessage,
+    TimePing,
+    TimePong,
+    WorkerConnected,
+    WorkerDispatchable,
+    WorkerShutdown,
     WorkerToRouterMessage,
 )
 from aiperf.credit.structs import Credit, CreditContext
@@ -115,28 +123,43 @@ class TestCreditReturnValidation:
     """Test CreditReturn struct, including first_token_sent for deadlock prevention."""
 
     @pytest.mark.parametrize(
-        "first_token_sent,cancelled,error",
-        [(True, False, None), (False, True, None)],  # Sample: normal and cancelled
-    )  # fmt: skip
+        "first_token_sent,cancelled,error,request_latency_ns",
+        [
+            param(True, False, None, 123_000_000, id="successful"),
+            param(False, True, None, None, id="cancelled"),
+        ],
+    )
     def test_credit_return_scenarios(
-        self, sample_credit, first_token_sent, cancelled, error
-    ):
+        self,
+        sample_credit: Credit,
+        first_token_sent: bool,
+        cancelled: bool,
+        error: None,
+        request_latency_ns: int | None,
+    ) -> None:
         """CreditReturn handles various completion scenarios."""
         credit_return = CreditReturn(
             credit=sample_credit,
             first_token_sent=first_token_sent,
             cancelled=cancelled,
             error=error,
+            request_latency_ns=request_latency_ns,
         )
 
         assert credit_return.first_token_sent is first_token_sent
         assert credit_return.cancelled is cancelled
         assert credit_return.error == error
+        assert credit_return.request_latency_ns == request_latency_ns
 
-    def test_credit_return_serialization_roundtrip(self, sample_credit):
+    def test_credit_return_serialization_roundtrip(self, sample_credit: Credit) -> None:
         """CreditReturn preserves all fields through msgpack serialization."""
         original = CreditReturn(
-            credit=sample_credit, first_token_sent=True, cancelled=False
+            credit=sample_credit,
+            first_token_sent=True,
+            cancelled=False,
+            request_latency_ns=456_000_000,
+            inter_token_latency_ns=12_000_000,
+            output_sequence_length=128,
         )
         decoded = msgspec.msgpack.decode(
             msgspec.msgpack.encode(original), type=CreditReturn
@@ -144,6 +167,9 @@ class TestCreditReturnValidation:
 
         assert decoded.first_token_sent == original.first_token_sent
         assert decoded.cancelled == original.cancelled
+        assert decoded.request_latency_ns == original.request_latency_ns
+        assert decoded.inter_token_latency_ns == original.inter_token_latency_ns
+        assert decoded.output_sequence_length == original.output_sequence_length
 
 
 # =============================================================================
@@ -169,3 +195,51 @@ class TestCreditContextValidation:
         credit_context.returned = True
         assert credit_context.cancelled is True
         assert credit_context.returned is True
+
+
+# =============================================================================
+# Credit-Channel Wire Constants
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "cls,tag",
+    [
+        param(WorkerConnected, "wc", id="worker-connected"),
+        param(WorkerDispatchable, "wd", id="worker-dispatchable"),
+        param(WorkerShutdown, "ws", id="worker-shutdown"),
+        param(CreditReturn, "cr", id="credit-return"),
+        param(FirstToken, "ft", id="first-token"),
+        param(TimePing, "tp", id="time-ping"),
+        param(TimePong, "tpo", id="time-pong"),
+        param(CancelCredits, "cc", id="cancel-credits"),
+    ],
+)  # fmt: skip
+def test_credit_tag_values_are_stable_wire_constants(cls: type, tag: str) -> None:
+    """Tags and the tag field are wire format: renaming one breaks running workers."""
+    assert cls.__struct_config__.tag == tag
+    assert cls.__struct_config__.tag_field == "t"
+
+
+def test_time_ping_in_worker_to_router_union():
+    """TimePing decodes through the union it is actually sent on."""
+    ping = TimePing(sequence=3, sent_at_ns=1_234_567)
+    decoded = msgspec.msgpack.decode(
+        msgspec.msgpack.encode(ping), type=WorkerToRouterMessage
+    )
+
+    assert isinstance(decoded, TimePing)
+    assert decoded.sequence == ping.sequence
+    assert decoded.sent_at_ns == ping.sent_at_ns
+
+
+def test_time_pong_in_router_to_worker_union():
+    """TimePong decodes through the union it is actually sent on."""
+    pong = TimePong(sequence=3, sent_at_ns=1_234_567)
+    decoded = msgspec.msgpack.decode(
+        msgspec.msgpack.encode(pong), type=RouterToWorkerMessage
+    )
+
+    assert isinstance(decoded, TimePong)
+    assert decoded.sequence == pong.sequence
+    assert decoded.sent_at_ns == pong.sent_at_ns

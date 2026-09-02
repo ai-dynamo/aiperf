@@ -32,10 +32,5 @@ class GoodputMetric(BaseDerivedMetric[float]):
             raise NoMetricValue(f"Metric '{tag}' is not available for the run.")
         good_request_count = metric_results[tag]
 
-        benchmark_duration_converted = metric_results.get_converted_or_raise(
-            BenchmarkDurationMetric,
-            self.unit.time_unit,  # type: ignore
-        )
-        if benchmark_duration_converted == 0:
-            raise NoMetricValue("Benchmark duration is zero, cannot calculate goodput")
-        return good_request_count / benchmark_duration_converted  # type: ignore
+        duration = metric_results.observation_duration(self.unit.time_unit)  # type: ignore
+        return good_request_count / duration  # type: ignore

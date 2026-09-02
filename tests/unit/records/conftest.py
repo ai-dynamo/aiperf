@@ -4,6 +4,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
@@ -23,6 +24,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.tokenizer import Tokenizer
+from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType
 from aiperf.records.inference_result_parser import InferenceResultParser
 
@@ -33,8 +35,13 @@ def create_test_request_info(
     turn_index: int = 0,
     turns: list[Turn] | None = None,
 ) -> RequestInfo:
-    """Create a RequestInfo for testing."""
-    return RequestInfo(
+    """Create a RequestInfo for testing.
+
+    Populates ``payload_bytes`` via the real chat endpoint's ``format_payload``
+    so ``compute_input_token_count`` has authentic wire bytes to tokenise --
+    matching what ``inference_client`` does before the transport call.
+    """
+    info = RequestInfo(
         model_endpoint=ModelEndpointInfo(
             models=ModelListInfo(
                 models=[ModelInfo(name=model_name)],
@@ -52,6 +59,28 @@ def create_test_request_info(
         x_request_id="test-request-id",
         x_correlation_id="test-correlation-id",
         conversation_id=conversation_id,
+    )
+    if info.turns:
+        rebuild_payload_bytes(info)
+    return info
+
+
+def rebuild_payload_bytes(request_info: RequestInfo) -> None:
+    """Regenerate ``request_info.payload_bytes`` from the current turns /
+    system_message / user_context_message via the chat endpoint's
+    ``format_payload``.
+
+    Tests that mutate those fields on a RequestInfo fixture must call this
+    afterward: the parser reads ISL only from ``payload_bytes`` and never
+    re-tokenises the scalar fields additively.
+    """
+    if not request_info.turns:
+        request_info.payload_bytes = None
+        return
+    request_info.payload_bytes = orjson.dumps(
+        ChatEndpoint(model_endpoint=request_info.model_endpoint).format_payload(
+            request_info
+        )
     )
 
 
@@ -96,15 +125,39 @@ def inference_result_parser(cli_config):
         patch("aiperf.plugin.plugins.get_endpoint_metadata"),
     ):
         parser = InferenceResultParser(run=make_run_from_cli(cli_config))
+        # The plugin-loading path is patched above so the parser's default
+        # endpoint is a MagicMock. Tests that drive ISL through
+        # ``compute_input_token_count`` need a real endpoint whose
+        # ``extract_payload_inputs`` returns an ``ExtractedPayload``; swap
+        # in a real ChatEndpoint here. Tests that want a specific mock
+        # override ``parser.endpoint`` (or ``parser.endpoint.extract_response_data``)
+        # directly.
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.CHAT,
+                base_url="http://localhost:8000/v1/test",
+            ),
+        )
+        parser.endpoint = ChatEndpoint(model_endpoint=model_endpoint)
         return parser
 
 
 @pytest.fixture
 def setup_inference_parser(inference_result_parser, mock_tokenizer_cls):
-    """Setup InferenceResultParser for testing with mocked tokenizer."""
+    """Setup InferenceResultParser for testing with mocked tokenizer.
+
+    ``inference_result_parser`` already provides a real ``ChatEndpoint`` so
+    ``extract_payload_inputs`` returns a proper ``ExtractedPayload``
+    end-to-end. Tests that need a specific mocked endpoint should override
+    ``parser.endpoint`` (or ``parser.endpoint.extract_response_data``)
+    directly inside the test.
+    """
     tokenizer = mock_tokenizer_cls.from_pretrained("test-model")
     inference_result_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
-    inference_result_parser.endpoint = MagicMock()
     return inference_result_parser
 
 
@@ -135,7 +188,6 @@ def create_invalid_record(
     record = RequestRecord(
         request_info=create_test_request_info(model_name=model_name, turns=turns),
         model_name=model_name,
-        turns=turns or [],
     )
 
     if has_error:

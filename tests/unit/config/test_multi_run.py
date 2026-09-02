@@ -3,6 +3,7 @@
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config.sweep.multi_run import ConvergenceConfig, MultiRunConfig
 
@@ -60,21 +61,18 @@ class TestConvergenceThresholdValidation:
         cfg = ConvergenceConfig(metric="ttft", threshold=0.5)
         assert cfg.threshold == 0.5
 
-    def test_threshold_zero_rejected(self):
-        with pytest.raises(ValidationError, match="greater than 0"):
-            ConvergenceConfig(metric="ttft", threshold=0.0)
-
-    def test_threshold_negative_rejected(self):
-        with pytest.raises(ValidationError, match="greater than 0"):
-            ConvergenceConfig(metric="ttft", threshold=-0.01)
-
-    def test_threshold_one_rejected(self):
-        with pytest.raises(ValidationError, match="less than 1"):
-            ConvergenceConfig(metric="ttft", threshold=1.0)
-
-    def test_threshold_above_one_rejected(self):
-        with pytest.raises(ValidationError, match="less than 1"):
-            ConvergenceConfig(metric="ttft", threshold=1.5)
+    @pytest.mark.parametrize(
+        "threshold, match",
+        [
+            param(0.0, "greater than 0", id="threshold_zero_rejected"),
+            param(-0.01, "greater than 0", id="threshold_negative_rejected"),
+            param(1.0, "less than 1", id="threshold_one_rejected"),
+            param(1.5, "less than 1", id="threshold_above_one_rejected"),
+        ],
+    )  # fmt: skip
+    def test_threshold_out_of_range_rejected(self, threshold, match):
+        with pytest.raises(ValidationError, match=match):
+            ConvergenceConfig(metric="ttft", threshold=threshold)
 
 
 class TestConvergenceMinRunsValidation:
@@ -95,21 +93,21 @@ class TestMultiRunNumRunsValidation:
         cfg = MultiRunConfig()
         assert cfg.num_runs == 1
 
-    def test_num_runs_zero_rejected(self):
-        with pytest.raises(ValidationError, match="greater than or equal to 1"):
-            MultiRunConfig(num_runs=0)
-
-    def test_num_runs_negative_rejected(self):
-        with pytest.raises(ValidationError, match="greater than or equal to 1"):
-            MultiRunConfig(num_runs=-1)
-
     def test_num_runs_at_cap_accepted(self):
         cfg = MultiRunConfig(num_runs=10)
         assert cfg.num_runs == 10
 
-    def test_num_runs_above_cap_rejected(self):
-        with pytest.raises(ValidationError, match="less than or equal to 10"):
-            MultiRunConfig(num_runs=11)
+    @pytest.mark.parametrize(
+        "num_runs, match",
+        [
+            param(0, "greater than or equal to 1", id="num_runs_zero_rejected"),
+            param(-1, "greater than or equal to 1", id="num_runs_negative_rejected"),
+            param(11, "less than or equal to 10", id="num_runs_above_cap_rejected"),
+        ],
+    )  # fmt: skip
+    def test_num_runs_out_of_range_rejected(self, num_runs, match):
+        with pytest.raises(ValidationError, match=match):
+            MultiRunConfig(num_runs=num_runs)
 
 
 class TestMultiRunCooldownValidation:
@@ -120,17 +118,20 @@ class TestMultiRunCooldownValidation:
     def test_default_cooldown_is_zero(self):
         assert MultiRunConfig().cooldown_seconds == 0.0
 
-    def test_negative_cooldown_rejected(self):
-        with pytest.raises(ValidationError, match="greater than or equal to 0"):
-            MultiRunConfig(cooldown_seconds=-1.0)
-
     def test_cooldown_at_cap_accepted(self):
         cfg = MultiRunConfig(cooldown_seconds=86400.0)
         assert cfg.cooldown_seconds == 86400.0
 
-    def test_cooldown_above_cap_rejected(self):
-        with pytest.raises(ValidationError, match="less than or equal to 86400"):
-            MultiRunConfig(cooldown_seconds=86401.0)
+    @pytest.mark.parametrize(
+        "cooldown_seconds, match",
+        [
+            param(-1.0, "greater than or equal to 0", id="negative_cooldown_rejected"),
+            param(86401.0, "less than or equal to 86400", id="cooldown_above_cap_rejected"),
+        ],
+    )  # fmt: skip
+    def test_cooldown_out_of_range_rejected(self, cooldown_seconds, match):
+        with pytest.raises(ValidationError, match=match):
+            MultiRunConfig(cooldown_seconds=cooldown_seconds)
 
 
 class TestMultiRunConfidenceLevelValidation:
@@ -142,21 +143,18 @@ class TestMultiRunConfidenceLevelValidation:
     def test_default_is_0_95(self):
         assert MultiRunConfig().confidence_level == 0.95
 
-    def test_zero_rejected(self):
-        with pytest.raises(ValidationError, match="greater than 0"):
-            MultiRunConfig(confidence_level=0.0)
-
-    def test_one_rejected(self):
-        with pytest.raises(ValidationError, match="less than 1"):
-            MultiRunConfig(confidence_level=1.0)
-
-    def test_negative_rejected(self):
-        with pytest.raises(ValidationError, match="greater than 0"):
-            MultiRunConfig(confidence_level=-0.5)
-
-    def test_above_one_rejected(self):
-        with pytest.raises(ValidationError, match="less than 1"):
-            MultiRunConfig(confidence_level=1.5)
+    @pytest.mark.parametrize(
+        "confidence_level, match",
+        [
+            param(0.0, "greater than 0", id="zero_rejected"),
+            param(1.0, "less than 1", id="one_rejected"),
+            param(-0.5, "greater than 0", id="negative_rejected"),
+            param(1.5, "less than 1", id="above_one_rejected"),
+        ],
+    )  # fmt: skip
+    def test_confidence_level_out_of_range_rejected(self, confidence_level, match):
+        with pytest.raises(ValidationError, match=match):
+            MultiRunConfig(confidence_level=confidence_level)
 
     def test_common_values_accepted(self):
         for value in (0.90, 0.95, 0.99, 0.999):
@@ -168,14 +166,16 @@ class TestMultiRunBooleanFlagDefaults:
     """Default values are user-visible behavior. Flipping any of these
     silently changes how every multi-run benchmark behaves."""
 
-    def test_set_consistent_seed_default_true(self):
-        assert MultiRunConfig().set_consistent_seed is True
-
-    def test_vary_seed_per_trial_default_false(self):
-        assert MultiRunConfig().vary_seed_per_trial is False
-
-    def test_disable_warmup_after_first_default_true(self):
-        assert MultiRunConfig().disable_warmup_after_first is True
+    @pytest.mark.parametrize(
+        "attr, expected",
+        [
+            param("set_consistent_seed", True, id="set_consistent_seed_default_true"),
+            param("vary_seed_per_trial", False, id="vary_seed_per_trial_default_false"),
+            param("disable_warmup_after_first", True, id="disable_warmup_after_first_default_true"),
+        ],
+    )  # fmt: skip
+    def test_boolean_flag_default(self, attr, expected):
+        assert getattr(MultiRunConfig(), attr) is expected
 
 
 class TestConvergenceMinRunsBoundary:
@@ -187,3 +187,40 @@ class TestConvergenceMinRunsBoundary:
             convergence=ConvergenceConfig(metric="ttft", min_runs=5),
         )
         assert cfg.convergence.min_runs == cfg.num_runs == 5
+
+
+class TestRepeatTrialFlagsRequireMultipleRuns:
+    """v1 parity: across-trial flags (--set-consistent-seed,
+    --profile-run-disable-warmup-after-first, --profile-run-cooldown-seconds)
+    have no meaning at a single profiling run and must fail loud, not silently
+    build a no-op single-run multi_run block. The port routed them but dropped
+    v1's num_profile_runs==1 guard.
+    """
+
+    @pytest.mark.parametrize(
+        "kwargs, flag_fragment",
+        [
+            ({"set_consistent_seed": True}, "--set-consistent-seed"),
+            (
+                {"profile_run_disable_warmup_after_first": True},
+                "--profile-run-disable-warmup-after-first",
+            ),
+            ({"profile_run_cooldown_seconds": 5.0}, "--profile-run-cooldown-seconds"),
+        ],
+    )
+    def test_flag_without_multiple_runs_raises(self, kwargs, flag_fragment):
+        from aiperf.config.flags._converter_optionals import build_multi_run
+        from aiperf.config.flags.cli_config import CLIConfig
+
+        with pytest.raises(ValueError, match=flag_fragment):
+            build_multi_run(CLIConfig(model_names=["m"], **kwargs))
+
+    def test_flag_with_multiple_runs_is_accepted(self):
+        from aiperf.config.flags._converter_optionals import build_multi_run
+        from aiperf.config.flags.cli_config import CLIConfig
+
+        mr = build_multi_run(
+            CLIConfig(model_names=["m"], num_profile_runs=5, set_consistent_seed=True)
+        )
+        assert mr["num_runs"] == 5
+        assert mr["set_consistent_seed"] is True

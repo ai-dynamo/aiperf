@@ -12,7 +12,6 @@ from aiperf.metrics.types.output_sequence_length_metric import (
     TotalOutputSequenceLengthMetric,
 )
 from tests.unit.metrics.conftest import (
-    create_metric_array,
     create_record,
     run_simple_metrics_pipeline,
 )
@@ -83,7 +82,7 @@ class TestTotalOutputSequenceLengthMetric:
         """Test that TotalOutputSequenceLengthMetric correctly sums all output tokens"""
         metric = TotalOutputSequenceLengthMetric()
         metric_results = MetricResultsDict()
-        metric_results[OutputSequenceLengthMetric.tag] = create_metric_array(values)
+        metric_results[OutputSequenceLengthMetric.tag] = sum(values)
 
         result = metric.derive_value(metric_results)
         assert result == expected_sum

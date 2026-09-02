@@ -6,34 +6,76 @@ import pytest
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.types.power_efficiency_metrics import (
-    EnergyPerUserMetric,
-    OutputTokensPerJouleMetric,
-    TotalGpuEnergyMetric,
-    TotalGpuPowerMetric,
+    AmdAverageGpuPowerMetric,
+    AmdEnergyDelayProductMetric,
+    AmdEnergyPerOutputTokenMetric,
+    AmdEnergyPerRequestMetric,
+    AmdEnergyPerTotalTokenMetric,
+    AmdEnergyPerUserMetric,
+    AmdGoodputPerWattMetric,
+    AmdOutputTokensPerJouleMetric,
+    AmdOutputTokensPerSecondPerWattMetric,
+    AmdPerformancePerWattMetric,
+    AmdTotalGpuEnergyMetric,
+    AmdTotalGpuPowerMetric,
+    NvidiaAverageGpuPowerMetric,
+    NvidiaEnergyDelayProductMetric,
+    NvidiaEnergyPerOutputTokenMetric,
+    NvidiaEnergyPerRequestMetric,
+    NvidiaEnergyPerTotalTokenMetric,
+    NvidiaEnergyPerUserMetric,
+    NvidiaGoodputPerWattMetric,
+    NvidiaOutputTokensPerJouleMetric,
+    NvidiaOutputTokensPerSecondPerWattMetric,
+    NvidiaPerformancePerWattMetric,
+    NvidiaTotalGpuEnergyMetric,
+    NvidiaTotalGpuPowerMetric,
 )
+
+_ENERGY_METRIC_CLASSES = [
+    NvidiaEnergyDelayProductMetric,
+    NvidiaPerformancePerWattMetric,
+    NvidiaOutputTokensPerSecondPerWattMetric,
+    NvidiaGoodputPerWattMetric,
+    NvidiaAverageGpuPowerMetric,
+    NvidiaTotalGpuEnergyMetric,
+    NvidiaTotalGpuPowerMetric,
+    NvidiaEnergyPerTotalTokenMetric,
+    NvidiaEnergyPerOutputTokenMetric,
+    NvidiaEnergyPerRequestMetric,
+    NvidiaOutputTokensPerJouleMetric,
+    NvidiaEnergyPerUserMetric,
+    AmdEnergyDelayProductMetric,
+    AmdPerformancePerWattMetric,
+    AmdOutputTokensPerSecondPerWattMetric,
+    AmdGoodputPerWattMetric,
+    AmdAverageGpuPowerMetric,
+    AmdTotalGpuEnergyMetric,
+    AmdTotalGpuPowerMetric,
+    AmdEnergyPerTotalTokenMetric,
+    AmdEnergyPerOutputTokenMetric,
+    AmdEnergyPerRequestMetric,
+    AmdOutputTokensPerJouleMetric,
+    AmdEnergyPerUserMetric,
+]
 
 
 class TestPowerEfficiencyDeriveValueContract:
-    """Pin the `_derive_value` invariant for externally-injected derived metrics.
+    """Pin the `_derive_value` invariant for the analyzer-injected energy metrics.
 
-    The three power-efficiency classes inherit `BaseDerivedMetric` for registry
-    integration but their values are produced by
-    `GPUTelemetryAccumulator.compute_efficiency_metrics`, not by the derivation
-    walk in `MetricResultsProcessor.update_derived_metrics`. Calling
-    `_derive_value` directly must raise `NoMetricValue` with a message that
-    names the tag, the operation, and the injection site — so a future
+    The energy-efficiency classes inherit `BaseDerivedMetric` for registry
+    integration, but their values are produced by
+    `EnergyEfficiencyAnalyzer.analyze`, not by the metrics accumulator's
+    derived-metric pass (they need GPU telemetry from a different accumulator).
+    Calling `_derive_value` directly must raise `NoMetricValue` with a message
+    that names the tag, the operation, and the injection site — so a future
     contributor copy-pasting this as the "derived metric pattern" sees the
     contract spelled out rather than a silent miscalculation.
     """
 
     @pytest.mark.parametrize(
         "metric_class",
-        [
-            TotalGpuPowerMetric,
-            TotalGpuEnergyMetric,
-            OutputTokensPerJouleMetric,
-            EnergyPerUserMetric,
-        ],
+        _ENERGY_METRIC_CLASSES,
         ids=lambda c: c.tag,
     )
     def test_derive_value_raises_no_metric_value(self, metric_class) -> None:
@@ -48,7 +90,7 @@ class TestPowerEfficiencyDeriveValueContract:
             "error message must name the operation source so agents understand "
             "which derivation path is being rejected"
         )
-        assert "compute_efficiency_metrics" in msg, (
+        assert "EnergyEfficiencyAnalyzer" in msg, (
             "error message must point to the actual injection site so a future "
             "contributor doesn't copy this as the derived-metric pattern"
         )

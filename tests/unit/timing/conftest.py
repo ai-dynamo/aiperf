@@ -5,7 +5,7 @@ import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -61,6 +61,9 @@ class MockCreditRouter:
             self._pending.append(asyncio.create_task(self._do_return(credit)))
             await yield_to_event_loop()
 
+    async def wait_for_workers(self, timeout: float) -> None:
+        pass
+
     async def _do_return(self, credit: Credit) -> None:
         await asyncio.sleep(0.001)
         if self._return_cb:
@@ -70,6 +73,12 @@ class MockCreditRouter:
             )
 
     async def cancel_all_credits(self) -> None:
+        pass
+
+    def begin_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
+        pass
+
+    def end_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
         pass
 
     def mark_credits_complete(self) -> None:
@@ -84,6 +93,9 @@ class MockCreditRouter:
         self, cb: Callable[[FirstToken], Awaitable[None]]
     ) -> None:
         self._first_token_cb = cb
+
+    def set_fatal_error_callback(self, cb: Callable[[BaseException], None]) -> None:
+        self._fatal_error_cb = cb
 
     async def return_credit(
         self, credit: Credit, cancelled: bool = False, first_token_sent: bool = True
@@ -186,7 +198,11 @@ def create_orchestrator_harness(mock_zmq, time_traveler):
         router = MockCreditRouter()
         pub = MagicMock()
         pub.publish = _async_noop
-        publisher = PhasePublisher(pub_client=pub, service_id="test")
+        publisher = PhasePublisher(
+            pub_client=pub,
+            service_id="test",
+            profile_cancel_sender=_async_noop,
+        )
         orch = PhaseOrchestrator(
             config=cfg,
             phase_publisher=publisher,
@@ -199,6 +215,37 @@ def create_orchestrator_harness(mock_zmq, time_traveler):
     return create
 
 
+@pytest.fixture
+def force_fail_fast(monkeypatch: pytest.MonkeyPatch):
+    """Robustly force ``Environment.DAG.FAIL_FAST`` for the duration of one test.
+
+    Belt-and-suspenders against an observed one-shot xdist flake where
+    the bare ``monkeypatch.setattr(Environment.DAG, "FAIL_FAST", X)``
+    pattern occasionally landed but didn't stick by the time the
+    BranchOrchestrator constructor read it. The fixture also sets the
+    underlying env var so any Pydantic re-validation triggered between
+    the override and the read can't drop the value, and sanity-checks
+    immediately after the override so a flake surfaces at the override
+    site rather than 5 lines later in the orchestrator.
+
+    Use as ``def test_x(force_fail_fast): force_fail_fast(True)`` --
+    ``monkeypatch`` is wired in by the fixture; tests don't need to
+    request it separately for this purpose.
+    """
+
+    def _set(value: bool) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setenv("AIPERF_DAG_FAIL_FAST", "true" if value else "false")
+        monkeypatch.setattr(Environment.DAG, "FAIL_FAST", value)
+        assert Environment.DAG.FAIL_FAST is value, (
+            f"force_fail_fast({value}) didn't take: "
+            f"Environment.DAG.FAIL_FAST is {Environment.DAG.FAIL_FAST!r}"
+        )
+
+    return _set
+
+
 def make_credit(
     id: int = 1,
     conv_id: str = "conv1",
@@ -206,7 +253,11 @@ def make_credit(
     num_turns: int | None = None,
     is_final: bool | None = None,
     phase: CreditPhase = CreditPhase.PROFILING,
+    phase_index: int | None = None,
     corr_id: str | None = None,
+    parent_correlation_id: str | None = None,
+    has_forks: bool = False,
+    agent_depth: int = 0,
 ) -> Credit:
     if num_turns is not None:
         n = num_turns
@@ -217,11 +268,15 @@ def make_credit(
     return Credit(
         id=id,
         phase=phase,
+        phase_index=phase_index,
         conversation_id=conv_id,
         x_correlation_id=corr_id or f"corr-{conv_id}",
         turn_index=turn,
         num_turns=n,
         issued_at_ns=time.time_ns(),
+        agent_depth=agent_depth,
+        parent_correlation_id=parent_correlation_id,
+        has_forks=has_forks,
     )
 
 
@@ -454,6 +509,7 @@ class TimingHarness:
                 CommAddress.EVENT_BUS_PROXY_FRONTEND
             ),
             service_id="test-service",
+            profile_cancel_sender=AsyncMock(),
         )
         self._worker = InstantWorker(
             cli_config=cli_config,

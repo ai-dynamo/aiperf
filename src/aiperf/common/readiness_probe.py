@@ -47,6 +47,12 @@ _CANNED_PAYLOADS: dict[str, dict] = {
         "messages": [{"role": "user", "content": _READINESS_PROMPT}],
         "max_tokens": 1,
     },
+    "messages": {
+        # Anthropic Messages API: same message array as chat, but max_tokens
+        # is required (the API rejects requests without it).
+        "messages": [{"role": "user", "content": _READINESS_PROMPT}],
+        "max_tokens": 1,
+    },
     "completions": {
         "prompt": _READINESS_PROMPT,
         "max_tokens": 1,
@@ -58,6 +64,7 @@ _CANNED_PAYLOADS: dict[str, dict] = {
 
 _DEFAULT_PATHS: dict[str, str] = {
     "chat": "/v1/chat/completions",
+    "messages": "/v1/messages",
     "completions": "/v1/completions",
     "embeddings": "/v1/embeddings",
 }

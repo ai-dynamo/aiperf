@@ -3,9 +3,9 @@
 
 import base64
 import io
+from types import ModuleType
 
 import numpy as np
-import soundfile as sf
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import AudioFormat
@@ -37,6 +37,28 @@ SUPPORTED_BIT_DEPTHS = {
 }
 
 
+def import_soundfile() -> ModuleType:
+    """Import soundfile lazily with a clear error when libsndfile is unavailable.
+
+    soundfile bundles libsndfile, which has no prebuilt Windows-on-ARM binary,
+    so importing it (or loading its native library) fails on WoA. Audio/video
+    synthesis is the only path that needs it, so the import is deferred to call
+    time and the platform failure is surfaced as an actionable ConfigurationError
+    instead of a raw OSError.
+    """
+    try:
+        import soundfile as sf
+    except (ImportError, OSError) as e:
+        raise ConfigurationError(
+            "Audio synthesis requires the soundfile/libsndfile native library, "
+            "which has no prebuilt Windows-on-ARM binary. Run audio or video "
+            "synthesis on Linux or WSL. (Native ARM64 support requires building "
+            "libsndfile from source and rebuilding soundfile against it; the "
+            "pip wheel alone does not provide it.)"
+        ) from e
+    return sf
+
+
 class AudioGenerator(BaseGenerator):
     """
     A class for generating synthetic audio data.
@@ -59,6 +81,12 @@ class AudioGenerator(BaseGenerator):
         self._duration_rng = rng.derive("dataset.audio.duration")
         self._format_rng = rng.derive("dataset.audio.format")
         self._data_rng = rng.derive("dataset.audio.data")
+
+        # Duration (seconds) sampled by the most recent ``generate()`` call.
+        # The composer hoists it onto ``Turn.audio_duration_seconds`` so ASR
+        # metrics (RTFx) work for synthetic audio, mirroring what ASR dataset
+        # loaders set (see ``hf_asr``).
+        self.last_audio_duration_seconds: float = 0.0
 
     def _validate_sampling_rate(
         self, sampling_rate_hz: int, audio_format: AudioFormat
@@ -122,6 +150,7 @@ class AudioGenerator(BaseGenerator):
         audio_length = self._duration_rng.sample_normal(
             length_mean, length_stddev, lower=0.01
         )
+        self.last_audio_duration_seconds = audio_length
 
         # Randomly select sampling rate and bit depth
         sampling_rate_hz = int(
@@ -154,6 +183,8 @@ class AudioGenerator(BaseGenerator):
             subtype = "MPEG_LAYER_III"
         elif self.config.format == AudioFormat.WAV:
             _, subtype = SUPPORTED_BIT_DEPTHS[bit_depth]
+
+        sf = import_soundfile()
 
         sf.write(
             output_buffer,

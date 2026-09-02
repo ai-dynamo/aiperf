@@ -106,3 +106,43 @@ def test_yaml_cli_dataset_magic_list_targets_existing_dataset(tmp_path: Path) ->
     assert config.sweep is not None
     assert config.sweep.parameters["datasets.default.prompts.isl.mean"] == [128, 256]
     assert "datasets.main.prompts.isl.mean" not in config.sweep.parameters
+
+
+def test_yaml_cli_overrides_accept_single_phase_dict_shorthand(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "single-phase.yaml"
+    cfg_file.write_text(
+        textwrap.dedent(
+            """\
+            benchmark:
+              models:
+                - test-model
+              endpoint:
+                urls:
+                  - http://localhost:8000/v1/chat/completions
+                streaming: true
+              datasets:
+                - name: default
+                  type: synthetic
+                  entries: 16
+                  prompts:
+                    isl: 32
+                    osl: 8
+              phases:
+                type: concurrency
+                concurrency: 1
+                requests: 4
+            """
+        )
+    )
+    user = CLIConfig(tokenizer_name="builtin", ui="none")
+
+    config = resolve_config(user, cfg_file)
+
+    assert len(config.benchmark.phases) == 1
+    phase = config.benchmark.phases[0]
+    assert phase.name == "profiling"
+    assert phase.kind == "profiling"
+    assert phase.concurrency == 1
+    assert phase.requests == 4
+    assert config.benchmark.tokenizer.name == "builtin"
+    assert config.benchmark.runtime.ui == "none"

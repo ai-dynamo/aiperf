@@ -1,0 +1,10 @@
+{
+  "id": "trace_02_n2",
+  "models": ["claude-opus-4-5-20251101"],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "requests": [
+    {"t": 0.0, "type": "n", "model": "claude-opus-4-5-20251101", "in": 200, "out": 30, "hash_ids": [1, 2, 3], "input_types": ["text"], "output_types": ["text"], "stop": "end_turn", "api_time": 1.0, "think_time": 0.0},
+    {"t": 1.5, "type": "n", "model": "claude-opus-4-5-20251101", "in": 250, "out": 40, "hash_ids": [1, 2, 3, 4], "input_types": ["text"], "output_types": ["text"], "stop": "end_turn", "api_time": 1.2, "think_time": 0.5}
+  ]
+}

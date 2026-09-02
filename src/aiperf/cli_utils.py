@@ -11,6 +11,7 @@ from contextlib import AbstractContextManager
 
 from rich.align import AlignMethod
 from rich.console import Console, RenderableType
+from rich.markup import escape
 from rich.panel import Panel
 from rich.style import StyleType
 from rich.text import Text
@@ -115,8 +116,14 @@ class exit_on_error(AbstractContextManager):
                 )
                 console.file.flush()
 
+            # Escape the exception text before substituting it into the
+            # markup template: exception messages routinely contain square
+            # brackets (e.g. ``list[str]``, ``uv pip install 'aiperf[accuracy]'``)
+            # that Rich would otherwise parse as style tags and silently drop,
+            # corrupting the message. Any intentional markup in the template
+            # itself is preserved.
             message = (
-                self.message.format(e=exc_value)
+                self.message.format(e=escape(str(exc_value)))
                 if isinstance(self.message, str)
                 else self.message
             )

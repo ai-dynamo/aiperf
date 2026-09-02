@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 from multiprocessing import Process
 from unittest.mock import MagicMock
 
@@ -13,6 +14,37 @@ from aiperf.controller.multiprocess_service_manager import (
     MultiProcessServiceManager,
 )
 from aiperf.plugin.enums import ServiceType
+
+
+class TestForkProcessRemovalSmokeTest:
+    """Bug 1 regression: ``ForkProcess`` import was Linux-only.
+
+    The original ``Process | SpawnProcess | ForkProcess | None`` field type
+    pulled ``ForkProcess`` from ``multiprocessing.context``, which fails at
+    module-load time on Windows (``ImportError: cannot import name
+    'ForkProcess'``). Replaced with ``Process | None`` — every Process
+    subclass inherits from Process, no subclass dispatch in the codebase.
+    """
+
+    def test_module_imports_on_any_platform(self) -> None:
+        """Importing this module must succeed on every platform AIPerf
+        supports — ForkProcess is no longer in the import chain."""
+        from aiperf.controller import multiprocess_service_manager
+
+        assert multiprocess_service_manager.MultiProcessRunInfo is not None
+
+    def test_field_accepts_a_plain_process(self) -> None:
+        """The ``process`` field accepts any subclass of Process, including
+        SpawnProcess (the actual runtime type AIPerf produces)."""
+        from multiprocessing import Process
+
+        info = MultiProcessRunInfo.model_construct(
+            process=Process(target=lambda: None),
+            service_type=ServiceType.SYSTEM_CONTROLLER,
+            run_id="test",
+        )
+        assert info.process is not None
+        # Don't actually start; just confirm assignment works.
 
 
 class TestMultiProcessServiceManager:
@@ -66,10 +98,11 @@ class TestMultiProcessServiceManager:
         )
         service_manager.multi_process_info = [dead_process_info]
 
-        # Expect an error due to the dead process
+        # Expect an error due to the dead REQUIRED process. (DATASET_MANAGER
+        # is in required_services via the service_manager fixture.)
         with pytest.raises(
             AIPerfError,
-            match="Service process dead_service_123 died before registering",
+            match="Required service dead_service_123 died before registering",
         ):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(),
@@ -97,10 +130,11 @@ class TestMultiProcessServiceManager:
         )
         service_manager.multi_process_info = [alive_process_info, dead_process_info]
 
-        # Should raise error about the dead process
+        # Should raise error about the dead REQUIRED process. (DATASET_MANAGER
+        # is in required_services via the service_manager fixture.)
         with pytest.raises(
             AIPerfError,
-            match="Service process dead_service_789 died before registering",
+            match="Required service dead_service_789 died before registering",
         ):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(), timeout_seconds=1.0
@@ -119,11 +153,181 @@ class TestMultiProcessServiceManager:
         )
         service_manager.multi_process_info = [none_process_info]
 
-        # Should raise error about the failed process
+        # Should raise error: None process counts as dead, and DATASET_MANAGER
+        # is in required_services. Optional services with None process would
+        # be dropped with a warning instead (see test_optional_dead_drops_and_continues).
         with pytest.raises(
             AIPerfError,
-            match="Service process failed_to_start_service died before registering",
+            match="Required service failed_to_start_service died before registering",
         ):
+            await service_manager.wait_for_all_services_registration(
+                stop_event=asyncio.Event(), timeout_seconds=1.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_service_passes_controller_pid_for_pdeathsig_guard(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Every child Process must receive the controller's PID so bootstrap
+        can arm the PR_SET_PDEATHSIG parent-death guard against it (and detect
+        the reparent race where the controller died before the guard armed)."""
+        mock_process_cls = MagicMock(return_value=MagicMock(spec=Process))
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.Process",
+            mock_process_cls,
+        )
+
+        await service_manager.run_service(ServiceType.DATASET_MANAGER)
+
+        mock_process_cls.assert_called_once()
+        launch_kwargs = mock_process_cls.call_args.kwargs
+        assert launch_kwargs["daemon"] is True
+        assert launch_kwargs["kwargs"]["controller_pid"] == os.getpid()
+        mock_process_cls.return_value.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_optional_dead_drops_and_continues(
+        self,
+        service_manager: MultiProcessServiceManager,
+        mock_alive_process: MagicMock,
+        mock_dead_process: MagicMock,
+    ):
+        """Pins F-04: an optional service (not in required_services) dying
+        before registering must drop the service from the wait set and let
+        the benchmark continue, NOT raise AIPerfError. Required services
+        dying remains fatal (covered by other tests in this class).
+        """
+        # GPU_TELEMETRY is not in required_services (fixture has only
+        # DATASET_MANAGER + TIMING_MANAGER) — so a dead one should be
+        # warning + drop, not fatal.
+        alive_dataset = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="dataset_alive",
+        )
+        alive_timing = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.TIMING_MANAGER,
+            service_id="timing_alive",
+        )
+        # SERVER_METRICS_MANAGER is an actual optional service started via
+        # run_service() — not in the fixture's required_services.
+        dead_optional = MultiProcessRunInfo.model_construct(
+            process=mock_dead_process,
+            service_type=ServiceType.SERVER_METRICS_MANAGER,
+            service_id="server_metrics_dead",
+        )
+        service_manager.multi_process_info = [
+            alive_dataset,
+            alive_timing,
+            dead_optional,
+        ]
+        # Mark the required services as registered so the wait loop succeeds
+        # once the dead optional is dropped.
+        from aiperf.common.enums import ServiceRegistrationStatus
+
+        for info in (alive_dataset, alive_timing):
+            registered = MagicMock()
+            registered.service_type = info.service_type
+            registered.registration_status = ServiceRegistrationStatus.REGISTERED
+            service_manager.service_id_map[info.service_id] = registered
+
+        # Should NOT raise — dead optional gets dropped, wait returns cleanly.
+        await service_manager.wait_for_all_services_registration(
+            stop_event=asyncio.Event(), timeout_seconds=2.0
+        )
+
+        # Dead optional was removed from the wait set.
+        assert dead_optional not in service_manager.multi_process_info
+
+    @pytest.mark.asyncio
+    async def test_wait_blocks_until_optional_services_register(
+        self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
+    ):
+        """Regression: optional services started via run_service() must also
+        be waited for before PROFILE_CONFIGURE is fanned out.
+
+        Failure mode: ServerMetricsManager (an optional service started via
+        run_service, not part of required_services) registers ~1s later than
+        the core services on slow Windows VDI. The SystemController previously
+        only waited for required_services; it fanned out PROFILE_CONFIGURE
+        before ServerMetricsManager had subscribed, leaving it un-configured
+        and the JSON export file missing on disk.
+
+        Now wait_for_all_services_registration derives its wait set from
+        multi_process_info (every spawned service) instead of just
+        required_services.
+        """
+        from aiperf.common.enums import ServiceRegistrationStatus
+        from aiperf.common.models.service_models import ServiceRunInfo
+
+        # required service already registered
+        required_info = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="dataset_manager",
+        )
+        # optional service spawned via run_service() but not yet registered
+        optional_info = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.SERVER_METRICS_MANAGER,
+            service_id="server_metrics_manager",
+        )
+        service_manager.multi_process_info = [required_info, optional_info]
+        # Mark only the required one as REGISTERED — optional is still spawning.
+        service_manager.service_id_map = {
+            "dataset_manager": ServiceRunInfo(
+                service_type=ServiceType.DATASET_MANAGER,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                service_id="dataset_manager",
+            ),
+            "timing_manager": ServiceRunInfo(
+                service_type=ServiceType.TIMING_MANAGER,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                service_id="timing_manager",
+            ),
+        }
+
+        # Pre-fix: wait would return ~immediately because required_services
+        # are all registered. Post-fix: wait times out because the optional
+        # SERVER_METRICS_MANAGER in multi_process_info isn't in service_id_map.
+        with pytest.raises(AIPerfError, match="failed to register within timeout"):
+            await service_manager.wait_for_all_services_registration(
+                stop_event=asyncio.Event(), timeout_seconds=1.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_wait_blocks_until_all_replicas_of_a_type_register(
+        self, service_manager: MultiProcessServiceManager, mock_alive_process: MagicMock
+    ):
+        """A scaled service type (e.g. RECORD_PROCESSOR, replicated based on
+        worker count) must have every replica registered before the wait
+        returns -- not just the first one."""
+        from aiperf.common.enums import ServiceRegistrationStatus
+        from aiperf.common.models.service_models import ServiceRunInfo
+
+        replica_1 = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.RECORD_PROCESSOR,
+            service_id="record_processor_1",
+        )
+        replica_2 = MultiProcessRunInfo.model_construct(
+            process=mock_alive_process,
+            service_type=ServiceType.RECORD_PROCESSOR,
+            service_id="record_processor_2",
+        )
+        service_manager.multi_process_info = [replica_1, replica_2]
+        service_manager.service_id_map = {
+            "record_processor_1": ServiceRunInfo(
+                service_type=ServiceType.RECORD_PROCESSOR,
+                registration_status=ServiceRegistrationStatus.REGISTERED,
+                service_id="record_processor_1",
+            ),
+        }
+
+        with pytest.raises(AIPerfError, match="failed to register within timeout"):
             await service_manager.wait_for_all_services_registration(
                 stop_event=asyncio.Event(), timeout_seconds=1.0
             )
@@ -158,7 +362,13 @@ class TestMultiProcessServiceManager:
 
 
 class TestWaitForProcess:
-    """Test _wait_for_process graceful shutdown and SIGKILL escalation."""
+    """Test _wait_for_process force-kill after bus shutdown grace.
+
+    Children ``SIG_IGN`` SIGTERM (see ``bootstrap.py``), so this path must
+    not call ``terminate()`` then wait — that only burned
+    ``TASK_CANCEL_TIMEOUT_SHORT`` before ``kill()``. After ``kill()`` we
+    still ``join()`` to reap the zombie.
+    """
 
     @pytest.fixture
     def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
@@ -169,13 +379,10 @@ class TestWaitForProcess:
 
     @pytest.fixture
     def _make_process_info(self) -> "callable":
-        def _factory(
-            *, is_alive_sequence: list[bool], pid: int = 12345
-        ) -> MultiProcessRunInfo:
+        def _factory(*, is_alive: bool = True, pid: int = 12345) -> MultiProcessRunInfo:
             mock_process = MagicMock(spec=Process)
-            mock_process.is_alive.side_effect = is_alive_sequence
+            mock_process.is_alive.return_value = is_alive
             mock_process.pid = pid
-            mock_process.join.return_value = None
             return MultiProcessRunInfo.model_construct(
                 process=mock_process,
                 service_type=ServiceType.DATASET_MANAGER,
@@ -211,29 +418,67 @@ class TestWaitForProcess:
         await service_manager._wait_for_process(info)
 
     @pytest.mark.asyncio
-    async def test_terminate_succeeds_no_kill(
+    async def test_alive_process_skips_terminate_goes_straight_to_kill(
         self, service_manager: MultiProcessServiceManager, _make_process_info
     ):
-        """Process that exits after SIGTERM should not be killed."""
-        # First is_alive=True (guard check), second is_alive=False (after join)
-        info = _make_process_info(is_alive_sequence=[True, False])
+        """Alive straggler is killed immediately; terminate must not run.
+
+        ``join()`` still runs *after* ``kill()`` so the child is reaped.
+        """
+        info = _make_process_info(is_alive=True)
+        # Initial is_alive gate is True; after kill the post-join check is False.
+        info.process.is_alive.side_effect = [True, False]
 
         await service_manager._wait_for_process(info)
 
-        info.process.terminate.assert_called_once()
-        info.process.join.assert_called_once()
-        info.process.kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_terminate_fails_escalates_to_kill(
-        self, service_manager: MultiProcessServiceManager, _make_process_info
-    ):
-        """Process still alive after join timeout should be killed with SIGKILL."""
-        # First is_alive=True (guard check), second is_alive=True (after join — still running)
-        info = _make_process_info(is_alive_sequence=[True, True])
-
-        await service_manager._wait_for_process(info)
-
-        info.process.terminate.assert_called_once()
-        info.process.join.assert_called_once()
+        info.process.terminate.assert_not_called()
         info.process.kill.assert_called_once()
+        info.process.join.assert_called_once()
+        method_names = [c[0] for c in info.process.method_calls]
+        assert method_names.index("kill") < method_names.index("join")
+
+
+class TestGetServiceLiveness:
+    """Local runs hold a real Process handle; the watchdog must consult it.
+
+    Without this override the heartbeat watchdog can only infer death from
+    silence, so a service that merely blocks its event loop past the stale
+    threshold is reaped and its buffered results vanish from the run.
+    """
+
+    @pytest.fixture
+    def manager(self) -> MultiProcessServiceManager:
+        mgr = MultiProcessServiceManager.__new__(MultiProcessServiceManager)
+        mgr.multi_process_info = []
+        return mgr
+
+    def _add(self, manager, service_id: str, alive: bool | None) -> None:
+        process = None
+        if alive is not None:
+            process = MagicMock(spec=Process)
+            process.is_alive.return_value = alive
+        manager.multi_process_info.append(
+            MultiProcessRunInfo.model_construct(
+                process=process,
+                service_type=ServiceType.WORKER,
+                service_id=service_id,
+            )
+        )
+
+    def test_get_service_liveness_running_process_returns_true(self, manager) -> None:
+        self._add(manager, "worker_1", alive=True)
+        assert manager.get_service_liveness("worker_1") is True
+
+    def test_get_service_liveness_exited_process_returns_false(self, manager) -> None:
+        self._add(manager, "worker_1", alive=False)
+        assert manager.get_service_liveness("worker_1") is False
+
+    def test_get_service_liveness_missing_handle_returns_false(self, manager) -> None:
+        """A None process means the spawn failed before producing a handle."""
+        self._add(manager, "worker_1", alive=None)
+        assert manager.get_service_liveness("worker_1") is False
+
+    def test_get_service_liveness_unknown_service_returns_none(self, manager) -> None:
+        """Services this manager never spawned have no ground truth to offer."""
+        self._add(manager, "worker_1", alive=True)
+        assert manager.get_service_liveness("worker_2") is None

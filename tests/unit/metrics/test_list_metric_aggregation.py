@@ -16,7 +16,7 @@ import pytest
 
 from aiperf.common.environment import Environment
 from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
-from aiperf.metrics.metric_dicts import MetricAggregator, MetricArray
+from aiperf.metrics.metric_dicts import MetricAggregator, metric_result_from_array
 
 
 class TestTDigestListMetricAggregator:
@@ -133,9 +133,11 @@ class TestTDigestListMetricAggregator:
         digest_agg.extend(values.tolist())
         digest_result = digest_agg.to_result(tag="t", header="T", unit="ms")
 
-        array_agg = MetricArray()
-        array_agg.extend(values.tolist())
-        array_result = array_agg.to_result(tag="t", header="T", unit="ms")
+        # Exact numpy-percentile reference (the same computation the t-digest
+        # approximates). ``metric_result_from_array`` sorts in place, so copy.
+        array_result = metric_result_from_array(
+            "t", "T", "ms", values.copy(), float(values.sum())
+        )
 
         # Same field set on the Pydantic model.
         assert set(digest_result.model_fields_set) == set(array_result.model_fields_set)
@@ -198,12 +200,9 @@ class TestTDigestListMetricAggregator:
 
     def test_protocol_runtime_isinstance(self) -> None:
         """Aggregator should satisfy the ``MetricAggregator`` protocol so
-        ``isinstance`` dispatch in ``MetricResultsProcessor`` and
-        ``DerivedSumMetric`` accepts both this and ``MetricArray``."""
+        ``MetricsAccumulator`` and ``DerivedSumMetric`` accept it."""
         digest_agg = TDigestListMetricAggregator()
-        array_agg = MetricArray()
         assert isinstance(digest_agg, MetricAggregator)
-        assert isinstance(array_agg, MetricAggregator)
 
     def test_compression_env_var_flows_to_underlying_sketch(
         self, monkeypatch: pytest.MonkeyPatch
@@ -222,8 +221,7 @@ class TestTDigestListMetricAggregator:
 
     def test_sum_property_for_derived_metric_protocol(self) -> None:
         """The ``MetricAggregator`` protocol requires a ``sum`` property so
-        :class:`DerivedSumMetric` can compute uniformly across this and
-        :class:`MetricArray`."""
+        :class:`DerivedSumMetric` can compute the total uniformly."""
         agg = TDigestListMetricAggregator()
         agg.extend([1.0, 2.0, 3.0, 4.0, 5.0])
         # Property is exposed and returns the running side-channel sum.

@@ -26,7 +26,7 @@ class GPUTelemetryJSONLWriter(
 
     Each line contains:
         - timestamp_ns: Collection timestamp in nanoseconds
-        - dcgm_url: DCGM endpoint URL for filtering by endpoint
+        - telemetry_source_url: source identifier URL for filtering by endpoint
         - gpu_uuid: Unique GPU identifier
         - gpu_index: GPU index on the host
         - hostname: Host machine name
@@ -65,6 +65,14 @@ class GPUTelemetryJSONLWriter(
             await self.buffered_write(record)
         except Exception as e:
             self.error(f"Failed to write GPU telemetry record: {e}")
+
+    async def process_record(self, record: TelemetryRecord) -> None:
+        """``StreamExporterProtocol``-compatible alias for ``process_telemetry_record``."""
+        await self.process_telemetry_record(record)
+
+    async def finalize(self) -> None:
+        """Flush any buffered data at end-of-run (``StreamExporterProtocol``)."""
+        await self.flush_buffer()
 
     async def summarize(self) -> list[MetricResult]:
         """Summarize the results. For this processor, we don't need to summarize anything."""
