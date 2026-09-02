@@ -2779,11 +2779,13 @@ class CLIConfig(BaseConfig):
         bool,
         Field(
             description=(
-                "Export generated response text to outputs.json after the run. "
-                "When enabled, the raw generated-text payload for each request is "
-                "written to an outputs.json file in the artifact directory. "
-                "Implied by `--export-level raw`; pass `--no-export-outputs-json` "
-                "to opt out of the extra file while keeping raw export."
+                "Export generated response text after the run. When enabled, the "
+                "raw generated-text payload for each request is written to "
+                "`outputs.json` in the artifact directory, or to "
+                "`<prefix>_outputs.json` when `--profile-export-prefix` is set "
+                "(prefix `foo` gives `foo_outputs.json`). Implied by "
+                "`--export-level raw`; pass `--no-export-outputs-json` to opt out "
+                "of the extra file while keeping raw export."
             ),
         ),
         CLIParameter(

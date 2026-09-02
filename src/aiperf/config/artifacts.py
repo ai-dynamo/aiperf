@@ -205,7 +205,8 @@ class ArtifactsConfig(BaseConfig):
         bool,
         Field(
             default=False,
-            description="Export generated response text to outputs.json after the run. "
+            description="Export generated response text after the run, to "
+            "`outputs.json` or `<prefix>_outputs.json` when `prefix` is set. "
             "Implied by `raw` export level unless explicitly set False.",
         ),
     ]
@@ -323,7 +324,8 @@ class ArtifactsConfig(BaseConfig):
     def outputs_json_file(self) -> Path:
         """Path for the aggregated generated outputs JSON export file."""
         base = self._base()
-        name = f"{base}_outputs.json" if base else "outputs.json"
+        default = OutputDefaults.OUTPUTS_JSON_FILE.name
+        name = f"{base}_outputs.json" if base else default
         return self.dir / name
 
     @property

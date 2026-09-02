@@ -1,12 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for --profile-export-prefix applying to the outputs.json export.
-
-outputs.json used to be the one export path that ignored the prefix, so a prefix
-resolving to 'outputs' collided with the summary JSON and was rejected outright.
-It now takes the prefix like every other artifact (`foo` -> `foo_outputs.json`),
-which makes the collision impossible and the guard unnecessary.
-"""
+"""Tests for --profile-export-prefix applying to the outputs.json export."""
 
 from __future__ import annotations
 

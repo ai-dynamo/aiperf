@@ -32,6 +32,13 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
     # field. Both are additive: `data` is still profiling-only.
     SCHEMA_VERSION = "1.1"
 
+    # outputs.json is sorted by (session_num, turn_index), so unlike the raw
+    # record aggregator it cannot stream -- the whole document is materialized
+    # to sort it, costing roughly 3x the on-disk fragment size at peak. Warn
+    # past this many records so a large run sees the cost instead of just
+    # paying it, since --export-level raw now enables this export by default.
+    LARGE_EXPORT_RECORD_WARNING_THRESHOLD = 50_000
+
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._cfg = exporter_config.cfg
@@ -101,6 +108,15 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             "data": records,
             "warmup": warmup,
         }
+
+        total = len(records) + len(warmup)
+        if total >= self.LARGE_EXPORT_RECORD_WARNING_THRESHOLD:
+            self.warning(
+                f"Serializing {total} records to {self._file_path.name}; this "
+                "export is sorted and therefore held in memory in full, needing "
+                "roughly 3x the fragment size on disk. Pass "
+                "--no-export-outputs-json to skip it."
+            )
 
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
         content = orjson.dumps(scrub_non_finite(output), option=orjson.OPT_INDENT_2)

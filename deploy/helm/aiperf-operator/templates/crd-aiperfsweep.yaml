@@ -642,8 +642,8 @@ spec:
                         default: false
                       exportOutputsJson:
                         type: boolean
-                        description: Export generated response text to outputs.json after the run. Implied by `raw` export
-                          level unless explicitly set False.
+                        description: Export generated response text after the run, to `outputs.json` or `<prefix>_outputs.json`
+                          when `prefix` is set. Implied by `raw` export level unless explicitly set False.
                         default: false
                   slos:
                     type: object

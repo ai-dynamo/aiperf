@@ -5,6 +5,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
 
+import orjson
 import pytest
 
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -103,8 +104,6 @@ class TestOutputsJsonRecordProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_extracts_response_text(self, tmp_path: Path) -> None:
         """Verifies response text is concatenated from content_responses."""
-        import orjson
-
         config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
@@ -144,8 +143,6 @@ class TestOutputsJsonRecordProcessorProcessRecord:
     ) -> None:
         """Allowlisted metrics are captured off ctx.metrics into the fragment, so
         outputs.json does not depend on the records JSONL export (F2)."""
-        import orjson
-
         from aiperf.common.messages.inference_messages import MetricRecordsData
 
         config = _make_config(tmp_path, export_outputs_json=True)
@@ -187,8 +184,6 @@ class TestOutputsJsonRecordProcessorProcessRecord:
     async def test_process_record_captures_warmup_phase(self, tmp_path: Path) -> None:
         """Warmup records are captured and tagged, so raw export's outputs.json
         covers the same requests as profile_export_raw.jsonl."""
-        import orjson
-
         config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
@@ -223,8 +218,6 @@ class TestOutputsJsonRecordProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_tags_profiling_phase(self, tmp_path: Path) -> None:
         """Profiling records carry the phase too, so the exporter can partition."""
-        import orjson
-
         config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
@@ -259,8 +252,6 @@ class TestOutputsJsonRecordProcessorProcessRecord:
         self, tmp_path: Path
     ) -> None:
         """When content_responses is empty, response_text is None."""
-        import orjson
-
         config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
