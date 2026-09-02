@@ -21,7 +21,7 @@ from aiperf.common.models.record_models import (
 )
 from aiperf.common.models.usage_models import Usage
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
-from aiperf.plugin.enums import EndpointType
+from aiperf.plugin.enums import EndpointType, TransportType
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,
@@ -985,6 +985,60 @@ class TestResponsesStatefulChaining:
             ResponsesEndpoint,
             create_model_endpoint(EndpointType.RESPONSES, extra=[("store", True)]),
         )
+
+    @pytest.fixture
+    def websocket_endpoint(self) -> ResponsesEndpoint:
+        me = create_model_endpoint(EndpointType.RESPONSES)
+        me.transport = TransportType.WEBSOCKET
+        return create_endpoint_with_mock_transport(ResponsesEndpoint, me)
+
+    def test_extract_response_id_websocket_without_store_returns_id(
+        self, websocket_endpoint: ResponsesEndpoint
+    ) -> None:
+        """WebSocket chaining resolves previous_response_id from the connection
+        cache, so the id is extracted even though ``store`` was never requested."""
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": "resp_ws_cache",
+                                "object": "response",
+                                "status": "completed",
+                            },
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert websocket_endpoint.extract_response_id(record) == "resp_ws_cache"
+
+    def test_extract_response_id_websocket_failure_returns_none(
+        self, websocket_endpoint: ResponsesEndpoint
+    ) -> None:
+        """A failed WebSocket response is not chainable even though the store
+        gate is exempt for the WebSocket transport."""
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.failed",
+                            "response": {
+                                "id": "resp_ws_aborted",
+                                "object": "response",
+                                "status": "failed",
+                            },
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert websocket_endpoint.extract_response_id(record) is None
 
     def test_extract_response_id_store_requested_response_omits_store_returns_id(
         self, store_endpoint: ResponsesEndpoint
