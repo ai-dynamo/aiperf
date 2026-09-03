@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import json
 import tempfile
 from pathlib import Path
 
@@ -617,16 +618,57 @@ class TestSpeedBenchAutoDetection:
 
         assert result == CustomDatasetType.SPEED_BENCH_QUALITATIVE
 
-    def test_category_filtered_entries_are_excluded_from_detection(self):
-        """Only the unfiltered entry may claim a file structurally."""
+    def test_resolver_also_infers_the_unfiltered_split_loader(self, tmp_path):
+        """Both production detection loops must agree.
+
+        ``CustomDatasetComposer._infer_type`` and ``DatasetResolver._detect_type``
+        each walk the registry independently; if only one excludes
+        category-filtered entries, a file resolves differently depending on
+        which path runs.
+        """
+        from aiperf.config.dataset.resolver import DatasetResolver
+
+        f = tmp_path / "qualitative.jsonl"
+        f.write_text(json.dumps(self._valid_row()) + "\n")
+
+        detected, _ = DatasetResolver._detect_type(str(f))
+
+        assert detected == CustomDatasetType.SPEED_BENCH_QUALITATIVE
+
+    def test_predicate_excludes_category_filtered_entries(self):
+        """``is_autodetectable`` is the shared rule both loops apply.
+
+        Exercised against synthetic entries rather than the registry: the
+        SPEED-Bench category selectors moved to ``--public-dataset``, so no
+        shipped custom entry carries a category today. The rule still guards
+        the invariant -- re-adding one would otherwise make every valid file
+        look ambiguous again.
+        """
+        from types import SimpleNamespace
+
+        from aiperf.plugin import plugins
+
+        unfiltered = SimpleNamespace(name="speed_bench_qualitative", metadata={})
+        filtered = SimpleNamespace(
+            name="speed_bench_coding", metadata={"category": "coding"}
+        )
+
+        assert plugins.is_autodetectable(unfiltered) is True
+        assert plugins.is_autodetectable(filtered) is False
+
+    def test_no_shipped_custom_entry_is_category_filtered(self):
+        """Pins the migration: category selectors live under --public-dataset.
+
+        If one reappears here, `_infer_type` sees two loaders claiming the same
+        file and auto-detection breaks for correctly prepared files.
+        """
         from aiperf.plugin import plugins
         from aiperf.plugin.enums import PluginType
 
-        matches = [
+        offenders = [
             entry.name
-            for entry, LoaderClass in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER)
-            if entry.metadata.get("category") is None
-            and LoaderClass.can_load(self._valid_row(), "qualitative.jsonl")
+            for entry, _ in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER)
+            if entry.metadata.get("category") is not None
         ]
 
-        assert matches == ["speed_bench_qualitative"]
+        assert offenders == []

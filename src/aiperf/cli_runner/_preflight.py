@@ -204,29 +204,34 @@ def _public_dataset_loaders(plan: BenchmarkPlan):
     """Yield ``(LoaderClass, loader_kwargs)`` for each public dataset in the plan.
 
     Reads plugin metadata directly rather than going through the composer,
-    which needs a live run. Only the fields the preflight hooks care about are
-    forwarded.
+    which needs a live run. Only the fields the preflight hooks act on are
+    forwarded, and the yielded pairs are deduplicated by those fields rather
+    than by selector name: a category sweep names 11 distinct selectors that
+    all resolve the same underlying config, and keying on the selector would
+    make preflight issue 11 identical auth probes before the run starts.
     """
     from aiperf.config.dataset import PublicDataset
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
-    seen: set[str] = set()
+    seen: set[tuple[type, str | None]] = set()
     for cfg in plan.configs:
         dataset = cfg.get_default_dataset()
-        if not isinstance(dataset, PublicDataset) or dataset.dataset in seen:
+        if not isinstance(dataset, PublicDataset):
             continue
-        seen.add(dataset.dataset)
 
         LoaderClass = plugins.get_class(
             PluginType.PUBLIC_DATASET_LOADER, dataset.dataset
         )
         metadata = plugins.get_public_dataset_loader_metadata(dataset.dataset)
-        kwargs = {
-            "hf_subset": dataset.hf_subset or metadata.hf_subset,
-            "category": metadata.category,
-        }
-        yield LoaderClass, {k: v for k, v in kwargs.items() if v is not None}
+        hf_subset = dataset.hf_subset or metadata.hf_subset
+
+        key = (LoaderClass, hf_subset)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        yield LoaderClass, ({"hf_subset": hf_subset} if hf_subset else {})
 
 
 def _preflight_dataset_access(plan: BenchmarkPlan) -> None:

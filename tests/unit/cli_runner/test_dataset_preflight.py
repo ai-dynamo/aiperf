@@ -40,14 +40,48 @@ class TestPublicDatasetEnumeration:
         assert len(found) == 1
         loader_class, kwargs = found[0]
         assert loader_class.__name__ == "SpeedBenchPublicLoader"
-        assert kwargs == {"hf_subset": "qualitative", "category": "qa"}
+        assert kwargs == {"hf_subset": "qualitative"}
 
-    def test_unfiltered_dataset_yields_no_category(self):
+    def test_only_hook_relevant_kwargs_are_forwarded(self):
+        """category does not affect access or materialization, so it is not sent."""
         plan = _plan(_public("speed_bench_qualitative"))
 
         _, kwargs = next(iter(_public_dataset_loaders(plan)))
 
-        assert "category" not in kwargs
+        assert kwargs == {"hf_subset": "qualitative"}
+
+    def test_selectors_sharing_a_config_are_probed_once(self):
+        """A category sweep names many selectors backed by one config.
+
+        Keying dedup on the selector made preflight issue one auth probe per
+        category before the run started -- 11 identical round trips for the
+        qualitative sweep, and a rate-limit risk on the preflight path.
+        """
+        plan = SimpleNamespace(
+            configs=[
+                SimpleNamespace(get_default_dataset=lambda d=d: d)
+                for d in (
+                    _public("speed_bench_qa"),
+                    _public("speed_bench_coding"),
+                    _public("speed_bench_math"),
+                )
+            ]
+        )
+
+        assert len(list(_public_dataset_loaders(plan))) == 1
+
+    def test_different_configs_are_probed_separately(self):
+        plan = SimpleNamespace(
+            configs=[
+                SimpleNamespace(get_default_dataset=lambda d=d: d)
+                for d in (
+                    _public("speed_bench_qa"),
+                    _public("speed_bench_throughput_1k"),
+                )
+            ]
+        )
+
+        assert len(list(_public_dataset_loaders(plan))) == 2
 
     def test_file_datasets_are_skipped(self, tmp_path):
         f = tmp_path / "d.jsonl"
@@ -67,7 +101,7 @@ class TestPreflightDispatch:
         ) as hook:
             _preflight_dataset_access(plan)
 
-        hook.assert_called_once_with(hf_subset="qualitative", category="qa")
+        hook.assert_called_once_with(hf_subset="qualitative")
 
     def test_materialize_hook_is_invoked_with_the_loader_kwargs(self):
         plan = _plan(_public("speed_bench_qa"))
@@ -78,7 +112,7 @@ class TestPreflightDispatch:
         ) as hook:
             _preflight_dataset_materialize(plan)
 
-        hook.assert_called_once_with(hf_subset="qualitative", category="qa")
+        hook.assert_called_once_with(hf_subset="qualitative")
 
     def test_hook_failures_propagate(self):
         """A preflight must not swallow the error it exists to surface."""

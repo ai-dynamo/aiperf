@@ -11,7 +11,10 @@ from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.dataset.loader.speed_bench import SpeedBenchRow
-from aiperf.dataset.loader.speed_bench_public import SpeedBenchPublicLoader
+from aiperf.dataset.loader.speed_bench_public import (
+    HLE_ACCESS_URL,
+    SpeedBenchPublicLoader,
+)
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from tests.unit.conftest import make_run_from_cli
 
@@ -103,11 +106,7 @@ class TestSpeedBenchPublicLoader:
 
 
 class TestUnresolvedRowRejection:
-    """Upstream reports success even when a source is unreachable.
-
-    Exit status is therefore not evidence that the prompts are real, so the
-    rows themselves are checked before the cache is published.
-    """
+    """Exit status is not evidence the prompts are real; the rows are."""
 
     def test_rejects_and_removes_a_partially_resolved_cache(self, tmp_path):
         partial = tmp_path / "qualitative.jsonl.partial"
@@ -143,6 +142,13 @@ class TestUnresolvedRowRejection:
 
 
 class TestGatePreflight:
+    """The gate check must distinguish credential states.
+
+    "No token" and "token without access" need different actions: telling an
+    unauthenticated user their account lacks access sends them to accept terms
+    on an account they never logged into.
+    """
+
     @pytest.fixture(autouse=True)
     def _uncached(self, tmp_path):
         """Point the cache at an empty dir.
@@ -154,14 +160,27 @@ class TestGatePreflight:
         with patch.object(
             SpeedBenchPublicLoader,
             "cache_path_for",
-            return_value=tmp_path / "qualitative.jsonl",
+            staticmethod(lambda config: tmp_path / f"{config}.jsonl"),
         ):
             yield
 
-    def test_gated_source_raises_actionable_configuration_error(self):
+    def test_missing_credentials_says_so_and_lists_where_it_looked(self):
+        with (
+            patch("huggingface_hub.get_token", return_value=None),
+            pytest.raises(ConfigurationError) as excinfo,
+        ):
+            SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
+
+        message = str(excinfo.value)
+        assert "no HuggingFace credentials were found" in message
+        assert "$HF_TOKEN" in message
+        assert "hf auth login" in message
+
+    def test_authenticated_but_unauthorized_says_accept_the_terms(self):
         from huggingface_hub.errors import GatedRepoError
 
         with (
+            patch("huggingface_hub.get_token", return_value="hf_fake"),
             patch(
                 "huggingface_hub.HfApi.auth_check",
                 side_effect=GatedRepoError("gated", response=Mock()),
@@ -171,96 +190,41 @@ class TestGatePreflight:
             SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
 
         message = str(excinfo.value)
-        assert "cais/hle" in message
-        assert "https://huggingface.co/datasets/cais/hle" in message
-        assert "hf auth login" in message
+        assert "You are authenticated" in message
+        assert HLE_ACCESS_URL in message
+        # Must not send an already-logged-in user back through login.
+        assert "hf auth login" not in message
 
     def test_network_failure_is_not_reported_as_missing_access(self):
         """ "I could not tell" must never render as "you lack access"."""
-        with patch("huggingface_hub.HfApi.auth_check", side_effect=OSError("no route")):
+        with (
+            patch("huggingface_hub.get_token", return_value="hf_fake"),
+            patch("huggingface_hub.HfApi.auth_check", side_effect=OSError("no route")),
+        ):
             SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
 
     def test_authorized_account_passes(self):
-        with patch("huggingface_hub.HfApi.auth_check", return_value=None):
-            SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
-
-
-class TestMovedNameMigration:
-    """The 26 category selectors moved to --public-dataset.
-
-    They were the only documented way to run those subsets, so a bare enum
-    error would strand anyone with an existing script or tutorial command.
-    """
-
-    @pytest.mark.parametrize(
-        "name",
-        [
-            "speed_bench_coding",
-            "speed_bench_summarization",
-            "speed_bench_throughput_1k_mixed",
-            "speed_bench_throughput_32k_high_entropy",
-        ],
-    )
-    def test_moved_name_points_at_the_new_flag(self, name):
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError) as excinfo:
-            CLIConfig(model_names=["m"], custom_dataset_type=name)
-
-        message = str(excinfo.value)
-        assert "--public-dataset" in message
-        assert f"--public-dataset {name}" in message
-
-    @pytest.mark.parametrize(
-        "name", ["speed_bench_qualitative", "speed_bench_throughput_1k"]
-    )
-    def test_surviving_names_still_accepted(self, name):
-        """The 6 base entries remain: they let AIPerf read a prepared file."""
-        cfg = CLIConfig(model_names=["m"], custom_dataset_type=name)
-
-        assert cfg.custom_dataset_type == name
-
-
-class TestPreflightRunsWithoutAnEventLoop:
-    """Preflight is synchronous; the loader's base class is not.
-
-    ``BasePublicDatasetLoader.__init__`` opens an aiohttp client, which needs a
-    running event loop. Constructing a loader during preflight therefore raises
-    ``RuntimeError: no running event loop`` for every user, which unit tests
-    hide because pytest-asyncio supplies a loop.
-    """
-
-    def test_materialize_does_not_construct_a_loader(self, tmp_path):
-        cached = tmp_path / "qualitative.jsonl"
-        cached.write_text(json.dumps(_row("a" * 32, "qa", "Cached.")) + "\n")
-
-        with patch.object(
-            SpeedBenchPublicLoader, "cache_path_for", return_value=cached
+        with (
+            patch("huggingface_hub.get_token", return_value="hf_fake"),
+            patch("huggingface_hub.HfApi.auth_check", return_value=None),
         ):
-            # No event loop is running here, deliberately.
-            SpeedBenchPublicLoader.preflight_materialize(hf_subset="qualitative")
-
-    def test_access_check_does_not_construct_a_loader(self):
-        with patch("huggingface_hub.HfApi.auth_check", return_value=None):
             SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
 
-    def test_cache_path_is_resolvable_without_an_instance(self):
-        path = SpeedBenchPublicLoader.cache_path_for("throughput_1k")
+    def test_cached_config_skips_the_probe_entirely(self, tmp_path):
+        """An already-resolved config must not need credentials at all.
 
-        assert path.name == "throughput_1k.jsonl"
+        This is what makes the pre-staging workflow work on an air-gapped box.
+        """
+        cached = tmp_path / "qualitative.jsonl"
+        cached.write_text("{}\n")
 
-
-def test_public_loaders_construct_outside_an_event_loop():
-    """Public loaders must be constructible synchronously.
-
-    ``BasePublicDatasetLoader`` opened an aiohttp ``TCPConnector`` eagerly, so
-    merely instantiating any public loader outside an event loop raised
-    ``RuntimeError: no running event loop`` -- which broke the preflight phase
-    for every user while unit tests, which run under pytest-asyncio, passed.
-    """
-    loader = SpeedBenchPublicLoader(hf_subset="qualitative")
-
-    assert loader.config == "qualitative"
+        with (
+            patch.object(
+                SpeedBenchPublicLoader, "cache_path_for", staticmethod(lambda c: cached)
+            ),
+            patch("huggingface_hub.get_token", side_effect=AssertionError("probed")),
+        ):
+            SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
 
 
 class TestResolveConfig:
@@ -412,3 +376,108 @@ class TestConvertEdgeCases:
         conversations = await _loader().convert_to_conversations(data)
 
         assert len(conversations) == 1
+
+
+class TestMovedNameMigration:
+    """The 26 category selectors moved to --public-dataset.
+
+    They were the only documented way to run those subsets, so a bare enum
+    error would strand anyone with an existing script or tutorial command.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "speed_bench_coding",
+            "speed_bench_summarization",
+            "speed_bench_throughput_1k_mixed",
+            "speed_bench_throughput_32k_high_entropy",
+        ],
+    )
+    def test_moved_name_points_at_the_new_flag(self, name):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as excinfo:
+            CLIConfig(model_names=["m"], custom_dataset_type=name)
+
+        message = str(excinfo.value)
+        assert "--public-dataset" in message
+        assert f"--public-dataset {name}" in message
+
+    @pytest.mark.parametrize(
+        "name", ["speed_bench_qualitative", "speed_bench_throughput_1k"]
+    )
+    def test_surviving_names_still_accepted(self, name):
+        """The 6 base entries remain: they let AIPerf read a prepared file."""
+        cfg = CLIConfig(model_names=["m"], custom_dataset_type=name)
+
+        assert cfg.custom_dataset_type == name
+
+
+class TestPreflightRunsWithoutAnEventLoop:
+    """Preflight runs synchronously, so it must not construct a loader.
+
+    Unit tests run under pytest-asyncio and always have a loop, so this class
+    deliberately exercises the no-loop path they would otherwise hide.
+    """
+
+    def test_materialize_does_not_construct_a_loader(self, tmp_path):
+        cached = tmp_path / "qualitative.jsonl"
+        cached.write_text(json.dumps(_row("a" * 32, "qa", "Cached.")) + "\n")
+
+        with patch.object(
+            SpeedBenchPublicLoader, "cache_path_for", return_value=cached
+        ):
+            # No event loop is running here, deliberately.
+            SpeedBenchPublicLoader.preflight_materialize(hf_subset="qualitative")
+
+    def test_access_check_does_not_construct_a_loader(self):
+        with patch("huggingface_hub.HfApi.auth_check", return_value=None):
+            SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
+
+    def test_cache_path_is_resolvable_without_an_instance(self):
+        path = SpeedBenchPublicLoader.cache_path_for("throughput_1k")
+
+        assert path.name == "throughput_1k.jsonl"
+
+
+def test_public_loaders_construct_outside_an_event_loop():
+    """Public loaders must be constructible with no event loop running."""
+    loader = SpeedBenchPublicLoader(hf_subset="qualitative")
+
+    assert loader.config == "qualitative"
+
+
+class TestDeterminism:
+    """The composed dataset must not vary between runs.
+
+    Benchmark results are only comparable if the prompts are identical, so
+    conversion is order-preserving and does not sample: the same cached config
+    yields the same conversations regardless of seed. Resolution itself is
+    likewise deterministic -- it is byte-identical to upstream's prepare step.
+    """
+
+    @staticmethod
+    def _data():
+        return {"dataset": [_row(f"{i:032d}", "qa", f"Prompt {i}.") for i in range(25)]}
+
+    async def test_repeated_conversion_yields_identical_conversations(self):
+        first = await _loader().convert_to_conversations(self._data())
+        second = await _loader().convert_to_conversations(self._data())
+
+        assert [c.session_id for c in first] == [c.session_id for c in second]
+        assert [c.turns[0].texts[0].contents for c in first] == [
+            c.turns[0].texts[0].contents for c in second
+        ]
+
+    async def test_conversion_preserves_source_order(self):
+        """Order-preserving, so a truncated run is a prefix rather than a sample."""
+        conversations = await _loader().convert_to_conversations(self._data())
+
+        assert [c.session_id for c in conversations] == [f"{i:032d}" for i in range(25)]
+
+    def test_sampling_is_sequential_not_random(self):
+        assert (
+            SpeedBenchPublicLoader.get_preferred_sampling_strategy()
+            == DatasetSamplingStrategy.SEQUENTIAL
+        )

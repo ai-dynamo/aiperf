@@ -82,10 +82,8 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
     def cache_path_for(config: str) -> Path:
         """Where the resolved rows for ``config`` are cached.
 
-        A plain function of the config name so preflight can consult it without
-        constructing a loader: the base class opens an aiohttp client in
-        ``__init__``, which needs a running event loop that the synchronous
-        preflight phase does not have.
+        A plain function of the config name so the synchronous preflight phase
+        can consult it without constructing a loader.
         """
         return SPEED_BENCH_CACHE_DIR / f"{config}.jsonl"
 
@@ -112,16 +110,23 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             return
 
         try:
-            from huggingface_hub import HfApi
+            from huggingface_hub import HfApi, get_token
             from huggingface_hub.errors import GatedRepoError
-
-            HfApi().auth_check(cls._GATED_SOURCE, repo_type="dataset")
         except ImportError:
             # huggingface_hub absent: let the resolve step report the real
             # problem rather than inventing one here.
             return
+
+        # Distinguish "no credentials" from "credentials without access": they
+        # need different actions, and reporting the first as the second sends
+        # someone to accept terms on an account they have not logged into.
+        if get_token() is None:
+            raise ConfigurationError(cls._no_credentials_message())
+
+        try:
+            HfApi().auth_check(cls._GATED_SOURCE, repo_type="dataset")
         except GatedRepoError as e:
-            raise ConfigurationError(cls._gate_message()) from e
+            raise ConfigurationError(cls._not_authorized_message()) from e
         except Exception:
             # Network failure, HF outage, or an unexpected status. "I could not
             # tell" must not be reported as "you lack access" -- the resolve
@@ -129,19 +134,40 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             return
 
     @classmethod
-    def _gate_message(cls) -> str:
-        """Guidance for an account that cannot read the gated source."""
+    def _gate_explanation(cls) -> str:
+        """Why this step exists and why no tool can do it for you."""
+        return (
+            f"'{cls._GATED_SOURCE}' is the only gated source of the 14, and it "
+            f"appears in every SPEED-Bench config. Access is granted to "
+            f"individual users rather than organizations, and HuggingFace "
+            f"provides no API for requesting it, so this cannot be automated."
+        )
+
+    @classmethod
+    def _no_credentials_message(cls) -> str:
+        """Guidance when no HuggingFace token is configured at all."""
         return (
             f"SPEED-Bench needs '{cls._GATED_SOURCE}', which is gated on "
-            f"HuggingFace, and this account has not been granted access.\n\n"
+            f"HuggingFace, and no HuggingFace credentials were found.\n\n"
+            f"  Searched: $HF_TOKEN, then the token file under $HF_HOME "
+            f"(default ~/.cache/huggingface/token)\n\n"
             f"  1. Open {HLE_ACCESS_URL} and accept the terms.\n"
             f"     Approval is automatic -- no reviewer, no waiting period.\n"
-            f"  2. Run: hf auth login\n\n"
-            f"The request must be made from a browser: HuggingFace grants "
-            f"access to individual users rather than organizations and provides "
-            f"no API for it, so no tool can do this step for you. It is the "
-            f"only gated source of the 14, and it appears in every SPEED-Bench "
-            f"config."
+            f"  2. Authenticate: run 'hf auth login', or set HF_TOKEN in CI.\n\n"
+            f"{cls._gate_explanation()}"
+        )
+
+    @classmethod
+    def _not_authorized_message(cls) -> str:
+        """Guidance when authenticated but the terms have not been accepted."""
+        return (
+            f"SPEED-Bench needs '{cls._GATED_SOURCE}', which is gated on "
+            f"HuggingFace. You are authenticated, but this account has not "
+            f"been granted access.\n\n"
+            f"  Open {HLE_ACCESS_URL} and accept the terms. Approval is "
+            f"automatic -- no reviewer, no waiting period. No re-login is "
+            f"needed afterwards.\n\n"
+            f"{cls._gate_explanation()}"
         )
 
     @classmethod
@@ -186,9 +212,8 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
     ) -> Path:
         """Resolve ``config``'s prompt text and cache it; return the cache path.
 
-        A classmethod so the synchronous preflight phase can call it: the base
-        loader opens an aiohttp client in ``__init__`` and needs a running event
-        loop, which preflight does not have.
+        A classmethod so the synchronous preflight phase can call it without
+        constructing a loader.
 
         Raises:
             ConfigurationError: If the prepare script's dependencies are absent.
