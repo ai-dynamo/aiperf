@@ -31,6 +31,8 @@ navigation:
       path: tutorials/anthropic-messages-endpoint.md
     - page: Profile Hugging Face TGI Models with AIPerf
       path: tutorials/huggingface-tgi.md
+    - page: Profile Native SGLang Generate Endpoints
+      path: tutorials/sglang-generate.md
     - page: Profile Vision Language Models with AIPerf
       path: tutorials/vision.md
     - page: Profile Audio Language Models with AIPerf

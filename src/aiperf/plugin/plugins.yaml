@@ -366,6 +366,20 @@ endpoint:
       tokenizes_input: true
       metrics_title: LLM Metrics
 
+  sglang_generate:
+    class: aiperf.endpoints.sglang_generate:SGLangGenerateEndpoint
+    description: |
+      Native SGLang-compatible streaming token generation endpoint. Sends
+      cumulative input_ids to /generate and captures output_ids for exact
+      multi-turn context replay.
+    metadata:
+      endpoint_path: /generate
+      supports_streaming: true
+      produces_tokens: true
+      tokenizes_input: true
+      requires_token_ids: true
+      metrics_title: LLM Metrics
+
   image_generation:
     class: aiperf.endpoints.openai_image_generation:ImageGenerationEndpoint
     description: |

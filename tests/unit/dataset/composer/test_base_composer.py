@@ -268,6 +268,25 @@ class TestBaseDatasetComposer:
         # Cache cleared after finalize.
         assert id(turn) not in composer._turn_sequence_cache
 
+    def test_finalize_turn_materializes_required_token_ids(
+        self, sequence_dist_config, mock_tokenizer
+    ):
+        """Token-input endpoints encode dataset text once before dispatch."""
+        sequence_dist_config.endpoint_type = "sglang_generate"
+        sequence_dist_config.streaming = True
+        mock_tokenizer.encode.return_value = [10, 20, 30]
+        composer = ConcreteBaseComposer(
+            run=make_run(sequence_dist_config), tokenizer=mock_tokenizer
+        )
+        turn = Turn(texts=[{"contents": ["hello", "world"]}])
+
+        composer._finalize_turn(turn)
+
+        assert turn.token_ids == [10, 20, 30]
+        mock_tokenizer.encode.assert_called_with(
+            "hello world", add_special_tokens=False
+        )
+
     def test_prefix_prompt_enabled_property(self, base_config, mock_tokenizer):
         """Test prefix_prompt_enabled property."""
         composer = ConcreteBaseComposer(
