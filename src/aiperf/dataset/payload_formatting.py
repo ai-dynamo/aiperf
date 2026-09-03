@@ -5,8 +5,6 @@
 Provides a generator that creates formatted API request payloads from
 conversations using an endpoint protocol. Used by both the dataset manager
 (inputs.json generation) and the custom composer (payload pre-formatting).
-Also provides the chunked encoder the dataset manager streams inputs.json
-through.
 """
 
 from __future__ import annotations
@@ -85,6 +83,14 @@ _PAYLOAD_INDENT = b"\n        "
 def _iter_session_pieces(session: SessionPayloads) -> Iterator[bytes]:
     """Yield one session exactly as OPT_INDENT_2 would print it, one payload per piece."""
     dumped = session.model_dump(exclude_none=True, mode="json")
+    if any(key not in ("session_id", "payloads") for key in dumped):
+        # The hand-built frame emits only session_id and payloads, so a session
+        # carrying extra="allow" fields is encoded whole to keep every field
+        # and the exact byte layout of the one-shot document dump.
+        yield orjson.dumps(dumped, option=orjson.OPT_INDENT_2).replace(
+            b"\n", _SESSION_INDENT
+        )
+        return
     payloads = dumped.pop("payloads")
     head = b"{"
     if "session_id" in dumped:
@@ -111,10 +117,11 @@ def iter_inputs_json_chunks(
     """Yield the inputs.json document in chunks flushed at payload boundaries.
 
     Every chunk but the last is at least ``chunk_bytes`` and none exceeds it by
-    more than one encoded payload. orjson escapes control characters inside
-    strings, so re-indenting on raw newlines is exact and the concatenated
-    chunks are byte-identical to encoding the whole ``InputsFile`` with
-    ``OPT_INDENT_2`` in one call.
+    more than one encoded piece: a session frame, a single payload, or a whole
+    session only when extra model fields force the single-piece fallback.
+    orjson escapes control characters inside strings, so re-indenting on raw
+    newlines is exact and the concatenated chunks are byte-identical to
+    encoding the whole ``InputsFile`` with ``OPT_INDENT_2`` in one call.
     """
     if not inputs.data:
         yield _INPUTS_JSON_EMPTY

@@ -50,6 +50,24 @@ class TestIterInputsJsonChunks:
             param(
                 InputsFile(
                     data=[
+                        _session("s1", 1, "before"),
+                        SessionPayloads.model_validate(
+                            {
+                                "session_id": "s2",
+                                "payloads": [_payload("extra 0")],
+                                "trace_meta": {"origin": "unit", "ids": [1, 2]},
+                                "note": "extension field",
+                                "dropped_if_none": None,
+                            }
+                        ),
+                        _session("s3", 1, "after"),
+                    ]
+                ),
+                id="session-with-extra-fields",
+            ),
+            param(
+                InputsFile(
+                    data=[
                         _session("s1", 2, 'line1\nline2\ttab "quoted" \\ slash'),
                         _session(None, 0, ""),
                         _session("s3", 3, "unicode é 中 \U0001f600"),
@@ -141,5 +159,6 @@ class TestGenerateInputsJsonFileStreaming:
 
         assert len(write_sizes) > 1
         assert all(size >= BYTES_PER_MIB for size in write_sizes[:-1])
+        assert all(size < 2 * BYTES_PER_MIB for size in write_sizes)
         assert (tmp_path / "inputs.json").read_bytes() == expected
         assert not (tmp_path / "inputs.tmp").exists()
