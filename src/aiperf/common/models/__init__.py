@@ -50,6 +50,11 @@ from aiperf.common.models.health_models import (
     IOCounters,
     ProcessHealth,
 )
+from aiperf.common.models.host_telemetry_models import (
+    HostPowerDomainMetadata,
+    HostTelemetryMetrics,
+    HostTelemetryRecord,
+)
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -142,11 +147,6 @@ from aiperf.common.models.telemetry_models import (
     TelemetryHierarchy,
     TelemetryMetrics,
     TelemetryRecord,
-)
-from aiperf.common.models.host_telemetry_models import (
-    HostPowerDomainMetadata,
-    HostTelemetryMetrics,
-    HostTelemetryRecord,
 )
 from aiperf.common.models.trace_models import (
     AioHttpTraceData,
