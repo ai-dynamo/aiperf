@@ -195,6 +195,29 @@ class TestGatePreflight:
         # Must not send an already-logged-in user back through login.
         assert "hf auth login" not in message
 
+    def test_rejected_credentials_are_reported_not_swallowed(self):
+        """`auth_check` raises RepositoryNotFoundError for a refused 401.
+
+        GatedRepoError subclasses RepositoryNotFoundError, not the reverse, so
+        catching only the former let a bad token fall into the catch-all and
+        skip the fast fail this check exists for.
+        """
+        from huggingface_hub.errors import RepositoryNotFoundError
+
+        with (
+            patch("huggingface_hub.get_token", return_value="hf_expired"),
+            patch(
+                "huggingface_hub.HfApi.auth_check",
+                side_effect=RepositoryNotFoundError("401", response=Mock()),
+            ),
+            pytest.raises(ConfigurationError) as excinfo,
+        ):
+            SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
+
+        message = str(excinfo.value)
+        assert "rejected the credentials" in message
+        assert "hf auth login" in message
+
     def test_network_failure_is_not_reported_as_missing_access(self):
         """ "I could not tell" must never render as "you lack access"."""
         with (

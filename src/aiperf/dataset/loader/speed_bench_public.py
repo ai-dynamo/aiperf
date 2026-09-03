@@ -111,7 +111,10 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
 
         try:
             from huggingface_hub import HfApi, get_token
-            from huggingface_hub.errors import GatedRepoError
+            from huggingface_hub.errors import (
+                GatedRepoError,
+                RepositoryNotFoundError,
+            )
         except ImportError:
             # huggingface_hub absent: let the resolve step report the real
             # problem rather than inventing one here.
@@ -126,7 +129,16 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
         try:
             HfApi().auth_check(cls._GATED_SOURCE, repo_type="dataset")
         except GatedRepoError as e:
+            # Must precede RepositoryNotFoundError: GatedRepoError subclasses it.
             raise ConfigurationError(cls._not_authorized_message()) from e
+        except RepositoryNotFoundError as e:
+            # HuggingFace answers an unauthenticated or rejected request with a
+            # 401 it cannot disambiguate from "no such repo", and the client
+            # surfaces that as RepositoryNotFoundError. Reaching here means a
+            # token exists but was refused, so it is a credential problem --
+            # letting it fall through to the catch-all below would silently skip
+            # the fast fail this check exists for.
+            raise ConfigurationError(cls._rejected_credentials_message()) from e
         except Exception:
             # Network failure, HF outage, or an unexpected status. "I could not
             # tell" must not be reported as "you lack access" -- the resolve
@@ -167,6 +179,20 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             f"  Open {HLE_ACCESS_URL} and accept the terms. Approval is "
             f"automatic -- no reviewer, no waiting period. No re-login is "
             f"needed afterwards.\n\n"
+            f"{cls._gate_explanation()}"
+        )
+
+    @classmethod
+    def _rejected_credentials_message(cls) -> str:
+        """Guidance when a token exists but HuggingFace refused it."""
+        return (
+            f"SPEED-Bench needs '{cls._GATED_SOURCE}', and HuggingFace rejected "
+            f"the credentials found on this machine. The token is most likely "
+            f"expired, revoked, or lacks read scope.\n\n"
+            f"  1. Re-authenticate: run 'hf auth login', or refresh HF_TOKEN "
+            f"in CI.\n"
+            f"  2. If that succeeds and this persists, accept the terms at "
+            f"{HLE_ACCESS_URL}.\n\n"
             f"{cls._gate_explanation()}"
         )
 
@@ -304,16 +330,10 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
                 f"Failed to resolve SPEED-Bench '{config}' from its source "
                 f"datasets: {error}"
             )
-        return (
-            f"SPEED-Bench needs '{cls._GATED_SOURCE}', which is gated on "
-            f"HuggingFace. Accept its terms at {HLE_ACCESS_URL} -- approval is "
-            f"automatic, with no reviewer and no waiting period -- then run "
-            f"'hf auth login'. The request must be made from a browser: "
-            f"HuggingFace grants access to individual users rather than "
-            f"organizations and offers no API for it, so no tool can do this "
-            f"step for you. It is the only gated source of the 14, and it "
-            f"appears in every SPEED-Bench config. Underlying error: {error}"
-        )
+        # Reuse the preflight wording rather than restating it: this path is
+        # reached when the gate is hit despite the preflight probe passing
+        # (access revoked mid-run, or the probe could not reach HuggingFace).
+        return f"{cls._not_authorized_message()}\n\nUnderlying error: {error}"
 
     async def convert_to_conversations(
         self, data: dict[str, Any]
