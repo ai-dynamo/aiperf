@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from aiperf.common.enums import RequestContentType
 from aiperf.config.config import AIPerfConfig
 from aiperf.config.endpoint import EndpointConfig
+from aiperf.config.runtime import RuntimeConfig
 from aiperf.plugin.enums import EndpointType
 
 _ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
@@ -556,3 +557,25 @@ class TestStreamingNormalization:
                 )
             )
         assert config.benchmark.endpoint.streaming is False
+
+
+# =============================================================================
+# runtime.workers_min must not exceed runtime.workers
+# =============================================================================
+
+
+def test_runtime_config_workers_min_greater_than_workers_raises_error() -> None:
+    with pytest.raises(ValidationError, match="workers_min must be <= workers"):
+        RuntimeConfig(workers=4, workers_min=8)
+
+
+def test_runtime_config_workers_min_equal_to_workers_is_valid() -> None:
+    config = RuntimeConfig(workers=4, workers_min=4)
+    assert config.workers == 4
+    assert config.workers_min == 4
+
+
+def test_runtime_config_workers_min_without_workers_is_valid() -> None:
+    config = RuntimeConfig(workers_min=4)
+    assert config.workers_min == 4
+    assert config.workers is None

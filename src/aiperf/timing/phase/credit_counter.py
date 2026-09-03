@@ -332,8 +332,8 @@ class CreditCounter:
         self,
         is_final_turn: bool,
         cancelled: bool,
-        errored: bool = False,
         *,
+        errored: bool = False,
         is_child: bool = False,
         no_request: bool = False,
     ) -> bool:
@@ -376,8 +376,6 @@ class CreditCounter:
         """
         if cancelled:
             self._requests_cancelled += 1
-            if is_final_turn and not is_child:
-                self._cancelled_sessions += 1
         else:
             # Request-level (completed/errors): every real wire request ticks,
             # children included; a ``no_request`` virtual credit does not.
@@ -388,7 +386,10 @@ class CreditCounter:
                 self._requests_completed += 1
                 if errored:
                     self._request_errors += 1
-            if is_final_turn and not is_child:
+        if is_final_turn and not is_child:
+            if cancelled:
+                self._cancelled_sessions += 1
+            else:
                 self._completed_sessions += 1
 
         return self.check_all_returned_or_cancelled()

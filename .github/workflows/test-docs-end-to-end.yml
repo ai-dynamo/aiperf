@@ -5,10 +5,8 @@
 #
 # Triggers:
 #   push          — runs for trusted main, release, and mirrored PR branch
-#                   pushes that touch tutorial markdown or the test runner.
+#                   pushes.
 #   workflow_call — invoked by nightly.yml so the nightly stays green.
-#
-# The paths filter avoids allocating AMD GPU runners for unrelated pushes.
 
 name: Test Docs End-to-End
 
@@ -18,9 +16,6 @@ on:
       - main
       - 'pull-request/[0-9]+'
       - 'release/*'
-    paths:
-      - 'docs/tutorials/**'
-      - 'tests/ci/test_docs_end_to_end/**'
   workflow_call:
     inputs:
       source_ref:
