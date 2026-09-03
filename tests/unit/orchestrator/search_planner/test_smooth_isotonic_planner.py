@@ -309,8 +309,6 @@ def test_sla_warmup_uses_phase_concurrency_when_sweeping_requests() -> None:
     warmup = mutated.phases[0]
     assert warmup.name == "warmup"
     assert warmup.type == PhaseType.CONCURRENCY
-    # Base config runs at concurrency=1; the swept 500 requests must not
-    # become the warmup load.
     assert warmup.concurrency == 1
     assert mutated.phases[1].requests == 500
 
@@ -327,8 +325,6 @@ def test_sla_warmup_uses_phase_rate_when_sweeping_concurrency_cap() -> None:
     warmup = mutated.phases[0]
     assert warmup.name == "warmup"
     assert warmup.type == PhaseType.POISSON
-    # Base rate phase runs at rate=1.0; the swept cap of 42 must not become
-    # the warmup rate.
     assert warmup.rate == 1.0
     assert mutated.phases[1].concurrency == 42
 
