@@ -361,6 +361,19 @@ Key behaviors:
   `previous_response_not_found` from the server. Add `--extra-inputs
   '{"store": true}'` to persist responses server-side so a reconnect still
   resolves the id.
+- **Forked & multi-agent conversations chain across connections.** Fork/spawn
+  children (e.g. `weka_trace` subagents, `dag_jsonl` branches) each get their own
+  conversation identity, so a child opens its *own* socket and inherits the
+  parent's `previous_response_id`. Resolving that id on a socket that never
+  created it requires the server to persist response state *across connections* —
+  which the WebSocket spec does not guarantee and only `store: true` on a
+  persisting backend makes portable. Some servers (e.g. vLLM's agentic-api)
+  persist cross-connection unconditionally, so forks chain there without `store`;
+  AIPerf emits a one-time warning for cross-connection chaining without `store` so
+  the server-dependency is explicit. Add `--extra-inputs '{"store": true}'` (with
+  a persisting backend) for portable fork/spawn chaining. Linear multi-turn
+  conversations are unaffected — every turn reuses the one leased socket, so their
+  chaining stays connection-local.
 - **HTTP-only fields are stripped.** `stream`, `stream_options`, and `background`
   are HTTP-transport concepts; the socket always streams events, so AIPerf drops
   them from the `response.create` envelope automatically.
