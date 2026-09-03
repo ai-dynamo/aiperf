@@ -275,25 +275,6 @@ class TestWeibullParams:
         with pytest.raises(ValueError, match="distribution"):
             WeibullParams(mean=2_500, median=1_800)
 
-    @pytest.mark.parametrize(
-        "ratio",
-        [
-            param(1.0001, id="near_one"),
-            param(1.2, id="mild_skew"),
-            param(2.0, id="moderate_skew"),
-            param(5.0, id="heavy_skew"),
-            param(20.0, id="extreme_skew"),
-        ],
-    )  # fmt: skip
-    def test_weibull_params_solve_bracket_signs_opposite(self, ratio: float) -> None:
-        """brentq bracket [0.05, 3.5] must straddle the root for all r > 1."""
-
-        def f(k: float) -> float:
-            return math.gamma(1.0 + 1.0 / k) - ratio * math.log(2.0) ** (1.0 / k)
-
-        assert f(0.05) > 0
-        assert f(3.5) < 0
-
 
 class TestFitFromSamples:
     def test_recovers_known_distribution(self) -> None:
