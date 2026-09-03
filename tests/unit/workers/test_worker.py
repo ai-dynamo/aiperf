@@ -1188,16 +1188,11 @@ class TestForkReplayDecision:
         worker.model_endpoint.transport = transport
         worker.model_endpoint.endpoint.extra = extra
 
-    async def test_ws_without_store_replays(self, mock_worker) -> None:
-        self._set_endpoint(mock_worker, transport="websocket", extra=[])
-        assert mock_worker._fork_child_replays_context() is True
-
     async def test_ws_with_store_chains(self, mock_worker) -> None:
+        # The only branch not covered at the seed_from_parent caller boundary
+        # below (which exercises ws-without-store and http), so it is asserted
+        # directly on the predicate.
         self._set_endpoint(mock_worker, transport="websocket", extra=[("store", True)])
-        assert mock_worker._fork_child_replays_context() is False
-
-    async def test_http_chains(self, mock_worker) -> None:
-        self._set_endpoint(mock_worker, transport="http", extra=[])
         assert mock_worker._fork_child_replays_context() is False
 
     async def test_seed_drops_chain_for_ws_without_store(self, mock_worker) -> None:

@@ -323,12 +323,7 @@ class ResponsesEndpoint(BaseEndpoint):
         return is_truthy_flag(store)
 
     def _is_websocket_transport(self) -> bool:
-        """Whether this run uses the WebSocket transport (ws/wss).
-
-        WebSocket Responses chaining resolves ``previous_response_id`` from the
-        connection's response cache regardless of ``store``, so the store gate
-        in ``extract_response_id`` does not apply.
-        """
+        """Whether this run uses the WebSocket transport (ws/wss)."""
         transport = self.model_endpoint.transport
         return transport is not None and str(transport) == "websocket"
 
