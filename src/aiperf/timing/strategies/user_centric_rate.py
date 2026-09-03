@@ -16,36 +16,12 @@ and whose median is user-supplied to control skew. Each user draws from an indep
 deterministically seeded stream, so gap sequences are reproducible under `--random-seed`.
 New-user spawn scheduling keeps using the mean gap.
 
-Sampled Gaps Do Not Preserve The Realized Request Rate
-------------------------------------------------------
-Pinning the mean pins the *distribution* mean, not the realized aggregate request rate.
-The next send time is `max(now, next_send_time + gap)` (see `handle_credit_return`), so
-the clamp only ever pushes a send later: a gap shorter than the in-flight service time is
-truncated away, while a longer-than-mean gap is applied in full. The realized inter-send
-interval is `max(service_time, gap)`, whose expectation is at least the pinned mean and
-strictly above it whenever a response can outlast its gap - which is why the shortfall
-exists with fixed gaps too. Because `max(service_time, ...)` is convex, swapping a fixed
-gap for a random one of the same mean raises that expectation further, and heavier skew
-raises it more: more of the distribution's mass falls below the service time and is
-clamped away. Do not read `--request-rate` as a guaranteed realized rate in this mode -
-measure the achieved rate from the run's own output.
-
-Heavy Skew Produces Near-Zero Gaps
-----------------------------------
-Neither params model is constructed with `min`/`max` rejection bounds here, so nothing
-floors a sampled gap. For `weibull`, the shape solved from mean/median drops below 1 once
-`mean / median > 1 / ln(2) ~= 1.443`; below shape 1 the density is unbounded at zero and a
-non-trivial share of draws are effectively back-to-back turns. Measured with this repo's
-own solver and sampler (`aiperf.common.distributions`), 2,000,000 draws per row:
-
-  mean / median      | mean/median | weibull shape | draws under 1 ms
-  2.000 s / 0.500 s  | 4.000       | 0.5079        | 2.93%
-  1.667 s / 1.200 s  | 1.389       | 1.0514        | 0.041%
-  1.667 s / 1.300 s  | 1.282       | 1.1907        | 0.014%
-
-Lognormal is far less exposed: 0.0089% of draws under 1 ms at the same 2.0 s / 0.5 s
-setting. Keep `mean / median` below about 1.44 if near-zero gaps would distort the
-workload under test.
+Sampled gaps do not preserve the realized request rate: the send-time clamp
+`max(now, next_send_time + gap)` only ever pushes a send later, so a random gap raises the
+realized interval above the pinned mean, more so under heavier skew. Heavily skewed Weibull
+draws can also approach zero. Measure the achieved rate from the run's own output rather
+than reading `--request-rate` as guaranteed; see `timing-modes-reference.md` for the full
+analysis and measurements.
 
 Virtual History & Start Order
 -----------------------------
