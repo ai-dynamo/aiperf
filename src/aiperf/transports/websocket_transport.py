@@ -262,9 +262,34 @@ class WebSocketTransport(BaseTransport):
             # The Responses WebSocket contract requires JSON text frames; binary
             # frames are rejected with an invalid_request_error.
             await ws.send_str(orjson.dumps(envelope).decode())
-            dirty = await self._read_until_terminal(
-                ws, record, start_perf_ns, first_token_callback
-            )
+            # cancel_after_ns (cancellation benchmarks) is measured from the moment
+            # the request is fully sent, matching the HTTP transport. Bound the read
+            # by it and return a 499 record on expiry rather than reading through to
+            # a terminal event or the endpoint timeout.
+            cancel_after_ns = request_info.cancel_after_ns
+            if cancel_after_ns is not None:
+                sent_perf_ns = time.perf_counter_ns()
+                try:
+                    dirty = await asyncio.wait_for(
+                        self._read_until_terminal(
+                            ws, record, start_perf_ns, first_token_callback
+                        ),
+                        timeout=cancel_after_ns / NANOS_PER_SECOND,
+                    )
+                except TimeoutError:
+                    dirty = True
+                    cancel_perf_ns = time.perf_counter_ns()
+                    record.cancellation_perf_ns = cancel_perf_ns
+                    elapsed_s = (cancel_perf_ns - sent_perf_ns) / NANOS_PER_SECOND
+                    record.error = ErrorDetails(
+                        code=499,
+                        type="RequestCancellationError",
+                        message=f"Request cancelled {elapsed_s:.3f}s after being sent",
+                    )
+            else:
+                dirty = await self._read_until_terminal(
+                    ws, record, start_perf_ns, first_token_callback
+                )
         except asyncio.CancelledError:
             dirty = True
             record.cancellation_perf_ns = time.perf_counter_ns()
@@ -491,21 +516,26 @@ class WebSocketTransport(BaseTransport):
         that ``previous_response_id`` chaining relies on died with that socket.
         """
         correlation_id = request_info.x_correlation_id
-        had_stale_lease = False
+        stale: aiohttp.ClientWebSocketResponse | None = None
         if correlation_id:
             async with self._lock:
                 leased = self._leases.get(correlation_id)
                 if leased is not None and not leased.closed:
                     return leased, False
-                had_stale_lease = leased is not None
+                stale = leased
 
         # Open outside the lock so concurrent opens do not serialize.
         ws = await self._open(request_info, headers)
         async with self._lock:
+            # Drop the peer-closed socket the new one replaces; it never passes
+            # through _release, so leaving it in _all leaks a ClientWebSocketResponse
+            # per reconnect until shutdown.
+            if stale is not None:
+                self._all.discard(stale)
             self._all.add(ws)
             if correlation_id:
                 self._leases[correlation_id] = ws
-        return ws, had_stale_lease
+        return ws, stale is not None
 
     async def _open(
         self, request_info: RequestInfo, headers: dict[str, str]
