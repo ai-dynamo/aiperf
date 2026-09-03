@@ -227,7 +227,6 @@ def test_monotonic_boundary_in_middle_converges_within_15_iters():
     assert infeasible_min is not None
     # Boundary lies between feasible_max (passes) and infeasible_min (fails).
     assert feasible_max < 256 <= infeasible_min
-    # Precision: relative gap under 5%.
     assert (infeasible_min - feasible_max) / infeasible_min < 0.05
 
 
@@ -272,7 +271,6 @@ def test_real_dim_boundary_in_middle_converges_within_precision():
     assert feasible_max is not None
     assert infeasible_min is not None
     assert feasible_max < 256.0 <= infeasible_min
-    # Precision: relative gap under 5%.
     assert (infeasible_min - feasible_max) / infeasible_min < 0.05
     assert isinstance(feasible_max, float)
     assert isinstance(infeasible_min, float)
