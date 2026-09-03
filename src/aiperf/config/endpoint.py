@@ -757,6 +757,55 @@ class EndpointConfig(BaseConfig):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _validate_transport_url_schemes_consistent(self) -> Self:
+        """Reject URL schemes that do not match the transport that will serve them.
+
+        ``get_url`` only prepends a scheme to a *schemeless* URL; a URL that
+        already carries the wrong scheme for the selected transport is left
+        intact and produces a nonsense target (e.g. ``transport: websocket`` with
+        an ``https://`` URL would be joined as ``ws://https://...``). And with no
+        explicit ``transport``, ``InferenceClient`` auto-detects a single
+        transport from the first URL only, so a list mixing ``ws(s)`` and
+        ``http(s)`` URLs would silently route the rest through the wrong
+        transport. Reject both up front. Schemeless URLs are wildcards
+        (``get_url`` supplies the selected transport's scheme) and are skipped.
+        """
+        scheme_transport = {
+            "ws": TransportType.WEBSOCKET,
+            "wss": TransportType.WEBSOCKET,
+            "http": TransportType.HTTP,
+            "https": TransportType.HTTP,
+        }
+        schemed: list[tuple[str, TransportType]] = []
+        for url in self.urls:
+            mapped = scheme_transport.get(urlparse(url).scheme.lower())
+            if mapped is not None:
+                schemed.append((url, mapped))
+
+        if self.transport is not None:
+            mismatched = [url for url, mapped in schemed if mapped != self.transport]
+            if mismatched:
+                raise ValueError(
+                    f"--transport {str(self.transport)!r} is incompatible with the "
+                    f"scheme of URL(s) {mismatched!r}. Use ws/wss URLs with "
+                    "--transport websocket and http/https URLs with --transport "
+                    "http, or drop --transport to auto-detect from the URL scheme."
+                )
+            return self
+
+        implied = {mapped for _, mapped in schemed}
+        if len(implied) > 1:
+            shown = ", ".join(sorted(str(t) for t in implied))
+            raise ValueError(
+                f"Endpoint URLs mix transport schemes ({shown}); an endpoint "
+                "resolves a single transport from the first URL, so the others "
+                "would be routed through the wrong transport. Use one scheme "
+                "family (all ws/wss or all http/https) per endpoint, or set "
+                "--transport explicitly."
+            )
+        return self
+
     def _has_credentials(self) -> bool:
         """Whether the endpoint carries transport credentials worth protecting."""
         if self.api_key:
