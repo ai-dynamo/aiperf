@@ -9,10 +9,13 @@ cases (no-pass, no-failure), and the boundary_summary export shape.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config.config import BenchmarkConfig
+from aiperf.config.phases import PhaseType
 from aiperf.config.sweep import (
     AdaptiveSearchSweep,
     Objective,
@@ -42,6 +45,18 @@ def _base_config() -> BenchmarkConfig:
             ],
         }
     )
+
+
+def _base_config_rate() -> BenchmarkConfig:
+    """Base config with a rate-controlled profiling phase for real-axis dims."""
+    cfg_dict = _base_config().model_dump(exclude_none=True)
+    cfg_dict["phases"][0] = {
+        "name": "profiling",
+        "type": "poisson",
+        "rate": 1.0,
+        "requests": 10,
+    }
+    return BenchmarkConfig.model_validate(cfg_dict)
 
 
 def _adaptive_cfg(
@@ -98,8 +113,9 @@ def _result(variation: SweepVariation, *, ttft_p95: float) -> RunResult:
 
 def _drive(
     planner: SmoothIsotonicSLAPlanner,
-    ttft_curve: dict[int, float],
+    ttft_curve: Callable[[float], float],
     max_iters: int = 50,
+    path: str = "phases.profiling.concurrency",
 ) -> int:
     """Run the planner; return iter count when converged."""
     iters = 0
@@ -108,15 +124,8 @@ def _drive(
         if proposal is None:
             break
         _, variation = proposal
-        x = variation.values["phases.profiling.concurrency"]
-        # Fall back to the largest curve key <= x for unmapped values.
-        if x in ttft_curve:
-            ttft = ttft_curve[x]
-        else:
-            keys_le = [k for k in ttft_curve if k <= x]
-            ttft = (
-                ttft_curve[max(keys_le)] if keys_le else next(iter(ttft_curve.values()))
-            )
+        x = variation.values[path]
+        ttft = ttft_curve(float(x))
         planner.tell(variation, [_result(variation, ttft_p95=ttft)])
         iters += 1
     return iters
@@ -133,12 +142,28 @@ def test_construction_rejects_multi_dim() -> None:
         SmoothIsotonicSLAPlanner(_base_config(), cfg)
 
 
-def test_construction_rejects_real_dim() -> None:
+def test_construction_accepts_real_dim() -> None:
     cfg = _adaptive_cfg()
     cfg.search_space[0] = SearchSpaceDimension(
-        path="phases.profiling.concurrency", lo=1.0, hi=1000.0, kind="real"
+        path="phases.profiling.rate", lo=1.0, hi=1000.0, kind="real"
     )
-    with pytest.raises(ValueError, match="kind='int'"):
+    planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
+    assert isinstance(planner._lo, float)
+    assert isinstance(planner._hi, float)
+
+
+def test_construction_rejects_real_dim_with_nonpositive_lo() -> None:
+    cfg = _adaptive_cfg()
+    cfg.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.rate", lo=0.0, hi=1000.0, kind="real"
+    )
+    with pytest.raises(ValueError, match="lo > 0"):
+        SmoothIsotonicSLAPlanner(_base_config(), cfg)
+
+
+def test_construction_rejects_int_dim_with_lo_below_one() -> None:
+    cfg = _adaptive_cfg(lo=0)
+    with pytest.raises(ValueError, match="lo >= 1"):
         SmoothIsotonicSLAPlanner(_base_config(), cfg)
 
 
@@ -153,7 +178,7 @@ def test_no_pass_in_range_when_first_probe_fails() -> None:
     """First (lo) probe already infeasible -> no_pass_in_range."""
     cfg = _adaptive_cfg(lo=100, hi=1000, threshold=50.0)
     planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
-    _drive(planner, {1: 200.0, 100: 200.0, 1000: 200.0})
+    _drive(planner, lambda x: 200.0)
     assert planner.is_converged()
     assert planner.convergence_reason() == "smooth_isotonic_no_pass_in_range"
 
@@ -162,7 +187,7 @@ def test_no_failure_in_range_when_all_probes_pass() -> None:
     """Every probe up to hi passes -> no_failure_in_range."""
     cfg = _adaptive_cfg(lo=1, hi=64, threshold=200.0)
     planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
-    _drive(planner, {1: 50.0, 1000: 50.0})
+    _drive(planner, lambda x: 50.0)
     assert planner.is_converged()
     assert planner.convergence_reason() == "smooth_isotonic_no_failure_in_range"
 
@@ -172,8 +197,7 @@ def test_finds_boundary_on_smooth_curve() -> None:
     cfg = _adaptive_cfg(lo=1, hi=1024, threshold=200.0)
     planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
     # TTFT = 50 + concurrency * 2 (linear). Crosses 200 at concurrency=75.
-    curve = {x: 50.0 + x * 2.0 for x in range(1, 1025)}
-    _drive(planner, curve)
+    _drive(planner, lambda x: 50.0 + 2.0 * x)
     assert planner.is_converged()
     summary = planner.boundary_summary()
     assert summary is not None
@@ -185,11 +209,38 @@ def test_finds_boundary_on_smooth_curve() -> None:
     assert imin["value"] - fmax["value"] <= max(4, fmax["value"] // 20)
 
 
+def test_finds_boundary_on_real_axis() -> None:
+    """Real-valued dim: TTFT = 50 + rate*2 crosses 200 at rate=75.
+
+    Exercises the float bracket/fit/bisect path end-to-end; the boundary
+    band must straddle 75 and respect the relative precision target.
+    """
+    cfg = _adaptive_cfg()
+    cfg.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.rate", lo=1.0, hi=1024.0, kind="real"
+    )
+    planner = SmoothIsotonicSLAPlanner(_base_config_rate(), cfg)
+    _drive(planner, lambda x: 50.0 + 2.0 * x, path="phases.profiling.rate")
+    assert planner.is_converged()
+    assert planner.convergence_reason() in (
+        "smooth_isotonic_precision_reached",
+        "smooth_isotonic_cliff_precision_reached",
+    )
+    summary = planner.boundary_summary()
+    assert summary is not None
+    fmax = summary["feasible_max"]
+    imin = summary["infeasible_min"]
+    assert fmax is not None
+    assert imin is not None
+    assert 60 <= fmax["value"] <= 80, f"feasible_max={fmax['value']!r}"
+    assert 60 <= imin["value"] <= 90, f"infeasible_min={imin['value']!r}"
+    assert (imin["value"] - fmax["value"]) / imin["value"] < 0.10
+
+
 def test_boundary_summary_includes_smooth_isotonic_fields() -> None:
     cfg = _adaptive_cfg(lo=1, hi=512, threshold=200.0)
     planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
-    curve = {x: 50.0 + x * 2.0 for x in range(1, 513)}
-    _drive(planner, curve)
+    _drive(planner, lambda x: 50.0 + 2.0 * x)
     summary = planner.boundary_summary()
     assert summary is not None
     assert summary["swept_dim_path"] == "phases.profiling.concurrency"
@@ -202,8 +253,7 @@ def test_boundary_summary_includes_smooth_isotonic_fields() -> None:
 def test_history_grows_per_iteration() -> None:
     cfg = _adaptive_cfg(lo=1, hi=512, threshold=200.0, max_iterations=8)
     planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
-    curve = {x: 50.0 + x * 2.0 for x in range(1, 513)}
-    iters = _drive(planner, curve)
+    iters = _drive(planner, lambda x: 50.0 + 2.0 * x)
     assert iters == len(planner.history())
     assert iters >= 3
     for i, entry in enumerate(planner.history()):
@@ -214,8 +264,7 @@ def test_history_grows_per_iteration() -> None:
 def test_max_iterations_reason() -> None:
     cfg = _adaptive_cfg(lo=1, hi=4096, threshold=200.0, max_iterations=3)
     planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
-    curve = {x: 50.0 + x * 2.0 for x in range(1, 4097)}
-    _drive(planner, curve)
+    _drive(planner, lambda x: 50.0 + 2.0 * x)
     assert planner.is_converged()
     assert planner.convergence_reason() == "max_iterations"
 
@@ -228,6 +277,23 @@ def test_tell_without_ask_raises() -> None:
     )
     with pytest.raises(RuntimeError, match="without matching ask"):
         planner.tell(fake_variation, [_result(fake_variation, ttft_p95=50.0)])
+
+
+def test_sla_warmup_mirrors_rate_phase_for_real_dim() -> None:
+    """Auto warmup must run at the swept rate for a rate-controlled
+    profiling phase, not a hardcoded (non-integer) concurrency."""
+    cfg = _adaptive_cfg()
+    cfg.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.rate", lo=1.0, hi=1000.0, kind="real"
+    )
+    planner = SmoothIsotonicSLAPlanner(_base_config_rate(), cfg)
+    mutated = planner._mutate_base(50.5)
+    warmup = mutated.phases[0]
+    assert warmup.name == "warmup"
+    assert warmup.type == PhaseType.POISSON
+    assert warmup.rate == 50.5
+    assert warmup.exclude_from_results is True
+    assert mutated.phases[1].rate == 50.5
 
 
 def test_non_monotonic_warning_threaded_per_iteration() -> None:

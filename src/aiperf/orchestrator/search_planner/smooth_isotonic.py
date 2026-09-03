@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from aiperf.common.environment import Environment
 from aiperf.config.config import BenchmarkConfig
+from aiperf.config.phases import PhaseType
 from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation, _set_nested_value
 from aiperf.orchestrator.search_planner._sla_helpers import (
     averaged_metric_value,
@@ -115,11 +116,17 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
                 "search use the bayesian planner via `--search-planner bayesian`."
             )
         dim = cfg.search_space[0]
-        if dim.kind != "int":
+        if dim.kind == "int" and int(dim.lo) < 1:
             raise ValueError(
-                f"smooth_isotonic planner v1 supports kind='int' dimensions only; "
-                f"got kind={dim.kind!r} on path {dim.path!r}. Use the bayesian "
-                "planner for real-valued dimensions."
+                f"smooth_isotonic planner: dimension {dim.path!r} requires "
+                f"lo >= 1 (got lo={dim.lo!r}); the exponential probe doubles "
+                "from lo and would stall or diverge for lo < 1."
+            )
+        if dim.kind == "real" and dim.lo <= 0:
+            raise ValueError(
+                f"smooth_isotonic planner: dimension {dim.path!r} requires "
+                f"lo > 0 (got lo={dim.lo!r}); the exponential probe doubles "
+                "from lo and would stall or diverge for lo <= 0."
             )
         if not cfg.sla_filters:
             raise ValueError(
@@ -138,27 +145,27 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
                 "--optuna-acquisition qlognehvi."
             )
         self._dim = dim
-        self._lo: int = int(dim.lo)
-        self._hi: int = int(dim.hi)
+        self._lo: int | float = int(dim.lo) if dim.kind == "int" else float(dim.lo)
+        self._hi: int | float = int(dim.hi) if dim.kind == "int" else float(dim.hi)
         self._sla_filters: list[SLAFilter] = list(cfg.sla_filters)
         self._filter_keys: list[str] = [
             f"{i}:{f.metric_tag}.{f.stat}.{f.op}.{f.threshold}"
             for i, f in enumerate(self._sla_filters)
         ]
 
-        self.feasible_max: int | None = None
-        self.infeasible_min: int | None = None
+        self.feasible_max: int | float | None = None
+        self.infeasible_min: int | float | None = None
         # Per-x raw signed margins per filter. "Signed" means negative=feasible
         # regardless of filter ``op`` (gt filters are negated so PAVA's
         # ``increasing=True`` assumption holds for all filters).
-        self._raw_probes: dict[int, list[dict[str, float]]] = {}
+        self._raw_probes: dict[int | float, list[dict[str, float]]] = {}
 
         self._phase: _PhaseLiteral = "bracket"
-        self._next_value: int = self._lo
-        self._pending_value: int | None = None
-        self._probe_queue: list[int] = []
+        self._next_value: int | float = self._lo
+        self._pending_value: int | float | None = None
+        self._probe_queue: list[int | float] = []
 
-        self._candidate_x: int | None = None
+        self._candidate_x: int | float | None = None
         self._fit_count: int = 0
 
         self._iter = 0
@@ -180,7 +187,7 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         # Track which swept-dim values we have already probed so the warmup
         # floor downshifts to
         # ``Environment.SEARCH_PLANNER.REPLICATE_WARMUP_FLOOR`` for replicates.
-        self._first_probe_at: set[int] = set()
+        self._first_probe_at: set[int | float] = set()
 
     # ------------------------------------------------------------------
     # SearchPlanner ABC
@@ -285,7 +292,7 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
     # Bracket step + verdict latching
     # ------------------------------------------------------------------
 
-    def _absorb_verdict(self, value: int, feasible: bool) -> None:
+    def _absorb_verdict(self, value: int | float, feasible: bool) -> None:
         """Latch ``feasible_max`` / ``infeasible_min``; flag non-monotonicity."""
         if feasible:
             if self.infeasible_min is not None and value >= self.infeasible_min:
@@ -313,7 +320,7 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
             "smooth_isotonic: %s; SLA boundary is non-monotonic in this run.", detail
         )
 
-    def _plan_bracket_step(self, value: int, feasible: bool) -> None:
+    def _plan_bracket_step(self, value: int | float, feasible: bool) -> None:
         if not feasible:
             if self.feasible_max is None:
                 self._convergence_reason = "smooth_isotonic_no_pass_in_range"
@@ -339,18 +346,23 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         if self.feasible_max is None or self.infeasible_min is None:
             return
         gap = self.infeasible_min - self.feasible_max
-        if gap <= 1:
+        if self._dim.kind == "int" and gap <= 1:
             return
         for k in range(1, count + 1):
             frac = k / (count + 1)
-            x = self.feasible_max + max(1, round(gap * frac))
-            x = min(x, self.infeasible_min - 1)
-            x = max(x, self.feasible_max + 1)
+            if self._dim.kind == "int":
+                x = self.feasible_max + max(1, round(gap * frac))
+                x = min(x, self.infeasible_min - 1)
+                x = max(x, self.feasible_max + 1)
+            else:
+                x = self.feasible_max + gap * frac
+                if x <= self.feasible_max or x >= self.infeasible_min:
+                    continue
             if x not in self._raw_probes:
-                self._probe_queue.append(int(x))
+                self._probe_queue.append(x)
         # Dedupe while preserving order.
-        seen: set[int] = set()
-        deduped: list[int] = []
+        seen: set[int | float] = set()
+        deduped: list[int | float] = []
         for x in self._probe_queue:
             if x not in seen:
                 seen.add(x)
@@ -374,7 +386,7 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
                 out[key] = float(sla.threshold) - float(value)
         return out
 
-    def _mutate_base(self, value: int) -> BenchmarkConfig:
+    def _mutate_base(self, value: int | float) -> BenchmarkConfig:
         # mode="python" silences the when_used="json" credential redactors
         # (api_key / headers). context={"include_secrets": True} silences
         # the unconditional _redact_urls serializer that strips userinfo
@@ -418,11 +430,12 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         if existing is None:
             phases[idx]["requests"] = target
 
-    def _apply_sla_warmup(self, cfg_dict: dict[str, Any], value: int) -> None:
+    def _apply_sla_warmup(self, cfg_dict: dict[str, Any], value: int | float) -> None:
         """Prepend a per-iteration ``warmup`` phase to ``cfg_dict["phases"]``.
 
         Skipped when ``cfg.sla_warmup_seconds == 0`` (explicit user opt-out)
-        or when the profiling phase cannot be located. The warmup uses the
+        or when the profiling phase cannot be located. Also skipped when its
+        type cannot be driven by a single swept value. The warmup uses the
         same swept-dim value being probed and is excluded from results. If
         the user already declared a warmup phase, it is replaced — the
         unique-name validator forbids two ``warmup`` entries, and the swept
@@ -434,7 +447,8 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         phases = cfg_dict.get("phases")
         if not phases:
             return
-        if _find_phase_index(phases, "profiling") is None:
+        idx = _find_phase_index(phases, "profiling")
+        if idx is None:
             return
 
         base_warmup = (
@@ -452,13 +466,25 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
                 Environment.SEARCH_PLANNER.REPLICATE_WARMUP_FLOOR, base_warmup
             )
 
-        warmup_phase: dict[str, Any] = {
-            "name": "warmup",
-            "type": "concurrency",
-            "concurrency": value,
-            "duration": duration,
-            "exclude_from_results": True,
-        }
+        ptype = phases[idx].get("type")
+        if ptype == PhaseType.CONCURRENCY:
+            warmup_phase: dict[str, Any] = {
+                "name": "warmup",
+                "type": PhaseType.CONCURRENCY,
+                "concurrency": int(value),
+                "duration": duration,
+                "exclude_from_results": True,
+            }
+        elif ptype in (PhaseType.POISSON, PhaseType.GAMMA, PhaseType.CONSTANT):
+            warmup_phase = {
+                "name": "warmup",
+                "type": ptype,
+                "rate": float(value),
+                "duration": duration,
+                "exclude_from_results": True,
+            }
+        else:
+            return
         # Replace any user-declared warmup so the per-iteration sweep value
         # drives the warmup; the unique-name validator on BenchmarkConfig
         # forbids two phases named "warmup".

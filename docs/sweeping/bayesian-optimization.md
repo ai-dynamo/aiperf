@@ -550,7 +550,7 @@ flowchart LR
     class hist,SLA output
 ```
 
-The monotonic planner mirrors Triton perf_analyzer's `--binary-search`: each point's verdict is provisional until 2 trials agree (configurable via `AdaptiveSearchSweep.monotonic_stability_trials`, default `2`).
+The monotonic planner mirrors Triton perf_analyzer's `--binary-search`: each point's verdict is provisional until 2 trials agree (configurable via `AdaptiveSearchSweep.monotonic_stability_trials`, default `2`). Both 1D planners accept an `int` or `real` search-space dimension; the exponential probe doubles from `lo`, so `lo` must be positive (`lo >= 1` for `int`, `lo > 0` for `real`). A `real` boundary is reported as the band `[feasible_max, infeasible_min]` rather than an exact point.
 
 #### `smooth_isotonic` (default)
 
