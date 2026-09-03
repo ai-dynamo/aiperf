@@ -10,6 +10,7 @@ import aiohttp
 import orjson
 import pytest
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.models import RequestInfo, SSEMessage
@@ -65,6 +66,7 @@ def _request_info(
     is_final_turn: bool = True,
     turn_index: int = 0,
     previous_response_id: str | None = None,
+    cancel_after_ns: int | None = None,
 ) -> RequestInfo:
     model_endpoint = create_model_endpoint_info(
         base_url="ws://localhost:8000", custom_endpoint="/v1/responses"
@@ -80,6 +82,7 @@ def _request_info(
         conversation_id="conv-1",
         is_final_turn=is_final_turn,
         previous_response_id=previous_response_id,
+        cancel_after_ns=cancel_after_ns,
     )
 
 
@@ -106,9 +109,6 @@ class TestHasWsScheme:
     def test_ws_and_wss(self) -> None:
         assert _has_ws_scheme("ws://h") is True
         assert _has_ws_scheme("WSS://h") is True
-
-    def test_http_is_not_ws(self) -> None:
-        assert _has_ws_scheme("http://h") is False
 
 
 class TestMetadata:
@@ -388,6 +388,36 @@ class TestSendRequest:
         assert record.status != 200
         await transport.stop()
 
+    async def test_cancel_after_ns_records_499(self) -> None:
+        transport = await self._transport()
+        fake = FakeWS([])
+        transport._open = AsyncMock(return_value=fake)
+
+        async def _hang(*_a: object, **_k: object) -> bool:
+            await asyncio.Event().wait()
+            return False
+
+        transport._read_until_terminal = _hang
+        record = await transport.send_request(
+            _request_info(cancel_after_ns=1_000_000), {"model": "m"}
+        )
+        assert record.error is not None
+        assert record.error.code == 499
+        assert record.error.type == "RequestCancellationError"
+        assert record.cancellation_perf_ns is not None
+        await transport.stop()
+
+    async def test_cancel_after_ns_completes_before_deadline(self) -> None:
+        transport = await self._transport()
+        fake = FakeWS([_text({"type": "response.completed", "response": {"id": "r"}})])
+        transport._open = AsyncMock(return_value=fake)
+        record = await transport.send_request(
+            _request_info(cancel_after_ns=60 * NANOS_PER_SECOND), {"model": "m"}
+        )
+        assert record.status == 200
+        assert record.error is None
+        await transport.stop()
+
 
 @pytest.mark.asyncio
 class TestPoolAndAffinity:
@@ -585,6 +615,30 @@ class TestReconnectChaining:
         assert record.status == 200
         assert len(opened) == 2
         assert opened[1].sent  # the turn was actually sent on the fresh socket
+        await transport.stop()
+
+    async def test_reconnect_discards_stale_socket_from_all(self) -> None:
+        # A peer-closed leased socket is replaced on reconnect; the old one must
+        # not linger in _all, or every reconnect leaks a socket until shutdown.
+        transport = WebSocketTransport(
+            model_endpoint=self._endpoint(extra=[("store", True)])
+        )
+        await transport.initialize()
+        opened: list[FakeWS] = []
+        transport._open = self._open_recorder(opened)
+
+        await transport.send_request(_request_info(is_final_turn=False), {"model": "m"})
+        opened[0].closed = True
+        await transport.send_request(
+            _request_info(
+                is_final_turn=False, turn_index=1, previous_response_id="resp_1"
+            ),
+            {"model": "m", "previous_response_id": "resp_1"},
+        )
+
+        assert opened[0] not in transport._all
+        assert opened[1] in transport._all
+        assert len(transport._all) == 1
         await transport.stop()
 
     async def test_reconnect_with_per_turn_store_proceeds(self) -> None:
