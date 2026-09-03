@@ -43,6 +43,31 @@ def _loader(category: str | None = None, multi_turn: bool = True, **kw):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_from_machine_state(tmp_path_factory):
+    """Keep every test in this file independent of the developer's machine.
+
+    Two pieces of ambient state leak into these tests otherwise, and both hide
+    failures locally while breaking CI:
+
+    * a real resolved cache under ``.cache/aiperf/datasets`` makes
+      ``preflight_access`` return before it checks credentials at all;
+    * a cached HuggingFace token makes the no-credentials branch unreachable.
+
+    Tests that assert on a specific credential state patch over these.
+    """
+    cache_dir = tmp_path_factory.mktemp("speed-bench-cache")
+    with (
+        patch.object(
+            SpeedBenchPublicLoader,
+            "cache_path_for",
+            staticmethod(lambda config: cache_dir / f"{config}.jsonl"),
+        ),
+        patch("huggingface_hub.get_token", return_value="hf_isolated"),
+    ):
+        yield
+
+
 class TestSpeedBenchPublicLoader:
     def test_preferred_sampling_strategy_is_sequential(self):
         assert (
@@ -455,7 +480,10 @@ class TestPreflightRunsWithoutAnEventLoop:
             SpeedBenchPublicLoader.preflight_materialize(hf_subset="qualitative")
 
     def test_access_check_does_not_construct_a_loader(self):
-        with patch("huggingface_hub.HfApi.auth_check", return_value=None):
+        with (
+            patch("huggingface_hub.get_token", return_value="hf_fake"),
+            patch("huggingface_hub.HfApi.auth_check", return_value=None),
+        ):
             SpeedBenchPublicLoader.preflight_access(hf_subset="qualitative")
 
     def test_cache_path_is_resolvable_without_an_instance(self):
