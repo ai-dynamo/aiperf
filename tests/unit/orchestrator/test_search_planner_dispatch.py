@@ -59,3 +59,26 @@ def test_build_search_planner_dispatches_via_plugin_registry(adaptive_plan):
 
     planner = build_search_planner(adaptive_plan)
     assert isinstance(planner, SearchPlanner)
+
+
+def test_build_search_planner_rejects_real_dim_on_int_typed_field(adaptive_plan):
+    """A kind='real' dimension targeting an int-typed phase field fails fast
+    instead of crashing (or silently coercing) mid-search."""
+    from aiperf.orchestrator.search_planner import build_search_planner
+
+    adaptive_plan.sweep.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.requests", lo=10, hi=1000, kind="real"
+    )
+    with pytest.raises(ValueError, match="int-typed phase field 'requests'"):
+        build_search_planner(adaptive_plan)
+
+
+def test_build_search_planner_accepts_real_dim_on_float_typed_field(adaptive_plan):
+    """A kind='real' dimension on a float-typed phase field builds normally."""
+    from aiperf.orchestrator.search_planner import build_search_planner
+    from aiperf.orchestrator.search_planner.base import SearchPlanner
+
+    adaptive_plan.sweep.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.rate", lo=1.0, hi=10.0, kind="real"
+    )
+    assert isinstance(build_search_planner(adaptive_plan), SearchPlanner)
