@@ -800,7 +800,7 @@ class TestTimeoutHandling:
         assert result is False
 
     async def test_indefinite_wait_raises_task_exception_instead_of_hanging(
-        self, runner: PhaseRunner, time_traveler: MagicMock
+        self, runner: PhaseRunner
     ) -> None:
         """timeout=None has no bound to fall back on, so a raced task that
         raises before the event is set must fail the wait fast (#1041) rather
@@ -821,7 +821,7 @@ class TestTimeoutHandling:
             )
 
     async def test_indefinite_wait_prioritizes_task_exception_over_simultaneous_event(
-        self, runner: PhaseRunner, time_traveler: MagicMock
+        self, runner: PhaseRunner
     ) -> None:
         """If the event is already set and the raced task has already failed
         by the time the wait begins, both futures can complete on the same
