@@ -112,7 +112,6 @@ class WebSocketTransport(BaseTransport):
         self._leases: dict[str, aiohttp.ClientWebSocketResponse] = {}
         self._all: set[aiohttp.ClientWebSocketResponse] = set()
         self._lock = asyncio.Lock()
-        self._warned_cross_conn_chaining = False
 
     @classmethod
     def metadata(cls) -> TransportMetadata:
@@ -204,7 +203,7 @@ class WebSocketTransport(BaseTransport):
             envelope.get("store")
         )
 
-        ws, reused, reconnected = await self._acquire(request_info, headers)
+        ws, reconnected = await self._acquire(request_info, headers)
         dirty = False
         start_perf_ns = time.perf_counter_ns()
         record = RequestRecord(
@@ -212,19 +211,6 @@ class WebSocketTransport(BaseTransport):
             timestamp_ns=time.time_ns(),
             start_perf_ns=start_perf_ns,
         )
-        # A fork/spawn child gets its own x_correlation_id, so it opens a fresh
-        # socket yet inherits the parent's previous_response_id. Resolving that id
-        # on a socket that never saw the parent turn requires the server to persist
-        # response state across connections -- server-dependent and only guaranteed
-        # with store:true. Warn once rather than fail: on servers that do persist
-        # cross-connection (e.g. vLLM agentic-api) the chained turn still resolves.
-        if (
-            not reused
-            and not reconnected
-            and request_info.previous_response_id
-            and not store_requested
-        ):
-            self._warn_cross_conn_chaining_once()
         # A mid-conversation reconnect loses the connection-local response cache
         # that non-stored chaining depends on. Sending the chained turn (only the
         # newest turn plus previous_response_id) would draw a confusing
@@ -379,27 +365,6 @@ class WebSocketTransport(BaseTransport):
             raise TimeoutError
         return await asyncio.wait_for(ws.receive(), timeout=remaining)
 
-    def _warn_cross_conn_chaining_once(self) -> None:
-        """Warn once that a forked/spawned conversation is chaining cross-connection.
-
-        The child opens its own socket and sends the parent's
-        ``previous_response_id``, so resolution depends on the server persisting
-        response state across connections. That is server-dependent and only
-        guaranteed with ``store: true`` on a persisting backend. Add
-        ``--extra-inputs '{"store": true}'`` for portable fork/spawn chaining.
-        """
-        if self._warned_cross_conn_chaining:
-            return
-        self._warned_cross_conn_chaining = True
-        self.warning(
-            "WebSocket forked/spawned conversation is chaining across connections: "
-            "the child socket sends an inherited previous_response_id it never "
-            "created locally, so resolution relies on the server persisting "
-            "response state across connections (not guaranteed by the WebSocket "
-            "spec). Add --extra-inputs '{\"store\": true}' with a persisting "
-            "backend for portable fork/spawn chaining."
-        )
-
     def _store_requested(self) -> bool:
         """Whether the run requested server-side storage via endpoint ``extra``.
 
@@ -487,20 +452,17 @@ class WebSocketTransport(BaseTransport):
 
     async def _acquire(
         self, request_info: RequestInfo, headers: dict[str, str]
-    ) -> tuple[aiohttp.ClientWebSocketResponse, bool, bool]:
+    ) -> tuple[aiohttp.ClientWebSocketResponse, bool]:
         """Reuse the conversation's leased socket, or open and lease a new one.
 
         Session concurrency serializes a conversation's turns, so its leased
         socket is never in use by two turns at once. A request with no
         ``x_correlation_id`` always gets a fresh socket (closed on release).
 
-        Returns ``(socket, reused, reconnected)``. ``reused`` is True when the
-        conversation's still-open leased socket was handed back (a normal later
-        turn). ``reconnected`` is True when a prior lease for this conversation
-        existed but its socket was already closed, so a fresh one was opened --
-        the connection-local response cache that ``previous_response_id`` chaining
-        relies on died with that socket. A freshly opened socket for a
-        never-before-seen conversation returns both False.
+        Returns ``(socket, reconnected)`` where ``reconnected`` is True when a
+        prior lease for this conversation existed but its socket was already
+        closed, so a fresh one was opened. The connection-local response cache
+        that ``previous_response_id`` chaining relies on died with that socket.
         """
         correlation_id = request_info.x_correlation_id
         had_stale_lease = False
@@ -508,7 +470,7 @@ class WebSocketTransport(BaseTransport):
             async with self._lock:
                 leased = self._leases.get(correlation_id)
                 if leased is not None and not leased.closed:
-                    return leased, True, False
+                    return leased, False
                 had_stale_lease = leased is not None
 
         # Open outside the lock so concurrent opens do not serialize.
@@ -517,7 +479,7 @@ class WebSocketTransport(BaseTransport):
             self._all.add(ws)
             if correlation_id:
                 self._leases[correlation_id] = ws
-        return ws, False, had_stale_lease
+        return ws, had_stale_lease
 
     async def _open(
         self, request_info: RequestInfo, headers: dict[str, str]
