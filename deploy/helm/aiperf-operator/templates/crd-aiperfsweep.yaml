@@ -655,16 +655,21 @@ spec:
                     description: |-
                       Tokenizer configuration for token counting and prompt generation.
 
-                      AIPerf uses a HuggingFace tokenizer for accurate token counting,
-                      which is essential for ISL/OSL enforcement and metrics calculation.
+                      AIPerf uses a local tokenizer or a supported remote tokenizer API for
+                      accurate token counting, ISL/OSL enforcement, and prompt generation.
                     properties:
                       name:
                         type: string
-                        description: 'HuggingFace tokenizer identifier, local filesystem path, or `builtin` for a zero-network-access
-                          tokenizer backed by tiktoken (o200k_base encoding). Should match the model''s tokenizer for accurate
-                          token counts. If `--tokenizer` is not set and the model name looks like an obvious placeholder (e.g.
-                          `mock-model`, `test-model`, `fake-model`), AIPerf substitutes `builtin` automatically and emits
-                          a warning. Example: ''meta-llama/Llama-3.1-8B-Instruct'''
+                        description: 'HuggingFace tokenizer identifier, local filesystem path, `builtin`, or a llama.cpp server
+                          URL when type is `llamacpp`. Should match the model''s tokenizer for accurate token counts. If `--tokenizer`
+                          is not set and the model name looks like an obvious placeholder (e.g. `mock-model`, `test-model`,
+                          `fake-model`), AIPerf substitutes `builtin` automatically and emits a warning. Example: ''meta-llama/Llama-3.1-8B-Instruct'''
+                      type:
+                        type: string
+                        enum:
+                        - llamacpp
+                        description: Remote tokenizer API type. With `llamacpp`, `name` is an optional tokenizer-server URL;
+                          when omitted, AIPerf reuses the inference server URL and calls `/tokenize` and `/detokenize`.
                       revision:
                         type: string
                         description: 'Model revision to use: branch name, tag, or commit hash. Use for version pinning to

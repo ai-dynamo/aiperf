@@ -515,6 +515,11 @@ class Tokenizer:
             AmbiguousTokenizerNameError: If the name is ambiguous.
             TokenizerError: If the tokenizer cannot be loaded.
         """
+        from aiperf.common.llamacpp_tokenizer import is_http_tokenizer_url
+
+        if is_http_tokenizer_url(name):
+            return cls._from_llamacpp(name)
+
         if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
             return cls._from_tiktoken(
                 _BUILTIN_ENCODING if name == BUILTIN_TOKENIZER_NAME else name
@@ -717,6 +722,19 @@ class Tokenizer:
         tokenizer_cls._decode_args = {}
         return tokenizer_cls
 
+    @classmethod
+    def _from_llamacpp(cls, base_url: str) -> "Tokenizer":
+        """Load a tokenizer backed by llama.cpp's HTTP tokenizer routes."""
+        from aiperf.common.llamacpp_tokenizer import LlamaCppTokenizerAdapter
+
+        tokenizer_cls = cls()
+        tokenizer_cls._tokenizer = LlamaCppTokenizerAdapter(base_url)
+        tokenizer_cls._resolved_name = tokenizer_cls._tokenizer.base_url
+        tokenizer_cls._call_args = {}
+        tokenizer_cls._encode_args = {}
+        tokenizer_cls._decode_args = {}
+        return tokenizer_cls
+
     def __call__(self, text, **kwargs) -> "BatchEncoding":
         """
         Call the underlying Huggingface tokenizer with default arguments,
@@ -818,7 +836,7 @@ class Tokenizer:
         return self._resolved_name
 
     @property
-    def bos_token_id(self) -> int:
+    def bos_token_id(self) -> int | None:
         """
         Return the beginning-of-sequence (BOS) token ID.
         """
@@ -826,7 +844,7 @@ class Tokenizer:
         return self._tokenizer.bos_token_id
 
     @property
-    def eos_token_id(self) -> int:
+    def eos_token_id(self) -> int | None:
         """
         Return the end-of-sequence (EOS) token ID.
         """
@@ -922,6 +940,13 @@ class Tokenizer:
             except (TypeError, NotImplementedError):
                 pass
         return 0
+
+    def close(self) -> None:
+        """Release resources owned by the underlying tokenizer, if any."""
+        self._require_init()
+        close = getattr(self._tokenizer, "close", None)
+        if callable(close):
+            close()
 
     def __repr__(self) -> str:
         """

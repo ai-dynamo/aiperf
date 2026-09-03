@@ -255,6 +255,11 @@ class FastAPIService(BaseComponentService):
         cfg = self.run.cfg
         seen: dict[str, None] = {}
         tokenizer_cfg = getattr(cfg, "tokenizer", None)
+        if (
+            tokenizer_cfg is not None
+            and getattr(tokenizer_cfg, "type", None) == "llamacpp"
+        ):
+            return []
         if tokenizer_cfg is not None and getattr(tokenizer_cfg, "name", None):
             seen.setdefault(tokenizer_cfg.name, None)
         else:

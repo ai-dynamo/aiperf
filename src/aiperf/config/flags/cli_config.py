@@ -493,7 +493,8 @@ class CLIConfig(BaseConfig):
     tokenizer_name: Annotated[
         str | None,
         Field(
-            description="HuggingFace tokenizer identifier, local path, or `builtin` for token counting in prompts and responses. "
+            description="HuggingFace tokenizer identifier, local path, `builtin`, or a "
+            "llama.cpp server URL when `--tokenizer-type llamacpp` is set. "
             "Accepts model names (e.g., `meta-llama/Llama-2-7b-hf`), filesystem paths to tokenizer files, "
             "or `builtin` for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). "
             "If not specified, defaults to the value of `--model-names`. "
@@ -504,6 +505,19 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--tokenizer"),
+            group=Groups.TOKENIZER,
+        ),
+    ] = None
+
+    tokenizer_type: Annotated[
+        Literal["llamacpp"] | None,
+        Field(
+            description="Tokenizer backend type. `llamacpp` uses the inference server's "
+            "`/tokenize` and `/detokenize` APIs when --tokenizer is omitted; when "
+            "--tokenizer is set, its value is used as the llama.cpp tokenizer URL.",
+        ),
+        CLIParameter(
+            name=("--tokenizer-type",),
             group=Groups.TOKENIZER,
         ),
     ] = None
