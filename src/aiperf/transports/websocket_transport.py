@@ -143,9 +143,11 @@ class WebSocketTransport(BaseTransport):
     def get_url(self, request_info: RequestInfo) -> str:
         """Build the ``ws(s)://host/v1/responses`` URL from the base URL.
 
-        Mirrors the HTTP transport's path-join against the endpoint metadata
-        ``endpoint_path`` while preserving the ``ws``/``wss`` scheme. A base URL
-        without a scheme defaults to ``ws://``.
+        Reuses the shared overlap-aware path-join (:meth:`_dedup_path_overlap`)
+        against the endpoint metadata ``endpoint_path`` while preserving the
+        ``ws``/``wss`` scheme, so a ``ws(s)://host/v1`` base and a metadata path
+        of ``v1/responses`` collapse to ``/v1/responses`` rather than
+        ``/v1/v1/responses``. A base URL without a scheme defaults to ``ws://``.
         """
         endpoint_info = request_info.model_endpoint.endpoint
         raw_base_url = endpoint_info.get_url(request_info.url_index)
@@ -161,10 +163,7 @@ class WebSocketTransport(BaseTransport):
             endpoint_metadata = plugins.get_endpoint_metadata(endpoint_info.type)
             sub_path = (endpoint_metadata.endpoint_path or "").lstrip("/")
 
-        if not sub_path or base_path.endswith("/" + sub_path):
-            new_path = base_path
-        else:
-            new_path = f"{base_path}/{sub_path}"
+        new_path = self._dedup_path_overlap(base_path, sub_path)
 
         return urlunsplit(
             (split.scheme, split.netloc, new_path, split.query, split.fragment)
@@ -203,7 +202,6 @@ class WebSocketTransport(BaseTransport):
             envelope.get("store")
         )
 
-        ws, reconnected = await self._acquire(request_info, headers)
         dirty = False
         start_perf_ns = time.perf_counter_ns()
         record = RequestRecord(
@@ -211,6 +209,34 @@ class WebSocketTransport(BaseTransport):
             timestamp_ns=time.time_ns(),
             start_perf_ns=start_perf_ns,
         )
+        # Opening the socket can fail (refused connection, or a handshake that
+        # exceeds the endpoint timeout); fold both into the failed-record path
+        # rather than letting them escape send_request.
+        try:
+            ws, reconnected = await self._acquire(request_info, headers)
+        except asyncio.CancelledError:
+            record.cancellation_perf_ns = time.perf_counter_ns()
+            record.error = ErrorDetails(
+                code=499, type="CancelledError", message="Request cancelled"
+            )
+            raise
+        except TimeoutError:
+            record.error = ErrorDetails(
+                code=408,
+                type="TimeoutError",
+                message=(
+                    "WebSocket handshake exceeded the "
+                    f"{self.model_endpoint.endpoint.timeout}s endpoint timeout"
+                ),
+            )
+            record.end_perf_ns = time.perf_counter_ns()
+            record.request_headers = redact_headers(headers)
+            return record
+        except Exception as e:
+            record.error = ErrorDetails.from_exception(e)
+            record.end_perf_ns = time.perf_counter_ns()
+            record.request_headers = redact_headers(headers)
+            return record
         # A mid-conversation reconnect loses the connection-local response cache
         # that non-stored chaining depends on. Sending the chained turn (only the
         # newest turn plus previous_response_id) would draw a confusing
@@ -484,9 +510,25 @@ class WebSocketTransport(BaseTransport):
     async def _open(
         self, request_info: RequestInfo, headers: dict[str, str]
     ) -> aiohttp.ClientWebSocketResponse:
+        """Open a socket, bounding the handshake by the endpoint timeout.
+
+        ``ws_connect`` (through a session with ``ClientTimeout(total=None)``) has
+        no handshake deadline of its own, so a peer that accepts the TCP
+        connection but never completes the upgrade would hang the turn forever.
+        Cap the handshake at ``endpoint.timeout`` (``timeout<=0`` disables it);
+        a breach raises ``TimeoutError``, which ``send_request`` turns into the
+        normal failed-record path.
+        """
         assert self._session is not None
         url = self.build_url(request_info)
-        return await self._session.ws_connect(url, headers=headers, autoping=True)
+
+        async def _connect() -> aiohttp.ClientWebSocketResponse:
+            return await self._session.ws_connect(url, headers=headers, autoping=True)
+
+        timeout = self.model_endpoint.endpoint.timeout
+        if not timeout or timeout <= 0:
+            return await _connect()
+        return await asyncio.wait_for(_connect(), timeout=timeout)
 
     async def _release(
         self,

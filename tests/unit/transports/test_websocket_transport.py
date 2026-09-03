@@ -167,6 +167,24 @@ class TestGetUrl:
         )
         assert transport.get_url(info) == "ws://localhost:8000/v1/responses"
 
+    def test_v1_base_url_collapses_overlap(self) -> None:
+        """A ``ws(s)://host/v1`` base URL must not become ``/v1/v1/responses``."""
+        me = create_model_endpoint_info(
+            base_url="ws://localhost:8000/v1", custom_endpoint="/v1/responses"
+        )
+        transport = WebSocketTransport(model_endpoint=me)
+        info = RequestInfo(
+            model_endpoint=me,
+            turns=[],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="r",
+            x_correlation_id="c",
+            conversation_id="c",
+        )
+        assert transport.get_url(info) == "ws://localhost:8000/v1/responses"
+
 
 class TestBuildEnvelope:
     def _transport(self) -> WebSocketTransport:
@@ -350,6 +368,24 @@ class TestSendRequest:
         transport._open = AsyncMock(return_value=fake)
         with pytest.raises(asyncio.CancelledError):
             await transport.send_request(_request_info(), {"model": "m"})
+        await transport.stop()
+
+    async def test_handshake_timeout_records_408(self) -> None:
+        transport = await self._transport()
+        transport._open = AsyncMock(side_effect=TimeoutError)
+        record = await transport.send_request(_request_info(), {"model": "m"})
+        assert record.error is not None
+        assert record.error.code == 408
+        assert record.error.type == "TimeoutError"
+        assert "handshake exceeded" in record.error.message
+        await transport.stop()
+
+    async def test_connect_failure_records_error(self) -> None:
+        transport = await self._transport()
+        transport._open = AsyncMock(side_effect=ConnectionRefusedError("refused"))
+        record = await transport.send_request(_request_info(), {"model": "m"})
+        assert record.error is not None
+        assert record.status != 200
         await transport.stop()
 
 
@@ -577,12 +613,8 @@ class TestReconnectChaining:
 
 @pytest.mark.asyncio
 class TestForkCrossConnectionChaining:
-    """A FORK child gets a fresh x_correlation_id, so on WebSockets it opens its
-    own socket. Chaining onto an inherited previous_response_id there is not
-    portable without store, so the worker drops the id and the child replays full
-    history instead (see worker/session_manager). These tests only assert the
-    transport still chains normally when a previous_response_id IS present -- the
-    replay decision is exercised in the worker/session-manager suites."""
+    """The transport forwards a previous_response_id as-is; the FORK replay
+    decision is made upstream in the worker/session-manager suites."""
 
     def _endpoint(self, extra: list[tuple[str, object]] | None = None):
         me = create_model_endpoint_info(
@@ -624,7 +656,7 @@ class TestForkCrossConnectionChaining:
         )
 
         assert record.status == 200
-        assert opened[0].sent  # the chained turn was sent on the fresh socket
+        assert opened[0].sent
         sent = orjson.loads(opened[0].sent[0])
         assert sent["previous_response_id"] == "resp_parent"
         await transport.stop()

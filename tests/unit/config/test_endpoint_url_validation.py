@@ -46,15 +46,13 @@ def test_endpoint_config_normalizes_schemeless_localhost() -> None:
         param("http://localhost:18765", "chat", id="http-localhost-port"),
         param("https://api.example.com/v1", "chat", id="https-with-path"),
         param("http://10.0.0.1:8000", "chat", id="http-ip-port"),
-        param("ws://localhost:19000", "responses", id="ws-localhost-port"),
-        param("wss://api.example.com/v1/responses", "responses", id="wss-with-path"),
     ],
 )  # fmt: skip
 def test_endpoint_config_accepts_valid_urls(url: str, endpoint_type: str) -> None:
-    """Standard http(s) and ws(s) URLs with explicit host pass validation.
+    """Standard http(s) URLs with explicit host pass validation.
 
-    WebSocket URLs pair with endpoint type 'responses' since the WebSocket
-    transport only speaks the Responses API contract.
+    WebSocket (ws/wss) acceptance is covered by
+    ``test_websocket_transport_accepts_responses_type``.
     """
     cfg = EndpointConfig(urls=[url], type=endpoint_type)
     assert cfg.urls == [url]
@@ -105,6 +103,32 @@ def test_websocket_transport_accepts_responses_type(
     """WebSocket paired with endpoint type 'responses' validates cleanly."""
     cfg = EndpointConfig(urls=[url], type="responses", transport=transport)
     assert cfg.urls == [url]
+
+
+# --- Transport must match the URL scheme -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "transport"),
+    [
+        param("ws://localhost:19000", "http", id="ws-url-http-transport"),
+        param("http://localhost:8000", "websocket", id="http-url-ws-transport"),
+        param("wss://api.example.com/v1/responses", "http", id="wss-url-http-transport"),
+    ],
+)  # fmt: skip
+def test_transport_scheme_mismatch_rejected(url: str, transport: str) -> None:
+    """An explicit --transport that contradicts the URL scheme must fail loudly."""
+    with pytest.raises(ValidationError, match="incompatible with the scheme"):
+        EndpointConfig(urls=[url], type="responses", transport=transport)
+
+
+def test_mixed_transport_schemes_rejected() -> None:
+    """URLs that imply conflicting transports with no explicit --transport fail."""
+    with pytest.raises(ValidationError, match="mix transport schemes"):
+        EndpointConfig(
+            urls=["ws://localhost:19000", "http://localhost:8000"],
+            type="responses",
+        )
 
 
 # --- Credential-bearing WebSocket connections require TLS (wss://) -----------
