@@ -320,6 +320,19 @@ class TestMetricsAccumulatorRunScopedDerivedMetrics:
 
         assert summary.timeslices is not None
         assert len(summary.timeslices) >= 1
+        # Only the send-lag family is asserted here. These records carry no
+        # request_latency/output_sequence_length, so the interactivity tags
+        # would be absent whether or not they were excluded -- asserting them
+        # would look like coverage while proving nothing. Their run-scoped
+        # contract is enforced at the metadata level by
+        # test_run_scoped_tags_excluded_from_timeslice_derivation, which does
+        # fail if the exclusion is removed.
+        replay_tags = {
+            ReplaySchedLagP50Metric.tag,
+            ReplaySchedLagP90Metric.tag,
+            ReplaySchedLagP99Metric.tag,
+            ReplaySchedDegradedMetric.tag,
+        }
         for ts in summary.timeslices:
-            for tag in self._RUN_SCOPED_TAGS:
+            for tag in replay_tags:
                 assert tag not in ts.metric_results

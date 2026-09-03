@@ -183,6 +183,26 @@ def test_mask_restricts_sample() -> None:
     assert results[P90].avg == pytest.approx(1.0 / np.percentile(survivors, 90))
 
 
+def test_mask_shorter_than_columns_does_not_abort_export() -> None:
+    """Ingestion can outrun a snapshotted mask; indexing must not raise.
+
+    ``summarize`` runs under ``asyncio.to_thread`` with a mask captured before
+    the call, so records arriving mid-export grow the columns past it. NumPy
+    raises IndexError when a boolean mask is shorter than the axis it indexes,
+    which would abort the whole export -- ``MetricsAccumulator.summarize``
+    caps to ``len(mask)`` for this reason, and this injection must match.
+    """
+    store = _store(latency_s=[1.0, 2.0, 3.0, 100.0], osl=[100.0] * 4)
+    # Mask snapshotted when only three records had been ingested.
+    stale_mask = np.array([True, True, True])
+
+    results = _inject(store, mask=stale_mask)
+
+    # The late arrival is excluded, exactly as if it had not been ingested.
+    survivors = [0.01, 0.02, 0.03]
+    assert results[P90].avg == pytest.approx(1.0 / np.percentile(survivors, 90))
+
+
 def test_deferred_derive_raises() -> None:
     """The scalar summarize path defers; values come only from injection."""
     metric = E2ENormalizedInteractivityP90Metric()

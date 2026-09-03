@@ -87,7 +87,13 @@ def _compute_finite_ratios(
 
     def _column(tag: str) -> NDArray[np.float64]:
         col = store.numeric(tag)
-        return col[mask] if mask is not None else col
+        if mask is None:
+            return col
+        # Cap to mask length before boolean indexing: the mask was snapshotted
+        # before this call and concurrent ingestion (the asyncio.to_thread race)
+        # may have grown the column past it, which would raise IndexError and
+        # abort the export. Mirrors MetricsAccumulator.summarize().
+        return col[: len(mask)][mask]
 
     latency_ns = _column(RequestLatencyMetric.tag)
     osl = _column(OutputSequenceLengthMetric.tag)
