@@ -296,6 +296,65 @@ def test_sla_warmup_mirrors_rate_phase_for_real_dim() -> None:
     assert mutated.phases[1].rate == 50.5
 
 
+def test_sla_warmup_uses_phase_concurrency_when_sweeping_requests() -> None:
+    """Sweeping a non-load field (requests) must not move the warmup load:
+    the warmup mirrors the profiling phase's own concurrency, not the
+    swept request count."""
+    cfg = _adaptive_cfg()
+    cfg.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.requests", lo=100, hi=1000, kind="int"
+    )
+    planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
+    mutated = planner._mutate_base(500)
+    warmup = mutated.phases[0]
+    assert warmup.name == "warmup"
+    assert warmup.type == PhaseType.CONCURRENCY
+    # Base config runs at concurrency=1; the swept 500 requests must not
+    # become the warmup load.
+    assert warmup.concurrency == 1
+    assert mutated.phases[1].requests == 500
+
+
+def test_sla_warmup_uses_phase_rate_when_sweeping_concurrency_cap() -> None:
+    """Sweeping the concurrency cap on a rate phase must not set the warmup
+    rate from the cap: the warmup mirrors the phase's own rate."""
+    cfg = _adaptive_cfg()
+    cfg.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.concurrency", lo=1, hi=64, kind="int"
+    )
+    planner = SmoothIsotonicSLAPlanner(_base_config_rate(), cfg)
+    mutated = planner._mutate_base(42)
+    warmup = mutated.phases[0]
+    assert warmup.name == "warmup"
+    assert warmup.type == PhaseType.POISSON
+    # Base rate phase runs at rate=1.0; the swept cap of 42 must not become
+    # the warmup rate.
+    assert warmup.rate == 1.0
+    assert mutated.phases[1].concurrency == 42
+
+
+def test_sla_warmup_inherits_rate_series_shape() -> None:
+    """A rate_series-driven phase yields a warmup mirroring the same rate
+    series, since the warmup copies the profiling phase shape."""
+    cfg_dict = _base_config_rate().model_dump(exclude_none=True)
+    cfg_dict["phases"][0]["rate_series"] = [
+        {"time_s": 0.0, "qps": 1.0},
+        {"time_s": 60.0, "qps": 2.0},
+    ]
+    del cfg_dict["phases"][0]["rate"]
+    base = BenchmarkConfig.model_validate(cfg_dict)
+    cfg = _adaptive_cfg()
+    cfg.search_space[0] = SearchSpaceDimension(
+        path="phases.profiling.requests", lo=100, hi=1000, kind="int"
+    )
+    planner = SmoothIsotonicSLAPlanner(base, cfg)
+    mutated = planner._mutate_base(500)
+    warmup = mutated.phases[0]
+    assert warmup.name == "warmup"
+    assert warmup.rate is None
+    assert warmup.rate_series is not None
+
+
 def test_non_monotonic_warning_threaded_per_iteration() -> None:
     """Issue #12: a non-monotonic verdict must be flagged on the iteration
     that triggered it.
