@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.enums import ConversationContextMode, CreditPhase
+from aiperf.common.enums import (
+    ConversationBranchMode,
+    ConversationContextMode,
+    CreditPhase,
+)
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -1172,3 +1176,54 @@ class TestNoRequestCredit:
         assert credit_return.error is None
         assert credit_return.first_token_sent is False
         assert credit_return.credit.id == 42
+
+
+@pytest.mark.asyncio
+class TestForkReplayDecision:
+    """FORK children replay full history on WebSockets without store, and chain
+    otherwise (HTTP, or any run that requested server-side storage)."""
+
+    def _set_endpoint(self, worker, *, transport: str, extra: list) -> None:
+        worker.model_endpoint = MagicMock()
+        worker.model_endpoint.transport = transport
+        worker.model_endpoint.endpoint.extra = extra
+
+    async def test_ws_without_store_replays(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport="websocket", extra=[])
+        assert mock_worker._fork_child_replays_context() is True
+
+    async def test_ws_with_store_chains(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport="websocket", extra=[("store", True)])
+        assert mock_worker._fork_child_replays_context() is False
+
+    async def test_http_chains(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport="http", extra=[])
+        assert mock_worker._fork_child_replays_context() is False
+
+    async def test_seed_drops_chain_for_ws_without_store(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport="websocket", extra=[])
+        mock_worker.session_manager = MagicMock()
+        credit = MagicMock(
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+
+        mock_worker._seed_from_parent_if_fork_child(credit, "child")
+
+        mock_worker.session_manager.seed_from_parent.assert_called_once_with(
+            "child", "parent", inherit_response_chain=False
+        )
+
+    async def test_seed_keeps_chain_for_http(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport="http", extra=[])
+        mock_worker.session_manager = MagicMock()
+        credit = MagicMock(
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+
+        mock_worker._seed_from_parent_if_fork_child(credit, "child")
+
+        mock_worker.session_manager.seed_from_parent.assert_called_once_with(
+            "child", "parent", inherit_response_chain=True
+        )

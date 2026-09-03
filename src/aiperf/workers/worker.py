@@ -83,6 +83,7 @@ from aiperf.common.protocols import (
     StreamingPushClientProtocol,
 )
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
+from aiperf.common.utils import is_truthy_flag
 from aiperf.config.adaptive_scale_phase import (
     sla_filters_require_first_token_observation,
 )
@@ -744,6 +745,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.session_manager: UserSessionManager = UserSessionManager(
             max_sessions=Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
         )
+        self._warned_fork_replay: bool = False
 
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory
@@ -1929,8 +1931,50 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             or credit.branch_mode != ConversationBranchMode.FORK
         ):
             return
+        inherit_response_chain = not self._fork_child_replays_context()
         self.session_manager.seed_from_parent(
-            x_correlation_id, credit.parent_correlation_id
+            x_correlation_id,
+            credit.parent_correlation_id,
+            inherit_response_chain=inherit_response_chain,
+        )
+        if not inherit_response_chain:
+            self._warn_fork_replay_once()
+
+    def _fork_child_replays_context(self) -> bool:
+        """Whether FORK children should replay full history instead of chaining.
+
+        A FORK child gets its own ``x_correlation_id`` and, on the WebSocket
+        transport, its own socket. Chaining onto the parent's
+        ``previous_response_id`` from that fresh socket only resolves if the
+        server persists response state across connections, which is not
+        guaranteed without ``store: true``. In that case the child replays its
+        inherited ``turn_list`` as a self-contained fresh response instead.
+        The HTTP path (and any run that requested storage) keeps chaining.
+        """
+        transport = self.model_endpoint.transport
+        if transport is None or str(transport) != "websocket":
+            return False
+        store = dict(self.model_endpoint.endpoint.extra or []).get("store")
+        return not is_truthy_flag(store)
+
+    def _warn_fork_replay_once(self) -> None:
+        """Notice once that FORK children replay history rather than chaining.
+
+        Replaying the client-side ``turn_list`` cannot reconstruct server-only
+        outputs (e.g. reasoning items), so surface the tradeoff once. Enabling
+        ``--extra-inputs '{"store": true}'`` (with a persisting backend) keeps
+        the server-side chain instead.
+        """
+        if self._warned_fork_replay:
+            return
+        self._warned_fork_replay = True
+        self.notice(
+            "WebSocket FORK children replay their full inherited history as a "
+            "fresh response because server-side storage was not requested: an "
+            "inherited previous_response_id is not portably resolvable on the "
+            "child's own socket. Server-only outputs such as reasoning items are "
+            "not reconstructed by replay. Add --extra-inputs '{\"store\": true}' "
+            "with a persisting backend to keep the server-side chain."
         )
 
     def _handle_terminal_disposition(

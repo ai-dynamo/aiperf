@@ -361,19 +361,21 @@ Key behaviors:
   `previous_response_not_found` from the server. Add `--extra-inputs
   '{"store": true}'` to persist responses server-side so a reconnect still
   resolves the id.
-- **Forked & multi-agent conversations chain across connections.** Fork/spawn
-  children (e.g. `weka_trace` subagents, `dag_jsonl` branches) each get their own
-  conversation identity, so a child opens its *own* socket and inherits the
-  parent's `previous_response_id`. Resolving that id on a socket that never
-  created it requires the server to persist response state *across connections* —
-  which the WebSocket spec does not guarantee and only `store: true` on a
-  persisting backend makes portable. Some servers (e.g. vLLM's agentic-api)
-  persist cross-connection unconditionally, so forks chain there without `store`;
-  AIPerf emits a one-time warning for cross-connection chaining without `store` so
-  the server-dependency is explicit. Add `--extra-inputs '{"store": true}'` (with
-  a persisting backend) for portable fork/spawn chaining. Linear multi-turn
-  conversations are unaffected — every turn reuses the one leased socket, so their
-  chaining stays connection-local.
+- **Forked conversations replay history when storage is not requested.** FORK
+  children (e.g. `dag_jsonl` branches) each get their own conversation identity,
+  so a child opens its *own* socket. Chaining onto the parent's
+  `previous_response_id` from that fresh socket only resolves if the server
+  persists response state *across connections*, which the WebSocket spec does not
+  guarantee without `store: true`. So, without requested storage, AIPerf drops the
+  inherited id and the child's first turn **replays its full inherited history**
+  (the parent's prompt plus captured responses) as a self-contained fresh
+  response; it then chains normally on its own socket from the second turn on. A
+  one-time notice records this. The tradeoff: replaying the client-side history
+  cannot reconstruct server-only outputs such as reasoning items — add
+  `--extra-inputs '{"store": true}'` (with a persisting backend) to keep the
+  server-side chain across the fork instead. SPAWN children already start from
+  fresh context, and linear multi-turn conversations reuse their one leased
+  socket, so both are unaffected.
 - **HTTP-only fields are stripped.** `stream`, `stream_options`, and `background`
   are HTTP-transport concepts; the socket always streams events, so AIPerf drops
   them from the `response.create` envelope automatically.
