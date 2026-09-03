@@ -292,6 +292,26 @@ class TestSendRequest:
         assert sent["type"] == "response.create"
         await transport.stop()
 
+    async def test_payload_bytes_updated_to_sent_envelope(self) -> None:
+        transport = await self._transport()
+        fake = FakeWS([_text({"type": "response.completed", "response": {"id": "r"}})])
+        transport._open = AsyncMock(return_value=fake)
+        info = _request_info()
+
+        await transport.send_request(
+            info, {"model": "m", "stream": True, "background": True}
+        )
+
+        # The raw-record exporter replays payload_bytes verbatim, so it must be
+        # the exact wire frame, not the pre-envelope HTTP-style body.
+        assert info.payload_bytes == fake.sent[0].encode()
+        payload = orjson.loads(info.payload_bytes)
+        assert payload["type"] == "response.create"
+        assert payload["stream_id"]
+        assert "stream" not in payload
+        assert "background" not in payload
+        await transport.stop()
+
     async def test_first_token_callback_fires(self) -> None:
         transport = await self._transport()
         fake = FakeWS(

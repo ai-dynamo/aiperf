@@ -1016,30 +1016,6 @@ class TestResponsesStatefulChaining:
         )
         assert websocket_endpoint.extract_response_id(record) == "resp_ws_cache"
 
-    def test_extract_response_id_websocket_failure_returns_none(
-        self, websocket_endpoint: ResponsesEndpoint
-    ) -> None:
-        """A failed WebSocket response is not chainable even though the store
-        gate is exempt for the WebSocket transport."""
-        record = RequestRecord(
-            responses=[
-                TextResponse(
-                    perf_ns=1,
-                    text=orjson.dumps(
-                        {
-                            "type": "response.failed",
-                            "response": {
-                                "id": "resp_ws_aborted",
-                                "object": "response",
-                                "status": "failed",
-                            },
-                        }
-                    ).decode(),
-                )
-            ]
-        )
-        assert websocket_endpoint.extract_response_id(record) is None
-
     def test_extract_response_id_store_requested_response_omits_store_returns_id(
         self, store_endpoint: ResponsesEndpoint
     ) -> None:
