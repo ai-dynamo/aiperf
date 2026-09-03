@@ -100,21 +100,43 @@ class TestIterInputsJsonChunks:
         chunks = list(iter_inputs_json_chunks(inputs, chunk_bytes=chunk_bytes))
 
         assert len(chunks) > 1
-        assert all(len(chunk) >= chunk_bytes for chunk in chunks[:-1])
-        assert all(len(chunk) < 2 * chunk_bytes for chunk in chunks)
+        assert all(len(chunk) == chunk_bytes for chunk in chunks[:-1])
+        assert 0 < len(chunks[-1]) <= chunk_bytes
         assert b"".join(chunks) == _single_dump(inputs)
 
-    def test_iter_inputs_json_chunks_splits_oversized_session_at_payload_boundaries(
-        self,
-    ) -> None:
+    def test_iter_inputs_json_chunks_bounds_chunks_for_oversized_session(self) -> None:
         chunk_bytes = 4096
         inputs = InputsFile(data=[_session("big", 64, "y" * 1024)])
 
         chunks = list(iter_inputs_json_chunks(inputs, chunk_bytes=chunk_bytes))
 
         assert len(chunks) > 1
-        assert all(len(chunk) >= chunk_bytes for chunk in chunks[:-1])
-        assert all(len(chunk) < 2 * chunk_bytes for chunk in chunks)
+        assert all(len(chunk) == chunk_bytes for chunk in chunks[:-1])
+        assert 0 < len(chunks[-1]) <= chunk_bytes
+        assert b"".join(chunks) == _single_dump(inputs)
+
+    def test_iter_inputs_json_chunks_bounds_chunks_for_oversized_extra_field(
+        self,
+    ) -> None:
+        chunk_bytes = 4096
+        inputs = InputsFile(
+            data=[
+                _session("s1", 1, "small"),
+                SessionPayloads.model_validate(
+                    {
+                        "session_id": "huge-extra",
+                        "payloads": [_payload("p")],
+                        "blob": "z" * (4 * chunk_bytes),
+                    }
+                ),
+            ]
+        )
+
+        chunks = list(iter_inputs_json_chunks(inputs, chunk_bytes=chunk_bytes))
+
+        assert len(chunks) > 4
+        assert all(len(chunk) == chunk_bytes for chunk in chunks[:-1])
+        assert 0 < len(chunks[-1]) <= chunk_bytes
         assert b"".join(chunks) == _single_dump(inputs)
 
 
@@ -158,7 +180,7 @@ class TestGenerateInputsJsonFileStreaming:
             await manager._generate_inputs_json_file()
 
         assert len(write_sizes) > 1
-        assert all(size >= BYTES_PER_MIB for size in write_sizes[:-1])
-        assert all(size < 2 * BYTES_PER_MIB for size in write_sizes)
+        assert all(size == BYTES_PER_MIB for size in write_sizes[:-1])
+        assert 0 < write_sizes[-1] <= BYTES_PER_MIB
         assert (tmp_path / "inputs.json").read_bytes() == expected
         assert not (tmp_path / "inputs.tmp").exists()

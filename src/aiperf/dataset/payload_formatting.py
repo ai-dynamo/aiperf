@@ -114,12 +114,11 @@ def _iter_session_pieces(session: SessionPayloads) -> Iterator[bytes]:
 def iter_inputs_json_chunks(
     inputs: InputsFile, chunk_bytes: int = INPUTS_JSON_WRITE_CHUNK_BYTES
 ) -> Iterator[bytes]:
-    """Yield the inputs.json document in chunks flushed at payload boundaries.
+    """Yield the inputs.json document in exact ``chunk_bytes`` slices.
 
-    Every chunk but the last is at least ``chunk_bytes`` and none exceeds it by
-    more than one encoded piece: a session frame, a single payload, or a whole
-    session only when extra model fields force the single-piece fallback.
-    orjson escapes control characters inside strings, so re-indenting on raw
+    Every chunk is exactly ``chunk_bytes`` except the last, which may be
+    smaller, regardless of how large any single encoded piece is. orjson
+    escapes control characters inside strings, so re-indenting on raw
     newlines is exact and the concatenated chunks are byte-identical to
     encoding the whole ``InputsFile`` with ``OPT_INDENT_2`` in one call.
     """
@@ -134,8 +133,12 @@ def iter_inputs_json_chunks(
         buffer += _SESSION_INDENT
         for piece in _iter_session_pieces(session):
             buffer += piece
-            if len(buffer) >= chunk_bytes:
-                yield bytes(buffer)
-                buffer.clear()
+            while len(buffer) >= chunk_bytes:
+                yield bytes(buffer[:chunk_bytes])
+                del buffer[:chunk_bytes]
     buffer += _INPUTS_JSON_TAIL
-    yield bytes(buffer)
+    while len(buffer) >= chunk_bytes:
+        yield bytes(buffer[:chunk_bytes])
+        del buffer[:chunk_bytes]
+    if buffer:
+        yield bytes(buffer)
