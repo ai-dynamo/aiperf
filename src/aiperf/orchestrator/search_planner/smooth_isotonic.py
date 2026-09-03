@@ -50,7 +50,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from aiperf.common.environment import Environment
 from aiperf.config.config import BenchmarkConfig
-from aiperf.config.phases import PhaseType
 from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation, _set_nested_value
 from aiperf.orchestrator.search_planner._sla_helpers import (
     averaged_metric_value,
@@ -434,12 +433,10 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         """Prepend a per-iteration ``warmup`` phase to ``cfg_dict["phases"]``.
 
         Skipped when ``cfg.sla_warmup_seconds == 0`` (explicit user opt-out)
-        or when the profiling phase cannot be located. Also skipped when its
-        type cannot be driven by a single swept value. The warmup uses the
-        same swept-dim value being probed and is excluded from results. If
-        the user already declared a warmup phase, it is replaced — the
-        unique-name validator forbids two ``warmup`` entries, and the swept
-        value should drive the warmup during the search.
+        or when the profiling phase cannot be located. The warmup runs at the
+        profiling phase's load and is excluded from results. If the user
+        already declared a warmup phase, it is replaced — the unique-name
+        validator forbids two ``warmup`` entries.
         """
         if self._cfg.sla_warmup_seconds == 0:
             self._first_probe_at.add(value)
@@ -466,25 +463,17 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
                 Environment.SEARCH_PLANNER.REPLICATE_WARMUP_FLOOR, base_warmup
             )
 
-        ptype = phases[idx].get("type")
-        if ptype == PhaseType.CONCURRENCY:
-            warmup_phase: dict[str, Any] = {
-                "name": "warmup",
-                "type": PhaseType.CONCURRENCY,
-                "concurrency": int(value),
-                "duration": duration,
-                "exclude_from_results": True,
-            }
-        elif ptype in (PhaseType.POISSON, PhaseType.GAMMA, PhaseType.CONSTANT):
-            warmup_phase = {
-                "name": "warmup",
-                "type": ptype,
-                "rate": float(value),
-                "duration": duration,
-                "exclude_from_results": True,
-            }
-        else:
-            return
+        warmup_phase = {
+            **phases[idx],
+            "name": "warmup",
+            "kind": "warmup",
+            "duration": duration,
+            "exclude_from_results": True,
+        }
+        # A workload stop condition would end the warmup early once its count
+        # is sent; keep it duration-bounded.
+        warmup_phase.pop("requests", None)
+        warmup_phase.pop("sessions", None)
         # Replace any user-declared warmup so the per-iteration sweep value
         # drives the warmup; the unique-name validator on BenchmarkConfig
         # forbids two phases named "warmup".
