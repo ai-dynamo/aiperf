@@ -304,15 +304,50 @@ class TestCollector:
 
 
 class TestProtocolConformance:
-    def test_collector_satisfies_the_host_protocol_surface(self):
+    def test_collector_satisfies_the_host_protocol_surface(self, powercap):
+        """The full protocol surface, not a subset.
+
+        The earlier version of this test listed five names and missed exactly
+        the three lifecycle methods the collector did not implement, so it
+        passed against a collector that did not satisfy the protocol. The
+        protocol is runtime_checkable, so an instance check catches a missing
+        method without hand-maintaining the list.
+        """
         from aiperf.host_telemetry.protocols import HostTelemetryCollectorProtocol
 
+        collector = RAPLTelemetryCollector(powercap)
+        assert isinstance(collector, HostTelemetryCollectorProtocol)
         for name in (
             "id",
             "endpoint_url",
             "initialize",
+            "start",
+            "stop",
             "is_url_reachable",
+            "collect_and_process_metrics",
             "validate_environment",
         ):
-            assert hasattr(RAPLTelemetryCollector, name), name
-        assert HostTelemetryCollectorProtocol is not None
+            assert hasattr(collector, name), name
+
+    @pytest.mark.asyncio
+    async def test_collect_and_process_dispatches_via_callback(self, powercap):
+        """Records reach the callback with the collector id, errors do not raise."""
+        import sys as _sys
+        from unittest.mock import patch as _patch
+
+        received = []
+
+        async def record_callback(records, collector_id):
+            received.append((records, collector_id))
+
+        with _patch.object(_sys, "platform", "linux"):
+            collector = RAPLTelemetryCollector(
+                powercap, record_callback=record_callback
+            )
+            await collector.initialize()
+            await collector.collect_and_process_metrics()
+
+        assert len(received) == 1
+        records, collector_id = received[0]
+        assert collector_id == "rapl"
+        assert all(r.telemetry_data.energy_consumption_uj >= 0 for r in records)

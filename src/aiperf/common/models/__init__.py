@@ -143,6 +143,11 @@ from aiperf.common.models.telemetry_models import (
     TelemetryMetrics,
     TelemetryRecord,
 )
+from aiperf.common.models.host_telemetry_models import (
+    HostPowerDomainMetadata,
+    HostTelemetryMetrics,
+    HostTelemetryRecord,
+)
 from aiperf.common.models.trace_models import (
     AioHttpTraceData,
     AioHttpTraceDataExport,
@@ -191,6 +196,9 @@ __all__ = [
     "GaugeStats",
     "GaugeTimeslice",
     "GpuMetadata",
+    "HostPowerDomainMetadata",
+    "HostTelemetryMetrics",
+    "HostTelemetryRecord",
     "GpuMetricTimeSeries",
     "GpuSummary",
     "GpuTelemetryData",

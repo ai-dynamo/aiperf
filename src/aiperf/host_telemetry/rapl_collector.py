@@ -28,17 +28,22 @@ as an empty result, because a silent zero is worse than a refusal.
 
 from __future__ import annotations
 
+import asyncio
 import platform
 import re
 import sys
 import time
 from pathlib import Path
 
+from aiperf.common.hooks import background_task
+from aiperf.common.mixins import AIPerfLifecycleMixin
+from aiperf.common.models import ErrorDetails
 from aiperf.common.models.host_telemetry_models import (
     HostPowerDomainMetadata,
     HostTelemetryMetrics,
     HostTelemetryRecord,
 )
+from aiperf.host_telemetry.protocols import THostErrorCallback, THostRecordCallback
 
 POWERCAP_ROOT = Path("/sys/class/powercap")
 
@@ -159,28 +164,34 @@ def discover_domains(root: Path = POWERCAP_ROOT) -> list[RAPLDomain]:
     return domains
 
 
-class RAPLTelemetryCollector:
+class RAPLTelemetryCollector(AIPerfLifecycleMixin):
     """Collects host energy telemetry from the Linux powercap RAPL interface.
 
     Reports the cumulative counter rather than a derived wattage. Deriving power
     needs two samples and a choice of interval, and that choice belongs to
     whatever is aggregating, not to the reader.
+
+    Lifecycle and delivery follow the shipped GPU collectors: `start`/`stop`
+    come from `AIPerfLifecycleMixin`, a background task samples every
+    `collection_interval` seconds while running, and records leave through
+    `record_callback` with failures through `error_callback`.
     """
 
     def __init__(
         self,
         root: Path = POWERCAP_ROOT,
         collection_interval: float = 1.0,
+        record_callback: THostRecordCallback | None = None,
+        error_callback: THostErrorCallback | None = None,
+        collector_id: str = "rapl",
     ) -> None:
         """Initialize the collector against a powercap tree."""
+        super().__init__(id=collector_id)
         self.root = Path(root)
         self._collection_interval = collection_interval
+        self._record_callback = record_callback
+        self._error_callback = error_callback
         self._domains: list[RAPLDomain] = []
-
-    @property
-    def id(self) -> str:
-        """Get the collector's unique identifier."""
-        return "rapl"
 
     @property
     def endpoint_url(self) -> str:
@@ -235,6 +246,30 @@ class RAPLTelemetryCollector:
     def domains(self) -> list[RAPLDomain]:
         """The readable domains found at initialize time."""
         return self._domains
+
+    @background_task(immediate=True, interval=lambda self: self.collection_interval)
+    async def _collect_metrics_loop(self) -> None:
+        """Sample every collection_interval seconds while the collector runs."""
+        await self.collect_and_process_metrics()
+
+    async def collect_and_process_metrics(self) -> None:
+        """One-shot scrape, dispatched through the configured callback.
+
+        The sysfs reads happen in a thread so a slow or hung read cannot stall
+        the event loop, mirroring the GPU collectors.
+        """
+        try:
+            records = await asyncio.to_thread(self.collect)
+            if records and self._record_callback:
+                await self._record_callback(records, self.id)
+        except Exception as e:  # fault-tolerant telemetry
+            if self._error_callback:
+                try:
+                    await self._error_callback(ErrorDetails.from_exception(e), self.id)
+                except Exception as callback_error:  # fault-tolerant telemetry
+                    self.error(f"Failed to send error via callback: {callback_error}")
+            else:
+                self.error(f"Host telemetry collection error: {e}")
 
     def collect(self) -> list[HostTelemetryRecord]:
         """Take one sample across every readable domain."""

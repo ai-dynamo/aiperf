@@ -7,9 +7,11 @@ requires `gpu_index`, `gpu_uuid`, `gpu_model_name` and `pci_bus_id`, none of
 which a CPU package or a board power rail has, so `TelemetryRecord` cannot carry
 a host sample.
 
-The split here is deliberately the same shape as the GPU side so that a future
-change can unify them behind one domain-tagged record without either side
-having to be rewritten first.
+The split mirrors the GPU side's metadata/metrics separation, but the shapes
+are not identical and a unification would have to reconcile them: the GPU
+record flattens metadata into the record through inheritance while this one
+nests it as a field, and the energy units differ (NVML reports millijoules,
+RAPL microjoules) with no shared naming convention yet.
 """
 
 from __future__ import annotations

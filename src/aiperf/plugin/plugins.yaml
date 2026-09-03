@@ -1537,6 +1537,14 @@ plot:
 # Supports DCGM HTTP endpoints and plugin-defined local collectors.
 # One-to-one mapping based on gpu_telemetry_collector configuration.
 # =============================================================================
+# =============================================================================
+# Host Telemetry Collector
+# =============================================================================
+# Host-side power/energy collectors, the sibling of gpu_telemetry_collector.
+# NOT YET WIRED: no CLI flag or manager instantiates this category yet; the
+# consuming manager lands separately. The registration exists so the category
+# and its first implementation are reviewable together.
+# =============================================================================
 host_telemetry_collector:
   rapl:
     class: aiperf.host_telemetry.rapl_collector:RAPLTelemetryCollector
@@ -1544,6 +1552,8 @@ host_telemetry_collector:
       Reads cumulative per-domain energy from the Linux powercap RAPL interface.
       Corrects counter wraparound. Requires root on most distributions, because
       energy_uj was restricted to mode 0400 after CVE-2020-8694.
+      NOT YET WIRED: no CLI flag instantiates this collector yet; it becomes
+      reachable when the host telemetry manager lands.
 
 gpu_telemetry_collector:
   dcgm:
