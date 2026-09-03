@@ -325,16 +325,6 @@ class UserCentricStrategy(AIPerfLoggerMixin):
 
         Takes the gap as an argument rather than reading `self._turn_gap` so it can
         never observe half-updated state.
-
-        Pinning the mean pins the distribution mean only; the realized aggregate
-        request rate is lower and degrades with skew (see the module docstring).
-
-        Neither params model is given `min`/`max` bounds here, so heavy skew is
-        unfloored. For weibull, a mean/median ratio above `1 / ln(2) ~= 1.443` drives
-        the solved shape below 1 and yields near-zero gaps: at mean 2.0 s /
-        median 0.5 s the shape is 0.5079 and 2.93% of draws land under 1 ms
-        (2,000,000-draw sample); at mean 1.667 s / median 1.2 s the shape is 1.0514
-        and 0.041% land under 1 ms.
         """
         if self._gap_distribution == UserCentricGapDistribution.FIXED:
             return None
