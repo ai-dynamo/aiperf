@@ -180,6 +180,7 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
     def __init__(
         self,
         root: Path = POWERCAP_ROOT,
+        *,
         collection_interval: float = 1.0,
         record_callback: THostRecordCallback | None = None,
         error_callback: THostErrorCallback | None = None,
