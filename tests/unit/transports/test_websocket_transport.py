@@ -369,7 +369,9 @@ class TestPoolAndAffinity:
         transport = await self._transport()
         opened: list[FakeWS] = []
 
-        async def fake_open(request_info, headers):
+        async def fake_open(
+            request_info: RequestInfo, headers: dict[str, str]
+        ) -> FakeWS:
             fake = FakeWS(
                 [_text({"type": "response.completed", "response": {"id": "r"}})]
             )
@@ -402,7 +404,9 @@ class TestPoolAndAffinity:
         transport = await self._transport()
         opened: list[FakeWS] = []
 
-        async def fake_open(request_info, headers):
+        async def fake_open(
+            request_info: RequestInfo, headers: dict[str, str]
+        ) -> FakeWS:
             fake = self._completed()
             opened.append(fake)
             return fake
@@ -486,7 +490,9 @@ class TestReconnectChaining:
         return me
 
     def _open_recorder(self, opened: list[FakeWS]):
-        async def fake_open(request_info, headers):
+        async def fake_open(
+            request_info: RequestInfo, headers: dict[str, str]
+        ) -> FakeWS:
             fake = FakeWS(
                 [_text({"type": "response.completed", "response": {"id": "r"}})]
             )
