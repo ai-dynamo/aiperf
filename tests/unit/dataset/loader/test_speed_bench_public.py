@@ -306,8 +306,14 @@ class TestResolveConfig:
         ``sys.modules``: the vendored script does ``from datasets import
         Dataset, ...`` at import time, so a stub module breaks its import
         before the code under test is reached.
+
+        Skips where ``datasets`` is unavailable. It has no Windows-on-ARM
+        wheel, which is why the production code imports it lazily; resolution
+        is unreachable on that platform, so there is nothing to exercise.
         """
-        import datasets as datasets_mod
+        datasets_mod = pytest.importorskip(
+            "datasets", reason="no Windows-on-ARM wheel; resolution is unreachable"
+        )
 
         from aiperf.dataset.loader.vendor import speed_bench_prepare
 

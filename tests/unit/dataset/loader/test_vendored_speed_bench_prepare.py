@@ -22,6 +22,17 @@ UPSTREAM_SHA256 = "a551be4df541474e54e21b480022b0cbb66c2da068fda61b2a64bd3223bbb
 def test_vendored_prepare_script_is_unmodified():
     digest = hashlib.sha256(VENDORED.read_bytes()).hexdigest()
 
+    normalized = hashlib.sha256(
+        VENDORED.read_bytes().replace(b"\r\n", b"\n")
+    ).hexdigest()
+    if digest != UPSTREAM_SHA256 and normalized == UPSTREAM_SHA256:
+        raise AssertionError(
+            f"{VENDORED.name} content is intact but its line endings were "
+            "rewritten on checkout. .gitattributes marks the vendor directory "
+            "`-text` to prevent exactly this; confirm it is present and that "
+            "the working copy was checked out after it was added."
+        )
+
     assert digest == UPSTREAM_SHA256, (
         f"{VENDORED.name} no longer matches upstream commit {UPSTREAM_COMMIT}. "
         "Do not edit vendored files: fix it upstream in NVIDIA-NeMo/Skills, "
