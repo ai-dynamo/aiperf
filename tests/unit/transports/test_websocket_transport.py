@@ -4,7 +4,7 @@
 
 import asyncio
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import orjson
@@ -549,4 +549,116 @@ class TestReconnectChaining:
         assert record.status == 200
         assert len(opened) == 2
         assert opened[1].sent  # the turn was actually sent on the fresh socket
+        await transport.stop()
+
+
+@pytest.mark.asyncio
+class TestForkCrossConnectionChaining:
+    """A fork/spawn child gets a fresh x_correlation_id, so it opens its own
+    socket and chains onto the parent's previous_response_id across connections.
+    That is server-dependent without store, so it warns once but still proceeds."""
+
+    def _endpoint(self, extra: list[tuple[str, object]] | None = None):
+        me = create_model_endpoint_info(
+            base_url="ws://localhost:8000", custom_endpoint="/v1/responses"
+        )
+        if extra is not None:
+            me.endpoint.extra = extra
+        return me
+
+    def _open_recorder(self, opened: list[FakeWS]):
+        async def fake_open(
+            request_info: RequestInfo, headers: dict[str, str]
+        ) -> FakeWS:
+            fake = FakeWS(
+                [_text({"type": "response.completed", "response": {"id": "r"}})]
+            )
+            opened.append(fake)
+            return fake
+
+        return fake_open
+
+    async def test_fork_child_warns_once_but_proceeds(self) -> None:
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        transport.warning = MagicMock()
+        opened: list[FakeWS] = []
+        transport._open = self._open_recorder(opened)
+
+        # A fork child: brand-new correlation id, first turn on its own socket,
+        # carrying the parent's inherited previous_response_id, no store.
+        record = await transport.send_request(
+            _request_info(
+                x_correlation_id="conv-child",
+                previous_response_id="resp_parent",
+            ),
+            {"model": "m", "previous_response_id": "resp_parent"},
+        )
+
+        assert record.status == 200
+        assert opened[0].sent  # the chained turn was sent cross-connection
+        transport.warning.assert_called_once()
+
+        # A second fork child does not re-warn (one-time gate).
+        await transport.send_request(
+            _request_info(
+                x_correlation_id="conv-child-2",
+                previous_response_id="resp_parent",
+            ),
+            {"model": "m", "previous_response_id": "resp_parent"},
+        )
+        transport.warning.assert_called_once()
+        await transport.stop()
+
+    async def test_no_warning_for_linear_first_turn(self) -> None:
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        transport.warning = MagicMock()
+        transport._open = self._open_recorder([])
+
+        # Turn 0 of a normal conversation carries no previous_response_id.
+        await transport.send_request(_request_info(), {"model": "m"})
+        transport.warning.assert_not_called()
+        await transport.stop()
+
+    async def test_no_warning_for_reused_socket_turn(self) -> None:
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        transport.warning = MagicMock()
+        opened: list[FakeWS] = []
+        transport._open = self._open_recorder(opened)
+
+        # Turn 0 leases the socket, turn 1 reuses it with a previous_response_id;
+        # that is same-connection chaining, not cross-connection -- no warning.
+        await transport.send_request(_request_info(is_final_turn=False), {"model": "m"})
+        opened[0]._messages = [
+            _text({"type": "response.completed", "response": {"id": "r"}})
+        ]
+        await transport.send_request(
+            _request_info(
+                is_final_turn=True, turn_index=1, previous_response_id="resp_0"
+            ),
+            {"model": "m", "previous_response_id": "resp_0"},
+        )
+        transport.warning.assert_not_called()
+        await transport.stop()
+
+    async def test_no_warning_when_store_requested(self) -> None:
+        transport = WebSocketTransport(
+            model_endpoint=self._endpoint(extra=[("store", True)])
+        )
+        await transport.initialize()
+        transport.warning = MagicMock()
+        transport._open = self._open_recorder([])
+
+        # With store the child's id is persisted server-side; cross-connection
+        # resolution is expected, so no server-dependency warning.
+        await transport.send_request(
+            _request_info(
+                x_correlation_id="conv-child",
+                previous_response_id="resp_parent",
+            ),
+            {"model": "m", "previous_response_id": "resp_parent"},
+        )
+        transport.warning.assert_not_called()
         await transport.stop()
