@@ -193,6 +193,12 @@ class WebSocketTransport(BaseTransport):
             )
 
         envelope = self._build_envelope(payload, request_info)
+        # The raw-record exporter replays request_info.payload_bytes verbatim, but
+        # it was populated upstream with the pre-envelope HTTP-style body. Overwrite
+        # it with the exact frame we put on the wire (type=response.create,
+        # stream_id, HTTP-only keys stripped) so WebSocket records stay replayable.
+        envelope_bytes = orjson.dumps(envelope)
+        request_info.payload_bytes = envelope_bytes
         headers = self.build_headers(request_info)
         correlation_id = request_info.x_correlation_id
         # store may be requested endpoint-wide (--extra-inputs) or per turn (a
@@ -261,7 +267,7 @@ class WebSocketTransport(BaseTransport):
         try:
             # The Responses WebSocket contract requires JSON text frames; binary
             # frames are rejected with an invalid_request_error.
-            await ws.send_str(orjson.dumps(envelope).decode())
+            await ws.send_str(envelope_bytes.decode())
             # cancel_after_ns (cancellation benchmarks) is measured from the moment
             # the request is fully sent, matching the HTTP transport. Bound the read
             # by it and return a 499 record on expiry rather than reading through to

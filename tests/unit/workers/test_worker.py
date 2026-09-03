@@ -1180,18 +1180,12 @@ class TestNoRequestCredit:
 
 @pytest.mark.asyncio
 class TestForkReplayDecision:
-    """FORK children replay full history on WebSockets without store, and chain
-    otherwise (HTTP, or any run that requested server-side storage)."""
-
     def _set_endpoint(self, worker, *, transport: str, extra: list) -> None:
         worker.model_endpoint = MagicMock()
         worker.model_endpoint.transport = transport
         worker.model_endpoint.endpoint.extra = extra
 
     async def test_ws_with_store_chains(self, mock_worker) -> None:
-        # The only branch not covered at the seed_from_parent caller boundary
-        # below (which exercises ws-without-store and http), so it is asserted
-        # directly on the predicate.
         self._set_endpoint(mock_worker, transport="websocket", extra=[("store", True)])
         assert mock_worker._fork_child_replays_context() is False
 

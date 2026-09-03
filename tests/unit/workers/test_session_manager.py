@@ -529,8 +529,5 @@ class TestSessionPreviousResponseId:
             "child-corr", "parent-corr", inherit_response_chain=False
         )
 
-        # Full history is still copied so the child can replay it as a fresh
-        # response, but the chain id is dropped so it does not chain onto an id
-        # its own socket never created.
         assert child.previous_response_id is None
         assert child.turn_list == parent.turn_list

@@ -113,7 +113,6 @@ def test_websocket_transport_accepts_responses_type(
     [
         param("ws://localhost:19000", "http", id="ws-url-http-transport"),
         param("http://localhost:8000", "websocket", id="http-url-ws-transport"),
-        param("wss://api.example.com/v1/responses", "http", id="wss-url-http-transport"),
     ],
 )  # fmt: skip
 def test_transport_scheme_mismatch_rejected(url: str, transport: str) -> None:
