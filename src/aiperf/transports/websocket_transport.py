@@ -197,6 +197,12 @@ class WebSocketTransport(BaseTransport):
         envelope = self._build_envelope(payload, request_info)
         headers = self.build_headers(request_info)
         correlation_id = request_info.x_correlation_id
+        # store may be requested endpoint-wide (--extra-inputs) or per turn (a
+        # dataset row's extra, which lands on the envelope). Either persists the
+        # response server-side, so both chaining checks below must honor it.
+        store_requested = self._store_requested() or is_truthy_flag(
+            envelope.get("store")
+        )
 
         ws, reused, reconnected = await self._acquire(request_info, headers)
         dirty = False
@@ -216,7 +222,7 @@ class WebSocketTransport(BaseTransport):
             not reused
             and not reconnected
             and request_info.previous_response_id
-            and not self._store_requested()
+            and not store_requested
         ):
             self._warn_cross_conn_chaining_once()
         # A mid-conversation reconnect loses the connection-local response cache
@@ -225,11 +231,7 @@ class WebSocketTransport(BaseTransport):
         # previous_response_not_found from the server. Fail the turn with a clear
         # cause instead. When store was requested the id is persisted server-side,
         # so a fresh socket still resolves it and the turn proceeds normally.
-        if (
-            reconnected
-            and request_info.previous_response_id
-            and not self._store_requested()
-        ):
+        if reconnected and request_info.previous_response_id and not store_requested:
             record.error = ErrorDetails(
                 code=None,
                 type="ChainingContextLost",

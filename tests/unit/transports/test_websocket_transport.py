@@ -551,6 +551,29 @@ class TestReconnectChaining:
         assert opened[1].sent  # the turn was actually sent on the fresh socket
         await transport.stop()
 
+    async def test_reconnect_with_per_turn_store_proceeds(self) -> None:
+        # Endpoint-level extra has no store, but the per-turn payload does; that
+        # still persists the response server-side, so a reconnect resolves the id.
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        opened: list[FakeWS] = []
+        transport._open = self._open_recorder(opened)
+
+        await transport.send_request(_request_info(is_final_turn=False), {"model": "m"})
+        opened[0].closed = True
+        record = await transport.send_request(
+            _request_info(
+                is_final_turn=True, turn_index=1, previous_response_id="resp_1"
+            ),
+            {"model": "m", "previous_response_id": "resp_1", "store": True},
+        )
+
+        assert record.error is None
+        assert record.status == 200
+        assert len(opened) == 2
+        assert opened[1].sent
+        await transport.stop()
+
 
 @pytest.mark.asyncio
 class TestForkCrossConnectionChaining:
@@ -659,6 +682,24 @@ class TestForkCrossConnectionChaining:
                 previous_response_id="resp_parent",
             ),
             {"model": "m", "previous_response_id": "resp_parent"},
+        )
+        transport.warning.assert_not_called()
+        await transport.stop()
+
+    async def test_no_warning_when_store_requested_per_turn(self) -> None:
+        # Endpoint-level extra has no store, but the per-turn payload does; that
+        # persists the child's inherited id server-side, so no warning.
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        transport.warning = MagicMock()
+        transport._open = self._open_recorder([])
+
+        await transport.send_request(
+            _request_info(
+                x_correlation_id="conv-child",
+                previous_response_id="resp_parent",
+            ),
+            {"model": "m", "previous_response_id": "resp_parent", "store": True},
         )
         transport.warning.assert_not_called()
         await transport.stop()
