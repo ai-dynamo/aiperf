@@ -434,17 +434,19 @@ class TestConcurrencyManager:
     @pytest.mark.asyncio
     async def test_release_stuck_slots_returns_counts(self) -> None:
         m = ConcurrencyManager()
-        m.configure_for_phase(P, 10, 5)
+        m.configure_for_phase(P, 10, 5, 10)
         for _ in range(3):
             await m.acquire_session_slot(P, lambda: True)
         for _ in range(2):
             await m.acquire_prefill_slot(P, lambda: True)
-        assert m.release_stuck_slots(P) == (3, 2)
+        for _ in range(4):
+            await m.acquire_request_slot(P, lambda: True)
+        assert m.release_stuck_slots(P) == (3, 2, 4)
 
     def test_release_stuck_slots_disabled_returns_zero(self) -> None:
         m = ConcurrencyManager()
         m.configure_for_phase(P, None, None)
-        assert m.release_stuck_slots(P) == (0, 0)
+        assert m.release_stuck_slots(P) == (0, 0, 0)
 
     def test_get_session_stats_disabled_returns_none(self) -> None:
         m = ConcurrencyManager()

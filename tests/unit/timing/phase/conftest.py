@@ -42,7 +42,7 @@ def mock_credit_router() -> MagicMock:
 def mock_credit_manager() -> MagicMock:
     m = MagicMock()
     m.configure_for_phase = MagicMock()
-    m.release_stuck_slots = MagicMock(return_value=(0, 0))
+    m.release_stuck_slots = MagicMock(return_value=(0, 0, 0))
     return m
 
 

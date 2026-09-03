@@ -1,5 +1,5 @@
 {
-  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. Key: (check, file, identifier). Function/class identifiers are qualnames (e.g. 'FixedTrialsStrategy.__init__'); call-site identifiers (stdlib-json, exception-message) are '<enclosing-qualname>::<call-or-message>'. A trailing '#N' (N>=2) marks the Nth occurrence of an identifier that genuinely repeats inside one scope (see _disambiguate). New entries here should be rare and justified; prefer fixing the underlying violation. Kubernetes-operator entries: kopf owns the calling convention for @kopf.on.* handlers (fixed positional kwarg set), so their keyword-only-args entries are permanent, not debt. The EventType duplicate-classes pair is likewise intentional: aiperf.operator.events.EventType is the Kubernetes Event 'type' field (Normal/Warning) and aiperf.endpoints.anthropic_messages.EventType is the Anthropic SSE event name; both match their upstream vocabulary.",
+  "_comment": "Pre-existing violations of tools/check_ergonomics.py. Regenerate with: python tools/check_ergonomics.py --regenerate-baseline. Key: (check, file, identifier). Function/class identifiers are qualnames (e.g. 'FixedTrialsStrategy.__init__'); call-site identifiers (stdlib-json, exception-message) are '<enclosing-qualname>::<call-or-message>'. A trailing '#N' (N>=2) marks the Nth occurrence of an identifier that genuinely repeats inside one scope (see _disambiguate). New entries here should be rare and justified; prefer fixing the underlying violation.",
   "violations": [
     [
       "duplicate-classes",
@@ -395,6 +395,11 @@
       "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
+    ],
+    [
+      "pydantic-fields",
+      "src/aiperf/config/phases.py",
+      "BasePhaseConfig"
     ],
     [
       "pydantic-fields",

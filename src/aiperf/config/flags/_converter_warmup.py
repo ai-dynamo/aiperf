@@ -130,6 +130,19 @@ def _warmup_ramps(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None:
         w["rate_ramp"] = {"duration": rr}
 
 
+def _mirror_warmup_field(
+    w: dict[str, Any], cli: CLIConfig, s: set[str], key: str
+) -> None:
+    # Prefer the warmup-specific flag (``warmup_<key>``); fall back to the
+    # profiling-phase flag (``<key>``) only when the user set it. Neither set
+    # -> leave the key absent.
+    warmup_field = f"warmup_{key}"
+    if warmup_field in s:
+        w[key] = getattr(cli, warmup_field)
+    elif key in s:
+        w[key] = getattr(cli, key)
+
+
 def build_warmup(cli: CLIConfig, *, base_warmup: bool = False) -> dict[str, Any] | None:
     """Build a warmup phase dict from CLIConfig, or return None.
 
@@ -180,10 +193,8 @@ def build_warmup(cli: CLIConfig, *, base_warmup: bool = False) -> dict[str, Any]
         _warmup_pattern_type(w, cli, s)
     _warmup_ramps(w, cli, s)
     _apply_agentic_replay_fields(w, cli)
-    if "warmup_prefill_concurrency" in s:
-        w["prefill_concurrency"] = cli.warmup_prefill_concurrency
-    elif "prefill_concurrency" in s:
-        w["prefill_concurrency"] = cli.prefill_concurrency
+    _mirror_warmup_field(w, cli, s, "prefill_concurrency")
+    _mirror_warmup_field(w, cli, s, "request_concurrency")
     if cli.warmup_grace_period is not None:
         # grace_period is a duration-phase concept (a tail on top of ``duration``);
         # PhaseConfig rejects it without ``duration`` set. Raise a targeted error

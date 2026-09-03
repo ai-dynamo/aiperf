@@ -25,6 +25,7 @@ _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("grace_period", "benchmark_grace_period"),
     ("concurrency", "concurrency"),
     ("prefill_concurrency", "prefill_concurrency"),
+    ("request_concurrency", "request_concurrency"),
     ("requests", "request_count"),
     ("sessions", "conversation_num"),
     ("users", "num_users"),
@@ -85,6 +86,13 @@ def _apply_agentic_replay_fields(phase: dict[str, Any], cli: CLIConfig) -> None:
         and cli.warmup_grace_period is not None
     ):
         phase["agentic_warmup_grace_period"] = cli.warmup_grace_period
+    # The auto-synthesized agentic warmup is not a user-declared warmup phase,
+    # so --warmup-request-concurrency (which only feeds _converter_warmup's
+    # skipped phase) would otherwise be dead on the agentic path. Route it onto
+    # the profiling phase so _build_agentic_warmup_config can throttle the
+    # priming burst separately from profiling intensity.
+    if cli.scenario is not None and "warmup_request_concurrency" in fields_set:
+        phase["agentic_warmup_request_concurrency"] = cli.warmup_request_concurrency
 
 
 _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(

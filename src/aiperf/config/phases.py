@@ -204,6 +204,21 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
+    request_concurrency: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            default=None,
+            description="Max total in-flight requests (must be >= 1). Unlike "
+            "'concurrency' (which caps session trees and lets sub-agent forks "
+            "oversubscribe) and 'prefill_concurrency' (which releases at first "
+            "token), this caps every wire request -- roots and sub-agent forks "
+            "alike -- from dispatch until the response returns. Set it to bound "
+            "the total in-flight requests an engine can see. If None, total "
+            "in-flight is unbounded (default).",
+        ),
+    ]
+
     # -------------------------------------------------------------------------
     # Transition Settings
     # -------------------------------------------------------------------------
@@ -380,6 +395,24 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
+    agentic_warmup_request_concurrency: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            default=None,
+            description="AGENTIC_REPLAY only: total in-flight request cap for the "
+            "auto-synthesized cache-warmup phase, independent of the profiling "
+            "phase's ``request_concurrency``. The warmup burst still primes one "
+            "trajectory per profiling concurrency lane, but only this many "
+            "requests are in flight at once, so the pool warms gently instead of "
+            "thundering-herding the engine, then profiling proceeds at full "
+            "intensity. Routed onto the profiling phase from "
+            "``--warmup-request-concurrency`` and read by "
+            "``timing.config._build_agentic_warmup_config``. None falls back to "
+            "the profiling phase's ``request_concurrency``.",
+        ),
+    ]
+
     _failed_request_threshold_explicitly_set: bool = False
     _trajectory_start_min_ratio_explicitly_set: bool = False
     _trajectory_start_max_ratio_explicitly_set: bool = False
@@ -453,6 +486,14 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ):
             raise ValueError(
                 f"Phase '{self.name}': prefill_concurrency must be <= concurrency"
+            )
+        if (
+            self.prefill_concurrency is not None
+            and self.request_concurrency is not None
+            and self.prefill_concurrency > self.request_concurrency
+        ):
+            raise ValueError(
+                f"Phase '{self.name}': prefill_concurrency must be <= request_concurrency"
             )
         if self.grace_period is not None and self.duration is None:
             raise ValueError(
