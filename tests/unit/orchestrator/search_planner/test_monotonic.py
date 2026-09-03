@@ -9,6 +9,8 @@ tests use synthetic feasibility functions (no Optuna / BoTorch dep — pure-Pyth
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 from pytest import param
 
@@ -46,15 +48,29 @@ def _base_config() -> BenchmarkConfig:
     )
 
 
+def _base_config_rate() -> BenchmarkConfig:
+    """Base config with a rate-controlled profiling phase for real-axis dims."""
+    cfg_dict = _base_config().model_dump(exclude_none=True)
+    cfg_dict["phases"][0] = {
+        "name": "profiling",
+        "type": "poisson",
+        "rate": 1.0,
+        "requests": 10,
+    }
+    return BenchmarkConfig.model_validate(cfg_dict)
+
+
 def _cfg(
     *,
-    lo: int = 1,
-    hi: int = 1000,
+    lo: int | float = 1,
+    hi: int | float = 1000,
     max_iterations: int = 30,
     sla_filters: list[SLAFilter] | None = None,
     monotonic_stability_trials: int = 1,
     objective_metric: str = "output_token_throughput",
     extra_dims: list[SearchSpaceDimension] | None = None,
+    path: str = "phases.profiling.concurrency",
+    kind: Literal["int", "real"] = "int",
 ) -> AdaptiveSearchSweep:
     if sla_filters is None:
         sla_filters = [
@@ -65,11 +81,7 @@ def _cfg(
                 threshold=200.0,
             )
         ]
-    dims = [
-        SearchSpaceDimension(
-            path="phases.profiling.concurrency", lo=lo, hi=hi, kind="int"
-        ),
-    ]
+    dims = [SearchSpaceDimension(path=path, lo=lo, hi=hi, kind=kind)]
     if extra_dims:
         dims.extend(extra_dims)
     return AdaptiveSearchSweep(
@@ -86,6 +98,22 @@ def _cfg(
         random_seed=42,
         sla_filters=sla_filters,
         monotonic_stability_trials=monotonic_stability_trials,
+    )
+
+
+def _real_cfg(
+    *,
+    lo: float = 1.0,
+    hi: float = 1000.0,
+    max_iterations: int = 30,
+) -> AdaptiveSearchSweep:
+    """Adaptive-search config sweeping a real-valued rate dimension."""
+    return _cfg(
+        lo=lo,
+        hi=hi,
+        max_iterations=max_iterations,
+        path="phases.profiling.rate",
+        kind="real",
     )
 
 
@@ -110,10 +138,11 @@ def _drive_to_convergence(
     feasibility_fn,
     *,
     max_loops: int = 60,
+    path: str = "phases.profiling.concurrency",
 ) -> int:
     """Run ask/tell pairs until is_converged() or ask() returns None.
 
-    Returns total iterations consumed. ``feasibility_fn(concurrency: int) -> bool``
+    Returns total iterations consumed. ``feasibility_fn(value) -> bool``
     drives the synthetic SLA verdict — feasible runs report TTFT below the
     200 ms threshold, infeasible runs report above.
     """
@@ -125,7 +154,7 @@ def _drive_to_convergence(
         if proposal is None:
             break
         _, variation = proposal
-        c = variation.values["phases.profiling.concurrency"]
+        c = variation.values[path]
         ttft = 100.0 if feasibility_fn(c) else 300.0
         planner.tell(variation, [_make_result(variation, ttft_p95=ttft)])
         iters += 1
@@ -158,38 +187,23 @@ def test_construction_rejects_empty_sla_filters():
     assert "sla_filter" in str(exc.value).lower()
 
 
-def test_construction_rejects_real_kind_dimension():
-    """Monotonic planner is integer-only; real-valued dim must raise."""
-    cfg = AdaptiveSearchSweep(
-        search_space=[
-            SearchSpaceDimension(
-                path="phases.profiling.rate", lo=1.0, hi=100.0, kind="real"
-            ),
-        ],
-        objectives=[
-            Objective(
-                metric="output_token_throughput",
-                stat="avg",
-                direction=OptimizationDirection.MAXIMIZE,
-            )
-        ],
-        max_iterations=20,
-        n_initial_points=2,
-        random_seed=42,
-        sla_filters=[
-            SLAFilter(
-                metric_tag="time_to_first_token",
-                stat="p95",
-                op="lt",
-                threshold=200.0,
-            )
-        ],
-    )
-    with pytest.raises(ValueError) as exc:
-        MonotonicSLASearchPlanner(_base_config(), cfg)
-    msg = str(exc.value).lower()
-    assert "int" in msg
-    assert "bayesian" in msg
+def test_construction_accepts_real_kind_dimension():
+    """Real-valued dim is accepted; lo/hi stay floats."""
+    planner = MonotonicSLASearchPlanner(_base_config(), _real_cfg(lo=1.0, hi=100.0))
+    assert isinstance(planner._lo, float)
+    assert isinstance(planner._hi, float)
+
+
+def test_construction_rejects_real_dim_with_nonpositive_lo():
+    """kind='real' lo <= 0 raises: the doubling probe would stall/diverge."""
+    with pytest.raises(ValueError, match="lo > 0"):
+        MonotonicSLASearchPlanner(_base_config(), _real_cfg(lo=0.0))
+
+
+def test_construction_rejects_int_dim_with_lo_below_one():
+    """kind='int' lo < 1 raises: the doubling probe would stall/diverge."""
+    with pytest.raises(ValueError, match="lo >= 1"):
+        MonotonicSLASearchPlanner(_base_config(), _cfg(lo=0))
 
 
 # ----------------------------------------------------------------------------
@@ -239,6 +253,46 @@ def test_all_failing_region_reports_no_pass_in_range():
     assert planner.convergence_reason() == "monotonic_no_pass_in_range"
     assert planner.feasible_max is None
     assert planner.infeasible_min == 1
+
+
+def test_real_dim_boundary_in_middle_converges_within_precision():
+    """Boundary at rate=256 in [1, 1000]: O(log N) float bisection,
+    bracket within 5% relative precision, values stay float."""
+    planner = MonotonicSLASearchPlanner(
+        _base_config_rate(),
+        _real_cfg(lo=1.0, hi=1000.0, max_iterations=30),
+    )
+    iters = _drive_to_convergence(
+        planner, lambda x: x < 256.0, path="phases.profiling.rate"
+    )
+    assert iters < 25
+    assert planner.convergence_reason() == "monotonic_precision_reached"
+    feasible_max = planner.feasible_max
+    infeasible_min = planner.infeasible_min
+    assert feasible_max is not None
+    assert infeasible_min is not None
+    assert feasible_max < 256.0 <= infeasible_min
+    # Precision: relative gap under 5%.
+    assert (infeasible_min - feasible_max) / infeasible_min < 0.05
+    assert isinstance(feasible_max, float)
+    assert isinstance(infeasible_min, float)
+
+
+def test_real_dim_small_scale_boundary_uses_relative_precision():
+    """Boundary at 0.5 in [0.1, 1.0]: sub-1.0 axes must converge on
+    relative precision, not an absolute unit-gap shortcut."""
+    planner = MonotonicSLASearchPlanner(
+        _base_config_rate(),
+        _real_cfg(lo=0.1, hi=1.0, max_iterations=30),
+    )
+    _drive_to_convergence(planner, lambda x: x < 0.5, path="phases.profiling.rate")
+    assert planner.convergence_reason() == "monotonic_precision_reached"
+    feasible_max = planner.feasible_max
+    infeasible_min = planner.infeasible_min
+    assert feasible_max is not None
+    assert infeasible_min is not None
+    assert feasible_max < 0.5 <= infeasible_min
+    assert (infeasible_min - feasible_max) / infeasible_min < 0.05
 
 
 def test_non_monotonic_sets_warning_flag_and_finds_a_boundary():
