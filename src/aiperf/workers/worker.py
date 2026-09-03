@@ -1958,13 +1958,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         return not is_truthy_flag(store)
 
     def _warn_fork_replay_once(self) -> None:
-        """Notice once that FORK children replay history rather than chaining.
-
-        Replaying the client-side ``turn_list`` cannot reconstruct server-only
-        outputs (e.g. reasoning items), so surface the tradeoff once. Enabling
-        ``--extra-inputs '{"store": true}'`` (with a persisting backend) keeps
-        the server-side chain instead.
-        """
         if self._warned_fork_replay:
             return
         self._warned_fork_replay = True
