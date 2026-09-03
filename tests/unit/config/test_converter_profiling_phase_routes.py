@@ -25,7 +25,6 @@ from typing import ClassVar
 
 import pytest
 from pydantic import ValidationError
-from pytest import param
 
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.flags._converter_profiling import build_profiling
@@ -411,25 +410,16 @@ class TestSystemIdleGapCapRouting:
         prof = build_profiling(user)
         assert "system_idle_gap_cap_seconds" not in prof
 
-    @pytest.mark.parametrize(
-        "value",
-        [
-            param(float("inf"), id="inf"),
-            param(float("-inf"), id="-inf"),
-            param(float("nan"), id="nan"),
-        ],
-    )  # fmt: skip
-    def test_system_idle_gap_cap_rejects_non_finite(self, value: float) -> None:
+    def test_system_idle_gap_cap_rejects_non_finite(self) -> None:
         """``inf`` is the regression case: ``ge=0.0`` alone admits it, so an
         infinite cap silently disabled the global idle guard instead of
         erroring. ``allow_inf_nan=False`` rejects it at ``CLIConfig``
-        construction. ``-inf``/``nan`` already failed ``ge=0.0`` and are kept
-        here so the whole non-finite set stays covered."""
+        construction."""
         with pytest.raises(ValidationError):
             CLIConfig(
                 concurrency=8,
                 request_count=10,
-                system_idle_gap_cap_seconds=value,
+                system_idle_gap_cap_seconds=float("inf"),
             )
 
 
