@@ -365,6 +365,11 @@ class WorkerGroupManagerBase(BaseComponentService):
         seen: dict[str, None] = {}
         cfg = self.run.cfg
         tokenizer_cfg = getattr(cfg, "tokenizer", None)
+        if (
+            tokenizer_cfg is not None
+            and getattr(tokenizer_cfg, "type", None) == "llamacpp"
+        ):
+            return []
         if tokenizer_cfg is not None and getattr(tokenizer_cfg, "name", None):
             seen.setdefault(tokenizer_cfg.name, None)
         else:

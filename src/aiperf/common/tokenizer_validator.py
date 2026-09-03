@@ -241,6 +241,7 @@ def validate_tokenizer_early(
     from aiperf.common.tokenizer import (
         BUILTIN_TOKENIZER_NAME,
         TIKTOKEN_ENCODING_NAMES,
+        Tokenizer,
     )
     from aiperf.plugin import plugins
 
@@ -259,6 +260,18 @@ def validate_tokenizer_early(
 
     tokenizer_cfg = config.tokenizer
     model_names = config.get_model_names()
+
+    if tokenizer_cfg and tokenizer_cfg.type == "llamacpp":
+        assert tokenizer_cfg.name is not None
+        tokenizer = Tokenizer.from_pretrained(tokenizer_cfg.name, resolve_alias=False)
+        try:
+            logger.info(
+                f"Validated llama.cpp tokenizer API at {tokenizer.resolved_name}"
+            )
+        finally:
+            tokenizer.close()
+        return {model: tokenizer_cfg.name for model in model_names}
+
     names = (
         [tokenizer_cfg.name]
         if tokenizer_cfg and tokenizer_cfg.name
@@ -388,6 +401,7 @@ def _partition_preload_names(
     """
     from pathlib import Path
 
+    from aiperf.common.llamacpp_tokenizer import is_http_tokenizer_url
     from aiperf.common.tokenizer import (
         BUILTIN_TOKENIZER_NAME,
         TIKTOKEN_ENCODING_NAMES,
@@ -399,6 +413,8 @@ def _partition_preload_names(
     hf_names: set[str] = set()
     hf_already_cached: set[str] = set()
     for name in set(resolved_names.values()):
+        if is_http_tokenizer_url(name):
+            continue
         if name == BUILTIN_TOKENIZER_NAME or name in TIKTOKEN_ENCODING_NAMES:
             if _is_tiktoken_cached(name):
                 if logger:

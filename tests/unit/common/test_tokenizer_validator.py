@@ -39,6 +39,7 @@ def mock_cfg() -> MagicMock:
     config.endpoint.type = "openai_chat"
     config.endpoint.use_server_token_count = False
     config.tokenizer.name = None
+    config.tokenizer.type = None
     config.tokenizer.trust_remote_code = False
     config.tokenizer.revision = "main"
     config.get_model_names.return_value = ["gpt-4o", "gpt-4o-mini"]
@@ -406,6 +407,26 @@ class TestValidatorTiktokenShortCircuit:
             "gpt-4o": encoding_name,
             "gpt-4o-mini": encoding_name,
         }
+
+
+@pytest.mark.usefixtures("_mock_endpoint_meta")
+def test_validate_tokenizer_early_llamacpp_probes_api(
+    mock_cfg: MagicMock, mock_logger: MagicMock
+) -> None:
+    mock_cfg.tokenizer.type = "llamacpp"
+    mock_cfg.tokenizer.name = "http://127.0.0.1:8081"
+    tokenizer = MagicMock()
+    tokenizer.resolved_name = "http://127.0.0.1:8081"
+
+    with patch.object(Tokenizer, "from_pretrained", return_value=tokenizer) as load:
+        result = validate_tokenizer_early(mock_cfg, mock_logger)
+
+    load.assert_called_once_with("http://127.0.0.1:8081", resolve_alias=False)
+    tokenizer.close.assert_called_once_with()
+    assert result == {
+        "gpt-4o": "http://127.0.0.1:8081",
+        "gpt-4o-mini": "http://127.0.0.1:8081",
+    }
 
 
 @pytest.mark.usefixtures("_mock_endpoint_meta")

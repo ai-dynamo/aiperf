@@ -65,6 +65,11 @@ def _preload() -> None:
     if not name:
         return
 
+    from aiperf.common.llamacpp_tokenizer import is_http_tokenizer_url
+
+    if is_http_tokenizer_url(name):
+        return
+
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     try:

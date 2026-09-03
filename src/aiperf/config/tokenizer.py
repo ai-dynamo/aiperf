@@ -10,7 +10,7 @@ Re-exported via :mod:`aiperf.config`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field
 
@@ -20,6 +20,7 @@ from aiperf.config.base import BaseConfig
 @dataclass(frozen=True)
 class TokenizerDefaults:
     NAME = None
+    TYPE = None
     REVISION = "main"
     TRUST_REMOTE_CODE = False
     APPLY_CHAT_TEMPLATE = False
@@ -29,8 +30,8 @@ class TokenizerConfig(BaseConfig):
     """
     Tokenizer configuration for token counting and prompt generation.
 
-    AIPerf uses a HuggingFace tokenizer for accurate token counting,
-    which is essential for ISL/OSL enforcement and metrics calculation.
+    AIPerf uses a local tokenizer or a supported remote tokenizer API for
+    accurate token counting, ISL/OSL enforcement, and prompt generation.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -39,13 +40,23 @@ class TokenizerConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="HuggingFace tokenizer identifier, local filesystem path, or `builtin` "
-            "for a zero-network-access tokenizer backed by tiktoken (o200k_base encoding). "
+            description="HuggingFace tokenizer identifier, local filesystem path, `builtin`, "
+            "or a llama.cpp server URL when type is `llamacpp`. "
             "Should match the model's tokenizer for accurate token counts. "
             "If `--tokenizer` is not set and the model name looks like an obvious placeholder "
             "(e.g. `mock-model`, `test-model`, `fake-model`), AIPerf substitutes `builtin` automatically "
             "and emits a warning. "
             "Example: 'meta-llama/Llama-3.1-8B-Instruct'",
+        ),
+    ]
+
+    type: Annotated[
+        Literal["llamacpp"] | None,
+        Field(
+            default=None,
+            description="Remote tokenizer API type. With `llamacpp`, `name` is an "
+            "optional tokenizer-server URL; when omitted, AIPerf reuses the inference "
+            "server URL and calls `/tokenize` and `/detokenize`.",
         ),
     ]
 
@@ -113,7 +124,7 @@ class TokenizerConfig(BaseConfig):
         Returns False if `resolved_names` is set (CLI already resolved aliases),
         True otherwise to enable HuggingFace Hub alias resolution.
         """
-        return self.resolved_names is None
+        return self.type is None and self.resolved_names is None
 
 
 __all__ = [

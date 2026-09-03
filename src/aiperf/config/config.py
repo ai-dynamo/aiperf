@@ -545,6 +545,57 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def resolve_llamacpp_tokenizer_url(self) -> Self:
+        """Resolve llama.cpp tokenizer URLs from the tokenizer or endpoint config."""
+        from aiperf.common.enums import PromptCorpus
+        from aiperf.common.llamacpp_tokenizer import (
+            is_http_tokenizer_url,
+            normalize_llamacpp_base_url,
+        )
+
+        tokenizer = self.tokenizer
+        assert tokenizer is not None
+
+        if tokenizer.type != "llamacpp":
+            if tokenizer.name and is_http_tokenizer_url(tokenizer.name):
+                raise ValueError(
+                    "An HTTP tokenizer URL requires tokenizer.type='llamacpp' "
+                    "(--tokenizer-type llamacpp)"
+                )
+            return self
+
+        if tokenizer.apply_chat_template:
+            raise ValueError(
+                "tokenizer.apply_chat_template is not supported with "
+                "tokenizer.type='llamacpp'; llama.cpp /tokenize accepts rendered "
+                "text, not chat messages"
+            )
+
+        if any(
+            dataset.prompts is not None
+            and dataset.prompts.corpus == PromptCorpus.RANDOM
+            for dataset in self.datasets
+        ):
+            raise ValueError(
+                "prompt corpus 'random' is not supported with "
+                "tokenizer.type='llamacpp'; the llama.cpp tokenizer API does not "
+                "expose the vocabulary metadata required for random token sampling"
+            )
+
+        if tokenizer.name:
+            tokenizer.name = normalize_llamacpp_base_url(tokenizer.name)
+            return self
+
+        bases = {normalize_llamacpp_base_url(url) for url in self.endpoint.urls}
+        if len(bases) != 1:
+            raise ValueError(
+                "--tokenizer-type llamacpp can reuse --url only when all inference "
+                "URLs resolve to one server; pass --tokenizer <url> explicitly"
+            )
+        tokenizer.name = bases.pop()
+        return self
+
+    @model_validator(mode="after")
     def validate_prefill_requires_streaming(self) -> Self:
         """Prefill concurrency requires streaming to measure TTFT boundaries."""
         for phase in self.phases:

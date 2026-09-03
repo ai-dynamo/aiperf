@@ -3,6 +3,7 @@
 
 
 from aiperf.config.flags import CLIConfig
+from aiperf.config.flags._converter_optionals import build_tokenizer
 from aiperf.config.tokenizer import TokenizerDefaults
 
 
@@ -15,6 +16,7 @@ def test_tokenizer_config_defaults():
     """
     config = CLIConfig()
     assert config.tokenizer_name == TokenizerDefaults.NAME
+    assert config.tokenizer_type == TokenizerDefaults.TYPE
     assert config.tokenizer_revision == TokenizerDefaults.REVISION
     assert config.trust_remote_code == TokenizerDefaults.TRUST_REMOTE_CODE
 
@@ -28,6 +30,7 @@ def test_output_config_custom_values():
     """
     custom_values = {
         "tokenizer_name": "custom_tokenizer",
+        "tokenizer_type": "llamacpp",
         "tokenizer_revision": "v1.0.0",
         "trust_remote_code": True,
     }
@@ -35,6 +38,12 @@ def test_output_config_custom_values():
 
     for key, value in custom_values.items():
         assert getattr(config, key) == value
+
+
+def test_build_tokenizer_routes_llamacpp_type():
+    config = CLIConfig(tokenizer_type="llamacpp")
+
+    assert build_tokenizer(config) == {"type": "llamacpp"}
 
 
 class TestGetTokenizerNameForModel:

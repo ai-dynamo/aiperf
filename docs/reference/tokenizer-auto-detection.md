@@ -6,7 +6,7 @@ sidebar-title: Pre-Flight Tokenizer Auto Detection
 
 # Pre-Flight Tokenizer Auto Detection
 
-AIPerf resolves tokenizer names **before** spawning services via lightweight Hub API calls. This pre-flight check catches ambiguous or unknown names immediately without delaying startup: it does **not** download or load the tokenizer. Full tokenizer loading happens later inside each service, where errors like gated repos or missing files are caught and displayed with context-aware panels.
+AIPerf resolves tokenizer names **before** spawning services via lightweight Hub API calls. This pre-flight check catches ambiguous or unknown names immediately without delaying startup: it does **not** download or load a HuggingFace tokenizer. For a llama.cpp tokenizer API, it instead verifies the remote `/tokenize` and `/detokenize` routes with a small round-trip probe. Full tokenizer loading happens later inside each service, where errors like gated repos or missing files are caught and displayed with context-aware panels.
 
 ## How It Works
 
@@ -26,6 +26,37 @@ Use this when you don't need a model-specific tokenizer and just want token coun
 ```bash
 aiperf profile --tokenizer builtin ...
 ```
+
+## llama.cpp Tokenizer API
+
+Pass `--tokenizer-type llamacpp` to use llama.cpp's HTTP tokenizer instead of downloading a HuggingFace tokenizer. When `--tokenizer` is omitted, AIPerf derives the server base URL from `--url` and calls the root `POST /tokenize` and `POST /detokenize` routes:
+
+```bash
+aiperf profile \
+  --model qwen3.5 \
+  --url http://127.0.0.1:8081 \
+  --endpoint-type chat \
+  --tokenizer-type llamacpp \
+  --streaming \
+  --isl 128 \
+  --osl 32 \
+  --concurrency 1 \
+  --request-count 1
+```
+
+If tokenization runs on a different llama.cpp server, pass its base URL with `--tokenizer`:
+
+```bash
+aiperf profile \
+  --url http://inference-host:8081 \
+  --tokenizer-type llamacpp \
+  --tokenizer http://tokenizer-host:8082 \
+  ...
+```
+
+AIPerf accepts a server base URL or a URL ending in a known inference/tokenizer route and normalizes it to the server base. If multiple inference URLs point to different server bases, `--tokenizer` is required. Startup fails before worker creation when either tokenizer route is absent, returns an incompatible response, or fails the round-trip probe.
+
+The llama.cpp tokenizer API exposes tokenization but not the complete vocabulary metadata or a HuggingFace chat template. Consequently, `--prompt-corpus random` and `--apply-chat-template` are not supported with `--tokenizer-type llamacpp`.
 
 ## Placeholder Model Name Detection
 
@@ -150,7 +181,8 @@ The shim is best-effort and idempotent: it is a no-op on `transformers` releases
 
 | Option | Description |
 |---|---|
-| `--tokenizer <name-or-path>` | Explicit tokenizer name, local path, or `builtin` for tiktoken. If omitted, model names are used. |
+| `--tokenizer <name-path-or-url>` | Explicit tokenizer name, local path, or `builtin` for tiktoken. With `--tokenizer-type llamacpp`, an optional llama.cpp server URL; if omitted, the inference URL is reused. |
+| `--tokenizer-type llamacpp` | Use llama.cpp's `POST /tokenize` and `POST /detokenize` API. |
 | `--tokenizer-revision <rev>` | Git revision for the tokenizer repo. Default: `main`. |
 | `--tokenizer-trust-remote-code` | Allow execution of custom tokenizer code from the repo. |
 | `--use-server-token-count` | Skip client-side tokenization. Skips pre-flight validation with non-synthetic data. |

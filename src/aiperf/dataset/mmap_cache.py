@@ -694,6 +694,7 @@ def _tokenizer_identity_from_run(run: BenchmarkRun) -> dict[str, object]:
     )
     return {
         "name": tokenizer_name,
+        "type": getattr(tokenizer_config, "type", None) if tokenizer_config else None,
         "revision": tokenizer_config.revision if tokenizer_config else None,
         "trust_remote_code": bool(
             tokenizer_config.trust_remote_code if tokenizer_config else False

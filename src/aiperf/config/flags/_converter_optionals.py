@@ -44,6 +44,8 @@ def build_tokenizer(cli: CLIConfig) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
     if "tokenizer_name" in tok_set:
         out["name"] = cli.tokenizer_name
+    if "tokenizer_type" in tok_set:
+        out["type"] = cli.tokenizer_type
     if "tokenizer_revision" in tok_set:
         out["revision"] = cli.tokenizer_revision
     if "trust_remote_code" in tok_set:
