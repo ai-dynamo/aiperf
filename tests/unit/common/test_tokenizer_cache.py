@@ -124,6 +124,52 @@ class TestFindCachedModelForAlias:
         assert Tokenizer._find_cached_model_for_alias("gpt2") is None
 
 
+class TestLocalTokenizerDirectory:
+    def test_offline_load_bypasses_huggingface_snapshot_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tokenizer_dir = tmp_path / "tokenizer"
+        tokenizer_dir.mkdir()
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+
+        def unexpected_snapshot_download(*args: object, **kwargs: object) -> None:
+            pytest.fail("local tokenizer path must not use snapshot_download")
+
+        monkeypatch.setattr(
+            "huggingface_hub.snapshot_download", unexpected_snapshot_download
+        )
+        seen: dict[str, object] = {}
+
+        def fake_from_pretrained(
+            name_or_path: str, **kwargs: object
+        ) -> _FakeHfTokenizer:
+            seen["name_or_path"] = name_or_path
+            seen.update(kwargs)
+            return _FakeHfTokenizer()
+
+        with patch(
+            "transformers.AutoTokenizer.from_pretrained",
+            side_effect=fake_from_pretrained,
+        ):
+            tokenizer = Tokenizer.from_pretrained(str(tokenizer_dir))
+
+        assert seen["name_or_path"] == str(tokenizer_dir.resolve())
+        assert tokenizer.resolved_name == str(tokenizer_dir)
+
+    def test_resolve_local_snapshot_expands_user_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tokenizer_dir = tmp_path / "tokenizer"
+        tokenizer_dir.mkdir()
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+        resolved = Tokenizer._resolve_local_snapshot("~/tokenizer", "main")
+
+        assert resolved == str(tokenizer_dir.resolve())
+
+
 class TestTokenizerOnlyRepoCacheLoad:
     """Regression: tokenizer-only HF repos lack ``config.json``.
 
