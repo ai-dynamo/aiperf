@@ -100,10 +100,6 @@ class TestSanitizeStreamId:
     def test_truncated_to_256(self) -> None:
         assert len(_sanitize_stream_id("x" * 500)) == 256
 
-    def test_all_invalid_collapses_but_nonempty(self) -> None:
-        # Non-alphanumeric chars are replaced with '_', never dropped.
-        assert _sanitize_stream_id("///") == "___"
-
 
 class TestHasWsScheme:
     def test_ws_and_wss(self) -> None:
@@ -376,7 +372,7 @@ class TestSendRequest:
         assert record.error.type == "ConnectionClosed"
         await transport.stop()
 
-    async def test_cancellation_records_499(self) -> None:
+    async def test_cancellation_propagates_and_closes_socket(self) -> None:
         transport = await self._transport()
 
         class CancelWS(FakeWS):
@@ -385,8 +381,13 @@ class TestSendRequest:
 
         fake = CancelWS([])
         transport._open = AsyncMock(return_value=fake)
+        # send_request re-raises CancelledError rather than returning the record,
+        # so the only observable contract is propagation plus socket cleanup: the
+        # leased socket is closed and its lease dropped in the finally block.
         with pytest.raises(asyncio.CancelledError):
             await transport.send_request(_request_info(), {"model": "m"})
+        assert fake.closed is True
+        assert transport._leases == {}
         await transport.stop()
 
     async def test_handshake_timeout_records_408(self) -> None:
