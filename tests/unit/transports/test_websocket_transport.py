@@ -286,7 +286,6 @@ class TestSendRequest:
         assert record.error is None
         assert len(record.responses) == 3
         assert all(isinstance(r, SSEMessage) for r in record.responses)
-        # The envelope was sent as a JSON text frame.
         assert fake.sent
         sent = orjson.loads(fake.sent[0])
         assert sent["type"] == "response.create"
@@ -466,9 +465,7 @@ class TestPoolAndAffinity:
 
         transport._open = fake_open
 
-        # First (non-final) turn opens a socket and keeps it leased.
         await transport.send_request(_request_info(is_final_turn=False), {"model": "m"})
-        # Second turn on the same conversation reuses the leased socket.
         first_socket = opened[0]
         first_socket._messages = [
             _text({"type": "response.completed", "response": {"id": "r"}})
@@ -539,7 +536,6 @@ class TestReceiveTimeout:
         return me
 
     async def test_receive_raises_when_deadline_passed(self) -> None:
-        # A deadline already in the past short-circuits without awaiting.
         with pytest.raises((TimeoutError, asyncio.TimeoutError)):
             await WebSocketTransport._receive(
                 _HangingWS([]), time.perf_counter_ns() - 1
@@ -593,9 +589,7 @@ class TestReconnectChaining:
         opened: list[FakeWS] = []
         transport._open = self._open_recorder(opened)
 
-        # Turn 1 leases a socket for the conversation.
         await transport.send_request(_request_info(is_final_turn=False), {"model": "m"})
-        # The peer drops the idle socket between turns.
         opened[0].closed = True
         # Turn 2 chains onto the prior response but must reconnect; the
         # connection-local cache is gone, so the chained turn cannot succeed.
@@ -711,9 +705,6 @@ class TestForkCrossConnectionChaining:
         return fake_open
 
     async def test_fresh_socket_with_previous_id_sends_chained_turn(self) -> None:
-        # When a previous_response_id reaches the transport (e.g. store:true FORK,
-        # or any chained turn), it is sent as-is on a fresh socket -- the transport
-        # does not fail or rewrite it. The replay decision happens upstream.
         transport = WebSocketTransport(
             model_endpoint=self._endpoint(extra=[("store", True)])
         )
