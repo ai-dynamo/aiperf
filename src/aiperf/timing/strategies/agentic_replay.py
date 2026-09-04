@@ -700,7 +700,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _dispatch_accelerated_trajectory(
         self, trajectory: Trajectory, lane: int
     ) -> None:
-        """Dispatch one lane from its post-snapshot state without idle delays."""
+        """Dispatch one lane from its post-snapshot state without idle delays.
+
+        Snapshot states marked in ``warmup_terminated_correlations`` (roots
+        whose baseline warm turn hit a context overflow) are excluded from
+        pressure dispatch: their terminal accounting already ran on the
+        baseline overflow return, so a continuation would be a guaranteed
+        re-overflow. The set only ever holds depth-0 correlation ids, so
+        children keep their load-bearing dispatch (a terminated child's
+        returned overflow is what drains the parent join).
+        """
         if trajectory.snapshot is None:
             session = self.conversation_source.session_for(trajectory)
             resume_index = trajectory.start_turn_index + 1
@@ -729,8 +738,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 cache_bust_markers=self._session_marker,
             )
 
+        terminated = self.conversation_source.warmup_terminated_correlations
         dispatchable = [
-            state for state in snapshot.states if not state.waiting_on_children
+            state
+            for state in snapshot.states
+            if not state.waiting_on_children
+            and state.x_correlation_id not in terminated
         ]
         has_baseline_root = any(
             state.agent_depth == 0

@@ -3081,6 +3081,96 @@ async def test_baseline_root_overflow_replacement_owns_accelerated_stage() -> No
 
 
 @pytest.mark.asyncio
+async def test_baseline_snapshot_root_overflow_not_redispatched_into_pressure() -> None:
+    """A timestamped root whose baseline warm turn overflowed must be excluded
+    from the accelerated dispatchable states (its terminal accounting already
+    ran on the baseline overflow return), while its live child keeps the
+    load-bearing pressure dispatch."""
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root",
+        next_turn_index=2,
+        agent_depth=0,
+    )
+    child_state = ConversationState(
+        conversation_id="trace_1",
+        x_correlation_id="child",
+        next_turn_index=1,
+        agent_depth=1,
+        parent_correlation_id="root",
+        root_correlation_id="root",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=2,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(root_state, child_state),
+            ),
+        )
+    ]
+    strategy, issuer, _, src = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    baseline = [c.args[0] for c in issuer.issue_credit.await_args_list]
+    by_corr = {t.x_correlation_id: t for t in baseline}
+    assert set(by_corr) == {"root", "child"}
+
+    # Root's baseline warm turn overflows: marked terminated, lane recycled.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id="root",
+            turn_index=by_corr["root"].turn_index,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        ),
+        error="This model's maximum context length is 131072 tokens",
+    )
+    assert src.warmup_terminated_correlations == {"root"}
+    recycled = issuer.issue_credit.await_args_list[-1].args[0]
+    assert recycled.turn_index == 0
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_1",
+            x_correlation_id="child",
+            turn_index=by_corr["child"].turn_index,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+            agent_depth=1,
+            parent_correlation_id="root",
+        )
+    )
+    assert strategy._accelerated_warmup_started is False
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id=recycled.conversation_id,
+            x_correlation_id=recycled.x_correlation_id,
+            turn_index=0,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+    assert strategy._accelerated_warmup_started is True
+
+    issued = [c.args[0] for c in issuer.issue_credit.await_args_list]
+    root_credits = [t for t in issued if t.x_correlation_id == "root"]
+    assert root_credits == [by_corr["root"]]
+    child_credits = [t for t in issued if t.x_correlation_id == "child"]
+    assert len(child_credits) == 2
+    assert child_credits[-1].turn_index == 1
+
+
+@pytest.mark.asyncio
 async def test_warmup_overflow_without_cache_pressure_marks_lane_terminated() -> None:
     """Without ``--agentic-cache-warmup-duration`` a warmup return is otherwise
     a strategy no-op, but a root context overflow must still mark the lane on
