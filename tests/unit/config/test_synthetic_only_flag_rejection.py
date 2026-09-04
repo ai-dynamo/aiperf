@@ -29,6 +29,11 @@ def _cli_fields_referenced(func: Callable[[CLIConfig], dict[str, Any]]) -> set[s
     Covers all four access shapes the builders use: ``"field" in s``,
     ``cli.field``, ``getattr(cli, key)`` over a dict literal, and field names
     passed as string arguments to ``_mean_stddev_pair``.
+
+    Only scans ``func``'s own source, not names it delegates to a
+    module-level constant. All current builders inline their field names, so
+    this holds today; a builder refactored to pull field names from a shared
+    constant would need this scanner updated too.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
     known = set(CLIConfig.model_fields)
