@@ -32,7 +32,7 @@ __all__ = [
 
 # Type aliases for format arrays.
 # Narrow to what the codebase actually emits: MetricsJsonExporter writes the
-# summary JSON, RecordExportJSONLWriter writes the records JSONL. No YAML
+# summary JSON, RecordShardJSONLWriter writes the records JSONL. No YAML
 # summary exporter and no records-CSV exporter exist; do not advertise them.
 SummaryExportFormat = Literal["json"]
 RecordsExportFormat = Literal["jsonl"]
@@ -42,6 +42,7 @@ RecordsExportFormat = Literal["jsonl"]
 class OutputDefaults:
     ARTIFACT_DIRECTORY = Path("./artifacts")
     RAW_RECORDS_FOLDER = Path("raw_records")
+    RECORDS_SHARDS_FOLDER = Path("records_shards")
     OUTPUT_FRAGMENTS_FOLDER = Path("output_fragments")
     LOG_FOLDER = Path("logs")
     LOG_FILE = Path("aiperf.log")
