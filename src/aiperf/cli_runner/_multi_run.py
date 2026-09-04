@@ -164,7 +164,11 @@ def _estimate_and_log_duration(
 ) -> Path:
     """Resolve artifact/timing for a probe run, log duration, return base_dir."""
     from aiperf.config import BenchmarkRun
-    from aiperf.config.resolution.resolvers import ArtifactDirResolver, TimingResolver
+    from aiperf.config.resolution.resolvers import (
+        ArtifactDirResolver,
+        DatasetResolver,
+        TimingResolver,
+    )
 
     probe_run = BenchmarkRun(
         benchmark_id="probe",
@@ -173,6 +177,7 @@ def _estimate_and_log_duration(
         variables=dict(plan.variables),
     )
     ArtifactDirResolver().resolve(probe_run, for_probe=True)
+    DatasetResolver().resolve(probe_run)
     TimingResolver().resolve(probe_run)
 
     per_run_duration = probe_run.resolved.total_expected_duration
