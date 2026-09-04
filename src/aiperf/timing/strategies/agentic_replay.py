@@ -661,7 +661,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         assert self._cache_warmup_duration is not None
         self._accelerated_warmup_started = True
         self.credit_issuer.set_max_tokens_override(_WARMUP_MAX_TOKENS)
+        terminated = self.conversation_source.warmup_terminated_correlations
         for trajectory in self.conversation_source.trajectories:
+            if trajectory.x_correlation_id in terminated:
+                continue
             self._seed_trajectory_replay_prefix(trajectory)
         self.credit_issuer.replay_gate.activate()
         self.info(
@@ -677,7 +680,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         )
         results = await asyncio.gather(
             *(
-                self._dispatch_accelerated_trajectory(trajectory, lane)
+                self._dispatch_accelerated_replacement(lane)
+                if trajectory.x_correlation_id in terminated
+                else self._dispatch_accelerated_trajectory(trajectory, lane)
                 for lane, trajectory in enumerate(self.conversation_source.trajectories)
             ),
             return_exceptions=True,
@@ -753,6 +758,32 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 ),
             )
             await self.credit_issuer.issue_credit(turn)
+
+    async def _dispatch_accelerated_replacement(self, lane: int) -> None:
+        """Continue a lane whose sampled root overflowed during baseline warmup.
+
+        The overflow already recycled the lane into a fresh turn-0 session,
+        and that replacement's clean return is what filled the baseline tally,
+        so the replacement -- not the terminated trajectory -- is the lane's
+        live stream. Re-dispatching the terminated trajectory at
+        ``start_turn_index + 1`` would reissue a prompt strictly larger than
+        the one the server already refused, and its return would recycle the
+        trajectory's correlation id a second time and trip the double-recycle
+        guard. If the replacement's baseline credit is still in flight, its
+        eventual return routes through ``_handle_accelerated_warmup_return``
+        on its own.
+        """
+        replacement = next(
+            (
+                credit
+                for correlation_id, credit in self._baseline_warmup_returns.items()
+                if self._correlation_to_lane.get(correlation_id) == lane
+            ),
+            None,
+        )
+        if replacement is None:
+            return
+        await self._handle_accelerated_warmup_return(replacement)
 
     def observe_credit_return(self, credit: Credit) -> None:
         """Track the next live turn for the warmup-to-profile handoff."""
@@ -1250,6 +1281,21 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._mint_marker_for_session(
             session.effective_root_correlation_id, trajectory.conversation_id, lane
         )
+
+        if (
+            session.x_correlation_id
+            in self.conversation_source.warmup_terminated_correlations
+        ):
+            self.info(
+                f"Trajectory {trajectory.conversation_id} overflowed the context "
+                f"window during WARMUP; recycling lane {lane} instead of resuming"
+            )
+            await self._spawn_from_recycle_or_id(
+                trajectory.conversation_id,
+                finished_correlation_id=session.x_correlation_id,
+            )
+            return
+
         resume_index = trajectory.start_turn_index + 1
         num_turns = len(session.metadata.turns)
 
@@ -1277,8 +1323,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     ) -> None:
         """Dispatch next turn or recycle on session completion.
 
-        WARMUP returns are no-ops at the strategy level; phase termination is
-        handled by ``SendingCompleteStopCondition`` + grace period. Terminal
+        WARMUP returns route to ``_handle_warmup_return``: they mark root
+        context overflows terminated and drive the optional cache-pressure
+        stage; otherwise they are strategy-level no-ops and phase termination
+        is handled by ``SendingCompleteStopCondition`` + grace period. Terminal
         WARMUP failures are routed by ``CreditCallbackHandler`` directly into
         ``record_warmup_failure`` and surfaced at WARMUP teardown.
 
@@ -1362,15 +1410,26 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     async def _handle_warmup_return(
         self, credit: Credit, error: str | None = None
     ) -> None:
-        """Advance baseline warmup into the optional cache-pressure stage."""
-        if self._cache_warmup_duration is None:
-            return
+        """Advance baseline warmup into the optional cache-pressure stage.
 
+        A root context overflow is also marked terminated on the shared
+        ``TrajectorySource`` regardless of the cache-pressure setting, so the
+        accelerated stage and the PROFILING instance recycle the lane instead
+        of resuming a stream the server already refused at a smaller prompt.
+        """
         terminal_overflow = (
             not credit.is_final_turn
             and error is not None
             and is_context_overflow_response(body=error)
         )
+        if terminal_overflow and credit.agent_depth == 0:
+            self.conversation_source.warmup_terminated_correlations.add(
+                credit.x_correlation_id
+            )
+
+        if self._cache_warmup_duration is None:
+            return
+
         if terminal_overflow:
             self.info(
                 lambda: (

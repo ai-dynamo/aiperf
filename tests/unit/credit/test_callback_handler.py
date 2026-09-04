@@ -1344,8 +1344,8 @@ class TestWarmupEarlyAbort:
     async def test_warmup_overflow_does_not_fire_abort(
         self, early_abort_handler, abort_cb, warmup_strategy
     ):
-        """A context-overflow warmup failure neither records nor fires the
-        abort -- the ProfileCancelCommand broadcast is the bug in #1288."""
+        """A non-cancelled context-overflow warmup failure neither records
+        nor fires the abort."""
         credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
         credit_return = CreditReturn(
             credit=credit,
@@ -1362,9 +1362,9 @@ class TestWarmupEarlyAbort:
     async def test_warmup_overflow_on_final_turn_does_not_fire_abort(
         self, early_abort_handler, abort_cb, warmup_strategy
     ):
-        """Final-turn overflow reaches ``_handle_warmup_failure`` via the
-        non-overflow-terminal branch (``overflow_terminal`` is False) and must
-        also bypass recording and the abort."""
+        """The overflow bypass must be independent of ``is_final_turn``:
+        gating it on non-final turns would send final-turn overflows back
+        into recording and the live abort."""
         credit = make_credit(turn_index=2, num_turns=3, phase=CreditPhase.WARMUP)
         assert credit.is_final_turn
         credit_return = CreditReturn(
