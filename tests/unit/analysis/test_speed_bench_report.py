@@ -11,15 +11,18 @@ import pytest
 
 from aiperf.analysis.speed_bench_report import (
     PROFILE_JSON,
+    PROFILE_JSONL,
     SERVER_METRICS_JSON,
     SpeedBenchReportError,
     _get_metric_stat,
+    acceptance_from_records,
     build_report,
     detect_columns,
     extract_accept_length,
     extract_accept_rate,
     extract_category,
     extract_model,
+    extract_summary_acceptance,
     extract_throughput,
     find_run_dirs,
     generate_report,
@@ -66,11 +69,32 @@ def _public_profile(dataset: str, model: str | None = "test-model") -> dict:
     return {"input_config": input_config}
 
 
+def _record(
+    category: str | None,
+    accepted: int,
+    drafted: int,
+    steps: int,
+    phase: str = "profiling",
+) -> dict:
+    """Construct one ``profile_export.jsonl`` line carrying an acceptance record."""
+    return {
+        "metadata": {"benchmark_phase": phase, "source_kind": category},
+        "metrics": {},
+        "spec_decode_acceptance": {
+            "engine": "vllm",
+            "num_accepted_draft_tokens": accepted,
+            "num_draft_tokens": drafted,
+            "num_spec_steps": steps,
+        },
+    }
+
+
 def _write_run_dir(
     tmp_path: Path,
     name: str,
     profile: dict | None,
     server_metrics: dict | None = None,
+    records: list[dict] | None = None,
 ) -> Path:
     """Materialize a fake run directory on disk and return its path."""
     run_dir = tmp_path / name
@@ -79,6 +103,10 @@ def _write_run_dir(
         (run_dir / PROFILE_JSON).write_bytes(orjson.dumps(profile))
     if server_metrics is not None:
         (run_dir / SERVER_METRICS_JSON).write_bytes(orjson.dumps(server_metrics))
+    if records is not None:
+        (run_dir / PROFILE_JSONL).write_bytes(
+            b"\n".join(orjson.dumps(record) for record in records) + b"\n"
+        )
     return run_dir
 
 
@@ -459,6 +487,287 @@ class TestBuildReport:
         empty = tmp_path / "no_profile"
         empty.mkdir()
         assert build_report([empty], metric_type="accept_length") == {}
+
+
+class TestAcceptanceFromRecords:
+    """The per-request path: one run's records fan out into per-category cells."""
+
+    def test_groups_records_by_source_kind(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            _profile(dataset="speed_bench_qualitative", model="m1"),
+            records=[
+                _record("coding", accepted=30, drafted=50, steps=10),
+                _record("coding", accepted=10, drafted=50, steps=10),
+                _record("math", accepted=60, drafted=100, steps=20),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "qualitative")
+
+        # coding: 1 + 40/20 = 3.0; math: 1 + 60/20 = 4.0
+        assert values == {"coding": 3.0, "math": 4.0}
+
+    def test_accept_rate_is_token_weighted_across_the_category(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            _profile(dataset="speed_bench_qualitative", model="m1"),
+            records=[
+                _record("coding", accepted=30, drafted=50, steps=10),
+                _record("coding", accepted=10, drafted=150, steps=10),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_rate", "qualitative")
+
+        # Summed, not averaged per request: 40/200 = 0.2 (per-request mean is 0.33).
+        assert values == {"coding": 0.2}
+
+    def test_warmup_records_are_excluded(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[
+                _record("coding", accepted=90, drafted=100, steps=10, phase="warmup"),
+                _record("coding", accepted=10, drafted=50, steps=10),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "coding")
+
+        assert values == {"coding": 2.0}
+
+    def test_excluded_warmup_phase_kind_is_also_dropped(self, tmp_path: Path):
+        # A phase can be warmup-kind under a different name; both signals count.
+        warmup = _record("coding", accepted=90, drafted=100, steps=10)
+        warmup["metadata"] = {
+            "benchmark_phase": "profiling",
+            "phase_kind": "warmup",
+            "source_kind": "coding",
+        }
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[warmup, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_record_missing_a_counter_does_not_skew_its_category(self, tmp_path: Path):
+        # A half-folded record would inflate accepted without its steps.
+        partial = _record("coding", accepted=999, drafted=999, steps=0)
+        del partial["spec_decode_acceptance"]["num_spec_steps"]
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[partial, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_records_without_source_kind_fall_back_to_run_category(
+        self, tmp_path: Path
+    ):
+        # spec_al_* public datasets carry no per-row category.
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_gsm8k",
+            _public_profile(dataset="spec_al_gsm8k", model="m1"),
+            records=[_record(None, accepted=20, drafted=40, steps=10)],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "gsm8k")
+
+        assert values == {"gsm8k": 3.0}
+
+    def test_records_without_acceptance_are_ignored(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[
+                {"metadata": {"benchmark_phase": "profiling"}, "metrics": {}},
+                _record("coding", accepted=10, drafted=50, steps=10),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "coding")
+
+        assert values == {"coding": 2.0}
+
+    def test_zero_step_category_is_omitted(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[_record("coding", accepted=0, drafted=0, steps=0)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {}
+
+    def test_unparseable_line_does_not_sink_the_run(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+        with open(run_dir / PROFILE_JSONL, "ab") as f:
+            f.write(b'{"metadata": {"benchm\n')
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_missing_jsonl_returns_empty(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path, "run_coding", _profile(dataset="speed_bench_coding", model="m1")
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {}
+
+
+class TestExtractSummaryAcceptance:
+    def test_accept_length_read_verbatim(self):
+        profile = {"spec_decode_token_weighted_acceptance_length": {"avg": 3.2}}
+        assert extract_summary_acceptance(profile, "accept_length") == 3.2
+
+    def test_accept_rate_converted_from_percent_to_fraction(self):
+        # The metric is exported as a percentage; the report speaks fractions.
+        profile = {"spec_decode_overall_draft_acceptance_rate": {"avg": 46.0}}
+        assert extract_summary_acceptance(profile, "accept_rate") == 0.46
+
+    def test_missing_metric_returns_none(self):
+        assert extract_summary_acceptance({}, "accept_length") is None
+
+    def test_throughput_has_no_summary_acceptance_tag(self):
+        assert extract_summary_acceptance({}, "throughput") is None
+
+
+class TestBuildReportSources:
+    """Source precedence: per-request records, then summary scalars, then the scrape."""
+
+    def test_single_run_over_aggregate_split_yields_the_full_matrix(
+        self, tmp_path: Path
+    ):
+        _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            _profile(dataset="speed_bench_qualitative", model="m1"),
+            records=[
+                _record("coding", accepted=20, drafted=40, steps=10),
+                _record("math", accepted=30, drafted=40, steps=10),
+                _record("writing", accepted=10, drafted=40, steps=10),
+            ],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 3.0, "math": 4.0, "writing": 2.0}}
+
+    def test_records_take_precedence_over_the_server_scrape(self, tmp_path: Path):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 2.0}}
+
+    def test_source_server_ignores_available_records(self, tmp_path: Path):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(
+            find_run_dirs([tmp_path]), metric_type="accept_length", source="server"
+        )
+
+        assert report == {"m1": {"coding": 9.9}}
+
+    def test_source_records_does_not_fall_back_to_the_scrape(self, tmp_path: Path):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+        )
+
+        report = build_report(
+            find_run_dirs([tmp_path]), metric_type="accept_length", source="records"
+        )
+
+        assert report == {"m1": {"coding": None}}
+
+    def test_source_summary_reads_only_the_run_level_scalars(self, tmp_path: Path):
+        # --source summary must ignore both the per-request trace and the scrape.
+        profile = _profile(dataset="speed_bench_coding", model="m1")
+        profile["spec_decode_token_weighted_acceptance_length"] = {"avg": 3.5}
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            profile,
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(
+            find_run_dirs([tmp_path]), metric_type="accept_length", source="summary"
+        )
+
+        assert report == {"m1": {"coding": 3.5}}
+
+    def test_summary_metrics_used_when_no_records_exist(self, tmp_path: Path):
+        # An --export-level summary run has no JSONL but still carries the
+        # run-level per-request scalars.
+        profile = _profile(dataset="speed_bench_coding", model="m1")
+        profile["spec_decode_token_weighted_acceptance_length"] = {"avg": 3.5}
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            profile,
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 3.5}}
+
+    def test_throughput_stays_one_column_per_run(self, tmp_path: Path):
+        # Throughput is a whole-run rate, so per-request records must not split
+        # it per category even when they carry categories.
+        profile = _profile(dataset="speed_bench_qualitative", model="m1")
+        profile["output_token_throughput"] = {"avg": 1234.0}
+        _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            profile,
+            records=[
+                _record("coding", accepted=20, drafted=40, steps=10),
+                _record("math", accepted=30, drafted=40, steps=10),
+            ],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="throughput")
+
+        assert report == {"m1": {"qualitative": 1234.0}}
 
 
 class TestPrintTable:

@@ -38,7 +38,11 @@ class TestSpeedBenchReportCommand:
         )
 
         mock_generate_report.assert_called_once_with(
-            paths, output=output, output_format="csv", metric="accept_rate"
+            paths,
+            output=output,
+            output_format="csv",
+            metric="accept_rate",
+            source="auto",
         )
 
     def test_default_output_path(self, mock_generate_report: MagicMock) -> None:

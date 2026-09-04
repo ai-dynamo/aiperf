@@ -21,8 +21,12 @@ cleanly when they are not.
 >   reads them inline during a normal `aiperf profile` run. Highest fidelity -- you get
 >   per-request distributions (avg/min/percentiles) and a pooled histogram. Direct-to-vLLM only.
 > - **Server scrape:** aggregate acceptance is read from the server's Prometheus `/metrics`
->   endpoint via `--server-metrics` and assembled with `aiperf speed-bench-report`. See the
->   [SPEED-Bench tutorial](speed-bench.md) for that path and for ready-made datasets.
+>   endpoint via `--server-metrics`. Works on engines with no per-request reporting
+>   (SGLang, TensorRT-LLM) and behind Dynamo, but the numbers cover the whole server.
+>
+> For a per-category acceptance matrix over a ready-made speculative-decoding dataset, see the
+> [SPEED-Bench tutorial](speed-bench.md), which covers both paths: on the per-request path a
+> single run produces the whole matrix, on the scrape path it takes one run per category.
 
 For the record shape and the adapter that fills it, see
 [Per-Request Speculative-Decoding Acceptance](../reference/spec-decode-acceptance.md); for
@@ -191,7 +195,7 @@ the expected clean-degradation behavior -- not an error. Common causes:
 - speculative decoding is off, or the requests had no verify steps;
 - the server was not started with `--per-request-spec-decode-metrics`;
 - the server is behind Dynamo, which strips the custom field (use the
-  [server-scrape path](speed-bench.md) instead);
+  [server-scrape path](speed-bench.md#portable-path-server-scrape) instead);
 - the vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915).
 
 ---
@@ -200,5 +204,5 @@ the expected clean-degradation behavior -- not an error. Common causes:
 
 - [Speculative Decoding Metrics](../metrics-reference.md#speculative-decoding-metrics) -- metric definitions and formulas.
 - [Per-Request Speculative-Decoding Acceptance](../reference/spec-decode-acceptance.md) -- the engine-neutral record and adapter architecture.
-- [SPEED-Bench tutorial](speed-bench.md) -- the server-scrape acceptance path and ready-made speculative-decoding datasets.
+- [SPEED-Bench tutorial](speed-bench.md) -- ready-made speculative-decoding datasets and the per-category acceptance matrix, on either path.
 - [SpecBench tutorial](spec-bench.md) -- profiling with the SpecBench speculative-decoding dataset.

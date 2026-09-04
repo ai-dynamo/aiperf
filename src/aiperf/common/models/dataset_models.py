@@ -211,8 +211,10 @@ class TurnMetadata(AIPerfBaseModel):
     source_kind: str | None = Field(
         default=None,
         description=(
-            "Loader-specific source classification for the reconstructed turn "
-            "(for example weka_main or weka_flat)."
+            "Loader-specific label for the turn's origin: Weka trace loaders "
+            "set the reconstruction kind (weka_main, weka_flat), the "
+            "SPEED-Bench loader sets the row's benchmark category (coding, "
+            "math, low_entropy)."
         ),
     )
     replay_predecessors: list["ReplayTurnReference"] = Field(
@@ -339,8 +341,10 @@ class Turn(AIPerfBaseModel):
     source_kind: str | None = Field(
         default=None,
         description=(
-            "Loader-specific source classification for the reconstructed turn "
-            "(for example weka_main or weka_flat)."
+            "Loader-specific label for the turn's origin: Weka trace loaders "
+            "set the reconstruction kind (weka_main, weka_flat), the "
+            "SPEED-Bench loader sets the row's benchmark category (coding, "
+            "math, low_entropy)."
         ),
     )
     replay_predecessors: list["ReplayTurnReference"] = Field(

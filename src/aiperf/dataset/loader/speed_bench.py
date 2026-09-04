@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field, ValidationError, model_validator
 
-from aiperf.common.models import AIPerfBaseModel
+from aiperf.common.models import AIPerfBaseModel, Conversation
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.multi_turn import MultiTurnDatasetLoader
 
@@ -133,6 +133,7 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         """
         self.category = category
         self.multi_turn = multi_turn
+        self._category_by_session: dict[str, str] = {}
         super().__init__(filename=filename, run=run, **kwargs)
 
     @classmethod
@@ -183,6 +184,7 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
             )
 
             data[multi_turn_data.session_id].append(multi_turn_data)
+            self._category_by_session[multi_turn_data.session_id] = loaded_line.category
 
         if self.category and not data:
             self.warning(
@@ -194,6 +196,29 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
             )
 
         return data
+
+    def convert_to_conversations(
+        self, data: dict[str, list[MultiTurn]]
+    ) -> list[Conversation]:
+        """Build conversations and stamp each turn with its row's category.
+
+        The category rides ``Turn.source_kind``, which the worker copies onto
+        every request and the record processor writes to
+        ``MetricRecordMetadata.source_kind``. That makes each line of
+        ``profile_export.jsonl`` self-describing, so a single run over an
+        aggregate split (``speed_bench_qualitative``, ``speed_bench_throughput_1k``)
+        can be broken down per category afterwards -- by
+        ``aiperf speed-bench-report`` or any other consumer -- without needing
+        the source JSONL, which the artifact directory does not contain.
+        """
+        conversations = super().convert_to_conversations(data)
+        for conversation in conversations:
+            category = self._category_by_session.get(conversation.session_id)
+            if category is None:
+                continue
+            for turn in conversation.turns:
+                turn.source_kind = category
+        return conversations
 
 
 class SpeedBenchSplitLoader(SpeedBenchLoader):
