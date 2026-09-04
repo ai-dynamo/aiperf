@@ -53,7 +53,6 @@ _SOCKET_CLOSED = object()
 
 
 def _decode_event(data: str) -> dict[str, Any] | None:
-    """Parse a frame payload into an event dict, or None if not a JSON object."""
     try:
         event = orjson.loads(data)
     except orjson.JSONDecodeError:
@@ -62,7 +61,6 @@ def _decode_event(data: str) -> dict[str, Any] | None:
 
 
 def _has_ws_scheme(url: str) -> bool:
-    """Return True if ``url`` already starts with ``ws://`` or ``wss://``."""
     lowered = url.lower()
     return lowered.startswith(("ws://", "wss://"))
 
@@ -121,7 +119,6 @@ class WebSocketTransport(BaseTransport):
 
     @classmethod
     def metadata(cls) -> TransportMetadata:
-        """Return WebSocket transport metadata."""
         return TransportMetadata(
             transport_type=TransportType.WEBSOCKET,
             url_schemes=["ws", "wss"],
@@ -522,7 +519,6 @@ class WebSocketTransport(BaseTransport):
 
     @staticmethod
     def _error_from_event(event: dict[str, Any]) -> ErrorDetails:
-        """Build ErrorDetails from a failure event's nested error/response."""
         err = event.get("error")
         if isinstance(err, dict):
             return ErrorDetails(
