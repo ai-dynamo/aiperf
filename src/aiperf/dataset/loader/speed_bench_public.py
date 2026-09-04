@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -266,9 +267,14 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
         )
         SPEED_BENCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+        # Per-config temp file: the name is process- and config-unique so two
+        # AIPerf invocations resolving concurrently cannot truncate each other's
+        # partial write before either is published.
+        tmp_path = cache_path.with_suffix(f".jsonl.{os.getpid()}.partial")
         try:
             from datasets import load_dataset as hf_load_dataset
 
+            cls._reset_resolver_state(speed_bench_prepare)
             dataset = hf_load_dataset(hf_dataset_name, config, split=hf_split)
             # Whole-config, in upstream's row order -- see the class docstring.
             dataset = speed_bench_prepare._resolve_external_data(dataset, config)
@@ -280,16 +286,35 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
                 },
                 remove_columns=["turns"],
             )
+            dataset.to_json(tmp_path)
+            cls._reject_unresolved(config, tmp_path)
+        except DatasetLoaderError:
+            tmp_path.unlink(missing_ok=True)
+            raise
         except Exception as e:
+            # Covers the write itself: an ENOSPC or permissions failure in
+            # to_json would otherwise leave a partial file behind.
+            tmp_path.unlink(missing_ok=True)
             raise DatasetLoaderError(cls._resolution_failed_message(config, e)) from e
 
-        tmp_path = cache_path.with_suffix(".jsonl.partial")
-        dataset.to_json(tmp_path)
-        cls._reject_unresolved(config, tmp_path)
         # Publish atomically: a half-written cache must never look complete to
         # the next run, which would silently benchmark placeholder text.
         tmp_path.replace(cache_path)
         return cache_path
+
+    @staticmethod
+    def _reset_resolver_state(speed_bench_prepare: Any) -> None:
+        """Re-seed the vendored resolver's module-global RNG.
+
+        Upstream seeds ``HLE_RNG`` once at import and consumes it while building
+        throughput prompts, so resolving a second config in the same process
+        continues from the first one's stream and produces prompts that differ
+        from a fresh process. Re-seeding per config restores the property that
+        a config's output depends only on the config.
+        """
+        import numpy as np
+
+        speed_bench_prepare.HLE_RNG = np.random.default_rng(42)
 
     @classmethod
     def _reject_unresolved(cls, config: str, path: Path) -> None:
@@ -363,8 +388,9 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
 
             conversations.append(
                 Conversation(
-                    session_id=str(row.get("question_id"))
-                    or self.session_id_generator.next(),
+                    session_id=str(question_id)
+                    if (question_id := row.get("question_id"))
+                    else self.session_id_generator.next(),
                     turns=[Turn(texts=[Text(contents=[text])]) for text in texts],
                 )
             )

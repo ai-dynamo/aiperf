@@ -234,6 +234,21 @@ def _public_dataset_loaders(plan: BenchmarkPlan):
         yield LoaderClass, ({"hf_subset": hf_subset} if hf_subset else {})
 
 
+def _call_optional_hook(
+    loader_class: type, name: str, kwargs: dict[str, object]
+) -> None:
+    """Invoke a preflight hook when the loader defines one.
+
+    ``PublicDatasetLoaderProtocol`` does not require these hooks, so a loader
+    registered by an external plugin need not implement them. Absence means
+    "nothing to prepare", matching how ``_preflight_accuracy_deps`` treats the
+    optional ``check_available`` hook.
+    """
+    hook = getattr(loader_class, name, None)
+    if callable(hook):
+        hook(**kwargs)
+
+
 def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
     """Verify gated public datasets are reachable before anything expensive.
 
@@ -243,7 +258,7 @@ def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
     immediate, actionable message.
     """
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
-        LoaderClass.preflight_access(**kwargs)
+        _call_optional_hook(LoaderClass, "preflight_access", kwargs)
 
 
 def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
@@ -269,4 +284,4 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
         )
 
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
-        LoaderClass.preflight_materialize(**kwargs)
+        _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)

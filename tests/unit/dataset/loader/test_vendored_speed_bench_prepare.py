@@ -38,10 +38,3 @@ def test_vendored_prepare_script_is_unmodified():
         "Do not edit vendored files: fix it upstream in NVIDIA-NeMo/Skills, "
         "then re-vendor and update UPSTREAM_COMMIT/UPSTREAM_SHA256 together."
     )
-
-
-def test_vendored_prepare_script_retains_its_licence_header():
-    header = VENDORED.read_text(encoding="utf-8")[:600]
-
-    assert "Copyright (c) 2026, NVIDIA CORPORATION" in header
-    assert "Apache License, Version 2.0" in header

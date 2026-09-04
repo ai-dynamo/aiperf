@@ -165,8 +165,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset speed_bench_coding \
-    --osl 4096 \
-    --extra-inputs temperature:0 \
+    --extra-inputs temperature:0 max_tokens:4096 \
     --concurrency 16
 ```
 
@@ -192,8 +191,7 @@ aiperf profile \
     --url localhost:8000 \
     --public-dataset speed_bench_coding \
     --server-metrics http://localhost:8000/metrics \
-    --osl 4096 \
-    --extra-inputs temperature:0 \
+    --extra-inputs temperature:0 max_tokens:4096 \
     --concurrency 16 \
     --output-artifact-dir ./artifacts/speed_bench_coding
 ```
@@ -215,8 +213,7 @@ for cat in $CATEGORIES; do
       --url localhost:8000 \
       --public-dataset speed_bench_${cat} \
       --server-metrics http://localhost:8000/metrics \
-      --osl 4096 \
-      --extra-inputs temperature:0 \
+      --extra-inputs temperature:0 max_tokens:4096 \
       --concurrency 16 \
       --output-artifact-dir "./artifacts/speed_bench_${cat}"
 done
