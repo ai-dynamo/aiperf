@@ -567,7 +567,9 @@ Behavior worth knowing:
 > `--rankings-*` options. A file or public dataset supplies its own media and passages,
 > so these previously did nothing at all; they are now an error. The per-modality
 > batch-size flags remain supported with `--custom-dataset-type random_pool`, where they
-> control how many items are packed per request.
+> control how many items are packed per request -- but only when `--input-file` points
+> at a single random-pool file, not a directory: a directory forms a separately named
+> pool per file, and batching across pools has no defined meaning.
 
 ---
 

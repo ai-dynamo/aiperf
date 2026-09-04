@@ -644,13 +644,10 @@ _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
     ("conversation_turn_delay_mean", "--conversation-turn-delay-mean"),
     ("conversation_turn_delay_stddev", "--conversation-turn-delay-stddev"),
     ("conversation_turn_delay_ratio", "--conversation-turn-delay-ratio"),
-    # Synthetic media SHAPE and rankings generation. The batch-size members of
-    # these families are listed above (and exempted for random_pool); the shape
-    # knobs below have no rescue path at all, so setting them alongside
-    # --input-file / --public-dataset was a pure no-op: a file dataset supplies
-    # its own media and passages, and FileDataset/PublicDataset have no field to
-    # receive the values. Kept in sync with the _build_* functions by
-    # tests/unit/config/test_synthetic_only_flag_rejection.py.
+    # Synthetic media SHAPE and rankings generation, unlike the batch-size
+    # members above, have no rescue path and no field on FileDataset/
+    # PublicDataset to receive them. Kept in sync with the _build_*
+    # functions by tests/unit/config/test_synthetic_only_flag_rejection.py.
     ("rankings_passages_mean", "--rankings-passages-mean"),
     ("rankings_passages_stddev", "--rankings-passages-stddev"),
     ("rankings_passages_prompt_token_mean", "--rankings-passages-prompt-token-mean"),

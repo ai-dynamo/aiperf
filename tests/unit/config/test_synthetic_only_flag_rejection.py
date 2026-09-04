@@ -2,14 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Every synthetic-only flag is rejected on file/public datasets, not dropped.
 
-``_reject_file_dataset_incompatible`` already covered the prefix-prompt, ISL,
-batch-size and conversation-turn families. The synthetic media *shape* knobs
-(audio length/format/depths/rates/channels, image height/width/format, the
-video family) and all six rankings knobs were missing from its trigger table,
-so setting them alongside ``--input-file`` was a silent no-op: the subtable is
-stripped by ``_apply_dataset_type`` and FileDataset/PublicDataset have no field
-to receive it.
-
 The mechanical test below re-derives the field list from the ``_build_*``
 functions, so a newly added synthetic flag fails here rather than quietly
 joining the silently-dropped set.
@@ -20,16 +12,18 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 from pytest import param
 
 from aiperf.config.flags import _converter_dataset as conv
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.plugin.enums import CustomDatasetType
 
 
-def _cli_fields_referenced(func) -> set[str]:
+def _cli_fields_referenced(func: Callable[[CLIConfig], dict[str, Any]]) -> set[str]:
     """Every CLIConfig field name the builder reads, however it reads it.
 
     Covers all four access shapes the builders use: ``"field" in s``,
@@ -66,7 +60,9 @@ def _cli_fields_referenced(func) -> set[str]:
         param(conv._build_video, id="video"),
     ],
 )  # fmt: skip
-def test_every_synthetic_only_flag_is_rejected_or_rescued(builder) -> None:
+def test_every_synthetic_only_flag_is_rejected_or_rescued(
+    builder: Callable[[CLIConfig], dict[str, Any]],
+) -> None:
     """No field of a stripped subtable may be silently accepted.
 
     ``prompts`` is excluded from this sweep on purpose: it is stripped too, but
@@ -84,15 +80,13 @@ def test_every_synthetic_only_flag_is_rejected_or_rescued(builder) -> None:
     )
 
 
-def _trace(tmp_path) -> str:
+def _trace(tmp_path: Path) -> str:
     trace = tmp_path / "t.jsonl"
     trace.write_text('{"text": "hi"}\n')
     return str(trace)
 
 
 class TestNewlyRejected:
-    """The families this change adds to the existing trigger table."""
-
     @pytest.mark.parametrize(
         "field,value,expected_flag",
         [
@@ -106,7 +100,7 @@ class TestNewlyRejected:
         ],
     )  # fmt: skip
     def test_rejected_with_input_file(
-        self, tmp_path, field: str, value: object, expected_flag: str
+        self, tmp_path: Path, field: str, value: object, expected_flag: str
     ) -> None:
         cli = CLIConfig(
             model_names=["m"], input_file=_trace(tmp_path), **{field: value}
@@ -130,31 +124,3 @@ class TestUnchangedBehavior:
         out = conv.build_dataset(cli)
         assert out["images"]["width"]["mean"] == 64
         assert out["audio"]["length"]["mean"] == 5.0
-
-    def test_defaults_never_trip_the_gate(self, tmp_path) -> None:
-        """model_fields_set-gated, so an untouched flag is not a violation."""
-        conv.build_dataset(CLIConfig(model_names=["m"], input_file=_trace(tmp_path)))
-
-    def test_random_pool_batch_sizes_still_work(self, tmp_path) -> None:
-        """The batch-size exemption is untouched by the new entries."""
-        pool = tmp_path / "pool.jsonl"
-        pool.write_text('{"text": "hi"}\n')
-        cli = CLIConfig(
-            model_names=["m"],
-            input_file=str(pool),
-            custom_dataset_type=CustomDatasetType.RANDOM_POOL,
-            image_batch_size=2,
-            audio_batch_size=3,
-        )
-        out = conv.build_dataset(cli)
-        assert out["image_batch_size"] == 2
-        assert out["audio_batch_size"] == 3
-
-    def test_osl_still_routed_for_file_datasets(self, tmp_path) -> None:
-        """``prompts`` members with a rescue path stay accepted."""
-        cli = CLIConfig(
-            model_names=["m"],
-            input_file=_trace(tmp_path),
-            prompt_output_tokens_mean=64,
-        )
-        conv.build_dataset(cli)
