@@ -17,12 +17,13 @@ cleanly when they are not.
 > [!NOTE]
 > There are two ways to get acceptance metrics out of AIPerf; pick by what your server exposes:
 >
-> - **Per-request (this guide):** the stats ride the response body, per choice, so AIPerf
->   reads them inline during a normal `aiperf profile` run. Highest fidelity -- you get
->   per-request distributions (avg/min/percentiles) and a pooled histogram. Direct-to-vLLM only.
+> - **Per-request (this guide):** the stats ride the response body, so AIPerf reads them
+>   inline during a normal `aiperf profile` run. Highest fidelity -- you get per-request
+>   distributions (avg/min/percentiles) and a pooled histogram. Supported for vLLM and
+>   TensorRT-LLM; direct to the engine, not behind Dynamo.
 > - **Server scrape:** aggregate acceptance is read from the server's Prometheus `/metrics`
 >   endpoint via `--server-metrics`. Works on engines with no per-request reporting
->   (SGLang, TensorRT-LLM) and behind Dynamo, but the numbers cover the whole server.
+>   (SGLang) and behind Dynamo, but the numbers cover the whole server.
 >
 > For a per-category acceptance matrix over a ready-made speculative-decoding dataset, see the
 > [SPEED-Bench tutorial](speed-bench.md), which covers both paths: on the per-request path a
@@ -38,15 +39,21 @@ of the metrics reference.
 
 ## Prerequisites
 
-- A vLLM server running **speculative decoding** with **per-request metrics enabled** via
-  `--per-request-spec-decode-metrics summary` (or `detailed`). The field shape tracks vLLM
-  [PR #48915](https://github.com/vllm-project/vllm/pull/48915) -- confirm your vLLM build
-  includes it.
-- **Direct-to-vLLM only.** Behind Dynamo the custom stats field is currently stripped, so
+- A server running **speculative decoding** with **per-request metrics enabled**. Either:
+  - **vLLM** with `--per-request-spec-decode-metrics summary` (or `detailed`). The field
+    shape tracks vLLM [PR #48915](https://github.com/vllm-project/vllm/pull/48915) --
+    confirm your vLLM build includes it.
+  - **TensorRT-LLM** with `per_request_spec_decode_stats: true` in the YAML passed to
+    `--extra_llm_api_options`. PyTorch backend only.
+
+  You do not tell AIPerf which engine you are pointed at -- it recognizes each engine's
+  payload by shape.
+- **Direct to the engine.** Behind Dynamo the custom stats field is currently stripped, so
   the per-request path is unavailable there (use the server-scrape path instead).
-- Streaming works out of the box. In streaming, vLLM sends the metrics on the trailing
-  usage chunk, so AIPerf requests `stream_options.include_usage` on every streaming run;
-  no extra flag is needed.
+- Streaming works out of the box, though the two engines place the payload differently:
+  vLLM sends it on the trailing usage chunk -- so AIPerf requests
+  `stream_options.include_usage` on every streaming run -- while TensorRT-LLM attaches it
+  to the terminal chunk's choice. No extra flag is needed for either.
 
 ---
 
@@ -72,6 +79,42 @@ curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
 ```
+
+---
+
+## Or start a TensorRT-LLM server
+
+TensorRT-LLM has no CLI flag for metrics — they are `TorchLlmArgs` fields set through the
+YAML passed to `--extra_llm_api_options`:
+
+```yaml
+# extra-llm-api-config.yaml
+per_request_spec_decode_stats: true
+speculative_config:
+  decoding_type: Eagle
+  speculative_model_dir: <draft-model-path>
+  max_draft_len: 3
+```
+
+```bash
+trtllm-serve meta-llama/Llama-3.1-8B-Instruct \
+  --extra_llm_api_options extra-llm-api-config.yaml
+```
+
+That YAML field is the whole opt-in -- clients need send nothing, so AIPerf detects the
+payload the same way it detects vLLM's. Verify the server is emitting the field — note it
+sits on the **choice**, not at the response root:
+
+```bash
+curl -s localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+```
+
+Look for `choices[0].speculative_decoding`. A few things differ from vLLM and are expected:
+`num_spec_tokens` is `null` when the server runs with `draft_len_schedule`; the per-step
+arrays are never populated; and the field is absent entirely for a request that drafted
+nothing. Support is PyTorch-backend only.
 
 ---
 
@@ -193,10 +236,14 @@ If the Spec Decode section, histogram, and `spec_decode_*` fields are all absent
 the expected clean-degradation behavior -- not an error. Common causes:
 
 - speculative decoding is off, or the requests had no verify steps;
-- the server was not started with `--per-request-spec-decode-metrics`;
+- the server was not started with per-request reporting enabled -- vLLM's
+  `--per-request-spec-decode-metrics`, or TensorRT-LLM's
+  `per_request_spec_decode_stats: true`;
 - the server is behind Dynamo, which strips the custom field (use the
   [server-scrape path](speed-bench.md#portable-path-server-scrape) instead);
-- the vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915).
+- the vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915);
+- on TensorRT-LLM, the run used the C++/TRT backend, which has no per-position
+  vectors -- per-request reporting is PyTorch-backend only.
 
 ---
 
