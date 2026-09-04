@@ -101,7 +101,12 @@ def test_websocket_transport_accepts_responses_type(
     url: str, transport: str | None
 ) -> None:
     """WebSocket paired with endpoint type 'responses' validates cleanly."""
-    cfg = EndpointConfig(urls=[url], type="responses", transport=transport)
+    cfg = EndpointConfig(
+        urls=[url],
+        type="responses",
+        transport=transport,
+        use_server_token_count=True,
+    )
     assert cfg.urls == [url]
 
 
@@ -137,7 +142,9 @@ def test_ws_with_api_key_rejected() -> None:
     """An API key over unencrypted ws:// would leak the credential in cleartext."""
     with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
         EndpointConfig(
-            urls=["ws://localhost:19000"], type="responses", api_key="secret"
+            urls=["ws://localhost:19000"],
+            type="responses",
+            api_key="secret",
         )
 
 
@@ -157,14 +164,9 @@ def test_wss_with_api_key_allowed() -> None:
         urls=["wss://api.example.com/v1/responses"],
         type="responses",
         api_key="secret",
+        use_server_token_count=True,
     )
     assert cfg.api_key == "secret"
-
-
-def test_ws_without_credentials_allowed() -> None:
-    """A plain ws:// with no credentials is permitted."""
-    cfg = EndpointConfig(urls=["ws://localhost:19000"], type="responses")
-    assert cfg.urls == ["ws://localhost:19000"]
 
 
 def test_ws_with_non_sensitive_header_allowed() -> None:
@@ -173,5 +175,13 @@ def test_ws_with_non_sensitive_header_allowed() -> None:
         urls=["ws://localhost:19000"],
         type="responses",
         headers={"X-Trace-Id": "abc"},
+        use_server_token_count=True,
     )
     assert cfg.urls == ["ws://localhost:19000"]
+
+
+def test_ws_without_server_token_count_rejected() -> None:
+    """WebSocket chaining sends only the newest turn, so client-side ISL would
+    undercount; the transport requires --use-server-token-count."""
+    with pytest.raises(ValidationError, match="usage.prompt_tokens"):
+        EndpointConfig(urls=["ws://localhost:19000"], type="responses")
