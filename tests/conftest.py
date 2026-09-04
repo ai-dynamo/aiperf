@@ -20,6 +20,18 @@ PYTEST_AUTO_WORKER_CPU_FRACTION_ENV = "AIPERF_PYTEST_AUTO_WORKER_CPU_FRACTION"
 PYTEST_XDIST_AUTO_WORKERS_ENV = "PYTEST_XDIST_AUTO_NUM_WORKERS"
 DEFAULT_PYTEST_AUTO_WORKER_CPU_FRACTION = 0.75
 
+# Rich reads TERM to decide whether to emit SGR escapes and how wide to render.
+# Under a capable TERM it interleaves escapes into cell text, so assertions on
+# rendered substrings ("[PHASE]") fail, and it inherits the runner's width, so
+# assertions on table rows fail at narrow sizes -- a suite green on one terminal
+# goes red on another. "dumb" is the one setting that yields plain text at a
+# fixed size. Set before any test module imports a module that builds a Console
+# at import time. Width still needs pinning per console, because "dumb" fixes it
+# at 80 columns: see tests/harness/console.py.
+os.environ["TERM"] = "dumb"
+os.environ.pop("COLUMNS", None)
+os.environ.pop("LINES", None)
+
 
 def _read_cgroup_v2_cpu_capacity(cpu_max_path: Path) -> float | None:
     try:

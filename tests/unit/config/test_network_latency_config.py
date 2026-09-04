@@ -36,7 +36,9 @@ class TestBuildNetworkLatency:
 
     def test_automatic_only_enables(self) -> None:
         cli = _make_cli(network_latency_automatic=True)
-        assert build_network_latency(cli) == {"enabled": True}
+        # mean_ms is emitted explicitly so the override clears a YAML meanMs
+        # rather than inheriting it and skipping probing.
+        assert build_network_latency(cli) == {"enabled": True, "mean_ms": None}
 
     def test_automatic_with_ping_interval_sets_interval(self) -> None:
         cli = _make_cli(
@@ -44,6 +46,7 @@ class TestBuildNetworkLatency:
         )
         assert build_network_latency(cli) == {
             "enabled": True,
+            "mean_ms": None,
             "ping_interval": 0.25,
         }
 

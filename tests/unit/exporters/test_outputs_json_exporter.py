@@ -21,6 +21,7 @@ def _make_fragment(
     request_start_ns: int = 1000000000,
     request_end_ns: int = 2000000000,
     metrics: dict | None = None,
+    benchmark_phase: str = "profiling",
 ) -> dict:
     """Build an output fragment dict suitable for JSONL serialization.
 
@@ -32,6 +33,7 @@ def _make_fragment(
         "turn_index": turn_index,
         "conversation_id": conversation_id,
         "x_request_id": x_request_id,
+        "benchmark_phase": benchmark_phase,
         "response_text": response_text,
         "request_start_ns": request_start_ns,
         "request_end_ns": request_end_ns,
@@ -136,7 +138,7 @@ class TestOutputsJsonExporter:
         assert outputs_file.exists()
 
         data = orjson.loads(outputs_file.read_bytes())
-        assert data["schema_version"] == "1.0"
+        assert data["schema_version"] == "1.1"
         assert len(data["data"]) == 2
 
         entry1 = data["data"][0]
@@ -261,3 +263,188 @@ class TestOutputsJsonExporter:
         texts = {r["session_num"]: r["response_text"] for r in data["data"]}
         assert texts[1] == "from proc1"
         assert texts[2] == "from proc2"
+
+
+class TestOutputsJsonWarmupPartition:
+    """Warmup responses are exported, but kept out of `data`."""
+
+    @pytest.mark.asyncio
+    async def test_warmup_fragments_go_to_warmup_array(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=1, response_text="profiled"),
+                _make_fragment(
+                    session_num=0,
+                    response_text="warmed up",
+                    benchmark_phase="warmup",
+                ),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert [r["response_text"] for r in data["data"]] == ["profiled"]
+        assert [r["response_text"] for r in data["warmup"]] == ["warmed up"]
+
+    @pytest.mark.asyncio
+    async def test_entries_carry_benchmark_phase(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=1),
+                _make_fragment(session_num=0, benchmark_phase="warmup"),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert data["data"][0]["benchmark_phase"] == "profiling"
+        assert data["warmup"][0]["benchmark_phase"] == "warmup"
+
+    @pytest.mark.asyncio
+    async def test_warmup_array_present_and_empty_when_no_warmup(
+        self, tmp_path: Path
+    ) -> None:
+        """`warmup` is always emitted so consumers can index it unconditionally."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [_make_fragment(session_num=1)],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert data["warmup"] == []
+        assert len(data["data"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_fragment_without_phase_treated_as_profiling(
+        self, tmp_path: Path
+    ) -> None:
+        """Only a known-warmup phase may leave `data`.
+
+        Pins the direction of the partition branch: inverting it to test for
+        PROFILING would silently move records with a missing or newly-added
+        phase into `warmup`, dropping them from consumers' denominators.
+        """
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        fragment = _make_fragment(session_num=1, response_text="legacy")
+        del fragment["benchmark_phase"]
+        _write_jsonl(fragments_dir / "output_fragments_proc1.jsonl", [fragment])
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert [r["response_text"] for r in data["data"]] == ["legacy"]
+        assert data["warmup"] == []
+
+    @pytest.mark.asyncio
+    async def test_warmup_array_sorted_independently(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=9, benchmark_phase="warmup"),
+                _make_fragment(session_num=2, benchmark_phase="warmup"),
+                _make_fragment(session_num=5),
+                _make_fragment(session_num=1),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert [r["session_num"] for r in data["data"]] == [1, 5]
+        assert [r["session_num"] for r in data["warmup"]] == [2, 9]
+
+
+class TestLargeExportWarning:
+    """The large-export warning fires on the record count, not the file size.
+
+    outputs.json is sorted, so it cannot stream and holds the whole document in
+    memory. The warning is the only signal a user gets that a run is paying that
+    cost, so pin the boundary rather than leaving log-only behavior untested.
+    """
+
+    @staticmethod
+    def _prepare(
+        tmp_path: Path, record_count: int, threshold: int
+    ) -> tuple[list[str], OutputsJsonExporter]:
+        """Build an exporter over ``record_count`` fragments, capturing warnings."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True, exist_ok=True)
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [_make_fragment(session_num=i) for i in range(record_count)],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = threshold
+
+        warnings: list[str] = []
+        exporter.warning = warnings.append  # type: ignore[method-assign]
+        return warnings, exporter
+
+    @pytest.mark.asyncio
+    async def test_export_record_count_at_threshold_warns(self, tmp_path: Path) -> None:
+        warnings, exporter = self._prepare(tmp_path, 3, threshold=2)
+        await exporter.export()
+
+        assert len(warnings) == 1
+        assert "3 records" in warnings[0]
+        assert "--no-export-outputs-json" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_export_record_count_below_threshold_does_not_warn(
+        self, tmp_path: Path
+    ) -> None:
+        warnings, exporter = self._prepare(tmp_path, 2, threshold=3)
+        await exporter.export()
+
+        assert warnings == []
+
+    @pytest.mark.asyncio
+    async def test_export_warmup_records_count_toward_threshold_warns(
+        self, tmp_path: Path
+    ) -> None:
+        """Warmup records are held in memory too, so they count."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=0),
+                _make_fragment(session_num=1, benchmark_phase="warmup"),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = 2
+        warnings: list[str] = []
+        exporter.warning = warnings.append  # type: ignore[method-assign]
+
+        await exporter.export()
+
+        assert len(warnings) == 1
+        assert "2 records" in warnings[0]

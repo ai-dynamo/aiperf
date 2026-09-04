@@ -336,6 +336,18 @@ class JsonExportData(AIPerfBaseModel):
     input_config: BenchmarkConfig | None = None
     run_info: RunInfo | None = None
     was_cancelled: bool | None = None
+    is_complete: bool | None = Field(
+        default=None,
+        description=(
+            "False when the run degraded before finishing (for example the "
+            "record-stall watchdog fired), so tooling can reject the artifact "
+            "instead of comparing it against complete runs."
+        ),
+    )
+    incomplete_reason: str | None = Field(
+        default=None,
+        description="Human-readable cause when is_complete is False, else None.",
+    )
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None

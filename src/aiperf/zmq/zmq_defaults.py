@@ -49,6 +49,8 @@ class ZMQSocketDefaults:
     TCP_KEEPALIVE_CNT = 3
     IMMEDIATE = 1  # Don't queue messages
     LINGER = 0  # Don't wait on close
+    RECONNECT_IVL = Environment.ZMQ.RECONNECT_IVL
+    RECONNECT_IVL_MAX = Environment.ZMQ.RECONNECT_IVL_MAX
 
     # High Water Mark
     # TODO: Investigate better ways to handle this

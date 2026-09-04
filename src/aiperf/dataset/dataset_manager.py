@@ -18,6 +18,7 @@ import orjson
 from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
@@ -35,9 +36,10 @@ from aiperf.common.messages import (
     ConversationResponseMessage,
     ConversationTurnRequestMessage,
     ConversationTurnResponseMessage,
+    DatasetConfigStatusRequest,
+    DatasetConfigStatusResponse,
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
-    ProfileConfigureCommand,
 )
 from aiperf.common.mixins import ReplyClientMixin
 from aiperf.common.models import (
@@ -74,6 +76,26 @@ if TYPE_CHECKING:
         DatasetClientStoreProtocol,
     )
     from aiperf.plugin.schema.schemas import EndpointMetadata
+
+
+def _dataset_generation_of(client_metadata: DatasetClientMetadata) -> str | None:
+    """Derive a stable identity for the dataset a client metadata describes.
+
+    Worker pods compare this against the generation of the files they already
+    downloaded to decide whether a re-download is needed, so it must change
+    whenever the dataset is rebuilt. The mmap run directory name carries the
+    benchmark id and is created fresh per build, which is exactly that.
+
+    Example:
+        >>> _dataset_generation_of(meta)  # data_file_path=/aiperf/datasets/aiperf_mmap_bench-7f2a/dataset.dat
+        'aiperf_mmap_bench-7f2a'
+
+    Returns None for client stores that expose no file layout.
+    """
+    data_file_path = getattr(client_metadata, "data_file_path", None)
+    if data_file_path is None:
+        return None
+    return Path(data_file_path).parent.name
 
 
 class DatasetManager(ReplyClientMixin, BaseComponentService):
@@ -133,6 +155,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # writes under the same key the lookup would have used.
         self._cache_key_for_run: str | None = None
         self._cache_hit_used: bool = False
+        self._dataset_rebroadcast_task: asyncio.Task[None] | None = None
+        # Last DatasetConfiguredNotification published this run, if any.
+        # DatasetConfiguredNotification is a one-shot PUB/SUB broadcast with
+        # no replay; a subscriber that finishes subscribing after it was
+        # published never receives it. Cached here so DATASET_CONFIG_STATUS_REQUEST
+        # (sent by a RecordProcessor/RecordsManager that hasn't seen the
+        # notification yet) can hand back the already-published config
+        # instead of the requester blocking until CONFIGURATION_TIMEOUT.
+        self._last_dataset_configured_notification: (
+            DatasetConfiguredNotification | None
+        ) = None
 
     def _is_kubernetes_run(self) -> bool:
         """Return whether the optional KUBERNETES service-run plugin is active."""
@@ -143,9 +176,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         )
 
     @on_command(CommandType.PROFILE_CONFIGURE)
-    async def _profile_configure_command(
-        self, message: ProfileConfigureCommand
-    ) -> None:
+    async def _profile_configure_command(self, message: Command) -> None:
         """Configure the dataset.
 
         Wraps the entire configuration sequence so that any failure (synthetic
@@ -154,7 +185,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         exception propagates back to the command-handler. Without this fan-out,
         TimingManager's _profile_configure_command would block on its 300s
         dataset_configured_event timeout while the SystemController has already
-        observed the CommandErrorResponse and is trying to shut down.
+        observed the CommandErr and is trying to shut down.
         """
         try:
             await self._do_profile_configure(message)
@@ -173,7 +204,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 )
             raise
 
-    async def _do_profile_configure(self, message: ProfileConfigureCommand) -> None:
+    async def _do_profile_configure(self, message: Command) -> None:
         """Inner implementation of PROFILE_CONFIGURE handling.
 
         Fast path: cache HIT — restore mmap files and return.
@@ -856,13 +887,15 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             f"unique conversations: {len(self.dataset_metadata.conversations)}, "
             f"unique turn count: {self.dataset_metadata.total_turn_count}"
         )
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-                metadata=self.dataset_metadata,
-                client_metadata=client_metadata,
-            )
+        notification = DatasetConfiguredNotification(
+            service_id=self.service_id,
+            metadata=self.dataset_metadata,
+            client_metadata=client_metadata,
+            benchmark_generation=self.run.benchmark_id,
+            dataset_generation=_dataset_generation_of(client_metadata),
         )
+        self._last_dataset_configured_notification = notification
+        await self.publish(notification)
 
     def _populate_cache_after_run(self) -> None:
         """Write the just-finalized run's mmap files into the cache."""
@@ -891,6 +924,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 else None
             ),
             all_turns_source_loaded_payloads=self._all_turns_source_loaded_payloads,
+            aiperf_version=mmap_cache.aiperf_cache_identity(),
             dataset_metadata_json=self.dataset_metadata.model_dump_json(),
         )
         try:
@@ -998,13 +1032,65 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # Note: dataset_configured event is set in _configure_dataset_client_and_free_memory()
         # after the dataset client is initialized, to avoid a race condition where fallback
         # requests arrive before the client is ready.
-        await self.publish(
-            DatasetConfiguredNotification(
-                service_id=self.service_id,
-                metadata=self.dataset_metadata,
-                client_metadata=client_metadata,
-            )
+        notification = DatasetConfiguredNotification(
+            service_id=self.service_id,
+            metadata=self.dataset_metadata,
+            client_metadata=client_metadata,
+            benchmark_generation=self.run.benchmark_id,
+            dataset_generation=_dataset_generation_of(client_metadata),
         )
+        self._last_dataset_configured_notification = notification
+        await self.publish(notification)
+        self._start_dataset_rebroadcast(notification)
+
+    @on_request(MessageType.DATASET_CONFIG_STATUS_REQUEST)
+    async def _handle_dataset_config_status_request(
+        self, message: DatasetConfigStatusRequest
+    ) -> DatasetConfigStatusResponse:
+        """Return the published configuration to a late subscriber."""
+        self.debug(
+            lambda: f"Handling dataset config status request from {message.service_id}"
+        )
+        return DatasetConfigStatusResponse(
+            service_id=self.service_id,
+            request_id=message.request_id,
+            notification=self._last_dataset_configured_notification,
+        )
+
+    def _start_dataset_rebroadcast(
+        self, notification: DatasetConfiguredNotification
+    ) -> None:
+        """Re-announce the dataset for a bounded window so late pods catch up.
+
+        Kubernetes only. This notification is the sole way a WorkerGroupManager
+        learns a dataset exists, and it is a plain pub/sub broadcast: a worker
+        pod whose containers subscribe after it fires receives nothing, never
+        downloads, and its workers can never become dispatchable. Sibling pods
+        in a JobSet routinely start seconds apart, so that window is real.
+
+        Re-announcing is safe because every consumer is idempotent on the
+        repeat: the WorkerGroupManager short-circuits once the dataset is
+        downloaded, and a Kubernetes Worker defers to the pod-local download.
+        Restricted to Kubernetes precisely because the local-mode Worker path
+        re-opens its dataset client on each notification.
+        """
+        if not self._is_kubernetes_run():
+            return
+        self._dataset_rebroadcast_task = self.execute_async(
+            self._rebroadcast_dataset_configured(notification)
+        )
+
+    async def _rebroadcast_dataset_configured(
+        self, notification: DatasetConfiguredNotification
+    ) -> None:
+        """Re-publish the dataset notification on an interval, then stop."""
+        interval = Environment.DATASET.REBROADCAST_INTERVAL
+        deadline = time.perf_counter() + Environment.DATASET.REBROADCAST_WINDOW
+        while time.perf_counter() < deadline:
+            await asyncio.sleep(interval)
+            if self.stop_requested:
+                return
+            await self.publish(notification)
 
     @on_request(MessageType.CONVERSATION_REQUEST)
     async def _handle_conversation_request(

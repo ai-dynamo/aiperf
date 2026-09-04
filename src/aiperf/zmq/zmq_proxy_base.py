@@ -10,10 +10,15 @@ import zmq.asyncio
 from zmq import SocketType
 
 from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task, on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.config.comm.base import BaseZMQProxyConfig
 from aiperf.zmq.zmq_base_client import BaseZMQClient
+
+# libzmq requires the two ends of a PAIR to share the same context, so this address is
+# never exposed outside the process and needs no config knob.
+_SHUTDOWN_CONTROL_ADDRESS_PREFIX = "inproc://zmq-proxy-shutdown-control-"
 
 
 class ProxyEndType(CaseInsensitiveStrEnum):
@@ -67,6 +72,9 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
     - Monitoring: Optional PUB capture socket that broadcasts forwarded
       messages; ``_monitor_messages`` subscribes to it.
     - Proxy runs in separate thread to avoid blocking main event loop
+    - Shutdown: `zmq.proxy_steerable` runs a blocking native loop in that thread and can only
+      be interrupted with a TERMINATE command on its own internal control socket; the
+      frontend/backend sockets are not closed until that thread has confirmed it exited.
     """
 
     def __init__(
@@ -99,6 +107,8 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         self.proxy_task: asyncio.Task | None = None
         self.control_client: ProxySocketClient | None = None
         self.capture_client: ProxySocketClient | None = None
+        self._shutdown_control_socket: zmq.asyncio.Socket | None = None
+        self._shutdown_control_sender: zmq.asyncio.Socket | None = None
 
         self.config = zmq_proxy_config
 
@@ -216,13 +226,21 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
         """
         self.debug("Starting Proxy...")
 
+        shutdown_control_address = (
+            f"{_SHUTDOWN_CONTROL_ADDRESS_PREFIX}{self.proxy_uuid}"
+        )
+        self._shutdown_control_socket = self.context.socket(SocketType.PAIR)
+        self._shutdown_control_socket.bind(shutdown_control_address)
+        self._shutdown_control_sender = self.context.socket(SocketType.PAIR)
+        self._shutdown_control_sender.connect(shutdown_control_address)
+
         self.proxy_task = asyncio.create_task(
             asyncio.to_thread(
                 zmq.proxy_steerable,
                 self.frontend_socket.socket,
                 self.backend_socket.socket,
                 capture=self.capture_client.socket if self.capture_client else None,
-                control=self.control_client.socket if self.control_client else None,
+                control=self._shutdown_control_socket,
             )
         )
 
@@ -262,12 +280,62 @@ class BaseZMQProxy(AIPerfLifecycleMixin, ABC):
     async def _stop_proxy(self) -> None:
         """Shutdown the BaseZMQProxy."""
         self.debug("Proxy Stopping...")
-        if self.proxy_task:
-            self.proxy_task.cancel()
-            self.proxy_task = None
-        await self.frontend_socket.stop()
-        await self.backend_socket.stop()
+        proxy_thread_exited = await self._terminate_proxy_task()
+        if proxy_thread_exited:
+            # Only safe to close these once the background zmq.proxy_steerable thread has
+            # actually exited - closing them while it is still using them is a data race
+            # that can crash the process (see PROXY_TERMINATE_TIMEOUT docs).
+            await self.frontend_socket.stop()
+            await self.backend_socket.stop()
+        if self._shutdown_control_sender:
+            self._shutdown_control_sender.close()
+            self._shutdown_control_sender = None
+        if self._shutdown_control_socket:
+            self._shutdown_control_socket.close()
+            self._shutdown_control_socket = None
         if self.control_client:
             await self.control_client.stop()
         if self.capture_client:
             await self.capture_client.stop()
+
+    async def _terminate_proxy_task(self) -> bool:
+        """Ask the background `zmq.proxy_steerable` thread to exit, and wait for it to do so.
+
+        `zmq.proxy_steerable` runs a blocking native loop in a real OS thread via
+        `asyncio.to_thread`; cancelling the wrapping asyncio Task does not stop that thread.
+        The frontend/backend sockets must not be closed until the thread has actually exited,
+        since libzmq sockets are not safe to close while another thread is blocked inside them.
+
+        Returns:
+            True if the proxy thread is confirmed to have exited (or was never started), False
+            if it may still be running and the caller must not close the frontend/backend sockets.
+        """
+        if not self.proxy_task:
+            return True
+        proxy_task, self.proxy_task = self.proxy_task, None
+        try:
+            await self._shutdown_control_sender.send(b"TERMINATE")
+        except Exception as e:
+            self.warning(f"Failed to send TERMINATE to proxy control socket: {e}")
+
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(proxy_task),
+                timeout=Environment.ZMQ.PROXY_TERMINATE_TIMEOUT,
+            )
+            return True
+        except TimeoutError:
+            self.error(
+                f"Proxy background thread did not exit within "
+                f"{Environment.ZMQ.PROXY_TERMINATE_TIMEOUT}s of TERMINATE. Leaving the "
+                "frontend/backend sockets open to avoid a use-after-free race with the "
+                "still-running native thread."
+            )
+            return False
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.debug(
+                lambda e=e: f"Proxy task ended with exception during shutdown: {e}"
+            )
+            return True

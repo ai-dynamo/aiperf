@@ -235,7 +235,9 @@ class ColumnStore:
         """
         return self.metadata_category_strings(tag)
 
-    def mask_for_categorical(self, tag: str, value: str) -> NDArray[np.bool_]:
+    def mask_for_categorical(
+        self, tag: str, value: str, *, count: int | None = None
+    ) -> NDArray[np.bool_]:
         """Return a boolean mask of records whose ``tag`` column equals ``value``.
 
         Use case: per-group analyzer queries. Combine with
@@ -248,19 +250,25 @@ class ColumnStore:
                 mask = store.mask_for_categorical("x_correlation_id", value)
                 results = accumulator.compute_results_for_mask(mask)
 
+        ``count`` pins the slice length to a caller-supplied snapshot instead
+        of re-reading ``self._count``.  Pass the snapshot taken at the start of
+        a batch export to avoid size mismatches when ingestion races the call
+        on another thread.
+
         Returns an empty mask if the tag has no column or the value never
         appeared (no false-positive matches via the missing-sentinel).
         """
+        n = count if count is not None else self._count
         table = self._metadata_categories.get(tag)
         if table is None:
-            return np.zeros(self._count, dtype=np.bool_)
+            return np.zeros(n, dtype=np.bool_)
         code = table.get(value)
         if code is None:
-            return np.zeros(self._count, dtype=np.bool_)
+            return np.zeros(n, dtype=np.bool_)
         col = self._metadata_categorical.get(tag)
         if col is None:
-            return np.zeros(self._count, dtype=np.bool_)
-        return col[: self._count] == code
+            return np.zeros(n, dtype=np.bool_)
+        return col[:n] == code
 
     def query_time_range(self, start_ns: float, end_ns: float) -> NDArray[np.bool_]:
         """Return a boolean mask of records overlapping ``[start_ns, end_ns]``.

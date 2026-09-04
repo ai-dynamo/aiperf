@@ -30,8 +30,7 @@ sidebar-title: Comprehensive LLM Benchmarking
     - [Automatic Plot Generation](#automatic-plot-generation)
     - [KV Cache Efficiency Testing](#kv-cache-efficiency-testing)
     - [User-Centric Timing Mode](#user-centric-timing-mode)
-11. [Coming Soon](#coming-soon)
-    - [Kubernetes-Native Benchmarking](#kubernetes-native-benchmarking)
+11. [Kubernetes-Native Benchmarking](#kubernetes-native-benchmarking)
 
 ---
 
@@ -1032,13 +1031,12 @@ aiperf profile \
 
 ---
 
-## Coming Soon
+## Kubernetes-Native Benchmarking
 
-AIPerf is actively developing new capabilities:
+AIPerf supports distributed, operator-managed benchmarking on Kubernetes. See [Getting Started on Kubernetes](kubernetes/getting-started.md) for installation or the [End-to-End Workflow](kubernetes/workflow.md) for the complete benchmark lifecycle.
 
-### Kubernetes-Native Benchmarking
-- **Distributed load generation**: Deploy multiple load-tester pods to simulate thousands of concurrent users
-- **Large-scale workloads**: Test production-scale traffic patterns without client-side bottlenecks
-- **Automated orchestration**: Kubernetes operators to manage benchmark lifecycles and resource allocation
+- **Distributed load generation**: Scale workers across multiple pods, with multiple worker containers per pod
+- **Large-scale workloads**: Generate production-scale traffic without single-client bottlenecks
+- **Automated orchestration**: The operator validates `AIPerfJob` resources and manages JobSets, pod health, cancellation, and durable results
 
 ---
