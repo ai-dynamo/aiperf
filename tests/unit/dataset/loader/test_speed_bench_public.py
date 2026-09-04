@@ -546,6 +546,17 @@ class TestDeterminism:
 class TestResolverStateIsolation:
     """Each config must resolve independently of what ran before it."""
 
+    @pytest.fixture(autouse=True)
+    def _requires_datasets(self):
+        """The vendored resolver imports ``datasets`` at module load.
+
+        It has no Windows-on-ARM wheel, which is why production imports it
+        lazily; resolution is unreachable there, so there is nothing to pin.
+        """
+        pytest.importorskip(
+            "datasets", reason="no Windows-on-ARM wheel; resolution is unreachable"
+        )
+
     def test_rng_is_reseeded_per_config(self) -> None:
         """Upstream seeds HLE_RNG once at import and consumes it building
         throughput prompts, so a second config resolved in the same process
