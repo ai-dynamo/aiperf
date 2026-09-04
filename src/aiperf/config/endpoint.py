@@ -806,6 +806,33 @@ class EndpointConfig(BaseConfig):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_websocket_chaining_requires_server_token_count(self) -> Self:
+        """Require server token counts on the WebSocket transport.
+
+        The WebSocket Responses path always chains via ``previous_response_id``
+        (its connection-local cache resolves the id without ``store``), so every
+        turn after the first sends only the newest turn on the wire. As with the
+        ``store: true`` HTTP path in
+        ``_validate_responses_store_requires_server_token_count``, client-side ISL
+        would then undercount the server-side prompt, so require
+        ``--use-server-token-count``. Defined last so structural/credential errors
+        surface before this metrics-config requirement.
+        """
+        if (
+            self.type == EndpointType.RESPONSES
+            and TransportType.WEBSOCKET in self._effective_transports()
+            and not self.use_server_token_count
+        ):
+            raise ValueError(
+                "WebSocket Responses transport chains via previous_response_id, "
+                "which sends only the newest turn on the wire; client-side Input "
+                "Sequence Length would undercount the server-side prompt. Add "
+                "--use-server-token-count so ISL comes from the server's "
+                "usage.prompt_tokens."
+            )
+        return self
+
     def _has_credentials(self) -> bool:
         """Whether the endpoint carries transport credentials worth protecting."""
         if self.api_key:
