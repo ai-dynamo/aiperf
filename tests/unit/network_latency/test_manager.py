@@ -16,13 +16,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     NetworkLatencyRecordMessage,
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileStartCommand,
 )
 from aiperf.common.models import ErrorDetails, NetworkLatencySample
 from aiperf.config.flags.cli_config import CLIConfig
@@ -138,7 +136,7 @@ class TestNetworkLatencyManagerInitialization:
         )
 
 
-class TestProfileStartCommand:
+class TestProfileStart:
     """PROFILE_START builds, resolves, and starts one collector per target."""
 
     @pytest.mark.asyncio
@@ -152,9 +150,7 @@ class TestProfileStartCommand:
             side_effect=[AsyncMock(), AsyncMock()],
         ):
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
         # One collector per unique host:port target.
@@ -180,9 +176,7 @@ class TestProfileStartCommand:
             side_effect=[good, bad],
         ):
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
         # Only the collector that started successfully is retained.
@@ -202,9 +196,7 @@ class TestProfileStartCommand:
 
         with patch("asyncio.create_task", side_effect=close_coroutine) as mock_create:
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
         mock_create.assert_called_once()
@@ -231,16 +223,14 @@ class TestProfileStartCommand:
             patch("asyncio.create_task", side_effect=close_coroutine) as mock_create,
         ):
             await manager._on_start_profiling(
-                ProfileStartCommand(
-                    service_id=manager.id, command=CommandType.PROFILE_START
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_START)
             )
 
         mock_create.assert_called_once()
         assert manager._collectors == {}
 
 
-class TestProfileCompleteCommand:
+class TestProfileComplete:
     """PROFILE_COMPLETE tops up to MIN_SAMPLES then stops all collectors."""
 
     @pytest.mark.asyncio
@@ -255,9 +245,7 @@ class TestProfileCompleteCommand:
         manager._collectors = {"localhost:8000": collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # Topped up exactly to the floor, then stopped + cleared.
@@ -275,9 +263,7 @@ class TestProfileCompleteCommand:
         manager._collectors = {"localhost:8000": collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         assert collector.probe_calls == 0
@@ -293,9 +279,7 @@ class TestProfileCompleteCommand:
         manager._collectors = {"localhost:8000": collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         # The failing probe breaks the top-up loop after one attempt; stop still runs.
@@ -314,9 +298,7 @@ class TestProfileCompleteCommand:
         manager._collectors = {"localhost:8000": collector}
 
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
         assert collector.probe_calls == 0
@@ -332,9 +314,7 @@ class TestProfileCompleteCommand:
 
         # Must not raise.
         await manager._handle_profile_complete_command(
-            ProfileCompleteCommand(
-                service_id=manager.id, command=CommandType.PROFILE_COMPLETE
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_COMPLETE)
         )
 
 
@@ -346,9 +326,7 @@ class TestProfileCancelAndStop:
         manager._collectors = {"localhost:8000": collector}
 
         await manager._handle_profile_cancel_command(
-            ProfileCancelCommand(
-                service_id=manager.id, command=CommandType.PROFILE_CANCEL
-            )
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
         collector.stop.assert_awaited_once()

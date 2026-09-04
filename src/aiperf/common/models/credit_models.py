@@ -134,6 +134,20 @@ class BasePhaseStats(AIPerfBaseModel):
     )
 
     @property
+    def is_warmup(self) -> bool:
+        """Whether this phase has warmup semantics."""
+        return self.phase_kind == "warmup" or (
+            self.phase_kind is None and self.phase == CreditPhase.WARMUP
+        )
+
+    @property
+    def is_profiling(self) -> bool:
+        """Whether this phase has profiling semantics."""
+        return self.phase_kind == "profiling" or (
+            self.phase_kind is None and self.phase == CreditPhase.PROFILING
+        )
+
+    @property
     def is_started(self) -> bool:
         return self.start_ns is not None
 

@@ -31,7 +31,7 @@ and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
@@ -90,7 +90,7 @@ from aiperf.plugin.enums import (
 )
 
 # Default server-metrics export formats for CLIConfig, kept self-contained here
-# because aiperf.config.defaults does not carry the equivalent constant.
+# because no config module carries the equivalent constant.
 _DEFAULT_SERVER_METRICS_FORMATS: list[ServerMetricsFormat] = [
     ServerMetricsFormat.JSON,
     ServerMetricsFormat.CSV,
@@ -2287,7 +2287,7 @@ class CLIConfig(BaseConfig):
             "count toward the ratio. A grace floor of max(concurrency, 10) records "
             "must accumulate before the check is armed, so a single early failure "
             "cannot kill the run. When the threshold is exceeded a "
-            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
+            "PROFILE_CANCEL is broadcast: in-flight requests drain via the "
             "normal cancel path, partial results are still aggregated, and the run "
             "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
             "in record_processor_service so the rate measures real failures only.",
@@ -2694,12 +2694,13 @@ class CLIConfig(BaseConfig):
         Field(
             description="Base filename for ALL exported files. With prefix='foo' every "
             "output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, "
-            "`foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and "
-            "`foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
+            "`foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, "
+            "and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
             "historical per-file names are used: `profile_export_aiperf.{csv,json}` "
             "for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` "
-            "for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. "
-            "Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) "
+            "for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and "
+            "`server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, "
+            "`_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) "
             "are stripped from the supplied value.",
         ),
         CLIParameter(
@@ -2717,7 +2718,9 @@ class CLIConfig(BaseConfig):
             description="Controls which output files are generated. "
             "`summary`: Only aggregate metrics files (`.csv`, `.json`). "
             "`records`: Includes per-request metrics (`.jsonl`). "
-            "`raw`: Includes raw request/response data (`_raw.jsonl`).",
+            "`raw`: Includes raw request/response data (`_raw.jsonl`) and, unless "
+            "`--no-export-outputs-json` is passed, the generated text "
+            "(`_outputs.json`).",
         ),
         CLIParameter(
             name=("--export-level", "--profile-export-level"),
@@ -2776,14 +2779,19 @@ class CLIConfig(BaseConfig):
         bool,
         Field(
             description=(
-                "Export generated response text to outputs.json after the run. "
-                "When enabled, the raw generated-text payload for each request is "
-                "written to an outputs.json file in the artifact directory."
+                "Export generated response text after the run. When enabled, the "
+                "raw generated-text payload for each request is written to "
+                "`outputs.json` in the artifact directory, or to "
+                "`<prefix>_outputs.json` when `--profile-export-prefix` is set "
+                "(prefix `foo` gives `foo_outputs.json`). Implied by "
+                "`--export-level raw`; pass `--no-export-outputs-json` to opt out "
+                "of the extra file while keeping raw export."
             ),
         ),
         CLIParameter(
             name=("--export-outputs-json",),
             group=Groups.OUTPUT,
+            negative="--no-export-outputs-json",
         ),
     ] = False
 
@@ -4350,3 +4358,10 @@ class CLIConfig(BaseConfig):
     _gpu_telemetry_metrics_file: Path | None = None
 
     _server_metrics_urls: list[str] = []
+
+
+# The local worker-process limit does not apply to distributed Kubernetes
+# execution; KubeOptions.total_workers owns that surface instead.
+KubeCLIConfig: TypeAlias = Annotated[
+    CLIConfig, Parameter(parse=r"^(?!workers_max$).*$")
+]

@@ -133,3 +133,347 @@ def test_iterations_emit_objective_values_vector(tmp_path: Path):
     write_search_history(tmp_path, history, cfg)
     payload = json.loads((tmp_path / "search_history.json").read_text())
     assert payload["iterations"][0]["objective_values"] == [10.0, 5.0]
+
+
+def test_multi_objective_config_with_length_one_vectors(tmp_path: Path):
+    """A 1-D planner under a 2-objective config must not crash the sweep.
+
+    Only the Optuna planner writes a full objective vector; monotonic.py,
+    smooth_isotonic.py and multi_tier_planner.py all hard-code a length-1
+    objective_values. _pareto_front indexed objective_values[i] blindly, so
+    the IndexError escaped orchestrator.py -- which has no try/except around
+    it -- and killed the adaptive sweep after its first scored iteration,
+    losing the trajectory file with it.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=10.0,
+            objective_values=[10.0],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=20.0,
+            objective_values=[20.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    # The comparable objective still orders them: 20 beats 10 on maximize.
+    assert [t["iteration_idx"] for t in payload["best_trials"]] == [1]
+
+
+def test_single_objective_nan_first_does_not_win_max(tmp_path: Path):
+    """A NaN-scoring iteration must never win max()/min() by list order.
+
+    Reproduces the reported bug directly: with objective values
+    [NaN, 10.0, 50.0] and the NaN trial evaluated first, an unfiltered
+    max() returns the NaN trial as "best" because every comparison against
+    NaN is False. The legitimately-best iteration (idx=2, value=50.0) must
+    win regardless of where the NaN trial sits in history.
+    """
+    cfg = _single_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=float("nan"),
+            objective_values=[float("nan")],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 10},
+            objective_value=10.0,
+            objective_values=[10.0],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=2,
+            variation_values={"concurrency": 20},
+            objective_value=50.0,
+            objective_values=[50.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    assert len(payload["best_trials"]) == 1
+    assert payload["best_trials"][0]["iteration_idx"] == 2
+    assert payload["best_trials"][0]["objective_values"] == [50.0]
+
+
+def test_all_nan_trial_excluded_from_pareto_front(tmp_path: Path):
+    """An all-NaN trial can never be dominated and must not survive on the front.
+
+    Since every comparison against NaN is False, an all-NaN trial would
+    never lose a domination check and would be stuck on the Pareto front
+    forever with pareto_rank=0. It must be filtered out upstream instead.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=float("nan"),
+            objective_values=[float("nan"), float("nan")],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=20.0,
+            objective_values=[20.0, 8.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    front_idxs = [p["iteration_idx"] for p in payload["best_trials"]]
+    assert 0 not in front_idxs
+    assert front_idxs == [1]
+
+
+def test_multi_objective_with_absent_vectors(tmp_path: Path):
+    """objective_values is Optional; the scalar mirror must carry index 0."""
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=10.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=20.0,
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    assert [t["iteration_idx"] for t in payload["best_trials"]] == [1]
+
+
+def test_non_finite_secondary_objective_cannot_dominate(tmp_path: Path):
+    """A NaN on a *secondary* objective must not win the Pareto front.
+
+    The primary-objective filter upstream of the front only rejects a
+    non-finite index 0, so a trial scoring [100.0, NaN] survived it. Inside
+    _dominates the NaN read back as "unavailable" and the objective was
+    skipped, leaving the trial to win on throughput alone -- it dominated
+    [50.0, 8.0], a trial strictly better on the very objective that got
+    dropped, and then serialized as [100.0, null], indistinguishable from a
+    trial that was never scored on latency at all.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_values=[50.0, 8.0],
+            objective_value=50.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_values=[100.0, float("nan")],
+            objective_value=100.0,
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+
+    ranked = [t["iteration_idx"] for t in payload["best_trials"]]
+    assert 0 in ranked, (
+        "the fully-scored trial must survive: it was strictly better on latency"
+    )
+    assert ranked == [0], (
+        "the poisoned trial must be dropped from the pool, not merely made "
+        "incomparable -- incomparable is also undominatable, which would "
+        "*guarantee* it a slot in the reported front"
+    )
+    assert all(
+        t["objective_values"] is None or None not in t["objective_values"]
+        for t in payload["best_trials"]
+    ), "no best trial may serialize a scrubbed non-finite objective as null"
+
+
+def test_poisoned_trial_is_not_reported_as_pareto_best(tmp_path: Path):
+    """Front membership, not just domination, must reject a poisoned trial.
+
+    Distinct from the domination test above: here the poisoned trial is the
+    only one that could plausibly top the front, so a fix that merely stops it
+    *dominating* still leaves it undominated and therefore reported as
+    Pareto-best with pareto_rank=0 -- serialized as [500.0, null], which a
+    consumer cannot distinguish from a trial never scored on latency.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_values=[10.0, 1.0],
+            objective_value=10.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_values=[20.0, 2.0],
+            objective_value=20.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=2,
+            variation_values={"concurrency": 99},
+            objective_values=[500.0, float("inf")],
+            objective_value=500.0,
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+
+    ranked = [t["iteration_idx"] for t in payload["best_trials"]]
+    assert 2 not in ranked, (
+        "a trial with a non-finite objective must never be reported as best"
+    )
+    assert ranked, "dropping the poisoned trial must not empty the front"
+    assert set(ranked) <= {0, 1}
+
+
+def test_short_vector_trial_does_not_evict_fully_scored_trial(tmp_path: Path):
+    """A trial scored on fewer objectives must not push out a fully-scored one.
+
+    ``_objective_at`` reports an absent dimension as unavailable and
+    ``_dominates`` skips it, which is right when *every* trial in a run is
+    short (the gap is symmetric and carries no information). It is wrong when
+    the vectors differ in length: a trial recorded on throughput alone,
+    ``[20.0]``, skipped the latency objective it was never scored on and
+    dominated ``[15.0, 3.0]``, a trial that was actually evaluated on both.
+    The fully-scored trial must stay on the front.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=20.0,
+            objective_values=[20.0],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=15.0,
+            objective_values=[15.0, 3.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    ranked = [t["iteration_idx"] for t in payload["best_trials"]]
+    assert 1 in ranked, (
+        "the fully-scored trial must not be dominated by a trial that simply "
+        "was not scored on the second objective"
+    )
+
+
+def test_short_vector_ties_on_shared_objective_stay_incomparable(tmp_path: Path):
+    """Equal on the shared objective, neither trial dominates the other.
+
+    The more-instrumented trial (scored on both objectives) must not evict
+    the less-instrumented one just because it has an extra recorded
+    dimension: nothing measured shows it is actually better anywhere, since
+    the one dimension both were scored on is tied. Both stay on the front.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=20.0,
+            objective_values=[20.0],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=20.0,
+            objective_values=[20.0, 3.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    assert sorted(t["iteration_idx"] for t in payload["best_trials"]) == [0, 1]
+
+
+def test_ragged_objective_values_one_sided_absence_does_not_evict(tmp_path: Path):
+    """A trial missing one objective must not be evicted by a fully-scored trial.
+
+    Mirrors the review scenario: A=[throughput 15.0, latency 3.0] (both
+    dimensions recorded) vs B=[throughput 15.0] (latency never recorded).
+    Throughput -- the only dimension both were scored on -- is identical, so
+    nothing measured shows A is better anywhere. Counting B's missing latency
+    value in A's favor would wrongly evict B; instead the pair is
+    incomparable on that objective and both remain on the front.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=15.0,
+            objective_values=[15.0, 3.0],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=15.0,
+            objective_values=[15.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    assert sorted(t["iteration_idx"] for t in payload["best_trials"]) == [0, 1]
+
+
+def test_always_poisoned_objective_falls_back_to_live_objectives(tmp_path: Path):
+    """One never-scored objective must not void the whole trajectory.
+
+    Poisoned trials are dropped from the ranking pool so a garbage reading
+    cannot buy a free pass on an objective the other trials were scored
+    against. When an objective is non-finite for *every* iteration nobody
+    gets a free pass -- the gap is symmetric again -- yet the all-or-nothing
+    filter emptied the pool and ``best_trials`` came back null even though
+    the other objective cleanly ranks the run.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=index,
+            variation_values={"concurrency": 10 * (index + 1)},
+            objective_value=value,
+            objective_values=[value, float("nan")],
+            feasible=True,
+        )
+        for index, value in enumerate([100.0, 90.0, 80.0])
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    assert payload["best_trials"], (
+        "a dead secondary objective must not void the whole pool"
+    )
+    assert [t["iteration_idx"] for t in payload["best_trials"]] == [0]

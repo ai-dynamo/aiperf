@@ -12,7 +12,6 @@ All tests drive ``resolve_config`` with a real YAML file, not ``convert_cli_to_a
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -218,6 +217,10 @@ def test_batch_size_on_yaml_with_omitted_format_reports_effective_default(
     FileDataset.format defaults to DatasetFormat.SINGLE_TURN -- "got format:
     None" reads like a parse failure rather than "you didn't set format, so
     it's using the default".
+
+    The message is now phrased in CLI-flag terms rather than YAML-key terms,
+    but the property under test is unchanged: it must name the effective
+    default, never None.
     """
     pool = tmp_path / "pool.jsonl"
     pool.touch()
@@ -238,8 +241,12 @@ benchmark:
     yaml_path = tmp_path / "no_format.yaml"
     yaml_path.write_text(yaml_content)
     cli = _cli(prompt_batch_size=4)
-    with pytest.raises(ValueError, match=re.escape("declares format: single_turn")):
+    with pytest.raises(ValueError, match="single_turn") as excinfo:
         resolve_config(cli, yaml_path)
+
+    assert "None" not in str(excinfo.value), (
+        "the effective default must be named, never a bare None"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +334,9 @@ def test_image_batch_size_flag_creates_the_images_block(
     yaml_path = _write_synthetic_yaml(tmp_path, batch_size=1)
     cli = _cli(image_batch_size=2)
     cfg = resolve_config(cli, yaml_path)
-    assert cfg.benchmark.datasets[0].images.batch_size == 2
+    images = cfg.benchmark.datasets[0].images
+    assert images is not None
+    assert images.batch_size == 2
 
 
 def test_batch_size_flag_applies_without_cli_custom_dataset_type(

@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, get_args
+
+from pydantic.alias_generators import to_camel
 
 from aiperf.common.enums import DatasetType
 from aiperf.common.phase import infer_legacy_phase_kind
@@ -48,6 +51,7 @@ from aiperf.plugin.enums import ArrivalPattern, PhaseType
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from aiperf.common.types import PhaseKind
     from aiperf.config import AIPerfConfig
     from aiperf.config.config import BenchmarkConfig
     from aiperf.config.flags import CLIConfig
@@ -74,12 +78,7 @@ def resolve_config(
     Returns:
         Fully resolved `AIPerfConfig` ready for downstream use.
     """
-    from aiperf.config.flags.converter import (
-        _promote_cli_dataset_magic_lists,
-        _promote_magic_lists_to_sweep_block,
-        _wrap_under_envelope,
-        convert_cli_to_aiperf,
-    )
+    from aiperf.config.flags.converter import convert_cli_to_aiperf
 
     if config_file is None:
         config_file = cli_config.config_file
@@ -87,17 +86,57 @@ def resolve_config(
     if config_file is None:
         return convert_cli_to_aiperf(cli_config)
 
+    from aiperf.config.loader import load_config_dict_with_raw_envelope
+
+    yaml_dict, raw_yaml_dict = load_config_dict_with_raw_envelope(config_file)
+    return _resolve_config_envelopes(cli_config, yaml_dict, raw_yaml_dict)
+
+
+def apply_cli_overrides(
+    config: AIPerfConfig,
+    cli_config: CLIConfig,
+) -> AIPerfConfig:
+    """Overlay explicitly-authored CLI values on an already-loaded config.
+
+    Kubernetes workload YAML is first separated from its CR deployment fields,
+    so it cannot use :func:`resolve_config`'s file-loading entry point directly.
+    This adapter feeds the validated config and its retained pre-Jinja envelope
+    through the exact same override pipeline used by ordinary Config-v2 files.
+
+    Args:
+        config: Loaded Config-v2 envelope that supplies the YAML baseline.
+        cli_config: Parsed CLI values; only ``model_fields_set`` entries apply.
+
+    Returns:
+        A new config with CLI precedence and a matching raw sweep envelope.
+    """
+    rendered = config.model_dump(
+        mode="python",
+        by_alias=True,
+        exclude_unset=True,
+        exclude_none=True,
+        context={"include_secrets": True},
+    )
+    raw = copy.deepcopy(config._raw_envelope or rendered)
+    return _resolve_config_envelopes(cli_config, rendered, raw)
+
+
+def _resolve_config_envelopes(
+    cli_config: CLIConfig,
+    yaml_dict: dict[str, Any],
+    raw_yaml_dict: dict[str, Any],
+) -> AIPerfConfig:
+    """Resolve rendered and pre-Jinja envelopes through one override pipeline."""
     from aiperf.config import AIPerfConfig
     from aiperf.config.flags._config_flag_routing import reject_unrouted_cli_flags
-    from aiperf.config.loader import load_config_dict
+    from aiperf.config.flags.converter import _wrap_under_envelope
 
     # Fail before any merging: a flag this path cannot route would otherwise
     # be dropped without a word, handing the user a benchmark that silently
     # ignored what they asked for.
     reject_unrouted_cli_flags(cli_config)
-
-    yaml_dict = load_config_dict(config_file)
     _normalize_loaded_benchmark_shorthands(yaml_dict)
+    _normalize_loaded_benchmark_shorthands(raw_yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
@@ -113,18 +152,232 @@ def resolve_config(
     pre_merged = (
         deep_merge(yaml_dict, _wrap_under_envelope(copy.deepcopy(pre_overrides)))
         if pre_overrides
-        else yaml_dict
+        else copy.deepcopy(yaml_dict)
     )
     base_config = AIPerfConfig.model_validate(pre_merged)
+    base_dataset = base_config.benchmark.datasets[0]
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)
     overrides = _wrap_under_envelope(overrides) if overrides else overrides
-    yaml_dict = normalize_gpu_telemetry_base_for_override(yaml_dict, overrides)
-    yaml_dict = normalize_server_metrics_base_for_override(yaml_dict, overrides)
-    merged = deep_merge(yaml_dict, overrides) if overrides else yaml_dict
-    _apply_dataset_overrides(merged, cli_config)
-    _apply_phase_loadgen_overrides(merged, cli_config)
-    _apply_warmup_overrides(merged, cli_config)
+    merged = _merge_overrides_into_envelope(
+        yaml_dict,
+        overrides,
+        cli_config,
+        dataset_type=base_dataset.type,
+        dataset_format=getattr(base_dataset, "format", None),
+    )
+    raw_merged = _merge_overrides_into_envelope(
+        raw_yaml_dict,
+        overrides,
+        cli_config,
+        dataset_type=base_dataset.type,
+        dataset_format=getattr(base_dataset, "format", None),
+        phase_shape_decision=merged.phase_shape_decision,
+        phase_identity=merged.phase_identity,
+    )
+
+    config = AIPerfConfig.model_validate(merged.envelope)
+    config._raw_envelope = raw_merged.envelope
+    _validate_search_space_phase_targets(config, merged.envelope)
+    return config
+
+
+def _validate_search_space_phase_targets(
+    config: AIPerfConfig, envelope: dict[str, Any]
+) -> None:
+    """Reject searched dimensions the resolved phase cannot accept.
+
+    ``--search-space`` shape inference only runs when the profiling phase is
+    built from CLI flags (``_converter_profiling.build_profiling``). A config
+    that authors its own ``phases:`` keeps its discriminator, so a dimension
+    such as ``phases.profiling.users`` can target a phase type that has no
+    such field. The path is syntactically valid, so nothing rejects it until
+    the planner writes its first sampled value and Pydantic raises
+    ``extra_forbidden`` -- mid-run, after the benchmark is already underway
+    and the searched dimension has cost real time. Fail at resolution instead.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+    from aiperf.config.sweep.expand import _find_phase_or_recipe_alias
+
+    dimensions = getattr(config.sweep, "search_space", None)
+    if not dimensions:
+        return
+    benchmark = envelope.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return
+    phases = benchmark.get("phases")
+    if not isinstance(phases, list) or not phases:
+        return
+
+    for dimension in dimensions:
+        path = getattr(dimension, "path", None)
+        if not isinstance(path, str):
+            continue
+        segments = path.split(".")
+        # Only direct ``phases.<selector>.<field>`` scalars are checked; a
+        # deeper path (``phases.profiling.cancellation.rate``) targets a
+        # sub-model whose own validation owns the field.
+        if len(segments) != 3 or segments[0] != "phases":
+            continue
+        selector, field_name = segments[1], segments[2]
+        target = _find_phase_or_recipe_alias(phases, selector, parent_key="phases")
+        if target is None:
+            continue
+        try:
+            resolved = config.benchmark.phases[phases.index(target)]
+        except (ValueError, IndexError):
+            continue
+        if _phase_accepts_field(type(resolved), field_name):
+            continue
+        raise ConfigurationError(
+            f"--search-space dimension {path!r} targets field {field_name!r}, "
+            f"which phase {resolved.name!r} (type {resolved.type}) does not "
+            f"have. {_phase_types_declaring(field_name)} Either search a field "
+            f"the phase declares, or change the phase's 'type:'."
+        )
+
+
+def _phase_accepts_field(phase_cls: type, field_name: str) -> bool:
+    """Whether ``phase_cls`` declares ``field_name`` under either spelling."""
+    fields = phase_cls.model_fields
+    if field_name in fields:
+        return True
+    return any(info.alias == field_name for info in fields.values())
+
+
+def _phase_types_declaring(field_name: str) -> str:
+    """Human-readable hint naming the phase types that do declare a field."""
+    from aiperf.config import phases as phase_models
+
+    declaring: list[str] = []
+    for name in dir(phase_models):
+        candidate = getattr(phase_models, name)
+        if not isinstance(candidate, type) or not hasattr(candidate, "model_fields"):
+            continue
+        type_field = candidate.model_fields.get("type")
+        if type_field is None:
+            continue
+        # Concrete phases pin the discriminator as ``Literal[PhaseType.X]``;
+        # the abstract bases annotate the bare enum, so an empty get_args()
+        # is what filters them out of the hint.
+        members = get_args(type_field.annotation)
+        if len(members) != 1:
+            continue
+        if _phase_accepts_field(candidate, field_name):
+            declaring.append(str(members[0]))
+    unique = sorted(set(declaring))
+    if not unique:
+        return "No phase type declares it."
+    return f"Declared by phase type(s): {', '.join(unique)}."
+
+
+@dataclass(slots=True)
+class _PhaseShapeDecision:
+    """Value-dependent phase-shape outcome of one override pass.
+
+    The rendered envelope is the only one whose phase fields hold real values;
+    in the retained pre-Jinja envelope the same fields may still be ``{{ ... }}``
+    source strings. Re-deriving the phase discriminator there would compare a
+    template string against :class:`PhaseType` members and reach a different
+    answer, so the decision is recorded once on the rendered pass and replayed
+    verbatim onto the raw one.
+
+    Attributes:
+        phase_type: Final discriminator written onto the profiling phase, or
+            ``None`` when no CLI flag changed it.
+        removed_keys: Canonical (snake_case) phase keys discarded as
+            incompatible with ``phase_type``; replayed through
+            :func:`_pop_config_value` so either spelling is removed.
+    """
+
+    phase_type: PhaseType | None = None
+    removed_keys: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class _PhaseIdentityDecision:
+    """Which ``benchmark.phases`` entries are the warmup/profiling phases.
+
+    ``infer_legacy_phase_kind`` falls back to matching the phase's ``name``
+    against the reserved ``warmup``/``profiling`` spellings whenever ``kind:``
+    is omitted. In the retained pre-Jinja envelope that name may still be a
+    ``{{ ... }}`` source string, which matches nothing -- so re-deriving the
+    identity there targets a different phase (or none) than the rendered pass
+    did, and the CLI override lands in only one of the two envelopes. The
+    identity is therefore classified once, on the rendered pass, and replayed
+    by position onto the raw one.
+
+    Attributes:
+        classified: Whether ``kinds`` has been populated; distinguishes "no
+            phase carries a kind" from "not decided yet".
+        kinds: Phase-list index -> resolved kind, in index order.
+    """
+
+    classified: bool = False
+    kinds: dict[int, PhaseKind] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class _MergedEnvelope:
+    """One override pass' merged envelope plus the decision it reached.
+
+    Attributes:
+        envelope: The merged config envelope dict.
+        phase_shape_decision: Phase-shape outcome to replay onto sibling
+            envelopes so validation and execution cannot disagree.
+        phase_identity: Warmup/profiling phase identity to replay onto sibling
+            envelopes whose phase names may still be Jinja source.
+    """
+
+    envelope: dict[str, Any]
+    phase_shape_decision: _PhaseShapeDecision
+    phase_identity: _PhaseIdentityDecision
+
+
+def _merge_overrides_into_envelope(
+    envelope: dict[str, Any],
+    overrides: dict[str, Any] | None,
+    cli_config: CLIConfig,
+    *,
+    dataset_type: Any,
+    dataset_format: Any,
+    phase_shape_decision: _PhaseShapeDecision | None = None,
+    phase_identity: _PhaseIdentityDecision | None = None,
+) -> _MergedEnvelope:
+    """Apply the config-file CLI override pipeline to one envelope.
+
+    The resolver calls this once for the rendered envelope used for Pydantic
+    validation and once for the retained pre-Jinja envelope used by sweep
+    expansion. Structural rewrites run on both, but every value-dependent
+    phase-shape branch (and the ``ConfigurationError`` guards built on it) runs
+    only on the rendered pass; passing that pass' ``phase_shape_decision`` back
+    in switches this call into replay mode, which is what keeps CLI overrides
+    and Jinja-backed ``sweep.parameters`` from disagreeing at execution time.
+    """
+    from aiperf.config.flags.converter import (
+        _promote_cli_dataset_magic_lists,
+        _promote_magic_lists_to_sweep_block,
+    )
+
+    overrides = copy.deepcopy(overrides) if overrides else overrides
+    identity = phase_identity or _PhaseIdentityDecision()
+    envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
+    envelope = normalize_server_metrics_base_for_override(envelope, overrides)
+    merged = deep_merge(envelope, overrides) if overrides else envelope
+    _apply_control_hook_enable_overrides(merged, cli_config)
+    _apply_dataset_overrides(
+        merged,
+        cli_config,
+        declared_type=dataset_type,
+        declared_format=dataset_format,
+    )
+    decision = _apply_phase_loadgen_overrides(
+        merged,
+        cli_config,
+        phase_shape_decision=phase_shape_decision,
+        phase_identity=identity,
+    )
+    _apply_warmup_overrides(merged, cli_config, phase_identity=identity)
     promote_benchmark_magic_lists(
         merged,
         cli_config,
@@ -132,7 +385,10 @@ def resolve_config(
         promote_magic_lists_to_sweep_block=_promote_magic_lists_to_sweep_block,
         retarget_dataset_magic_lists=_retarget_dataset_magic_lists,
     )
-    return AIPerfConfig.model_validate(merged)
+    _coalesce_phase_aliases(merged)
+    return _MergedEnvelope(
+        envelope=merged, phase_shape_decision=decision, phase_identity=identity
+    )
 
 
 def _normalize_loaded_benchmark_shorthands(yaml_dict: dict[str, Any]) -> None:
@@ -156,14 +412,56 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 
     Lists are replaced wholesale (not concatenated) so that a CLI override
     list cleanly clobbers a YAML list rather than appending.
+
+    An empty-dict override also replaces rather than recursing: ``--header``
+    with no value, ``--extra`` with no value and an empty ``--goodput`` all
+    mean "this section is empty", not "leave the YAML alone". Producers that
+    need "enable but inherit the YAML sub-fields" (the ``--reset-kv-cache`` /
+    ``--server-profiler`` bare booleans) cannot be expressed through this
+    function at all and are applied post-merge by
+    :func:`_apply_control_hook_enable_overrides`.
     """
+    from pydantic.alias_generators import to_camel
+
     out = copy.deepcopy(base)
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = deep_merge(out[key], value)
+        target_key = key
+        alias = to_camel(key)
+        if key not in out and alias in out:
+            target_key = alias
+        if isinstance(value, dict) and isinstance(out.get(target_key), dict) and value:
+            out[target_key] = deep_merge(out[target_key], value)
         else:
-            out[key] = value
+            out[target_key] = value
     return out
+
+
+def _coalesce_phase_aliases(envelope: dict[str, Any]) -> None:
+    """Make phase overlays win over equivalent camelCase YAML keys."""
+    from pydantic.alias_generators import to_camel
+
+    benchmark = envelope.get("benchmark")
+    phases = benchmark.get("phases") if isinstance(benchmark, dict) else None
+    if not isinstance(phases, list):
+        return
+    for phase in phases:
+        if not isinstance(phase, dict):
+            continue
+        for key in list(phase):
+            if "_" not in key:
+                continue
+            alias = to_camel(key)
+            if alias not in phase:
+                continue
+            snake_value = phase.pop(key)
+            camel_value = phase[alias]
+            phase[alias] = (
+                deep_merge(camel_value, snake_value)
+                if isinstance(camel_value, dict)
+                and isinstance(snake_value, dict)
+                and snake_value
+                else snake_value
+            )
 
 
 def build_cli_overrides(
@@ -238,7 +536,6 @@ def build_cli_overrides(
 
     if "no_sweep_table" in cli.model_fields_set:
         out["no_sweep_table"] = cli.no_sweep_table
-
     # random_seed is an envelope key distinct from the dataset's own seed
     # field (written by build_dataset onto the dataset block, which only
     # feeds SessionIDGenerator). AIPerfConfig.random_seed is what
@@ -408,40 +705,149 @@ def _apply_endpoint_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
     """Translate explicitly-set endpoint flags into ``out['endpoint']`` and
     ``out['models']``.
 
-    ``--model-names`` lives on the CLIConfig endpoint section but maps to the
-    ``models.items`` block on AIPerfConfig; everything else stays on ``endpoint``.
+    ``--model-names`` and ``--model-selection-strategy`` live on the CLIConfig
+    endpoint section but map to the ``models`` block on AIPerfConfig
+    (``items`` / ``strategy``); everything else stays on ``endpoint``.
     """
-    from aiperf.config.flags._converter_endpoint import (
-        _ENDPOINT_FIELD_MAP,
-        _maybe_build_reset_kv_cache,
-        _maybe_build_server_profiler,
-    )
-
     ep_set = cli.model_fields_set & ENDPOINT_FIELDS
     if not ep_set:
         return
-    endpoint: dict[str, Any] = {}
-    if "urls" in ep_set:
-        endpoint["urls"] = list(cli.urls)
-    for cli_field, aiperf_key in _ENDPOINT_FIELD_MAP.items():
-        if cli_field in ep_set:
-            endpoint[aiperf_key] = getattr(cli, cli_field)
-    # The probe sub-blocks have builders the CLI-only path already uses; this
-    # path simply never called them. They emit only fields the user set, so a
-    # YAML block keeps whatever the flags do not mention.
-    for key, built in (
-        ("reset_kv_cache", _maybe_build_reset_kv_cache(cli)),
-        ("server_profiler", _maybe_build_server_profiler(cli)),
-    ):
-        if built is not None:
-            endpoint[key] = built
+
+    endpoint = _build_endpoint_override(cli, ep_set)
     if endpoint:
         out["endpoint"] = endpoint
-    if "model_names" in ep_set and cli.model_names:
-        models: dict[str, Any] = {"items": [{"name": name} for name in cli.model_names]}
-        if "model_selection_strategy" in ep_set:
-            models["strategy"] = cli.model_selection_strategy
+
+    models = _build_model_override(cli, ep_set)
+    if models:
         out["models"] = models
+
+
+def _build_endpoint_override(cli: CLIConfig, fields_set: set[str]) -> dict[str, Any]:
+    from aiperf.config.flags._converter_endpoint import _ENDPOINT_FIELD_MAP
+
+    endpoint: dict[str, Any] = {}
+    if "urls" in fields_set:
+        endpoint["urls"] = list(cli.urls)
+    for cli_field, aiperf_key in _ENDPOINT_FIELD_MAP.items():
+        if cli_field in fields_set:
+            endpoint[aiperf_key] = getattr(cli, cli_field)
+
+    _apply_reset_kv_cache_override(endpoint, cli, fields_set)
+    _apply_server_profiler_override(endpoint, cli, fields_set)
+    return endpoint
+
+
+def _apply_reset_kv_cache_override(
+    endpoint: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
+    reset_fields = {
+        "reset_kv_cache",
+        "reset_kv_cache_path",
+        "reset_kv_cache_timeout_seconds",
+    }
+    if not fields_set & reset_fields:
+        return
+    if "reset_kv_cache" in fields_set and not cli.reset_kv_cache:
+        endpoint["reset_kv_cache"] = False
+        return
+
+    from aiperf.config.flags._converter_endpoint import _maybe_build_reset_kv_cache
+
+    # A bare ``--reset-kv-cache`` builds no sub-fields, and an empty dict here
+    # would wipe a YAML-supplied path/timeout on merge. That case is enabled
+    # post-merge instead; see _apply_control_hook_enable_overrides.
+    if sub_fields := _maybe_build_reset_kv_cache(cli):
+        endpoint["reset_kv_cache"] = sub_fields
+
+
+def _apply_server_profiler_override(
+    endpoint: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
+    profiler_fields = {
+        "server_profiler",
+        "server_profiler_start_path",
+        "server_profiler_stop_path",
+        "server_profiler_timeout_seconds",
+    }
+    if not fields_set & profiler_fields:
+        return
+    if "server_profiler" in fields_set and not cli.server_profiler:
+        endpoint["server_profiler"] = False
+        return
+
+    from aiperf.config.flags._converter_endpoint import _maybe_build_server_profiler
+
+    if sub_fields := _maybe_build_server_profiler(cli):
+        endpoint["server_profiler"] = sub_fields
+
+
+# Control hooks whose bare boolean CLI flag means "enable, but inherit whatever
+# the YAML already configured". Each entry is
+# (cli_flag_attr, endpoint_key, cli_sub_field_attrs).
+_CONTROL_HOOK_ENABLE_FLAGS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    (
+        "reset_kv_cache",
+        "reset_kv_cache",
+        frozenset({"reset_kv_cache_path", "reset_kv_cache_timeout_seconds"}),
+    ),
+    (
+        "server_profiler",
+        "server_profiler",
+        frozenset(
+            {
+                "server_profiler_start_path",
+                "server_profiler_stop_path",
+                "server_profiler_timeout_seconds",
+            }
+        ),
+    ),
+)
+
+
+def _apply_control_hook_enable_overrides(
+    merged: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Enable ``--reset-kv-cache`` / ``--server-profiler`` without clobbering YAML.
+
+    These flags accept ``false | true | {sub-fields}``. A bare boolean flag
+    carries no sub-fields, so it cannot be expressed as a deep-merge override:
+    an empty dict replaces the YAML section (see :func:`deep_merge`) and a
+    literal ``True`` replaces it too, either way discarding a user-authored
+    ``path`` / ``start_path`` / ``timeout_seconds``. Running post-merge lets the
+    overlay see the YAML value and leave an already-configured mapping alone,
+    since a mapping already means "enabled".
+    """
+    from pydantic.alias_generators import to_camel
+
+    fields_set = cli.model_fields_set
+    benchmark = merged.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return
+    for flag_attr, endpoint_key, sub_field_attrs in _CONTROL_HOOK_ENABLE_FLAGS:
+        if flag_attr not in fields_set or not getattr(cli, flag_attr):
+            continue
+        if fields_set & sub_field_attrs:
+            continue
+        endpoint = benchmark.setdefault("endpoint", {})
+        if not isinstance(endpoint, dict):
+            return
+        target_key = endpoint_key
+        alias = to_camel(endpoint_key)
+        if endpoint_key not in endpoint and alias in endpoint:
+            target_key = alias
+        current = endpoint.get(target_key)
+        if isinstance(current, dict) and current:
+            continue
+        endpoint[target_key] = True
+
+
+def _build_model_override(cli: CLIConfig, fields_set: set[str]) -> dict[str, Any]:
+    models: dict[str, Any] = {}
+    if "model_names" in fields_set and cli.model_names:
+        models["items"] = [{"name": name} for name in cli.model_names]
+    if "model_selection_strategy" in fields_set:
+        models["strategy"] = cli.model_selection_strategy
+    return models
 
 
 def _apply_input_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
@@ -453,9 +859,9 @@ def _apply_input_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
     if not inp_set:
         return
     endpoint = out.setdefault("endpoint", {})
-    if "headers" in inp_set and cli.headers:
+    if "headers" in inp_set:
         endpoint["headers"] = dict(cli.headers)
-    if "extra_inputs" in inp_set and cli.extra_inputs:
+    if "extra_inputs" in inp_set:
         endpoint["extra"] = dict(cli.extra_inputs)
     if not endpoint:
         out.pop("endpoint", None)
@@ -545,13 +951,13 @@ def _inert_dataset_flags(
     from aiperf.config.loader.errors import ConfigurationError
 
     inert: list[str] = []
-    for field in candidates:
+    for candidate in candidates:
         # Solo construction is deliberately outside the try: a CLIConfig
         # cross-field validator failing on this single field alone would be
         # a real bug in this function's premise (the combined CLIConfig
         # already validated), and must surface rather than be swallowed by
         # the except below, which exists for build_dataset only.
-        solo = _CLIConfig(**{field: getattr(cli, field)})
+        solo = _CLIConfig(**{candidate: getattr(cli, candidate)})
         try:
             emitted = build_dataset(
                 solo, declared_type=declared_type, declared_format=declared_format
@@ -563,7 +969,7 @@ def _inert_dataset_flags(
             # disabled guard.
             continue
         if not emitted:
-            inert.append(field)
+            inert.append(candidate)
     return inert
 
 
@@ -614,7 +1020,13 @@ def _reject_inert_dataset_flags(
     )
 
 
-def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_dataset_overrides(
+    merged: dict[str, Any],
+    cli: CLIConfig,
+    *,
+    declared_type: Any | None = None,
+    declared_format: Any | None = None,
+) -> None:
     """Overlay explicitly-set dataset flags onto the YAML-supplied dataset.
 
     Delegates to ``build_dataset`` -- the same builder the CLI-only path uses
@@ -646,16 +1058,17 @@ def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
             )
         return
 
-    # A YAML dataset may omit `type`; validation resolves that to synthetic.
-    # Passing None here would instead switch build_dataset back to inferring
-    # the type from flags -- the CLI-only path, which materializes defaults
-    # meant for building a dataset from nothing. Default it so both spellings
-    # of "synthetic" take the same route.
-    declared_type = dataset.get("type") or DatasetType.SYNTHETIC
+    # Direct helper callers have no separately validated envelope. Preserve
+    # their historical behavior by deriving identity from this concrete dict;
+    # resolver callers always pass the rendered identity so raw Jinja leaves
+    # are never interpreted as dataset discriminators.
+    if declared_type is None:
+        declared_type = dataset.get("type") or DatasetType.SYNTHETIC
+        declared_format = dataset.get("format")
     override = build_dataset(
         cli,
         declared_type=declared_type,
-        declared_format=dataset.get("format"),
+        declared_format=declared_format,
     )
     _reject_inert_dataset_flags(cli, dataset, declared_type)
     if not override:
@@ -677,26 +1090,35 @@ _LOADGEN_PHASE_FIELD_MAP: tuple[tuple[str, str], ...] = (
     ("request_rate", "rate"),
     ("user_centric_rate", "rate"),
     ("num_users", "users"),
-    # --num-conversations sets the profiling phase's session count as well as
-    # the dataset entry count, matching convert_cli_to_aiperf. It lives in
-    # INPUT_FIELDS rather than LOADGEN_FIELDS, hence the explicit mention in
-    # the gate below.
     ("conversation_num", "sessions"),
 )
 
-# Fields routed onto the profiling phase that are not LOADGEN_FIELDS members.
-_NON_LOADGEN_PHASE_FIELDS: frozenset[str] = frozenset(
-    {
-        "conversation_num",
+_PROFILING_PHASE_OVERRIDE_FIELDS: frozenset[str] = frozenset(
+    {attr for attr, _ in _LOADGEN_PHASE_FIELD_MAP}
+    | {
+        "arrival_pattern",
+        "arrival_smoothness",
+        "concurrency_ramp_duration",
         "fixed_schedule",
         "fixed_schedule_auto_offset",
-        "fixed_schedule_start_offset",
         "fixed_schedule_end_offset",
+        "fixed_schedule_start_offset",
+        "prefill_concurrency_ramp_duration",
+        "request_cancellation_delay",
+        "request_cancellation_rate",
+        "request_rate_ramp_duration",
+        "request_rate_series",
     }
 )
 
 
-def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_phase_loadgen_overrides(
+    merged: dict[str, Any],
+    cli: CLIConfig,
+    *,
+    phase_shape_decision: _PhaseShapeDecision | None = None,
+    phase_identity: _PhaseIdentityDecision | None = None,
+) -> _PhaseShapeDecision:
     """Overlay explicit ``--request-count`` / ``--request-rate`` / etc. onto
     the YAML-supplied profiling phase.
 
@@ -715,100 +1137,426 @@ def _apply_phase_loadgen_overrides(merged: dict[str, Any], cli: CLIConfig) -> No
     are overlaid via the same converter helper the CLI-only path uses, so a
     ``-f scenario.yaml --agentic-cache-warmup-duration 30`` honors the
     documented "CLI flags override values from the config file" contract.
+
+    Args:
+        merged: Config envelope to mutate in place.
+        cli: Parsed CLI values; only ``model_fields_set`` entries apply.
+        phase_shape_decision: When supplied, the phase-shape outcome already
+            decided against the rendered envelope, replayed here instead of
+            being re-derived from this envelope's (possibly still-templated)
+            values.
+        phase_identity: Shared warmup/profiling phase classification. Populated
+            on the deciding pass and reused verbatim on sibling envelopes whose
+            phase names may still be Jinja source.
+
+    Returns:
+        The phase-shape decision this pass reached (or replayed).
     """
     from aiperf.config.flags._converter_profiling import (
         _AGENTIC_REPLAY_ROUTES,
         _apply_agentic_replay_fields,
     )
 
-    loadgen_set = cli.model_fields_set & (LOADGEN_FIELDS | _NON_LOADGEN_PHASE_FIELDS)
+    decision = phase_shape_decision or _PhaseShapeDecision()
+    loadgen_set = cli.model_fields_set & _PROFILING_PHASE_OVERRIDE_FIELDS
     agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
     if not loadgen_set and not agentic_set:
-        return
+        return decision
 
     benchmark = merged.get("benchmark")
     if not isinstance(benchmark, dict):
-        return
+        return decision
     phases = benchmark.get("phases")
     if not isinstance(phases, list) or not phases:
-        return
+        return decision
 
-    target = _find_profiling_phase(phases)
+    target = _find_profiling_phase(phases, phase_identity or _PhaseIdentityDecision())
     if target is None:
-        return
+        return decision
 
     _reject_loadgen_target_collisions(loadgen_set)
+    _apply_loadgen_value_overrides(target, cli, loadgen_set)
+    _apply_default_grace_period_override(target, cli, loadgen_set)
+    _apply_agentic_replay_fields(target, cli)
+    decision = _apply_phase_shape_overrides(
+        target, cli, loadgen_set, decision=phase_shape_decision
+    )
+    _apply_rate_series_override(target, cli, loadgen_set)
+    return decision
 
-    if "request_rate_series" in loadgen_set and cli.request_rate_series is not None:
-        from aiperf.config.rate_series import RateSeriesConfig
 
-        series = RateSeriesConfig(path=str(cli.request_rate_series))
-        target["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
-        target.pop("rate", None)
-        if "arrival_pattern" in loadgen_set:
-            target["type"] = {
-                ArrivalPattern.POISSON: PhaseType.POISSON,
-                ArrivalPattern.GAMMA: PhaseType.GAMMA,
-                ArrivalPattern.CONSTANT: PhaseType.CONSTANT,
-            }.get(cli.arrival_pattern, PhaseType.POISSON)
+def _apply_rate_series_override(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
+    if "request_rate_series" not in fields_set or cli.request_rate_series is None:
+        return
 
+    from aiperf.config.rate_series import RateSeriesConfig
+
+    series = RateSeriesConfig(path=str(cli.request_rate_series))
+    target["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
+    target.pop("rate", None)
+    if "arrival_pattern" in fields_set:
+        target["type"] = {
+            ArrivalPattern.POISSON: PhaseType.POISSON,
+            ArrivalPattern.GAMMA: PhaseType.GAMMA,
+            ArrivalPattern.CONSTANT: PhaseType.CONSTANT,
+        }.get(cli.arrival_pattern, PhaseType.POISSON)
+
+
+def _apply_loadgen_value_overrides(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
     for attr, key in _LOADGEN_PHASE_FIELD_MAP:
-        if attr not in loadgen_set:
+        if attr not in fields_set:
             continue
         value = getattr(cli, attr)
         if value is None:
             continue
         target[key] = value
 
+
+def _apply_default_grace_period_override(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
+    # This helper runs before _coalesce_phase_aliases, so a YAML-authored
+    # ``gracePeriod`` is still under its camelCase spelling here. Checking only
+    # the snake_case key would miss it, write the CLI default under
+    # ``grace_period``, and let the coalesce step overwrite the user's value.
+    from pydantic.alias_generators import to_camel
+
     if (
-        "benchmark_duration" in loadgen_set
-        and "benchmark_grace_period" not in loadgen_set
+        "benchmark_duration" in fields_set
+        and "benchmark_grace_period" not in fields_set
         and cli.benchmark_duration is not None
         and "grace_period" not in target
+        and to_camel("grace_period") not in target
     ):
         target["grace_period"] = cli.benchmark_grace_period
 
-    if cli.fixed_schedule:
-        # _profiling_phase_type does this when building a phase from flags.
-        # Set it before _apply_phase_shaping_overrides so the fixed-schedule
-        # offset routes, which validate against the phase type, can apply.
-        target["type"] = PhaseType.FIXED_SCHEDULE
 
-    _apply_agentic_replay_fields(target, cli)
-    _apply_phase_shaping_overrides(target, cli)
+def _apply_phase_shape_overrides(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    *,
+    decision: _PhaseShapeDecision | None = None,
+) -> _PhaseShapeDecision:
+    """Apply phase-discriminator, ramp, and cancellation CLI overrides.
 
-
-def _apply_phase_shaping_overrides(target: dict[str, Any], cli: CLIConfig) -> None:
-    """Route ramps, cancellation and arrival smoothness onto the phase.
-
-    These were built only by the CLI-only converter, so under ``--config``
-    they were dropped and later rejected. Reuse the converter's own helpers
-    rather than restating the field maps here: ``_RAMP_FIELDS`` and the
-    gamma-only routes stay in one place, and a new entry in either is picked
-    up by both paths.
-
-    ``_apply_phase_specific_routes`` validates against ``prof["type"]``, which
-    on this path is whatever the YAML declared -- so ``--arrival-smoothness``
-    against a non-gamma YAML phase is rejected with the converter's message
-    instead of being silently dropped.
+    With ``decision=None`` this is the deciding pass: the discriminator is
+    derived from ``target``'s own values and every ``ConfigurationError`` guard
+    is evaluated. With a ``decision`` supplied this is the replay pass over a
+    sibling envelope whose values may still be Jinja source; the recorded
+    discriminator is written verbatim and the guards are skipped, since they
+    already passed against real values.
     """
-    from aiperf.config.flags._converter_profiling import (
-        _apply_phase_specific_routes,
-        _apply_profiling_ramps,
-        apply_cancellation,
+    replay = decision is not None
+    if decision is None:
+        decision = _PhaseShapeDecision()
+        _apply_phase_type_override(target, cli, fields_set, decision)
+    else:
+        _replay_phase_shape_decision(target, decision)
+    _apply_arrival_smoothness_override(
+        target, cli, fields_set, decision, validate=not replay
     )
+    _apply_phase_ramp_overrides(target, cli, fields_set, validate=not replay)
+    _apply_fixed_schedule_offset_overrides(target, cli, fields_set, validate=not replay)
+    _apply_cancellation_override(target, cli, fields_set)
+    return decision
 
-    _apply_profiling_ramps(target, cli)
-    apply_cancellation(target, cli)
-    if "type" in target:
-        _apply_phase_specific_routes(target, cli)
-        # An explicit start offset contradicts auto_offset, whose default is
-        # True; build_profiling clears it the same way at
-        # _converter_profiling.py:531. Without this the user gets a raw
-        # "auto_offset cannot be True when start_offset is set" from
-        # validation for a combination the CLI-only path accepts.
-        if target["type"] == PhaseType.FIXED_SCHEDULE and "start_offset" in target:
-            target.setdefault("auto_offset", False)
+
+def _replay_phase_shape_decision(
+    target: dict[str, Any], decision: _PhaseShapeDecision
+) -> None:
+    """Write a previously-decided discriminator onto a sibling envelope."""
+    for key in decision.removed_keys:
+        _pop_config_value(target, key)
+    if decision.phase_type is not None:
+        target["type"] = decision.phase_type
+
+
+def _apply_phase_type_override(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    decision: _PhaseShapeDecision,
+) -> None:
+    if "fixed_schedule" in fields_set and cli.fixed_schedule:
+        _apply_fixed_schedule_type_override(target, fields_set, decision)
+        return
+    if "user_centric_rate" in fields_set:
+        _transition_phase_type(target, PhaseType.USER_CENTRIC, decision)
+        return
+    if "request_rate_series" in fields_set:
+        phase_type = (
+            _arrival_phase_type(cli)
+            if "arrival_pattern" in fields_set
+            else PhaseType.POISSON
+        )
+        _transition_phase_type(target, phase_type, decision)
+        return
+    if "request_rate" in fields_set:
+        _apply_request_rate_type_override(target, cli, fields_set, decision)
+        return
+    if "arrival_pattern" in fields_set:
+        _require_rate_controlled_phase(
+            target, "--arrival-pattern requires a rate-controlled profiling phase"
+        )
+        if _preserve_user_centric_phase(target, fields_set):
+            return
+        _transition_phase_type(target, _arrival_phase_type(cli), decision)
+
+
+def _preserve_user_centric_phase(target: dict[str, Any], fields_set: set[str]) -> bool:
+    """Return True when a YAML ``user_centric`` phase must keep its type.
+
+    ``--request-rate`` / ``--arrival-pattern`` imply an open-loop phase only
+    when the CLI alone defines the workload. Against a config-file
+    ``user_centric`` phase they are edits to a phase that already owns a
+    ``rate`` field, so switching the discriminator would silently drop
+    ``users`` and swap the closed-loop user model the config asked for.
+    """
+    if target.get("type") != PhaseType.USER_CENTRIC:
+        return False
+    if "arrival_pattern" in fields_set:
+        from aiperf.config.loader.errors import ConfigurationError
+
+        raise ConfigurationError(
+            "--arrival-pattern cannot be applied to the 'user_centric' profiling "
+            "phase from the config file: user-centric phases have no arrival "
+            "distribution. Change the phase type in YAML to poisson/gamma/constant."
+        )
+    return True
+
+
+def _apply_fixed_schedule_type_override(
+    target: dict[str, Any], fields_set: set[str], decision: _PhaseShapeDecision
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    conflicts = fields_set & {
+        "request_rate",
+        "request_rate_series",
+        "user_centric_rate",
+    }
+    if conflicts:
+        raise ConfigurationError(
+            "--fixed-schedule cannot be combined with rate-control CLI flags: "
+            f"{', '.join(sorted(conflicts))}"
+        )
+    _transition_phase_type(target, PhaseType.FIXED_SCHEDULE, decision)
+
+
+def _apply_request_rate_type_override(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    decision: _PhaseShapeDecision,
+) -> None:
+    if _preserve_user_centric_phase(target, fields_set):
+        return
+    current_type = target.get("type")
+    rate_types = {
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+    }
+    if "arrival_pattern" in fields_set:
+        phase_type = _arrival_phase_type(cli)
+    elif current_type in rate_types:
+        phase_type = current_type
+    else:
+        phase_type = PhaseType.POISSON
+    _transition_phase_type(target, phase_type, decision)
+
+
+def _require_rate_controlled_phase(target: dict[str, Any], message: str) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if target.get("rate") is None and _get_config_value(target, "rate_series") is None:
+        raise ConfigurationError(message)
+
+
+def _apply_arrival_smoothness_override(
+    target: dict[str, Any],
+    cli: CLIConfig,
+    fields_set: set[str],
+    decision: _PhaseShapeDecision,
+    *,
+    validate: bool,
+) -> None:
+    if "arrival_smoothness" not in fields_set:
+        return
+    if validate:
+        _require_rate_controlled_phase(
+            target,
+            "--arrival-smoothness requires a rate-controlled profiling phase",
+        )
+        if target.get("type") == PhaseType.USER_CENTRIC:
+            # Unlike --request-rate, smoothness cannot be preserved in place:
+            # UserCentricPhase has no `smoothness` field, so honoring the flag
+            # would mean silently dropping `users` and rewriting the load model.
+            from aiperf.config.loader.errors import ConfigurationError
+
+            raise ConfigurationError(
+                "--arrival-smoothness cannot be applied to the 'user_centric' "
+                "profiling phase from the config file: user-centric phases have no "
+                "arrival-distribution shape. Change the phase type in YAML to "
+                "'gamma' to use --arrival-smoothness."
+            )
+        _transition_phase_type(target, PhaseType.GAMMA, decision)
+    target["smoothness"] = cli.arrival_smoothness
+
+
+def _apply_phase_ramp_overrides(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str], *, validate: bool
+) -> None:
+    """Overlay ramp ``duration`` CLI flags onto the phase's ramp mappings.
+
+    ``RampConfig`` carries ``strategy`` alongside ``duration``, so the flag
+    merges into whichever spelling the YAML already used instead of replacing
+    the mapping -- otherwise ``--concurrency-ramp-duration`` would silently
+    reset a user-authored ``strategy: exponential`` back to the model default,
+    and would do so only for the snake_case spelling (``_coalesce_phase_aliases``
+    already deep-merges the camelCase twin).
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    for cli_field, phase_field in (
+        ("concurrency_ramp_duration", "concurrency_ramp"),
+        ("prefill_concurrency_ramp_duration", "prefill_ramp"),
+        ("request_rate_ramp_duration", "rate_ramp"),
+    ):
+        if cli_field not in fields_set:
+            continue
+        if (
+            validate
+            and cli_field == "request_rate_ramp_duration"
+            and target.get("type")
+            not in {
+                PhaseType.POISSON,
+                PhaseType.GAMMA,
+                PhaseType.CONSTANT,
+                PhaseType.USER_CENTRIC,
+            }
+        ):
+            raise ConfigurationError(
+                "--request-rate-ramp-duration requires a rate-controlled profiling phase"
+            )
+        target_key = phase_field
+        alias = to_camel(phase_field)
+        if phase_field not in target and alias in target:
+            target_key = alias
+        existing = target.get(target_key)
+        duration = {"duration": getattr(cli, cli_field)}
+        target[target_key] = (
+            deep_merge(existing, duration) if isinstance(existing, dict) else duration
+        )
+
+
+def _apply_fixed_schedule_offset_overrides(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str], *, validate: bool
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    fixed_offset_fields = {
+        "fixed_schedule_auto_offset": "auto_offset",
+        "fixed_schedule_start_offset": "start_offset",
+        "fixed_schedule_end_offset": "end_offset",
+    }
+    if fields_set & fixed_offset_fields.keys():
+        if validate and target.get("type") != PhaseType.FIXED_SCHEDULE:
+            raise ConfigurationError(
+                "fixed-schedule offset CLI flags require a fixed_schedule profiling phase"
+            )
+        for cli_field, phase_field in fixed_offset_fields.items():
+            if cli_field in fields_set:
+                target[phase_field] = getattr(cli, cli_field)
+        # This runs before _coalesce_phase_aliases, so a YAML-authored
+        # ``autoOffset`` is still under its camelCase spelling here. Checking
+        # only the snake_case key would miss it, write the default under
+        # ``auto_offset``, and let the coalesce step overwrite the user's
+        # camelCase value with this False default (same hazard as
+        # _apply_default_grace_period_override above).
+        if (
+            "fixed_schedule_start_offset" in fields_set
+            and "auto_offset" not in target
+            and to_camel("auto_offset") not in target
+        ):
+            target["auto_offset"] = False
+
+
+def _arrival_phase_type(cli: CLIConfig) -> PhaseType:
+    return {
+        ArrivalPattern.GAMMA: PhaseType.GAMMA,
+        ArrivalPattern.CONSTANT: PhaseType.CONSTANT,
+    }.get(cli.arrival_pattern, PhaseType.POISSON)
+
+
+def _transition_phase_type(
+    target: dict[str, Any], phase_type: PhaseType, decision: _PhaseShapeDecision
+) -> None:
+    """Change a phase discriminator and discard only incompatible YAML fields.
+
+    Records the outcome on ``decision`` so the same discriminator and the same
+    discarded keys can be replayed onto the pre-Jinja envelope, whose values
+    would otherwise steer this function to a different answer.
+    """
+    rate_types = {
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+        PhaseType.USER_CENTRIC,
+    }
+    if phase_type not in rate_types:
+        removed = ("rate", "rate_ramp", "rate_series", "smoothness", "users")
+    else:
+        removed = ("auto_offset", "start_offset", "end_offset", "rate_series")
+        if phase_type != PhaseType.GAMMA:
+            removed += ("smoothness",)
+        if phase_type != PhaseType.USER_CENTRIC:
+            removed += ("users",)
+    for key in removed:
+        _pop_config_value(target, key)
+    target["type"] = phase_type
+    decision.phase_type = phase_type
+    decision.removed_keys.update(removed)
+
+
+def _get_config_value(mapping: dict[str, Any], key: str) -> Any:
+    from pydantic.alias_generators import to_camel
+
+    return mapping.get(key, mapping.get(to_camel(key)))
+
+
+def _pop_config_value(mapping: dict[str, Any], key: str) -> None:
+    from pydantic.alias_generators import to_camel
+
+    mapping.pop(key, None)
+    mapping.pop(to_camel(key), None)
+
+
+def _apply_cancellation_override(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if not fields_set & {"request_cancellation_rate", "request_cancellation_delay"}:
+        return
+    cancellation = target.get("cancellation")
+    if not isinstance(cancellation, dict):
+        cancellation = {}
+    if "request_cancellation_rate" in fields_set:
+        cancellation["rate"] = cli.request_cancellation_rate
+    if "request_cancellation_delay" in fields_set:
+        cancellation["delay"] = cli.request_cancellation_delay
+    if "rate" not in cancellation:
+        raise ConfigurationError(
+            "--request-cancellation-delay requires a cancellation rate in YAML "
+            "or --request-cancellation-rate"
+        )
+    target["cancellation"] = cancellation
 
 
 # CLI flags that shape the warmup phase. Derived from the section frozenset
@@ -818,18 +1566,47 @@ _WARMUP_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _find_warmup_phase(phases: list[Any]) -> dict[str, Any] | None:
-    """Return the YAML-declared warmup phase, if there is one."""
-    for entry in phases:
+def _classify_phases(
+    phases: list[Any], identity: _PhaseIdentityDecision
+) -> _PhaseIdentityDecision:
+    """Record each phase entry's resolved kind, once, on the deciding pass.
+
+    A pre-classified decision is returned untouched so a sibling envelope whose
+    phase names are still ``{{ ... }}`` source reuses the rendered pass' answer
+    instead of matching template strings against the reserved names.
+    """
+    if identity.classified:
+        return identity
+    for index, entry in enumerate(phases):
         if not isinstance(entry, dict):
             continue
         kind = infer_legacy_phase_kind(entry.get("name"), entry.get("kind"))
-        if kind == "warmup":
+        if kind is not None:
+            identity.kinds[index] = kind
+    identity.classified = True
+    return identity
+
+
+def _find_warmup_phase(
+    phases: list[Any], identity: _PhaseIdentityDecision
+) -> dict[str, Any] | None:
+    """Return the YAML-declared warmup phase, if there is one."""
+    _classify_phases(phases, identity)
+    for index, kind in identity.kinds.items():
+        if kind != "warmup" or index >= len(phases):
+            continue
+        entry = phases[index]
+        if isinstance(entry, dict):
             return entry
     return None
 
 
-def _apply_warmup_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_warmup_overrides(
+    merged: dict[str, Any],
+    cli: CLIConfig,
+    *,
+    phase_identity: _PhaseIdentityDecision | None = None,
+) -> None:
     """Overlay explicitly-set ``--warmup-*`` flags onto the warmup phase.
 
     ``_apply_phase_loadgen_overrides`` deliberately targets only the profiling
@@ -862,7 +1639,7 @@ def _apply_warmup_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
     if not isinstance(phases, list) or not phases:
         return
 
-    existing = _find_warmup_phase(phases)
+    existing = _find_warmup_phase(phases, phase_identity or _PhaseIdentityDecision())
     built = build_warmup(cli, base_warmup=existing is not None)
     if built is None:
         from aiperf.config.flags._config_flag_routing import flag_names_for
@@ -956,20 +1733,24 @@ def _reject_loadgen_target_collisions(fields_set: set[str]) -> None:
     )
 
 
-def _find_profiling_phase(phases: list[Any]) -> dict[str, Any] | None:
+def _find_profiling_phase(
+    phases: list[Any], identity: _PhaseIdentityDecision
+) -> dict[str, Any] | None:
     """Return the unique profiling-kind phase for CLI loadgen overlays.
 
     Legacy YAML may omit ``kind`` on canonical names, so infer it for this
     pre-validation merge pass. Ambiguous multi-profiling configs must express
     values directly in YAML for v1.
     """
+    _classify_phases(phases, identity)
     candidates: list[dict[str, Any]] = []
-    for entry in phases:
+    for index, kind in identity.kinds.items():
+        if index >= len(phases):
+            continue
+        entry = phases[index]
         if not isinstance(entry, dict):
             continue
-        kind = infer_legacy_phase_kind(entry.get("name"), entry.get("kind"))
-        if kind is not None:
-            entry["kind"] = kind
+        entry["kind"] = kind
         if kind == "profiling":
             candidates.append(entry)
     if len(candidates) == 1:
