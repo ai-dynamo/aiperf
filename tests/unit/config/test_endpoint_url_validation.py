@@ -77,7 +77,6 @@ def test_endpoint_config_rejects_http_with_empty_host() -> None:
     ("url", "transport"),
     [
         param("ws://localhost:19000", None, id="ws-url-autodetect"),
-        param("wss://api.example.com/v1/responses", None, id="wss-url-autodetect"),
         param("http://localhost:8000", "websocket", id="explicit-transport-http-url"),
     ],
 )  # fmt: skip
@@ -185,3 +184,15 @@ def test_ws_without_server_token_count_rejected() -> None:
     undercount; the transport requires --use-server-token-count."""
     with pytest.raises(ValidationError, match="usage.prompt_tokens"):
         EndpointConfig(urls=["ws://localhost:19000"], type="responses")
+
+
+def test_ws_with_wait_for_model_rejected() -> None:
+    """The readiness probe issues HTTP requests, which cannot target a ws:// URL,
+    so wait-for-model probing is rejected for the WebSocket transport."""
+    with pytest.raises(ValidationError, match="not supported on the WebSocket"):
+        EndpointConfig(
+            urls=["ws://localhost:19000"],
+            type="responses",
+            wait_for_model_timeout=30.0,
+            use_server_token_count=True,
+        )

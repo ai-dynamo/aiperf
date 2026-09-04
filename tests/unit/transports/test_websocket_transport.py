@@ -656,8 +656,36 @@ class TestReconnectChaining:
         await transport.stop()
 
     async def test_reconnect_with_per_turn_store_proceeds(self) -> None:
-        # Endpoint-level extra has no store, but the per-turn payload does; that
-        # still persists the response server-side, so a reconnect resolves the id.
+        # Endpoint-level extra has no store, but turn 1's per-turn payload does;
+        # that persists resp_1 server-side, so a reconnect on turn 2 resolves it.
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        opened: list[FakeWS] = []
+        transport._open = self._open_recorder(opened)
+
+        await transport.send_request(
+            _request_info(is_final_turn=False), {"model": "m", "store": True}
+        )
+        opened[0].closed = True
+        record = await transport.send_request(
+            _request_info(
+                is_final_turn=True, turn_index=1, previous_response_id="resp_1"
+            ),
+            {"model": "m", "previous_response_id": "resp_1"},
+        )
+
+        assert record.error is None
+        assert record.status == 200
+        assert len(opened) == 2
+        assert opened[1].sent
+        await transport.stop()
+
+    async def test_reconnect_prior_turn_unstored_fails_despite_current_store(
+        self,
+    ) -> None:
+        # resp_1 came from an unstored turn 1; turn 2 setting store:true cannot
+        # retroactively persist it, so a reconnect still loses the chain. The
+        # guard must key off the prior turn's store, not the current turn's.
         transport = WebSocketTransport(model_endpoint=self._endpoint())
         await transport.initialize()
         opened: list[FakeWS] = []
@@ -672,10 +700,10 @@ class TestReconnectChaining:
             {"model": "m", "previous_response_id": "resp_1", "store": True},
         )
 
-        assert record.error is None
-        assert record.status == 200
+        assert record.error is not None
+        assert record.error.type == "ChainingContextLost"
         assert len(opened) == 2
-        assert opened[1].sent
+        assert opened[1].sent == []
         await transport.stop()
 
 
