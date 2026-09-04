@@ -248,7 +248,6 @@ class TestGatePreflight:
         assert "hf auth login" in message
 
     def test_network_failure_is_not_reported_as_missing_access(self) -> None:
-        """ "I could not tell" must never render as "you lack access"."""
         with (
             patch("huggingface_hub.get_token", return_value="hf_fake"),
             patch("huggingface_hub.HfApi.auth_check", side_effect=OSError("no route")),
@@ -510,7 +509,6 @@ class TestPreflightRunsWithoutAnEventLoop:
 
 
 def test_public_loaders_construct_outside_an_event_loop() -> None:
-    """Public loaders must be constructible with no event loop running."""
     loader = SpeedBenchPublicLoader(hf_subset="qualitative")
 
     assert loader.config == "qualitative"
