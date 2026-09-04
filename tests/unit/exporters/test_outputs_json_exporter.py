@@ -377,3 +377,72 @@ class TestOutputsJsonWarmupPartition:
         data = orjson.loads((tmp_path / "outputs.json").read_bytes())
         assert [r["session_num"] for r in data["data"]] == [1, 5]
         assert [r["session_num"] for r in data["warmup"]] == [2, 9]
+
+
+class TestLargeExportWarning:
+    """The large-export warning fires on the record count, not the file size.
+
+    outputs.json is sorted, so it cannot stream and holds the whole document in
+    memory. The warning is the only signal a user gets that a run is paying that
+    cost, so pin the boundary rather than leaving log-only behavior untested.
+    """
+
+    @staticmethod
+    def _prepare(
+        tmp_path: Path, record_count: int, threshold: int
+    ) -> tuple[list[str], OutputsJsonExporter]:
+        """Build an exporter over ``record_count`` fragments, capturing warnings."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True, exist_ok=True)
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [_make_fragment(session_num=i) for i in range(record_count)],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = threshold
+
+        warnings: list[str] = []
+        exporter.warning = warnings.append  # type: ignore[method-assign]
+        return warnings, exporter
+
+    @pytest.mark.asyncio
+    async def test_warns_at_threshold(self, tmp_path: Path) -> None:
+        warnings, exporter = self._prepare(tmp_path, 3, threshold=2)
+        await exporter.export()
+
+        assert len(warnings) == 1
+        assert "3 records" in warnings[0]
+        assert "--no-export-outputs-json" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_no_warning_below_threshold(self, tmp_path: Path) -> None:
+        warnings, exporter = self._prepare(tmp_path, 2, threshold=3)
+        await exporter.export()
+
+        assert warnings == []
+
+    @pytest.mark.asyncio
+    async def test_warning_counts_warmup_toward_the_threshold(
+        self, tmp_path: Path
+    ) -> None:
+        """Warmup records are held in memory too, so they count."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=0),
+                _make_fragment(session_num=1, benchmark_phase="warmup"),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = 2
+        warnings: list[str] = []
+        exporter.warning = warnings.append  # type: ignore[method-assign]
+
+        await exporter.export()
+
+        assert len(warnings) == 1
+        assert "2 records" in warnings[0]

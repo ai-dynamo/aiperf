@@ -177,14 +177,15 @@ class ArtifactsConfig(BaseConfig):
     ]
 
     auto_plot: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
+            default=None,
             description=(
                 "Auto-invoke `aiperf plot` against the artifact directory after the "
-                "benchmark completes. Resolved by the CLI converter from the "
-                "tri-state CLI flag and the active search recipe's auto_plot_default; "
-                "by the time it lands here it is a plain bool."
+                "benchmark completes. Unset (the default) means a `plot:` section "
+                "implies True; set False to suppress plots even with one, True to "
+                "force them. `AIPerfConfig` resolves this to a concrete bool, so any "
+                "config that came through the loader carries a plain bool."
             ),
         ),
     ]
@@ -202,12 +203,14 @@ class ArtifactsConfig(BaseConfig):
     ]
 
     export_outputs_json: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
+            default=None,
             description="Export generated response text after the run, to "
             "`outputs.json` or `<prefix>_outputs.json` when `prefix` is set. "
-            "Implied by `raw` export level unless explicitly set False.",
+            "Unset (the default) means the `raw` export level implies it; set "
+            "False to opt out at raw, True to force it at any level. Always a "
+            "concrete bool once validation has run.",
         ),
     ]
 
@@ -228,15 +231,24 @@ class ArtifactsConfig(BaseConfig):
         return self
 
     def _apply_raw_implies_outputs_json(self) -> None:
-        """Raw export implies outputs.json unless the user explicitly declined.
+        """Resolve the tri-state ``export_outputs_json`` to a concrete bool.
 
-        If you asked for the full request/response bodies, you want the generated
-        text too. An explicit ``--no-export-outputs-json`` (or ``exportOutputsJson:
-        false`` in YAML) wins, so raw-level debugging can skip the second copy.
+        ``None`` means "decide from the export level": raw implies the file,
+        because if you asked for the full request/response bodies you want the
+        generated text too. An explicit True or False is honored as-is, so
+        raw-level debugging can decline the second copy.
+
+        Tri-state rather than ``model_fields_set`` on a ``False`` default: the
+        Kubernetes apiserver materializes CRD ``default:`` values on write, so a
+        defaulted-to-False field is indistinguishable from a user-authored one
+        and would silently defeat the implication for every AIPerfJob.
         """
-        if not self.raw or "export_outputs_json" in self.model_fields_set:
-            return
-        self.export_outputs_json = True
+        if self.export_outputs_json is None:
+            self.export_outputs_json = self.raw
+            # Resolving is not authoring: keep the field out of
+            # ``model_fields_set`` so ``exclude_unset`` dumps (the Kubernetes
+            # ConfigMap payload) do not invent a value the user never wrote.
+            self.model_fields_set.discard("export_outputs_json")
 
     # ==========================================================================
     # COMPUTED FILE PATH PROPERTIES

@@ -384,3 +384,34 @@ def test_build_benchmark_plan_no_plot_section():
     config = load_config_from_string(_BASE_BENCHMARK_YAML)
     plan = build_benchmark_plan(config)
     assert plan.plot is None
+
+
+def test_k8s_crd_defaulting_cannot_suppress_implied_auto_plot() -> None:
+    """A ``plot:`` section must still imply auto_plot under Kubernetes.
+
+    The apiserver materializes CRD ``default:`` values on write, so gating the
+    implication on ``model_fields_set`` meant every AIPerfJob stored an explicit
+    ``autoPlot: false`` and silently rendered no plots. ``auto_plot`` is
+    tri-state so there is no CRD default to materialize.
+    """
+    from aiperf.config.artifacts import ArtifactsConfig
+    from aiperf.config.loader import load_config_from_mapping
+    from aiperf.kubernetes.spec_converter import build_config_envelope
+
+    assert ArtifactsConfig.model_fields["auto_plot"].default is None
+
+    spec = {
+        "benchmark": {
+            "model": "test-model",
+            "endpoint": {"url": "http://localhost:8000"},
+            "dataset": {"type": "synthetic"},
+            "phases": {"type": "concurrency", "concurrency": 1, "requests": 5},
+        },
+        "plot": {"visualization": {}},
+    }
+    config = load_config_from_mapping(build_config_envelope(spec))
+    assert config.benchmark.artifacts.auto_plot is True
+
+    spec["benchmark"]["artifacts"] = {"autoPlot": False}
+    config = load_config_from_mapping(build_config_envelope(spec))
+    assert config.benchmark.artifacts.auto_plot is False

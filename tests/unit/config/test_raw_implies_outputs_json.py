@@ -17,6 +17,8 @@ from aiperf.config.artifacts import ArtifactsConfig
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
 from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.loader import load_config_from_mapping
+from aiperf.kubernetes.spec_converter import build_config_envelope
 
 
 def _artifacts(**kwargs: Any) -> ArtifactsConfig:
@@ -129,3 +131,46 @@ class TestRawImpliesOutputsJsonUnderConfigYaml:
         artifacts = cfg.benchmark.artifacts
         assert artifacts.export_level == ExportLevel.RAW
         assert artifacts.export_outputs_json is False
+
+
+class TestRawImpliesOutputsJsonUnderKubernetes:
+    """The implication must survive Kubernetes CRD structural-schema defaulting.
+
+    A CRD ``default:`` is materialized by the apiserver on write, so a bool
+    field with a non-null default arrives indistinguishable from a user-authored
+    value. That is why ``export_outputs_json`` is tri-state rather than gated on
+    ``model_fields_set``: with a ``False`` default the CRD carried
+    ``default: false``, every AIPerfJob stored an explicit ``false``, and
+    ``artifacts.raw: true`` silently produced no outputs.json.
+    """
+
+    @staticmethod
+    def _resolve(artifacts: dict[str, Any]) -> ArtifactsConfig:
+        spec = {
+            "benchmark": {
+                "model": "test-model",
+                "endpoint": {"url": "http://localhost:8000"},
+                "dataset": {"type": "synthetic"},
+                "phases": {"type": "concurrency", "concurrency": 1, "requests": 5},
+                "artifacts": artifacts,
+            }
+        }
+        return load_config_from_mapping(build_config_envelope(spec)).benchmark.artifacts
+
+    def test_crd_omits_default_for_export_outputs_json(self) -> None:
+        """No CRD default means the apiserver cannot materialize the field."""
+        assert ArtifactsConfig.model_fields["export_outputs_json"].default is None
+
+    def test_k8s_raw_true_implies_outputs_json(self) -> None:
+        assert self._resolve({"raw": True}).export_outputs_json is True
+
+    def test_k8s_explicit_false_still_opts_out(self) -> None:
+        artifacts = self._resolve({"raw": True, "exportOutputsJson": False})
+        assert artifacts.export_level == ExportLevel.RAW
+        assert artifacts.export_outputs_json is False
+
+    def test_k8s_non_raw_leaves_outputs_json_off(self) -> None:
+        assert self._resolve({"raw": False}).export_outputs_json is False
+
+    def test_k8s_flag_alone_works_below_raw(self) -> None:
+        assert self._resolve({"exportOutputsJson": True}).export_outputs_json is True
