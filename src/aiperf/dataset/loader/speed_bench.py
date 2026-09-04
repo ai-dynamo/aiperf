@@ -176,9 +176,9 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
 
         When ``self.category`` is set, lines whose ``category`` field does not
         match are skipped. If the filter eliminates every row, the mismatch is
-        raised here: an empty dataset is never survivable downstream -- it dies
-        ~26s later inside timing_manager with ``conversation_ids cannot be
-        empty`` and a SIGKILL, long after the cause has scrolled away.
+        raised here: an empty dataset is never survivable downstream, and
+        failing at load time keeps the cause next to the configuration that
+        produced it rather than surfacing later from another service.
 
         When ``self.multi_turn`` is set, all turns in the row are used,
         otherwise only the first turn is used.

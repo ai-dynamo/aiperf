@@ -122,9 +122,6 @@ class TestBuildLoaderKwargs:
             composer._build_loader_kwargs(PublicDatasetType.AIMO, ShareGPTLoader)
 
     def test_category_forwarded_to_supporting_loader(self, aimo_config):
-        """Mirrors the multi_turn case: the category call site needs its own
-        coverage, or a bug specific to this wiring (wrong field name, wrong
-        supporting_loaders string) would not be caught at the composer level."""
         from aiperf.dataset.loader.speed_bench_public import SpeedBenchPublicLoader
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
 

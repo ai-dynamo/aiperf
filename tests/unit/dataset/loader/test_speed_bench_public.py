@@ -494,7 +494,6 @@ class TestPreflightRunsWithoutAnEventLoop:
         with patch.object(
             SpeedBenchPublicLoader, "cache_path_for", return_value=cached
         ):
-            # No event loop is running here, deliberately.
             SpeedBenchPublicLoader.preflight_materialize(hf_subset="qualitative")
 
     def test_access_check_does_not_construct_a_loader(self) -> None:

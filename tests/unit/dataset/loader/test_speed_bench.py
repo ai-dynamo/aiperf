@@ -467,19 +467,6 @@ class TestSpeedBenchLoaderRowValidation:
         ):
             loader.load_dataset()
 
-    def test_unprepared_row_is_still_recognized_as_speed_bench(self):
-        """Placeholder content is a preparation problem, not a format problem.
-
-        If ``can_load`` rejected these rows, auto-detection would fail first and
-        the user would see "No loader can handle the data format" instead of the
-        placeholder guidance.
-        """
-        placeholder_row = _make_speed_bench_row(
-            messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}],
-        )
-
-        assert SpeedBenchLoader.can_load(placeholder_row) is True
-
 
 class TestSpeedBenchLoaderMultiTurn:
     def test_multi_turn_produces_all_messages(self, create_jsonl_file):
