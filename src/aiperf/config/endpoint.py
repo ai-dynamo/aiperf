@@ -636,6 +636,28 @@ class EndpointConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def _validate_wait_for_model_unsupported_on_websocket(self) -> Self:
+        """Reject the readiness probe on the WebSocket transport.
+
+        ``wait_for_endpoint`` probes readiness with ``AioHttpClient`` HTTP
+        GET/POST calls against the configured URL, but aiohttp rejects a
+        ``ws://``/``wss://`` URL with NonHttpUrlClientError, so the probe would
+        never succeed and every WebSocket benchmark would fail at preflight.
+        Fail fast at config time instead of hanging until the probe deadline.
+        """
+        if (
+            self.wait_for_model_timeout > 0
+            and TransportType.WEBSOCKET in self._effective_transports()
+        ):
+            raise ValueError(
+                "--wait-for-model-timeout is not supported on the WebSocket "
+                "transport: the readiness probe issues HTTP requests, which "
+                "cannot target a ws:// or wss:// URL. Drop "
+                "--wait-for-model-timeout for WebSocket endpoints."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_request_content_type(self) -> Self:
         """Auto-select multipart for endpoints that declare requires_form_data."""
         from aiperf.plugin import plugins
