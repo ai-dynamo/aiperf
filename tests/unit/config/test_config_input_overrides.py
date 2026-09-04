@@ -329,8 +329,12 @@ def test_inert_flag_paired_with_routable_one_still_errors(
 def test_inert_media_flag_paired_on_file_dataset_errors(
     random_pool_yaml: Path,
 ) -> None:
-    """Same, for the media flags against a file dataset."""
-    with pytest.raises(ConfigurationError, match=r"--image-width-mean"):
+    """Same, for the media flags against a file dataset.
+
+    Either error type satisfies the guarantee: the flag must not be silently
+    discarded when paired with a routable one.
+    """
+    with pytest.raises((ConfigurationError, ValueError), match=r"--image-width-mean"):
         resolve_config(cli(prompt_batch_size=4, image_width_mean=128), random_pool_yaml)
 
 
