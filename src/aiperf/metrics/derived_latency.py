@@ -9,9 +9,12 @@ metadata columns:
 
 - ``credit_to_start_latency``: ``request_start_ns - credit_issued_ns``.
   Surface controller queue saturation.
-- ``effective_latency``: ``end_ns - credit_issued_ns``. Coordinated-omission-
-  aware request latency that includes credit-queue wait time. Measures the
-  latency a saturating user actually perceives.
+- ``effective_latency``: ``end_ns - credit_issued_ns`` over successful records.
+  Coordinated-omission-aware request latency that includes credit-queue wait
+  time. Measures the latency a saturating user actually perceives.
+- ``adj_effective_latency``: the same distribution with one ``+inf`` sample per
+  errored record, mirroring the ``adj_<tag>`` treatment the registry latency
+  metrics get from ``PERCENTILE_INCLUDES_FAILED_REQUESTS``.
 
 All percentiles are computed exactly via numpy on the per-record arrays;
 results are emitted in display units (milliseconds) so consumers don't need
@@ -34,6 +37,10 @@ if TYPE_CHECKING:
 
 
 _NS_PER_MS = 1_000_000.0
+
+_EFFECTIVE_LATENCY_TAG = "effective_latency"
+_EFFECTIVE_LATENCY_HEADER = "Effective Latency (CO-aware)"
+_EFFECTIVE_LATENCY_UNIT = "ms"
 
 
 def _array_to_metric_result(
@@ -89,6 +96,36 @@ def _delta_ms(
     return np.maximum(valid, 0.0) / _NS_PER_MS
 
 
+def _success_mask(
+    store: ColumnStore, mask: NDArray[np.bool_] | None
+) -> NDArray[np.bool_]:
+    """Combine ``mask`` with a not-errored filter over the store's records.
+
+    ``has_error`` uses the uint8 encoding documented on
+    ``ColumnStore.metadata_bool`` (0=False, 1=True, 255=missing), so comparing
+    against 1 leaves uningested slots out of the error set. Those slots carry
+    NaN timestamps that :func:`_delta_ms` drops regardless.
+    """
+    n = store.count
+    success = store.metadata_bool("has_error")[:n] != 1
+    return success if mask is None else success & mask
+
+
+def _error_mask(
+    store: ColumnStore, mask: NDArray[np.bool_] | None, valid_col: NDArray[np.float64]
+) -> NDArray[np.bool_]:
+    """Errored records inside ``mask`` that also have ``valid_col`` populated.
+
+    Restricting to finite ``valid_col`` entries keeps the failure count drawn
+    from the same population as the success distribution it inflates: a record
+    without ``credit_issued_ns`` contributes no success sample, so it must not
+    contribute a failure sample either.
+    """
+    n = store.count
+    is_error = (store.metadata_bool("has_error")[:n] == 1) & ~np.isnan(valid_col)
+    return is_error if mask is None else is_error & mask
+
+
 def compute_credit_to_start_latency(
     store: ColumnStore, mask: NDArray[np.bool_] | None = None
 ) -> MetricResult | None:
@@ -103,12 +140,10 @@ def compute_credit_to_start_latency(
     issued_col = store.metadata_numeric("credit_issued_ns")
     if issued_col.size == 0:
         return None
-    if mask is not None:
-        n = min(n, len(mask))
     start_ns = store.start_ns[:n]
     if mask is not None:
         start_ns = start_ns[mask]
-        issued_col = issued_col[:n][mask]
+        issued_col = issued_col[mask]
     values_ms = _delta_ms(start_ns, issued_col)
     if values_ms.size == 0:
         return None
@@ -131,6 +166,13 @@ def compute_effective_latency(
     ``credit_issued_ns``, so the queue wait is part of the perceived latency.
     Compare to ``request_latency`` (``end_ns - start_ns``) to see how much
     of perceived latency is queue-induced vs server-induced.
+
+    Errored records are excluded. ``RequestRecord.valid`` is ``not has_error
+    and ...``, so the registry latency metrics already draw from a
+    success-only population; masking here gives ``effective_latency`` that
+    same population rather than blending a failure's time-to-error into the
+    success distribution at full weight. ``adj_effective_latency`` carries
+    the failure-aware view — see :func:`compute_adjusted_effective_latency`.
     """
     n = store.count
     if n == 0:
@@ -138,20 +180,54 @@ def compute_effective_latency(
     issued_col = store.metadata_numeric("credit_issued_ns")
     if issued_col.size == 0:
         return None
-    if mask is not None:
-        n = min(n, len(mask))
-    end_ns = store.end_ns[:n]
-    if mask is not None:
-        end_ns = end_ns[mask]
-        issued_col = issued_col[:n][mask]
-    values_ms = _delta_ms(end_ns, issued_col)
+    success = _success_mask(store, mask)
+    values_ms = _delta_ms(store.end_ns[:n][success], issued_col[success])
     if values_ms.size == 0:
         return None
     return _array_to_metric_result(
-        tag="effective_latency",
-        header="Effective Latency (CO-aware)",
-        unit="ms",
+        tag=_EFFECTIVE_LATENCY_TAG,
+        header=_EFFECTIVE_LATENCY_HEADER,
+        unit=_EFFECTIVE_LATENCY_UNIT,
         values_ms=values_ms,
+    )
+
+
+def compute_adjusted_effective_latency(
+    store: ColumnStore, mask: NDArray[np.bool_] | None = None
+) -> MetricResult | None:
+    """Failure-inflated companion to ``effective_latency``.
+
+    Mirrors the ``adj_<tag>`` treatment ``PERCENTILE_INCLUDES_FAILED_REQUESTS``
+    gives the registry latency metrics: the success-only distribution plus one
+    ``+inf`` sample per errored record. ``effective_latency`` is not a registry
+    metric so it cannot carry the flag, but a coordinated-omission metric with
+    no failure-aware companion is the one gap that reporting the success-only
+    view would otherwise open.
+
+    Returns ``None`` when the window holds no errors (nothing to inflate) or no
+    successes (no distribution to inflate) — matching the no-op that
+    :func:`inject_adjusted_latency_metrics` applies at ``error_count == 0``.
+    """
+    n = store.count
+    if n == 0:
+        return None
+    issued_col = store.metadata_numeric("credit_issued_ns")
+    if issued_col.size == 0:
+        return None
+    error_count = int(_error_mask(store, mask, issued_col).sum())
+    if error_count == 0:
+        return None
+    success = _success_mask(store, mask)
+    clean = _delta_ms(store.end_ns[:n][success], issued_col[success])
+    if clean.size == 0:
+        return None
+    return _inflated_metric_result(
+        tag=_EFFECTIVE_LATENCY_TAG,
+        header=_EFFECTIVE_LATENCY_HEADER,
+        unit=_EFFECTIVE_LATENCY_UNIT,
+        clean_sorted=np.sort(clean),
+        error_count=error_count,
+        console_group=MetricConsoleGroup.EFFECTIVE,
     )
 
 
@@ -160,11 +236,16 @@ def inject_derived_latency_metrics(
     results: dict[str, MetricResult],
     mask: NDArray[np.bool_] | None = None,
 ) -> None:
-    """Inject ``credit_to_start_latency`` and ``effective_latency`` into
-    ``results`` if their prerequisite columns are populated. Pure side-effect."""
+    """Inject ``credit_to_start_latency``, ``effective_latency`` and
+    ``adj_effective_latency`` into ``results`` if their prerequisite columns
+    are populated. Pure side-effect."""
     for tag, result in (
         ("credit_to_start_latency", compute_credit_to_start_latency(store, mask)),
-        ("effective_latency", compute_effective_latency(store, mask)),
+        (_EFFECTIVE_LATENCY_TAG, compute_effective_latency(store, mask)),
+        (
+            f"adj_{_EFFECTIVE_LATENCY_TAG}",
+            compute_adjusted_effective_latency(store, mask),
+        ),
     ):
         if result is not None:
             results[tag] = result
@@ -230,6 +311,30 @@ def _build_adjusted_metric_result(
     falls back to the parent tag for unit conversion (see
     :mod:`aiperf.metrics.display_units`).
     """
+    return _inflated_metric_result(
+        tag=tag,
+        header=metric_cls.header,
+        unit=str(metric_cls.unit),
+        clean_sorted=clean_sorted,
+        error_count=error_count,
+    )
+
+
+def _inflated_metric_result(
+    *,
+    tag: str,
+    header: str,
+    unit: str,
+    clean_sorted: NDArray[np.float64],
+    error_count: int,
+    console_group: MetricConsoleGroup | None = None,
+) -> MetricResult:
+    """Build an ``adj_<tag>`` MetricResult from a success-only sample set.
+
+    Shared by the registry-metric path (``PERCENTILE_INCLUDES_FAILED_REQUESTS``)
+    and by ``effective_latency``, which is derived at summarize-time and so has
+    no metric class to read ``header`` / ``unit`` off of.
+    """
     inflated = np.concatenate(
         [clean_sorted, np.full(error_count, np.inf, dtype=np.float64)]
     )
@@ -243,9 +348,10 @@ def _build_adjusted_metric_result(
     # a NaN that the JSON encoder may render as ``null`` or reject.
     return MetricResult(
         tag=f"adj_{tag}",
-        header=f"{metric_cls.header} (error-adjusted)",
-        unit=str(metric_cls.unit),
+        header=f"{header} (error-adjusted)",
+        unit=unit,
         count=n,
+        console_group=console_group,
         sum=float(np.sum(inflated)),
         avg=float(np.mean(inflated)),
         min=float(np.min(inflated)),

@@ -214,6 +214,8 @@ def assert_error_request_record(
     assert isinstance(record, RequestRecord)
     assert record.error is not None
     assert len(record.responses) == 0
+    assert record.end_perf_ns is not None
+    assert record.end_perf_ns >= record.start_perf_ns
 
     if expected_error_code is not None:
         assert record.error.code == expected_error_code
