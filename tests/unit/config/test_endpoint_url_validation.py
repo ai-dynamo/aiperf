@@ -179,6 +179,47 @@ def test_ws_with_non_sensitive_header_allowed() -> None:
     assert cfg.urls == ["ws://localhost:19000"]
 
 
+def test_ws_with_userinfo_credentials_rejected() -> None:
+    """Userinfo in a ws:// URL becomes a cleartext Basic auth header on upgrade."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://user:secret@localhost:19000"],
+            type="responses",
+            use_server_token_count=True,
+        )
+
+
+def test_ws_with_sensitive_query_param_rejected() -> None:
+    """A sensitive query parameter in a ws:// URL is sent verbatim in cleartext."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://localhost:19000/v1/responses?api_key=secret"],
+            type="responses",
+            use_server_token_count=True,
+        )
+
+
+def test_ws_with_encoded_sensitive_query_param_rejected() -> None:
+    """A percent-encoded sensitive query key is decoded before matching, so it is
+    not a smuggling path around the ws:// TLS gate."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://localhost:19000/v1/responses?api%5Fkey=secret"],
+            type="responses",
+            use_server_token_count=True,
+        )
+
+
+def test_wss_with_url_credentials_allowed() -> None:
+    """URL-embedded credentials are fine over TLS-encrypted wss://."""
+    cfg = EndpointConfig(
+        urls=["wss://user:secret@api.example.com/v1/responses"],
+        type="responses",
+        use_server_token_count=True,
+    )
+    assert cfg.urls == ["wss://user:secret@api.example.com/v1/responses"]
+
+
 def test_ws_without_server_token_count_rejected() -> None:
     """WebSocket chaining sends only the newest turn, so client-side ISL would
     undercount; the transport requires --use-server-token-count."""

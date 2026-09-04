@@ -33,11 +33,15 @@ from aiperf.transports.base_transports import (
 )
 
 # Terminal Responses lifecycle events over the socket. ``response.completed``
-# ends a turn successfully; the others end it in failure.
+# and ``response.incomplete`` both end a turn successfully; only ``response.failed``
+# and ``error`` end it in failure. ``response.incomplete`` is the contract's normal
+# terminal status for a truncated output (``incomplete_details.reason ==
+# "max_output_tokens"``), reached routinely via ``max_output_tokens`` /
+# ``cancel_after_ns``; the HTTP SSE path never errors on it, so neither does this.
 _TERMINAL_EVENT_TYPES = frozenset(
     {"response.completed", "response.failed", "response.incomplete", "error"}
 )
-_FAILURE_EVENT_TYPES = frozenset({"response.failed", "response.incomplete", "error"})
+_FAILURE_EVENT_TYPES = frozenset({"response.failed", "error"})
 
 # stream_id charset per the OpenAI WebSocket-mode spec: 1-256 characters,
 # alphanumeric plus underscore, hyphen, and period.
@@ -224,7 +228,7 @@ class WebSocketTransport(BaseTransport):
         # exceeds the endpoint timeout); fold both into the failed-record path
         # rather than letting them escape send_request.
         try:
-            ws, reconnected = await self._acquire(request_info, headers)
+            ws, is_fresh = await self._acquire(request_info, headers)
         except asyncio.CancelledError:
             record.cancellation_perf_ns = time.perf_counter_ns()
             record.error = ErrorDetails(
@@ -248,18 +252,19 @@ class WebSocketTransport(BaseTransport):
             record.end_perf_ns = time.perf_counter_ns()
             record.request_headers = redact_headers(headers)
             return record
-        # A mid-conversation reconnect loses the connection-local response cache
-        # that non-stored chaining depends on. Sending the chained turn (only the
-        # newest turn plus previous_response_id) would draw a confusing
-        # previous_response_not_found from the server. Fail the turn with a clear
-        # cause instead. Resolvability hinges on whether the *prior* turn (the one
-        # previous_response_id points at) was persisted, not this turn's store:
-        # endpoint-wide store persists every turn, otherwise consult the recorded
-        # prior-turn flag.
+        # A turn sent on a freshly opened socket has an empty connection-local
+        # response cache, which non-stored chaining depends on. Sending the
+        # chained turn (only the newest turn plus previous_response_id) would draw
+        # a confusing previous_response_not_found from the server. Fail the turn
+        # with a clear cause instead. Resolvability hinges on whether the *prior*
+        # turn (the one previous_response_id points at) was persisted, not this
+        # turn's store: endpoint-wide store persists every turn, otherwise consult
+        # the recorded prior-turn flag (which _release preserves across a dropped
+        # lease precisely so this check survives a reconnect).
         prior_stored = self._store_requested() or (
             bool(correlation_id) and self._stored.get(correlation_id, False)
         )
-        if reconnected and request_info.previous_response_id and not prior_stored:
+        if is_fresh and request_info.previous_response_id and not prior_stored:
             record.error = ErrorDetails(
                 code=None,
                 type="ChainingContextLost",
@@ -549,10 +554,16 @@ class WebSocketTransport(BaseTransport):
         socket is never in use by two turns at once. A request with no
         ``x_correlation_id`` always gets a fresh socket (closed on release).
 
-        Returns ``(socket, reconnected)`` where ``reconnected`` is True when a
-        prior lease for this conversation existed but its socket was already
-        closed, so a fresh one was opened. The connection-local response cache
-        that ``previous_response_id`` chaining relies on died with that socket.
+        Returns ``(socket, is_fresh)`` where ``is_fresh`` is True whenever this
+        call actually opened a new socket rather than reusing a live lease. That
+        is the fact the chaining guard needs: a fresh socket has an empty
+        connection-local response cache, so an inherited ``previous_response_id``
+        is unresolvable on it without server-side store. Keying on "did we open"
+        rather than "was a stale lease present" matters because ``_release``
+        drops the lease on every turn that ends dirty or on a closed socket, so
+        the reconnecting turn would otherwise find nothing stale and skip the
+        guard. The first turn of a conversation is also fresh, but it carries no
+        ``previous_response_id``, so the guard is a no-op there.
         """
         correlation_id = request_info.x_correlation_id
         stale: aiohttp.ClientWebSocketResponse | None = None
@@ -574,7 +585,7 @@ class WebSocketTransport(BaseTransport):
             self._all.add(ws)
             if correlation_id:
                 self._leases[correlation_id] = ws
-        return ws, stale is not None
+        return ws, True
 
     async def _open(
         self, request_info: RequestInfo, headers: dict[str, str]
@@ -621,7 +632,13 @@ class WebSocketTransport(BaseTransport):
                 return
             if correlation_id and self._leases.get(correlation_id) is ws:
                 self._leases.pop(correlation_id, None)
-                self._stored.pop(correlation_id, None)
+                # Keep the prior-turn store flag across a dropped lease: a turn
+                # that ends dirty (timeout/close) still forces the next turn onto
+                # a fresh socket, and the chaining guard there must know whether
+                # the prior response was persisted. Only the final turn -- which
+                # has no successor -- clears it.
+                if is_final_turn:
+                    self._stored.pop(correlation_id, None)
             self._all.discard(ws)
             to_close = ws if not ws.closed else None
         if to_close is not None:

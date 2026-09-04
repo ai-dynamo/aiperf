@@ -6,7 +6,7 @@ import re
 from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import parse_qsl, unquote_plus, urlsplit
 
 REDACTED_VALUE = "<redacted>"
 
@@ -424,6 +424,28 @@ def _redact_sensitive_query_parameters(url: str) -> str:
         return f"{separator}{name}={REDACTED_VALUE}"
 
     return _URL_QUERY_PARAMETER_PATTERN.sub(_redact_parameter, url)
+
+
+def url_carries_credentials(url: str) -> bool:
+    """Whether a URL embeds credentials in its userinfo or a sensitive query param.
+
+    Mirrors the credential classification :func:`redact_url` acts on, so a gate
+    can reject a cleartext transport for exactly the URLs that would be redacted:
+    ``ws://user:secret@host`` (userinfo) or ``ws://host?api_key=secret`` (query).
+    Query-parameter names are percent-decoded before matching, matching the
+    server's own decode, so ``api%5Fkey`` is not a smuggling path.
+    """
+    split = urlsplit(url)
+    if split.username or split.password:
+        return True
+    for name, _ in parse_qsl(split.query, keep_blank_values=True):
+        try:
+            decoded_name = unquote_plus(name, errors="strict")
+        except UnicodeDecodeError:
+            decoded_name = name
+        if _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(decoded_name):
+            return True
+    return False
 
 
 def redact_url(url: str) -> str:
