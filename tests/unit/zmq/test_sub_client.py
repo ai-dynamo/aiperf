@@ -12,15 +12,12 @@ import zmq
 import zmq.asyncio
 
 from aiperf.common.enums import (
-    CommandResponseStatus,
-    CommandType,
     LifecycleState,
     MessageType,
 )
 from aiperf.common.exceptions import CommunicationError
 from aiperf.common.messages import (
-    CommandMessage,
-    CommandResponse,
+    ConnectionProbeMessage,
     HeartbeatMessage,
     Message,
 )
@@ -203,13 +200,13 @@ class TestZMQSubClientMessageHandling:
             callback_called.set()
 
         # Register callback for the FULL targeted topic (not just base message type)
-        targeted_topic = f"{MessageType.COMMAND}{TOPIC_DELIMITER}service-123"
+        targeted_topic = f"{MessageType.CONNECTION_PROBE}{TOPIC_DELIMITER}service-123"
         client._subscribers[targeted_topic] = [callback]
 
         # Message with targeted topic
-        message = CommandMessage(
+        message = ConnectionProbeMessage(
             service_id="test-service",
-            command=CommandType.SHUTDOWN,
+            target_service_id="service-123",
         )
         topic_bytes = f"{targeted_topic}{TOPIC_END}".encode()
         message_bytes = message.model_dump_json().encode()
@@ -245,50 +242,23 @@ class TestZMQSubClientMessageHandling:
         assert len(msgs1) == 1 and len(msgs2) == 1
 
     @pytest.mark.asyncio
-    async def test_handle_message_deserializes_command_message(
+    async def test_handle_message_deserializes_targeted_message(
         self, mock_zmq_context, create_callback_tracker
     ):
-        """Test that COMMAND messages are deserialized as CommandMessage."""
+        """Test that a targeted message routes to its concrete class."""
         client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
 
         callback, event, received_messages = create_callback_tracker()
-        client._subscribers[MessageType.COMMAND] = [callback]
+        client._subscribers[MessageType.CONNECTION_PROBE] = [callback]
 
-        message = CommandMessage(
-            service_id="test-service",
-            command=CommandType.SHUTDOWN,
-        )
-        topic_bytes = f"{MessageType.COMMAND}{TOPIC_END}".encode()
+        message = ConnectionProbeMessage(service_id="test-service")
+        topic_bytes = f"{MessageType.CONNECTION_PROBE}{TOPIC_END}".encode()
         message_bytes = message.model_dump_json().encode()
 
         await client._handle_message(topic_bytes, message_bytes)
         await event.wait()
 
-        assert isinstance(received_messages[0], CommandMessage)
-
-    @pytest.mark.asyncio
-    async def test_handle_message_deserializes_command_response(
-        self, mock_zmq_context, create_callback_tracker
-    ):
-        """Test that COMMAND_RESPONSE messages are deserialized as CommandResponse."""
-        client = ZMQSubClient(address="tcp://127.0.0.1:5555", bind=False)
-
-        callback, event, received_messages = create_callback_tracker()
-        client._subscribers[MessageType.COMMAND_RESPONSE] = [callback]
-
-        message = CommandResponse(
-            service_id="test-service",
-            command=CommandType.SHUTDOWN,
-            command_id="cmd-123",
-            status=CommandResponseStatus.SUCCESS,
-        )
-        topic_bytes = f"{MessageType.COMMAND_RESPONSE}{TOPIC_END}".encode()
-        message_bytes = message.model_dump_json().encode()
-
-        await client._handle_message(topic_bytes, message_bytes)
-        await event.wait()
-
-        assert isinstance(received_messages[0], CommandResponse)
+        assert isinstance(received_messages[0], ConnectionProbeMessage)
 
 
 class TestZMQSubClientWildcardSubscription:

@@ -58,16 +58,16 @@ def test_pre_session_with_fork_rejected():
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="PORT DEVIATION: v2 _check_pre_session_branch DROPPED the "
-    "'pre-session dispatch requires is_background=True' check. v2 re-keyed "
-    "fire-and-forget gating off is_background onto dispatch_timing='pre' to "
-    "support main's dag_jsonl background-forks, so a blocking (is_background="
-    "False) pre-session SPAWN now validates with no equivalent rejection.",
-)
-def test_pre_session_with_blocking_rejected():
-    """is_background=False + dispatch_timing=pre is rejected (v2 dropped this check, so it now validates: see xfail)."""
+def test_pre_session_with_blocking_spawn_accepted():
+    """A blocking (is_background=False) pre-session SPAWN validates.
+
+    v1 rejected this. v2 deliberately re-keyed fire-and-forget gating off
+    ``is_background`` onto ``dispatch_timing='pre'`` so that main's
+    ``dag_jsonl`` background-forks are expressible, which makes the v1
+    rejection wrong rather than missing. The fire-and-forget intent is
+    asserted by the SPAWN_JOIN-gating tests instead; this pins the accepted
+    shape so a future re-tightening is a deliberate, visible change.
+    """
     branch = ConversationBranchInfo(
         branch_id="r:pre",
         child_conversation_ids=["c"],
@@ -75,11 +75,8 @@ def test_pre_session_with_blocking_rejected():
         is_background=False,
         dispatch_timing="pre",
     )
-    md = _metadata([branch])
-    with pytest.raises(
-        NotImplementedError, match="pre-session dispatch requires is_background=True"
-    ):
-        validate_for_orchestrator_v1(md)
+
+    validate_for_orchestrator_v1(_metadata([branch]))
 
 
 def test_pre_session_on_non_root_rejected():
