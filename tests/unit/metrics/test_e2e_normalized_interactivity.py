@@ -120,7 +120,7 @@ def test_slow_tail_convention_is_not_percentile_of_rate() -> None:
     osl = [100.0] * 5
     results = _inject(_store(latency_s=latency_s, osl=osl))
 
-    rate = np.array(osl) / np.array(latency_s)  # per-request OSL/latency
+    rate = np.array(osl) / np.array(latency_s)
     naive_p90 = float(np.percentile(rate, 90))  # p(1/x): the WRONG convention
     # p90 slow-tail interactivity is the pessimistic (smaller) value.
     assert results[P90].avg < naive_p90
@@ -149,12 +149,10 @@ def test_filter_drops_nonpositive_ttft_and_isl() -> None:
     store = _store(
         latency_s=[1.0, 2.0, 3.0],
         osl=[100.0, 100.0, 100.0],
-        ttft_s=[0.5, 0.0, 0.5],  # 2nd dropped on TTFT
-        isl=[100.0, 100.0, 0.0],  # 3rd dropped on ISL
+        ttft_s=[0.5, 0.0, 0.5],
+        isl=[100.0, 100.0, 0.0],
     )
     results = _inject(store)
-    # Only request 0 survives (latency 1.0s / OSL 100 = 0.01 s/token), so the
-    # percentile of a single ratio inverts to 1 / 0.01 = 100.
     assert results[P90].avg == pytest.approx(100.0)
 
 
@@ -306,6 +304,5 @@ def test_drop_log_does_not_count_non_positive_values_as_missing(caplog) -> None:
         r.getMessage() for r in caplog.records if "dropped" in r.getMessage()
     )
     assert "2 of 5 requests dropped" in message
-    # Only the absent row is "missing"; the zero-latency row is not.
     assert "1 with no recorded latency/OSL" in message
     assert "non-positive or non-finite latency" in message
