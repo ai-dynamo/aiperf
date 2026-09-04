@@ -197,6 +197,83 @@ class TestZMQRouterReplyClientRequestHandling:
             mock_socket.send_multipart.assert_called_once()
 
 
+class TestZMQRouterReplyClientResponseFutureCleanup:
+    """A response future must never outlive its request.
+
+    The entry is what gates duplicate-request rejection, so a stranded future
+    permanently rejects every later request that reuses the same request_id
+    (retries do), on top of leaking memory for the life of the process.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wait_for_response_cancelled_removes_response_future(
+        self, router_test_helper, sample_message
+    ):
+        """Test that cancelling the waiter still drops the response future."""
+        router_test_helper.setup_mock_socket()
+
+        async with router_test_helper.create_client() as client:
+            client._response_futures[sample_message.request_id] = asyncio.Future()
+
+            task = asyncio.ensure_future(
+                client._wait_for_response(sample_message.request_id, (b"client_id",))
+            )
+            for _ in range(10):
+                await asyncio.sleep(0)
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            assert client._response_futures == {}
+
+    @pytest.mark.asyncio
+    async def test_wait_for_response_timeout_removes_future_and_replies_error(
+        self, router_test_helper, sample_message
+    ):
+        """Test that a handler that never resolves the future times out and cleans up."""
+        mock_socket = router_test_helper.setup_mock_socket()
+
+        async with router_test_helper.create_client() as client:
+            client._response_timeout = 0.01
+            client._response_futures[sample_message.request_id] = asyncio.Future()
+
+            await asyncio.wait_for(
+                client._wait_for_response(sample_message.request_id, (b"client_id",)),
+                timeout=5.0,
+            )
+
+            assert client._response_futures == {}
+            mock_socket.send_multipart.assert_called_once()
+            sent = mock_socket.send_multipart.call_args[0][0]
+            error_msg = Message.from_json(sent[-1])
+            assert isinstance(error_msg, ErrorMessage)
+            assert error_msg.error is not None
+            assert error_msg.error.type == "RESPONSE_TIMEOUT"
+
+    @pytest.mark.asyncio
+    async def test_wait_for_response_send_failure_removes_future(
+        self, router_test_helper, sample_message
+    ):
+        """Test that a failed reply send does not strand the response future."""
+        mock_socket = router_test_helper.setup_mock_socket()
+        mock_socket.send_multipart.side_effect = RuntimeError("send failed")
+
+        async with router_test_helper.create_client() as client:
+            future = asyncio.Future()
+            future.set_result(
+                Message(
+                    message_type=MessageType.HEARTBEAT,
+                    request_id=sample_message.request_id,
+                )
+            )
+            client._response_futures[sample_message.request_id] = future
+
+            await client._wait_for_response(sample_message.request_id, (b"client_id",))
+
+            assert client._response_futures == {}
+
+
 class TestZMQRouterReplyClientBackgroundTask:
     """Test router reply client background task."""
 
@@ -264,4 +341,197 @@ class TestZMQRouterReplyClientBackgroundTask:
             # Wait for background task to run
             await wait_for_background_task()
 
+            mock_socket.send_multipart.assert_not_called()
+
+
+class TestZMQRouterReplyClientDuplicateRequestId:
+    """A duplicate request_id must be rejected, not clobber the in-flight one.
+
+    Overwriting the pending Future strands the first waiter forever and makes
+    _wait_for_response deliver that response to the second request's routing
+    envelope -- answering the wrong caller. Retries and uuid reuse both
+    produce duplicates in practice.
+    """
+
+    @pytest.mark.asyncio
+    async def test_duplicate_request_id_sends_error_and_preserves_first_future(
+        self, router_test_helper, sample_message
+    ):
+        request_json = sample_message.model_dump_json().encode()
+        duplicate_request_data = [b"client_id_2", request_json]
+        mock_socket = router_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=[duplicate_request_data, zmq.Again()]
+        )
+
+        async def handler(msg: Message) -> Message:
+            return Message(
+                message_type=MessageType.HEARTBEAT,
+                request_id=msg.request_id,
+            )
+
+        async with router_test_helper.create_client(auto_start=True) as client:
+            client.register_request_handler(
+                service_id="test-service",
+                message_type=sample_message.message_type,
+                handler=handler,
+            )
+            # The original request is still in flight.
+            first_future = asyncio.Future()
+            client._response_futures[sample_message.request_id] = first_future
+
+            for _ in range(50):
+                await asyncio.sleep(0)
+                if mock_socket.send_multipart.called:
+                    break
+
+            assert client._response_futures[sample_message.request_id] is first_future
+            assert not first_future.done()
+
+            assert mock_socket.send_multipart.called
+            sent = mock_socket.send_multipart.call_args[0][0]
+            assert sent[0] == b"client_id_2"
+            error_msg = Message.from_json(sent[-1])
+            assert isinstance(error_msg, ErrorMessage)
+            assert error_msg.error is not None
+            assert error_msg.error.type == "DUPLICATE_REQUEST_ID"
+
+
+class TestZMQRouterReplyClientFireAndForget:
+    """Fire-and-forget handlers receive the message but produce no reply."""
+
+    def test_register_request_handler_defaults_to_request_reply(self, mock_zmq_context):
+        """Test that handlers are request-reply unless fire_and_forget is passed."""
+        client = ZMQRouterReplyClient(address="tcp://127.0.0.1:5555", bind=True)
+
+        async def handler(msg: Message) -> Message:
+            return msg
+
+        client.register_request_handler(
+            service_id="test-service",
+            message_type=MessageType.HEARTBEAT,
+            handler=handler,
+        )
+
+        assert client._request_handlers[MessageType.HEARTBEAT] == (
+            "test-service",
+            handler,
+            False,
+        )
+
+    def test_register_request_handler_fire_and_forget_stores_flag(
+        self, mock_zmq_context
+    ):
+        """Test that fire_and_forget=True is stored in the handler registry."""
+        client = ZMQRouterReplyClient(address="tcp://127.0.0.1:5555", bind=True)
+
+        async def handler(msg: Message) -> None:
+            return None
+
+        client.register_request_handler(
+            service_id="test-service",
+            message_type=MessageType.HEARTBEAT,
+            handler=handler,
+            fire_and_forget=True,
+        )
+
+        assert client._request_handlers[MessageType.HEARTBEAT] == (
+            "test-service",
+            handler,
+            True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_fire_and_forget_calls_handler_and_sends_no_response(
+        self, router_test_helper, sample_message
+    ):
+        """Test that _handle_fire_and_forget invokes the handler without replying."""
+        received: list[Message] = []
+
+        async def handler(msg: Message) -> None:
+            received.append(msg)
+            return None
+
+        async with router_test_helper.create_client() as client:
+            client.register_request_handler(
+                service_id="test-service",
+                message_type=sample_message.message_type,
+                handler=handler,
+                fire_and_forget=True,
+            )
+
+            await client._handle_fire_and_forget(sample_message)
+
+            assert received == [sample_message]
+            assert client._response_futures == {}
+            client.socket.send_multipart.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_fire_and_forget_handler_raises_does_not_propagate(
+        self, router_test_helper, sample_message
+    ):
+        """Test that a failing fire-and-forget handler is swallowed, not raised."""
+
+        async def failing_handler(msg: Message) -> None:
+            raise RuntimeError("boom")
+
+        async with router_test_helper.create_client() as client:
+            client.register_request_handler(
+                service_id="test-service",
+                message_type=sample_message.message_type,
+                handler=failing_handler,
+                fire_and_forget=True,
+            )
+
+            await client._handle_fire_and_forget(sample_message)
+
+    @pytest.mark.asyncio
+    async def test_handle_fire_and_forget_cancelled_error_propagates(
+        self, router_test_helper, sample_message
+    ):
+        """Test that CancelledError is re-raised so task cancellation still works."""
+
+        async def cancelling_handler(msg: Message) -> None:
+            raise asyncio.CancelledError()
+
+        async with router_test_helper.create_client() as client:
+            client.register_request_handler(
+                service_id="test-service",
+                message_type=sample_message.message_type,
+                handler=cancelling_handler,
+                fire_and_forget=True,
+            )
+
+            with pytest.raises(asyncio.CancelledError):
+                await client._handle_fire_and_forget(sample_message)
+
+    @pytest.mark.asyncio
+    async def test_receiver_fire_and_forget_creates_no_response_future(
+        self, router_test_helper, sample_message
+    ):
+        """Test that the receiver loop dispatches fire-and-forget without replying."""
+        request_json = sample_message.model_dump_json().encode()
+        mock_socket = router_test_helper.setup_mock_socket(
+            recv_multipart_side_effect=[[b"client_id_1", request_json], zmq.Again()]
+        )
+        received: list[Message] = []
+
+        async def handler(msg: Message) -> None:
+            received.append(msg)
+
+        async with router_test_helper.create_client(auto_start=True) as client:
+            client.register_request_handler(
+                service_id="test-service",
+                message_type=sample_message.message_type,
+                handler=handler,
+                fire_and_forget=True,
+            )
+
+            for _ in range(50):
+                await asyncio.sleep(0)
+                if received:
+                    break
+
+            assert len(received) == 1
+            assert received[0].request_id == sample_message.request_id
+            assert client._response_futures == {}
             mock_socket.send_multipart.assert_not_called()

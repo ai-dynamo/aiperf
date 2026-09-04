@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# AIPerf Mock Server deployment for testing
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiperf-mock-server
+  namespace: default
+  labels:
+    app: aiperf-mock-server
+spec:
+  type: ClusterIP
+  selector:
+    app: aiperf-mock-server
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiperf-mock-server
+  namespace: default
+  labels:
+    app: aiperf-mock-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aiperf-mock-server
+  template:
+    metadata:
+      labels:
+        app: aiperf-mock-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        aiperf.nvidia.com/metrics-paths: "/metrics,/vllm/metrics,/sglang/metrics,/trtllm/metrics,/dynamo_frontend/metrics,/dynamo_component/prefill/metrics,/dynamo_component/decode/metrics"
+    spec:
+      containers:
+        - name: mock-server
+          image: aiperf-mock-server:latest
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+          ports:
+            - containerPort: 8000
+          env:
+            - name: MOCK_SERVER_HOST
+              value: "0.0.0.0"
+            - name: MOCK_SERVER_FAST
+              value: "false"
+            - name: MOCK_SERVER_TOKENIZER
+              value: "gpt2"
+            - name: MOCK_SERVER_WORKERS
+              value: "8"
+            - name: TTFT_MIN
+              value: "5000"
+            - name: TTFT_MAX
+              value: "5000"
+            - name: ITL_MIN
+              value: "50"
+            - name: ITL_MAX
+              value: "50"
+            - name: MIN_TOKENS
+              value: "5000"
+            - name: MAX_TOKENS
+              value: "5000"
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: "2Gi"
+            limits:
+              cpu: "8000m"
+              memory: "4Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10

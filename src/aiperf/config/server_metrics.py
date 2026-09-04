@@ -69,7 +69,21 @@ class ServerMetricsDiscoveryConfig(BaseConfig):
         Field(
             default=None,
             description="Kubernetes namespace to search. "
-            "If not specified, searches all namespaces.",
+            "If not specified, searches the benchmark pod's own namespace "
+            "(the only namespace the default benchmark RBAC can list pods "
+            "in). Use '*' to search all namespaces; this requires a "
+            "cluster-scoped 'pods: list' grant on the benchmark "
+            "ServiceAccount.",
+        ),
+    ]
+
+    timeout_seconds: Annotated[
+        float,
+        Field(
+            default=30.0,
+            gt=0,
+            description="Maximum seconds to wait for Kubernetes endpoint "
+            "discovery before proceeding with explicit endpoints only.",
         ),
     ]
 
@@ -170,6 +184,8 @@ class ServerMetricsConfig(BaseConfig):
 
         if not isinstance(data, dict):
             return data
+
+        data = dict(data)
 
         # url → urls (singular to plural)
         if "url" in data and "urls" not in data:
