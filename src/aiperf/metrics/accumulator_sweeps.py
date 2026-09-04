@@ -24,13 +24,20 @@ if TYPE_CHECKING:
 FloatArray: TypeAlias = NDArray[np.float64]
 
 
-def _get_icl_data(store: ColumnStore) -> RaggedSeries | None:
+def _get_icl_data(
+    store: ColumnStore, snapshot_n: int | None = None
+) -> RaggedSeries | None:
     """Return inter-chunk-latency ragged series if available for replay, else None.
 
     Returns ``None`` both when ICL was never recorded and when the configured
     list backend (``Environment.METRICS.LIST_BACKEND=tdigest``) does not retain
     per-record structure. In both cases, callers fall through to the
     request-level (non-ICL) sweep helpers.
+
+    ``snapshot_n``, when given, is the record count at the time the export
+    snapshot was taken.  ICL entries with record_index >= snapshot_n belong to
+    records added concurrently (asyncio.to_thread race); returning None forces
+    the non-ICL fallback rather than letting those indices cause IndexError.
     """
     if "inter_chunk_latency" not in store.ragged_tags():
         return None
@@ -38,6 +45,12 @@ def _get_icl_data(store: ColumnStore) -> RaggedSeries | None:
     if not getattr(icl, "SUPPORTS_PER_RECORD_REPLAY", False):
         return None
     if len(icl.values) == 0:
+        return None
+    if (
+        snapshot_n is not None
+        and len(icl.record_indices) > 0
+        and int(icl.record_indices.max()) >= snapshot_n
+    ):
         return None
     return icl  # type: ignore[return-value]
 
@@ -47,9 +60,11 @@ def icl_aware_throughput(
     generation_start_ns: FloatArray,
     end_ns: FloatArray,
     output_tokens: FloatArray,
+    *,
+    snapshot_n: int | None = None,
 ) -> tuple[FloatArray, FloatArray]:
     """Compute throughput sweep, preferring ICL-aware when available."""
-    icl = _get_icl_data(store)
+    icl = _get_icl_data(store, snapshot_n)
     if icl is not None:
         return _sweepline.throughput_sweep_line_icl(
             generation_start_ns,
@@ -69,9 +84,10 @@ def icl_aware_tokens_in_flight(
     *,
     input_tokens: FloatArray,
     output_tokens: FloatArray,
+    snapshot_n: int | None = None,
 ) -> tuple[FloatArray, FloatArray]:
     """Compute tokens in flight, preferring ICL-aware when available."""
-    icl = _get_icl_data(store)
+    icl = _get_icl_data(store, snapshot_n)
     if icl is not None:
         return _kv_cache.tokens_in_flight_sweep_line_icl(
             start_ns,
@@ -128,10 +144,11 @@ def _build_throughput_curves(
     input_tokens: Any,
     output_tokens: Any,
     conc: dict[str, Any],
+    snapshot_n: int | None = None,
 ) -> dict[str, Any]:
     """Return the throughput, prefill-throughput, total-throughput, and per-user curves."""
     throughput_ts, throughput_vals = icl_aware_throughput(
-        store, generation_start_ns, end_ns, output_tokens
+        store, generation_start_ns, end_ns, output_tokens, snapshot_n=snapshot_n
     )
     prefill_throughput_ts, prefill_throughput_vals = (
         sweepline.prefill_throughput_sweep_line(
@@ -196,11 +213,17 @@ def compute_sweep_curves(
     fallbacks fire — see ``_get_icl_data``.
     """
     n = store.count
+    if mask is not None:
+        # Cap to mask length: mask is a snapshot; concurrent ingestion
+        # (asyncio.to_thread race) may have grown count since mask was built.
+        n = min(n, len(mask))
     start_ns = _apply_record_mask(store.start_ns[:n], mask)
     end_ns = _apply_record_mask(store.end_ns[:n], mask)
     generation_start_ns = _apply_record_mask(store.generation_start_ns[:n], mask)
-    output_tokens = _apply_record_mask(store.numeric("output_sequence_length"), mask)
-    input_tokens = _apply_record_mask(store.numeric("input_sequence_length"), mask)
+    output_tokens = _apply_record_mask(
+        store.numeric("output_sequence_length")[:n], mask
+    )
+    input_tokens = _apply_record_mask(store.numeric("input_sequence_length")[:n], mask)
 
     conc = _build_concurrency_curves(_sweepline, start_ns, end_ns, generation_start_ns)
     tput = _build_throughput_curves(
@@ -212,6 +235,7 @@ def compute_sweep_curves(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         conc=conc,
+        snapshot_n=n,
     )
     tokens_in_flight_ts, tokens_in_flight_vals = icl_aware_tokens_in_flight(
         store,
@@ -220,6 +244,7 @@ def compute_sweep_curves(
         end_ns,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        snapshot_n=n,
     )
 
     return _sweepline.SweepLineCurves(

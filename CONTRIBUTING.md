@@ -14,6 +14,7 @@ For technical architecture, see [`docs/architecture.md`](docs/architecture.md). 
 - **Python 3.11+**
 - **uv**: Package manager (installed automatically by `make first-time-setup`)
 - **pre-commit**: For automated code quality checks
+- **Kubernetes tests only**: Docker, Kind, kubectl, and Helm
 
 ### Initial Setup
 
@@ -46,6 +47,7 @@ pre-commit install    # Install pre-commit hooks
 | `make test-integration` | Integration tests with mock server |
 | `make test-integration-verbose` | Integration tests with real-time output |
 | `make test-component-integration` | Component integration tests |
+| `make test-kubernetes-ci` | Serial Kubernetes PR gate on a fresh isolated Kind cluster |
 | `make test-ci` | CI mode: unit + component integration with coverage |
 | `make test-imports` | Verify all modules can be imported |
 | `make test-stress` | Stress tests with mock server |
@@ -59,6 +61,12 @@ pre-commit install    # Install pre-commit hooks
 | `make generate-all-docs` | Regenerate CLI + env var documentation |
 | `make generate-cli-docs` | Regenerate CLI documentation |
 | `make generate-env-vars-docs` | Regenerate environment variable documentation |
+| `make generate-crd` | Regenerate the Helm AIPerfJob and AIPerfSweep CRD templates |
+| `make check-crd` | Verify the generated CRD templates match the Python models |
+| `make crd-release` | Render standalone CRD manifests into `dist/` (override with `HELM_DIST_DIR`) |
+| `make helm-lint` | Lint the bundled AIPerf operator Helm chart |
+| `make helm-template` | Render the bundled Helm chart without cluster access |
+| `make helm-package` | Package the bundled Helm chart into `dist/` (override with `HELM_DIST_DIR`) |
 | `make docker` | Build Docker image |
 | `make docker-run` | Run Docker container |
 | `make clean` | Clean caches and build artifacts |
@@ -70,7 +78,15 @@ Direct pytest commands:
 uv run pytest tests/unit/ -n auto                          # Unit tests (parallel)
 uv run pytest -m integration -n auto                       # Integration tests (multiprocess)
 uv run pytest -m component_integration -n auto             # Component integration tests
+make test-kubernetes-ci                                   # Kubernetes acceptance tests (serial Kind)
 ```
+
+The CI workflow builds the local runtime and mock-server images before invoking
+this target. The test run loads those images, creates a uniquely named Kind
+cluster with an isolated kubeconfig, and deletes that cluster afterward. It
+excludes the opt-in GPU, slow, audit, and chaos suites. Keep the gate serial
+(`-n 0`): its tests intentionally share one operator installation and exercise
+ordered cluster lifecycle behavior.
 
 ### Pre-Commit Hooks
 
@@ -106,16 +122,29 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 
 Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
 
-### Code Review Skills
+### Bundled Skills
 
-Bundled with the repository you'll find the `aiperf-code-review` skill. When starting Claude Code within the repository and running `/skills`, you should see the following:
+The repository ships agent skills under `.agents/skills/` (surfaced to Claude Code
+through the `.claude/skills` symlink). Running `/skills` inside the repository
+lists them:
 
 ```
   Project skills (.claude/skills)
-  aiperf-code-review · ~30 description tokens
+  aiperf-code-review              review a branch against origin/main
+  aiperf-llm-ergonomics-review    review CLI/API surfaces for LLM ergonomics
+  aiperf-kube-run                 run a benchmark on Kubernetes end to end
+  aiperf-kube-setup               prepare a cluster and install the operator
+  aiperf-kube-triage              diagnose a stuck or failed Kubernetes run
+  aiperf-kube-sweep               run parameter sweeps on Kubernetes
+  bump-version                    version bump helper
+  cherry-pick                     cherry-pick helper
+  docs-to-fern                    docs site conversion helper
+  linear-issue                    Linear issue helper
 ```
 
-When creating a PR, you can run this skill yourself within your branch (or inside of a worktree) once your pull request is created by prompting Claude similar to the example below:
+#### Code review
+
+When creating a PR, you can run the `aiperf-code-review` skill yourself within your branch (or inside of a worktree) once your pull request is created by prompting Claude similar to the example below:
 
 ```
 ❯ Can you run a code review with the aiperf-code-review skill?
@@ -127,6 +156,21 @@ When creating a PR, you can run this skill yourself within your branch (or insid
 You are encouraged to use this to self-review as a first pass review before a maintainer reviews your PR.
 
 Please note, the skill does run `aiperf` and utilizes a mock server. If you are working on a laptop or personal work station, be aware that this may slow down your computer during review.
+
+#### Kubernetes
+
+The `aiperf-kube-*` skills cover the Kubernetes path and are grounded in
+[`docs/kubernetes/`](docs/kubernetes/). Start with `aiperf-kube-run`, which links
+out to the other three. They quote CLI flags, container defaults, and Helm values
+as literals, so they can go stale when those change; the pack ships a verifier
+that checks every one of them against the live CLI and the working tree:
+
+```bash
+uv run python .agents/skills/aiperf-kube-run/verify_pack.py
+```
+
+Run it after changing an `aiperf kube` flag, a `AIPERF_K8S_*` default, or
+`deploy/helm/aiperf-operator/values.yaml`, and update the skill text when it fails.
 
 
 ### Package Management

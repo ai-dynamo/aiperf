@@ -56,6 +56,21 @@ def _stable_tokenizer() -> dict[str, object]:
 
 
 class TestComputeCacheKey:
+    def test_source_install_identity_is_not_static_version(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Editable installs must key the mmap cache by their source tree."""
+        import aiperf
+
+        monkeypatch.setattr(aiperf, "__commit_sha__", "unknown")
+        monkeypatch.setattr(aiperf, "__version__", "source-version")
+
+        identity = mmap_cache.aiperf_cache_identity()
+
+        assert identity is not None
+        assert identity.startswith("source:")
+        assert identity != "source-version"
+
     def test_osl_set_produces_a_computable_key(self, tmp_path: Path) -> None:
         # Regression: --osl puts a SamplingDistribution on dataset.osl. The key
         # serializes it to a JSON dict; a raw model would TypeError in

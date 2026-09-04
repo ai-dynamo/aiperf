@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -329,11 +330,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if ctx.phase is not None:
             phase_value = str(ctx.phase)
             mask &= self._column_store.mask_for_categorical(
-                "benchmark_phase", phase_value
+                "benchmark_phase", phase_value, count=n
             )
             if ctx.phase_index is not None:
                 mask &= self._column_store.mask_for_categorical(
-                    "phase_index", str(ctx.phase_index)
+                    "phase_index", str(ctx.phase_index), count=n
                 )
             return mask
         if ctx.start_ns is not None:
@@ -378,6 +379,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         output = self._build_metric_results(scalar_dict, record_arrays, sketch_results)
 
         n = self._column_store.count
+        if mask is not None:
+            # Cap to mask length: mask was snapshotted before this call and
+            # concurrent ingestion (asyncio.to_thread race) may have grown count.
+            n = min(n, len(mask))
         if n > 0:
             is_error = self._column_store.metadata_bool("has_error")[:n] == 1
             if mask is not None:
@@ -434,7 +439,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 col = store.numeric(tag)
                 clean = col[~np.isnan(col)]
             else:
-                values = store.numeric(tag)[mask]
+                # Cap to mask length before boolean indexing — concurrent ingestion
+                # (asyncio.to_thread race) may have grown the column beyond the mask snapshot.
+                values = store.numeric(tag)[: len(mask)][mask]
                 clean = values[~np.isnan(values)]
             if len(clean) == 0:
                 continue
@@ -618,6 +625,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 phase=ctx.phase,
                 phase_index=ctx.phase_index,
             )
+        # Deliberately NOT asyncio.to_thread: this is the realtime path, which
+        # runs while records are still being ingested. Off-loading it would let
+        # a worker thread read the column arrays while the event loop mutates
+        # (and reallocates on grow) them, with no lock between the two. The
+        # final export path can safely use a thread because ingestion has
+        # stopped by then; see export_results.
         return self._summarize_for_export_context(export_ctx)
 
     def _summarize_for_export_context(
@@ -698,7 +711,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
-        return self._summarize_for_export_context(ctx)
+        # Ctrl+C finalizes before late record processors necessarily stop
+        # publishing. Keep that path on the event loop so column-store mutation
+        # cannot race a worker thread traversing its arrays.
+        if ctx.cancelled:
+            return self._summarize_for_export_context(ctx)
+        return await asyncio.to_thread(self._summarize_for_export_context, ctx)
 
     def _inject_sweep_metrics(
         self,
