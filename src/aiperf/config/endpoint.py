@@ -763,17 +763,24 @@ class EndpointConfig(BaseConfig):
 
         ``aiohttp.ClientSession.ws_connect`` sends the configured API key and
         authentication headers on the initial upgrade request; over ``ws://``
-        those travel in cleartext (CWE-319). Require ``wss://`` whenever
-        credentials are configured, or drop the credentials.
+        those travel in cleartext (CWE-319). Credentials also ride the URL
+        itself -- userinfo (``ws://user:secret@host``) becomes a cleartext
+        ``Authorization: Basic`` header on the upgrade, and a sensitive query
+        parameter (``ws://host?api_key=secret``) is sent verbatim. Require
+        ``wss://`` whenever any of these are present, or drop the credentials.
         """
-        if not self._has_credentials():
-            return self
+        from aiperf.common.redact import url_carries_credentials
+
+        has_config_credentials = self._has_credentials()
         for url in self.urls:
-            if urlparse(url).scheme.lower() == "ws":
+            if urlparse(url).scheme.lower() != "ws":
+                continue
+            if has_config_credentials or url_carries_credentials(url):
                 raise ValueError(
                     f"URL {url!r} uses the unencrypted 'ws://' scheme but the "
-                    "endpoint carries credentials (api_key or authentication "
-                    "headers), which would be transmitted in cleartext. Use "
+                    "endpoint carries credentials (api_key, authentication "
+                    "headers, or credentials embedded in the URL's userinfo or "
+                    "query string), which would be transmitted in cleartext. Use "
                     "'wss://' for credential-bearing WebSocket connections, or "
                     "remove the credentials."
                 )

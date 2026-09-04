@@ -21,6 +21,7 @@ from aiperf.common.types import JsonObject
 from aiperf.common.utils import is_truthy_flag
 from aiperf.endpoints import _openai_responses_replay as _replay
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+from aiperf.plugin.enums import TransportType
 
 
 class ResponsesEndpoint(BaseEndpoint):
@@ -324,8 +325,7 @@ class ResponsesEndpoint(BaseEndpoint):
 
     def _is_websocket_transport(self) -> bool:
         """Whether this run uses the WebSocket transport (ws/wss)."""
-        transport = self.model_endpoint.transport
-        return transport is not None and str(transport) == "websocket"
+        return self.model_endpoint.transport == TransportType.WEBSOCKET
 
     @staticmethod
     def _maybe_enable_usage_stream_options(

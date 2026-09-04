@@ -24,6 +24,7 @@ from aiperf.common.models import (
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.plugin.enums import TransportType
 from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import (
     Worker,
@@ -1180,18 +1181,43 @@ class TestNoRequestCredit:
 
 @pytest.mark.asyncio
 class TestForkReplayDecision:
-    def _set_endpoint(self, worker, *, transport: str, extra: list) -> None:
+    def _set_endpoint(self, worker, *, transport, extra: list) -> None:
         worker.model_endpoint = MagicMock()
         worker.model_endpoint.transport = transport
         worker.model_endpoint.endpoint.extra = extra
 
-    async def test_ws_with_store_chains(self, mock_worker) -> None:
-        self._set_endpoint(mock_worker, transport="websocket", extra=[("store", True)])
-        assert mock_worker._fork_child_replays_context() is False
+    def _parent_with_turns(self, turns: list[Turn]) -> MagicMock:
+        parent = MagicMock()
+        parent.num_turns = len(turns)
+        parent.conversation.turns = turns
+        return parent
+
+    async def test_ws_with_endpoint_store_chains(self, mock_worker) -> None:
+        self._set_endpoint(
+            mock_worker, transport=TransportType.WEBSOCKET, extra=[("store", True)]
+        )
+        assert mock_worker._fork_child_replays_context(parent=None) is False
+
+    async def test_ws_with_per_turn_store_chains(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
+        parent = self._parent_with_turns(
+            [Turn(extra_body={"store": True}), Turn(extra_body={"store": True})]
+        )
+        assert mock_worker._fork_child_replays_context(parent) is False
+
+    async def test_ws_with_partial_per_turn_store_replays(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
+        parent = self._parent_with_turns(
+            [Turn(extra_body={"store": True}), Turn(extra_body=None)]
+        )
+        assert mock_worker._fork_child_replays_context(parent) is True
 
     async def test_seed_drops_chain_for_ws_without_store(self, mock_worker) -> None:
-        self._set_endpoint(mock_worker, transport="websocket", extra=[])
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
         mock_worker.session_manager = MagicMock()
+        mock_worker.session_manager.get.return_value = self._parent_with_turns(
+            [Turn(extra_body=None)]
+        )
         credit = MagicMock(
             parent_correlation_id="parent",
             branch_mode=ConversationBranchMode.FORK,
@@ -1199,12 +1225,13 @@ class TestForkReplayDecision:
 
         mock_worker._seed_from_parent_if_fork_child(credit, "child")
 
+        mock_worker.session_manager.get.assert_called_once_with("parent")
         mock_worker.session_manager.seed_from_parent.assert_called_once_with(
             "child", "parent", inherit_response_chain=False
         )
 
     async def test_seed_keeps_chain_for_http(self, mock_worker) -> None:
-        self._set_endpoint(mock_worker, transport="http", extra=[])
+        self._set_endpoint(mock_worker, transport=TransportType.HTTP, extra=[])
         mock_worker.session_manager = MagicMock()
         credit = MagicMock(
             parent_correlation_id="parent",

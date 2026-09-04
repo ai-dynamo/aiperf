@@ -144,6 +144,47 @@ class TestApplyEndpointCredentials:
         assert run.cfg.endpoint.api_key is None
 
 
+def _ws_benchmark_run(tmp_path) -> BenchmarkRun:
+    """Build a BenchmarkRun on a credential-free ws:// Responses endpoint.
+
+    The endpoint validates at construction (no credentials over ws://); the
+    injection step is what tries to attach a secret afterward.
+    """
+    kwargs = {
+        **_MINIMAL_CONFIG_KWARGS,
+        "endpoint": {
+            "urls": ["ws://my-internal-vllm:8000/v1/responses"],
+            "type": "responses",
+            "use_server_token_count": True,
+        },
+    }
+    cfg = BenchmarkConfig(**kwargs)
+    return BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="run_0001",
+    )
+
+
+def test_injected_key_onto_ws_endpoint_is_rejected(tmp_path):
+    """Rehydrating a secret onto a ws:// endpoint would leak it in cleartext.
+
+    The overlay mutates the endpoint in place, and BaseConfig has no
+    validate_assignment, so the ws:// TLS gate must be re-asserted explicitly.
+    """
+    run = _ws_benchmark_run(tmp_path)
+    credentials = EndpointCredentialInjection(
+        api_key=_INJECTED_KEY,
+        api_key_from_alias=False,
+        headers=None,
+        urls=None,
+    )
+
+    with pytest.raises(ValueError, match="unencrypted 'ws://'"):
+        apply_endpoint_credentials(run, credentials)
+
+
 def test_ambient_shell_key_does_not_reach_an_unconfigured_endpoint(
     tmp_path, monkeypatch
 ):
