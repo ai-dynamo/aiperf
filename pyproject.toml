@@ -182,7 +182,13 @@ explicit = true
 # Base settings for ruff
 line-length = 88
 indent-width = 4
-exclude = ["__pycache__", "build", "dist", ".venv", "venv", "notebooks/TCO_calculator.ipynb"]
+exclude = ["__pycache__", "build", "dist", ".venv", "venv", "notebooks/TCO_calculator.ipynb",
+           # Verbatim third-party sources; see src/aiperf/dataset/loader/vendor/README.md.
+           # Linting them would pressure us to edit files whose value is being unmodified.
+           "src/aiperf/dataset/loader/vendor"]
+# Honor `exclude` even when a path is passed explicitly (pre-commit passes
+# changed files by name), so formatting cannot rewrite vendored sources.
+force-exclude = true
 
 [tool.ruff.lint]
 select = [
@@ -235,6 +241,15 @@ max-complexity = 10
 "json.loads".msg = "Use orjson.loads instead."
 "json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
 "json.load".msg = "Use orjson.loads on file bytes instead."
+
+[tool.coverage.run]
+omit = [
+    # Verbatim third-party sources: see src/aiperf/dataset/loader/vendor/README.md.
+    # Measuring coverage of an unmodified upstream file is meaningless -- AIPerf
+    # exercises a narrow entry point into it, and the number would only ever
+    # invite edits to a file whose value is being byte-identical to upstream.
+    "src/aiperf/dataset/loader/vendor/*",
+]
 
 [tool.pytest.ini_options]
 # Basic pytest configuration

@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import json
 import tempfile
 from pathlib import Path
 
@@ -155,7 +156,11 @@ class TestSpeedBenchCanLoad:
                         {"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}
                     ],
                 },
-                False,
+                # Shape is valid; the content is merely unprepared. Rejecting it
+                # here would make auto-detection fail with "No loader can handle
+                # the data format" instead of the placeholder guidance the loader
+                # raises.
+                True,
                 id="turns_placeholder",
             ),
             param(
@@ -583,3 +588,87 @@ class TestUnrecognizedTypeFieldFallback:
         }
         result = composer._infer_type(data)
         assert result == CustomDatasetType.BAILIAN_TRACE
+
+
+class TestSpeedBenchAutoDetection:
+    """Auto-detection must not be defeated by category-filtered registry entries.
+
+    SPEED-Bench registers 28 category-filtered plugin entries across 6 loader
+    classes (e.g. ``speed_bench_coding`` -> ``SpeedBenchQualitativeLoader``).
+    Because ``_infer_type`` counted matching *entries* rather than classes, a
+    correctly prepared file matched 12 of them and auto-detection died with
+    "Multiple loaders can handle the data format" -- failing the user who did
+    the preparation step correctly.
+    """
+
+    @staticmethod
+    def _valid_row() -> dict:
+        return {
+            "question_id": "a" * 32,
+            "category": "coding",
+            "messages": [{"role": "user", "content": "Implement binary search."}],
+        }
+
+    def test_prepared_file_infers_unfiltered_split_loader(
+        self, create_cfg_and_composer
+    ):
+        _, composer = create_cfg_and_composer()
+
+        result = composer._infer_type(self._valid_row(), filename="qualitative.jsonl")
+
+        assert result == CustomDatasetType.SPEED_BENCH_QUALITATIVE
+
+    def test_resolver_also_infers_the_unfiltered_split_loader(self, tmp_path):
+        """Both production detection loops must agree.
+
+        ``CustomDatasetComposer._infer_type`` and ``DatasetResolver._detect_type``
+        each walk the registry independently; if only one excludes
+        category-filtered entries, a file resolves differently depending on
+        which path runs.
+        """
+        from aiperf.config.dataset.resolver import DatasetResolver
+
+        f = tmp_path / "qualitative.jsonl"
+        f.write_text(json.dumps(self._valid_row()) + "\n")
+
+        detected, _ = DatasetResolver._detect_type(str(f))
+
+        assert detected == CustomDatasetType.SPEED_BENCH_QUALITATIVE
+
+    def test_predicate_excludes_category_filtered_entries(self):
+        """``is_autodetectable`` is the shared rule both loops apply.
+
+        Exercised against synthetic entries rather than the registry: the
+        SPEED-Bench category selectors moved to ``--public-dataset``, so no
+        shipped custom entry carries a category today. The rule still guards
+        the invariant -- re-adding one would otherwise make every valid file
+        look ambiguous again.
+        """
+        from types import SimpleNamespace
+
+        from aiperf.plugin import plugins
+
+        unfiltered = SimpleNamespace(name="speed_bench_qualitative", metadata={})
+        filtered = SimpleNamespace(
+            name="speed_bench_coding", metadata={"category": "coding"}
+        )
+
+        assert plugins.is_autodetectable(unfiltered) is True
+        assert plugins.is_autodetectable(filtered) is False
+
+    def test_no_shipped_custom_entry_is_category_filtered(self):
+        """Pins the migration: category selectors live under --public-dataset.
+
+        If one reappears here, `_infer_type` sees two loaders claiming the same
+        file and auto-detection breaks for correctly prepared files.
+        """
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        offenders = [
+            entry.name
+            for entry, _ in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER)
+            if entry.metadata.get("category") is not None
+        ]
+
+        assert offenders == []

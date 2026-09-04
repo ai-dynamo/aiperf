@@ -14,7 +14,6 @@ from aiperf.dataset.loader import (
     RandomPoolDatasetLoader,
     SingleTurnDatasetLoader,
 )
-from aiperf.dataset.loader.speed_bench import SpeedBenchLoader
 from aiperf.plugin.enums import CustomDatasetType, DatasetSamplingStrategy
 from tests.unit.dataset.composer.conftest import make_run
 
@@ -88,20 +87,6 @@ class TestCoreFunctionality:
         )
         composer._create_loader_instance(dataset_type)
         assert isinstance(composer.loader, expected_instance)
-
-    def test_create_loader_instance_passes_speed_bench_category_metadata(
-        self, custom_config, mock_tokenizer
-    ):
-        dataset_type = CustomDatasetType("speed_bench_coding")
-        custom_config.custom_dataset_type = dataset_type
-
-        composer = CustomDatasetComposer(
-            run=make_run(custom_config), tokenizer=mock_tokenizer
-        )
-        composer._create_loader_instance(dataset_type)
-
-        assert isinstance(composer.loader, SpeedBenchLoader)
-        assert composer.loader.category == "coding"
 
     def test_no_category_in_kwargs_when_none(self, custom_config, mock_tokenizer):
         from aiperf.plugin.schema.schemas import CustomDatasetLoaderMetadata

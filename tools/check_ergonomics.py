@@ -619,7 +619,9 @@ def _iter_py_files(paths: list[Path]) -> list[Path]:
             out.append(p)
         elif p.is_dir():
             out.extend(sorted(p.rglob("*.py")))
-    return [f for f in out if "__pycache__" not in f.parts]
+    # "vendor" holds verbatim third-party sources whose value is being byte
+    # identical to upstream, so AIPerf's ergonomics rules cannot apply to them.
+    return [f for f in out if "__pycache__" not in f.parts and "vendor" not in f.parts]
 
 
 def _run_per_file(

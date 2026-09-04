@@ -198,3 +198,90 @@ def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
             headers=headers,
         )
     )
+
+
+def _public_dataset_loaders(plan: BenchmarkPlan):
+    """Yield ``(LoaderClass, loader_kwargs)`` for each public dataset in the plan.
+
+    Reads plugin metadata directly rather than going through the composer,
+    which needs a live run. Only the fields the preflight hooks act on are
+    forwarded, and the yielded pairs are deduplicated by those fields rather
+    than by selector name: a category sweep names 11 distinct selectors that
+    all resolve the same underlying config, and keying on the selector would
+    make preflight issue 11 identical auth probes before the run starts.
+    """
+    from aiperf.config.dataset import PublicDataset
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    seen: set[tuple[type, str | None]] = set()
+    for cfg in plan.configs:
+        dataset = cfg.get_default_dataset()
+        if not isinstance(dataset, PublicDataset):
+            continue
+
+        LoaderClass = plugins.get_class(
+            PluginType.PUBLIC_DATASET_LOADER, dataset.dataset
+        )
+        metadata = plugins.get_public_dataset_loader_metadata(dataset.dataset)
+        hf_subset = dataset.hf_subset or metadata.hf_subset
+
+        key = (LoaderClass, hf_subset)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        yield LoaderClass, ({"hf_subset": hf_subset} if hf_subset else {})
+
+
+def _call_optional_hook(
+    loader_class: type, name: str, kwargs: dict[str, object]
+) -> None:
+    """Invoke a preflight hook when the loader defines one.
+
+    ``PublicDatasetLoaderProtocol`` does not require these hooks, so a loader
+    registered by an external plugin need not implement them. Absence means
+    "nothing to prepare", matching how ``_preflight_accuracy_deps`` treats the
+    optional ``check_available`` hook.
+    """
+    hook = getattr(loader_class, name, None)
+    if callable(hook):
+        hook(**kwargs)
+
+
+def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
+    """Verify gated public datasets are reachable before anything expensive.
+
+    Why: access to a gated dataset is granted per user through a browser, so it
+    cannot be fixed mid-run. Probing first turns a multi-GB download that ends
+    in a 403 -- or a wait on a model that was never going to be used -- into an
+    immediate, actionable message.
+    """
+    for LoaderClass, kwargs in _public_dataset_loaders(plan):
+        _call_optional_hook(LoaderClass, "preflight_access", kwargs)
+
+
+def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
+    """Fetch and cache public datasets that need resolution before services start.
+
+    Why: ``DatasetManager`` performs dataset setup while ``TimingManager``
+    blocks on the profiling handshake, so a large download there trips
+    ``AIPERF_DATASET_CONFIGURATION_TIMEOUT`` (and raising that limit would
+    weaken hang detection for every run, since ``PROFILE_CONFIGURE_TIMEOUT`` is
+    constrained to be at least as large). Runs after the endpoint probe so an
+    unreachable server fails in seconds rather than after the download.
+    """
+    import logging
+
+    # Same reason as _preflight_endpoint_ready: rich logging isn't installed
+    # yet, and a multi-GB fetch with no output looks like a hang. That check
+    # returns early when endpoint waiting is disabled, so don't rely on it
+    # having installed the handler.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
+    for LoaderClass, kwargs in _public_dataset_loaders(plan):
+        _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)

@@ -461,3 +461,53 @@ def require_turn_mean_at_least_one(value: Any) -> Any:
                 "use --conversation-turn-mean 1 or omit it for single-turn conversations."
             )
     return value
+
+
+# SPEED-Bench category and entropy-tier selectors moved from
+# --custom-dataset-type to --public-dataset, where AIPerf resolves the dataset
+# itself instead of requiring a separately prepared file. The names were the
+# only documented way to run those subsets, so a bare enum error would strand
+# anyone with an existing script.
+_MOVED_TO_PUBLIC_DATASET = frozenset(
+    [
+        f"speed_bench_{c}"
+        for c in (
+            "coding",
+            "humanities",
+            "math",
+            "multilingual",
+            "qa",
+            "rag",
+            "reasoning",
+            "roleplay",
+            "stem",
+            "summarization",
+            "writing",
+        )
+    ]
+    + [
+        f"speed_bench_throughput_{isl}_{tier}"
+        for isl in ("1k", "2k", "8k", "16k", "32k")
+        for tier in ("low_entropy", "mixed", "high_entropy")
+    ]
+)
+
+
+def reject_moved_custom_dataset_type(input: Any) -> Any:
+    """Point relocated ``--custom-dataset-type`` values at their new flag.
+
+    Runs before enum coercion so the message names the replacement command
+    rather than listing every remaining valid value.
+
+    Raises:
+        ValueError: If the value moved to ``--public-dataset``.
+    """
+    if isinstance(input, str) and input in _MOVED_TO_PUBLIC_DATASET:
+        raise ValueError(
+            f"'{input}' is no longer a --custom-dataset-type. SPEED-Bench "
+            f"subsets are now selected with --public-dataset, and AIPerf "
+            f"resolves the dataset for you, so --input-file is not needed:\n"
+            f"    aiperf profile --public-dataset {input} ...\n"
+            f"See docs/tutorials/speed-bench.md."
+        )
+    return input
