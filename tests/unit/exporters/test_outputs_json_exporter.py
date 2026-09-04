@@ -407,7 +407,7 @@ class TestLargeExportWarning:
         return warnings, exporter
 
     @pytest.mark.asyncio
-    async def test_warns_at_threshold(self, tmp_path: Path) -> None:
+    async def test_export_record_count_at_threshold_warns(self, tmp_path: Path) -> None:
         warnings, exporter = self._prepare(tmp_path, 3, threshold=2)
         await exporter.export()
 
@@ -416,14 +416,16 @@ class TestLargeExportWarning:
         assert "--no-export-outputs-json" in warnings[0]
 
     @pytest.mark.asyncio
-    async def test_no_warning_below_threshold(self, tmp_path: Path) -> None:
+    async def test_export_record_count_below_threshold_does_not_warn(
+        self, tmp_path: Path
+    ) -> None:
         warnings, exporter = self._prepare(tmp_path, 2, threshold=3)
         await exporter.export()
 
         assert warnings == []
 
     @pytest.mark.asyncio
-    async def test_warning_counts_warmup_toward_the_threshold(
+    async def test_export_warmup_records_count_toward_threshold_warns(
         self, tmp_path: Path
     ) -> None:
         """Warmup records are held in memory too, so they count."""

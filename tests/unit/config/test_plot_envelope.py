@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config import AIPerfConfig  # noqa: F401  (used by Task 3 tests below)
+from aiperf.config.artifacts import ArtifactsConfig
+from aiperf.config.loader import load_config_from_mapping
 from aiperf.config.loader.core import load_config_from_string
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.config.plot import (
@@ -18,6 +20,7 @@ from aiperf.config.plot import (
     ServerMetricsDownsampling,
     load_plot_envelope_from_path,
 )
+from aiperf.kubernetes.spec_converter import build_config_envelope
 
 
 def test_plot_envelope_minimal_inline_form_loads():
@@ -394,10 +397,6 @@ def test_k8s_crd_defaulting_cannot_suppress_implied_auto_plot() -> None:
     ``autoPlot: false`` and silently rendered no plots. ``auto_plot`` is
     tri-state so there is no CRD default to materialize.
     """
-    from aiperf.config.artifacts import ArtifactsConfig
-    from aiperf.config.loader import load_config_from_mapping
-    from aiperf.kubernetes.spec_converter import build_config_envelope
-
     assert ArtifactsConfig.model_fields["auto_plot"].default is None
 
     spec = {
