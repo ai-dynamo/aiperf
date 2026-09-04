@@ -153,11 +153,17 @@ class MonotonicSLASearchPlanner(SearchPlanner):
                 "spaces by GP-modeling the joint surface."
             )
         dim = cfg.search_space[0]
-        if dim.kind != "int":
+        if dim.kind == "int" and int(dim.lo) < 1:
             raise ValueError(
-                f"monotonic_sla planner v1 supports kind='int' dimensions only; "
-                f"got kind={dim.kind!r} on path {dim.path!r}. Use the bayesian "
-                "planner for real-valued dimensions."
+                f"monotonic_sla planner: dimension {dim.path!r} requires "
+                f"lo >= 1 (got lo={dim.lo!r}); the exponential probe doubles "
+                "from lo and would stall or diverge for lo < 1."
+            )
+        if dim.kind == "real" and dim.lo <= 0:
+            raise ValueError(
+                f"monotonic_sla planner: dimension {dim.path!r} requires "
+                f"lo > 0 (got lo={dim.lo!r}); the exponential probe doubles "
+                "from lo and would stall or diverge for lo <= 0."
             )
         if not cfg.sla_filters:
             raise ValueError(
@@ -178,25 +184,25 @@ class MonotonicSLASearchPlanner(SearchPlanner):
                 "--optuna-acquisition qlognehvi."
             )
         self._dim = dim
-        self._lo: int = int(dim.lo)
-        self._hi: int = int(dim.hi)
+        self._lo: int | float = int(dim.lo) if dim.kind == "int" else float(dim.lo)
+        self._hi: int | float = int(dim.hi) if dim.kind == "int" else float(dim.hi)
         self._stability_trials = cfg.monotonic_stability_trials
 
         # Bracket. ``feasible_max`` (lo') is the highest swept value with a
         # latched feasible verdict; ``infeasible_min`` (hi') is the lowest
         # with a latched infeasible verdict. Both None until first verdict.
-        self.feasible_max: int | None = None
-        self.infeasible_min: int | None = None
+        self.feasible_max: int | float | None = None
+        self.infeasible_min: int | float | None = None
 
         # Per-point trial logs for the stability window.
-        self._point_logs: dict[int, _PointLog] = {}
+        self._point_logs: dict[int | float, _PointLog] = {}
 
         # Algorithm phase: "probe" (exponential ramp) or "bisect".
         self._phase: Literal["probe", "bisect"] = "probe"
         # Next swept value to ask for. Starts at lo; doubled in probe phase.
-        self._next_value: int = self._lo
+        self._next_value: int | float = self._lo
         # ``ask`` returned a value but ``tell`` hasn't been called yet.
-        self._pending_value: int | None = None
+        self._pending_value: int | float | None = None
 
         self._iter = 0
         self._history: list[SearchIteration] = []
@@ -298,7 +304,7 @@ class MonotonicSLASearchPlanner(SearchPlanner):
     # Algorithm internals
     # ------------------------------------------------------------------
 
-    def _absorb_verdict(self, value: int, verdict: bool) -> bool:
+    def _absorb_verdict(self, value: int | float, verdict: bool) -> bool:
         """Update ``feasible_max`` / ``infeasible_min`` from a latched verdict.
 
         Returns True if the verdict reveals a non-monotonic transition (a
@@ -340,7 +346,7 @@ class MonotonicSLASearchPlanner(SearchPlanner):
                 self.infeasible_min = value
         return non_monotonic
 
-    def _plan_next_step(self, value: int, verdict: bool | None) -> None:
+    def _plan_next_step(self, value: int | float, verdict: bool | None) -> None:
         """Decide the next swept value to ask for, or latch a convergence reason."""
         if verdict is None:
             # Stability window: re-ask the same value until verdict latches.
@@ -352,7 +358,7 @@ class MonotonicSLASearchPlanner(SearchPlanner):
         else:
             self._plan_bisect_step()
 
-    def _plan_probe_step(self, value: int, verdict: bool) -> None:
+    def _plan_probe_step(self, value: int | float, verdict: bool) -> None:
         """Exponential ramp: double the swept value until a fail or hi reached."""
         if not verdict:
             # First failure during probing — bracket found.
@@ -378,7 +384,10 @@ class MonotonicSLASearchPlanner(SearchPlanner):
         self._next_value = next_value
 
     def _plan_bisect_step(self) -> None:
-        """Bisection: midpoint of [feasible_max, infeasible_min] until precision."""
+        """Bisection: midpoint of [feasible_max, infeasible_min] until precision.
+
+        Integer axes also stop at unit gap; real axes stop on relative precision only.
+        """
         if self.feasible_max is None or self.infeasible_min is None:
             # Cannot bisect without both bounds; defer to the failsafes.
             self._convergence_reason = (
@@ -388,28 +397,36 @@ class MonotonicSLASearchPlanner(SearchPlanner):
             )
             return
         gap = self.infeasible_min - self.feasible_max
-        if gap <= 1:
+        if self._dim.kind == "int" and gap <= 1:
             self._convergence_reason = "monotonic_precision_reached"
             return
-        relative = gap / max(self.infeasible_min, 1)
-        if relative < Environment.SEARCH_PLANNER.SLA_PRECISION_DEFAULT:
+        # infeasible_min >= lo > 0 (enforced at construction)
+        if gap / self.infeasible_min < Environment.SEARCH_PLANNER.SLA_PRECISION_DEFAULT:
             self._convergence_reason = "monotonic_precision_reached"
             return
-        # Integer midpoint biased downward — keeps the bracket tightening.
-        midpoint = self.feasible_max + gap // 2
-        # Avoid re-probing a value we already have a latched verdict on; if
-        # the midpoint coincides with one of the bounds, nudge inward.
-        if midpoint <= self.feasible_max:
-            midpoint = self.feasible_max + 1
-        if midpoint >= self.infeasible_min:
-            midpoint = self.infeasible_min - 1
+        if self._dim.kind == "int":
+            # Integer midpoint biased downward — keeps the bracket tightening.
+            midpoint = self.feasible_max + gap // 2
+            # Avoid re-probing a value we already have a latched verdict on; if
+            # the midpoint coincides with one of the bounds, nudge inward.
+            if midpoint <= self.feasible_max:
+                midpoint = self.feasible_max + 1
+            if midpoint >= self.infeasible_min:
+                midpoint = self.infeasible_min - 1
+            self._next_value = midpoint
+            return
+        midpoint = self.feasible_max + gap / 2
+        if midpoint <= self.feasible_max or midpoint >= self.infeasible_min:
+            # Midpoint absorbed by float resolution — bracket tighter than the target.
+            self._convergence_reason = "monotonic_precision_reached"
+            return
         self._next_value = midpoint
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _mutate_base(self, value: int) -> BenchmarkConfig:
+    def _mutate_base(self, value: int | float) -> BenchmarkConfig:
         """Return a deep-copied BenchmarkConfig with ``value`` patched in at the dim path.
 
         mode="python" + context={"include_secrets": True} so neither the

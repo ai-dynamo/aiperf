@@ -75,7 +75,7 @@ def _infeasible_min_block(
 
 
 def _latest_iteration_at(
-    planner: MonotonicSLASearchPlanner, value: int, *, feasible: bool
+    planner: MonotonicSLASearchPlanner, value: int | float, *, feasible: bool
 ) -> SearchIteration | None:
     """Return the latest iteration whose swept value matches and feasibility agrees.
 

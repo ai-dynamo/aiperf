@@ -118,7 +118,7 @@ def plan_replicate_step(planner: SmoothIsotonicSLAPlanner) -> None:
 # ----------------------------------------------------------------------
 
 
-def _fit_and_solve(planner: SmoothIsotonicSLAPlanner) -> int | None:
+def _fit_and_solve(planner: SmoothIsotonicSLAPlanner) -> int | float | None:
     xs, per_filter_curves, per_filter_margins, per_filter_sigmas = _build_fit(planner)
     if not xs:
         return None
@@ -136,18 +136,23 @@ def _fit_and_solve(planner: SmoothIsotonicSLAPlanner) -> int | None:
     )
     if root is None:
         return None
-    candidate = int(round(root))
-    if candidate <= planner.feasible_max:
-        candidate = planner.feasible_max + 1
-    if candidate >= planner.infeasible_min:
-        candidate = planner.infeasible_min - 1
+    if planner._dim.kind == "int":
+        candidate = int(round(root))
+        if candidate <= planner.feasible_max:
+            candidate = planner.feasible_max + 1
+        if candidate >= planner.infeasible_min:
+            candidate = planner.infeasible_min - 1
+        return candidate
+    candidate = float(root)
+    if candidate <= planner.feasible_max or candidate >= planner.infeasible_min:
+        candidate = (planner.feasible_max + planner.infeasible_min) / 2
     return candidate
 
 
 def _build_fit(
     planner: SmoothIsotonicSLAPlanner,
 ) -> tuple[
-    list[int],
+    list[int | float],
     dict[str, Callable[[float], float] | None],
     dict[str, float],
     dict[str, float],
@@ -227,23 +232,33 @@ def _queue_more_probes_for_refit(planner: SmoothIsotonicSLAPlanner) -> None:
     if planner.feasible_max is None or planner.infeasible_min is None:
         return
     gap = planner.infeasible_min - planner.feasible_max
-    if gap <= 1:
+    if planner._dim.kind == "int" and gap <= 1:
         return
     for frac in (0.125, 0.625):
-        x = planner.feasible_max + max(1, round(gap * frac))
-        x = min(x, planner.infeasible_min - 1)
-        x = max(x, planner.feasible_max + 1)
+        if planner._dim.kind == "int":
+            x = planner.feasible_max + max(1, round(gap * frac))
+            x = min(x, planner.infeasible_min - 1)
+            x = max(x, planner.feasible_max + 1)
+        else:
+            x = planner.feasible_max + gap * frac
+            if x <= planner.feasible_max or x >= planner.infeasible_min:
+                continue
         if x not in planner._raw_probes and x not in planner._probe_queue:
-            planner._probe_queue.append(int(x))
+            planner._probe_queue.append(x)
 
 
-def _bisection_fallback(planner: SmoothIsotonicSLAPlanner) -> int | None:
+def _bisection_fallback(planner: SmoothIsotonicSLAPlanner) -> int | float | None:
     if planner.feasible_max is None or planner.infeasible_min is None:
         return None
     gap = planner.infeasible_min - planner.feasible_max
-    if gap <= 1:
+    if planner._dim.kind == "int":
+        if gap <= 1:
+            return None
+        return planner.feasible_max + gap // 2
+    midpoint = planner.feasible_max + gap / 2
+    if midpoint <= planner.feasible_max or midpoint >= planner.infeasible_min:
         return None
-    return planner.feasible_max + gap // 2
+    return midpoint
 
 
 # ----------------------------------------------------------------------
@@ -252,7 +267,7 @@ def _bisection_fallback(planner: SmoothIsotonicSLAPlanner) -> int | None:
 
 
 def _enter_replicate_or_terminate(
-    planner: SmoothIsotonicSLAPlanner, candidate: int
+    planner: SmoothIsotonicSLAPlanner, candidate: int | float
 ) -> None:
     cliff = _check_cliff(planner, candidate)
     planner.boundary_type = "cliff" if cliff else "smooth"
@@ -290,30 +305,35 @@ def _enter_replicate_or_terminate(
     planner._phase = "replicate"
 
 
-def _cliff_bisect_midpoint(planner: SmoothIsotonicSLAPlanner) -> int | None:
+def _cliff_bisect_midpoint(planner: SmoothIsotonicSLAPlanner) -> int | float | None:
     """Midpoint of [feasible_max, infeasible_min], nudged inward on collision."""
     if planner.feasible_max is None or planner.infeasible_min is None:
         return None
     gap = planner.infeasible_min - planner.feasible_max
-    if gap <= 1:
-        return None
-    mid = planner.feasible_max + gap // 2
-    if mid <= planner.feasible_max:
-        mid = planner.feasible_max + 1
-    if mid >= planner.infeasible_min:
-        mid = planner.infeasible_min - 1
+    if planner._dim.kind == "int":
+        if gap <= 1:
+            return None
+        mid = planner.feasible_max + gap // 2
+        if mid <= planner.feasible_max:
+            mid = planner.feasible_max + 1
+        if mid >= planner.infeasible_min:
+            mid = planner.infeasible_min - 1
+        if mid <= planner.feasible_max or mid >= planner.infeasible_min:
+            return None
+        return int(mid)
+    mid = planner.feasible_max + gap / 2
     if mid <= planner.feasible_max or mid >= planner.infeasible_min:
         return None
-    return int(mid)
+    return mid
 
 
-def _check_cliff(planner: SmoothIsotonicSLAPlanner, candidate: int) -> bool:
+def _check_cliff(planner: SmoothIsotonicSLAPlanner, candidate: int | float) -> bool:
     """PAVA-residual cliff guard. Returns False on degenerate fit input."""
     del candidate  # currently unused; reserved for future per-candidate residual.
     if not planner.binding_constraint:
         return False
     xs = sorted(planner._raw_probes.keys())
-    raw_pts: list[tuple[int, float]] = []
+    raw_pts: list[tuple[int | float, float]] = []
     for x in xs:
         samples = [
             m[planner.binding_constraint]
@@ -370,11 +390,11 @@ def _bracket_precision_reached(planner: SmoothIsotonicSLAPlanner) -> bool:
     if planner.feasible_max is None or planner.infeasible_min is None:
         return False
     gap = planner.infeasible_min - planner.feasible_max
-    if gap <= 1:
+    if planner._dim.kind == "int" and gap <= 1:
         return True
+    # infeasible_min >= lo > 0 (enforced at construction)
     return (
-        gap / max(planner.infeasible_min, 1)
-        < Environment.SEARCH_PLANNER.SLA_PRECISION_DEFAULT
+        gap / planner.infeasible_min < Environment.SEARCH_PLANNER.SLA_PRECISION_DEFAULT
     )
 
 
