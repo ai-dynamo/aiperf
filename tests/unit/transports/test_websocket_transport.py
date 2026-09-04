@@ -239,8 +239,9 @@ class TestErrorFromEvent:
         assert err.message == "nope"
 
     def test_fallback(self) -> None:
-        err = WebSocketTransport._error_from_event({"type": "response.incomplete"})
-        assert err.type == "response.incomplete"
+        # A failure event carrying no error payload still yields a usable error.
+        err = WebSocketTransport._error_from_event({"type": "response.failed"})
+        assert err.type == "response.failed"
         assert "did not complete" in err.message
 
 
@@ -349,6 +350,34 @@ class TestSendRequest:
         assert record.status != 200
         assert record.error is not None
         assert record.error.message == "kaboom"
+        await transport.stop()
+
+    async def test_incomplete_event_ends_turn_successfully(self) -> None:
+        # response.incomplete is the contract's normal terminal status for a
+        # truncated output (e.g. max_output_tokens); like the HTTP SSE path it is
+        # a success, not an error, and leaves the socket reusable.
+        transport = await self._transport()
+        fake = FakeWS(
+            [
+                _text({"type": "response.output_text.delta", "delta": "Hi"}),
+                _text(
+                    {
+                        "type": "response.incomplete",
+                        "response": {
+                            "id": "r",
+                            "status": "incomplete",
+                            "incomplete_details": {"reason": "max_output_tokens"},
+                        },
+                    }
+                ),
+            ]
+        )
+        transport._open = AsyncMock(return_value=fake)
+
+        record = await transport.send_request(_request_info(), {"model": "m"})
+
+        assert record.status == 200
+        assert record.error is None
         await transport.stop()
 
     async def test_binary_frame_decoded(self) -> None:
@@ -679,6 +708,96 @@ class TestReconnectChaining:
         assert record.status == 200
         assert len(opened) == 2
         assert opened[1].sent
+        await transport.stop()
+
+    def _seq_opener(self, sockets: list[FakeWS], opened: list[FakeWS]):
+        """Hand out prepared sockets in order, recording each open.
+
+        Unlike ``_open_recorder`` (which fabricates a fresh clean socket per open),
+        this lets a turn end on a socket that is already dirty/closed, so the test
+        can exercise the reconnect the *release* triggers rather than the peer.
+        """
+        queue = list(sockets)
+
+        async def fake_open(
+            request_info: RequestInfo, headers: dict[str, str]
+        ) -> FakeWS:
+            ws = queue.pop(0)
+            opened.append(ws)
+            return ws
+
+        return fake_open
+
+    async def test_dirty_release_forces_guard_on_next_chained_turn(self) -> None:
+        # Turn 1 ends dirty (premature close, no terminal event), so _release drops
+        # the lease. The next chained turn must still be forced onto a fresh socket
+        # and tripped by the guard -- keying off "was a stale lease present" would
+        # miss this, because the dirty release left nothing stale to find.
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        opened: list[FakeWS] = []
+        turn1 = FakeWS([])  # empty -> immediate CLOSED -> dirty premature close
+        turn2 = FakeWS([_text({"type": "response.completed", "response": {"id": "r"}})])
+        transport._open = self._seq_opener([turn1, turn2], opened)
+
+        first = await transport.send_request(
+            _request_info(is_final_turn=False), {"model": "m"}
+        )
+        assert first.error is not None  # turn 1 was dirty
+        assert "conv-1" not in transport._leases  # dirty release dropped the lease
+
+        record = await transport.send_request(
+            _request_info(
+                is_final_turn=True, turn_index=1, previous_response_id="resp_1"
+            ),
+            {"model": "m", "previous_response_id": "resp_1"},
+        )
+
+        assert record.error is not None
+        assert record.error.type == "ChainingContextLost"
+        assert len(opened) == 2
+        assert opened[1].sent == []
+        await transport.stop()
+
+    async def test_socket_closed_at_release_forces_guard_on_next_chained_turn(
+        self,
+    ) -> None:
+        # Turn 1 succeeds but the peer closes the socket as it delivers the terminal
+        # event, so _release sees ws.closed and drops the lease (keep requires an
+        # open socket). The next chained turn reconnects and must hit the guard.
+        class _ClosesOnTerminalWS(FakeWS):
+            async def receive(self) -> aiohttp.WSMessage:
+                msg = await super().receive()
+                if not self._messages:  # terminal event just handed out
+                    self.closed = True
+                return msg
+
+        transport = WebSocketTransport(model_endpoint=self._endpoint())
+        await transport.initialize()
+        opened: list[FakeWS] = []
+        turn1 = _ClosesOnTerminalWS(
+            [_text({"type": "response.completed", "response": {"id": "r"}})]
+        )
+        turn2 = FakeWS([_text({"type": "response.completed", "response": {"id": "r"}})])
+        transport._open = self._seq_opener([turn1, turn2], opened)
+
+        first = await transport.send_request(
+            _request_info(is_final_turn=False), {"model": "m"}
+        )
+        assert first.error is None
+        assert "conv-1" not in transport._leases  # closed socket dropped at release
+
+        record = await transport.send_request(
+            _request_info(
+                is_final_turn=True, turn_index=1, previous_response_id="resp_1"
+            ),
+            {"model": "m", "previous_response_id": "resp_1"},
+        )
+
+        assert record.error is not None
+        assert record.error.type == "ChainingContextLost"
+        assert len(opened) == 2
+        assert opened[1].sent == []
         await transport.stop()
 
     async def test_reconnect_prior_turn_unstored_fails_despite_current_store(

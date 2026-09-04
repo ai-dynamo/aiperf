@@ -374,6 +374,14 @@ def apply_endpoint_credentials(
     if credentials.urls:
         endpoint.urls = credentials.urls
 
+    # BaseConfig has no validate_assignment, so the endpoint's model validators do
+    # not re-run on the in-place overlay above. Re-assert the one that guards a
+    # cleartext credential leak: injecting an api_key/header onto a ``ws://``
+    # endpoint (or injecting a credential-bearing ``ws://`` URL) would otherwise
+    # transmit the just-rehydrated secret unencrypted, silently bypassing the
+    # config-time gate.
+    endpoint._validate_ws_credentials_require_tls()
+
     if not require_resolved:
         return
 
