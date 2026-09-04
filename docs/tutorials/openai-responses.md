@@ -351,8 +351,10 @@ Key behaviors:
   contract resolves `previous_response_id` from the connection's response cache,
   so multi-turn conversations chain in the default `deltas_without_responses`
   context mode without requesting server-side storage. As with HTTP chaining,
-  only the newest turn is put on the wire, so pair WebSocket runs with
-  [`--use-server-token-count`](#server-token-counts) for accurate multi-turn ISL.
+  only the newest turn is put on the wire, so WebSocket runs **require**
+  [`--use-server-token-count`](#server-token-counts) (enforced at config
+  validation) so multi-turn ISL comes from the server's `usage.prompt_tokens`
+  instead of undercounting the newest-turn-only payload.
 - **A mid-conversation reconnect ends a chained turn.** Because non-stored
   chaining lives only in the connection-local cache, if the peer drops a
   conversation's socket between turns the cached `previous_response_id` is no
@@ -387,6 +389,10 @@ Key behaviors:
 - **Credentials require `wss://`.** An API key or authentication header sent over
   unencrypted `ws://` would travel in cleartext, so AIPerf rejects that
   combination — use `wss://` for credential-bearing WebSocket runs.
+- **`--wait-for-model-timeout` is not supported.** The readiness probe issues HTTP
+  GET/POST requests, which cannot target a `ws://`/`wss://` URL, so AIPerf rejects
+  the flag for WebSocket endpoints at config validation. Gate readiness against the
+  server's HTTP frontend before launching the WebSocket run instead.
 
 The endpoint layer is transport-agnostic: metrics, parsing, and multi-turn
 control behave identically to the HTTP path. You can therefore compare stateless

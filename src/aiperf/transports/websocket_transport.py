@@ -111,6 +111,12 @@ class WebSocketTransport(BaseTransport):
         # and the set of all live sockets for teardown. Guarded by ``_lock``.
         self._leases: dict[str, aiohttp.ClientWebSocketResponse] = {}
         self._all: set[aiohttp.ClientWebSocketResponse] = set()
+        # Whether the last completed response on a conversation was persisted
+        # server-side. previous_response_id points at that prior turn, so only
+        # its store status governs whether a reconnect can still resolve the id.
+        # Session concurrency serializes a conversation's turns, so per-key
+        # access needs no lock; the lease-drop pop rides ``_lock``.
+        self._stored: dict[str, bool] = {}
         self._lock = asyncio.Lock()
 
     @classmethod
@@ -132,6 +138,7 @@ class WebSocketTransport(BaseTransport):
             sockets = list(self._all)
             self._all.clear()
             self._leases.clear()
+            self._stored.clear()
         for ws in sockets:
             if not ws.closed:
                 await ws.close()
@@ -202,8 +209,9 @@ class WebSocketTransport(BaseTransport):
         headers = self.build_headers(request_info)
         correlation_id = request_info.x_correlation_id
         # store may be requested endpoint-wide (--extra-inputs) or per turn (a
-        # dataset row's extra, which lands on the envelope). Either persists the
-        # response server-side, so both chaining checks below must honor it.
+        # dataset row's extra, which lands on the envelope). Either persists this
+        # turn's response server-side; recorded after success so the next turn
+        # knows whether its previous_response_id survives a reconnect.
         store_requested = self._store_requested() or is_truthy_flag(
             envelope.get("store")
         )
@@ -247,9 +255,14 @@ class WebSocketTransport(BaseTransport):
         # that non-stored chaining depends on. Sending the chained turn (only the
         # newest turn plus previous_response_id) would draw a confusing
         # previous_response_not_found from the server. Fail the turn with a clear
-        # cause instead. When store was requested the id is persisted server-side,
-        # so a fresh socket still resolves it and the turn proceeds normally.
-        if reconnected and request_info.previous_response_id and not store_requested:
+        # cause instead. Resolvability hinges on whether the *prior* turn (the one
+        # previous_response_id points at) was persisted, not this turn's store:
+        # endpoint-wide store persists every turn, otherwise consult the recorded
+        # prior-turn flag.
+        prior_stored = self._store_requested() or (
+            bool(correlation_id) and self._stored.get(correlation_id, False)
+        )
+        if reconnected and request_info.previous_response_id and not prior_stored:
             record.error = ErrorDetails(
                 code=None,
                 type="ChainingContextLost",
@@ -268,34 +281,13 @@ class WebSocketTransport(BaseTransport):
             # The Responses WebSocket contract requires JSON text frames; binary
             # frames are rejected with an invalid_request_error.
             await ws.send_str(envelope_bytes.decode())
-            # cancel_after_ns (cancellation benchmarks) is measured from the moment
-            # the request is fully sent, matching the HTTP transport. Bound the read
-            # by it and return a 499 record on expiry rather than reading through to
-            # a terminal event or the endpoint timeout.
-            cancel_after_ns = request_info.cancel_after_ns
-            if cancel_after_ns is not None:
-                sent_perf_ns = time.perf_counter_ns()
-                try:
-                    dirty = await asyncio.wait_for(
-                        self._read_until_terminal(
-                            ws, record, start_perf_ns, first_token_callback
-                        ),
-                        timeout=cancel_after_ns / NANOS_PER_SECOND,
-                    )
-                except TimeoutError:
-                    dirty = True
-                    cancel_perf_ns = time.perf_counter_ns()
-                    record.cancellation_perf_ns = cancel_perf_ns
-                    elapsed_s = (cancel_perf_ns - sent_perf_ns) / NANOS_PER_SECOND
-                    record.error = ErrorDetails(
-                        code=499,
-                        type="RequestCancellationError",
-                        message=f"Request cancelled {elapsed_s:.3f}s after being sent",
-                    )
-            else:
-                dirty = await self._read_until_terminal(
-                    ws, record, start_perf_ns, first_token_callback
-                )
+            dirty = await self._read_bounded(
+                ws,
+                record,
+                request_info,
+                start_perf_ns=start_perf_ns,
+                first_token_callback=first_token_callback,
+            )
         except asyncio.CancelledError:
             dirty = True
             record.cancellation_perf_ns = time.perf_counter_ns()
@@ -310,7 +302,52 @@ class WebSocketTransport(BaseTransport):
             record.end_perf_ns = time.perf_counter_ns()
             record.request_headers = redact_headers(headers)
             await self._release(ws, correlation_id, request_info.is_final_turn, dirty)
+        # Remember this turn's store status so the next chained turn can judge
+        # whether its previous_response_id survives a reconnect. Skip the final
+        # turn (no successor) since _release already dropped the lease and flag.
+        if record.error is None and correlation_id and not request_info.is_final_turn:
+            self._stored[correlation_id] = store_requested
         return record
+
+    async def _read_bounded(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        record: RequestRecord,
+        request_info: RequestInfo,
+        *,
+        start_perf_ns: int,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> bool:
+        """Read to a terminal event, bounding it by ``cancel_after_ns`` if set.
+
+        cancel_after_ns (cancellation benchmarks) is measured from the moment the
+        request is fully sent, matching the HTTP transport: on expiry, record a
+        499 and stop rather than reading through to a terminal event or the
+        endpoint timeout. Returns True when the socket must not be reused.
+        """
+        cancel_after_ns = request_info.cancel_after_ns
+        if cancel_after_ns is None:
+            return await self._read_until_terminal(
+                ws, record, start_perf_ns, first_token_callback
+            )
+        sent_perf_ns = time.perf_counter_ns()
+        try:
+            return await asyncio.wait_for(
+                self._read_until_terminal(
+                    ws, record, start_perf_ns, first_token_callback
+                ),
+                timeout=cancel_after_ns / NANOS_PER_SECOND,
+            )
+        except TimeoutError:
+            cancel_perf_ns = time.perf_counter_ns()
+            record.cancellation_perf_ns = cancel_perf_ns
+            elapsed_s = (cancel_perf_ns - sent_perf_ns) / NANOS_PER_SECOND
+            record.error = ErrorDetails(
+                code=499,
+                type="RequestCancellationError",
+                message=f"Request cancelled {elapsed_s:.3f}s after being sent",
+            )
+            return True
 
     def _build_envelope(
         self, payload: dict[str, Any] | bytes, request_info: RequestInfo
@@ -588,6 +625,7 @@ class WebSocketTransport(BaseTransport):
                 return
             if correlation_id and self._leases.get(correlation_id) is ws:
                 self._leases.pop(correlation_id, None)
+                self._stored.pop(correlation_id, None)
             self._all.discard(ws)
             to_close = ws if not ws.closed else None
         if to_close is not None:
