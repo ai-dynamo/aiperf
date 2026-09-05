@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from aiperf.common.finite import FiniteFloat
 from pydantic import Field
 
 from aiperf.common.models.base_models import AIPerfBaseModel
@@ -60,7 +61,7 @@ class HostTelemetryMetrics(AIPerfBaseModel):
     gives instantaneous power and no counter. A collector fills what it has.
     """
 
-    energy_consumption_uj: float | None = Field(
+    energy_consumption_uj: FiniteFloat | None = Field(
         default=None,
         ge=0,
         description=(
@@ -69,7 +70,7 @@ class HostTelemetryMetrics(AIPerfBaseModel):
             "is responsible for correcting before reporting."
         ),
     )
-    power_usage_w: float | None = Field(
+    power_usage_w: FiniteFloat | None = Field(
         default=None,
         ge=0,
         description=(
@@ -78,7 +79,7 @@ class HostTelemetryMetrics(AIPerfBaseModel):
             "a measured value from a computed one."
         ),
     )
-    energy_range_uj: float | None = Field(
+    energy_range_uj: FiniteFloat | None = Field(
         default=None,
         ge=0,
         description=(

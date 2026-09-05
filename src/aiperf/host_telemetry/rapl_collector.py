@@ -29,13 +29,17 @@ as an empty result, because a silent zero is worse than a refusal.
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
 import platform
 import re
-import sys
 import time
 from pathlib import Path
 
-from aiperf.common.hooks import background_task
+from pydantic import ValidationError
+
+from aiperf.common.constants import IS_LINUX
+from aiperf.common.hooks import background_task, on_init
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import ErrorDetails
 from aiperf.common.models.host_telemetry_models import (
@@ -53,6 +57,8 @@ POWERCAP_ROOT = Path("/sys/class/powercap")
 _TOP_LEVEL = re.compile(r"^intel-rapl:\d+$")
 _SUBDOMAIN = re.compile(r"^intel-rapl:\d+:\d+$")
 
+logger = logging.getLogger(__name__)
+
 
 class RAPLUnavailableError(RuntimeError):
     """Raised when RAPL cannot be read on this host."""
@@ -68,7 +74,17 @@ class RAPLDomain:
         self.index = index
         self.parent_id = parent_id
         self.name = self._read_text("name") or path.name
-        self.max_energy_uj = self._read_float("max_energy_range_uj")
+        raw_range = self._read_text("max_energy_range_uj")
+        self.max_energy_uj = self._parse_float(raw_range)
+        if raw_range is not None and self.max_energy_uj is None:
+            # The file exists on every real intel-rapl domain, so a present but
+            # unparseable range signals a fault, and taking the lossy no-range
+            # wrap fallback silently would hide it.
+            logger.warning(
+                "%s: max_energy_range_uj is present but unparseable (%r); "
+                "wrap correction degrades to the lossy no-range fallback",
+                self.domain_id, raw_range,
+            )
 
         self._last_raw: float | None = None
         self._wrap_offset: float = 0.0
@@ -76,15 +92,28 @@ class RAPLDomain:
     def _read_text(self, filename: str) -> str | None:
         try:
             return (self.path / filename).read_text().strip()
-        except OSError:
+        except OSError as e:
+            # EACCES (not root) and a transient EIO present identically to the
+            # caller as None; the exception type is the only thing that tells
+            # them apart, so it is worth a log line even at debug level.
+            logger.debug("%s/%s: %s: %s", self.domain_id, filename,
+                         type(e).__name__, e)
             return None
 
-    def _read_float(self, filename: str) -> float | None:
-        raw = self._read_text(filename)
+    @staticmethod
+    def _parse_float(raw: str | None) -> float | None:
         try:
-            return float(raw) if raw is not None else None
+            value = float(raw) if raw is not None else None
         except ValueError:
             return None
+        # 'inf' and 'nan' parse successfully, and a non-finite energy would
+        # otherwise ride all the way to serialization before being lost.
+        if value is not None and not math.isfinite(value):
+            return None
+        return value
+
+    def _read_float(self, filename: str) -> float | None:
+        return self._parse_float(self._read_text(filename))
 
     def read_energy_uj(self) -> float | None:
         """Return cumulative energy in microjoules, corrected for counter wraparound.
@@ -104,19 +133,34 @@ class RAPLDomain:
         any normal rate is several orders of magnitude clear of it. It is stated
         here because a caller that pauses collection could cross it, and a
         silent undercount is worse than a documented one.
+
+        A backwards step is also not proof of a wrap. The counter resets to
+        near zero on suspend/resume, an intel_rapl module reload, or a
+        container restart, and crediting a reset as a wrap would inject a full
+        range of phantom energy. So a backwards step only counts as a wrap
+        when the previous reading was in the upper half of the declared range;
+        otherwise the jump is absorbed, the interval is lost, and the running
+        total stays nondecreasing. The same absorption is the fallback when no
+        range is declared, and in both absorbed cases the total is permanently
+        biased low by the unknowable lost interval, which compounds if it
+        happens again. That bias is the price of never inventing energy.
         """
         raw = self._read_float("energy_uj")
         if raw is None:
             return None
 
         if self._last_raw is not None and raw < self._last_raw:
-            # The counter went backwards, so it wrapped. Add one full range.
-            # Without max_energy_range_uj the size of the wrap is unknown, and
-            # inventing one would silently corrupt the total, so the jump is
-            # absorbed instead: the interval is lost, the running total is not.
-            if self.max_energy_uj:
+            if self.max_energy_uj and self._last_raw >= 0.5 * self.max_energy_uj:
+                # Plausible wrap: the counter was near its ceiling.
                 self._wrap_offset += self.max_energy_uj
             else:
+                if self.max_energy_uj:
+                    logger.warning(
+                        "%s: counter went backwards from %.0f at %.0f%% of "
+                        "range; treating as a reset, not a wrap",
+                        self.domain_id, self._last_raw,
+                        100.0 * self._last_raw / self.max_energy_uj,
+                    )
                 self._wrap_offset += self._last_raw - raw
 
         self._last_raw = raw
@@ -144,7 +188,10 @@ def discover_domains(root: Path = POWERCAP_ROOT) -> list[RAPLDomain]:
     domains: list[RAPLDomain] = []
     index = 0
     try:
-        entries = sorted(p for p in root.iterdir() if _TOP_LEVEL.match(p.name))
+        entries = sorted(
+            (p for p in root.iterdir() if _TOP_LEVEL.match(p.name)),
+            key=lambda p: int(p.name.rsplit(":", 1)[1]),
+        )
     except OSError:
         return []
 
@@ -154,7 +201,8 @@ def discover_domains(root: Path = POWERCAP_ROOT) -> list[RAPLDomain]:
         index += 1
         try:
             children = sorted(
-                p for p in parent_path.iterdir() if _SUBDOMAIN.match(p.name)
+                (p for p in parent_path.iterdir() if _SUBDOMAIN.match(p.name)),
+                key=lambda p: int(p.name.rsplit(":", 1)[1]),
             )
         except OSError:
             children = []
@@ -206,10 +254,17 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
 
     @classmethod
     def validate_environment(cls, root: Path = POWERCAP_ROOT) -> None:
-        """Raise RAPLUnavailableError if RAPL cannot be used on this host."""
-        if sys.platform != "linux":
+        """Raise RAPLUnavailableError if RAPL cannot be used on this host.
+
+        This is a class-level preflight against the platform default tree, by
+        design: a protocol-driven caller invokes it before any instance
+        exists. An instance's configured ``root`` is honoured at initialize
+        time, not here.
+        """
+        if not IS_LINUX:
             raise RAPLUnavailableError(
-                f"RAPL is a Linux powercap interface and this host is {sys.platform}."
+                f"RAPL is a Linux powercap interface and this host is "
+                f"{platform.system()}."
             )
         if not Path(root).is_dir():
             raise RAPLUnavailableError(
@@ -230,15 +285,52 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
                 "normally means the process is not running as root."
             )
 
-    async def initialize(self) -> None:
-        """Discover the readable RAPL domains on this host."""
-        self.validate_environment(self.root)
-        self._domains = [d for d in discover_domains(self.root) if d.is_readable()]
+    @on_init
+    async def _discover_readable_domains(self) -> None:
+        """Discover the readable RAPL domains on this host.
+
+        Runs as an ON_INIT hook so the mixin's own ``initialize`` still drives
+        the CREATED -> INITIALIZED transition that ``start`` requires;
+        overriding ``initialize`` outright left the collector unstartable.
+        Discovery happens in a thread for the same reason the sampling path
+        does: sysfs reads against a wedged driver hang, and they would hang
+        the event loop from here just as surely as from a sample.
+        """
+        self._domains = await asyncio.to_thread(self._discover_readable_sync)
+
+    def _discover_readable_sync(self) -> list[RAPLDomain]:
+        """One walk of the tree, validated and filtered to readable domains."""
+        if not IS_LINUX:
+            raise RAPLUnavailableError(
+                f"RAPL is a Linux powercap interface and this host is "
+                f"{platform.system()}."
+            )
+        if not self.root.is_dir():
+            raise RAPLUnavailableError(
+                f"{self.root} does not exist, so this kernel exposes no "
+                "powercap interface. On a supported CPU this usually means "
+                "the intel_rapl_common module is not loaded."
+            )
+        domains = discover_domains(self.root)
+        if not domains:
+            raise RAPLUnavailableError(
+                f"{self.root} exists but contains no intel-rapl domains. "
+                f"Detected machine: {platform.machine()}."
+            )
+        readable = [d for d in domains if d.is_readable()]
+        if not readable:
+            raise RAPLUnavailableError(
+                f"Found {len(domains)} RAPL domain(s) but none has a readable "
+                "energy_uj. Since CVE-2020-8694 most distributions restrict it "
+                "to mode 0400, so this normally means the process is not "
+                "running as root."
+            )
+        return readable
 
     async def is_url_reachable(self) -> bool:
         """Whether at least one RAPL domain can be read."""
         try:
-            self.validate_environment(self.root)
+            await asyncio.to_thread(self._discover_readable_sync)
         except RAPLUnavailableError:
             return False
         return True
@@ -261,6 +353,13 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
         """
         try:
             records = await asyncio.to_thread(self.collect)
+            if not records and self._domains:
+                # Total telemetry loss must not look like a healthy idle run:
+                # permission revocation or driver teardown lands here.
+                raise RAPLUnavailableError(
+                    f"All {len(self._domains)} previously readable RAPL "
+                    "domain(s) produced no sample."
+                )
             if records and self._record_callback:
                 await self._record_callback(records, self.id)
         except Exception as e:  # fault-tolerant telemetry
@@ -282,17 +381,25 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
                 # A domain that became unreadable mid-run is skipped rather than
                 # reported as zero, which would look like an idle package.
                 continue
-            records.append(
-                HostTelemetryRecord(
-                    timestamp_ns=timestamp_ns,
-                    telemetry_source_url=self.endpoint_url,
-                    domain=domain.metadata(),
-                    telemetry_data=HostTelemetryMetrics(
-                        energy_consumption_uj=energy,
-                        energy_range_uj=domain.max_energy_uj,
-                    ),
+            try:
+                records.append(
+                    HostTelemetryRecord(
+                        timestamp_ns=timestamp_ns,
+                        telemetry_source_url=self.endpoint_url,
+                        domain=domain.metadata(),
+                        telemetry_data=HostTelemetryMetrics(
+                            energy_consumption_uj=energy,
+                            energy_range_uj=domain.max_energy_uj,
+                        ),
+                    )
                 )
-            )
+            except ValidationError as e:
+                # One malformed domain must not discard the sample from the
+                # domains that read perfectly; skipping matches the policy for
+                # the unreadable case above.
+                logger.warning("%s: sample failed validation, skipped: %s",
+                               domain.domain_id, e)
+                continue
         return records
 
 
