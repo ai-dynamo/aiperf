@@ -8,6 +8,7 @@ import sys
 import numpy as np
 import pytest
 import soundfile as sf
+from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import AudioFormat
@@ -261,6 +262,33 @@ class TestAudioBitDepth:
         audio_data, sample_rate = decode_audio(data_uri)
         assert len(audio_data) > 0
         assert sample_rate == 16000
+
+    @pytest.mark.parametrize(
+        "audio_format",
+        [param(AudioFormat.WAV, id="wav"), param(AudioFormat.MP3, id="mp3")],
+    )  # fmt: skip
+    @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
+    def test_bit_depth_preserves_signal_amplitude(
+        self, audio_format: AudioFormat, bit_depth: int
+    ) -> None:
+        reference, _ = decode_audio(
+            AudioGenerator(
+                make_config(mean=0.1, stddev=0, depths=[32], audio_format=audio_format)
+            ).generate()
+        )
+        actual, _ = decode_audio(
+            AudioGenerator(
+                make_config(
+                    mean=0.1, stddev=0, depths=[bit_depth], audio_format=audio_format
+                )
+            ).generate()
+        )
+
+        # Each generator derives the same seeded waveform. Changing precision
+        # may quantize it, but must not change its overall signal level.
+        actual_rms = np.sqrt(np.mean(actual**2))
+        reference_rms = np.sqrt(np.mean(reference**2))
+        assert actual_rms == pytest.approx(reference_rms, rel=0.02)
 
     @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
     def test_mp3_ignores_bit_depth_uses_lossy_encoding(self, bit_depth):

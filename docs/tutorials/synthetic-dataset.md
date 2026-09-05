@@ -136,7 +136,7 @@ Audio files are generated as synthetic Gaussian noise:
 1. **Parameter Selection**: Random selection of sample rate and bit depth from configured lists
 2. **Duration Sampling**: Duration follows normal distribution (with rejection sampling for ≥0.01s)
 3. **Noise Generation**: Gaussian noise generated as a NumPy array
-4. **Scaling**: Clipped to [-1, 1] and scaled to the target bit depth range
+4. **Scaling**: Clipped to [-1, 1] and scaled to the integer sample type's full range before encoding to the requested bit depth
 5. **Encoding**: Written as WAV or MP3 using soundfile library
 6. **Base64 Encoding**: Encoded as `<format>,<base64data>` string
 
