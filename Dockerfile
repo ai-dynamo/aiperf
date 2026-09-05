@@ -216,7 +216,7 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
 # does not leak into the runtime image; the test/dev extras are not installed
 # here either.
 COPY pyproject.toml uv.lock .
-RUN uv sync --active --locked --no-install-project --no-default-groups --extra botorch
+RUN uv sync --active --locked --no-install-project --no-default-groups --extra botorch --extra aws
 
 # Copy the rest of the application.
 #
@@ -228,9 +228,14 @@ RUN uv sync --active --locked --no-install-project --no-default-groups --extra b
 #
 # The botorch dependency set, including torch, is resolved from uv.lock so the
 # image build cannot select a newer incompatible release from an index.
+#
+# The [aws] extra (botocore) ships too so --auth-type sigv4 works in-cluster.
+# Without it SigV4SignerPlugin raises ImportError at transport init and every
+# request to a SigV4-protected endpoint fails, which is the documented EKS/IRSA
+# workflow in docs/tutorials/aws-sigv4-auth.md.
 COPY --from=wheel-builder /dist /dist
 RUN WHEEL=$(ls /dist/aiperf-*.whl) \
-    && uv pip install --no-deps "aiperf[botorch] @ file://${WHEEL}" \
+    && uv pip install --no-deps "aiperf[botorch,aws] @ file://${WHEEL}" \
     && rm -rf /dist /workspace/pyproject.toml
 
 # Remove setuptools as it is not needed for the runtime image. Nothing imported
