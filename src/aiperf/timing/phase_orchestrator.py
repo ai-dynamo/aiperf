@@ -39,6 +39,7 @@ from aiperf.timing.trajectory_source import TrajectorySource
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
+    from aiperf.auth.base_signer import RequestSignerProtocol
     from aiperf.common.models import DatasetMetadata
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.credit.sticky_router import CreditRouterProtocol
@@ -49,12 +50,13 @@ if TYPE_CHECKING:
 async def _stop_server_profiler_warn_only(
     hooks: PreparedEndpointControlHooks,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
     stop_fn: Callable[..., Awaitable[None]],
     warn_fn: Callable[[str], None],
 ) -> None:
     """Stop the server profiler without masking the primary phase outcome."""
     try:
-        await stop_fn(hooks, headers)
+        await stop_fn(hooks, headers, signer)
     except ControlPlaneHttpError as error:
         warn_fn(f"server_profiler stop failed: {error}")
 
@@ -64,6 +66,7 @@ async def run_phase_with_server_profiler(
     phase: CreditPhase,
     hooks: PreparedEndpointControlHooks | None,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
     run_phase: Callable[[], Awaitable[None]],
     start_fn: Callable[..., Awaitable[None]],
     stop_fn: Callable[..., Awaitable[None]],
@@ -85,22 +88,26 @@ async def run_phase_with_server_profiler(
         await run_phase()
         return False
 
-    await start_fn(hooks, headers)
+    await start_fn(hooks, headers, signer)
     if defer_stop:
         try:
             await run_phase()
         except asyncio.CancelledError:
-            await _stop_server_profiler_warn_only(hooks, headers, stop_fn, warn_fn)
+            await _stop_server_profiler_warn_only(
+                hooks, headers, signer, stop_fn, warn_fn
+            )
             raise
         except Exception:
-            await _stop_server_profiler_warn_only(hooks, headers, stop_fn, warn_fn)
+            await _stop_server_profiler_warn_only(
+                hooks, headers, signer, stop_fn, warn_fn
+            )
             raise
         return True
 
     try:
         await run_phase()
     finally:
-        await _stop_server_profiler_warn_only(hooks, headers, stop_fn, warn_fn)
+        await _stop_server_profiler_warn_only(hooks, headers, signer, stop_fn, warn_fn)
     return False
 
 
@@ -157,6 +164,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         dataset_metadata: DatasetMetadata,
         control_hooks: PreparedEndpointControlHooks | None = None,
         control_headers: dict[str, str] | None = None,
+        control_signer: RequestSignerProtocol | None = None,
         run: BenchmarkRun | None = None,
         **kwargs,
     ) -> None:
@@ -170,6 +178,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             control_hooks: Prepared endpoint control hooks (profiler URLs);
                 owned by TimingManager, never by workers
             control_headers: Auth headers for control-plane POSTs
+            control_signer: Request signer applied to control-plane POSTs when
+                ``endpoint.auth_type`` is set (e.g. SigV4). Owned and
+                lifecycle-managed by TimingManager, matching control_hooks.
             run: Full ``BenchmarkRun`` for strategies that need it (e.g.
                 AgenticReplayStrategy reads ``run.cfg.get_cache_bust_target()``
                 and ``run.benchmark_id``). Optional; strategies that don't need
@@ -182,6 +193,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._dataset_metadata = dataset_metadata
         self._control_hooks = control_hooks
         self._control_headers = control_headers or {}
+        self._control_signer = control_signer
         self._run = run
 
         # Create dataset sampler
@@ -433,19 +445,21 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             async def _start_profiler(
                 hooks: PreparedEndpointControlHooks,
                 headers: dict[str, str],
+                signer: RequestSignerProtocol | None,
                 phase_runner: PhaseRunner = runner,
             ) -> None:
                 await self._start_server_profiler_for_runner(
-                    phase_runner, hooks, headers
+                    phase_runner, hooks, headers, signer
                 )
 
             async def _stop_profiler(
                 hooks: PreparedEndpointControlHooks,
                 headers: dict[str, str],
+                signer: RequestSignerProtocol | None,
                 phase_runner: PhaseRunner = runner,
             ) -> None:
                 await self._stop_server_profiler_for_runner(
-                    phase_runner, hooks, headers
+                    phase_runner, hooks, headers, signer
                 )
 
             try:
@@ -453,6 +467,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                     phase=phase_config.phase,
                     hooks=self._control_hooks,
                     headers=self._control_headers,
+                    signer=self._control_signer,
                     run_phase=_run,
                     start_fn=_start_profiler,
                     stop_fn=_stop_profiler,
@@ -527,10 +542,11 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         runner: PhaseRunner,
         hooks: PreparedEndpointControlHooks,
         headers: dict[str, str],
+        signer: RequestSignerProtocol | None,
     ) -> None:
         """Start the profiler when the first profiling runner takes ownership."""
         if not self._server_profiler_owners:
-            await start_server_profiler(hooks, headers)
+            await start_server_profiler(hooks, headers, signer=signer)
         self._server_profiler_owners.add(runner)
 
     async def _stop_server_profiler_for_runner(
@@ -538,6 +554,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         runner: PhaseRunner,
         hooks: PreparedEndpointControlHooks,
         headers: dict[str, str],
+        signer: RequestSignerProtocol | None,
     ) -> None:
         """Release one runner's profiler ownership and stop after the last one."""
         if runner not in self._server_profiler_owners:
@@ -545,7 +562,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._server_profiler_owners.remove(runner)
         if self._server_profiler_owners:
             return
-        await stop_server_profiler(hooks, headers)
+        await stop_server_profiler(hooks, headers, signer=signer)
 
     async def _stop_server_profiler_for_runner_warn_only(
         self, runner: PhaseRunner
@@ -555,7 +572,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             return
         try:
             await self._stop_server_profiler_for_runner(
-                runner, self._control_hooks, self._control_headers
+                runner,
+                self._control_hooks,
+                self._control_headers,
+                self._control_signer,
             )
         except ControlPlaneHttpError as error:
             self.warning(f"server_profiler stop failed: {error}")
@@ -600,7 +620,11 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             return
         self._server_profiler_owners.clear()
         try:
-            await stop_server_profiler(self._control_hooks, self._control_headers)
+            await stop_server_profiler(
+                self._control_hooks,
+                self._control_headers,
+                signer=self._control_signer,
+            )
         except ControlPlaneHttpError as error:
             self.warning(f"server_profiler stop failed: {error}")
 
