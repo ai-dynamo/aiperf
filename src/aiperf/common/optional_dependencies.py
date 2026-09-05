@@ -10,7 +10,7 @@ OTEL_METRICS_STREAMING_FEATURE = "OpenTelemetry metrics streaming is enabled"
 
 
 def install_optional_dependency_hint(extra: str) -> str:
-    return f"Install with: pip install '{extra}' or uv add '{extra}'."
+    return f"Install with: uv add '{extra}' or uv pip install '{extra}'."
 
 
 def mlflow_dependency_message(feature: str) -> str:

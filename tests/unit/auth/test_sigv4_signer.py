@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# botocore is an optional dependency (aiperf[aws]/aiperf[sagemaker]); skip this
+# botocore is an optional dependency (aiperf[aws]); skip this
 # module entirely rather than failing collection when it isn't installed.
 pytest.importorskip("botocore")
 
