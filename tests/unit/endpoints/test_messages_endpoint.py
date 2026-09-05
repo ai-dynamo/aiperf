@@ -6,8 +6,14 @@ import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import ExtractedPayload, Text, Turn
-from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
+from aiperf.common.models.model_endpoint_info import (
+    EndpointInfo,
+    ModelEndpointInfo,
+    ModelInfo,
+    ModelListInfo,
+)
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     SSEField,
@@ -251,15 +257,7 @@ class TestAnthropicMessagesHeaders:
         assert headers["anthropic-version"] == "2023-06-01"
         assert "Authorization" not in headers
 
-    def test_api_key_as_x_api_key(self):
-        from aiperf.common.enums import ModelSelectionStrategy
-        from aiperf.common.models.model_endpoint_info import (
-            EndpointInfo,
-            ModelEndpointInfo,
-            ModelInfo,
-            ModelListInfo,
-        )
-
+    def test_api_key_as_x_api_key(self) -> None:
         model_endpoint = ModelEndpointInfo(
             models=ModelListInfo(
                 models=[ModelInfo(name="test-model")],
@@ -281,15 +279,7 @@ class TestAnthropicMessagesHeaders:
         assert headers["x-api-key"] == "sk-ant-test-key"
         assert "Authorization" not in headers
 
-    def test_auth_type_suppresses_x_api_key(self):
-        from aiperf.common.enums import ModelSelectionStrategy
-        from aiperf.common.models.model_endpoint_info import (
-            EndpointInfo,
-            ModelEndpointInfo,
-            ModelInfo,
-            ModelListInfo,
-        )
-
+    def test_auth_type_suppresses_x_api_key(self) -> None:
         model_endpoint = ModelEndpointInfo(
             models=ModelListInfo(
                 models=[ModelInfo(name="test-model")],
@@ -311,15 +301,7 @@ class TestAnthropicMessagesHeaders:
 
         assert "x-api-key" not in headers
 
-    def test_custom_headers_merged(self):
-        from aiperf.common.enums import ModelSelectionStrategy
-        from aiperf.common.models.model_endpoint_info import (
-            EndpointInfo,
-            ModelEndpointInfo,
-            ModelInfo,
-            ModelListInfo,
-        )
-
+    def test_custom_headers_merged(self) -> None:
         model_endpoint = ModelEndpointInfo(
             models=ModelListInfo(
                 models=[ModelInfo(name="test-model")],
