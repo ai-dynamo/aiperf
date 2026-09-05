@@ -230,7 +230,7 @@ RUN uv sync --active --locked --no-install-project --no-default-groups --extra b
 # image build cannot select a newer incompatible release from an index.
 #
 # The [aws] extra (botocore) ships too so --auth-type sigv4 works in-cluster.
-# Without it SigV4SignerPlugin raises ImportError at transport init and every
+# Without it SigV4RequestSigner raises ImportError at transport init and every
 # request to a SigV4-protected endpoint fails, which is the documented EKS/IRSA
 # workflow in docs/tutorials/aws-sigv4-auth.md.
 COPY --from=wheel-builder /dist /dist
