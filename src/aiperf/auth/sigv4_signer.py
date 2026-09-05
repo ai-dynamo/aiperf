@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,11 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
        called on every request and triggers botocore's built-in
        refresh-if-needed check on the currently-resolved credential object
        (e.g. renewing an STS/SSO/IRSA token before it expires). This alone
-       protects a long-running benchmark from *expiry*.
+       protects a long-running benchmark from *expiry*. It runs via
+       ``asyncio.to_thread`` because that refresh is a synchronous STS/SSO/
+       subprocess call guarded by a lock, and doing it inline would stall
+       the worker's event loop - and every concurrent in-flight request -
+       for the duration of the refresh.
     2. Periodic full re-resolution (``AIPERF_AWS_CREDENTIAL_RERESOLVE_INTERVAL``,
        default 15 minutes, 0 disables it): a background task re-runs
        botocore's entire credential provider chain from scratch, independent
@@ -142,8 +147,9 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         """
         # get_frozen_credentials() re-resolves (and refreshes if expired)
         # on every call - see the class docstring for the two-layer
-        # refresh/re-resolve strategy.
-        frozen = self._credentials.get_frozen_credentials()
+        # refresh/re-resolve strategy. Offloaded to a thread because the
+        # refresh path performs blocking network/subprocess I/O.
+        frozen = await asyncio.to_thread(self._credentials.get_frozen_credentials)
         credentials = self._Credentials(
             frozen.access_key, frozen.secret_key, frozen.token
         )
