@@ -67,9 +67,38 @@ def test_invalid_sigv4_config_rejected(kwargs: dict, expected_message: str) -> N
         EndpointConfig(urls=["http://localhost:8000"], **kwargs)
 
 
+def test_sigv4_with_plain_http_url_rejected() -> None:
+    with pytest.raises(ValueError, match="requires https:// URLs"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            auth_type="sigv4",
+            aws_region="us-east-1",
+            aws_service="sagemaker",
+        )
+
+
+def test_sigv4_requires_http_transport_gate() -> None:
+    """Non-HTTP transports never call _sign_if_needed, so a non-HTTP transport
+    plugin would resolve AWS credentials and sign nothing, silently producing
+    unauthenticated requests. Mirrors
+    test_control_hooks_require_http_transport_gate's model_construct pattern,
+    since "grpc" is not a registered transport plugin and would otherwise fail
+    normal field validation.
+    """
+    cfg = EndpointConfig.model_construct(
+        urls=["https://localhost:8000"],
+        auth_type="sigv4",
+        aws_region="us-east-1",
+        aws_service="sagemaker",
+        transport="grpc",
+    )
+    with pytest.raises(ValueError, match="requires HTTP transport"):
+        cfg._validate_sigv4_auth()
+
+
 def test_valid_sigv4_config_accepted() -> None:
     config = EndpointConfig(
-        urls=["http://localhost:8000"],
+        urls=["https://localhost:8000"],
         auth_type="sigv4",
         aws_region="us-east-1",
         aws_service="sagemaker",

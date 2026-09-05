@@ -762,6 +762,16 @@ class EndpointConfig(BaseConfig):
                 f"non-empty value."
             )
 
+        # Transport None means auto-detect HTTP from URL — allowed. Only the
+        # HTTP transport (aiohttp_transport.py) calls _sign_if_needed; any other
+        # transport would resolve AWS credentials and sign nothing, silently
+        # producing unauthenticated requests.
+        if self.transport is not None and self.transport != TransportType.HTTP:
+            raise ValueError(
+                "--auth-type sigv4 requires HTTP transport; unsupported transport "
+                f"{self.transport!r}"
+            )
+
         if self.request_content_type == RequestContentType.MULTIPART_FORM_DATA:
             raise ValueError(
                 f"--auth-type sigv4 does not support multipart/form-data requests, "
@@ -769,4 +779,16 @@ class EndpointConfig(BaseConfig):
                 f"not implemented, and sending it unsigned would silently produce "
                 f"unauthenticated requests."
             )
+
+        # SigV4 signing adds AWS credentials (Authorization header and optional
+        # X-Amz-Security-Token) to outbound requests. Sending those over plain
+        # HTTP would expose them to interception, so require https for every
+        # configured URL.
+        for url in self.urls:
+            scheme = urlparse(url).scheme.lower()
+            if scheme != "https":
+                raise ValueError(
+                    f"--auth-type sigv4 requires https:// URLs; URL {url!r} uses "
+                    f"scheme {scheme!r}."
+                )
         return self
