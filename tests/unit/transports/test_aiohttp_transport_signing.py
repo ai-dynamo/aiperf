@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.auth.base_signer import SignedRequest
+from aiperf.common.models.record_models import RequestRecord
 from aiperf.transports.aiohttp_transport import AioHttpTransport
 from tests.unit.transports.conftest import create_model_endpoint_info
+from tests.unit.transports.test_aiohttp_transport import create_request_info
 
 
 class TestAioHttpTransportSignerCreation:
@@ -108,3 +110,31 @@ class TestAioHttpTransportSignIfNeeded:
         )
 
         assert signed.body == b"signed-body"
+
+
+class TestAioHttpTransportSendRequestSigning:
+    """send_request must route through the signer, not just expose _sign_if_needed."""
+
+    @pytest.mark.asyncio
+    async def test_send_request_passes_signed_headers_to_client(self) -> None:
+        model_endpoint = create_model_endpoint_info()
+        transport = AioHttpTransport(model_endpoint=model_endpoint)
+        transport.aiohttp_client = AsyncMock()
+        transport.aiohttp_client.post_request.return_value = RequestRecord()
+
+        mock_signer = AsyncMock()
+        mock_signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ...", "X-Amz-Date": "now"},
+            body=b"signed-body",
+        )
+        transport.request_signer = mock_signer
+
+        await transport.send_request(
+            create_request_info(model_endpoint), {"prompt": "hi"}
+        )
+
+        mock_signer.sign.assert_awaited_once()
+        _url, body, headers = transport.aiohttp_client.post_request.call_args.args
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+        assert headers["X-Amz-Date"] == "now"
+        assert body == b"signed-body"

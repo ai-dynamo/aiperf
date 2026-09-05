@@ -89,6 +89,28 @@ class TestBaseEndpoint:
         for key, value in expected_headers.items():
             assert headers[key] == value
 
+    def test_get_endpoint_headers_auth_type_suppresses_bearer(
+        self, endpoint, model_endpoint
+    ):
+        """A configured request signer replaces Bearer auth, so a leftover
+        api_key must not leak to the signed endpoint."""
+        model_endpoint.endpoint.api_key = "leftover-key"
+        model_endpoint.endpoint.auth_type = "sigv4"
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
+
+        assert "Authorization" not in endpoint.get_endpoint_headers(request_info)
+
+    def test_get_endpoint_headers_bearer_without_auth_type(
+        self, endpoint, model_endpoint
+    ):
+        """Bearer auth still applies for the non-signed path."""
+        model_endpoint.endpoint.api_key = "plain-key"
+        model_endpoint.endpoint.auth_type = None
+        request_info = create_request_info(model_endpoint=model_endpoint, turns=[])
+
+        headers = endpoint.get_endpoint_headers(request_info)
+        assert headers["Authorization"] == "Bearer plain-key"
+
     @pytest.mark.parametrize(
         "url_params,expected_params",
         [
