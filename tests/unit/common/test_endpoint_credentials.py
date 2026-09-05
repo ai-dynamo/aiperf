@@ -185,6 +185,20 @@ def test_injected_key_onto_ws_endpoint_is_rejected(tmp_path):
         apply_endpoint_credentials(run, credentials)
 
 
+def test_injected_ws_url_with_userinfo_is_rejected(tmp_path):
+    """An injected ws:// URL must not escape the credential-TLS gate either."""
+    run = _ws_benchmark_run(tmp_path)
+    credentials = EndpointCredentialInjection(
+        api_key=None,
+        api_key_from_alias=False,
+        headers=None,
+        urls=["ws://user:secret@host:8000/v1/responses"],
+    )
+
+    with pytest.raises(ValueError, match="unencrypted 'ws://'"):
+        apply_endpoint_credentials(run, credentials)
+
+
 def test_ambient_shell_key_does_not_reach_an_unconfigured_endpoint(
     tmp_path, monkeypatch
 ):
