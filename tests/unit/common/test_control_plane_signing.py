@@ -64,7 +64,7 @@ def test_auth_type_suppresses_api_key_header(
     """
     cfg = EndpointConfig(
         type=endpoint_type,
-        urls=["http://server"],
+        urls=["https://server"],
         api_key="leftover-key",
         auth_type="sigv4",
         aws_region="us-east-1",
@@ -138,6 +138,35 @@ async def test_control_plane_post_sends_signed_headers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_control_plane_post_wraps_signer_failure() -> None:
+    """A signer exception must surface as ControlPlaneHttpError, not raw.
+
+    Cleanup call sites (control_hooks, phase_orchestrator) only catch
+    ControlPlaneHttpError/CancelledError. A raw signer exception escaping
+    control_plane_post would abort the profiler-stop URL loop early and can
+    mask the benchmark's primary exception during teardown.
+    """
+
+    class _FailingSigner:
+        async def sign(
+            self, method: str, url: str, headers: dict[str, str], body: bytes | None
+        ) -> SignedRequest:
+            raise RuntimeError("credential refresh failed")
+
+    from aiperf.common.control_plane_http import ControlPlaneHttpError
+
+    with pytest.raises(ControlPlaneHttpError) as exc_info:
+        await control_plane_post(
+            url="http://server/reset",
+            headers={"X-Trace": "1"},
+            timeout_s=1.0,
+            signer=_FailingSigner(),
+        )
+
+    assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
 async def test_reset_kv_cache_signs_every_retry_attempt() -> None:
     """Each retry re-signs.
 
@@ -182,7 +211,7 @@ def _config(**endpoint_overrides: Any) -> BenchmarkConfig:
     return BenchmarkConfig.model_validate(
         {
             "models": ["test-model"],
-            "endpoint": {"urls": ["http://server"], **endpoint_overrides},
+            "endpoint": {"urls": ["https://server"], **endpoint_overrides},
             "datasets": [
                 {
                     "name": "main",
