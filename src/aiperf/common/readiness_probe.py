@@ -30,8 +30,10 @@ import aiohttp
 import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.endpoint_auth import sign_request
 
 if TYPE_CHECKING:
+    from aiperf.auth.base_signer import RequestSignerProtocol
     from aiperf.transports.aiohttp_client import AioHttpClient
 
 _logger = AIPerfLogger(__name__)
@@ -169,6 +171,7 @@ async def _base_url_ready_after_models_404(
     attempt: int,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
 ) -> bool:
     fallback_timeout = _models_timeout(
         deadline=deadline,
@@ -178,7 +181,12 @@ async def _base_url_ready_after_models_404(
         url=url,
         checked_attempts=attempt,
     )
-    fallback = await client.get_request(url, headers=headers, timeout=fallback_timeout)
+    fallback_url, fallback_headers, _ = await sign_request(
+        signer, method="GET", url=url, headers=headers
+    )
+    fallback = await client.get_request(
+        fallback_url, headers=fallback_headers, timeout=fallback_timeout
+    )
     if fallback.status is not None and 200 <= fallback.status < 300:
         _logger.info(
             f"/v1/models not available at {url}; base URL responded "
@@ -233,6 +241,7 @@ async def _wait_models(
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
 ) -> None:
     """Poll ``{url}/v1/models`` until ``model_name`` appears in ``data[]``.
 
@@ -255,8 +264,13 @@ async def _wait_models(
             url=url,
             checked_attempts=attempt - 1,
         )
+        # Signed per attempt: a SigV4 signature is only valid inside a
+        # five-minute skew window, which readiness polling routinely outlives.
+        signed_url, signed_headers, _ = await sign_request(
+            signer, method="GET", url=models_url, headers=headers
+        )
         record = await client.get_request(
-            models_url, headers=headers, timeout=request_timeout
+            signed_url, headers=signed_headers, timeout=request_timeout
         )
 
         if record.status == 200 and record.responses:
@@ -280,6 +294,7 @@ async def _wait_models(
                 attempt=attempt,
                 interval_s=interval_s,
                 headers=headers,
+                signer=signer,
             ):
                 return
         else:
@@ -303,6 +318,7 @@ async def _wait_inference(
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
 ) -> None:
     """POST a canned 1-token request to the inference endpoint until it works.
 
@@ -336,10 +352,19 @@ async def _wait_inference(
             model_name=model_name,
             checked_attempts=attempt - 1,
         )
-        record = await client.post_request(
-            request_url,
-            payload=body,
+        # Signed per attempt (see _wait_models): the signature covers the
+        # exact body bytes, so sign after the payload is built.
+        signed_url, signed_headers, signed_body = await sign_request(
+            signer,
+            method="POST",
+            url=request_url,
             headers=request_headers,
+            body=body,
+        )
+        record = await client.post_request(
+            signed_url,
+            payload=signed_body,
+            headers=signed_headers,
             timeout=request_timeout,
         )
 
@@ -371,6 +396,7 @@ async def wait_for_endpoint(
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None = None,
 ) -> None:
     """Block until every configured (URL, model) pair passes the probe.
 
@@ -409,6 +435,7 @@ async def wait_for_endpoint(
                         timeout_s=timeout_s,
                         interval_s=interval_s,
                         headers=headers,
+                        signer=signer,
                     )
             if mode in ("inference", "both"):
                 # Probe every configured model. In a multi-model deployment
@@ -428,6 +455,7 @@ async def wait_for_endpoint(
                         timeout_s=timeout_s,
                         interval_s=interval_s,
                         headers=headers,
+                        signer=signer,
                     )
     finally:
         await client.close()

@@ -23,6 +23,7 @@ from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
 from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 if TYPE_CHECKING:
+    from aiperf.config.config import AIPerfConfig
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
@@ -214,7 +215,18 @@ class ModelEndpointInfo(AIPerfBaseModel):
     @classmethod
     def from_run(cls, run: BenchmarkRun) -> ModelEndpointInfo:
         """Create a ModelEndpointInfo from a BenchmarkRun."""
-        cfg = run.cfg
+        return cls.from_config(run.cfg)
+
+    @classmethod
+    def from_config(cls, cfg: AIPerfConfig) -> ModelEndpointInfo:
+        """Create a ModelEndpointInfo from a resolved AIPerfConfig.
+
+        Split out of ``from_run`` for callers that only reach the config
+        (pre-flight readiness, control-plane hooks) and still need an exact
+        signer input - ``auth_type``/``aws_*`` must match what the request
+        path uses or the control plane signs with different parameters than
+        the benchmark itself.
+        """
         ep = cfg.endpoint
         models_advanced = cfg.models
         return cls(
