@@ -3,6 +3,9 @@
 import pytest
 
 from aiperf.auth.base_signer import RequestSignerProtocol, SignedRequest
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
+from tests.unit.transports.conftest import create_model_endpoint_info
 
 
 class TestSignedRequest:
@@ -28,7 +31,15 @@ class TestSignedRequest:
 
 
 class TestRequestSignerProtocol:
-    def test_protocol_is_runtime_checkable(self) -> None:
-        assert hasattr(RequestSignerProtocol, "__protocol_attrs__") or hasattr(
-            RequestSignerProtocol, "__abstractmethods__"
-        )
+    def test_registered_signers_satisfy_protocol(self) -> None:
+        """Every plugin in the request_signer category must actually satisfy
+        the protocol the category declares."""
+        entries = plugins.list_entries(PluginType.REQUEST_SIGNER)
+        assert entries, "no request_signer plugins registered"
+        for entry in entries:
+            signer = plugins.get_class(PluginType.REQUEST_SIGNER, entry.name)(
+                model_endpoint=create_model_endpoint_info()
+            )
+            assert isinstance(signer, RequestSignerProtocol), (
+                f"{entry.name} does not satisfy RequestSignerProtocol"
+            )
