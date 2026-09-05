@@ -599,7 +599,9 @@ class EndpointConfig(BaseConfig):
             "--aws-service": self.aws_service,
         }
         if self.auth_type != RequestSignerType.SIGV4:
-            set_flags = sorted(flag for flag, val in aws_flags.items() if val is not None)
+            set_flags = sorted(
+                flag for flag, val in aws_flags.items() if val is not None
+            )
             if set_flags:
                 raise ValueError(
                     f"{', '.join(set_flags)} has no effect unless --auth-type is set "
