@@ -1962,23 +1962,40 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         A FORK child opening its own socket can only chain onto the parent's
         ``previous_response_id`` when the full chain is server-persisted, so
-        ``store: true`` must have been in effect endpoint-wide or on every
-        dispatched parent turn. ``store`` can arrive per-turn (the Responses
-        endpoint merges the dispatching turn's ``extra_body``), so consulting
-        only the endpoint-wide ``extra`` would wrongly force a replay -- and its
-        loss of server-only outputs such as reasoning items -- for a parent that
-        was in fact persisted.
+        every parent turn the child inherits must have been stored. ``store``
+        can arrive per-turn: ``ResponsesEndpoint.format_payload`` applies the
+        endpoint-wide ``extra`` first and the turn's ``extra_body`` last, so a
+        per-turn ``store: false`` overrides an endpoint-wide ``store: true`` and
+        wins on the wire. Resolving effective ``store`` the same way -- turn
+        override last -- keeps an endpoint-wide default from being mistaken for
+        proof of persistence.
+
+        Only the turns the parent has *dispatched* are inherited: the child
+        forks at ``parent.turn_index``, and ``num_turns`` counts turns merely
+        *planned* (a non-terminal background FORK can be dispatched before the
+        parent has sent its later turns), so slicing on ``num_turns`` would
+        judge persistence against not-yet-sent turns.
         """
-        endpoint_store = dict(self.model_endpoint.endpoint.extra or []).get("store")
-        if is_truthy_flag(endpoint_store):
-            return True
-        if parent is None or parent.num_turns <= 0:
+        if parent is None or parent.turn_index < 0:
             return False
-        dispatched_turns = parent.conversation.turns[: parent.num_turns]
+        endpoint_store = is_truthy_flag(
+            dict(self.model_endpoint.endpoint.extra or []).get("store")
+        )
+        dispatched_turns = parent.conversation.turns[: parent.turn_index + 1]
         return bool(dispatched_turns) and all(
-            is_truthy_flag((turn.extra_body or {}).get("store"))
+            self._turn_store_persisted(turn, endpoint_store)
             for turn in dispatched_turns
         )
+
+    @staticmethod
+    def _turn_store_persisted(turn: Turn, endpoint_store: bool) -> bool:
+        """Effective ``store`` for one turn: its ``extra_body`` override wins over
+        the endpoint-wide default, matching ``ResponsesEndpoint.format_payload``
+        (endpoint ``extra`` applied first, per-turn ``extra_body`` last)."""
+        override = (turn.extra_body or {}).get("store")
+        if override is not None:
+            return is_truthy_flag(override)
+        return endpoint_store
 
     def _warn_fork_replay_once(self) -> None:
         if self._warned_fork_replay:

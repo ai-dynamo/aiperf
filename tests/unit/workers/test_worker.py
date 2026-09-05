@@ -1186,9 +1186,18 @@ class TestForkReplayDecision:
         worker.model_endpoint.transport = transport
         worker.model_endpoint.endpoint.extra = extra
 
-    def _parent_with_turns(self, turns: list[Turn]) -> MagicMock:
+    def _parent_with_turns(
+        self, turns: list[Turn], *, turn_index: int | None = None
+    ) -> MagicMock:
+        """A parent session that has dispatched ``turns[: turn_index + 1]``.
+
+        ``turn_index`` defaults to the last turn (all planned turns dispatched);
+        pass a smaller value to model a background FORK whose parent has planned
+        more turns than it has sent.
+        """
         parent = MagicMock()
         parent.num_turns = len(turns)
+        parent.turn_index = len(turns) - 1 if turn_index is None else turn_index
         parent.conversation.turns = turns
         return parent
 
@@ -1196,7 +1205,8 @@ class TestForkReplayDecision:
         self._set_endpoint(
             mock_worker, transport=TransportType.WEBSOCKET, extra=[("store", True)]
         )
-        assert mock_worker._fork_child_replays_context(parent=None) is False
+        parent = self._parent_with_turns([Turn(extra_body=None), Turn(extra_body=None)])
+        assert mock_worker._fork_child_replays_context(parent) is False
 
     async def test_ws_with_per_turn_store_chains(self, mock_worker) -> None:
         self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
@@ -1205,12 +1215,49 @@ class TestForkReplayDecision:
         )
         assert mock_worker._fork_child_replays_context(parent) is False
 
+    async def test_ws_per_turn_false_overrides_endpoint_store_and_replays(
+        self, mock_worker
+    ) -> None:
+        """A per-turn ``store: false`` beats an endpoint-wide ``store: true``."""
+        self._set_endpoint(
+            mock_worker, transport=TransportType.WEBSOCKET, extra=[("store", True)]
+        )
+        parent = self._parent_with_turns(
+            [Turn(extra_body=None), Turn(extra_body={"store": False})]
+        )
+        assert mock_worker._fork_child_replays_context(parent) is True
+
     async def test_ws_with_partial_per_turn_store_replays(self, mock_worker) -> None:
         self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
         parent = self._parent_with_turns(
             [Turn(extra_body={"store": True}), Turn(extra_body=None)]
         )
         assert mock_worker._fork_child_replays_context(parent) is True
+
+    async def test_ws_ignores_undispatched_future_turns(self, mock_worker) -> None:
+        """Only turns the parent has dispatched (``turns[: turn_index + 1]``) count.
+
+        A background FORK can seed a child before the parent has sent its later
+        turns; those planned-but-unsent turns must not veto a chain that every
+        dispatched turn persisted.
+        """
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
+        parent = self._parent_with_turns(
+            [
+                Turn(extra_body={"store": True}),
+                Turn(extra_body=None),
+                Turn(extra_body=None),
+            ],
+            turn_index=0,
+        )
+        assert mock_worker._fork_child_replays_context(parent) is False
+
+    async def test_ws_no_parent_replays(self, mock_worker) -> None:
+        """No parent session means no resolvable chain, so the child replays."""
+        self._set_endpoint(
+            mock_worker, transport=TransportType.WEBSOCKET, extra=[("store", True)]
+        )
+        assert mock_worker._fork_child_replays_context(parent=None) is True
 
     async def test_seed_drops_chain_for_ws_without_store(self, mock_worker) -> None:
         self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])

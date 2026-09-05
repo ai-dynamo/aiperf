@@ -432,18 +432,17 @@ def url_carries_credentials(url: str) -> bool:
     Mirrors the credential classification :func:`redact_url` acts on, so a gate
     can reject a cleartext transport for exactly the URLs that would be redacted:
     ``ws://user:secret@host`` (userinfo) or ``ws://host?api_key=secret`` (query).
-    Query-parameter names are percent-decoded before matching, matching the
-    server's own decode, so ``api%5Fkey`` is not a smuggling path.
+    ``parse_qsl`` already percent-decodes each parameter name once -- the same
+    single decode :func:`redact_url` applies -- so ``api%5Fkey`` is rejected here
+    and redacted there, while a doubly-encoded ``api%255Fkey`` (which no server
+    decodes to ``api_key``) is treated as non-sensitive by both. A second decode
+    would break that mirror.
     """
     split = urlsplit(url)
     if split.username or split.password:
         return True
     for name, _ in parse_qsl(split.query, keep_blank_values=True):
-        try:
-            decoded_name = unquote_plus(name, errors="strict")
-        except UnicodeDecodeError:
-            decoded_name = name
-        if _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(decoded_name):
+        if _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(name):
             return True
     return False
 
