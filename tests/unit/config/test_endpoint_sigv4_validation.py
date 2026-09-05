@@ -62,9 +62,7 @@ from aiperf.plugin.enums import EndpointType
         ),
     ],
 )  # fmt: skip
-def test_invalid_sigv4_config_rejected(
-    kwargs: dict, expected_message: str
-) -> None:
+def test_invalid_sigv4_config_rejected(kwargs: dict, expected_message: str) -> None:
     with pytest.raises(ValueError, match=expected_message):
         EndpointConfig(urls=["http://localhost:8000"], **kwargs)
 
