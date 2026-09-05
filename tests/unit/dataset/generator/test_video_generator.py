@@ -7,6 +7,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pytest
 import soundfile as sf
 from PIL import Image
@@ -620,6 +621,23 @@ class TestVideoAudioBitDepth:
         data, sr = sf.read(io.BytesIO(wav_bytes))
         assert len(data) > 0
         assert sr == 44100  # default sample rate
+
+    @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
+    def test_video_audio_bit_depth_preserves_signal_amplitude(
+        self, base_config: VideoConfig, bit_depth: int
+    ) -> None:
+        base_config.audio = VideoAudioConfig(channels=1, depth=32)
+        reference, _ = sf.read(
+            io.BytesIO(VideoGenerator(base_config)._generate_audio_data())
+        )
+        base_config.audio.depth = bit_depth
+        actual, _ = sf.read(
+            io.BytesIO(VideoGenerator(base_config)._generate_audio_data())
+        )
+
+        actual_rms = np.sqrt(np.mean(actual**2))
+        reference_rms = np.sqrt(np.mean(reference**2))
+        assert actual_rms == pytest.approx(reference_rms, rel=0.02)
 
     def test_video_audio_8bit_is_unsigned(self):
         """8-bit video audio values are in unsigned range (0-255 centered at 128).
