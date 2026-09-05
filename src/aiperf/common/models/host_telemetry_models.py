@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from aiperf.common.finite import FiniteFloat
 from pydantic import Field
 
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 
 

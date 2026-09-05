@@ -390,13 +390,13 @@ class TestResetVersusWrap:
         """A counter reset at 10% of range must not inject a full range."""
         d = discover_domains(powercap)[0]
         assert d.max_energy_uj == 262143328850.0
-        (d.path / "energy_uj").write_text("26214332885")   # 10% of range
+        (d.path / "energy_uj").write_text("26214332885")  # 10% of range
         first = d.read_energy_uj()
-        (d.path / "energy_uj").write_text("1000")           # backwards, far from ceiling
+        (d.path / "energy_uj").write_text("1000")  # backwards, far from ceiling
         second = d.read_energy_uj()
-        assert second == first                              # absorbed, nondecreasing
+        assert second == first  # absorbed, nondecreasing
         (d.path / "energy_uj").write_text("2000")
-        assert d.read_energy_uj() == first + 1000           # counting resumes
+        assert d.read_energy_uj() == first + 1000  # counting resumes
 
     def test_backwards_step_near_range_ceiling_is_still_a_wrap(self, powercap):
         d = discover_domains(powercap)[0]
@@ -457,6 +457,9 @@ class TestDomainOrdering:
             (d / "max_energy_range_uj").write_text("262143328850")
         order = [(d.index, d.domain_id) for d in discover_domains(tmp_path)]
         assert order == [
-            (0, "intel-rapl:0"), (1, "intel-rapl:1"), (2, "intel-rapl:2"),
-            (3, "intel-rapl:10"), (4, "intel-rapl:11"),
+            (0, "intel-rapl:0"),
+            (1, "intel-rapl:1"),
+            (2, "intel-rapl:2"),
+            (3, "intel-rapl:10"),
+            (4, "intel-rapl:11"),
         ]

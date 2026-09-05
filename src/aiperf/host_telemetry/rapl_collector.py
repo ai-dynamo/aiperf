@@ -83,7 +83,8 @@ class RAPLDomain:
             logger.warning(
                 "%s: max_energy_range_uj is present but unparseable (%r); "
                 "wrap correction degrades to the lossy no-range fallback",
-                self.domain_id, raw_range,
+                self.domain_id,
+                raw_range,
             )
 
         self._last_raw: float | None = None
@@ -96,8 +97,7 @@ class RAPLDomain:
             # EACCES (not root) and a transient EIO present identically to the
             # caller as None; the exception type is the only thing that tells
             # them apart, so it is worth a log line even at debug level.
-            logger.debug("%s/%s: %s: %s", self.domain_id, filename,
-                         type(e).__name__, e)
+            logger.debug("%s/%s: %s: %s", self.domain_id, filename, type(e).__name__, e)
             return None
 
     @staticmethod
@@ -158,7 +158,8 @@ class RAPLDomain:
                     logger.warning(
                         "%s: counter went backwards from %.0f at %.0f%% of "
                         "range; treating as a reset, not a wrap",
-                        self.domain_id, self._last_raw,
+                        self.domain_id,
+                        self._last_raw,
                         100.0 * self._last_raw / self.max_energy_uj,
                     )
                 self._wrap_offset += self._last_raw - raw
@@ -397,8 +398,9 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
                 # One malformed domain must not discard the sample from the
                 # domains that read perfectly; skipping matches the policy for
                 # the unreadable case above.
-                logger.warning("%s: sample failed validation, skipped: %s",
-                               domain.domain_id, e)
+                logger.warning(
+                    "%s: sample failed validation, skipped: %s", domain.domain_id, e
+                )
                 continue
         return records
 
