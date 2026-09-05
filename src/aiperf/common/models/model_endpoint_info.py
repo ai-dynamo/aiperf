@@ -23,7 +23,7 @@ from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
 from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 if TYPE_CHECKING:
-    from aiperf.config.config import AIPerfConfig
+    from aiperf.config.config import BenchmarkConfig
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
@@ -218,8 +218,8 @@ class ModelEndpointInfo(AIPerfBaseModel):
         return cls.from_config(run.cfg)
 
     @classmethod
-    def from_config(cls, cfg: AIPerfConfig) -> ModelEndpointInfo:
-        """Create a ModelEndpointInfo from a resolved AIPerfConfig.
+    def from_config(cls, cfg: BenchmarkConfig) -> ModelEndpointInfo:
+        """Create a ModelEndpointInfo from a resolved BenchmarkConfig.
 
         Split out of ``from_run`` for callers that only reach the config
         (pre-flight readiness, control-plane hooks) and still need an exact

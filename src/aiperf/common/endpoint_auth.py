@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from aiperf.auth.base_signer import RequestSignerProtocol
-    from aiperf.config.config import AIPerfConfig
+    from aiperf.config.config import BenchmarkConfig
     from aiperf.config.endpoint import EndpointConfig
 
 # Anthropic Messages authenticates with x-api-key plus a required
@@ -77,7 +77,7 @@ async def sign_request(
 
 @asynccontextmanager
 async def endpoint_signer(
-    cfg: AIPerfConfig,
+    cfg: BenchmarkConfig,
 ) -> AsyncIterator[RequestSignerProtocol | None]:
     """Build, start, and tear down the endpoint's request signer, if any.
 
