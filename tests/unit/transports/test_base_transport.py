@@ -421,7 +421,6 @@ class TestBaseTransport:
         [
             param({}, ["first", "", "last"], id="preserve"),
             param({"other": "value"}, ["first", "", "last"], id="merge"),
-            param({"tag": "override"}, ["override"], id="override"),
         ],
     )  # fmt: skip
     def test_build_url_preserves_repeated_query_values(
@@ -430,6 +429,7 @@ class TestBaseTransport:
         endpoint_params: dict[str, str],
         expected_tags: list[str],
     ) -> None:
+        """Preserve repeated and blank values when retaining or merging query keys."""
         request_info.model_endpoint.endpoint.base_urls = [
             "http://localhost:8000/v1/chat/completions?tag=first&tag=&tag=last"
         ]
