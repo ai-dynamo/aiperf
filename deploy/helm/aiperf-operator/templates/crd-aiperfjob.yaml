@@ -224,7 +224,8 @@ spec:
                         type: string
                         enum:
                         - http
-                        description: Transport plugin name. Auto-detected from the URL scheme when unset.
+                        description: Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected
+                          from URL when unset; explicit setting overrides auto-detection.
                       awsRegion:
                         type: string
                         description: AWS region for the request. Required when auth_type='sigv4'.
