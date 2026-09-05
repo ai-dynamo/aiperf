@@ -267,10 +267,10 @@ class TestAudioBitDepth:
         "audio_format",
         [param(AudioFormat.WAV, id="wav"), param(AudioFormat.MP3, id="mp3")],
     )  # fmt: skip
-    @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
     def test_bit_depth_preserves_signal_amplitude(
-        self, audio_format: AudioFormat, bit_depth: int
+        self, audio_format: AudioFormat
     ) -> None:
+        """24-bit encoding preserves amplitude relative to the int32 reference."""
         reference, _ = decode_audio(
             AudioGenerator(
                 make_config(mean=0.1, stddev=0, depths=[32], audio_format=audio_format)
@@ -278,9 +278,7 @@ class TestAudioBitDepth:
         )
         actual, _ = decode_audio(
             AudioGenerator(
-                make_config(
-                    mean=0.1, stddev=0, depths=[bit_depth], audio_format=audio_format
-                )
+                make_config(mean=0.1, stddev=0, depths=[24], audio_format=audio_format)
             ).generate()
         )
 

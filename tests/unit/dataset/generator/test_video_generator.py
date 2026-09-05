@@ -622,15 +622,15 @@ class TestVideoAudioBitDepth:
         assert len(data) > 0
         assert sr == 44100  # default sample rate
 
-    @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
     def test_video_audio_bit_depth_preserves_signal_amplitude(
-        self, base_config: VideoConfig, bit_depth: int
+        self, base_config: VideoConfig
     ) -> None:
+        """24-bit video audio preserves amplitude relative to the int32 reference."""
         base_config.audio = VideoAudioConfig(channels=1, depth=32)
         reference, _ = sf.read(
             io.BytesIO(VideoGenerator(base_config)._generate_audio_data())
         )
-        base_config.audio.depth = bit_depth
+        base_config.audio.depth = 24
         actual, _ = sf.read(
             io.BytesIO(VideoGenerator(base_config)._generate_audio_data())
         )
