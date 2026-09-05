@@ -281,6 +281,36 @@ class TestAnthropicMessagesHeaders:
         assert headers["x-api-key"] == "sk-ant-test-key"
         assert "Authorization" not in headers
 
+    def test_auth_type_suppresses_x_api_key(self):
+        from aiperf.common.enums import ModelSelectionStrategy
+        from aiperf.common.models.model_endpoint_info import (
+            EndpointInfo,
+            ModelEndpointInfo,
+            ModelInfo,
+            ModelListInfo,
+        )
+
+        model_endpoint = ModelEndpointInfo(
+            models=ModelListInfo(
+                models=[ModelInfo(name="test-model")],
+                model_selection_strategy=ModelSelectionStrategy.ROUND_ROBIN,
+            ),
+            endpoint=EndpointInfo(
+                type=EndpointType.MESSAGES,
+                base_url="http://localhost:8000",
+                streaming=False,
+                extra=[],
+                api_key="leftover-key",
+                auth_type="sigv4",
+            ),
+        )
+        endpoint = create_endpoint_with_mock_transport(MessagesEndpoint, model_endpoint)
+        request_info = create_request_info(model_endpoint=model_endpoint)
+
+        headers = endpoint.get_endpoint_headers(request_info)
+
+        assert "x-api-key" not in headers
+
     def test_custom_headers_merged(self):
         from aiperf.common.enums import ModelSelectionStrategy
         from aiperf.common.models.model_endpoint_info import (
