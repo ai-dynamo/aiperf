@@ -70,7 +70,7 @@ def capture_file_writes():
             self.written_content = ""
 
         def write_bytes(self, data: bytes):
-            self.written_content = data.decode("utf-8")
+            self.written_content += data.decode("utf-8")
 
     capture = FileWriteCapture()
 
@@ -79,7 +79,7 @@ def capture_file_writes():
             if isinstance(data, (bytes, bytearray)):
                 capture.write_bytes(bytes(data))
             else:
-                capture.written_content = data
+                capture.written_content += data
 
         async def __aenter__(self):
             return self
