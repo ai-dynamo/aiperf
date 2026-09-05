@@ -58,6 +58,9 @@ async def control_plane_post(
 
     Transport failures (timeouts, connection errors, ``ClientError``) are
     raised as ``ControlPlaneHttpError`` so callers share one error type.
+    Signer failures (e.g. credential refresh errors) are wrapped the same
+    way and treated as retryable, since credential refresh is itself a
+    network operation.
 
     ``asyncio.CancelledError`` is intentionally not wrapped, preserving task
     cancellation semantics; callers needing cleanup on cancellation must
@@ -68,14 +71,15 @@ async def control_plane_post(
     skew window that control-hook backoff can outlive.
     """
     body = b""
-    url, headers, signed_body = await sign_request(
-        signer, method="POST", url=url, headers=headers, body=body
-    )
-    body = signed_body if signed_body is not None else body
     safe_url = redact_url(url)
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     # trust_env=False keeps loopback / cluster traffic off ambient HTTP(S)_PROXY.
     try:
+        url, headers, signed_body = await sign_request(
+            signer, method="POST", url=url, headers=headers, body=body
+        )
+        body = signed_body if signed_body is not None else body
+        safe_url = redact_url(url)
         async with (
             aiohttp.ClientSession(timeout=timeout, trust_env=False) as session,
             session.post(url, headers=headers, data=body) as resp,
@@ -94,5 +98,10 @@ async def control_plane_post(
     except (TimeoutError, aiohttp.ClientError) as exc:
         raise ControlPlaneHttpError(
             f"control_plane POST {safe_url} failed: {type(exc).__name__}: {exc}",
+            retryable=True,
+        ) from exc
+    except Exception as exc:
+        raise ControlPlaneHttpError(
+            f"control_plane POST {safe_url} signing failed: {type(exc).__name__}: {exc}",
             retryable=True,
         ) from exc
