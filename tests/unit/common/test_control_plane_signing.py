@@ -335,3 +335,40 @@ def test_from_config_matches_from_run() -> None:
     assert from_config.endpoint.aws_region == "eu-west-1"
     assert from_config.endpoint.aws_service == "bedrock-runtime"
     assert from_config.endpoint.auth_type == "sigv4"
+
+
+@pytest.mark.parametrize(
+    "profiler_urls,expect_signer",
+    [
+        param([], False, id="no-profiler-hooks"),
+        param(["http://server/start_profile"], True, id="profiler-hooks"),
+    ],
+)  # fmt: skip
+def test_control_signer_only_built_when_profiler_hooks_exist(
+    profiler_urls: list[str], expect_signer: bool
+) -> None:
+    """Resolving AWS credentials for POSTs that never fire can only fail a run."""
+    from aiperf.timing.manager import TimingManager
+
+    manager = cast(Any, TimingManager.__new__(TimingManager))
+    manager.run = SimpleNamespace(
+        cfg=_config(
+            auth_type="sigv4", aws_region="us-east-1", aws_service="execute-api"
+        )
+    )
+    hooks = PreparedEndpointControlHooks(
+        timeout_s=1.0,
+        reset_urls=[],
+        profiler_start_urls=list(profiler_urls),
+        profiler_stop_urls=list(profiler_urls),
+        profiler_timeout_s=1.0,
+        reset_max_retry_seconds=0.0,
+    )
+
+    with patch(
+        "aiperf.timing.manager.plugins.get_class",
+        return_value=lambda **_: SimpleNamespace(),
+    ):
+        signer = TimingManager._create_control_signer(manager, hooks)
+
+    assert (signer is not None) is expect_signer
