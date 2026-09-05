@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections import OrderedDict
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -13,6 +14,7 @@ import aiohttp
 import orjson
 
 from aiperf.common.constants import NANOS_PER_SECOND
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.models import (
@@ -22,7 +24,7 @@ from aiperf.common.models import (
     SSEField,
     SSEMessage,
 )
-from aiperf.common.redact import redact_headers
+from aiperf.common.redact import redact_headers, redact_url
 from aiperf.common.utils import is_truthy_flag
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
@@ -117,8 +119,15 @@ class WebSocketTransport(BaseTransport):
         # server-side. previous_response_id points at that prior turn, so only
         # its store status governs whether a reconnect can still resolve the id.
         # Session concurrency serializes a conversation's turns, so per-key
-        # access needs no lock; the lease-drop pop rides ``_lock``.
-        self._stored: dict[str, bool] = {}
+        # access needs no lock; the lease-drop pop rides ``_lock``. Bounded with
+        # LRU eviction (mirroring UserSessionManager) because a conversation
+        # halted before its final turn -- context overflow, error, cancellation
+        # -- never reaches the final-turn pop, so the entry would otherwise leak
+        # for the life of the run. Evicting the oldest is safe: a later reconnect
+        # of an evicted (long-idle) conversation conservatively reads
+        # not-persisted and fails with a clear ChainingContextLost.
+        self._stored: OrderedDict[str, bool] = OrderedDict()
+        self._stored_max = Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
         self._lock = asyncio.Lock()
 
     @classmethod
@@ -209,13 +218,13 @@ class WebSocketTransport(BaseTransport):
         request_info.payload_bytes = envelope_bytes
         headers = self.build_headers(request_info)
         correlation_id = request_info.x_correlation_id
-        # store may be requested endpoint-wide (--extra-inputs) or per turn (a
-        # dataset row's extra, which lands on the envelope). Either persists this
-        # turn's response server-side; recorded after success so the next turn
-        # knows whether its previous_response_id survives a reconnect.
-        store_requested = self._store_requested() or is_truthy_flag(
-            envelope.get("store")
-        )
+        # Effective store for this turn. ResponsesEndpoint.format_payload already
+        # merged the endpoint-wide extra and the turn's extra_body (turn last), so
+        # the envelope's own ``store`` is authoritative: a per-turn ``store: false``
+        # that overrode an endpoint-wide ``store: true`` reads as False here, not
+        # True. Recorded after success so the next turn knows whether its
+        # previous_response_id survives a reconnect.
+        store_requested = is_truthy_flag(envelope.get("store"))
 
         dirty = False
         start_perf_ns = time.perf_counter_ns()
@@ -257,12 +266,22 @@ class WebSocketTransport(BaseTransport):
         # chained turn (only the newest turn plus previous_response_id) would draw
         # a confusing previous_response_not_found from the server. Fail the turn
         # with a clear cause instead. Resolvability hinges on whether the *prior*
-        # turn (the one previous_response_id points at) was persisted, not this
-        # turn's store: endpoint-wide store persists every turn, otherwise consult
-        # the recorded prior-turn flag (which _release preserves across a dropped
-        # lease precisely so this check survives a reconnect).
-        prior_stored = self._store_requested() or (
-            bool(correlation_id) and self._stored.get(correlation_id, False)
+        # turn (the one previous_response_id points at) was persisted.
+        #
+        # A reconnect of the same conversation has that turn's recorded effective
+        # store in ``_stored`` (each turn writes its own merged store, _release
+        # preserves it across a dropped lease), so use it. A FORK child chaining
+        # onto its parent's response opens a brand-new conversation whose id is
+        # not in ``_stored``; there the best proxy for "the inherited response is
+        # server-persisted" is this turn's effective store (``store_requested``,
+        # already the endpoint-wide default with the per-turn override applied and
+        # true whenever server-side store is on for the run). Defaulting to
+        # ``store_requested`` -- not to False -- keeps the legitimately chained
+        # FORK child from being tripped, while a recorded ``False`` from a prior
+        # ``store: false`` turn still correctly blocks a same-conversation
+        # reconnect.
+        prior_stored = bool(correlation_id) and self._stored.get(
+            correlation_id, store_requested
         )
         if is_fresh and request_info.previous_response_id and not prior_stored:
             record.error = ErrorDetails(
@@ -308,8 +327,15 @@ class WebSocketTransport(BaseTransport):
         # whether its previous_response_id survives a reconnect. Skip the final
         # turn (no successor) since _release already dropped the lease and flag.
         if record.error is None and correlation_id and not request_info.is_final_turn:
-            self._stored[correlation_id] = store_requested
+            self._remember_store(correlation_id, store_requested)
         return record
+
+    def _remember_store(self, correlation_id: str, store_requested: bool) -> None:
+        """Record a turn's effective store flag, evicting the oldest over cap."""
+        self._stored[correlation_id] = store_requested
+        self._stored.move_to_end(correlation_id)
+        while len(self._stored) > self._stored_max:
+            self._stored.popitem(last=False)
 
     async def _read_bounded(
         self,
@@ -461,16 +487,6 @@ class WebSocketTransport(BaseTransport):
             raise TimeoutError
         return await asyncio.wait_for(ws.receive(), timeout=remaining)
 
-    def _store_requested(self) -> bool:
-        """Whether the run requested server-side storage via endpoint ``extra``.
-
-        Mirrors ``ResponsesEndpoint._store_requested``: with ``store: true`` the
-        server persists responses, so ``previous_response_id`` survives a socket
-        reconnect; without it, chaining lives only in the connection-local cache.
-        """
-        store = dict(self.model_endpoint.endpoint.extra or []).get("store")
-        return is_truthy_flag(store)
-
     def _frame_payload(
         self,
         msg: aiohttp.WSMessage,
@@ -602,13 +618,53 @@ class WebSocketTransport(BaseTransport):
         assert self._session is not None
         url = self.build_url(request_info)
 
+        # Terminal 'response.completed' frames carry the whole assembled response,
+        # which can exceed aiohttp's 4 MiB default and discard otherwise-complete
+        # work as a spurious transport error. 0 disables the cap (matching the
+        # HTTP SSE path); a positive value bounds per-frame memory.
+        max_msg_size = Environment.ENDPOINT.WEBSOCKET_MAX_MESSAGE_SIZE
+
         async def _connect() -> aiohttp.ClientWebSocketResponse:
-            return await self._session.ws_connect(url, headers=headers, autoping=True)
+            ws = await self._session.ws_connect(
+                url, headers=headers, autoping=True, max_msg_size=max_msg_size
+            )
+            await self._reject_redirected_socket(ws)
+            return ws
 
         timeout = self.model_endpoint.endpoint.timeout
         if not timeout or timeout <= 0:
             return await _connect()
         return await asyncio.wait_for(_connect(), timeout=timeout)
+
+    @staticmethod
+    async def _reject_redirected_socket(
+        ws: aiohttp.ClientWebSocketResponse,
+    ) -> None:
+        """Refuse a socket whose handshake followed an HTTP redirect.
+
+        ``aiohttp.ClientSession.ws_connect`` issues its upgrade through
+        ``self.request`` with the default ``allow_redirects=True`` and exposes no
+        way to disable it, so a ``wss://`` endpoint that answers the upgrade with
+        a 302 to ``http://elsewhere`` has aiohttp re-send the credential-bearing
+        custom headers to the redirect target -- in cleartext, and to a host the
+        credential-TLS gate never vetted. The headers are already on the wire by
+        the time we see the resolved response, but refusing to *use* the resulting
+        socket stops the run from silently benchmarking over the downgraded
+        connection and surfaces the misconfiguration loudly instead. ``history``
+        is non-empty only when at least one redirect was followed.
+        """
+        response = getattr(ws, "_response", None)
+        if response is not None and getattr(response, "history", None):
+            final_url = getattr(response, "url", None)
+            if not ws.closed:
+                await ws.close()
+            raise ValueError(
+                "WebSocket handshake followed an HTTP redirect to "
+                f"{redact_url(str(final_url)) if final_url else 'an unknown URL'}; "
+                "refusing to reuse the connection because credentials may have "
+                "been re-sent to an unvetted host. Point --url directly at the "
+                "final wss:// endpoint."
+            )
 
     async def _release(
         self,

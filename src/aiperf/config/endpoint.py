@@ -769,7 +769,7 @@ class EndpointConfig(BaseConfig):
         parameter (``ws://host?api_key=secret``) is sent verbatim. Require
         ``wss://`` whenever any of these are present, or drop the credentials.
         """
-        from aiperf.common.redact import url_carries_credentials
+        from aiperf.common.redact import redact_url, url_carries_credentials
 
         has_config_credentials = self._has_credentials()
         for url in self.urls:
@@ -777,7 +777,7 @@ class EndpointConfig(BaseConfig):
                 continue
             if has_config_credentials or url_carries_credentials(url):
                 raise ValueError(
-                    f"URL {url!r} uses the unencrypted 'ws://' scheme but the "
+                    f"URL {redact_url(url)!r} uses the unencrypted 'ws://' scheme but the "
                     "endpoint carries credentials (api_key, authentication "
                     "headers, or credentials embedded in the URL's userinfo or "
                     "query string), which would be transmitted in cleartext. Use "
@@ -862,22 +862,27 @@ class EndpointConfig(BaseConfig):
             )
         return self
 
-    def revalidate_websocket_gates(self) -> None:
-        """Re-run the WebSocket safety validators after an in-place mutation.
+    def revalidate_after_credential_injection(self) -> None:
+        """Re-run the URL/credential safety validators after an in-place mutation.
 
         ``BaseConfig`` sets no ``validate_assignment``, so the ``mode="after"``
         validators do not re-run when credential rehydration overwrites
         ``api_key`` / ``headers`` / ``urls`` post-construction. Any code that
-        mutates those fields must call this so an injected ``ws://`` URL or a
-        Secret-injected credential cannot slip past the responses-type,
-        credential-TLS, scheme-consistency, wait-for-model, and server-token-count
-        gates that construction enforced. Kept next to the validators so a new WS
-        gate is added in exactly one place.
+        mutates those fields must call this so an injected URL or a
+        Secret-injected credential cannot slip past the gates that construction
+        enforced: URL well-formedness (``_validate_endpoint_boundaries``), the
+        responses-type, credential-TLS, scheme-consistency, wait-for-model,
+        control-hook-HTTP, and server-token-count gates. Boundaries runs first so
+        a malformed injected URL surfaces a format error before the scheme-aware
+        gates interpret it. Kept next to the validators so a new gate is added in
+        exactly one place.
         """
+        self._validate_endpoint_boundaries()
         self._validate_websocket_requires_responses()
         self._validate_wait_for_model_unsupported_on_websocket()
         self._validate_ws_credentials_require_tls()
         self._validate_transport_url_schemes_consistent()
+        self._validate_control_hooks_require_http()
         self._validate_websocket_chaining_requires_server_token_count()
 
     def _has_credentials(self) -> bool:

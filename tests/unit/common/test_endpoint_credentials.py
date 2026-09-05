@@ -199,6 +199,64 @@ def test_injected_ws_url_with_userinfo_is_rejected(tmp_path):
         apply_endpoint_credentials(run, credentials)
 
 
+def _explicit_ws_benchmark_run(tmp_path) -> BenchmarkRun:
+    """A credential-free endpoint with ``transport: websocket`` set explicitly."""
+    kwargs = {
+        **_MINIMAL_CONFIG_KWARGS,
+        "endpoint": {
+            "urls": ["ws://my-internal-vllm:8000/v1/responses"],
+            "type": "responses",
+            "transport": "websocket",
+            "use_server_token_count": True,
+        },
+    }
+    cfg = BenchmarkConfig(**kwargs)
+    return BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="run_0001",
+    )
+
+
+def test_injected_schemeless_url_is_normalized_before_revalidation(tmp_path):
+    """A schemeless injected URL must be normalized like construction does.
+
+    Without normalization the raw ``host:port`` form keeps no ``ws://`` scheme,
+    so the credential-TLS gate never inspects it and a Secret-injected key would
+    go out over cleartext ws:// (WebSocketTransport.get_url supplies the ws://
+    scheme at request time). Normalizing to ``http://`` here mirrors the field's
+    AfterValidator, so the scheme-consistency gate rejects the explicit
+    ws-transport/http-URL mismatch instead of the config silently leaking.
+    """
+    run = _explicit_ws_benchmark_run(tmp_path)
+    credentials = EndpointCredentialInjection(
+        api_key=_INJECTED_KEY,
+        api_key_from_alias=False,
+        headers=None,
+        urls=["my-internal-vllm:8000/v1/responses"],
+    )
+
+    with pytest.raises(ValueError, match="incompatible"):
+        apply_endpoint_credentials(run, credentials)
+
+
+def test_injected_malformed_url_is_rejected_by_boundary_gate(tmp_path):
+    """Injected URLs must clear _validate_endpoint_boundaries too (unsupported
+    scheme / out-of-range port), which construction enforces but the in-place
+    overlay would otherwise skip."""
+    run = _benchmark_run(tmp_path, None)
+    credentials = EndpointCredentialInjection(
+        api_key=None,
+        api_key_from_alias=False,
+        headers=None,
+        urls=["ftp://host:8000/v1"],
+    )
+
+    with pytest.raises(ValueError, match="unsupported scheme"):
+        apply_endpoint_credentials(run, credentials)
+
+
 def test_ambient_shell_key_does_not_reach_an_unconfigured_endpoint(
     tmp_path, monkeypatch
 ):

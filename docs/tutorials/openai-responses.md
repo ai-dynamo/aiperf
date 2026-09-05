@@ -389,6 +389,16 @@ Key behaviors:
 - **Credentials require `wss://`.** An API key or authentication header sent over
   unencrypted `ws://` would travel in cleartext, so AIPerf rejects that
   combination — use `wss://` for credential-bearing WebSocket runs.
+- **Redirected handshakes are refused.** If a `wss://` endpoint answers the upgrade
+  with an HTTP redirect, AIPerf refuses to reuse the resulting connection (it may
+  have re-sent credentials to an unvetted host over cleartext). Point `--url`
+  directly at the final `wss://` endpoint.
+- **Large terminal frames.** A `response.completed` frame carries the fully
+  assembled response, so very long generations or large tool-call/image payloads
+  can exceed aiohttp's default 4 MiB per-frame limit. AIPerf disables that cap by
+  default (matching the HTTP SSE path); set
+  `AIPERF_ENDPOINT_WEBSOCKET_MAX_MESSAGE_SIZE` to a positive byte count to bound
+  per-frame memory instead.
 - **`--wait-for-model-timeout` is not supported.** The readiness probe issues HTTP
   GET/POST requests, which cannot target a `ws://`/`wss://` URL, so AIPerf rejects
   the flag for WebSocket endpoints at config validation. Gate readiness against the

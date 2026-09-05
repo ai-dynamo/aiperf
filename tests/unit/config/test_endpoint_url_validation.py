@@ -189,6 +189,19 @@ def test_ws_with_userinfo_credentials_rejected() -> None:
         )
 
 
+def test_ws_credential_rejection_message_redacts_the_secret() -> None:
+    """The safety-rejection message must not print the credential it protects."""
+    with pytest.raises(ValidationError) as exc_info:
+        EndpointConfig(
+            urls=["ws://user:supersecret@localhost:19000/v1/responses"],
+            type="responses",
+            use_server_token_count=True,
+        )
+    message = str(exc_info.value)
+    assert "supersecret" not in message
+    assert "unencrypted 'ws://'" in message
+
+
 def test_ws_with_sensitive_query_param_rejected() -> None:
     """A sensitive query parameter in a ws:// URL is sent verbatim in cleartext."""
     with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
