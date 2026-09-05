@@ -323,18 +323,30 @@ class AioHttpTransport(BaseTransport):
                 request_info.model_endpoint.endpoint.request_content_type
                 == RequestContentType.MULTIPART_FORM_DATA
             )
+            # Pre-encoded bytes (PAYLOAD_BYTES fast path / raw payload replay)
+            # are sent verbatim; dicts are encoded here.
             body: bytes | aiohttp.FormData
-            if use_form_data:
-                # Request signers (SigV4) sign a fixed byte payload; multipart
-                # form-data bodies aren't signed. EndpointConfig rejects
-                # auth_type + multipart at config time, so this branch is only
-                # reachable with no signer configured.
+            if isinstance(payload, bytes):
+                body = payload
+            elif use_form_data:
                 body = self._build_form_data(payload)
             else:
-                signed = await self._sign_if_needed(
-                    "POST", url, headers, orjson.dumps(payload)
-                )
+                body = orjson.dumps(payload)
+
+            # Request signers (SigV4) sign a fixed byte payload; multipart
+            # form-data bodies aren't signed. EndpointConfig rejects
+            # auth_type + multipart at config time, so an unsigned FormData
+            # body means no signer is configured.
+            if not isinstance(body, aiohttp.FormData):
+                signed = await self._sign_if_needed("POST", url, headers, body)
                 url, headers, body = signed.url, signed.headers, signed.body
+            elif self.request_signer is not None:
+                raise RuntimeError(
+                    "FormData body with a configured request_signer: signers "
+                    "sign a fixed byte payload and can't sign multipart "
+                    "form-data. EndpointConfig should have rejected "
+                    "auth_type + multipart at config time."
+                )
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -514,13 +526,23 @@ class AioHttpTransport(BaseTransport):
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         body: bytes | aiohttp.FormData
-        if use_form_data:
+        if isinstance(payload, bytes):
+            body = payload
+        elif use_form_data:
             body = self._build_form_data(payload)
         else:
-            signed = await self._sign_if_needed(
-                "POST", url, headers, orjson.dumps(payload)
-            )
+            body = orjson.dumps(payload)
+
+        if not isinstance(body, aiohttp.FormData):
+            signed = await self._sign_if_needed("POST", url, headers, body)
             url, headers, body = signed.url, signed.headers, signed.body
+        elif self.request_signer is not None:
+            raise RuntimeError(
+                "FormData body with a configured request_signer: signers "
+                "sign a fixed byte payload and can't sign multipart "
+                "form-data. EndpointConfig should have rejected "
+                "auth_type + multipart at config time."
+            )
         record = await self.aiohttp_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
