@@ -8,6 +8,7 @@ import aiohttp
 import orjson
 import pytest
 
+from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.models import ErrorDetails, RequestRecord, TextResponse
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.aiohttp_client import AioHttpClient
@@ -340,6 +341,103 @@ class TestVideoContentDownload:
         # The actual implementation propagates the original error code
         assert result.code == 404
         assert "Failed to download video" in result.message
+
+
+class TestVideoTransportSigning:
+    """Signed headers from `request_signer` must reach the video job HTTP calls."""
+
+    @pytest.mark.asyncio
+    async def test_submit_video_job_passes_signed_headers_to_client(self, transport):
+        """_submit_video_job must sign the JSON request and forward signed headers."""
+        transport.aiohttp_client.post_request.return_value = create_request_record(
+            status=201,
+            body=orjson.dumps({"id": "video-123", "status": "queued"}).decode(),
+        )
+        mock_signer = AsyncMock()
+        mock_signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ...", "X-Amz-Date": "now"},
+            body=b"signed-body",
+        )
+        transport.request_signer = mock_signer
+
+        result = await transport._submit_video_job(
+            "http://localhost/v1/videos",
+            {"prompt": "A cat playing piano"},
+            {"Content-Type": "application/json"},
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        mock_signer.sign.assert_awaited_once()
+        url, body, headers = transport.aiohttp_client.post_request.call_args.args
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+        assert headers["X-Amz-Date"] == "now"
+        assert body == b"signed-body"
+
+    @pytest.mark.asyncio
+    async def test_poll_video_job_passes_signed_headers_to_client(self, transport):
+        """_poll_video_job must sign each poll request and forward signed headers."""
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200,
+            body=orjson.dumps({"id": "video-123", "status": "completed"}).decode(),
+        )
+        mock_signer = AsyncMock()
+        mock_signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ...", "X-Amz-Date": "now"},
+            url="https://signed.example.com/v1/videos/video-123",
+        )
+        transport.request_signer = mock_signer
+
+        result = await transport._poll_video_job(
+            "video-123",
+            "http://localhost/v1/videos/video-123",
+            {"Authorization": "Bearer token"},
+            timeout=60.0,
+            poll_interval=1.0,
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        mock_signer.sign.assert_awaited_once()
+        url, headers = transport.aiohttp_client.get_request.call_args.args
+        assert url == "https://signed.example.com/v1/videos/video-123"
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+        assert headers["X-Amz-Date"] == "now"
+
+    @pytest.mark.asyncio
+    async def test_download_video_content_passes_signed_headers_to_client(
+        self, transport
+    ):
+        """_download_video_content must sign the download request and forward signed headers."""
+        import time
+
+        from aiperf.common.models import BinaryResponse
+
+        perf_ns = time.perf_counter_ns()
+        transport.aiohttp_client.get_request.return_value = RequestRecord(
+            request_headers={},
+            start_perf_ns=perf_ns,
+            end_perf_ns=perf_ns + 1000000,
+            status=200,
+            responses=[
+                BinaryResponse(perf_ns=perf_ns, raw_bytes=b"fake_video_content")
+            ],
+        )
+        mock_signer = AsyncMock()
+        mock_signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ...", "X-Amz-Date": "now"},
+        )
+        transport.request_signer = mock_signer
+
+        result = await transport._download_video_content(
+            "video-123",
+            "http://localhost/v1/videos/video-123/content",
+            {"Authorization": "Bearer token"},
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        mock_signer.sign.assert_awaited_once()
+        url, headers = transport.aiohttp_client.get_request.call_args.args
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+        assert headers["X-Amz-Date"] == "now"
 
 
 class TestVideoRequestWorkflow:
