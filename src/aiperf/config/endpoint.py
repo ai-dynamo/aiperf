@@ -862,6 +862,24 @@ class EndpointConfig(BaseConfig):
             )
         return self
 
+    def revalidate_websocket_gates(self) -> None:
+        """Re-run the WebSocket safety validators after an in-place mutation.
+
+        ``BaseConfig`` sets no ``validate_assignment``, so the ``mode="after"``
+        validators do not re-run when credential rehydration overwrites
+        ``api_key`` / ``headers`` / ``urls`` post-construction. Any code that
+        mutates those fields must call this so an injected ``ws://`` URL or a
+        Secret-injected credential cannot slip past the responses-type,
+        credential-TLS, scheme-consistency, wait-for-model, and server-token-count
+        gates that construction enforced. Kept next to the validators so a new WS
+        gate is added in exactly one place.
+        """
+        self._validate_websocket_requires_responses()
+        self._validate_wait_for_model_unsupported_on_websocket()
+        self._validate_ws_credentials_require_tls()
+        self._validate_transport_url_schemes_consistent()
+        self._validate_websocket_chaining_requires_server_token_count()
+
     def _has_credentials(self) -> bool:
         """Whether the endpoint carries transport credentials worth protecting."""
         if self.api_key:
