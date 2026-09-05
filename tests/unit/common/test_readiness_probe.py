@@ -9,6 +9,7 @@ from typing import Any, cast
 import orjson
 import pytest
 
+from aiperf.auth.base_signer import SignedRequest
 from aiperf.common import readiness_probe
 from aiperf.config.flags.cli_config import CLIConfig
 
@@ -19,9 +20,10 @@ class _FakeRecord:
 
 
 class _FakeClient:
-    def __init__(self) -> None:
+    def __init__(self, status: int = 400) -> None:
         self.posted_urls: list[str] = []
         self.payloads: list[dict[str, Any]] = []
+        self._status = status
 
     async def post_request(
         self,
@@ -35,7 +37,9 @@ class _FakeClient:
         assert isinstance(decoded_payload, dict)
         self.posted_urls.append(request_url)
         self.payloads.append(decoded_payload)
-        return _FakeRecord()
+        record = _FakeRecord()
+        record.status = self._status
+        return record
 
 
 def test_wait_inference_warns_on_endpoint_type_fallback(
@@ -122,6 +126,63 @@ def test_wait_inference_messages_uses_dedicated_template(
             "model": "claude-sonnet-4-20250514",
         }
     ]
+
+
+class _FakeSigner:
+    """Minimal stand-in for a configured RequestSignerProtocol."""
+
+    async def sign(
+        self, method: str, url: str, headers: dict[str, str], body: bytes | None
+    ) -> SignedRequest:
+        return SignedRequest(headers=headers)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_wait_inference_signed_401_403_raises_instead_of_ready(status: int) -> None:
+    """A signed probe rejected with 401/403 must not be treated as ready.
+
+    Unlike the unsigned case (any status < 500 counts as ready), a rejected
+    *signed* request almost always means the signature itself is
+    misconfigured (bad credentials/region/service), so the probe should
+    fail fast with a clear error rather than silently reporting ready.
+    """
+    client = _FakeClient(status=status)
+
+    with pytest.raises(RuntimeError, match=str(status)):
+        asyncio.run(
+            readiness_probe._wait_inference(
+                client=cast(Any, client),
+                url="http://server",
+                model_name="model-a",
+                endpoint_type="chat",
+                custom_endpoint=None,
+                timeout_s=1.0,
+                interval_s=0.1,
+                headers={},
+                signer=cast(Any, _FakeSigner()),
+            )
+        )
+
+
+def test_wait_inference_unsigned_403_still_counts_as_ready() -> None:
+    """Without a signer, 401/403 keeps the documented < 500 behavior."""
+    client = _FakeClient(status=403)
+
+    asyncio.run(
+        readiness_probe._wait_inference(
+            client=cast(Any, client),
+            url="http://server",
+            model_name="model-a",
+            endpoint_type="chat",
+            custom_endpoint=None,
+            timeout_s=1.0,
+            interval_s=0.1,
+            headers={},
+            signer=None,
+        )
+    )
+
+    assert client.posted_urls == ["http://server/v1/chat/completions"]
 
 
 class _FakeReadyRecord:
