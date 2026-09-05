@@ -23,7 +23,7 @@ from pytest import param
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import MetricFlags
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import MetricResult, ParsedResponseRecord, Turn
+from aiperf.common.models import MetricResult, ParsedResponseRecord
 from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.metric_dicts import MetricResultsDict
 from aiperf.metrics.replay_sched_lag_analyzer import inject_replay_sched_lag_metrics
@@ -42,9 +42,14 @@ def _scheduled_record(
     intended_ms: float | None, actual_send_ms: float
 ) -> ParsedResponseRecord:
     """Record whose turn was scheduled at ``intended_ms`` (schedule-relative)
-    and actually sent at ``actual_send_ms`` (wall clock, same test clock)."""
+    and actually sent at ``actual_send_ms`` (wall clock, same test clock).
+
+    Production records carry the intended time on
+    ``RecordContext.scheduled_send_ms`` (hoisted at enrich time); the full
+    ``turns`` list never crosses the ZMQ hop.
+    """
     record = create_record(start_ns=int(actual_send_ms * NANOS_PER_MILLIS))
-    record.request.request_info.turns = [Turn(timestamp=intended_ms)]
+    record.request.request_info.scheduled_send_ms = intended_ms
     return record
 
 

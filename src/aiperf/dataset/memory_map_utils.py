@@ -14,7 +14,16 @@ Flow (Kubernetes):
     2. WorkerPodManager downloads compressed files once per pod from control-plane via HTTP API
     3. WorkerPodManager decompresses files locally
     4. Workers read via mmap through MemoryMapDatasetClientStore
+
+Storage formats (``MemoryMapDatasetIndex.format``):
+    - ``conversation``: Each entry is a JSON-serialized Conversation object.
+      Used for normal datasets. Workers deserialize to get a full Conversation.
+    - ``payload_bytes``: Each entry is pre-encoded payload bytes (one per turn).
+      Used for verbatim API replay. Workers read bytes directly from the mmap
+      and send them to the transport without deserialization.
 """
+
+from __future__ import annotations
 
 import asyncio
 import mmap
@@ -23,14 +32,17 @@ import tempfile
 import types
 import weakref
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import aiofiles
+import orjson
 from pydantic import Field, field_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import BYTES_PER_MIB
+from aiperf.common.enums import MemoryMapFormat
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import (
     MemoryMapFileOperationError,
@@ -42,6 +54,7 @@ from aiperf.common.models import (
     AIPerfBaseModel,
     Conversation,
     MemoryMapClientMetadata,
+    Turn,
 )
 
 _logger = AIPerfLogger(__name__)
@@ -82,6 +95,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self,
         benchmark_id: str | None = None,
         compress_only: bool = False,
+        format: MemoryMapFormat = MemoryMapFormat.CONVERSATION,
         **kwargs: Any,
     ) -> None:
         """Initialize memory-mapped storage.
@@ -91,11 +105,15 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             compress_only: If True, stream directly to compressed files without creating
                 uncompressed versions. Use for Kubernetes where DatasetManager doesn't need
                 local mmap access. Workers decompress after download.
+            format: Storage format for the dataset files. ``CONVERSATION`` serializes
+                each Conversation as JSON; ``PAYLOAD_BYTES`` writes pre-encoded per-turn
+                payload bytes for verbatim replay.
             **kwargs: Additional configuration (unused for local mmap)
         """
         super().__init__()
         self._finalized = False
         self._compress_only = compress_only
+        self._format: MemoryMapFormat = format
 
         # Streaming state (one of _data_file or _stream_writer+_raw_data_file is active)
         self._data_file = None
@@ -103,6 +121,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self._stream_writer = None
         self._current_offset = 0
         self._offsets: dict[str, ConversationOffset] = {}
+        self._payload_offsets: dict[str, list[PayloadOffset]] = {}
         self._session_ids: list[str] = []  # Maintain insertion order
 
         # File paths (configurable base path for k8s mounted volumes)
@@ -142,6 +161,13 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                 f"Memory-mapped backing store initialized (streaming to {self._data_path})"
             )
 
+    async def _write_bytes(self, data: bytes) -> None:
+        """Write bytes to the active output (compressed stream or async file)."""
+        if self._compress_only:
+            self._stream_writer.write(data)
+        else:
+            await self._data_file.write(data)
+
     async def add_conversation(
         self, conversation_id: str, conversation: Conversation
     ) -> None:
@@ -157,20 +183,35 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         if self._finalized:
             raise RuntimeError("Cannot add conversations after finalization")
 
-        conv_bytes = conversation.model_dump_json().encode("utf-8")
-
-        if self._compress_only:
-            # Write to zstd streaming compressor (sync I/O, but fast)
-            self._stream_writer.write(conv_bytes)
+        if self._format == MemoryMapFormat.PAYLOAD_BYTES:
+            # Pre-encode each turn's raw_payload and write the bytes directly;
+            # workers replay these verbatim with no deserialization. Persist
+            # turn scalars in the index so metric enrichment can restore
+            # max_tokens / scheduled_send_ms without the full Conversation.
+            turn_offsets: list[PayloadOffset] = []
+            for turn in conversation.turns:
+                payload_bytes = orjson.dumps(turn.raw_payload)
+                turn_offsets.append(
+                    PayloadOffset(
+                        offset=self._current_offset,
+                        size=len(payload_bytes),
+                        max_tokens=_resolve_turn_max_tokens(turn),
+                        timestamp=turn.timestamp,
+                    )
+                )
+                self._current_offset += len(payload_bytes)
+                await self._write_bytes(payload_bytes)
+            self._payload_offsets[conversation_id] = turn_offsets
         else:
-            await self._data_file.write(conv_bytes)
+            conv_bytes = conversation.model_dump_json().encode("utf-8")
+            # Track uncompressed offset (workers need this after decompression)
+            self._offsets[conversation_id] = ConversationOffset(
+                offset=self._current_offset, size=len(conv_bytes)
+            )
+            self._current_offset += len(conv_bytes)
+            await self._write_bytes(conv_bytes)
 
-        # Track uncompressed offset (workers need this after decompression)
-        self._offsets[conversation_id] = ConversationOffset(
-            offset=self._current_offset, size=len(conv_bytes)
-        )
         self._session_ids.append(conversation_id)
-        self._current_offset += len(conv_bytes)
 
         if len(self._session_ids) % 1000 == 0:
             self.debug(
@@ -205,7 +246,9 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
         index = MemoryMapDatasetIndex(
             conversation_ids=self._session_ids,
+            format=self._format,
             offsets=self._offsets,
+            payload_offsets=self._payload_offsets,
             total_size=self._current_offset,
         )
         index_bytes = index.model_dump_json(by_alias=True).encode("utf-8")
@@ -268,12 +311,53 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         return MemoryMapClientMetadata(
             data_file_path=self._data_path,
             index_file_path=self._index_path,
+            format=self._format,
             conversation_count=len(self._session_ids),
             total_size_bytes=self._current_offset,
+            compressed=self._compress_only,
             compressed_data_file_path=self._compressed_data_path if self._compress_only else None,
             compressed_index_file_path=self._compressed_index_path if self._compress_only else None,
             compressed_size_bytes=self._compressed_size if self._compress_only else 0,
         )  # fmt: skip
+
+    def adopt_existing_files(
+        self,
+        *,
+        session_ids: list[str],
+        total_size_bytes: int,
+        compressed_size_bytes: int = 0,
+    ) -> None:
+        """Mark this store as finalized over already-on-disk files.
+
+        Used by the dataset cache HIT path: ``dataset.dat`` / ``index.dat`` are
+        already on disk in the run mmap dir (copied from the cache), so we never
+        call ``initialize()`` (which would open a writer) or ``finalize()``
+        (which would re-write the index). The on-stop cleanup hook still runs
+        and unlinks the run dir as if the writer had produced the files itself.
+        """
+        if self._finalized:
+            raise RuntimeError(
+                "adopt_existing_files called on an already-finalized store."
+            )
+        # compress_only (Kubernetes) cache HIT restores only .dat.zst files;
+        # uncompressed dataset.dat / index.dat are never written.
+        if self._compress_only:
+            data_ok = self._compressed_data_path.exists()
+            index_ok = self._compressed_index_path.exists()
+            missing = (self._compressed_data_path, self._compressed_index_path)
+        else:
+            data_ok = self._data_path.exists()
+            index_ok = self._index_path.exists()
+            missing = (self._data_path, self._index_path)
+        if not data_ok or not index_ok:
+            raise FileNotFoundError(
+                f"adopt_existing_files requires both files on disk: "
+                f"{missing[0]}, {missing[1]}"
+            )
+        self._session_ids = list(session_ids)
+        self._current_offset = total_size_bytes
+        self._compressed_size = compressed_size_bytes if self._compress_only else 0
+        self._finalized = True
 
     @on_stop
     async def _cleanup(self) -> None:
@@ -319,12 +403,10 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         self._data_path: Path = client_metadata.data_file_path
         self._index_path: Path = client_metadata.index_file_path
         self._client: MemoryMapDatasetClient | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
 
     @on_init
     async def _setup(self) -> None:
         """Open memory-mapped files (read-only)."""
-        self._loop = asyncio.get_running_loop()
         self.debug(
             lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
         )
@@ -337,7 +419,14 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
     async def get_conversation(self, conversation_id: str) -> Conversation:
         """Retrieve conversation from memory-mapped file.
 
-        Runs in executor since mmap reads can block on page faults.
+        No executor hop: pages are prefaulted at open (when MMAP_PREFAULT is
+        enabled) so reads don't trigger major faults. Remains async-callable
+        for API parity with other dataset clients.
+
+        When MMAP_PREFAULT is disabled, reads may still take major faults, and
+        those now land on the event loop thread rather than an executor thread.
+        That is deliberate: CPython's mmap slice holds the GIL while copying,
+        so an executor relocates the stall instead of removing it.
 
         Args:
             conversation_id: Session ID of the conversation
@@ -348,11 +437,43 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         Raises:
             KeyError: If conversation_id not found
         """
-        if self._client is None or self._loop is None:
+        if self._client is None:
             raise RuntimeError("Client store not initialized. Call initialize() first.")
-        return await self._loop.run_in_executor(
-            None, self._client.get_conversation, conversation_id
-        )
+        return self._client.get_conversation(conversation_id)
+
+    async def get_payload_bytes(
+        self, conversation_id: str, turn_index: int
+    ) -> bytes | None:
+        """Retrieve pre-encoded payload bytes for a specific turn.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Pre-encoded JSON bytes, or None when the dataset is not in
+            PAYLOAD_BYTES format or the turn has no payload.
+        """
+        if self._client is None:
+            raise RuntimeError("Client store not initialized. Call initialize() first.")
+        return self._client.get_payload_bytes(conversation_id, turn_index)
+
+    async def get_payload_turn(
+        self, conversation_id: str, turn_index: int
+    ) -> PayloadTurnData | None:
+        """Retrieve payload bytes plus turn scalars for metric enrichment.
+
+        Args:
+            conversation_id: The session ID of the conversation
+            turn_index: Turn index within the conversation
+
+        Returns:
+            ``PayloadTurnData`` or None when the dataset is not in
+            PAYLOAD_BYTES format or the turn has no payload.
+        """
+        if self._client is None:
+            raise RuntimeError("Client store not initialized. Call initialize() first.")
+        return self._client.get_payload_turn(conversation_id, turn_index)
 
     @on_stop
     async def _cleanup(self) -> None:
@@ -370,6 +491,105 @@ class ConversationOffset(AIPerfBaseModel):
     size: int = Field(ge=0, description="Size of the conversation data in bytes")
 
 
+class PayloadOffset(AIPerfBaseModel):
+    """Offset information for a single turn's payload in the data file."""
+
+    offset: int = Field(ge=0, description="Byte offset where payload data starts")
+    size: int = Field(ge=0, description="Size of the payload data in bytes")
+    max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Requested output length for this turn (from Turn.max_tokens or "
+            "wire JSON). Restored onto reconstructed Turns so OSL-mismatch "
+            "metrics stay live on the PAYLOAD_BYTES path."
+        ),
+    )
+    timestamp: int | float | None = Field(
+        default=None,
+        description=(
+            "Schedule timestamp in milliseconds from Turn.timestamp. Restored "
+            "onto reconstructed Turns so schedule-lag metrics stay live on "
+            "the PAYLOAD_BYTES path."
+        ),
+    )
+
+
+# Wire-body keys that encode the same Turn.max_tokens scalar across endpoints.
+_WIRE_MAX_TOKEN_KEYS: tuple[str, ...] = (
+    "max_tokens",
+    "max_completion_tokens",
+    "max_output_tokens",
+)
+
+
+@dataclass(slots=True)
+class PayloadTurnData:
+    """Pre-encoded payload bytes plus turn scalars for metric enrichment."""
+
+    payload_bytes: bytes
+    max_tokens: int | None = None
+    timestamp: int | float | None = None
+
+
+def max_tokens_from_wire_payload(payload: dict[str, Any] | None) -> int | None:
+    """Extract a positive max-tokens value from a wire JSON body, if present."""
+    if not isinstance(payload, dict):
+        return None
+    for key in _WIRE_MAX_TOKEN_KEYS:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value >= 1:
+            return value
+    return None
+
+
+def apply_max_tokens_to_wire_payload(
+    payload: dict[str, Any], value: int
+) -> dict[str, Any]:
+    """Return a copy of a raw wire body with its output-length cap set to ``value``.
+
+    Overwrites every max-token key already present so the cap is honored across
+    endpoint dialects; when none is present, sets the canonical ``max_tokens``
+    key so an override still takes effect on the wire.
+    """
+    updated = dict(payload)
+    present = [key for key in _WIRE_MAX_TOKEN_KEYS if key in updated]
+    if present:
+        for key in present:
+            updated[key] = value
+    else:
+        # No cap recorded: pick the canonical key for the body's dialect so the
+        # server actually honors it. Responses bodies (keyed by "input") expect
+        # max_output_tokens; chat/completions bodies expect max_tokens.
+        canonical = "max_output_tokens" if "input" in updated else "max_tokens"
+        updated[canonical] = value
+    return updated
+
+
+def _resolve_turn_max_tokens(turn: Turn) -> int | None:
+    """Prefer Turn.max_tokens; fall back to wire-body keys in raw_payload."""
+    if turn.max_tokens is not None:
+        return turn.max_tokens
+    raw = turn.raw_payload
+    return max_tokens_from_wire_payload(raw if isinstance(raw, dict) else None)
+
+
+def turn_from_payload_turn(entry: PayloadTurnData) -> Turn:
+    """Rebuild a minimal Turn from PAYLOAD_BYTES entry data."""
+    raw_payload = orjson.loads(entry.payload_bytes)
+    max_tokens = entry.max_tokens
+    if max_tokens is None and isinstance(raw_payload, dict):
+        max_tokens = max_tokens_from_wire_payload(raw_payload)
+    return Turn(
+        role="user",
+        raw_payload=raw_payload,
+        max_tokens=max_tokens,
+        timestamp=entry.timestamp,
+    )
+
+
 class MemoryMapDatasetIndex(AIPerfBaseModel):
     """Index structure for the memory-mapped dataset.
 
@@ -379,9 +599,19 @@ class MemoryMapDatasetIndex(AIPerfBaseModel):
     conversation_ids: list[str] = Field(
         default_factory=list, description="List of all conversation IDs in the dataset"
     )
+    format: MemoryMapFormat = Field(
+        default=MemoryMapFormat.CONVERSATION,
+        description="Storage format: 'conversation' for serialized Conversations, "
+        "'payload_bytes' for pre-encoded per-turn payload bytes.",
+    )
     offsets: dict[str, ConversationOffset] = Field(
         default_factory=dict,
         description="Mapping of conversation IDs to their byte offsets and sizes",
+    )
+    payload_offsets: dict[str, list[PayloadOffset]] = Field(
+        default_factory=dict,
+        description="Mapping of conversation IDs to per-turn payload offsets. "
+        "Used when format is 'payload_bytes'.",
     )
     total_size: int = Field(
         default=0, ge=0, description="Total size of the serialized dataset in bytes"
@@ -442,6 +672,15 @@ class MemoryMapDatasetClient:
 
             index_data = self.index_mmap.read()
             self.index = MemoryMapDatasetIndex.model_validate_json(index_data)
+            # Flatten to a plain dict[str, tuple[int, int]] to avoid per-lookup
+            # Pydantic attribute overhead on the hot path. Wire format unchanged;
+            # self.index stays for callers that iterate index.conversation_ids.
+            self._offsets: dict[str, tuple[int, int]] = {
+                cid: (o.offset, o.size) for cid, o in self.index.offsets.items()
+            }
+
+            if Environment.DATASET.MMAP_PREFAULT:
+                self._prefault_data_mmap()
 
         except OSError as e:
             self._cleanup_resources()
@@ -468,7 +707,7 @@ class MemoryMapDatasetClient:
             lambda: f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes"
         )
 
-    def __enter__(self) -> "MemoryMapDatasetClient":
+    def __enter__(self) -> MemoryMapDatasetClient:
         """Context manager entry."""
         return self
 
@@ -504,6 +743,19 @@ class MemoryMapDatasetClient:
                 with suppress(Exception):
                     obj.close()
 
+    def _prefault_data_mmap(self) -> None:
+        """Advise WILLNEED and touch every page to populate the page cache.
+
+        Without this, the first read of each page takes a major fault whose
+        latency lands inside a measured request. Workers share the kernel page
+        cache, so N workers cost one disk read rather than N serialized ones.
+        """
+        # madvise is unavailable on some platforms; the page walk still works.
+        with suppress(OSError, AttributeError):
+            self.data_mmap.madvise(mmap.MADV_WILLNEED)
+        for offset in range(0, len(self.data_mmap), mmap.PAGESIZE):
+            _ = self.data_mmap[offset]
+
     def _deserialize_conversation(self, data: bytes) -> Conversation:
         """Deserialize a single conversation from bytes.
 
@@ -534,19 +786,28 @@ class MemoryMapDatasetClient:
 
         Raises:
             KeyError: If conversation_id is not found
-            MemoryMapSerializationError: If conversation data is corrupted
+            MemoryMapSerializationError: If conversation data is corrupted or
+                the dataset is in payload_bytes format
         """
-        if conversation_id not in self.index.offsets:
+        if self.index.format == MemoryMapFormat.PAYLOAD_BYTES:
+            raise MemoryMapSerializationError(
+                f"Cannot retrieve Conversation '{conversation_id}' in payload_bytes "
+                "format. Use get_payload_bytes() instead."
+            )
+
+        if conversation_id not in self._offsets:
             raise KeyError(f"Conversation '{conversation_id}' not found in dataset")
 
-        offset_info = self.index.offsets[conversation_id]
+        offset, size = self._offsets[conversation_id]
 
         try:
-            self.data_mmap.seek(offset_info.offset)
-            conv_bytes = self.data_mmap.read(offset_info.size)
+            # Slice rather than seek()+read(): the mmap file position is shared
+            # state, so two concurrent readers can interleave a seek between
+            # another's seek and read and serve foreign bytes.
+            conv_bytes = self.data_mmap[offset : offset + size]
 
             _logger.debug(
-                lambda: f"Loading conversation '{conversation_id}': offset={offset_info.offset}, size={offset_info.size} bytes"
+                lambda: f"Loading conversation '{conversation_id}': offset={offset}, size={size} bytes"
             )
 
             return self._deserialize_conversation(conv_bytes)
@@ -556,6 +817,71 @@ class MemoryMapDatasetClient:
                 f"Failed to load conversation '{conversation_id}' from {self.data_file_path}: {e}"
             )
             raise
+
+    def get_payload_bytes(self, conversation_id: str, turn_index: int) -> bytes | None:
+        """Get pre-encoded payload bytes for a specific turn.
+
+        Returns bytes directly from the mmap -- zero deserialization overhead.
+
+        Args:
+            conversation_id: Conversation ID
+            turn_index: Turn index within the conversation
+
+        Returns:
+            Pre-encoded JSON bytes, or None when the dataset is not in
+            PAYLOAD_BYTES format or the turn has no payload.
+        """
+        if self.index.format != MemoryMapFormat.PAYLOAD_BYTES:
+            return None
+        turn_offsets = self.index.payload_offsets.get(conversation_id)
+        if turn_offsets is None or turn_index >= len(turn_offsets):
+            return None
+        offset_info = turn_offsets[turn_index]
+        return bytes(
+            self.data_mmap[offset_info.offset : offset_info.offset + offset_info.size]
+        )
+
+    def get_payload_turn(
+        self, conversation_id: str, turn_index: int
+    ) -> PayloadTurnData | None:
+        """Get payload bytes plus turn scalars for a specific turn.
+
+        Scalars (``max_tokens``, ``timestamp``) are restored from the index
+        when present. When ``max_tokens`` is missing (legacy indexes or turns
+        that never set it on the Turn), it is recovered from wire JSON keys
+        ``max_tokens`` / ``max_completion_tokens`` / ``max_output_tokens``.
+
+        Args:
+            conversation_id: Conversation ID
+            turn_index: Turn index within the conversation
+
+        Returns:
+            ``PayloadTurnData`` or None when the dataset is not in
+            PAYLOAD_BYTES format or the turn has no payload.
+        """
+        if self.index.format != MemoryMapFormat.PAYLOAD_BYTES:
+            return None
+        turn_offsets = self.index.payload_offsets.get(conversation_id)
+        if turn_offsets is None or turn_index >= len(turn_offsets):
+            return None
+        offset_info = turn_offsets[turn_index]
+        payload_bytes = bytes(
+            self.data_mmap[offset_info.offset : offset_info.offset + offset_info.size]
+        )
+        max_tokens = offset_info.max_tokens
+        if max_tokens is None:
+            try:
+                raw = orjson.loads(payload_bytes)
+            except orjson.JSONDecodeError:
+                raw = None
+            max_tokens = max_tokens_from_wire_payload(
+                raw if isinstance(raw, dict) else None
+            )
+        return PayloadTurnData(
+            payload_bytes=payload_bytes,
+            max_tokens=max_tokens,
+            timestamp=offset_info.timestamp,
+        )
 
     def close(self) -> None:
         """Close the memory-mapped files and associated resources.

@@ -792,6 +792,72 @@ class TestMultiRunPNGExporter:
         assert df["concurrency"].tolist() == [1, 4]
         assert df["request_latency"].tolist() == [100.0, 150.0]  # p50 values
 
+    def test_concurrency_group_legend_uses_metadata_not_run_name(
+        self, multi_run_exporter, tmp_path: Path
+    ) -> None:
+        """Regression: run-name prefixes must not leak into concurrency legends."""
+        models = ["Qwen/Qwen3-32B-FP8", "Llama-3.3-70B-Instruct-FP8-dynamic"]
+        runs = []
+        for concurrency in [1, 10, 50]:
+            for index, model in enumerate(models):
+                safe_model = model.replace("/", "_")
+                runs.append(
+                    RunData(
+                        metadata=RunMetadata(
+                            run_name=f"{safe_model}-openai-chat-concurrency{concurrency}",
+                            run_path=tmp_path
+                            / f"{safe_model}-openai-chat-concurrency{concurrency}",
+                            model=model,
+                            concurrency=concurrency,
+                        ),
+                        requests=None,
+                        aggregated={
+                            "request_latency": {
+                                "avg": 1000.0 * concurrency + index,
+                                "unit": "ms",
+                            },
+                            "output_token_throughput_per_gpu": {
+                                "avg": 100.0 / concurrency + index,
+                                "unit": "tokens/s/gpu",
+                            },
+                        },
+                        timeslices=None,
+                        slice_duration=None,
+                    )
+                )
+
+        df = multi_run_exporter._runs_to_dataframe(
+            runs, {"display_names": {}, "units": {}}
+        )
+        spec = PlotSpec(
+            name="pareto_by_concurrency",
+            plot_type=PlotType.PARETO,
+            metrics=[
+                MetricSpec(
+                    name="request_latency", source=DataSource.AGGREGATED, axis="x"
+                ),
+                MetricSpec(
+                    name="output_token_throughput_per_gpu",
+                    source=DataSource.AGGREGATED,
+                    axis="y",
+                ),
+            ],
+            title="Pareto by Concurrency",
+            filename="pareto_by_concurrency.png",
+            label_by="model",
+            group_by="concurrency",
+        )
+
+        fig = multi_run_exporter._create_plot_from_spec(
+            spec, df, {"display_names": {}, "units": {}}
+        )
+
+        legend_traces = [trace for trace in fig.data if trace.showlegend]
+        assert [trace.name for trace in legend_traces] == ["1", "10", "50"]
+        assert all(
+            "openai-chat-concurrency" not in trace.name for trace in legend_traces
+        )
+
 
 class TestSingleRunPNGExporter:
     """Tests for SingleRunPNGExporter class."""
@@ -2222,10 +2288,14 @@ class TestDualAxisHandler:
     def test_metric_prep_registry(self, dual_axis_handler):
         """Test that the metric preparation registry contains expected functions."""
         assert "throughput_tokens_per_sec" in dual_axis_handler.METRIC_PREP_FUNCTIONS
+        assert "nvidia_gpu_utilization" in dual_axis_handler.METRIC_PREP_FUNCTIONS
         assert "gpu_utilization" in dual_axis_handler.METRIC_PREP_FUNCTIONS
 
         assert callable(
             dual_axis_handler.METRIC_PREP_FUNCTIONS["throughput_tokens_per_sec"]
+        )
+        assert callable(
+            dual_axis_handler.METRIC_PREP_FUNCTIONS["nvidia_gpu_utilization"]
         )
         assert callable(dual_axis_handler.METRIC_PREP_FUNCTIONS["gpu_utilization"])
 

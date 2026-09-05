@@ -64,8 +64,12 @@ class SessionSynthesizer:
         )
         self._group_weights = weights / weights.sum()
 
-        # Fixed prefix size (L1 + L1.5)
-        self._fixed_prefix = config.cache.layer1_tokens + config.cache.layer1_5_tokens
+        # Fixed prefix (L1 + L1.5) reserved as whole cache blocks, so session
+        # (L2) content always begins in its own block. This keeps the partial
+        # final block of a turn-0 row session-unique -- a shared prefix hash_id
+        # must never be a row's final (partial) block, or it would map to two
+        # different block sizes across sessions and fail trace reconstruction.
+        self._fixed_prefix = self._allocator.prefix_tokens
 
         # Output floor: respect config max if it's below the default minimum
         gen_max = config.generation_length.max

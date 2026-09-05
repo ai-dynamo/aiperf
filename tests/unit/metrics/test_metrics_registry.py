@@ -88,7 +88,7 @@ class TestMetricRegistry:
         registries (e.g. GPU telemetry) must not raise here.
         """
         assert MetricRegistry.get_class_or_none("definitely_not_a_real_metric") is None
-        assert MetricRegistry.get_class_or_none("gpu_power_usage") is None
+        assert MetricRegistry.get_class_or_none("nvidia_power_usage") is None
 
     def test_get_class_or_none_matches_get_class_for_known_tags(self):
         """For registered tags, both lookups return the same class."""

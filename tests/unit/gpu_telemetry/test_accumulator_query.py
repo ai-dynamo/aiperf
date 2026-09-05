@@ -52,7 +52,7 @@ class TestProcessRecord:
 
         assert len(accumulator._timestamps_ns) == 1
         assert accumulator._timestamps_ns[0] == 1_000
-        assert len(accumulator._hierarchy.dcgm_endpoints) > 0
+        assert len(accumulator._hierarchy.telemetry_source_endpoints) > 0
 
 
 class TestQueryTimeRange:

@@ -44,7 +44,7 @@ class TestBareStringForkUnchanged:
         loader = DagJsonlLoader(filename=path)
         b = _branch(loader, "r", "r:0")
         assert b.mode == ConversationBranchMode.FORK
-        assert b.background is False
+        assert b.is_background is False
         assert b.child_conversation_ids == ["c"]
 
     def test_bare_string_on_non_final_turn_rejected(self) -> None:
@@ -72,7 +72,7 @@ class TestObjectFormForkBackground:
         loader = DagJsonlLoader(filename=path)
         b = _branch(loader, "r", "r:0")
         assert b.mode == ConversationBranchMode.FORK
-        assert b.background is True
+        assert b.is_background is True
         assert b.child_conversation_ids == ["c"]
 
     def test_object_form_bg_false_equivalent_to_bare_string(self) -> None:
@@ -95,7 +95,7 @@ class TestObjectFormForkBackground:
 """)
         loader = DagJsonlLoader(filename=path)
         b = _branch(loader, "r", "r:0")
-        assert b.background is True
+        assert b.is_background is True
         assert b.child_conversation_ids == ["c1", "c2"]
 
     def test_bg_forks_on_multiple_non_final_turns(self) -> None:
@@ -109,8 +109,8 @@ class TestObjectFormForkBackground:
         loader = DagJsonlLoader(filename=path)
         b0 = _branch(loader, "r", "r:0")
         b1 = _branch(loader, "r", "r:1")
-        assert b0.background is True and b0.child_conversation_ids == ["c1"]
-        assert b1.background is True and b1.child_conversation_ids == ["c2"]
+        assert b0.is_background is True and b0.child_conversation_ids == ["c1"]
+        assert b1.is_background is True and b1.child_conversation_ids == ["c2"]
 
 
 class TestMixedForegroundAndBackground:
@@ -128,8 +128,8 @@ class TestMixedForegroundAndBackground:
         loader = DagJsonlLoader(filename=path)
         fg = _branch(loader, "r", "r:0:fork")
         bg = _branch(loader, "r", "r:0:bg_fork")
-        assert fg.background is False and fg.child_conversation_ids == ["c1"]
-        assert bg.background is True and bg.child_conversation_ids == ["c2"]
+        assert fg.is_background is False and fg.child_conversation_ids == ["c1"]
+        assert bg.is_background is True and bg.child_conversation_ids == ["c2"]
 
     def test_mixed_on_non_final_turn_rejects_fg_with_clear_error(self) -> None:
         """FG fork would terminate the parent before its next turn fires,

@@ -96,12 +96,13 @@ class ArtifactsConfig(BaseConfig):
             description="Base filename override applied to ALL profile and server-metrics "
             "exports. With prefix='foo' every output becomes `foo.csv`, `foo.json`, "
             "`foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, "
-            "`foo_gpu_telemetry.jsonl`, `foo_server_metrics.{jsonl,json,csv,parquet}`. "
+            "`foo_outputs.json`, `foo_gpu_telemetry.jsonl`, "
+            "`foo_server_metrics.{jsonl,json,csv,parquet}`. "
             "When unset (the default), historical per-file names are used: "
             "`profile_export_aiperf.csv/json`, `profile_export.jsonl`, "
-            "`profile_export_raw.jsonl`, `gpu_telemetry_export.jsonl`, "
+            "`profile_export_raw.jsonl`, `outputs.json`, `gpu_telemetry_export.jsonl`, "
             "`server_metrics_export.{jsonl,json,csv,parquet}`. Known suffixes "
-            "(`_raw.jsonl`, `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, "
+            "(`_raw.jsonl`, `_outputs.json`, `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, "
             "`_server_metrics.{jsonl,json,csv,parquet}`, `.csv`/`.json`/`.jsonl`/`.parquet`) "
             "are stripped from the supplied value so `--profile-export-prefix foo_raw.jsonl` "
             "still yields a clean `foo` base.",
@@ -176,14 +177,15 @@ class ArtifactsConfig(BaseConfig):
     ]
 
     auto_plot: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
+            default=None,
             description=(
                 "Auto-invoke `aiperf plot` against the artifact directory after the "
-                "benchmark completes. Resolved by the CLI converter from the "
-                "tri-state CLI flag and the active search recipe's auto_plot_default; "
-                "by the time it lands here it is a plain bool."
+                "benchmark completes. Unset (the default) means a `plot:` section "
+                "implies True; set False to suppress plots even with one, True to "
+                "force them. `AIPerfConfig` resolves this to a concrete bool, so any "
+                "config that came through the loader carries a plain bool."
             ),
         ),
     ]
@@ -201,10 +203,14 @@ class ArtifactsConfig(BaseConfig):
     ]
 
     export_outputs_json: Annotated[
-        bool,
+        bool | None,
         Field(
-            default=False,
-            description="Export generated response text to outputs.json after the run.",
+            default=None,
+            description="Export generated response text after the run, to "
+            "`outputs.json` or `<prefix>_outputs.json` when `prefix` is set. "
+            "Unset (the default) means the `raw` export level implies it; set "
+            "False to opt out at raw, True to force it at any level. Always a "
+            "concrete bool once validation has run.",
         ),
     ]
 
@@ -221,7 +227,28 @@ class ArtifactsConfig(BaseConfig):
             )
         if self.slice_duration is not None and self.slice_duration <= 0:
             raise ValueError("slice_duration must be > 0")
+        self._apply_raw_implies_outputs_json()
         return self
+
+    def _apply_raw_implies_outputs_json(self) -> None:
+        """Resolve the tri-state ``export_outputs_json`` to a concrete bool.
+
+        ``None`` means "decide from the export level": raw implies the file,
+        because if you asked for the full request/response bodies you want the
+        generated text too. An explicit True or False is honored as-is, so
+        raw-level debugging can decline the second copy.
+
+        Tri-state rather than ``model_fields_set`` on a ``False`` default: the
+        Kubernetes apiserver materializes CRD ``default:`` values on write, so a
+        defaulted-to-False field is indistinguishable from a user-authored one
+        and would silently defeat the implication for every AIPerfJob.
+        """
+        if self.export_outputs_json is None:
+            self.export_outputs_json = self.raw
+            # Resolving is not authoring: keep the field out of
+            # ``model_fields_set`` so ``exclude_unset`` dumps (the Kubernetes
+            # ConfigMap payload) do not invent a value the user never wrote.
+            self.model_fields_set.discard("export_outputs_json")
 
     # ==========================================================================
     # COMPUTED FILE PATH PROPERTIES
@@ -241,6 +268,7 @@ class ArtifactsConfig(BaseConfig):
         "_timeslices.csv",
         "_timeslices.json",
         "_console.txt",
+        "_outputs.json",
         "_raw.jsonl",
         ".parquet",
         ".csv",
@@ -307,7 +335,10 @@ class ArtifactsConfig(BaseConfig):
     @property
     def outputs_json_file(self) -> Path:
         """Path for the aggregated generated outputs JSON export file."""
-        return self.dir / OutputDefaults.OUTPUTS_JSON_FILE
+        base = self._base()
+        default = OutputDefaults.OUTPUTS_JSON_FILE.name
+        name = f"{base}_outputs.json" if base else default
+        return self.dir / name
 
     @property
     def profile_export_raw_jsonl_file(self) -> Path:

@@ -83,8 +83,14 @@ class PublicDatasetComposer(BaseDatasetComposer):
         loader_metadata = plugins.get_public_dataset_loader_metadata(dataset_type)
         kwargs: dict[str, Any] = {}
 
-        if loader_metadata.hf_dataset_name is not None:
-            kwargs["hf_dataset_name"] = loader_metadata.hf_dataset_name
+        # ``--hf-weka-dataset`` names the HF repo for the generic weka_hf loader
+        # at runtime; it overrides the (None) registered ``hf_dataset_name``. The
+        # CLI converter already auto-selects weka_hf and rejects pairing it with
+        # any other dataset, so only the repo lookup is needed here.
+        hf_weka_dataset = getattr(self._public_dataset, "hf_weka_dataset", None)
+        hf_dataset_name = hf_weka_dataset or loader_metadata.hf_dataset_name
+        if hf_dataset_name is not None:
+            kwargs["hf_dataset_name"] = hf_dataset_name
             kwargs["hf_split"] = loader_metadata.hf_split
             cli_subset = self._public_dataset.hf_subset
             subset = cli_subset if cli_subset is not None else loader_metadata.hf_subset
@@ -119,6 +125,9 @@ class PublicDatasetComposer(BaseDatasetComposer):
         if loader_metadata.streaming:
             kwargs["streaming"] = loader_metadata.streaming
 
+        if loader_metadata.is_trace:
+            self._inject_trace_kwargs(loader_metadata, kwargs)
+
         if self._public_dataset.filters:
             if not self._loader_accepts_kwarg(loader_class, "filters"):
                 raise ValueError(
@@ -127,3 +136,34 @@ class PublicDatasetComposer(BaseDatasetComposer):
             kwargs["filters"] = self._public_dataset.filters
 
         return kwargs
+
+    def _inject_trace_kwargs(
+        self, loader_metadata: Any, kwargs: dict[str, Any]
+    ) -> None:
+        """Mirror CustomDatasetComposer's trace-loader plumbing.
+
+        Trace public datasets (e.g. weka_hf) decode ``hash_ids`` into prompt
+        text from a tokenizer-backed prompt generator's ``_tokenized_corpus``,
+        the same way custom trace loaders do. Coding-agent traces register
+        ``default_prompt_corpus: coding`` so the reconstructed prompts resemble
+        real tool-use content; using the wrong corpus produces different request
+        bytes / ISL token counts. ``--prompt-corpus`` overrides the default.
+        """
+        from aiperf.dataset.generator.corpus import resolve_prompt_generator
+
+        if self.prompt_generator is None:
+            raise ValueError(
+                "Trace public datasets require a tokenizer for prompt synthesis. "
+                "Ensure the endpoint supports tokenization or provide a --tokenizer."
+            )
+
+        kwargs["prompt_generator"] = resolve_prompt_generator(
+            corpus=self.run.cfg.get_prompt_corpus(),
+            default_corpus=loader_metadata.default_prompt_corpus,
+            tokenizer=self.prompt_generator.tokenizer,
+            prompts=self._synthetic_prompts,
+            prefix_prompts=None,
+        )
+
+        if loader_metadata.default_block_size is not None:
+            kwargs["default_block_size"] = loader_metadata.default_block_size

@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
@@ -61,37 +62,18 @@ class TestBailianTrace:
         trace = BailianTrace.model_validate_json(raw)
         assert trace.request_type == "inference"
 
-    def test_missing_required_chat_id(self):
-        with pytest.raises(ValidationError, match="chat_id"):
-            BailianTrace(
-                timestamp=1.0,
-                input_length=10,
-                output_length=5,
-            )
-
-    def test_missing_required_timestamp(self):
-        with pytest.raises(ValidationError, match="timestamp"):
-            BailianTrace(
-                chat_id=1,
-                input_length=10,
-                output_length=5,
-            )
-
-    def test_missing_required_input_length(self):
-        with pytest.raises(ValidationError, match="input_length"):
-            BailianTrace(
-                chat_id=1,
-                timestamp=1.0,
-                output_length=5,
-            )
-
-    def test_missing_required_output_length(self):
-        with pytest.raises(ValidationError, match="output_length"):
-            BailianTrace(
-                chat_id=1,
-                timestamp=1.0,
-                input_length=10,
-            )
+    @pytest.mark.parametrize(
+        "kwargs, match",
+        [
+            param({"timestamp": 1.0, "input_length": 10, "output_length": 5}, "chat_id", id="chat_id"),
+            param({"chat_id": 1, "input_length": 10, "output_length": 5}, "timestamp", id="timestamp"),
+            param({"chat_id": 1, "timestamp": 1.0, "output_length": 5}, "input_length", id="input_length"),
+            param({"chat_id": 1, "timestamp": 1.0, "input_length": 10}, "output_length", id="output_length"),
+        ],
+    )  # fmt: skip
+    def test_missing_required_field(self, kwargs, match):
+        with pytest.raises(ValidationError, match=match):
+            BailianTrace(**kwargs)
 
 
 # ============================================================================
@@ -407,7 +389,7 @@ class TestBailianTraceDatasetLoader:
 
     # ---- convert_to_conversations ----
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_convert_to_conversations(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
@@ -499,7 +481,7 @@ class TestBailianTraceDatasetLoader:
 
         assert conversations[0].turns[0].extra_body == {"nvext": {"priority": 1}}
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_parallel_decode_length_mismatch_raises(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
@@ -538,7 +520,7 @@ class TestBailianTraceDatasetLoader:
 
     # ---- multi-turn conversation conversion ----
 
-    @patch("aiperf.dataset.loader.base_trace_loader.parallel_decode")
+    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
     def test_multi_turn_conversation_ordering(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):

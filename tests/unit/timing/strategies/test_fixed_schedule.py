@@ -227,6 +227,33 @@ class TestFixedScheduleCreditReturn:
         await strategy.handle_credit_return(credit)
         scheduler.schedule_at_perf_sec.assert_called_once()
 
+    async def test_continuation_turn_carries_has_forks(self) -> None:
+        """has_forks from the NEXT turn's metadata must ride onto the
+        continuation turn (the sticky router defers parent-entry eviction until
+        DAG children drain). Regression: from_previous_credit(credit) was called
+        without next_meta, so every continuation turn got has_forks=False."""
+        strategy, _scheduler, _ = make_strategy([(0, "c1"), (100, "c1")])
+        await strategy.setup_phase()
+        # Mark the next turn (index 1) as fork-bearing.
+        meta = strategy._conversation_source._metadata_lookup["c1"]
+        meta.turns[1].has_forks = True
+
+        captured: list = []
+        strategy._credit_issuer.issue_credit = (
+            lambda turn: captured.append(turn) or True
+        )
+        credit = Credit(
+            id=1,
+            phase=CreditPhase.PROFILING,
+            conversation_id="c1",
+            x_correlation_id="corr-c1",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=1000,
+        )
+        await strategy.handle_credit_return(credit)
+        assert captured and captured[0].has_forks is True
+
 
 @pytest.mark.asyncio
 class TestFixedScheduleTimestampConversion:

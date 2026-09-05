@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from unittest.mock import Mock, patch
+
+import pytest
+
+from aiperf.common.environment import Environment
+from aiperf.common.models import MetricResult
+from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
+from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
+from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
+from aiperf.metrics.types.output_token_count import (
+    OutputTokenCountMetric,
+)
+from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
+from aiperf.metrics.types.ttft_metric import TTFTMetric
+from aiperf.ui.dashboard.realtime_metrics_dashboard import RealtimeMetricsTable
+
+
+class TestRealtimeMetricsTable:
+    @pytest.mark.parametrize(
+        "metric_tag, show_internal, should_skip",
+        [
+            # ERROR_ONLY metrics - always skipped
+            (ErrorRequestCountMetric.tag, False, True),
+            (ErrorRequestCountMetric.tag, True, True),
+            # NO_CONSOLE metrics - skipped unless SHOW_INTERNAL_METRICS is True
+            (BenchmarkDurationMetric.tag, False, True),
+            (BenchmarkDurationMetric.tag, True, False),
+            (OutputTokenCountMetric.tag, False, True),
+            (OutputTokenCountMetric.tag, True, False),
+            # Normal metrics - always shown
+            (RequestLatencyMetric.tag, False, False),
+            (RequestLatencyMetric.tag, True, False),
+            (TTFTMetric.tag, False, False),
+            (TTFTMetric.tag, True, False),
+            (InterTokenLatencyMetric.tag, False, False),
+            (InterTokenLatencyMetric.tag, True, False),
+        ],
+    )  # fmt: skip
+    def test_should_skip_logic_with_real_metrics(
+        self, metric_tag, show_internal, should_skip
+    ):
+        """Test that metrics are skipped based on flags and configuration using real metrics"""
+        with patch.object(Environment.DEV, "SHOW_INTERNAL_METRICS", show_internal):
+            run = Mock()
+            table = RealtimeMetricsTable(run)
+
+            metric_result = MetricResult(
+                tag=metric_tag,
+                header="Test Metric",
+                unit="ms",
+                avg=1.0,
+            )
+
+            assert table._should_skip(metric_result) is should_skip
+
+    def test_update_allows_unregistered_metric_results(self) -> None:
+        run = Mock()
+        table = RealtimeMetricsTable(run)
+        table.data_table = Mock()
+        table.data_table.is_mounted = True
+        table.data_table.add_row.return_value = "row-1"
+
+        metric_result = MetricResult(
+            tag="prefix_cache_hit_rate",
+            header="Prefix Cache Hit Rate",
+            unit="%",
+            avg=42.0,
+            current=42.0,
+        )
+
+        table.update([metric_result])
+
+        table.data_table.add_row.assert_called_once()
+        assert "prefix_cache_hit_rate" in table._metric_row_keys

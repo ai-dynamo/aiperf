@@ -9,6 +9,7 @@ from aiperf_mock_server.models import (
     EmbeddingRequest,
     Message,
     RankingRequest,
+    ResponsesRequest,
 )
 
 
@@ -99,3 +100,68 @@ class TestRankingRequest:
             ],
         )
         assert req.passage_texts == ["passage 1", "passage 2"]
+
+
+class TestResponsesRequest:
+    """Tests for ResponsesRequest model and its `prompt_text` shape-flattener."""
+
+    @pytest.mark.parametrize(
+        "input_value,expected",
+        [
+            ("hello world", "hello world"),
+            (["alpha", "beta"], "alpha\nbeta"),
+            (
+                [{"role": "user", "content": "single string content"}],
+                "single string content",
+            ),
+            (
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "first"},
+                            {"type": "input_text", "text": "second"},
+                        ],
+                    }
+                ],
+                "first\nsecond",
+            ),
+            (
+                [
+                    {"role": "system", "content": "policy"},
+                    {"role": "user", "content": "hi"},
+                ],
+                "policy\nhi",
+            ),
+        ],
+    )
+    def test_prompt_text_flattens_input_shapes(self, input_value, expected):
+        req = ResponsesRequest(model="m", input=input_value)
+        assert req.prompt_text == expected
+
+    def test_unmodeled_fields_are_preserved_via_extras(self):
+        """`tools`, `instructions`, custom keys flow through the recorder
+        because BaseModel has `extra="allow"`."""
+        req = ResponsesRequest.model_validate(
+            {
+                "model": "m",
+                "input": "hi",
+                "max_output_tokens": 64,
+                "stream": True,
+                "instructions": "be brief",
+                "tools": [{"type": "function", "name": "foo"}],
+            }
+        )
+        assert req.max_output_tokens == 64
+        assert req.stream is True
+        # Extras land on the model instance for downstream inspection.
+        assert req.instructions == "be brief"
+        assert req.tools == [{"type": "function", "name": "foo"}]
+
+    def test_defaults_are_safe(self):
+        req = ResponsesRequest(model="m")
+        assert req.input == ""
+        assert req.max_output_tokens is None
+        assert req.stream is False
+        assert req.reasoning_effort is None
+        assert req.prompt_text == ""

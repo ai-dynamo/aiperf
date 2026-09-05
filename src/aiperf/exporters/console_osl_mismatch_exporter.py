@@ -27,15 +27,16 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
-        if exporter_config.results is None or not exporter_config.results.records:
-            self._metrics_by_tag = {}
-        else:
-            self._metrics_by_tag = {r.tag: r for r in exporter_config.results.records}
+        self._results = exporter_config.results
         self._pct_threshold = Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD
         self._max_token_threshold = Environment.METRICS.OSL_MISMATCH_MAX_TOKEN_THRESHOLD
 
     async def export(self, console: Console) -> None:
         """Export OSL mismatch warning to console if mismatches detected."""
+        if self._results is None:
+            self.debug("No results available, skipping output sequence length warning")
+            return
+
         metric = self._get_mismatch_metric()
         if not metric or not metric.avg or metric.avg <= 0:
             self.debug(
@@ -70,16 +71,22 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 
     def _get_mismatch_metric(self) -> MetricResult | None:
         """Extract the OSL mismatch count metric from results."""
-        return self._metrics_by_tag.get(OSLMismatchCountMetric.tag)
+        if self._results is None:
+            return None
+        return self._results.get(OSLMismatchCountMetric.tag)
 
     def _get_total_records(self) -> int:
         """Get the total number of valid records from results."""
-        metric = self._metrics_by_tag.get(RequestCountMetric.tag)
+        if self._results is None:
+            return 0
+        metric = self._results.get(RequestCountMetric.tag)
         return int(metric.avg) if metric and metric.avg else 0
 
     def _get_avg_diff(self) -> float | None:
         """Get the average OSL mismatch diff percentage from results."""
-        metric = self._metrics_by_tag.get(OSLMismatchDiffMetric.tag)
+        if self._results is None:
+            return None
+        metric = self._results.get(OSLMismatchDiffMetric.tag)
         return metric.avg if metric else None
 
     def _create_warning_text(

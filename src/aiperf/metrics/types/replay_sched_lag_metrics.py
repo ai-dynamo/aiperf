@@ -73,7 +73,8 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
     only differences between them are meaningful; see the module docstring.
 
     Formula:
-        Offset = RequestRecord.timestamp_ns - Turn.timestamp * NANOS_PER_MILLIS
+        Offset = RequestRecord.timestamp_ns
+                 - RecordContext.scheduled_send_ms * NANOS_PER_MILLIS
     """
 
     tag = "replay_send_schedule_offset"
@@ -92,21 +93,19 @@ class ReplaySendScheduleOffsetMetric(BaseRecordMetric[int]):
         """Return actual-minus-intended send time in nanoseconds.
 
         Raises:
-            NoMetricValue: If the dispatched turn is unavailable or carries no
-                absolute schedule timestamp (e.g. delay-scheduled continuation
-                turns, non-replay datasets).
+            NoMetricValue: If the slim record context carries no absolute
+                schedule timestamp (e.g. delay-scheduled continuation turns,
+                non-replay datasets).
         """
         request_info = record.request.request_info
-        if request_info is None or not request_info.turns:
-            raise NoMetricValue("Request info or turns not available in record.")
-
-        intended_ms = request_info.turns[-1].timestamp
-        if intended_ms is None:
+        if request_info is None or request_info.scheduled_send_ms is None:
             raise NoMetricValue(
-                "Turn has no absolute schedule timestamp (not fixed-schedule replay)."
+                "Request info or scheduled send timestamp not available in record."
             )
 
-        return record.timestamp_ns - int(intended_ms * NANOS_PER_MILLIS)
+        return record.timestamp_ns - int(
+            request_info.scheduled_send_ms * NANOS_PER_MILLIS
+        )
 
 
 class _ReplaySchedLagDeferMixin:

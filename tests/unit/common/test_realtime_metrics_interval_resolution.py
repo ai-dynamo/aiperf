@@ -120,3 +120,9 @@ def test_per_ui_type_resolver_auto_default(ui_type, expected) -> None:
 def test_per_ui_type_resolver_explicit_value_wins(ui_type, monkeypatch) -> None:
     monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 12.5)
     assert Environment.UI.realtime_metrics_interval(ui_type) == 12.5
+
+
+def test_realtime_metrics_interval_description_uses_markdown_backticks() -> None:
+    field = type(Environment.UI).model_fields["REALTIME_METRICS_INTERVAL"]
+    assert "`realtime_metrics_interval(ui_type)`" in field.description
+    assert "``realtime_metrics_interval(ui_type)``" not in field.description

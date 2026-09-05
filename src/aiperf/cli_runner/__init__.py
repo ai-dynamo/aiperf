@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aiperf.cli_runner._callbacks import CompletedRun, OnComplete
-from aiperf.cli_runner._multi_run import _run_multi_benchmark
+from aiperf.cli_runner._multi_run import (
+    _reject_in_process_sweep_under_operator,
+    _run_multi_benchmark,
+)
 from aiperf.cli_runner._preflight import (
     _preflight_accuracy_deps,
     _preflight_artifact_dir,
@@ -31,6 +34,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CompletedRun",
     "OnComplete",
+    "_reject_in_process_sweep_under_operator",
     "run_benchmark",
 ]
 
@@ -49,6 +53,14 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
             "--convergence-metric requires --num-profile-runs > 1. "
             "Set --num-profile-runs to at least 2 to enable adaptive convergence."
         )
+
+    # Register the SIGUSR1 stack-dump handler in the SystemController (main)
+    # process; each spawned service subprocess registers it in
+    # bootstrap_and_run_service, so `kill -USR1 <pid>` dumps thread tracebacks
+    # for any process in the tree when debugging a hang.
+    from aiperf.common.bootstrap import register_sigusr1_faulthandler
+
+    register_sigusr1_faulthandler()
 
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)

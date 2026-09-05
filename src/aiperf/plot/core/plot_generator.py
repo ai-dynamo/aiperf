@@ -712,6 +712,24 @@ class PlotGenerator:
 
         # Apply NVIDIA branding layout
         layout = self._get_base_layout(title, x_label, y_label)
+        layout["margin"]["b"] = max(layout["margin"].get("b", 0), 120)
+        pareto_note = {
+            "x": 0.5,
+            "y": 0,
+            "xref": "paper",
+            "yref": "paper",
+            "yshift": -65,
+            "text": "Lines connect Pareto frontier points only; other points remain markers.",
+            "showarrow": False,
+            "font": {
+                "size": 11,
+                "family": PLOT_FONT_FAMILY,
+                "color": self.colors["secondary"],
+            },
+            "xanchor": "center",
+            "yanchor": "top",
+        }
+        layout["annotations"] = list(layout.get("annotations", [])) + [pareto_note]
         fig.update_layout(layout)
 
         return fig
@@ -1566,6 +1584,7 @@ class PlotGenerator:
         secondary_style: Style | None = None,
         active_count_col: str | None = None,
         title: str | None = None,
+        subtitle: str | None = None,
         x_label: str | None = None,
         y1_label: str | None = None,
         y2_label: str | None = None,
@@ -1612,6 +1631,8 @@ class PlotGenerator:
             title
             or f"{get_metric_display_name(y1_metric)} with {get_metric_display_name(y2_metric)}"
         )
+        if subtitle:
+            title = f"{title}<br><sup>{subtitle}</sup>"
         x_label = x_label or "Time (s)"
         y1_label = y1_label or get_metric_display_name(y1_metric)
         y2_label = y2_label or get_metric_display_name(y2_metric)

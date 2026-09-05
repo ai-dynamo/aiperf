@@ -163,3 +163,37 @@ class TestShareGPTLoader:
             conversations[0].turns[0].texts[0].contents[0]
             == "Hello can you help me with a question"
         )
+
+    @pytest.mark.timeout(5)
+    async def test_convert_to_conversations_uses_batch_encoding_not_sequential(
+        self, sharegpt_loader: ShareGPTLoader
+    ) -> None:
+        """convert_to_conversations must call encode_lengths_batch, never per-entry encode().
+
+        The ShareGPT dataset has ~90K entries. Sequential encode() calls for every
+        prompt and completion took 5+ minutes, exceeding the default 300s timeout.
+        Batch encoding collapses this to a single call regardless of dataset size.
+        """
+        short_prompt = "what is the capital city"
+        short_completion = "it is a large coastal city"
+        medium_prompt = " ".join(["word"] * 150)
+        medium_completion = " ".join(["response"] * 100)
+        long_prompt = " ".join(["word"] * 700)
+        long_completion = " ".join(["response"] * 500)
+
+        prompts = [short_prompt, medium_prompt, long_prompt]
+        completions = [short_completion, medium_completion, long_completion]
+
+        dataset = [
+            {
+                "conversations": [
+                    {"from": "human", "value": prompts[i % 3]},
+                    {"from": "gpt", "value": completions[i % 3]},
+                ]
+            }
+            for i in range(5_000)
+        ]
+        conversations = await sharegpt_loader.convert_to_conversations(dataset)
+        assert len(conversations) == 5_000
+        assert sharegpt_loader.tokenizer.encode.call_count == 0
+        assert sharegpt_loader.tokenizer.encode_lengths_batch.call_count == 1

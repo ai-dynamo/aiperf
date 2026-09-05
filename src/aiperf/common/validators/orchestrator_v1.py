@@ -232,6 +232,9 @@ def _collect_turn_declared_spawn_edges(
                 branch_declaration_turn.setdefault(b_id, turn_idx)
         for branch in conv.branches:
             decl_idx = branch_declaration_turn.get(branch.branch_id)
+            # Descriptors no turn declares (branch_id absent from every turn's
+            # branch_ids) have no turn index and are excluded here; they never
+            # spawn at runtime, so they cannot form a gated cycle.
             if decl_idx is None:
                 continue
             for child_id in branch.child_conversation_ids:

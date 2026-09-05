@@ -64,6 +64,20 @@ class PrefixAllocator:
         return self._prefix_blocks
 
     @property
+    def prefix_tokens(self) -> int:
+        """Token span reserved by the shared prefix (L1 + L1.5) as WHOLE blocks.
+
+        L1 and L1.5 each round up to a whole number of blocks independently, so
+        the reserved prefix occupies ``prefix_blocks * block_size`` tokens, which
+        can exceed ``layer1_tokens + layer1_5_tokens``. Session (L2) content must
+        begin past this boundary; otherwise a small L2 remainder gets absorbed
+        into the last shared prefix block, making that shared hash_id the partial
+        final block in one session and a full block in another. That maps one
+        hash_id to two block sizes and fails trace reconstruction on replay.
+        """
+        return self._prefix_blocks * self._block_size
+
+    @property
     def block_size(self) -> int:
         return self._block_size
 

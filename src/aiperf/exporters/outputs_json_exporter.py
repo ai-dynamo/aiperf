@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Aggregator that merges output fragments with metrics into final outputs.json."""
+"""Aggregator that concatenates per-processor output fragments into final outputs.json."""
 
 from pathlib import Path
 from typing import Any
@@ -12,25 +12,32 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models.record_models import MetricRecordInfo
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 JsonObject = dict[str, Any]
-MetricsMap = dict[str, JsonObject]
 
 
 class OutputsJsonExporter(AIPerfLoggerMixin):
-    """Aggregates per-processor output fragment files and merges with metrics from profile_export.jsonl.
+    """Aggregates per-processor output fragment files into the final outputs.json.
+
+    Each fragment already carries its allowlisted per-request metrics (captured in
+    display units by OutputsJsonRecordProcessor), so this exporter performs no
+    metrics join and does not depend on the records JSONL export being enabled.
 
     Self-disables unless --export-outputs-json is set.
     """
 
-    _METRIC_ALLOWLIST = (
-        "output_token_count",
-        "output_sequence_length",
-        "request_latency",
-    )
+    # 1.1 added the top-level `warmup` array and the per-entry `benchmark_phase`
+    # field. Both are additive: `data` is still profiling-only.
+    SCHEMA_VERSION = "1.1"
+
+    # outputs.json is sorted by (session_num, turn_index), so unlike the raw
+    # record aggregator it cannot stream -- the whole document is materialized
+    # to sort it, costing roughly 3x the on-disk fragment size at peak. Warn
+    # past this many records so a large run sees the cost instead of just
+    # paying it, since --export-level raw now enables this export by default.
+    LARGE_EXPORT_RECORD_WARNING_THRESHOLD = 50_000
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -42,7 +49,6 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             )
 
         self._file_path = self._cfg.artifacts.outputs_json_file
-        self._jsonl_path = self._cfg.artifacts.profile_export_jsonl_file
         self._fragments_dir = (
             self._cfg.artifacts.artifact_directory
             / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
@@ -56,7 +62,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
         )
 
     async def export(self) -> None:
-        """Read fragment files, merge with metrics, and write final outputs.json."""
+        """Read fragment files (each self-contained) and write the final outputs.json."""
         fragment_files: list[Path] = list(
             self._fragments_dir.glob("output_fragments_*.jsonl")
         )
@@ -64,76 +70,94 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
             self.debug("No output fragment files found, skipping outputs.json export")
             return
 
-        fragments = self._read_fragments(fragment_files)
-        metrics_map = self._build_metrics_map()
+        fragments = await self._read_fragments(fragment_files)
 
         records: list[JsonObject] = []
+        warmup: list[JsonObject] = []
         for frag in fragments:
-            key = f"{frag['session_num']}:{frag.get('turn_index', 0)}"
-            metrics = metrics_map.get(key, {})
+            phase = frag.get("benchmark_phase")
             entry = {
                 "session_num": frag["session_num"],
                 "conversation_id": frag.get("conversation_id"),
                 "turn_index": frag.get("turn_index"),
                 "x_request_id": frag.get("x_request_id"),
+                "benchmark_phase": phase,
                 "request_start_ns": frag.get("request_start_ns"),
                 "request_end_ns": frag.get("request_end_ns"),
-                "metrics": metrics,
+                "metrics": frag.get("metrics") or {},
                 "response_text": frag.get("response_text"),
             }
-            records.append(entry)
+            # `data` stays profiling-only so consumers that sum over it do not
+            # silently start counting warmup responses. Test explicitly for
+            # WARMUP rather than for PROFILING: only a known-warmup record may
+            # leave `data`, so a missing or newly-added phase surfaces there
+            # instead of silently vanishing from everyone's denominators.
+            if phase == CreditPhase.WARMUP:
+                warmup.append(entry)
+            else:
+                records.append(entry)
 
-        records.sort(key=lambda r: (r["session_num"], r.get("turn_index") or 0))
+        def _order(record: JsonObject) -> tuple[int, int]:
+            return (record["session_num"], record.get("turn_index") or 0)
+
+        records.sort(key=_order)
+        warmup.sort(key=_order)
 
         output = {
-            "schema_version": "1.0",
+            "schema_version": self.SCHEMA_VERSION,
             "data": records,
+            "warmup": warmup,
         }
+
+        total = len(records) + len(warmup)
+        if total >= self.LARGE_EXPORT_RECORD_WARNING_THRESHOLD:
+            self.warning(
+                f"Serializing {total} records to {self._file_path.name}; this "
+                "export is sorted and therefore held in memory in full, needing "
+                "roughly 3x the fragment size on disk. Pass "
+                "--no-export-outputs-json to skip it."
+            )
 
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
         content = orjson.dumps(scrub_non_finite(output), option=orjson.OPT_INDENT_2)
         async with aiofiles.open(self._file_path, "wb") as f:
             await f.write(content)
 
-        self.info(f"Exported {len(records)} records to {self._file_path}")
+        self.info(
+            f"Exported {len(records)} records ({len(warmup)} warmup) "
+            f"to {self._file_path}"
+        )
 
         self._cleanup_fragments(fragment_files)
 
-    def _read_fragments(self, fragment_files: list[Path]) -> list[JsonObject]:
-        """Read all fragment JSONL files and return parsed dicts."""
+    async def _read_fragments(self, fragment_files: list[Path]) -> list[JsonObject]:
+        """Read all fragment JSONL files, skipping any unparsable lines.
+
+        A crashed processor can leave a half-written trailing line; one bad line
+        must not sink the whole export, so decode errors and non-object lines are
+        logged and skipped.
+        """
         fragments: list[JsonObject] = []
         for file in fragment_files:
-            with open(file) as f:
-                for line in f:
+            async with aiofiles.open(file) as f:
+                async for line in f:
                     line = line.strip()
                     if not line:
                         continue
-                    fragments.append(orjson.loads(line))
+                    try:
+                        fragment = orjson.loads(line)
+                    except orjson.JSONDecodeError as e:
+                        self.warning(
+                            f"Skipping unparsable fragment line in {file}: {e}"
+                        )
+                        continue
+                    if not isinstance(fragment, dict):
+                        self.warning(
+                            f"Skipping non-object fragment line in {file}: {line!r}"
+                        )
+                        continue
+                    fragments.append(fragment)
         return fragments
-
-    def _build_metrics_map(self) -> MetricsMap:
-        """Read profile_export.jsonl and build a metrics map keyed by session_num:turn_index."""
-        metrics_map: MetricsMap = {}
-        if not self._jsonl_path.exists():
-            self.debug("profile_export.jsonl not found, metrics will be empty")
-            return metrics_map
-
-        with open(self._jsonl_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                record = MetricRecordInfo.model_validate_json(line)
-                if record.metadata.benchmark_phase != CreditPhase.PROFILING:
-                    continue
-                key = f"{record.metadata.session_num}:{record.metadata.turn_index or 0}"
-                metrics: JsonObject = {}
-                for metric_key in self._METRIC_ALLOWLIST:
-                    if metric_key in record.metrics:
-                        metrics[metric_key] = record.metrics[metric_key].value
-                metrics_map[key] = metrics
-
-        return metrics_map
 
     def _cleanup_fragments(self, fragment_files: list[Path]) -> None:
         """Remove fragment files and directory."""

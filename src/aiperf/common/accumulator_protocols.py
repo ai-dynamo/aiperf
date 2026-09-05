@@ -73,6 +73,18 @@ class ExportContext:
     phase: CreditPhase | None = None
     """Credit phase represented by this export, or None when phase-agnostic."""
 
+    phase_index: int | None = None
+    """Concrete runtime phase index for phase-local exports, when available."""
+
+    phase_name: str | None = None
+    """User-provided phase name for diagnostics/export metadata."""
+
+    phase_kind: str | None = None
+    """Semantic phase kind for diagnostics/export metadata."""
+
+    is_phase_scoped: bool = False
+    """True when exporting an individual concrete phase rather than aggregate results."""
+
     error_summary: list[ErrorDetailsCount] | None = None
     """De-duplicated profile-run error counts to surface in the export, if any."""
 
@@ -117,6 +129,9 @@ class SummaryContext:
 
     phase: CreditPhase | None = None
     """Credit phase to scope this summary to (e.g. PROFILING for realtime metrics), or None for phase-agnostic full-range summarization."""
+
+    phase_index: int | None = None
+    """Absolute phase index to scope this summary to when ``phase`` is set."""
 
     cancelled: bool = False
     """True when the profile run was cancelled — analyzers may short-circuit."""

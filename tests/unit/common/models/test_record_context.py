@@ -30,6 +30,7 @@ class TestRecordContext:
         assert ctx.payload_bytes is None
         assert ctx.max_tokens is None
         assert ctx.audio_duration_seconds is None
+        assert ctx.scheduled_send_ms is None
 
     def test_explicit_dag_fields(self):
         ctx = _make_record_context(
@@ -38,6 +39,19 @@ class TestRecordContext:
         )
         assert ctx.agent_depth == 3
         assert ctx.parent_correlation_id == "root"
+
+    def test_phase_identity_fields(self):
+        ctx = _make_record_context(
+            phase_index=2,
+            profiling_index=1,
+            phase_name="recovery",
+            phase_kind="profiling",
+        )
+
+        assert ctx.phase_index == 2
+        assert ctx.profiling_index == 1
+        assert ctx.phase_name == "recovery"
+        assert ctx.phase_kind == "profiling"
 
 
 class TestRequestInfoIsRecordContext:
@@ -48,14 +62,24 @@ class TestRequestInfoIsRecordContext:
         ri_fields = set(RequestInfo.model_fields.keys())
         ctx_fields = set(RecordContext.model_fields.keys())
         extras = ri_fields - ctx_fields
-        # ``turns``, ``system_message``, ``user_context_message`` were hoisted
-        # onto RecordContext because the records pipeline reads them
-        # post-transport. The remaining transport-only extras are the
-        # endpoint/URL/timing fields.
+        # ``turns``, ``system_message``, ``user_context_message`` live ONLY on
+        # RequestInfo (worker-side) so the full Turn list never crosses the ZMQ
+        # hop to the record processor — only the canonical ``payload_bytes`` (a
+        # RecordContext field) travels. They are transport-only extras here.
         assert {"model_endpoint", "endpoint_headers", "drop_perf_ns"}.issubset(extras)
-        assert "turns" not in extras
-        assert "system_message" not in extras
-        assert "user_context_message" not in extras
+        assert "turns" in extras
+        assert "system_message" in extras
+        assert "user_context_message" in extras
+        # The hoisted scalars stay on RecordContext (they cross the wire).
+        assert "max_tokens" not in extras
+        assert "audio_duration_seconds" not in extras
+        assert "payload_bytes" not in extras
+        assert "scheduled_send_ms" not in extras
+        # Phase identity fields also live on RecordContext.
+        assert "phase_index" not in extras
+        assert "profiling_index" not in extras
+        assert "phase_name" not in extras
+        assert "phase_kind" not in extras
 
 
 class TestRequestRecordHoldsRecordContext:

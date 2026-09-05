@@ -20,49 +20,24 @@ def _make_fragment(
     response_text: str | None = "Hello, world!",
     request_start_ns: int = 1000000000,
     request_end_ns: int = 2000000000,
+    metrics: dict | None = None,
+    benchmark_phase: str = "profiling",
 ) -> dict:
-    """Build an output fragment dict suitable for JSONL serialization."""
+    """Build an output fragment dict suitable for JSONL serialization.
+
+    Fragments now carry their own metrics (captured in display units by the
+    record processor); the exporter no longer joins against profile_export.jsonl.
+    """
     return {
         "session_num": session_num,
         "turn_index": turn_index,
         "conversation_id": conversation_id,
         "x_request_id": x_request_id,
+        "benchmark_phase": benchmark_phase,
         "response_text": response_text,
         "request_start_ns": request_start_ns,
         "request_end_ns": request_end_ns,
-    }
-
-
-def _make_profile_record(
-    session_num: int,
-    turn_index: int = 0,
-    benchmark_phase: str = "profiling",
-    output_token_count: int = 42,
-    request_latency: float = 1000.0,
-) -> dict:
-    """Build a MetricRecordInfo dict suitable for profile_export.jsonl."""
-    return {
-        "metadata": {
-            "session_num": session_num,
-            "x_request_id": "req-1",
-            "x_correlation_id": None,
-            "conversation_id": "conv-1",
-            "turn_index": turn_index,
-            "credit_issued_ns": None,
-            "request_start_ns": 1000000000,
-            "request_ack_ns": None,
-            "request_end_ns": 2000000000,
-            "worker_id": "worker-1",
-            "record_processor_id": "proc-1",
-            "benchmark_phase": benchmark_phase,
-            "was_cancelled": False,
-        },
-        "metrics": {
-            "output_token_count": {"value": output_token_count, "unit": "tokens"},
-            "request_latency": {"value": request_latency, "unit": "ms"},
-        },
-        "trace_data": None,
-        "error": None,
+        "metrics": metrics if metrics is not None else {},
     }
 
 
@@ -79,7 +54,6 @@ def _make_exporter(tmp_path: Path) -> OutputsJsonExporter:
     config = MagicMock()
     config.cfg.artifacts.export_outputs_json = True
     config.cfg.artifacts.outputs_json_file = tmp_path / "outputs.json"
-    config.cfg.artifacts.profile_export_jsonl_file = tmp_path / "profile_export.jsonl"
     config.cfg.artifacts.artifact_directory = tmp_path
     return OutputsJsonExporter(config)
 
@@ -102,26 +76,60 @@ class TestOutputsJsonExporter:
         assert not outputs_file.exists()
 
     @pytest.mark.asyncio
-    async def test_export_merges_fragments_with_metrics(self, tmp_path: Path) -> None:
-        """Fragments are merged with metrics from profile_export.jsonl."""
+    async def test_export_skips_unparseable_fragment_line(self, tmp_path: Path) -> None:
+        """A corrupt line (e.g. a partial write from a crashed processor) is skipped
+        rather than aborting the whole export."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        frag_file = fragments_dir / "output_fragments_proc1.jsonl"
+        good = orjson.dumps(_make_fragment(session_num=1, response_text="good"))
+        frag_file.write_bytes(good + b"\n" + b"THIS IS NOT JSON {{{\n")
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert len(data["data"]) == 1
+        assert data["data"][0]["response_text"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_export_skips_non_object_fragment_line(self, tmp_path: Path) -> None:
+        """A syntactically-valid but non-object line (e.g. a bare literal) is skipped
+        rather than crashing the export when treated as a fragment dict."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        frag_file = fragments_dir / "output_fragments_proc1.jsonl"
+        good = orjson.dumps(_make_fragment(session_num=1, response_text="good"))
+        frag_file.write_bytes(good + b"\n" + b"123\n" + b'"stray"\n' + b"[]\n")
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert len(data["data"]) == 1
+        assert data["data"][0]["response_text"] == "good"
+
+    @pytest.mark.asyncio
+    async def test_export_emits_fragment_metrics(self, tmp_path: Path) -> None:
+        """Metrics carried on each fragment are emitted directly into outputs.json."""
         fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         fragments_dir.mkdir(parents=True)
 
         fragments = [
-            _make_fragment(session_num=1, response_text="Hello"),
-            _make_fragment(session_num=2, response_text="World"),
+            _make_fragment(
+                session_num=1,
+                response_text="Hello",
+                metrics={"output_token_count": 10, "request_latency": 500.0},
+            ),
+            _make_fragment(
+                session_num=2,
+                response_text="World",
+                metrics={"output_token_count": 20, "request_latency": 800.0},
+            ),
         ]
         _write_jsonl(fragments_dir / "output_fragments_proc1.jsonl", fragments)
-
-        profile_records = [
-            _make_profile_record(
-                session_num=1, output_token_count=10, request_latency=500.0
-            ),
-            _make_profile_record(
-                session_num=2, output_token_count=20, request_latency=800.0
-            ),
-        ]
-        _write_jsonl(tmp_path / "profile_export.jsonl", profile_records)
 
         exporter = _make_exporter(tmp_path)
         await exporter.export()
@@ -130,7 +138,7 @@ class TestOutputsJsonExporter:
         assert outputs_file.exists()
 
         data = orjson.loads(outputs_file.read_bytes())
-        assert data["schema_version"] == "1.0"
+        assert data["schema_version"] == "1.1"
         assert len(data["data"]) == 2
 
         entry1 = data["data"][0]
@@ -166,46 +174,54 @@ class TestOutputsJsonExporter:
         assert session_nums == [1, 2, 5, 9]
 
     @pytest.mark.asyncio
-    async def test_export_handles_missing_profile_jsonl(self, tmp_path: Path) -> None:
-        """When profile_export.jsonl is missing, metrics are empty but export succeeds."""
+    async def test_export_metrics_without_records_jsonl(self, tmp_path: Path) -> None:
+        """Regression (F2): metrics come from the fragment, so outputs.json is fully
+        populated even when no profile_export.jsonl exists (e.g. --export-level summary
+        or a YAML records: false)."""
         fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         fragments_dir.mkdir(parents=True)
 
-        fragments = [_make_fragment(session_num=1, response_text="test")]
+        fragments = [
+            _make_fragment(
+                session_num=1,
+                response_text="test",
+                metrics={"request_latency": 123.0, "output_token_count": 7},
+            )
+        ]
         _write_jsonl(fragments_dir / "output_fragments_proc1.jsonl", fragments)
+
+        # Deliberately no profile_export.jsonl written.
+        assert not (tmp_path / "profile_export.jsonl").exists()
 
         exporter = _make_exporter(tmp_path)
         await exporter.export()
 
         data = orjson.loads((tmp_path / "outputs.json").read_bytes())
         assert len(data["data"]) == 1
-        assert data["data"][0]["metrics"] == {}
+        assert data["data"][0]["metrics"] == {
+            "request_latency": 123.0,
+            "output_token_count": 7,
+        }
         assert data["data"][0]["response_text"] == "test"
 
     @pytest.mark.asyncio
-    async def test_export_filters_warmup_from_metrics(self, tmp_path: Path) -> None:
-        """Warmup records in profile_export.jsonl are not included in the metrics map."""
+    async def test_export_empty_metrics_when_fragment_has_none(
+        self, tmp_path: Path
+    ) -> None:
+        """A fragment with no captured metrics yields an empty metrics object."""
         fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
         fragments_dir.mkdir(parents=True)
 
-        fragments = [_make_fragment(session_num=1)]
-        _write_jsonl(fragments_dir / "output_fragments_proc1.jsonl", fragments)
-
-        profile_records = [
-            _make_profile_record(
-                session_num=1, benchmark_phase="warmup", output_token_count=99
-            ),
-            _make_profile_record(
-                session_num=1, benchmark_phase="profiling", output_token_count=42
-            ),
-        ]
-        _write_jsonl(tmp_path / "profile_export.jsonl", profile_records)
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [_make_fragment(session_num=1, response_text="test", metrics={})],
+        )
 
         exporter = _make_exporter(tmp_path)
         await exporter.export()
 
         data = orjson.loads((tmp_path / "outputs.json").read_bytes())
-        assert data["data"][0]["metrics"]["output_token_count"] == 42
+        assert data["data"][0]["metrics"] == {}
 
     @pytest.mark.asyncio
     async def test_export_cleans_up_fragments(self, tmp_path: Path) -> None:
@@ -247,3 +263,188 @@ class TestOutputsJsonExporter:
         texts = {r["session_num"]: r["response_text"] for r in data["data"]}
         assert texts[1] == "from proc1"
         assert texts[2] == "from proc2"
+
+
+class TestOutputsJsonWarmupPartition:
+    """Warmup responses are exported, but kept out of `data`."""
+
+    @pytest.mark.asyncio
+    async def test_warmup_fragments_go_to_warmup_array(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=1, response_text="profiled"),
+                _make_fragment(
+                    session_num=0,
+                    response_text="warmed up",
+                    benchmark_phase="warmup",
+                ),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert [r["response_text"] for r in data["data"]] == ["profiled"]
+        assert [r["response_text"] for r in data["warmup"]] == ["warmed up"]
+
+    @pytest.mark.asyncio
+    async def test_entries_carry_benchmark_phase(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=1),
+                _make_fragment(session_num=0, benchmark_phase="warmup"),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert data["data"][0]["benchmark_phase"] == "profiling"
+        assert data["warmup"][0]["benchmark_phase"] == "warmup"
+
+    @pytest.mark.asyncio
+    async def test_warmup_array_present_and_empty_when_no_warmup(
+        self, tmp_path: Path
+    ) -> None:
+        """`warmup` is always emitted so consumers can index it unconditionally."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [_make_fragment(session_num=1)],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert data["warmup"] == []
+        assert len(data["data"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_fragment_without_phase_treated_as_profiling(
+        self, tmp_path: Path
+    ) -> None:
+        """Only a known-warmup phase may leave `data`.
+
+        Pins the direction of the partition branch: inverting it to test for
+        PROFILING would silently move records with a missing or newly-added
+        phase into `warmup`, dropping them from consumers' denominators.
+        """
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        fragment = _make_fragment(session_num=1, response_text="legacy")
+        del fragment["benchmark_phase"]
+        _write_jsonl(fragments_dir / "output_fragments_proc1.jsonl", [fragment])
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert [r["response_text"] for r in data["data"]] == ["legacy"]
+        assert data["warmup"] == []
+
+    @pytest.mark.asyncio
+    async def test_warmup_array_sorted_independently(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=9, benchmark_phase="warmup"),
+                _make_fragment(session_num=2, benchmark_phase="warmup"),
+                _make_fragment(session_num=5),
+                _make_fragment(session_num=1),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        await exporter.export()
+
+        data = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert [r["session_num"] for r in data["data"]] == [1, 5]
+        assert [r["session_num"] for r in data["warmup"]] == [2, 9]
+
+
+class TestLargeExportWarning:
+    """The large-export warning fires on the record count, not the file size.
+
+    outputs.json is sorted, so it cannot stream and holds the whole document in
+    memory. The warning is the only signal a user gets that a run is paying that
+    cost, so pin the boundary rather than leaving log-only behavior untested.
+    """
+
+    @staticmethod
+    def _prepare(
+        tmp_path: Path, record_count: int, threshold: int
+    ) -> tuple[list[str], OutputsJsonExporter]:
+        """Build an exporter over ``record_count`` fragments, capturing warnings."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True, exist_ok=True)
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [_make_fragment(session_num=i) for i in range(record_count)],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = threshold
+
+        warnings: list[str] = []
+        exporter.warning = warnings.append  # type: ignore[method-assign]
+        return warnings, exporter
+
+    @pytest.mark.asyncio
+    async def test_export_record_count_at_threshold_warns(self, tmp_path: Path) -> None:
+        warnings, exporter = self._prepare(tmp_path, 3, threshold=2)
+        await exporter.export()
+
+        assert len(warnings) == 1
+        assert "3 records" in warnings[0]
+        assert "--no-export-outputs-json" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_export_record_count_below_threshold_does_not_warn(
+        self, tmp_path: Path
+    ) -> None:
+        warnings, exporter = self._prepare(tmp_path, 2, threshold=3)
+        await exporter.export()
+
+        assert warnings == []
+
+    @pytest.mark.asyncio
+    async def test_export_warmup_records_count_toward_threshold_warns(
+        self, tmp_path: Path
+    ) -> None:
+        """Warmup records are held in memory too, so they count."""
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir(parents=True)
+        _write_jsonl(
+            fragments_dir / "output_fragments_proc1.jsonl",
+            [
+                _make_fragment(session_num=0),
+                _make_fragment(session_num=1, benchmark_phase="warmup"),
+            ],
+        )
+
+        exporter = _make_exporter(tmp_path)
+        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = 2
+        warnings: list[str] = []
+        exporter.warning = warnings.append  # type: ignore[method-assign]
+
+        await exporter.export()
+
+        assert len(warnings) == 1
+        assert "2 records" in warnings[0]

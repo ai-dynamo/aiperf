@@ -30,6 +30,12 @@ TESTS_DIR = REPO_ROOT / "tests"
 # branch below.
 _MARKER_GATED_DEPS = {"datasets", "pyarrow"}
 
+# Opt-in test-only extras. ``playwright`` backs the browser-driven UI e2e
+# suites (``tests/ui_e2e``), which are marked ``e2e`` and deselected by
+# default; install it with
+# ``uv pip install playwright && uv run playwright install chromium``.
+_OPTIONAL_TEST_DEPS = {"playwright"}
+
 
 def discover_modules(
     base_dir: Path,
@@ -126,10 +132,14 @@ def import_modules(modules: list[str]) -> dict[str, Exception]:
             importlib.import_module(module_path)
         except pytest.skip.Exception:
             continue
-        except ModuleNotFoundError as e:
+        except ImportError as e:
+            if not isinstance(e, ModuleNotFoundError):
+                failures[module_path] = e
+                continue
             # Expected when an environment-marker-gated optional dep is absent
             # on this platform (e.g. datasets/pyarrow on Windows-on-ARM).
-            if (e.name or "").split(".")[0] in _MARKER_GATED_DEPS:
+            missing = e.name or ""
+            if missing.split(".")[0] in _MARKER_GATED_DEPS | _OPTIONAL_TEST_DEPS:
                 continue
             failures[module_path] = e
         except Exception as e:
@@ -147,7 +157,11 @@ _TEST_MODULES_WITH_DEPTH = discover_modules(
     REPO_ROOT,
     TESTS_DIR,
     exclude_names={"conftest.py", "test_imports.py"},
-    exclude_dirs={"ci"},
+    # aiperf_mock_amdsmi is the fake amdsmi bindings package; it raises OSError
+    # on import unless AIPERF_MOCK_AMDSMI is set (the dormancy gate), so it is
+    # intentionally non-importable here. It has dedicated coverage in
+    # tests/unit/gpu_telemetry/test_fake_amdsmi_module.py.
+    exclude_dirs={".venv", "ci", "aiperf_mock_amdsmi"},
 )
 
 AIPERF_MODULES = sorted_leaves_first(_AIPERF_MODULES_WITH_DEPTH)
@@ -259,3 +273,7 @@ class TestImportOrder:
         for modules in [_AIPERF_MODULES_WITH_DEPTH, _TEST_MODULES_WITH_DEPTH]:
             for module, _ in modules:
                 assert "__pycache__" not in module, f"Found pycache in: {module}"
+
+    def test_no_virtualenv_modules(self) -> None:
+        """Virtual environments nested in tests are never import targets."""
+        assert not any(".venv" in module.split(".") for module in TEST_MODULES)

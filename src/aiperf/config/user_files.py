@@ -15,6 +15,7 @@ from pydantic import Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import AIPerfError
+from aiperf.common.redact import redact_url
 from aiperf.config.base import BaseConfig
 
 if TYPE_CHECKING:
@@ -81,6 +82,11 @@ class UserFile(BaseConfig):
                 "string for text. Jinja2 expressions in any string leaf are "
                 "rendered with the user_files context."
             ),
+            # Genuinely polymorphic: a bare string for format: text, a
+            # dict/list/scalar otherwise. Without this marker the CRD generator
+            # emits `type: object` for the untyped `Any` and the apiserver
+            # rejects every format: text entry.
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
     ]
 
@@ -173,7 +179,7 @@ def build_user_file_context(
         "job_name": run_meta.job_name,
         "namespace": run_meta.namespace,
         "model": models[0] if models else "",
-        "endpoint_url": endpoint_urls[0] if endpoint_urls else "",
+        "endpoint_url": redact_url(endpoint_urls[0]) if endpoint_urls else "",
         "artifact_dir": str(run_dir),
     }
     for name in injected:

@@ -9,7 +9,7 @@ N*requests-per-trial sample. For SLO claims the pooled value is the
 correct statistic; mean-of-percentiles is a heuristic.
 
 This helper walks each ``RunResult.artifacts_path / "profile_export.jsonl"``
-file -- written by :mod:`aiperf.post_processors.record_export_jsonl_writer`
+file -- written by :mod:`aiperf.post_processors.record_export_results_processor`
 when ``--export-level records`` (or ``raw``) is set -- accumulates raw
 metric samples into a single bag, and returns ``np.percentile(bag, pct)``.
 

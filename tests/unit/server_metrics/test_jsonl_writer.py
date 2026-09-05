@@ -456,3 +456,29 @@ class TestInfoMetricsHandling:
         assert "memory_usage" in slim_record["metrics"]
         assert "python_info" not in slim_record["metrics"]
         assert "server_info" not in slim_record["metrics"]
+
+
+class TestStreamExporterProtocolAliases:
+    """``StreamExporterProtocol``-compatible aliases delegate correctly."""
+
+    @pytest.mark.asyncio
+    async def test_process_record_alias_writes_via_primary_path(
+        self,
+        cfg_server_metrics_export: BenchmarkRun,
+        sample_server_metrics_record_for_export: ServerMetricsRecord,
+    ):
+        writer = ServerMetricsJSONLWriter(
+            run=cfg_server_metrics_export,
+            service_id="records-manager",
+        )
+        async with aiperf_lifecycle(writer):
+            await writer.process_record(sample_server_metrics_record_for_export)
+            await writer.finalize()
+
+        output_file = (
+            cfg_server_metrics_export.cfg.artifacts.server_metrics_export_jsonl_file
+        )
+        lines = output_file.read_text().strip().splitlines()
+        assert len(lines) == 1
+        payload = orjson.loads(lines[0])
+        assert payload["endpoint_url"] == "http://localhost:8081/metrics"

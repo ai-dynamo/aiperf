@@ -55,6 +55,7 @@ def _make_processor_mock(
     mock_self._free_record_data = MagicMock(return_value=(None, None))
     mock_self._producers = producers
     mock_self._observers = observers or []
+    mock_self._drop_agentic_overflow_records = False
     return mock_self
 
 

@@ -15,7 +15,7 @@ trace synthesis sub-configs live in sibling ``content.py`` / ``trace.py`` /
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     ConfigDict,
@@ -28,15 +28,18 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     DatasetFormat,
     DatasetType,
+    PromptCorpus,
 )
-from aiperf.config.base import BaseConfig
 from aiperf.config.dataset.content import (
     AudioConfig,
+    CacheBustConfig,
     ImageConfig,
     PrefixPromptConfig,
     PromptConfig,
+    PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
 )
@@ -54,11 +57,13 @@ _logger = AIPerfLogger(__name__)
 __all__ = [
     "VIDEO_AUDIO_CODEC_MAP",
     "AudioConfig",
+    "CacheBustConfig",
     "DatasetConfig",
     "FileDataset",
     "ImageConfig",
     "PrefixPromptConfig",
     "PromptConfig",
+    "PromptSelectionConfig",
     "PublicDataset",
     "RankingsConfig",
     "SynthesisConfig",
@@ -81,7 +86,7 @@ _DatasetName = Annotated[
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(BaseConfig):
+class SyntheticDataset(SystemPromptMixin):
     """
     Synthetic dataset configuration.
 
@@ -277,7 +282,7 @@ class SyntheticDataset(BaseConfig):
         return self
 
 
-class FileDataset(BaseConfig):
+class FileDataset(SystemPromptMixin):
     """
     File-based dataset configuration.
 
@@ -301,8 +306,9 @@ class FileDataset(BaseConfig):
             description="Path to file or directory containing benchmark dataset. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
-            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/"
-            "bailian_trace, Parquet for baseten_trace, directories for random_pool.",
+            "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
+            "tracelab, JSONL trace files for mooncake_trace/bailian_trace, "
+            "Parquet for baseten_trace, directories for random_pool.",
         ),
     ]
 
@@ -326,6 +332,7 @@ class FileDataset(BaseConfig):
             description="Dataset file format determining parsing logic and expected file structure. "
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
+            "tracelab: TraceLab agentic-coding corpus, JSONL or gzipped JSONL. "
             "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
             "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
@@ -486,6 +493,207 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    prompt_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of text items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable text inputs entirely (e.g. image/audio/video-only workloads).",
+        ),
+    ]
+
+    image_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of images per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable image inputs entirely.",
+        ),
+    ]
+
+    audio_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of audio items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable audio inputs entirely.",
+        ),
+    ]
+
+    video_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of video items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable video inputs entirely.",
+        ),
+    ]
+
+    block_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description="Hash-id block granularity for trace replay (--isl-block-size). "
+            "hash-id trace loaders (mooncake_trace, bailian_trace, baseten_trace, "
+            "tracelab) decode each hash_id into a cached block of this many tokens; "
+            "total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
+            "When unset, the loader's plugin-metadata default applies (e.g. 512 for "
+            "mooncake_trace, 16 for bailian_trace). Not used by weka, which carries its "
+            "own inline per-block sizes.",
+        ),
+    ]
+
+    trace_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
+            "For Weka trace replay, AIPerf looks at all parent and subagent request "
+            "submission timestamps within one root trace, compresses long gaps between "
+            "consecutive request submissions, and derives turn delays from the "
+            "compressed per-trace timeline. Original request api_time values are not "
+            "used to decide these idle gaps. When set for Weka, this takes precedence over "
+            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
+            "delays are not separately capped. Defaults to None (no per-trace "
+            "idle-gap compression).",
+        ),
+    ]
+
+    ignore_trace_delays: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Strip per-turn timestamps and inter-turn delays from trace datasets at load time. "
+            "With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / "
+            "request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded "
+            "user think-time gaps. No effect under fixed-schedule (timestamps drive that mode before "
+            "they could be ignored -- combine with --no-fixed-schedule if you want both behaviors). "
+            "Mutually exclusive with use_think_time_only.",
+        ),
+    ]
+
+    use_think_time_only: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` "
+            "(client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. "
+            "Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of "
+            "each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to "
+            "the full delta for turns whose recorded `think_time` is null. Mutually exclusive with "
+            "ignore_trace_delays. No effect on non-weka trace loaders.",
+        ),
+    ]
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Maximum peak prompt+output context length (tokens) per Weka root "
+                "trace. Only honored by format weka_trace: the loader drops whole "
+                "traces whose *recorded* peak exceeds this ceiling at load time "
+                "(filter-then-cap before entries). Not a DatasetManager tokenize "
+                "filter; rejected for non-Weka formats."
+            ),
+        ),
+    ]
+
+    cache_bust: Annotated[
+        CacheBustConfig,
+        Field(
+            default_factory=CacheBustConfig,
+            description="Per-conversation cache-bust marker injection for trace "
+            "replay (mirror of the synthetic dataset's prompts.cache_bust). The "
+            "engine reads the active dataset's target via "
+            "``BenchmarkConfig.get_cache_bust_target()``; 'none' (default) "
+            "disables it.",
+        ),
+    ]
+
+    prompts: Annotated[
+        PromptSelectionConfig | None,
+        Field(
+            default=None,
+            description="Prompt synthesis selection for this dataset. "
+            "Set ``corpus`` to choose sonnet vs coding when content "
+            "is synthesized (trace hash_id reconstruction). Verbatim formats ignore it.",
+        ),
+    ]
+
+    _use_think_time_only_explicitly_set: bool = False
+
+    @model_validator(mode="after")
+    def _validate_trace_delay_exclusivity(self) -> FileDataset:
+        """Reject the mutually-exclusive trace-delay flags and snapshot intent."""
+        self._use_think_time_only_explicitly_set = (
+            "use_think_time_only" in self.model_fields_set
+        )
+        # Both flags set Turn.delay differently (None / recorded think_time), so
+        # at most one may be active.
+        if self.ignore_trace_delays and self.use_think_time_only:
+            raise ValueError(
+                "--ignore-trace-delays and --use-think-time-only are mutually "
+                "exclusive (each sets Turn.delay differently)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_batch_sizes_random_pool_only(self) -> FileDataset:
+        """Reject per-modality batch sizes on non-random_pool formats.
+
+        These fields are only consumed by RandomPoolDatasetLoader. Setting them
+        on other formats is an error, not a silent no-op.
+        """
+        batch_fields = {
+            "prompt_batch_size": self.prompt_batch_size,
+            "image_batch_size": self.image_batch_size,
+            "audio_batch_size": self.audio_batch_size,
+            "video_batch_size": self.video_batch_size,
+        }
+        set_fields = {k: v for k, v in batch_fields.items() if v is not None}
+        if set_fields and self.format != DatasetFormat.RANDOM_POOL:
+            names = ", ".join(set_fields)
+            raise ValueError(
+                f"{names} are rejected on formats other than random_pool; "
+                f"got format: {self.format}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_max_context_length_weka_only(self) -> FileDataset:
+        """Reject max_context_length on provably non-Weka file formats.
+
+        Only weka_trace consumes this field (recorded peak filter-then-cap).
+        File Weka traces are content-auto-detected (``WekaTraceLoader.can_load``)
+        and arrive with the default ``single_turn`` format, so ``single_turn`` is
+        ambiguous (may resolve to Weka) and must be allowed through -- the loader
+        ignores the field if it does not implement the filter. Only an explicit
+        non-Weka trace/pool format is provably unsupported. The CLI converter
+        (``_apply_max_context_length``) still loudly rejects an explicit non-Weka
+        ``--custom-dataset-type`` before construction.
+        """
+        if self.max_context_length is None:
+            return self
+        if self.format not in (DatasetFormat.WEKA_TRACE, DatasetFormat.SINGLE_TURN):
+            raise ValueError(
+                "max_context_length (--max-context-length) only applies to "
+                f"format weka_trace; got format {self.format}. It filters by "
+                "recorded peak prompt+output length at load time."
+            )
+        return self
+
     @model_validator(mode="after")
     def _validate_source_xor(self) -> FileDataset:
         path_set = self.path is not None
@@ -515,6 +723,31 @@ class FileDataset(BaseConfig):
         if records_set and isinstance(self.records, list) and not self.records:
             raise ValueError("`records:` must contain at least one record.")
 
+        return self
+
+    _HASH_ID_TRACE_FORMATS: ClassVar[frozenset[DatasetFormat]] = frozenset(
+        {
+            DatasetFormat.MOONCAKE_TRACE,
+            DatasetFormat.BAILIAN_TRACE,
+            DatasetFormat.BURST_GPT_TRACE,
+            DatasetFormat.SAGEMAKER_DATA_CAPTURE,
+            DatasetFormat.WEKA_TRACE,
+        }
+    )
+
+    @model_validator(mode="after")
+    def _validate_random_corpus_incompatible_with_trace(self) -> FileDataset:
+        if (
+            self.prompts is not None
+            and self.prompts.corpus == PromptCorpus.RANDOM
+            and self.format in self._HASH_ID_TRACE_FORMATS
+        ):
+            raise ValueError(
+                f"prompt_corpus 'random' is not compatible with format '{self.format}'; "
+                "trace loaders synthesize prompt content from a text corpus keyed by "
+                "hash_id — there is no corpus to draw from when corpus='random'. "
+                "Use corpus='sonnet' or 'coding', or switch to a synthetic dataset format."
+            )
         return self
 
     @model_validator(mode="after")
@@ -550,7 +783,7 @@ class FileDataset(BaseConfig):
         return self
 
 
-class PublicDataset(BaseConfig):
+class PublicDataset(SystemPromptMixin):
     """
     Public dataset configuration.
 
@@ -624,6 +857,222 @@ class PublicDataset(BaseConfig):
             "Supported keys and values depend on the selected dataset.",
         ),
     ]
+
+    hf_weka_dataset: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="HuggingFace dataset repo for the generic Weka loader (e.g. "
+            "`semianalysisai/cc-traces-weka-061526`). Only applies with "
+            "`dataset: weka_hf`; setting it with any other public dataset is an error. "
+            "Passing `--hf-weka-dataset` on the CLI auto-selects `--public-dataset weka_hf`, "
+            "so the repo flag works on its own. Pinned Weka public dataset aliases keep "
+            "their registry-defined repo names.",
+        ),
+    ]
+
+    inter_turn_delay_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Clamp per-turn replay delays to at most this many "
+            "seconds for HF-backed Weka trace replay (mirror of "
+            "``FileDataset.inter_turn_delay_cap_seconds``). ``None`` disables "
+            "the cap.",
+        ),
+    ]
+
+    trace_idle_gap_cap_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each "
+            "individual trace for HF-backed Weka replay (mirror of "
+            "``FileDataset.trace_idle_gap_cap_seconds``). When set, takes "
+            "precedence over ``inter_turn_delay_cap_seconds``. Defaults to "
+            "None (no per-trace idle-gap compression).",
+        ),
+    ]
+
+    ignore_trace_delays: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Strip per-turn timestamps and inter-turn delays from "
+            "HF-backed Weka trace replay at load time (mirror of "
+            "``FileDataset.ignore_trace_delays``). Mutually exclusive with "
+            "use_think_time_only.",
+        ),
+    ]
+
+    use_think_time_only: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="For HF-backed Weka replay, emit Turn.delay using only "
+            "the recorded per-request ``think_time`` instead of the full "
+            "inter-request delta (mirror of ``FileDataset.use_think_time_only``). "
+            "Mutually exclusive with ignore_trace_delays.",
+        ),
+    ]
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Maximum peak prompt+output context length (tokens) per "
+                "conversation for HF-backed Weka replay; drops over-length "
+                "traces at load using *recorded* lengths (mirror of "
+                "``FileDataset.max_context_length``). Rejected for non-Weka "
+                "public datasets."
+            ),
+        ),
+    ]
+
+    cache_bust: Annotated[
+        CacheBustConfig,
+        Field(
+            default_factory=CacheBustConfig,
+            description="Per-conversation cache-bust marker injection for "
+            "HF-backed Weka trace replay (mirror of "
+            "``FileDataset.cache_bust``). 'none' (default) disables it.",
+        ),
+    ]
+
+    prompts: Annotated[
+        PromptSelectionConfig | None,
+        Field(
+            default=None,
+            description="Prompt synthesis selection for this dataset. "
+            "Set ``corpus`` to choose sonnet vs coding when content "
+            "is synthesized (trace hash_id reconstruction). Verbatim formats ignore it.",
+        ),
+    ]
+
+    synthesis: Annotated[
+        SynthesisConfig | None,
+        Field(
+            default=None,
+            description="Trace synthesis/transformation configuration for "
+            "HF-backed Weka trace replay (mirror of ``FileDataset.synthesis``). "
+            "``--max-isl``/``--max-osl`` cap the per-conversation input/output "
+            "lengths of the replayed HF Weka traces; without this they applied "
+            "only to file-based traces. ``None`` disables synthesis.",
+        ),
+    ]
+
+    osl: Annotated[
+        SamplingDistribution | None,
+        Field(
+            default=None,
+            description="Output sequence length to apply when records do not "
+            "specify one (mirror of ``FileDataset.osl``). Can be a fixed integer "
+            "or {mean, stddev} distribution. Per-record output lengths always "
+            "take precedence.",
+        ),
+    ]
+
+    entries_explicit: Annotated[
+        bool,
+        Field(
+            default=False,
+            exclude=True,
+            alias="_entries_explicit",
+            description=(
+                "Internal provenance flag: True when the user explicitly chose the "
+                "entry count, gating the num_dataset_entries key in public-dataset "
+                "provenance. The CLI converter sets the ``_entries_explicit`` "
+                "sentinel to the true intent whenever it writes ``entries`` (which "
+                "otherwise absorbs the --num-conversations / --request-count "
+                "fallback and cannot signal intent). A YAML/programmatic config "
+                "that sets ``entries`` directly (no sentinel) is treated as "
+                "explicit by ``_resolve_entries_explicit``. Excluded from "
+                "serialization."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _resolve_entries_explicit(self) -> PublicDataset:
+        """Treat a direct (sentinel-less) ``entries`` set as explicit intent.
+
+        The CLI converter always pins ``_entries_explicit`` when it writes
+        ``entries``, so ``entries_explicit in model_fields_set`` is True for any
+        CLI-derived config and the sentinel value stands. A YAML/programmatic
+        config sets ``entries`` with no sentinel; there, a present ``entries``
+        means the author named the count on purpose (cquil's model_fields_set
+        semantics), so promote it to explicit.
+        """
+        if (
+            "entries_explicit" not in self.model_fields_set
+            and "entries" in self.model_fields_set
+        ):
+            self.entries_explicit = True
+        return self
+
+    @model_validator(mode="after")
+    def _validate_trace_delay_exclusivity(self) -> PublicDataset:
+        """Reject the mutually-exclusive trace-delay flags and snapshot intent."""
+        self._use_think_time_only_explicitly_set = (
+            "use_think_time_only" in self.model_fields_set
+        )
+        # Both flags set Turn.delay differently (None / recorded think_time), so
+        # at most one may be active.
+        if self.ignore_trace_delays and self.use_think_time_only:
+            raise ValueError(
+                "--ignore-trace-delays and --use-think-time-only are mutually "
+                "exclusive (each sets Turn.delay differently)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_max_context_length_weka_only(self) -> PublicDataset:
+        """Reject max_context_length on non-Weka public datasets.
+
+        Only Weka HF loaders consume this field (recorded peak filter-then-cap).
+        Other public datasets would silently store and ignore it.
+        """
+        if self.max_context_length is None:
+            return self
+        if "weka" not in str(self.dataset).lower():
+            raise ValueError(
+                "max_context_length (--max-context-length) only applies to "
+                f"Weka public datasets; got dataset {self.dataset}. It filters "
+                "by recorded peak prompt+output length at load time."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_weka_hf(self) -> PublicDataset:
+        """Fail fast on weka_hf <-> hf_weka_dataset inconsistency.
+
+        The CLI path is safe (the converter auto-selects weka_hf only when
+        --hf-weka-dataset is set), but a config file declaring
+        ``dataset: weka_hf`` with no ``hf_weka_dataset`` would otherwise reach
+        the generic Weka loader's required repo argument as None and surface an
+        opaque TypeError. Mirror v1's composer-level guard at config-load time.
+        Pinned Weka aliases (semianalysis_*) are distinct enum values and keep
+        their registry-defined repos, so they are untouched here.
+        """
+        is_weka_hf = self.dataset == PublicDatasetType.WEKA_HF
+        if self.hf_weka_dataset is not None and not is_weka_hf:
+            raise ValueError(
+                "hf_weka_dataset (--hf-weka-dataset) can only be used with "
+                "dataset weka_hf (--public-dataset weka_hf)"
+            )
+        if is_weka_hf:
+            repo = (self.hf_weka_dataset or "").strip()
+            if not repo:
+                raise ValueError(
+                    "dataset weka_hf (--public-dataset weka_hf) requires a "
+                    "non-empty hf_weka_dataset (--hf-weka-dataset) HuggingFace repo"
+                )
+            self.hf_weka_dataset = repo
+        return self
 
 
 # Union type for all dataset variants using discriminated union

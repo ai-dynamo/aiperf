@@ -77,6 +77,9 @@ def _clean_hf_env_vars(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
     monkeypatch.setenv("TIKTOKEN_CACHE_DIR", str(tmp_path / "tiktoken-empty"))
+    from aiperf.common.environment import Environment
+
+    monkeypatch.setattr(Environment.TOKENIZER, "SKIP_PRELOAD", False, raising=False)
 
 
 class _SyncExecutor:
@@ -439,9 +442,15 @@ class TestValidatorFakeModelFallback:
         resolution.is_ambiguous = False
         resolution.resolved_name = "Qwen/Qwen3-0.6B"
 
-        with patch.object(
-            Tokenizer, "resolve_alias", return_value=resolution
-        ) as mock_resolve:
+        # _prefetch_tokenizers would otherwise reach the real HF Hub: the
+        # autouse env fixture clears HF_HUB_OFFLINE, so the offline
+        # short-circuit in validate_tokenizer_early cannot fire.
+        with (
+            patch.object(
+                Tokenizer, "resolve_alias", return_value=resolution
+            ) as mock_resolve,
+            patch("aiperf.common.tokenizer_validator._prefetch_tokenizers"),
+        ):
             result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         # Only the real model is resolved; the fake one is skipped entirely.
@@ -462,9 +471,15 @@ class TestValidatorFakeModelFallback:
         resolution.is_ambiguous = False
         resolution.resolved_name = "Qwen/Qwen3-0.6B"
 
-        with patch.object(
-            Tokenizer, "resolve_alias", return_value=resolution
-        ) as mock_resolve:
+        # _prefetch_tokenizers would otherwise reach the real HF Hub: the
+        # autouse env fixture clears HF_HUB_OFFLINE, so the offline
+        # short-circuit in validate_tokenizer_early cannot fire.
+        with (
+            patch.object(
+                Tokenizer, "resolve_alias", return_value=resolution
+            ) as mock_resolve,
+            patch("aiperf.common.tokenizer_validator._prefetch_tokenizers"),
+        ):
             result = validate_tokenizer_early(mock_cfg, mock_logger)
 
         mock_resolve.assert_called_once_with("Qwen/Qwen3-0.6B")

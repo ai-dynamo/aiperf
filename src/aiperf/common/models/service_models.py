@@ -1,42 +1,43 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import time
-
-from pydantic import Field
+import msgspec
 
 from aiperf.common.enums import (
     LifecycleState,
     ServiceRegistrationStatus,
 )
-from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import ServiceTypeT
 
 
-class ServiceRunInfo(AIPerfBaseModel):
-    """Base model for tracking service run information."""
+class ServiceRunInfo(
+    msgspec.Struct,
+    kw_only=True,
+    omit_defaults=True,
+):
+    """Tracks a service's registration + lifecycle identity.
 
-    service_type: ServiceTypeT = Field(
-        ...,
-        description="The type of service",
-    )
-    registration_status: ServiceRegistrationStatus = Field(
-        ...,
-        description="The registration status of the service",
-    )
-    service_id: str = Field(
-        ...,
-        description="The ID of the service",
-    )
-    first_seen: int | None = Field(
-        default_factory=time.time_ns,
-        description="The first time the service was seen",
-    )
-    last_seen: int | None = Field(
-        default_factory=time.time_ns,
-        description="The last time the service was seen",
-    )
-    state: LifecycleState = Field(
-        default=LifecycleState.CREATED,
-        description="The current state of the service",
-    )
+    Mutable: the service registry rewrites ``registration_status``,
+    ``last_seen_ns``, ``state``, and ``pod_name`` over the service's
+    lifetime. Converted from Pydantic for hot-path construction speed
+    (every service heartbeat builds/updates one).
+    """
+
+    service_type: ServiceTypeT
+    registration_status: ServiceRegistrationStatus
+    service_id: str
+    first_seen_ns: int | None = None
+    last_seen_ns: int | None = None
+    """Controller-stamped receipt times on the monotonic
+    ``aiperf.common.service_registry.liveness_clock_ns`` clock, never the wall
+    clock: ``get_stale_services`` ages heartbeats by subtracting them, and an
+    NTP step would otherwise hide a dead service or reap live ones. The epoch
+    is per-process, which is safe because these never leave the controller."""
+    last_seq: int | None = None
+    """Highest sender-stamped Heartbeat/StatusUpdate sequence number applied so
+    far. Ordering authority for ``update_service`` -- never the receipt
+    timestamp, which is monotone by construction at the controller and so can
+    never detect real out-of-order delivery."""
+    state: LifecycleState = LifecycleState.CREATED
+    pod_name: str | None = None
+    pod_index: str | None = None

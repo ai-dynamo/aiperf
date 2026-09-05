@@ -19,6 +19,7 @@ from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.records.records_manager_processing import generate_realtime_metrics
 from tests.unit.post_processors.conftest import (
     create_accumulator_with_metrics,
+    create_metric_metadata,
     create_metric_records_data,
 )
 
@@ -120,3 +121,38 @@ async def test_generate_realtime_metrics_excludes_warmup_records(
 
     latency = next(m for m in flat if m.tag == RequestLatencyMetric.tag)
     assert latency.avg == pytest.approx(200.0)
+
+
+@pytest.mark.asyncio
+async def test_generate_realtime_metrics_can_scope_to_phase_index(
+    _mock_registry_for_accumulator: Mock, benchmark_run
+) -> None:
+    accumulator = create_accumulator_with_metrics(benchmark_run, RequestLatencyMetric)
+
+    first_metadata = create_metric_metadata(
+        session_num=0,
+        benchmark_phase=CreditPhase.PROFILING,
+        request_start_ns=1_000_000_000,
+        request_end_ns=1_100_000_000,
+    ).model_copy(update={"phase_index": 0})
+    second_metadata = create_metric_metadata(
+        session_num=0,
+        benchmark_phase=CreditPhase.PROFILING,
+        request_start_ns=2_000_000_000,
+        request_end_ns=2_300_000_000,
+    ).model_copy(update={"phase_index": 2})
+    first = create_metric_records_data(
+        metadata=first_metadata,
+        results=[{RequestLatencyMetric.tag: 100_000_000.0}],
+    )
+    second = create_metric_records_data(
+        metadata=second_metadata,
+        results=[{RequestLatencyMetric.tag: 300_000_000.0}],
+    )
+    await accumulator.process_record(first)
+    await accumulator.process_record(second)
+
+    flat = await generate_realtime_metrics([accumulator], phase_index=2)
+
+    latency = next(m for m in flat if m.tag == RequestLatencyMetric.tag)
+    assert latency.avg == pytest.approx(300.0)

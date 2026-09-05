@@ -3,11 +3,17 @@
 
 """User session management for multi-turn conversation optimization."""
 
+from collections import OrderedDict
+
 from pydantic import Field
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
+from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.models.dataset_models import Conversation, Turn
+
+_logger = AIPerfLogger(__name__)
 
 
 def _compute_is_fork_parent(conversation: Conversation) -> bool:
@@ -19,6 +25,29 @@ def _compute_is_fork_parent(conversation: Conversation) -> bool:
     would silently flip the flag to ``False``.
     """
     return any(b.mode == ConversationBranchMode.FORK for b in conversation.branches)
+
+
+def _count_expected_fork_children(conversation: Conversation) -> int:
+    """Total FORK-mode child conversations this conversation declares.
+
+    Stamped onto ``UserSession`` at creation for the same reason as
+    ``is_fork_parent``: ``conversation.branches`` is dropped on the
+    PAYLOAD_BYTES wire round-trip, so it cannot be recomputed later.
+
+    Only branches named by a parent turn can dispatch children. Descriptors
+    that no turn declares are inert and must not keep terminal parents pinned.
+    """
+    declared_branch_ids = {
+        branch_id for turn in conversation.turns for branch_id in turn.branch_ids or []
+    }
+    return sum(
+        len(branch.child_conversation_ids)
+        for branch in conversation.branches
+        if (
+            branch.mode == ConversationBranchMode.FORK
+            and branch.branch_id in declared_branch_ids
+        )
+    )
 
 
 class UserSession(AIPerfBaseModel):
@@ -53,6 +82,20 @@ class UserSession(AIPerfBaseModel):
         description="Resolved context mode for this session. "
         "Set at creation from conversation-level override, dataset default, or DELTAS_WITHOUT_RESPONSES.",
     )
+    parent_correlation_id: str | None = Field(
+        default=None,
+        description="Parent session's x_correlation_id when this is a DAG child "
+        "(set at ``create_and_store`` time for FORK/SPAWN children). ``None`` "
+        "for root sessions. Read by the worker's cache-bust path (FORK children "
+        "inherit the parent's already-busted shared turns and must not re-bust).",
+    )
+    branch_mode: ConversationBranchMode | None = Field(
+        default=None,
+        description="Relationship to the parent (FORK / SPAWN) when this is a DAG "
+        "child, else ``None``. FORK children inherit the parent's shared Turn "
+        "objects (and its cache-bust marker); SPAWN children start fresh and are "
+        "busted normally.",
+    )
     is_fork_parent: bool = Field(
         default=False,
         description="Whether this session declares any FORK-mode branch and "
@@ -74,17 +117,66 @@ class UserSession(AIPerfBaseModel):
     pending_fork_eviction: bool = Field(
         default=False,
         description="When True, the parent's terminal turn has already "
-        "fired, but eviction is deferred until all FORK-mode children "
-        "have joined. Used by ``release_fork_child`` to auto-evict the "
-        "session the moment ``fork_refcount`` reaches 0 (the eviction "
-        "path that normally fires on the parent's terminal turn cannot "
-        "find any children to pin yet — orchestrator dispatches them on "
-        "the credit-return path AFTER this terminal eviction runs).",
+        "fired, but eviction is deferred until every FORK-mode child has "
+        "joined. The eviction path that normally fires on the parent's "
+        "terminal turn cannot find any children to pin yet — the "
+        "orchestrator dispatches them on the credit-return path AFTER "
+        "that terminal eviction runs. Deferral ends when "
+        "``fork_children_outstanding`` goes False, not merely when "
+        "``fork_refcount`` momentarily hits 0.",
+    )
+    expected_fork_children: int = Field(
+        default=0,
+        ge=0,
+        description="Upper bound on how many FORK children will pin this "
+        "session, stamped at ``create_and_store`` time from "
+        "``conversation.branches`` (which the PAYLOAD_BYTES round-trip "
+        "strips, so it cannot be recomputed later). Paired with "
+        "``joined_fork_children`` this makes deferred eviction independent "
+        "of the order in which children arrive, pin, and join.",
+    )
+    joined_fork_children: int = Field(
+        default=0,
+        ge=0,
+        description="Cumulative count of FORK children that have joined via "
+        "``release_fork_child``. Unlike ``fork_refcount`` this never "
+        "decreases, so a parent whose children arrive one at a time is not "
+        "evicted the instant the first child joins.",
+    )
+
+    @property
+    def fork_children_outstanding(self) -> bool:
+        """Whether any FORK child may still need this session's history.
+
+        True while a child is actively pinned (``fork_refcount``) or while
+        fewer children have joined than the conversation declared. Children
+        arrive serially, so ``fork_refcount`` alone drops back to 0 between
+        siblings and is not a safe eviction trigger on its own.
+        """
+        return (
+            self.fork_refcount > 0
+            or self.joined_fork_children < self.expected_fork_children
+        )
+
+    previous_response_id: str | None = Field(
+        default=None,
+        description="Response ID from the previous turn (e.g. 'resp_<hash>') "
+        "used for stateful chaining in the Responses API.",
     )
 
     def advance_turn(self, turn_index: int) -> Turn:
-        """
-        Advance the turn list to the next turn.
+        """Append the next turn onto ``turn_list`` and return it.
+
+        Mutates ``turn_list`` in place:
+        - Under ``MESSAGE_ARRAY_WITH_RESPONSES`` the list is replaced with
+          ``[turn]`` (each turn carries its own full history; prior turns are
+          dropped so the endpoint sends the turn's messages as-authored).
+        - Under every other mode the turn is appended. Callers that only need
+          per-turn overrides can read ``turn_list[-1]`` after this call.
+          When jumping ahead past untraversed turns (e.g. agentic_replay's
+          mid-trajectory resume at ``k_i > 0``), prior turns 0..turn_index-1
+          are seeded first so the endpoint accumulator reproduces the full
+          chat prefix from the trace's delta-encoded turns.
 
         Args:
             turn_index: The index of the turn to advance to.
@@ -100,9 +192,32 @@ class UserSession(AIPerfBaseModel):
             )
 
         turn = self.conversation.turns[turn_index]
+        # A context reset must always break the server-side chain: chaining onto a
+        # previous_response_id would retain history the reset is meant to discard.
+        # Clearing is the safe direction (falls back to sending full history).
+        if turn.reset_context:
+            self.previous_response_id = None
+
         if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
             self.turn_list = [turn]
         else:
+            # Delta-encoded modes accumulate. For ``DELTAS_WITH_RESPONSES``
+            # (e.g. weka agentic_replay), if a caller skips ahead past
+            # untraversed turns (agentic_replay warmup resumes at k_i > 0
+            # without going through turns 0..k_i-1), seed those first so
+            # the endpoint's build_messages reproduces the full chat prefix
+            # from the trace's pre-canned delta turns.
+            #
+            # ``DELTAS_WITHOUT_RESPONSES`` is left unchanged: that mode
+            # captures live responses via ``store_response`` and assumes
+            # linear traversal; pre-seeding from trace turns would inject
+            # placeholder responses that the live-capture flow never wrote.
+            if (
+                self.context_mode == ConversationContextMode.DELTAS_WITH_RESPONSES
+                and len(self.turn_list) < turn_index
+            ):
+                for missing_idx in range(len(self.turn_list), turn_index):
+                    self.turn_list.append(self.conversation.turns[missing_idx])
             self.turn_list.append(turn)
         self.turn_index = turn_index
         return turn
@@ -121,6 +236,22 @@ class UserSession(AIPerfBaseModel):
         """
         self.turn_list.append(response_turn)
 
+    def store_response_id(self, response_id: str | None) -> None:
+        """Store the response ID from the server for stateful chaining."""
+        self.previous_response_id = response_id
+
+
+DEFAULT_MAX_SESSIONS = Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
+"""Default per-worker cap on cached multi-turn sessions.
+
+Sessions are normally evicted on the final turn or on cancellation. Abandoned
+ones never are -- a non-final ``CreditReturn`` reclaimed sticky-router side on
+worker reconnect or detach, or a session migrated to another worker leaving the
+original entry stranded, receives no final-turn credit here. Unbounded, those
+accrue for the process lifetime until the container is OOMKilled. The bound is
+high enough that legitimate concurrent multi-turn sessions stay resident.
+"""
+
 
 class UserSessionManager:
     """User session manager for multi-turn processing.
@@ -128,9 +259,33 @@ class UserSessionManager:
     Manages user sessions for multi-turn processing.
     """
 
-    def __init__(self) -> None:
-        self._cache: dict[str, UserSession] = {}
+    def __init__(self, max_sessions: int | None = None) -> None:
+        if max_sessions is None:
+            max_sessions = Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
+        if max_sessions < 1:
+            raise ValueError(f"max_sessions ({max_sessions}) must be >= 1")
+        self._max_sessions = max_sessions
+        self._cache: OrderedDict[str, UserSession] = OrderedDict()
         self._default_context_mode: ConversationContextMode | None = None
+        self._cap_warning_shown: bool = False
+        self._pinned_overflow_warning_shown: bool = False
+        self._stale_fork_evictions: int = 0
+
+    @property
+    def stale_fork_evictions(self) -> int:
+        """Count of deferred-eviction parents reclaimed under cap pressure.
+
+        Non-zero means FORK children failed to reach this worker (failed
+        spawn, or a sticky miss that routed them elsewhere) and their
+        parents were only collected because the cache filled up. It is the
+        observable signal that the cache is under DAG pressure.
+        """
+        return self._stale_fork_evictions
+
+    @property
+    def default_context_mode(self) -> ConversationContextMode | None:
+        """The dataset-level default context mode, if one was set by the loader."""
+        return self._default_context_mode
 
     def set_default_context_mode(self, mode: ConversationContextMode | None) -> None:
         """Set the dataset-level default context mode from the loader."""
@@ -142,6 +297,8 @@ class UserSessionManager:
         conversation: Conversation,
         num_turns: int,
         url_index: int | None = None,
+        parent_correlation_id: str | None = None,
+        branch_mode: ConversationBranchMode | None = None,
     ) -> UserSession:
         """
         Create and store user session.
@@ -153,6 +310,13 @@ class UserSessionManager:
                 len(conversation.turns) for ramp-up users who start mid-session.
             url_index: URL index for multi-URL load balancing. All turns in this session
                 will use this index to ensure they hit the same backend server.
+            parent_correlation_id: Parent session's correlation id for DAG
+                children (FORK/SPAWN), else ``None``. Stamped onto the session so
+                the worker's cache-bust path can tell FORK children apart from
+                roots. Seeding is performed separately by ``seed_from_parent``.
+            branch_mode: DAG branch mode (FORK / SPAWN), else ``None``. Stamped
+                onto the session for the cache-bust FORK no-op. Ignored when
+                ``parent_correlation_id`` is None.
 
         Raises:
             ValueError: If num_turns exceeds the actual conversation length.
@@ -167,6 +331,7 @@ class UserSessionManager:
             or ConversationContextMode.DELTAS_WITHOUT_RESPONSES
         )
         is_fork_parent = _compute_is_fork_parent(conversation)
+        expected_fork_children = _count_expected_fork_children(conversation)
         # FORK seeding hands the parent's accumulated ``turn_list`` to
         # the child. ``MESSAGE_ARRAY_WITH_RESPONSES`` replaces ``turn_list``
         # on every ``advance_turn`` (see below), which would discard the
@@ -208,6 +373,9 @@ class UserSessionManager:
             turn_list=[],
             context_mode=context_mode,
             is_fork_parent=is_fork_parent,
+            expected_fork_children=expected_fork_children,
+            parent_correlation_id=parent_correlation_id,
+            branch_mode=branch_mode if parent_correlation_id is not None else None,
         )
         self.store(x_correlation_id, user_session)
         return user_session
@@ -221,6 +389,74 @@ class UserSessionManager:
             user_session: User session
         """
         self._cache[x_correlation_id] = user_session
+        self._cache.move_to_end(x_correlation_id)
+        if len(self._cache) > self._max_sessions:
+            self._evict_lru_overflow()
+
+    def _evict_lru_overflow(self) -> None:
+        """Trim the cache back to ``max_sessions``, least-recently-used first.
+
+        Only reached once the cap is exceeded, which does not happen for
+        realistic session counts (see DEFAULT_MAX_SESSIONS), so the scan cost
+        here never touches the ``store`` hot path.
+
+        Pinned sessions are skipped. A FORK parent still holding
+        ``fork_refcount`` references, or one waiting on
+        ``pending_fork_eviction``, is the exact context its children are about
+        to seed from; dropping it would silently hand those children an empty
+        history. Any other session is fair game, but eviction is still pure LRU
+        and *can* drop a conversation that is merely in flight -- the worker
+        would rebuild it from the dataset without its captured assistant
+        responses -- so the one-shot warning names the cap: the run is either
+        leaking abandoned sessions or genuinely running more concurrent
+        conversations than the bound allows, and both want the operator's
+        attention rather than silent turn failures.
+        """
+        if not self._cap_warning_shown:
+            self._cap_warning_shown = True
+            _logger.warning(
+                f"Session cache hit its {self._max_sessions}-entry cap; evicting "
+                "least-recently-used sessions. In-flight multi-turn "
+                "conversations may lose their history."
+            )
+        # list() so the cache can be mutated while walking it, oldest first.
+        for x_correlation_id in list(self._cache):
+            if len(self._cache) <= self._max_sessions:
+                return
+            session = self._cache[x_correlation_id]
+            if session.fork_refcount > 0 or session.pending_fork_eviction:
+                continue
+            del self._cache[x_correlation_id]
+        if len(self._cache) <= self._max_sessions:
+            return
+
+        # Second pass: reclaim parents whose terminal turn already fired and
+        # whose FORK children are no longer actively holding the session lock
+        # (fork_refcount == 0).  Children that sticky-missed onto another worker
+        # never call release_fork_child on this worker, so joined_fork_children
+        # never reaches expected_fork_children and fork_children_outstanding stays
+        # True indefinitely -- those entries would otherwise be immortal.  The
+        # hard pin is fork_refcount > 0 (child currently dispatching on this
+        # worker); outstanding-but-not-pinned parents are stale stragglers.
+        for x_correlation_id in list(self._cache):
+            if len(self._cache) <= self._max_sessions:
+                break
+            session = self._cache[x_correlation_id]
+            if session.fork_refcount > 0 or not session.pending_fork_eviction:
+                continue
+            self._stale_fork_evictions += 1
+            del self._cache[x_correlation_id]
+
+        if len(self._cache) > self._max_sessions and (
+            not self._pinned_overflow_warning_shown
+        ):
+            self._pinned_overflow_warning_shown = True
+            _logger.warning(
+                f"Session cache is over its {self._max_sessions}-entry cap with "
+                f"{len(self._cache)} entries and every remaining session pinned by "
+                "a pending FORK child; keeping them resident rather than breaking "
+                "those children's context."
+            )
 
     def get(self, x_correlation_id: str) -> UserSession | None:
         """
@@ -229,7 +465,10 @@ class UserSessionManager:
         Args:
             x_correlation_id: X-Correlation-ID header value
         """
-        return self._cache.get(x_correlation_id)
+        session = self._cache.get(x_correlation_id)
+        if session is not None:
+            self._cache.move_to_end(x_correlation_id)
+        return session
 
     def evict(self, x_correlation_id: str) -> None:
         """
@@ -269,6 +508,12 @@ class UserSessionManager:
         assistant responses) into the child so that the request-builder
         prepends the full parent context before the child's own messages.
 
+        The parent's ``previous_response_id`` is copied too so a FORK child
+        continues the server-side Responses chain instead of replaying
+        history: replay drops filtered outputs (e.g. reasoning items) that
+        only survive server-side, so a child that lost the chain would lack
+        equivalent parent context.
+
         No-op (with a debug-friendly silent return) if either session is
         already evicted — the FORK-pin refcount usually keeps the parent
         resident, but late-arriving children may race past eviction. The
@@ -280,6 +525,7 @@ class UserSessionManager:
         if parent is None or child is None:
             return
         child.turn_list = list(parent.turn_list)
+        child.previous_response_id = parent.previous_response_id
 
     def release_fork_child(self, x_correlation_id: str) -> None:
         """Decrement the FORK-pin refcount on the session, floored at 0.
@@ -289,15 +535,22 @@ class UserSessionManager:
         practice and must not raise.
 
         When ``pending_fork_eviction`` is set (parent's terminal turn
-        has already fired but was waiting for children to land) and
-        the refcount drops to 0, the session is evicted in the same
-        call — there is no other code path that will collect it.
+        has already fired but was waiting for children to land) and no
+        FORK child is still outstanding, the session is evicted in the
+        same call — there is no other code path that will collect it.
+
+        "Outstanding" deliberately means ``fork_children_outstanding``,
+        not ``fork_refcount == 0``. Children arrive one credit at a time,
+        so the refcount returns to 0 between siblings: evicting on the
+        first join dropped the parent before sibling #2 ever pinned it,
+        and that child then went out with an empty history.
         """
         session = self._cache.get(x_correlation_id)
         if session is None:
             return
         session.fork_refcount = max(0, session.fork_refcount - 1)
-        if session.fork_refcount == 0 and session.pending_fork_eviction:
+        session.joined_fork_children += 1
+        if session.pending_fork_eviction and not session.fork_children_outstanding:
             self._cache.pop(x_correlation_id, None)
 
     def evict_if_unpinned(self, x_correlation_id: str) -> None:
@@ -308,17 +561,20 @@ class UserSessionManager:
         joins. Unknown sessions are a no-op.
 
         Sessions with ``pending_fork_eviction = True`` ALSO stay
-        resident at refcount==0 — their parent's terminal turn already
-        fired, but the orchestrator's child dispatch happens AFTER
-        this point, so we need to keep the session alive for the
-        about-to-arrive children to seed from. ``release_fork_child``
-        handles the eventual cleanup when the last child joins.
+        resident at refcount==0 *while children are still outstanding* —
+        their parent's terminal turn already fired, but the
+        orchestrator's child dispatch happens AFTER this point, so the
+        session must survive for the about-to-arrive children to seed
+        from. ``release_fork_child`` collects it when the last child
+        joins. Once every declared child has joined the deferral is over
+        and the session is popped here, so a parent whose children all
+        joined *before* its own terminal turn is not stranded.
         """
         session = self._cache.get(x_correlation_id)
         if session is None:
             return
         if session.fork_refcount > 0:
             return
-        if session.pending_fork_eviction:
+        if session.pending_fork_eviction and session.fork_children_outstanding:
             return
         self._cache.pop(x_correlation_id, None)

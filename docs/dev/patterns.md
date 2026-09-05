@@ -99,12 +99,16 @@ Then:
 2. If the flag maps to an existing `AIPerfConfig` key, add an entry to that section's
    field map (e.g. `_ENDPOINT_FIELD_MAP` in `_converter_endpoint.py`).
    Otherwise, read it directly in the relevant `_converter_*.py` builder.
-3. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
+3. Add the same explicit-field route to
+   `config.flags.resolver.build_cli_overrides` when the flag is valid with
+   `--config`. Test CLI-only and YAML-plus-CLI resolution against the same
+   affected `AIPerfConfig` subtree; unrelated YAML must remain intact.
+4. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
    `make generate-env-vars-docs` if you also added a corresponding env var.
-4. Add a unit test under `tests/unit/config/` constructing
+5. Add a unit test under `tests/unit/config/` constructing
    `CLIConfig(my_new_flag=...)` and asserting the converter emits the
    right `AIPerfConfig` shape.
-5. The disjointedness invariant in
+6. The disjointedness invariant in
    `tests/unit/config/v1/test_section_fields.py` will catch any
    cross-section name collision automatically.
 
@@ -112,17 +116,61 @@ Then:
 - No validators on CLIConfig fields. `BeforeValidator(parse_str_or_list)` for
   CLI input coercion is fine; domain validation (range checks across fields,
   cross-field constraints) lives on `AIPerfConfig`, not CLIConfig.
-- The CLI-to-envelope converter is the only module outside `cli_commands/` that may
-  read `CLIConfig` attributes.
+- The CLI-to-envelope converter and config-file resolver are the only modules
+  outside `cli_commands/` that may read `CLIConfig` attributes.
+
+### Config-file override envelope invariant
+
+`resolve_config` keeps two Config-v2 dictionaries aligned when combining
+`--config` with explicit CLI flags:
+
+- The rendered dictionary is post-environment and post-Jinja; it feeds
+  `AIPerfConfig.model_validate`.
+- The raw envelope is post-environment but pre-Jinja; it is retained on
+  `AIPerfConfig._raw_envelope` so `build_benchmark_plan` can render each
+  `sweep.parameters` variation independently.
+
+Every config-file override transformation must run through
+`_merge_overrides_into_envelope`, which applies the same deep merge, dataset
+filtering, phase targeting, and magic-list promotion to both dictionaries. Do
+not mutate only the rendered dictionary: a CLI override of a templated field
+would appear correct on the base config and then be replaced by the old Jinja
+template during sweep expansion.
+
+### Bool|object nested endpoint fields + flat CLI lowering
+
+Some endpoint features (`reset_kv_cache`, `server_profiler`) are nested on
+`EndpointConfig` as `false | true | object` via
+`parse_enabled_or_config(ModelCls)` in `aiperf.config.control_hooks`. Nested
+YAML stays ergonomic; CLIConfig remains flat.
+
+Pattern:
+
+1. Nested config classes live in `src/aiperf/config/control_hooks.py`
+   (`ResetKvCacheConfig`, `ServerProfilerConfig`).
+2. `EndpointConfig` fields use
+   `Annotated[Model | None, parse_enabled_or_config(Model), Field(...)]`.
+3. Flat CLI flags (`--reset-kv-cache`, `--reset-kv-cache-path`, …) live on
+   `CLIConfig` and are listed in `ENDPOINT_FIELDS`.
+4. `_converter_endpoint.build_endpoint` lowers via helpers such as
+   `_maybe_build_reset_kv_cache` / `_maybe_build_server_profiler`: any
+   enable flag **or** path/timeout override produces the nested dict
+   (`{}` for defaults-only).
+5. Runtime prepares absolute control URLs with
+   `prepare_endpoint_control_hooks` (unique origins only) and fires them
+   from the owning plane (CLI cell for reset; `TimingManager` /
+   `PhaseOrchestrator` for profiler) — never from workers. Seamless
+   non-final profiling defers profiler stop until drain.
+
+See [Benchmark Control Hooks](../tutorials/benchmark-control-hooks.md).
 
 ## Adaptive Scale Implementation Pattern
 
-Adaptive scale is a timing strategy plus CLI/YAML configuration surface. When changing adaptive control variables, SLA semantics, artifacts, or CLI/YAML precedence, update [Adaptive Scale](../tutorials/adaptive-scale.md) and keep these invariants intact:
+Adaptive scale is a YAML-only timing strategy configured on the phase it controls. When changing adaptive control variables, SLA semantics, artifacts, or YAML normalization, update [Adaptive Scale](../tutorials/adaptive-scale.md) and keep these invariants intact:
 
 - Exactly one adaptive control variable is active per phase. Supported variables are `concurrency`, `prefill_concurrency`, `request_rate`, and `users`.
-- Compact `--adaptive-scale-control variable:min,max:type` flags and expanded `--adaptive-control-*` flags are mutually exclusive.
-- `--adaptive-scale-sla` requires `--adaptive-scale`; it must raise a configuration error rather than silently no-op.
-- Canonical YAML stores adaptive SLA filters on phase-level `sla`; CLI SLA overrides must update that phase `sla` and any compatibility `adaptive_scale.sla` mirror before YAML lowering.
+- Adaptive scale settings stay attached to the concrete phase they control; do not add CLI-level adaptive overrides unless they include unambiguous phase targeting.
+- Canonical YAML stores adaptive SLA filters on phase-level `sla`; any compatibility `adaptive_scale.sla` mirror must stay aligned before YAML lowering.
 - Keep adaptive SLA docs aligned with `adaptive_scale_sla.SUPPORTED_METRICS_MESSAGE`; do not document a controller SLA metric until the runtime supports it.
 - TTFT adaptive SLA requires `FirstToken` observations even when no static `prefill_concurrency` is configured.
 - Ratio metrics such as `goodput_ratio` and `success_rate` are ratios rather than throughput values.
@@ -187,6 +235,86 @@ async def _handle(self, msg: MyMsg) -> None:
 ```
 
 Auto-subscription happens during `@on_init` phase.
+
+## Control Channel Command Pattern
+
+Commands do **not** ride the pub/sub event bus. They ride a dedicated
+DEALER/ROUTER control channel at `CommAddress.CONTROL`: every component service
+opens a DEALER (identity = its service ID), and `SystemController` binds the
+single ROUTER. The wire format is the `msgspec` tagged-union structs in
+`aiperf.common.control_structs`, not Pydantic `Message` subclasses. The same
+channel also carries registration (`Registration` / `RegistrationAck`),
+`Heartbeat`, and `StatusUpdate`.
+
+Every other message type still goes over the event bus with `publish()` /
+`@on_message`.
+
+### Request/response structs
+
+| Struct | Meaning |
+|---|---|
+| `Command{cid, cmd, payload}` | The request. `cid` correlates the response; `payload` is `orjson`-encoded bytes (`b""` when the command carries no data). |
+| `CommandAck{cid, cmd, sid}` | Handler ran and returned `None`. |
+| `CommandOk{cid, cmd, sid, payload}` | Handler returned a value, serialized into `payload`. |
+| `CommandErr{cid, cmd, sid, error, traceback}` | Handler raised. |
+| `CommandUnhandled{cid, cmd, sid}` | No `@on_command` hook matched. |
+
+`CommandUnhandled` is deliberately not an ack: "no handler" is a *failure* to
+callers that need the work done. `SystemController._finalize_artifact_response_error`
+treats it as one. Do not assume an unhandled command is harmless.
+
+### Adding a new command
+
+1. Add the value to `CommandType` in `common/enums/enums.py`.
+2. Add a handler on the receiving service. It takes a single `Command`:
+
+```python
+from aiperf.common.control_structs import Command
+from aiperf.common.hooks import on_command
+
+@on_command(CommandType.MY_COMMAND)
+async def _on_my_command(self, message: Command) -> None:
+    # Decode the payload only if the command carries data.
+    opts = orjson.loads(message.payload) if message.payload else {}
+    await self._do_the_thing(opts.get("mode"))
+```
+
+Returning `None` makes the dispatcher send `CommandAck`. Returning a value makes
+it send `CommandOk` with the value serialized into `payload` (`bytes` pass
+through, Pydantic models use `model_dump_json()`, everything else goes through
+`orjson.dumps`).
+
+Exactly **one** hook may claim a given `CommandType` per service — the dispatcher
+stops at the first match, because the response it sends back is that hook's
+result and a second hook would have no way to answer.
+
+### Sending a command
+
+From a service to the controller:
+
+```python
+response = await self.send_command_to_controller(
+    CommandType.MY_COMMAND, payload=orjson.dumps({"mode": "fast"})
+)
+```
+
+From the controller to services:
+
+| Method | Behavior |
+|---|---|
+| `_send_control_command(identity, cmd, ...)` | One service, awaits its response. |
+| `_send_control_command_to_all(cmd, service_ids, ...)` | Fan-out, returns responses in **input order** so callers can `zip(service_ids, responses, strict=True)`. Failures become `ErrorDetails` entries rather than raising. |
+| `_send_control_command_to_all_fail_fast(cmd, service_ids, ...)` | Completion-ordered fan-out that stops waiting on the first `CommandErr` or timeout. `CommandUnhandled` is **not** an abort condition here — the two callers fan `PROFILE_CONFIGURE` / `PROFILE_START` at every registered service and several legitimately implement neither. |
+| `_broadcast_control_command(cmd, service_ids, ...)` | Fire-and-forget; per-peer send errors are swallowed so one dead service cannot block the rest. |
+
+### Peer-to-peer commands must be relayed
+
+The ROUTER is the only path between two non-controller services — services have
+no socket to each other. A command aimed at a *peer* therefore needs a
+controller-side handler that re-fans it out. `PROFILE_COMPLETE` and
+`PROFILE_CANCEL` both work this way: the originating service sends to the
+controller, and the controller's handler broadcasts to the other services,
+excluding the originator.
 
 ## Plugin System Pattern
 
@@ -281,6 +409,40 @@ self.debug(lambda: f"Processing {len(self._items())} items")
 self.info("Starting service")
 ```
 
+## Machine-Readable Kube CLI Output Pattern
+
+Any `aiperf kube` command with a JSON or YAML output mode writes the payload
+through `kube_console.emit_raw`, never `kube_console.console.print`. Rich
+hard-wraps lines wider than the resolved console width — 80 whenever stdout is
+not a tty — and the wrap lands inside the token, so a long image reference or
+endpoint URL turns a valid document into an unparseable one under redirection
+or in CI. `soft_wrap=True` also avoids the wrap, but it is per-call discipline
+that is easy to forget; `emit_raw` makes the correct path the only path.
+
+```python
+from aiperf.kubernetes import console as kube_console
+
+kube_console.emit_raw(orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode())
+kube_console.emit_raw(yaml.safe_dump(doc, width=float("inf")), end="")  # already \n-terminated
+```
+
+Wrap the work that produces the payload in `machine_readable_stdout()` when it
+can log. The context manager retargets the `aiperf.kube` handlers to stderr for
+the duration instead of filtering by level, so a record emitted at *any* level
+— including one added by a later change — cannot prepend text to the document
+on stdout. Diagnostics stay visible, just on the other stream.
+
+```python
+with kube_console.machine_readable_stdout():
+    results = await checker.run_all_checks()
+kube_console.emit_raw(orjson.dumps(results.to_dict()).decode())
+```
+
+Human-facing log text (`aiperf kube logs`, controller log streaming) keeps
+going through `console.print`, but with `soft_wrap=True`: those lines may want
+styling later, and letting the terminal fold a long URL beats breaking it
+mid-token.
+
 ## NaN/Inf Discipline Pattern
 
 NaN/+inf/-inf in metric data corrupts downstream artifacts in three ways:
@@ -331,8 +493,22 @@ def export_records_json(records: list[Record], out_path: Path) -> None:
 
 `scrub_non_finite` recursively walks `dict`/`list`/`tuple` containers and
 rewrites non-finite numeric values to `None`. It leaves `str`/`bytes`/`bool`
-alone and handles numpy scalar types correctly (`numpy.float32`,
-`numpy.float64`).
+alone and normalizes numpy scalars to the native Python type they actually
+mean — `numpy.int64(7)` becomes `7`, not `7.0`, and `numpy.bool_(True)`
+becomes `True`, not `1.0`.
+
+That normalization is load-bearing, not incidental: `orjson.dumps` **raises**
+`TypeError: Type is not JSON serializable: numpy.float64` rather than
+degrading, so a numpy scalar anywhere in a payload aborts the export and
+takes the run down with it. Any code that hands values to an exporter
+(planners, scorers, analysis helpers) should still return native floats —
+`scrub_non_finite` is the backstop, not the excuse.
+
+Most exporters are shielded by accident: they call
+`scrub_non_finite(model.model_dump(mode="json"))`, and Pydantic's JSON-mode
+dump already coerces numpy. Payloads assembled as plain dicts from
+dataclasses (`search_history.json` is the live example) have no such step,
+so `scrub_non_finite` is their only guard.
 
 ### `is_finite_value` for the canonical finiteness check
 
@@ -349,6 +525,11 @@ def maybe_record_throughput(value: float) -> None:
 Use `is_finite_value` instead of `math.isfinite` or `not math.isnan`:
 `isinstance(x, float)` misses numpy scalar types on some numpy versions,
 and `math.isfinite` raises on non-numeric inputs.
+
+It rejects booleans — Python's and numpy's — because a bool is not a metric
+value. That matters for `nan_safe_mean`/`nan_safe_std`, which filter through
+it: admitting `numpy.bool_(True)` as `1.0` would make the same data average
+differently depending only on which bool type produced it.
 
 ### `nan_safe_mean` / `nan_safe_std` for aggregation
 
@@ -441,95 +622,158 @@ A normal `BaseDerivedMetric` computes its value from peer metrics in the
 `MetricResultsDict` via `_derive_value`. Some derived metrics, however, are
 computed from data that never lives in the `MetricResultsDict` at all —
 GPU power and energy come from telemetry scrapes, not from request
-records, so their values must be injected by the accumulator that owns
-the sensor data rather than derived by the standard registry walk.
+records, so their values are injected at summarize time by the
+`EnergyEfficiencyAnalyzer` plugin rather than derived by the standard
+registry walk.
 
-Reference file: [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py).
-Injection site: `GPUTelemetryAccumulator.compute_efficiency_metrics`
-([`src/aiperf/gpu_telemetry/accumulator.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/gpu_telemetry/accumulator.py)).
+Reference files:
+- [`src/aiperf/metrics/types/power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/types/power_efficiency_metrics.py) — metric registration classes
+- [`src/aiperf/metrics/energy_efficiency_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/energy_efficiency_analyzer.py) — injection site
 
 ### The three-part contract
 
 A metric class that participates in registry listings but is computed
-externally must spell out the contract in three places so future agents
+externally must spell out the contract in three places so future readers
 don't copy-paste the shape as the canonical derived-metric pattern.
 
-**1. `Invariant:` paragraph in the class docstring.** Name the injection
-site and the catching path explicitly:
+The shared base class `_InjectedEnergyMetric` fulfils all three parts for
+the GPU power-efficiency family. Concrete vendor classes inherit from it and
+only declare `tag`, `header`, `unit`, `display_order`, and `console_group`:
 
 ```python
-class TotalGpuEnergyMetric(BaseDerivedMetric[float]):
-    """Sum of GPU energy consumed across all GPUs during the benchmark phase, in joules.
+class _InjectedEnergyMetric(BaseDerivedMetric[float]):
+    """Shared deferred-derivation base for the analyzer-injected energy metrics.
 
-    Invariant: externally injected by
-    `GPUTelemetryAccumulator.compute_efficiency_metrics` from
-    energy_consumption counter deltas. `_derive_value` is intentionally
-    non-functional; `MetricsAccumulator._resolve_derived_metrics` is
-    expected to catch NoMetricValue and skip the tag during its
-    derivation walk.
+    Not registered itself (abstract). Values are injected at summarize time
+    by EnergyEfficiencyAnalyzer via SummaryContext; _derive_value always
+    raises so the standard derivation walk skips these tags.
     """
+
+    __is_abstract__ = True
+
+    def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
+        raise NoMetricValue(
+            f"'{self.tag}' is injected post-aggregation by EnergyEfficiencyAnalyzer "
+            "from GPU telemetry + inference token totals; it cannot be derived from "
+            "a single MetricResultsDict. If this surfaces, the derivation walk is "
+            "missing its NoMetricValue handler (MetricsAccumulator."
+            "_resolve_derived_metrics)."
+        )
+
+
+class NvidiaTotalGpuEnergyMetric(_InjectedEnergyMetric):
+    """Sum of NVIDIA GPU energy consumed during the profiling phase, in joules."""
+
+    __is_abstract__ = False
+    tag = "nvidia_total_gpu_energy"
+    header = "Total GPU Energy"
+    unit = EnergyMetricUnit.JOULES
+    display_order = 720
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA
 ```
 
-**2. `_derive_value` returns `NoReturn`.** The body unconditionally
-raises, so the truthful annotation is `NoReturn` from `typing`. Returning
-`float` would lie to type-checkers and downstream code that assumes the
-derivation succeeded.
+**1. `__is_abstract__ = True` on the base; `False` on each concrete class.**
+This prevents the base from appearing in the metric registry while still
+allowing subclasses to auto-register.
 
-```python
-from typing import NoReturn
-from aiperf.common.exceptions import NoMetricValue
-from aiperf.metrics.metric_dicts import MetricResultsDict
+**2. `_derive_value` returns `NoReturn`.** The body unconditionally raises,
+so the truthful annotation is `NoReturn`. Returning `float` would lie to
+type-checkers and downstream code that assumes derivation succeeded.
 
-def _derive_value(self, metric_results: MetricResultsDict) -> NoReturn:
-    raise NoMetricValue(
-        "Cannot derive 'total_gpu_energy' from MetricResultsDict: this metric "
-        "is externally injected by "
-        "GPUTelemetryAccumulator.compute_efficiency_metrics. If this exception "
-        "surfaces, the derivation walk is missing its NoMetricValue handler "
-        "(see MetricsAccumulator._resolve_derived_metrics)."
-    )
-```
+**3. Error message names the tag, the injection site, and the catching
+path.** A message that only names the source gives debugging agents no clue
+where the contract is enforced:
 
-**3. Error message names the operation, the injection site, and the catching
-path.** A message that only names the source ("X is computed by the GPU
-telemetry accumulator") gives debugging agents no clue where the contract
-is enforced. The recommended shape is:
+- *Tag*: `'{self.tag}'` — which metric failed.
+- *Injection site*: `EnergyEfficiencyAnalyzer` — the source of truth.
+- *Catching path*: `MetricsAccumulator._resolve_derived_metrics` — where
+  `NoMetricValue` is expected to be absorbed. If this fires in production,
+  the catching path has a bug.
 
-- *Operation*: what derivation was attempted (`Cannot derive 'X' from
-  MetricResultsDict`).
-- *Injection site*: which method is the source of truth
-  (`GPUTelemetryAccumulator.compute_efficiency_metrics`).
-- *Catching path*: where the exception is expected to be absorbed
-  (`MetricsAccumulator._resolve_derived_metrics`). If this fires in
-  production, the catching path has a bug.
-
-### Why not just skip the class entirely?
+### Why not skip the class entirely?
 
 The class is still required because the rest of the system reads class
-attributes (`tag`, `header`, `unit`, `display_order`, `flags`) when
-emitting `MetricResult`s, ordering the console table, and gating display
-behavior. The registry entry is structural metadata; the *value* is the
-external injection.
+attributes (`tag`, `header`, `unit`, `display_order`, `flags`,
+`console_group`) when emitting `MetricResult`s, ordering the console table,
+and gating display behavior. The registry entry is structural metadata; the
+*value* is the external injection.
 
 ### Where the injection happens
 
-`RecordsManager._apply_gpu_efficiency_metrics` calls
-`GPUTelemetryAccumulator.compute_efficiency_metrics`, which constructs
-`MetricResult` objects directly with the relevant tags and appends them
-to the records list before `ProcessRecordsResult` is built. The standard
+`EnergyEfficiencyAnalyzer.analyze()` (an `analyzer` plugin, called at
+summarize time via `SummaryContext`) queries `GPUTelemetryAccumulator` for
+per-vendor energy and power, joins them with token/throughput/latency totals
+from `MetricsAccumulator`, and constructs `MetricResult` objects directly
+from the registered class attributes (`tag`, `header`, `unit`). The standard
 `MetricsAccumulator._resolve_derived_metrics` walk sees these tags too,
 raises `NoMetricValue` via `_derive_value`, catches it, and skips — so the
-externally-injected values are not overwritten.
+analyzer-injected values are never overwritten.
 
 ### Test contract
 
-The error-message invariants are pinned by
-[`tests/unit/metrics/test_power_efficiency_metrics.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_power_efficiency_metrics.py)
-(parametrized over the three classes): every `_derive_value` call must
-raise `NoMetricValue` with a message that names the tag, the operation
-source (`MetricResultsDict`), and the injection site
-(`compute_efficiency_metrics`). A future weakening of any message fails
-the test rather than silently drifting.
+The `_derive_value` invariants are pinned by
+[`tests/unit/metrics/test_energy_efficiency_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_energy_efficiency_analyzer.py)
+and the property tests in `tests/unit/property/`. The 24 concrete classes
+(12 NVIDIA × 12 AMD) are each exercised: every `_derive_value` call must
+raise `NoMetricValue` with a message naming the tag, the injection site, and
+the catching path. A future weakening of any message fails the test rather
+than silently drifting.
+
+### Adding a new GPU telemetry vendor
+
+To add a third GPU vendor (e.g. Intel) follow these steps:
+
+**1. Define the platform constant** in `src/aiperf/gpu_telemetry/constants.py`:
+
+```python
+INTEL_GPU_TELEMETRY_PLATFORM = "intel"
+```
+
+**2. Add 12 metric classes** to `src/aiperf/metrics/types/power_efficiency_metrics.py`,
+one per role, all inheriting `_InjectedEnergyMetric`. Mirror the NVIDIA or
+AMD block verbatim, substituting `Intel`, `intel_`, `GPU_POWER_EFFICIENCY_INTEL`,
+and `display_order` values starting at the next free band (e.g. 900–965):
+
+```python
+class IntelTotalGpuPowerMetric(_InjectedEnergyMetric):
+    __is_abstract__ = False
+    tag = "intel_total_gpu_power"
+    header = "Total GPU Power"
+    unit = PowerMetricUnit.WATTS
+    display_order = 900
+    flags = MetricFlags.NONE
+    console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_INTEL
+# ... repeat for the other 11 roles
+```
+
+**3. Add the console group** to `MetricConsoleGroup` in
+`src/aiperf/common/enums/enums.py`:
+
+```python
+GPU_POWER_EFFICIENCY_INTEL = "GPU Power Efficiency (Intel)"
+```
+
+**4. Register the console group** in the console exporter that renders this
+section (search for `GPU_POWER_EFFICIENCY_NVIDIA` to find the registration
+point).
+
+**5. Add power/energy field constants** to `src/aiperf/gpu_telemetry/constants.py`
+and extend `_PLATFORM_POWER_FIELDS` / `_PLATFORM_ENERGY_FIELDS` in
+`src/aiperf/gpu_telemetry/accumulator.py` so `total_power_watts` and
+`total_energy_joules` can query the new vendor's fields.
+
+**6. Wire up `_VENDOR_METRICS`** in
+`src/aiperf/metrics/energy_efficiency_analyzer.py` — import the 12 new
+classes and add an entry keyed by `INTEL_GPU_TELEMETRY_PLATFORM`.
+
+**7. Add tests** — extend the parametrize tables in
+`tests/unit/metrics/test_energy_efficiency_analyzer.py` with an Intel stub
+GPU and verify all 12 metric tags are emitted with correct values.
+
+No changes are needed to `EnergyEfficiencyAnalyzer.analyze()` itself: the
+fan-out over `available_platforms()` and the `_VENDOR_METRICS` lookup are
+already vendor-agnostic.
 
 ## Testing Pattern
 

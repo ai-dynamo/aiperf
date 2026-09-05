@@ -49,6 +49,15 @@ from tools._core import (
 
 OUTPUT_FILE = Path("docs/cli-options.md")
 
+# Command groups whose lazy resolution is known to fail. A listed group is
+# skipped with a warning; anything else is a hard failure. This generator runs
+# from pre-commit on every `.py` change, so a blanket raise turns one broken
+# group into a wall for every unrelated commit, while a blanket warning lets an
+# import bug quietly delete a command and all its descendants from the page
+# with a green exit code. An entry here is a reviewed, visible admission of a
+# documentation gap -- keep it empty.
+KNOWN_UNRESOLVABLE_COMMANDS: frozenset[str] = frozenset()
+
 # NumPy-style docstring section headers that terminate description extraction.
 # Google-style ("Args:", "Examples:") are handled separately with startswith().
 _DOCSTRING_SECTIONS = frozenset(
@@ -258,36 +267,54 @@ def _extract_param(arg: Any, constraints: dict[str, list[str]]) -> Param:
     )
 
 
-def extract_commands(app: Any) -> list[tuple[str, str]]:
+def extract_commands(app: Any, *, prefix: str = "") -> list[tuple[str, str]]:
     """Extract command names and descriptions.
 
-    Recurses one level into subcommand-only apps (parent App that has no
-    ``@app.default``, only registered subcommands) so that ``aiperf config init``
-    and similar two-token commands are documented as their own sections.
+    Recurses to arbitrary depth through subcommand-only apps (a parent ``App``
+    with no ``@app.default``, only registered subcommands) so that every leaf
+    command is documented as its own section. Two-token commands such as
+    ``aiperf config init`` and three-token commands such as
+    ``aiperf kube results list-runs`` are both reached this way; an intermediate group
+    is never emitted on its own, because it has no argument collection to
+    document.
     """
     skip = {"--help", "-h", "--version"}
     commands: list[tuple[str, str]] = []
     for name, cmd in app._commands.items():
         if name in skip:
             continue
-        # If this is a subcommand-only app (no default), recurse one level.
+        full_name = f"{prefix}{name}"
         if hasattr(cmd, "_commands") and getattr(cmd, "default_command", None) is None:
-            for sub_name, sub_cmd in cmd._commands.items():
-                if sub_name in skip:
-                    continue
-                help_text = sub_cmd.help if hasattr(sub_cmd, "help") else ""
-                if callable(help_text):
-                    help_text = help_text()
-                if help_text:
-                    help_text = _extract_text(help_text).split("\n")[0].strip()
-                commands.append((f"{name} {sub_name}", help_text or ""))
+            try:
+                _resolve_lazy_commands(cmd)
+            except Exception as e:
+                # Swallowing this drops the command AND every descendant from
+                # the generated page while the generator still exits 0, so an
+                # import/registration bug lands as a quietly incomplete
+                # docs/cli-options.md that the pre-commit hook happily accepts.
+                # An unresolvable command group is a build failure, not a
+                # documentation style choice -- unless the gap is already
+                # declared, in which case blocking every unrelated commit
+                # buys nothing the allowlist entry does not already say.
+                if full_name not in KNOWN_UNRESOLVABLE_COMMANDS:
+                    raise RuntimeError(
+                        f"Could not resolve subcommands of '{full_name}': {e}. "
+                        "Refusing to emit docs that silently omit it and its "
+                        "descendants."
+                    ) from e
+                print_warning(
+                    f"Skipping known-unresolvable command group '{full_name}': {e}. "
+                    "It and its descendants are omitted from the generated docs."
+                )
+                continue
+            commands.extend(extract_commands(cmd, prefix=f"{full_name} "))
             continue
         help_text = cmd.help if hasattr(cmd, "help") else ""
         if callable(help_text):
             help_text = help_text()
         if help_text:
             help_text = _extract_text(help_text).split("\n")[0].strip()
-        commands.append((name, help_text or ""))
+        commands.append((full_name, help_text or ""))
     return commands
 
 
@@ -338,7 +365,7 @@ def _escape_mdx_prose(text: str) -> str:
     )
 
 
-def _format_param(param: Param) -> list[str]:
+def _format_param(param: Param, heading_level: int) -> list[str]:
     """Format a parameter as markdown."""
     # Header
     opts = []
@@ -355,7 +382,7 @@ def _format_param(param: Param) -> list[str]:
 
     type_str = f" `{param.type_suffix.strip()}`" if param.type_suffix else ""
     req = " _(Required)_" if param.required else ""
-    lines = [f"#### {', '.join(opts)}{type_str}{req}", ""]
+    lines = [f"{'#' * heading_level} {', '.join(opts)}{type_str}{req}", ""]
 
     # Body
     lines.append(f"{_escape_mdx_prose(normalize_text(param.description).rstrip('.'))}.")
@@ -499,7 +526,9 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
             if not skip_header:
                 lines.extend([f"### {group_name}", ""])
             for param in params:
-                lines.extend(_format_param(param))
+                lines.extend(
+                    _format_param(param, heading_level=3 if skip_header else 4)
+                )
 
     return "\n".join(line.rstrip() for line in lines)
 

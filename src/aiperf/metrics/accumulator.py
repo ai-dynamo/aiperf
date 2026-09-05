@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
@@ -36,6 +37,9 @@ from aiperf.metrics.derived_latency import (
     inject_derived_latency_metrics,
 )
 from aiperf.metrics.display_units import to_display_unit
+from aiperf.metrics.e2e_normalized_interactivity_analyzer import (
+    inject_e2e_normalized_interactivity_metrics,
+)
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.network_adjusted_analyzer import (
@@ -111,6 +115,17 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # One-shot latch for the mid-run "enable cache reporting" server-knob hint.
         self._warned_missing_cache_reporting: bool = False
 
+        # Pooled speculative-decoding acceptance histogram, keyed by
+        # (benchmark_phase, phase_index) so a phase-scoped export pools exactly
+        # the same record set the masked scalar totals do -- the export mask
+        # filters by phase kind and, when a concrete instance is requested, by
+        # phase_index too. Keeps the pooled counts reconciled with
+        # ``total_spec_decode_steps``. Dict aggregation has no home in the numpy
+        # columnar store, so it lives here as the one dedicated reducer.
+        self._acceptance_pool_by_phase: dict[
+            tuple[str, int | None], dict[int, int]
+        ] = {}
+
         # Derive functions for DERIVED metrics
         # _setup_metrics includes transitive dependencies (RECORD/AGGREGATE),
         # so filter to only metrics that actually have derive_value.
@@ -169,6 +184,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
     async def process_record(self, record: MetricRecordsData) -> None:
         """Ingest a single ``MetricRecordsData`` into columnar storage."""
         self._maybe_hint_missing_cache_reporting(record)
+        self._pool_spec_decode_record(record)
         idx = self._next_record_idx
         self._next_record_idx += 1
         meta = record.metadata
@@ -209,6 +225,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 "worker_id": meta.worker_id,
                 "record_processor_id": meta.record_processor_id,
                 "benchmark_phase": str(meta.benchmark_phase),
+                "phase_index": str(meta.phase_index)
+                if meta.phase_index is not None
+                else None,
                 "x_correlation_id": meta.x_correlation_id,
                 "conversation_id": meta.conversation_id,
             },
@@ -226,6 +245,62 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if usage_without_cache_in_record(record.metrics):
             self._warned_missing_cache_reporting = True
             self.warning(CACHE_REPORTING_HINT)
+
+    def _pool_spec_decode_record(self, record: MetricRecordsData) -> None:
+        """Sum a request's accepted-draft histogram into its
+        ``(benchmark_phase, phase_index)`` pool.
+
+        Skips records with no spec-decode stats and error records -- the latter
+        never contribute the ``spec_decode_steps`` metric either, so excluding
+        them here keeps the pooled counts reconciled with the masked scalar
+        ``total_spec_decode_steps``.
+        """
+        spec = record.spec_decode_acceptance
+        if spec is None or record.error is not None:
+            return
+        key = (str(record.metadata.benchmark_phase), record.metadata.phase_index)
+        pool = self._acceptance_pool_by_phase.setdefault(key, {})
+        for accepted_draft_count, steps in spec.acceptance_histogram.items():
+            pool[accepted_draft_count] = pool.get(accepted_draft_count, 0) + steps
+
+    def _pooled_acceptance_histogram(
+        self, ctx: ExportContext | None
+    ) -> dict[int, int] | None:
+        """Return the pooled histogram for the exported phase, key-sorted.
+
+        Mirrors the scalar export mask: a phase-scoped export selects pools by
+        phase kind, and by ``phase_index`` too when a concrete instance was
+        requested; otherwise it merges every same-kind instance. Windowed
+        (realtime/timeslice) exports return None -- the pooled histogram is a
+        run-level artifact, not defined per rolling window. A fully-unbounded
+        export pools every phase.
+        """
+        if not self._acceptance_pool_by_phase:
+            return None
+        if ctx is not None and ctx.phase is not None:
+            phase = str(ctx.phase)
+            selected = [
+                pool
+                for (
+                    pool_phase,
+                    pool_index,
+                ), pool in self._acceptance_pool_by_phase.items()
+                if pool_phase == phase
+                and (ctx.phase_index is None or pool_index == ctx.phase_index)
+            ]
+        elif ctx is not None and (ctx.start_ns is not None or ctx.end_ns is not None):
+            return None
+        else:
+            selected = list(self._acceptance_pool_by_phase.values())
+        merged: dict[int, int] = {}
+        for pool in selected:
+            for accepted_draft_count, steps in pool.items():
+                merged[accepted_draft_count] = (
+                    merged.get(accepted_draft_count, 0) + steps
+                )
+        if not merged:
+            return None
+        return {j: merged[j] for j in sorted(merged)}
 
     def query_time_range(self, start_ns: int, end_ns: int) -> BoolArray:
         """Return a boolean mask where True marks records in [start_ns, end_ns)."""
@@ -258,8 +333,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if ctx.phase is not None:
             phase_value = str(ctx.phase)
             mask &= self._column_store.mask_for_categorical(
-                "benchmark_phase", phase_value
+                "benchmark_phase", phase_value, count=n
             )
+            if ctx.phase_index is not None:
+                mask &= self._column_store.mask_for_categorical(
+                    "phase_index", str(ctx.phase_index), count=n
+                )
             return mask
         if ctx.start_ns is not None:
             mask &= self._column_store.start_ns[:n] >= ctx.start_ns
@@ -303,6 +382,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         output = self._build_metric_results(scalar_dict, record_arrays, sketch_results)
 
         n = self._column_store.count
+        if mask is not None:
+            # Cap to mask length: mask was snapshotted before this call and
+            # concurrent ingestion (asyncio.to_thread race) may have grown count.
+            n = min(n, len(mask))
         if n > 0:
             is_error = self._column_store.metadata_bool("has_error")[:n] == 1
             if mask is not None:
@@ -359,7 +442,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 col = store.numeric(tag)
                 clean = col[~np.isnan(col)]
             else:
-                values = store.numeric(tag)[mask]
+                # Cap to mask length before boolean indexing — concurrent ingestion
+                # (asyncio.to_thread race) may have grown the column beyond the mask snapshot.
+                values = store.numeric(tag)[: len(mask)][mask]
                 clean = values[~np.isnan(values)]
             if len(clean) == 0:
                 continue
@@ -541,7 +626,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 start_ns=ctx.start_ns or None,
                 end_ns=ctx.end_ns or None,
                 phase=ctx.phase,
+                phase_index=ctx.phase_index,
             )
+        # Deliberately NOT asyncio.to_thread: this is the realtime path, which
+        # runs while records are still being ingested. Off-loading it would let
+        # a worker thread read the column arrays while the event loop mutates
+        # (and reallocates on grow) them, with no lock between the two. The
+        # final export path can safely use a thread because ingestion has
+        # stopped by then; see export_results.
         return self._summarize_for_export_context(export_ctx)
 
     def _summarize_for_export_context(
@@ -609,17 +701,36 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 mask=mask,
                 warn_degraded=self._warn_replay_degraded,
             )
+            # E2E Normalized Interactivity (AgentX/InferenceX Pareto x-axis):
+            # 1 / p(request_latency_s / OSL), request-weighted over the masked
+            # columns. Reported run-scoped (not per timeslice) to match InferenceX,
+            # which defines this x-axis at run level only -- unlike the send-lag
+            # family above, the value is well-defined per slice, so per-slice
+            # support is a possible follow-up, not a correctness constraint.
+            inject_e2e_normalized_interactivity_metrics(
+                self._column_store,
+                overall_results,
+                mask=mask,
+            )
 
         overall_results = self._filter_hidden_metrics(overall_results)
         self.debug(lambda: f"Summarized {len(overall_results)} metric results")
         return AccumulatorMetricsSummary(
             results=overall_results,
             timeslices=timeslices,
+            pooled_spec_decode_acceptance_histogram=self._pooled_acceptance_histogram(
+                ctx
+            ),
         )
 
     async def export_results(self, ctx: ExportContext) -> AccumulatorMetricsSummary:
         """Export final metrics results for the requested phase/window."""
-        return self._summarize_for_export_context(ctx)
+        # Ctrl+C finalizes before late record processors necessarily stop
+        # publishing. Keep that path on the event loop so column-store mutation
+        # cannot race a worker thread traversing its arrays.
+        if ctx.cancelled:
+            return self._summarize_for_export_context(ctx)
+        return await asyncio.to_thread(self._summarize_for_export_context, ctx)
 
     def _inject_sweep_metrics(
         self,

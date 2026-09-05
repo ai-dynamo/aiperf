@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import ConversationBranchMode, CreditPhase
 from aiperf.credit.messages import FirstToken
-from aiperf.credit.sticky_router import StickyCreditRouter
+from aiperf.credit.sticky_router import StickyCreditRouter, _StickyEntry
 from aiperf.credit.structs import Credit
 from tests.unit.timing.conftest import make_credit
 
@@ -46,7 +47,7 @@ class TestStickyCreditRouterFairLoadBalancing:
         worker_id = router._router_client.send_to.call_args[0][0]
         assert worker_id == "worker-2"
         assert len(router._sticky_sessions) == 1
-        assert list(router._sticky_sessions.values())[0] == "worker-2"
+        assert list(router._sticky_sessions.values())[0].worker_id == "worker-2"
 
     async def test_creates_conversation_assignment(self, benchmark_run) -> None:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
@@ -58,7 +59,7 @@ class TestStickyCreditRouterFairLoadBalancing:
         await router.send_credit(credit)
 
         assert len(router._sticky_sessions) == 1
-        assert router._sticky_sessions["test-corr-id"] == "worker-A"
+        assert router._sticky_sessions["test-corr-id"].worker_id == "worker-A"
 
     async def test_error_if_no_workers_available(self, benchmark_run) -> None:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
@@ -78,7 +79,7 @@ class TestStickyCreditRouterStickyRouting:
         router._register_worker("worker-B")
 
         instance_id = "test-instance-123"
-        router._sticky_sessions[instance_id] = "worker-A"
+        router._sticky_sessions[instance_id] = _StickyEntry(worker_id="worker-A")
 
         credit = make_credit(
             id=2,
@@ -92,7 +93,7 @@ class TestStickyCreditRouterStickyRouting:
 
         worker_id = router._router_client.send_to.call_args[0][0]
         assert worker_id == "worker-A"
-        assert router._sticky_sessions[instance_id] == "worker-A"
+        assert router._sticky_sessions[instance_id].worker_id == "worker-A"
 
     async def test_cleans_up_assignment_on_final_turn(self, benchmark_run) -> None:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
@@ -100,7 +101,7 @@ class TestStickyCreditRouterStickyRouting:
         router._register_worker("worker-A")
 
         instance_id = "test-instance-456"
-        router._sticky_sessions[instance_id] = "worker-A"
+        router._sticky_sessions[instance_id] = _StickyEntry(worker_id="worker-A")
 
         credit = make_credit(
             id=5,
@@ -154,36 +155,48 @@ class TestStickyCreditRouterLoadTracking:
 
         assert router._workers["worker-1"].in_flight_credits == 0
 
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="s1", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
         assert router._workers["worker-1"].in_flight_credits == 1
         assert router._workers["worker-1"].total_sent_credits == 1
+        assert ("profiling", None, 1) in router._workers["worker-1"].active_credit_ids
 
-        router._track_credit_sent("worker-1", 2)
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
+        router._track_credit_sent("worker-1", credit2)
         assert router._workers["worker-1"].in_flight_credits == 2
         assert router._workers["worker-1"].total_sent_credits == 2
+        assert ("profiling", None, 2) in router._workers["worker-1"].active_credit_ids
 
     async def test_track_credit_returned(self, benchmark_run) -> None:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-1")
 
         router._workers["worker-1"].in_flight_credits = 5
-        router._workers["worker-1"].active_credit_ids.add(1)
-        router._workers["worker-1"].active_credit_ids.add(2)
+        router._workers["worker-1"].active_credit_ids.add(("profiling", None, 1))
+        router._workers["worker-1"].active_credit_ids.add(("profiling", None, 2))
         router._workers_by_load[0].discard("worker-1")
         router._workers_by_load[5].add("worker-1")
         router._min_load = 5
 
+        credit = make_credit(id=1, corr_id="s1", num_turns=1)
         router._track_credit_returned(
-            "worker-1", 1, cancelled=False, error_reported=False
+            "worker-1", credit, cancelled=False, error_reported=False
         )
         assert router._workers["worker-1"].in_flight_credits == 4
         assert router._workers["worker-1"].total_completed_credits == 1
+        assert ("profiling", None, 1) not in router._workers[
+            "worker-1"
+        ].active_credit_ids
 
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
         router._track_credit_returned(
-            "worker-1", 2, cancelled=False, error_reported=False
+            "worker-1", credit2, cancelled=False, error_reported=False
         )
         assert router._workers["worker-1"].in_flight_credits == 3
         assert router._workers["worker-1"].total_completed_credits == 2
+        assert ("profiling", None, 2) not in router._workers[
+            "worker-1"
+        ].active_credit_ids
 
     async def test_register_worker(self, benchmark_run) -> None:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
@@ -273,7 +286,7 @@ class TestStickyCreditRouterCompleteScenario:
 
         # Route second turns (should be sticky)
         for i, instance_id in enumerate(instance_ids):
-            expected_worker = router._sticky_sessions[instance_id]
+            expected_worker = router._sticky_sessions[instance_id].worker_id
             credit = make_credit(
                 id=100 + i,
                 conv_id="session-test",
@@ -514,9 +527,13 @@ class TestStickyCreditRouterCancellation:
         router._register_worker("worker-1")
         router._register_worker("worker-2")
 
-        # worker-1 has 3 in-flight credits
+        # worker-1 has 3 in-flight credits (composite keys: (phase, phase_index, credit_id))
         router._workers["worker-1"].in_flight_credits = 3
-        router._workers["worker-1"].active_credit_ids = {1, 2, 3}
+        router._workers["worker-1"].active_credit_ids = {
+            ("warmup", None, 1),
+            ("warmup", None, 2),
+            ("warmup", None, 3),
+        }
         # worker-2 has 0 in-flight credits
         router._workers["worker-2"].in_flight_credits = 0
 
@@ -527,6 +544,87 @@ class TestStickyCreditRouterCancellation:
         call_args = router._router_client.send_to.call_args[0]
         assert call_args[0] == "worker-1"
         assert call_args[1].credit_ids == {1, 2, 3}
+
+    @pytest.mark.parametrize(
+        "active_credit_ids, expected_wire_ids, expected_count",
+        [
+            param(
+                {("warmup", None, 5), ("profiling", 0, 5)},
+                {5},
+                2,
+                id="same_int_id_across_two_phases",
+            ),
+            param(
+                {("profiling", 0, 7), ("profiling", 1, 7)},
+                {7},
+                2,
+                id="same_int_id_across_two_phase_indexes",
+            ),
+            param(
+                {("warmup", None, 1), ("warmup", None, 2)},
+                {1, 2},
+                2,
+                id="distinct_ids_same_phase",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_cancel_all_credits_same_id_across_phases_counts_both(
+        self,
+        benchmark_run,
+        active_credit_ids: set[tuple[str, int | None, int]],
+        expected_wire_ids: set[int],
+        expected_count: int,
+    ) -> None:
+        """Composite keys must survive the cancel path so the count is not collapsed.
+
+        Credit ids restart at 0 every phase, so under seamless overlap the same
+        int is live in two phases at once. The wire message carries bare ids
+        (``CancelCredits.credit_ids`` is ``set[int]``), so collapsing there is
+        expected -- but the router's own set and reported count must stay
+        composite, or cancellation silently under-reports.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+        router._workers["worker-1"].in_flight_credits = len(active_credit_ids)
+        router._workers["worker-1"].active_credit_ids = set(active_credit_ids)
+
+        with patch.object(router, "info") as info:
+            await router.cancel_all_credits()
+
+        assert router._router_client.send_to.call_count == 1
+        assert router._router_client.send_to.call_args[0][1].credit_ids == (
+            expected_wire_ids
+        )
+        info.assert_called_once()
+        assert f"{expected_count} in-flight credits" in info.call_args[0][0]
+
+    async def test_cancel_all_credits_colliding_ids_across_workers_sum_correctly(
+        self, benchmark_run
+    ) -> None:
+        """Per-worker composite sets must sum, not merge, across workers."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+        router._register_worker("worker-2")
+
+        router._workers["worker-1"].in_flight_credits = 2
+        router._workers["worker-1"].active_credit_ids = {
+            ("warmup", None, 3),
+            ("profiling", 0, 3),
+        }
+        router._workers["worker-2"].in_flight_credits = 2
+        router._workers["worker-2"].active_credit_ids = {
+            ("warmup", None, 3),
+            ("profiling", 0, 3),
+        }
+
+        with patch.object(router, "info") as info:
+            await router.cancel_all_credits()
+
+        assert router._router_client.send_to.call_count == 2
+        info.assert_called_once()
+        assert "4 in-flight credits across 2 workers" in info.call_args[0][0]
 
     async def test_cancel_all_credits_no_workers_with_in_flight(
         self, benchmark_run
@@ -554,6 +652,39 @@ class TestStickyCreditRouterCancellation:
 
         assert router._cancellation_pending is True
 
+    async def test_cancellation_suppression_expires_and_is_not_latched(
+        self, benchmark_run
+    ) -> None:
+        """Suppression is a drain window, not a permanent latch.
+
+        Cancellation is global while begin_phase is per-phase, so under
+        seamless overlap a warmup drain can cancel after profiling has already
+        called begin_phase. A latched flag would then disable reconciliation,
+        orphan detection and in-flight warnings for the whole remaining run.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+
+        await router.cancel_all_credits()
+        assert router._cancellation_pending is True
+
+        # Nothing calls begin_phase again (profiling already started); the
+        # window must still lapse on its own.
+        router._cancellation_pending_until_ns -= int(1e12)
+        assert router._cancellation_pending is False
+
+    async def test_begin_phase_closes_cancellation_window(self, benchmark_run) -> None:
+        """A new phase starting still clears suppression immediately."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+
+        await router.cancel_all_credits()
+        assert router._cancellation_pending is True
+
+        router.begin_phase(CreditPhase.PROFILING, phase_index=None)
+
+        assert router._cancellation_pending is False
+
 
 class TestStickyCreditRouterWorkerUnregistration:
     """Test worker unregistration edge cases."""
@@ -567,7 +698,10 @@ class TestStickyCreditRouterWorkerUnregistration:
         router._register_worker("worker-1")
         router._workers["worker-1"].active_sessions = 2
         router._workers["worker-1"].active_session_ids = {"session-1", "session-2"}
-        router._sticky_sessions = {"session-1": "worker-1", "session-2": "worker-1"}
+        router._sticky_sessions = {
+            "session-1": _StickyEntry(worker_id="worker-1"),
+            "session-2": _StickyEntry(worker_id="worker-1"),
+        }
 
         router._unregister_worker("worker-1")
 
@@ -610,11 +744,13 @@ class TestStickyCreditRouterMinLoadTracking:
 
         assert router._min_load == 0
 
-        router._track_credit_sent("worker-1", 1)
+        credit1 = make_credit(id=1, corr_id="s1", num_turns=1)
+        router._track_credit_sent("worker-1", credit1)
         # worker-2 still at 0, so min_load stays 0
         assert router._min_load == 0
 
-        router._track_credit_sent("worker-2", 2)
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
+        router._track_credit_sent("worker-2", credit2)
         # Both workers now at 1, min_load should be 1
         assert router._min_load == 1
 
@@ -626,16 +762,19 @@ class TestStickyCreditRouterMinLoadTracking:
         router._register_worker("worker-2")
 
         # Send credits to both workers
-        router._track_credit_sent("worker-1", 1)
-        router._track_credit_sent("worker-2", 2)
-        router._track_credit_sent("worker-1", 3)
+        credit1 = make_credit(id=1, corr_id="s1", num_turns=1)
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
+        credit3 = make_credit(id=3, corr_id="s3", num_turns=1)
+        router._track_credit_sent("worker-1", credit1)
+        router._track_credit_sent("worker-2", credit2)
+        router._track_credit_sent("worker-1", credit3)
 
         # worker-1: 2 in-flight, worker-2: 1 in-flight
         assert router._min_load == 1
 
         # Return from worker-2, now at 0
         router._track_credit_returned(
-            "worker-2", 2, cancelled=False, error_reported=False
+            "worker-2", credit2, cancelled=False, error_reported=False
         )
         assert router._min_load == 0
 
@@ -671,10 +810,11 @@ class TestStickyCreditRouterErrorTracking:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="test", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
 
         router._track_credit_returned(
-            "worker-1", 1, cancelled=False, error_reported=True
+            "worker-1", credit, cancelled=False, error_reported=True
         )
 
         assert router._workers["worker-1"].total_errors_reported == 1
@@ -685,10 +825,11 @@ class TestStickyCreditRouterErrorTracking:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="test", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
 
         router._track_credit_returned(
-            "worker-1", 1, cancelled=True, error_reported=True
+            "worker-1", credit, cancelled=True, error_reported=True
         )
 
         assert router._workers["worker-1"].total_cancelled_credits == 1
@@ -812,7 +953,10 @@ class TestStickyCreditRouterMarkComplete:
         router._register_worker("worker-1")
         router._workers["worker-1"].active_sessions = 2
         router._workers["worker-1"].active_session_ids = {"s1", "s2"}
-        router._sticky_sessions = {"s1": "worker-1", "s2": "worker-1"}
+        router._sticky_sessions = {
+            "s1": _StickyEntry(worker_id="worker-1"),
+            "s2": _StickyEntry(worker_id="worker-1"),
+        }
 
         router.mark_credits_complete()
 
@@ -836,7 +980,7 @@ class TestStickyCreditRouterStickySessionReassignment:
         router._register_worker("worker-2")
 
         # Create sticky session to worker-1
-        router._sticky_sessions["session-X"] = "worker-1"
+        router._sticky_sessions["session-X"] = _StickyEntry(worker_id="worker-1")
 
         # Unregister worker-1
         router._unregister_worker("worker-1")
@@ -856,7 +1000,108 @@ class TestStickyCreditRouterStickySessionReassignment:
         assert worker_id == "worker-2"
 
         # New sticky session should be created
-        assert router._sticky_sessions["session-X"] == "worker-2"
+        assert router._sticky_sessions["session-X"].worker_id == "worker-2"
+
+
+def _make_no_request_credit(
+    credit_id: int = 1, corr_id: str = "vc-corr", num_turns: int = 1
+) -> Credit:
+    return Credit(
+        id=credit_id,
+        phase=CreditPhase.PROFILING,
+        conversation_id="conv-vc",
+        x_correlation_id=corr_id,
+        turn_index=0,
+        num_turns=num_turns,
+        issued_at_ns=0,
+        no_request=True,
+    )
+
+
+class TestStickyCreditRouterNoRequestShortCircuit:
+    """Virtual (no_request) orchestrator credits must never reach a worker; the
+    router synthesizes the CreditReturn in-process and feeds it to the same
+    return-consumer callback a real worker return would hit."""
+
+    async def test_no_request_credit_does_not_select_worker_or_wire_send(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+
+        captured: list[tuple[str, object]] = []
+
+        async def on_return(worker_id: str, credit_return) -> None:
+            captured.append((worker_id, credit_return))
+
+        router.set_return_callback(on_return)
+
+        before_in_flight = router._workers["worker-1"].in_flight_credits
+        before_active = set(router._workers["worker-1"].active_credit_ids)
+
+        credit = _make_no_request_credit(credit_id=7, corr_id="vc-1")
+        await router.send_credit(credit)
+        # Dispatch is decoupled via execute_async; let the scheduled task run.
+        await asyncio.sleep(0)
+
+        # (a) no worker selected, no wire send
+        router._router_client.send_to.assert_not_called()
+        # (b) per-worker load structures untouched
+        assert router._workers["worker-1"].in_flight_credits == before_in_flight
+        assert set(router._workers["worker-1"].active_credit_ids) == before_active
+        assert credit.id not in router._workers["worker-1"].active_credit_ids
+        # no sticky session created
+        assert "vc-1" not in router._sticky_sessions
+
+        # (c) return callback invoked with a synthesized CreditReturn
+        assert len(captured) == 1
+        worker_id, credit_return = captured[0]
+        assert worker_id == ""
+        assert credit_return.credit is credit
+        assert credit_return.cancelled is False
+        assert credit_return.error is None
+        assert credit_return.first_token_sent is False
+
+    async def test_no_request_credit_synthesized_with_zero_workers(
+        self, benchmark_run
+    ) -> None:
+        """The short-circuit sits above the empty-workers check, so a no_request
+        credit is synthesized even with no workers registered."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+
+        captured: list[object] = []
+
+        async def on_return(worker_id: str, credit_return) -> None:
+            captured.append(credit_return)
+
+        router.set_return_callback(on_return)
+
+        credit = _make_no_request_credit(credit_id=9, corr_id="vc-2")
+        # Must not raise "No workers available".
+        await router.send_credit(credit)
+        await asyncio.sleep(0)
+
+        router._router_client.send_to.assert_not_called()
+        assert len(captured) == 1
+        assert captured[0].credit is credit
+
+    async def test_normal_credit_still_goes_through_worker(self, benchmark_run) -> None:
+        """Regression guard: a no_request=False credit still selects a worker,
+        tracks the sent credit, and wire-sends."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+
+        credit = make_credit(id=1, corr_id="normal-corr", num_turns=1)
+        await router.send_credit(credit)
+
+        router._router_client.send_to.assert_called_once()
+        assert router._router_client.send_to.call_args[0][0] == "worker-1"
+        assert router._workers["worker-1"].in_flight_credits == 1
+        # Check composite key: (phase, phase_index, credit_id)
+        assert ("profiling", None, 1) in router._workers["worker-1"].active_credit_ids
 
 
 class TestStickyCreditRouterWorkerReadiness:
@@ -908,3 +1153,540 @@ class TestStickyCreditRouterWorkerReadiness:
 
         router._register_worker("worker-2")
         await wait_task
+
+
+class TestStickyCreditRouterDAGChildren:
+    """Sticky routing honors parent_correlation_id so DAG children land on
+    the parent's worker, with refcount-based eviction that survives the
+    parent's own final turn until children complete."""
+
+    def _child_credit(
+        self, *, corr_id: str, parent_corr: str, turn: int = 0, num_turns: int = 1
+    ) -> Credit:
+        return Credit(
+            id=999,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child-conv",
+            x_correlation_id=corr_id,
+            turn_index=turn,
+            num_turns=num_turns,
+            issued_at_ns=0,
+            parent_correlation_id=parent_corr,
+        )
+
+    async def test_child_routes_to_parent_worker(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        router._register_worker("worker-B")
+
+        # Pin root to worker-A via an initial multi-turn send.
+        router._sticky_sessions["root"] = _StickyEntry(worker_id="worker-A")
+
+        child_credit = self._child_credit(corr_id="child1", parent_corr="root")
+        await router.send_credit(child_credit)
+
+        worker_id = router._router_client.send_to.call_args[0][0]
+        assert worker_id == "worker-A"
+
+    async def test_register_child_routing_prevents_eviction_on_parent_final_turn(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+
+        # Parent's first turn (non-final) creates the sticky entry.
+        router._sticky_sessions["root"] = _StickyEntry(worker_id="worker-A")
+        router._workers["worker-A"].active_sessions = 1
+        router._workers["worker-A"].active_session_ids.add("root")
+
+        # Orchestrator bumps refcount before dispatching a child.
+        router.register_child_routing("root")
+        assert router._sticky_sessions["root"].ref_count == 2
+
+        # Parent's final turn arrives — entry must NOT be popped yet (child still outstanding).
+        parent_final = make_credit(
+            id=5,
+            conv_id="parent-conv",
+            turn=1,
+            corr_id="root",
+            num_turns=2,
+        )
+        await router.send_credit(parent_final)
+        assert "root" in router._sticky_sessions
+        assert router._sticky_sessions["root"].parent_final_seen is True
+        assert router._sticky_sessions["root"].ref_count == 1
+
+        # Child completes — release_child_routing drops refcount to 0, entry evicted.
+        router.release_child_routing("root")
+        assert "root" not in router._sticky_sessions
+
+    async def test_child_final_turn_does_not_touch_parent_entry(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+
+        router._sticky_sessions["root"] = _StickyEntry(
+            worker_id="worker-A", ref_count=2
+        )
+
+        # Child's final turn arrives — must not decrement or pop parent's entry.
+        child_final = self._child_credit(
+            corr_id="child1", parent_corr="root", turn=0, num_turns=1
+        )
+        await router.send_credit(child_final)
+
+        assert "root" in router._sticky_sessions
+        assert router._sticky_sessions["root"].ref_count == 2
+        assert router._sticky_sessions["root"].parent_final_seen is False
+
+    async def test_release_without_parent_final_seen_waits_for_parent(
+        self, benchmark_run
+    ) -> None:
+        """If children finish before the parent's final turn, the entry stays
+        until the parent's final turn marks parent_final_seen."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-A")
+        router._sticky_sessions["root"] = _StickyEntry(
+            worker_id="worker-A", ref_count=2
+        )
+
+        router.release_child_routing("root")
+        # Still alive because parent_final_seen is False.
+        assert "root" in router._sticky_sessions
+        assert router._sticky_sessions["root"].ref_count == 1
+
+    async def test_parent_final_turn_with_spawns_defers_eviction(
+        self, benchmark_run
+    ) -> None:
+        """Race fix: parent's final turn that declares subagent_spawns must
+        NOT evict the sticky entry — the orchestrator's register_child_routing
+        calls fire after the credit return, so the entry must survive to be
+        bumped back up. Eviction defers to release_child_routing."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+
+        # Parent's one-and-only turn: turn 0, num_turns=1 (final), with spawns.
+        parent_credit = make_credit(
+            id=1,
+            conv_id="parent-conv",
+            turn=0,
+            corr_id="root",
+            num_turns=1,
+            has_forks=True,
+        )
+        await router.send_credit(parent_credit)
+
+        # Entry must still exist so orchestrator.register_child_routing can find it.
+        assert "root" in router._sticky_sessions
+        entry = router._sticky_sessions["root"]
+        assert entry.parent_final_seen is True
+        assert entry.ref_count == 0
+        assert entry.worker_id == "worker-A"
+
+        # Orchestrator registers two children; refcount resurrects to 2.
+        router.register_child_routing("root")
+        router.register_child_routing("root")
+        assert router._sticky_sessions["root"].ref_count == 2
+
+        # First child terminates.
+        router.release_child_routing("root")
+        assert "root" in router._sticky_sessions
+        assert router._sticky_sessions["root"].ref_count == 1
+
+        # Last child terminates — now the entry can finally be evicted.
+        router.release_child_routing("root")
+        assert "root" not in router._sticky_sessions
+
+    async def test_parent_final_turn_without_spawns_evicts_normally(
+        self, benchmark_run
+    ) -> None:
+        """Regression guard: non-DAG parents (has_forks=False)
+        still evict on their final turn as before."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+
+        router._sticky_sessions["root"] = _StickyEntry(worker_id="worker-A")
+        router._workers["worker-A"].active_sessions = 1
+        router._workers["worker-A"].active_session_ids.add("root")
+
+        final_turn = make_credit(
+            id=2,
+            conv_id="parent-conv",
+            turn=1,
+            corr_id="root",
+            num_turns=2,
+            has_forks=False,
+        )
+        await router.send_credit(final_turn)
+
+        assert "root" not in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 0
+
+    async def test_parent_single_turn_with_spawns_creates_entry(
+        self, benchmark_run
+    ) -> None:
+        """When the parent's only turn is also its final turn and declares
+        spawns, the sticky entry must still be created — otherwise children
+        have no entry to find when orchestrator calls register_child_routing."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+
+        parent_credit = make_credit(
+            id=1,
+            conv_id="parent-conv",
+            turn=0,
+            corr_id="root",
+            num_turns=1,
+            has_forks=True,
+        )
+        await router.send_credit(parent_credit)
+
+        assert "root" in router._sticky_sessions
+        assert router._sticky_sessions["root"].worker_id == "worker-A"
+
+    async def test_spawn_child_does_not_create_parent_entry_or_leak_sessions(
+        self, benchmark_run
+    ) -> None:
+        """A SPAWN child whose parent's sticky entry was already evicted must
+        NOT auto-create a parent-keyed entry.
+
+        The auto-create path keyed by ``parent_correlation_id`` would mint a
+        fresh _StickyEntry and bump ``active_sessions`` with no eviction path
+        (final-turn eviction is gated on parent_correlation_id is None),
+        permanently leaking active_sessions and biasing load balancing.
+        With the parent entry gone, SPAWN children route least-loaded
+        instead."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        assert router._workers["worker-A"].active_sessions == 0
+
+        # SPAWN child, non-final turn, parent entry already gone.
+        spawn_child = Credit(
+            id=999,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child-conv",
+            x_correlation_id="child1",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=0,
+            parent_correlation_id="root",
+            branch_mode=ConversationBranchMode.SPAWN,
+        )
+        await router.send_credit(spawn_child)
+
+        # No parent-keyed entry minted; active_sessions not leaked.
+        assert "root" not in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 0
+        # Routed least-loaded to the only worker.
+        assert router._router_client.send_to.call_args[0][0] == "worker-A"
+
+    async def test_fork_child_does_not_create_parent_entry_when_absent(
+        self, benchmark_run
+    ) -> None:
+        """A FORK child whose parent sticky entry was already evicted must NOT
+        auto-create a parent-keyed entry (same leak as SPAWN).
+
+        Auto-create keyed by ``parent_correlation_id`` would mint a fresh
+        ``_StickyEntry`` and bump ``active_sessions`` with no eviction path
+        (final-turn eviction requires ``parent_correlation_id is None``).
+        When the parent entry still exists, FORK children co-locate via the
+        sticky hit path and never reach auto-create.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        assert router._workers["worker-A"].active_sessions == 0
+
+        fork_child = Credit(
+            id=999,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child-conv",
+            x_correlation_id="child1",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=0,
+            parent_correlation_id="root",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        await router.send_credit(fork_child)
+
+        assert "root" not in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 0
+        assert router._router_client.send_to.call_args[0][0] == "worker-A"
+
+    async def test_fork_child_colocates_when_parent_entry_exists(
+        self, benchmark_run
+    ) -> None:
+        """Normal FORK sticky: parent entry present → child pins to parent worker."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        router._register_worker("worker-B")
+
+        parent_credit = make_credit(
+            id=1,
+            conv_id="parent-conv",
+            turn=0,
+            corr_id="root",
+            num_turns=2,
+            has_forks=True,
+        )
+        await router.send_credit(parent_credit)
+        assert router._sticky_sessions["root"].worker_id == "worker-A"
+        parent_sessions = router._workers["worker-A"].active_sessions
+
+        fork_child = Credit(
+            id=2,
+            phase=CreditPhase.PROFILING,
+            conversation_id="child-conv",
+            x_correlation_id="child1",
+            turn_index=0,
+            num_turns=2,
+            issued_at_ns=0,
+            parent_correlation_id="root",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        await router.send_credit(fork_child)
+
+        assert router._sticky_sessions["root"].worker_id == "worker-A"
+        assert router._workers["worker-A"].active_sessions == parent_sessions
+        assert router._router_client.send_to.call_args[0][0] == "worker-A"
+
+    async def test_evict_unclaimed_sticky_after_parent_final_with_forks(
+        self, benchmark_run
+    ) -> None:
+        """R3: parent final with has_forks retains sticky; when no child ever
+        calls register_child_routing, evict_unclaimed_sticky must pop the
+        entry and decrement active_sessions."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+
+        parent_credit = make_credit(
+            id=1,
+            conv_id="parent-conv",
+            turn=0,
+            corr_id="root",
+            num_turns=1,
+            has_forks=True,
+        )
+        await router.send_credit(parent_credit)
+
+        assert "root" in router._sticky_sessions
+        entry = router._sticky_sessions["root"]
+        assert entry.parent_final_seen is True
+        assert entry.ref_count == 0
+        assert router._workers["worker-A"].active_sessions == 1
+
+        # Simulate all-children-failed finalize (no register_child_routing).
+        router.evict_unclaimed_sticky("root")
+
+        assert "root" not in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 0
+
+    async def test_evict_unclaimed_sticky_noop_when_children_hold_refs(
+        self, benchmark_run
+    ) -> None:
+        """Must not pop while register_child_routing has outstanding refs."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-A")
+        router._sticky_sessions["root"] = _StickyEntry(
+            worker_id="worker-A", ref_count=1, parent_final_seen=True
+        )
+        router._workers["worker-A"].active_sessions = 1
+        router._workers["worker-A"].active_session_ids.add("root")
+
+        router.evict_unclaimed_sticky("root")
+
+        assert "root" in router._sticky_sessions
+        assert router._sticky_sessions["root"].ref_count == 1
+        assert router._workers["worker-A"].active_sessions == 1
+
+    async def test_evict_unclaimed_sticky_noop_before_parent_final(
+        self, benchmark_run
+    ) -> None:
+        """Mid-session fork failure must leave sticky for remaining parent turns."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-A")
+        router._sticky_sessions["root"] = _StickyEntry(
+            worker_id="worker-A", ref_count=0, parent_final_seen=False
+        )
+        router._workers["worker-A"].active_sessions = 1
+        router._workers["worker-A"].active_session_ids.add("root")
+
+        router.evict_unclaimed_sticky("root")
+
+        assert "root" in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 1
+
+
+class TestVirtualReturnFatalError:
+    """A failing request-free virtual-return callback must be forwarded to the
+    fatal-error sink (so the phase surfaces it) instead of being swallowed."""
+
+    async def test_virtual_return_failure_forwarded_to_fatal_sink(
+        self, benchmark_run
+    ) -> None:
+        from aiperf.credit.messages import CreditReturn
+
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+
+        async def failing_return(worker_id, credit_return):
+            raise RuntimeError("intercept blew up")
+
+        router.set_return_callback(failing_return)
+        captured: list[BaseException] = []
+        router.set_fatal_error_callback(captured.append)
+
+        credit = make_credit(id=1, corr_id="c", turn=0, num_turns=1)
+        await router._fire_virtual_return(
+            CreditReturn(
+                credit=credit, cancelled=False, error=None, first_token_sent=False
+            )
+        )
+
+        assert len(captured) == 1
+        assert isinstance(captured[0], RuntimeError)
+        assert "intercept blew up" in str(captured[0])
+
+
+class TestStickyCreditRouterFinalTurnAccounting:
+    """Final-turn eviction must credit the worker that held the session."""
+
+    async def test_final_turn_decrements_the_pinned_worker_not_the_new_one(
+        self, benchmark_run
+    ) -> None:
+        """A re-routed final turn drove the *new* worker's counter negative.
+
+        The eviction block decremented ``self._workers[worker_id]`` -- the
+        freshly-selected worker -- rather than the worker the sticky entry was
+        actually counted against. active_sessions is the first element of the
+        tie-break key, so a worker pushed to -1 wins every subsequent tie for
+        the rest of the run.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+        router._register_worker("worker-2")
+
+        # The session is pinned to worker-1 and counted there. Routing keys are
+        # correlation ids, not conversation ids.
+        entry = _StickyEntry(worker_id="worker-1")
+        router._sticky_sessions["corr-9"] = entry
+        router._workers["worker-1"].active_sessions = 1
+        router._workers["worker-1"].active_session_ids.add("corr-9")
+
+        # worker-1 dies, so the final turn re-routes to worker-2.
+        router._unregister_worker("worker-1")
+        router._sticky_sessions["corr-9"] = entry
+
+        credit = make_credit(
+            id=9,
+            conv_id="session-1",
+            turn=2,
+            corr_id="corr-9",
+            num_turns=3,
+        )
+        await router.send_credit(credit)
+
+        assert router._router_client.send_to.call_args[0][0] == "worker-2"
+        assert router._workers["worker-2"].active_sessions == 0
+        assert "corr-9" not in router._sticky_sessions
+
+
+class TestStickyRoutingAtDagDepth:
+    """DAG grandchildren must co-locate with the session's worker.
+
+    A credit looks its entry up by parent_correlation_id, but only the
+    session root ever owns an entry -- a depth-1 child shares the root's. So a
+    depth-2 grandchild, whose parent id is that depth-1 child, found nothing,
+    logged a warning, and fell through to least-loaded routing, losing exactly
+    the prefix-cache locality the refcount machinery exists to preserve.
+    """
+
+    async def test_grandchild_routes_to_the_session_worker(self, benchmark_run) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-1")
+        router._register_worker("worker-2")
+
+        # Root session pinned to worker-2 (the least loaded at the time).
+        router._sticky_sessions["root"] = _StickyEntry(worker_id="worker-2")
+        router._workers["worker-2"].active_sessions = 1
+        router._workers["worker-2"].active_session_ids.add("root")
+
+        # Depth-1 child registers against the root and aliases its own id.
+        router.register_child_routing("root", "child-1")
+
+        # Depth-2 grandchild's parent is child-1, not root.
+        credit = make_credit(
+            id=5,
+            conv_id="session-1",
+            turn=0,
+            corr_id="grandchild-1",
+            num_turns=1,
+            parent_correlation_id="child-1",
+        )
+        await router.send_credit(credit)
+
+        assert router._router_client.send_to.call_args[0][0] == "worker-2"
+
+    async def test_aliases_are_dropped_with_the_entry(self, benchmark_run) -> None:
+        """Leaving aliases behind would route to a worker that no longer owns
+        the session and grow the dict for the life of the run."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-1")
+
+        entry = _StickyEntry(worker_id="worker-1")
+        router._sticky_sessions["root"] = entry
+        router._workers["worker-1"].active_sessions = 1
+        router._workers["worker-1"].active_session_ids.add("root")
+
+        router.register_child_routing("root", "child-1")
+        assert router._sticky_sessions["child-1"] is entry
+
+        entry.parent_final_seen = True
+        entry.ref_count = 1
+        router.release_child_routing("root")
+
+        assert "root" not in router._sticky_sessions
+        assert "child-1" not in router._sticky_sessions
+
+    async def test_eviction_through_an_alias_still_frees_the_root(
+        self, benchmark_run
+    ) -> None:
+        """Eviction is driven by whichever key the caller holds.
+
+        For a DAG descendant that key is an alias, not the key the entry is
+        filed under. Popping the alias alone left the root name pointing at a
+        dead entry and left the root id in the worker's active_session_ids
+        while active_sessions was decremented -- a permanent desync biasing the
+        active_sessions-first tie-break for the rest of the run.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-1")
+
+        entry = _StickyEntry(worker_id="worker-1", root_key="root")
+        router._sticky_sessions["root"] = entry
+        router._workers["worker-1"].active_sessions = 1
+        router._workers["worker-1"].active_session_ids.add("root")
+
+        router.register_child_routing("root", "child-1")
+        entry.parent_final_seen = True
+        entry.ref_count = 1
+
+        # The caller holds the child's id, not the root's.
+        router.release_child_routing("child-1")
+
+        assert "root" not in router._sticky_sessions
+        assert "child-1" not in router._sticky_sessions
+        assert router._workers["worker-1"].active_sessions == 0
+        assert router._workers["worker-1"].active_session_ids == set()

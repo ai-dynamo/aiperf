@@ -45,7 +45,7 @@ class TestServerMetrics:
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
                     --url {aiperf_mock_server.url} \
-                    --tokenizer gpt2 \
+                    --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \
                     --request-count 50 \
@@ -92,7 +92,7 @@ class TestServerMetrics:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 50 \
@@ -161,7 +161,7 @@ class TestServerMetrics:
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
                     --url {aiperf_mock_server.url} \
-                    --tokenizer gpt2 \
+                    --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \
                     --request-count 100 \
@@ -227,7 +227,7 @@ class TestServerMetrics:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 50 \
@@ -335,7 +335,7 @@ class TestServerMetrics:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 50 \
@@ -386,7 +386,7 @@ class TestServerMetrics:
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
                     --url {aiperf_mock_server.url} \
-                    --tokenizer gpt2 \
+                    --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \
                     --request-count 50 \
@@ -431,7 +431,7 @@ class TestServerMetrics:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --request-count 50 \
                 --concurrency 2 \
@@ -458,7 +458,7 @@ class TestServerMetrics:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 25 \
@@ -501,7 +501,7 @@ class TestServerMetrics:
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
                 --url {aiperf_mock_server.url} \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 25 \
@@ -541,7 +541,7 @@ class TestServerMetrics:
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
                     --url {aiperf_mock_server.url} \
-                    --tokenizer gpt2 \
+                    --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \
                     --request-count 50 \

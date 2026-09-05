@@ -4,6 +4,7 @@
 import asyncio
 import atexit
 import contextlib
+import faulthandler
 import glob
 import multiprocessing
 import os
@@ -16,9 +17,10 @@ import warnings
 from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.constants import IS_MACOS, IS_WINDOWS
+from aiperf.common.constants import IS_LINUX, IS_MACOS, IS_WINDOWS
 from aiperf.common.enums import LifecycleState
 from aiperf.common.environment import Environment
+from aiperf.common.event_loop import configure_event_loop_policy_for_platform
 from aiperf.plugin.enums import ServiceType
 
 _logger = AIPerfLogger(__name__)
@@ -36,12 +38,30 @@ warnings.filterwarnings(
 )
 
 
+def register_sigusr1_faulthandler() -> None:
+    """Register a SIGUSR1 stack-dump handler for hang debugging.
+
+    ``kill -USR1 <pid>`` then writes the Python traceback for every thread in
+    the process to stderr (which lands in that process's log). Called in the
+    SystemController (main) process and in every spawned service subprocess so
+    the entire AIPerf process tree is poke-able for hangs even where py-spy
+    isn't available. Best-effort: no-op on platforms without SIGUSR1 (Windows)
+    and silently skipped when handlers can't be installed (e.g. a test harness
+    that wraps stderr in a stream without ``fileno()``).
+    """
+    if not hasattr(signal, "SIGUSR1"):
+        return
+    with contextlib.suppress(ValueError, RuntimeError, AttributeError):
+        faulthandler.register(signal.SIGUSR1, all_threads=True, chain=False)
+
+
 def bootstrap_and_run_service(
     service_type: ServiceType,
     *,
     run: "BenchmarkRun",
     service_id: str | None = None,
     log_queue: "multiprocessing.Queue | None" = None,
+    controller_pid: int | None = None,
     **kwargs,
 ):
     """Bootstrap the service and run it.
@@ -53,6 +73,8 @@ def bootstrap_and_run_service(
         run: BenchmarkRun carrying the v2 BenchmarkConfig + per-run state.
         service_id: Optional unique identifier for this service instance.
         log_queue: Optional multiprocessing queue for child process logging.
+        controller_pid: PID of the launching SystemController, used to arm the
+            child's parent-death guard (see ``_install_parent_death_signal``).
         kwargs: Additional keyword arguments to pass to the service constructor.
     """
     is_child_process = multiprocessing.parent_process() is not None
@@ -77,14 +99,27 @@ def bootstrap_and_run_service(
 
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
     # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
-    # handled via the message bus (ShutdownCommand); process.terminate() is only
-    # called after the message bus path has already timed out, and the manager
-    # falls through to SIGKILL after the join timeout anyway. Ignoring SIGTERM
-    # prevents SIGSEGV crashes that occur when SIGTERM arrives while C extension
-    # code (uvloop, zmq, aiohttp, orjson) is executing.
+    # handled via the SHUTDOWN control command; after that path's delivery
+    # grace, MultiProcessServiceManager goes straight to Process.kill()
+    # (SIGKILL) rather than Process.terminate()+join — terminate would be a
+    # no-op here and only burn the join timeout. Ignoring SIGTERM prevents
+    # SIGSEGV crashes that occur when SIGTERM arrives while C extension code
+    # (uvloop, zmq, aiohttp, orjson) is executing. For hang diagnosis, send
+    # SIGUSR1 (faulthandler dump) or SIGKILL; SIGTERM will not stop the child.
     if is_child_process:
+        # Arm the parent-death guard FIRST, before anything else can leak time,
+        # so a SIGKILL'd controller cannot orphan this process. SIGKILL is the
+        # only viable death signal here precisely because SIGTERM is ignored
+        # just below.
+        _install_parent_death_signal(controller_pid)
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+    # Diagnostic stack-dump signal: `kill -USR1 <pid>` dumps every thread's
+    # traceback to this service's log -- crucial for debugging hangs in the
+    # non-cooperative subprocess pool. The SystemController registers the same
+    # handler so the whole process tree is poke-able.
+    register_sigusr1_faulthandler()
 
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
@@ -161,7 +196,11 @@ def bootstrap_and_run_service(
 
         _exit_if_service_failed(service)
 
-    _configure_event_loop_policy_for_platform()
+    # Also applied at every other real process entrypoint (aiperf.cli,
+    # aiperf.sweep_controller.main, aiperf.orchestrator.subprocess_runner) --
+    # see aiperf.common.event_loop for why this can't be centralized here
+    # alone.
+    configure_event_loop_policy_for_platform()
     _request_high_resolution_timer_on_windows()
 
     with contextlib.suppress(asyncio.CancelledError):
@@ -173,21 +212,53 @@ def bootstrap_and_run_service(
             asyncio.run(_run_service())
 
 
-def _configure_event_loop_policy_for_platform() -> None:
-    """On Windows, switch to ``WindowsSelectorEventLoopPolicy`` before the
-    event loop is created.
+def _install_parent_death_signal(controller_pid: int | None = None) -> None:
+    """Ask the kernel to SIGKILL this process when the controller dies (Linux only).
 
-    pyzmq's async sockets call ``loop.add_reader()`` / ``loop.add_writer()``,
-    which the default ``ProactorEventLoop`` on Windows does not implement.
-    The selector policy must be set before ``asyncio.run()``/``uvloop.run()``
-    constructs the loop.
+    The SystemController launches each service as a ``daemon=True`` child, which
+    only reaps children when the parent exits cleanly via Python's ``atexit``
+    hook. A SIGKILL'd, OOM-killed, or crashed controller never runs that hook,
+    so the services orphan, reparent to init/systemd, and leak RAM
+    indefinitely. ``PR_SET_PDEATHSIG`` is a kernel-level backstop that fires
+    regardless of how the parent dies.
 
-    uvloop is already auto-disabled on Windows via ``environment.py``, so on
-    Windows this only matters for the asyncio path. On non-Windows platforms
-    this is a no-op — the default policy is already correct.
+    SIGKILL (not SIGTERM) is mandatory: child processes ignore SIGTERM to avoid
+    C-extension SIGSEGV (see caller), so a catchable death signal would simply
+    be ignored and the orphan would survive anyway. Since the parent is already
+    gone by the time this fires, there is nothing left to shut down gracefully.
+
+    ``controller_pid`` is the SystemController PID captured at launch time. It is
+    the ground truth for "who is our parent", which matters because
+    PR_SET_PDEATHSIG only delivers for deaths that occur *after* it is armed: if
+    the controller died in the launch/import window before this runs, the child
+    has already reparented to a subreaper (systemd ``--user``, not always PID 1)
+    and the signal would never fire. Comparing the live ``getppid()`` against the
+    captured controller PID detects that race under both fork and spawn start
+    methods. When ``None`` (e.g. tests), it falls back to a ``getppid()``
+    snapshot, which is still correct under fork when the controller is alive.
+
+    Best-effort: any failure to arm the guard is non-fatal (the process simply
+    falls back to the pre-existing ``daemon=True`` behavior).
     """
-    if IS_WINDOWS:
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    if not IS_LINUX:
+        return
+
+    import ctypes
+
+    PR_SET_PDEATHSIG = 1
+    expected_ppid = controller_pid if controller_pid is not None else os.getppid()
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        if libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
+            return
+    except (OSError, AttributeError):
+        return
+
+    # If our parent is no longer the controller, it already died and we
+    # reparented during the race window — the death signal was missed forever,
+    # so exit now rather than orphan.
+    if os.getppid() != expected_ppid:
+        os._exit(1)
 
 
 def _request_high_resolution_timer_on_windows() -> None:

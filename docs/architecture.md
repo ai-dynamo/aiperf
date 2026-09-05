@@ -45,6 +45,22 @@ The System Controller is the central orchestrator that manages the lifecycle and
 - Monitoring the overall progress and health of the benchmarking process
 - Managing error handling, cleanup, and graceful termination of all modules
 
+Result-producing services register their result domains with the System Controller.
+Shutdown begins only after profiling has started and every registered domain has
+either completed or been evicted after a confirmed service failure. This lifecycle
+gate prevents an empty startup barrier from being mistaken for completed results.
+
+Kubernetes result publication is a fail-closed filesystem transaction. Before
+a controller starts benchmark work, and again immediately before export, it
+durably removes any stale ready marker and atomically installs a processing
+marker. After every required artifact is flushed and exported, it atomically
+installs and fsyncs the ready marker before clearing the processing marker. Only
+then does it publish `ResultsExportedMessage` and notify the operator. A crash
+or restarted export before that commit leaves top-level artifacts hidden from
+the results sidecar. Kubernetes sweep aggregation uses
+the same durable ready-marker commit after plotting and scratch-artifact pruning
+finish, so the operator never harvests a partially published aggregate tree.
+
 ### Dataset Manager
 
 The Dataset Manager handles all aspects of input data management during benchmarking runs.
@@ -118,14 +134,16 @@ The Records Manager handles the collection, organization, and storage of benchma
 
 The Records Manager does not hard-wire one handler per producer. Instead, every typed record carries a `record_type` class attribute and is fanned out through a metadata-driven routing table: each accumulator and stream exporter declares the record types it consumes via `record_types` in `plugins.yaml`, and `_dispatch_record` routes each record by `getattr(record, "record_type")` to all registered handlers. This makes each record type a dedicated channel.
 
-Accuracy benchmarking is one such dedicated channel, joining `metric_records`, `gpu_telemetry`, and `server_metrics`:
+Accuracy benchmarking and GPU telemetry use dedicated Records Manager channels.
+Server metrics use the same plugin metadata to select local consumers, but raw
+Prometheus snapshots remain inside Server Metrics Manager:
 
 | Channel (`record_type`) | Producer | Message | Consumers (`record_types`) |
 |---|---|---|---|
 | `metric_records` | Record Processor (`MetricRecordProcessor`) | `RecordsMessage` | `MetricsAccumulator`, JSONL/OTel stream exporters |
 | `accuracy` | Record Processor (`AccuracyRecordProcessor`) | `RecordsMessage` | `AccuracyAccumulator`, `AccuracyJSONLWriter` |
 | `gpu_telemetry` | GPU Telemetry Manager | `TelemetryRecordsMessage` | `GPUTelemetryAccumulator`, GPU JSONL writer |
-| `server_metrics` | Server Metrics Manager | `ServerMetricsRecordMessage` | `ServerMetricsAccumulator`, server-metrics JSONL writer |
+| `server_metrics` | Server Metrics Manager | None (manager-local callback) | `ServerMetricsAccumulator`, server-metrics JSONL writer, both hosted by Server Metrics Manager |
 
 **Two-stage record processing.** The `RecordProcessorService` runs two roles per parsed response (mirroring the accumulator/stream-exporter split on the consumer side): **producers** (`record_processor` category) parse and emit one finished typed record on a declared `record_type` channel — `MetricRecordProcessor` → `MetricRecordsData` (`metric_records`), `AccuracyRecordProcessor` → `AccuracyRecordsData` (`accuracy`) — and **observers** (`record_observer` category, e.g. the raw-record and outputs-json writers) receive a `RecordObserverContext` (the parsed record + all producer outputs keyed by `record_type`) and act without emitting a channel record. Each producer's output carries its own serialized `record_type` discriminator, so the service ships **one generic `RecordsMessage`** per request — `{metadata, records: list[RecordData], error}` — and the `RecordsManager` dispatches each record to its channel handlers by `record.record_type` (no per-type message classes, no type-sniffing). The metric record is the canonical per-request record that drives the phase-completion lockstep, keyed off the message metadata.
 
@@ -151,12 +169,31 @@ flowchart TD
 The GPU Telemetry Manager collects GPU metrics during benchmarking runs via pluggable collectors.
 
 **Key Responsibilities:**
-- Collecting GPU metrics (power, utilization, memory, temperature, errors) via two collector backends:
-  - **DCGM**: Scrapes DCGM Exporter HTTP endpoints (Prometheus format)
-  - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required)
+- Collecting GPU metrics (power, utilization, memory, temperature, errors) via pluggable collector backends:
+  - **DCGM**: Scrapes DCGM Exporter HTTP endpoints (Prometheus format) — NVIDIA GPUs; exposes `nvidia_power_usage` and `nvidia_energy_consumption`
+  - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required) — exposes `nvidia_power_usage`
+  - **amdsmi**: Queries AMD GPUs via the amdsmi Python library — exposes `amd_power` and `amd_energy_consumption`
 - Auto-discovering DCGM endpoints
 - Supporting custom endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
+
+Final GPU samples travel on the telemetry PUSH socket while the completion command
+travels on the control channel — separate transports entirely, so the command
+response alone is not an ingest barrier. The GPU Telemetry Manager closes
+record admission and sends a sequenced terminal marker on the telemetry PUSH socket.
+The Records Manager waits until every sequence through that marker has finished
+dispatch before summarizing or finalizing stream exporters. A missing marker or
+sequence fails result finalization closed instead of publishing a partial JSONL file.
+
+### GPU Power Efficiency Analysis
+
+At the end of each profiling phase, `EnergyEfficiencyAnalyzer` — an `analyzer` plugin — joins GPU telemetry energy/power data with inference token and throughput totals to produce the GPU power-efficiency metric family.
+
+`EnergyEfficiencyAnalyzer.analyze()` is called by the `SummaryContext` at summarize time. It calls `GPUTelemetryAccumulator.available_platforms()` to discover which vendors reported data, then fans out per vendor: querying windowed energy and power totals, computing the 12 derived metrics (total power, total energy, tokens/joule, energy/token, energy/request, energy/user, energy-delay product, performance/watt, output TPS/watt, goodput/watt, average power), and returning them as injected `MetricResult` objects. Each vendor's metrics render in their own console section (`GPU_POWER_EFFICIENCY_NVIDIA`, `GPU_POWER_EFFICIENCY_AMD`); a section is omitted entirely when no GPU of that vendor reported.
+
+![GPU Power Efficiency Data Flow](diagrams/gpu-power-efficiency-flow.svg)
+
+See [`docs/dev/patterns.md` — Externally-Injected Derived Metric Pattern](dev/patterns.md#externally-injected-derived-metric-pattern) for the metric class contract and instructions for adding a new vendor.
 
 ### Server Metrics Manager
 
@@ -165,8 +202,10 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 **Key Responsibilities:**
 - Collecting metrics from Prometheus-compatible endpoints (inference server application metrics, system metrics, custom metrics)
 - Auto-discovering metrics endpoints from configured inference server URLs (`--url`)
+- Discovering eligible inference-server pods through the Kubernetes API, scoped to the benchmark namespace unless another namespace is explicitly configured
 - Supporting custom Prometheus endpoints via `--server-metrics` flag
 - Parsing any metrics exposed in Prometheus format (gauges, counters, histograms)
+- Owning raw server-metric accumulation and JSONL writes locally; only bounded realtime summaries and the final aggregate cross the message bus
 - Typical metrics collected: inference server KV cache usage, request counts, latencies, batch sizes, model-specific metrics, and server resource metrics
 - Auto-detecting non-Prometheus endpoints (e.g. TRT-LLM serves an iteration-stats JSON array at `/metrics` by default), probing `<base>/prometheus/metrics` once as a fallback, and disabling collection for that endpoint after a single warning if neither path yields parseable Prometheus data — see [Server Metrics Compatibility & auto-disable](server-metrics/server-metrics.md#compatibility--auto-disable)
 - Exporting server metrics alongside benchmark results
@@ -193,6 +232,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 **Credit Distribution:**
 - Credits are dispatched to workers via a ROUTER/DEALER pattern (the Timing Manager's sticky ROUTER to each worker's DEALER)
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
+- If a registered worker that owns in-flight credits or sticky sessions is lost during an active benchmark, the Timing Manager cancels the phase and records a terminal failure rather than migrating or truncating worker-local state.
 - Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch
 - The return channel carries no ZMQ envelope identity, so the returning worker id travels inside the message
 - No coordination required between workers
@@ -232,19 +272,82 @@ AIPerf uses ZMQ to maintain **measurement accuracy** by decoupling orchestration
 - **Low-overhead messaging**: Credits are routed directly to workers
 - **Asynchronous by design**: No blocking calls between services, ensuring workers spend maximum time on I/O and timing
 - **Efficient transport**: ZMQ is designed for low-overhead inter-process communication
-- **Scalability**: Supports many local worker processes; Kubernetes is referenced by future-facing code paths, but no Kubernetes service-manager plugin or `ServiceRunType` is registered in this checkout, and distributed Kubernetes execution is not supported
+- **Scalability**: Supports many local worker processes and distributed Kubernetes execution through the registered `kubernetes` service-manager plugin
 
 ### Communication Patterns
 
-AIPerf uses **ZMQ proxies** for message routing between services and workers:
+AIPerf runs two distinct planes over ZMQ: a **pub/sub event bus** for data and
+telemetry, and a **DEALER/ROUTER control channel** for orchestration.
 
-- Services publish strongly-typed messages to specific topics (Pub/Sub pattern)
-- Services subscribe to relevant message types
-- Router/Dealer pattern for credit dispatch to workers
+**Event bus (ZMQ proxies).** Services publish strongly-typed messages to topics
+and subscribe to the message types they care about. This carries every message
+type *except* commands: records, telemetry, progress, results, status
+broadcasts. Alongside it are the dedicated streaming channels:
+
+- ROUTER/DEALER for credit dispatch to workers
 - PUSH/PULL fan-in for credit returns from workers back to the Timing Manager
-- Request/Reply patterns for synchronous operations
+- Request/Reply for synchronous operations
 
 For low event-loop overhead, the streaming credit sockets (the dispatch DEALER/ROUTER and the return PUSH/PULL) are driven directly off the raw ZMQ file descriptor with an edge-triggered, non-blocking batch drain rather than per-message `await` wrappers.
+
+**Control channel.** Commands, service registration, heartbeats, and lifecycle
+status do **not** ride the event bus. Each component service opens a DEALER to
+`CommAddress.CONTROL` using its service ID as the ZMQ identity; the System
+Controller binds the single ROUTER. Payloads are `msgspec` tagged-union structs
+from `aiperf.common.control_structs` rather than Pydantic `Message` subclasses.
+
+```mermaid
+flowchart LR
+    subgraph controller["System Controller"]
+        ROUTER["ROUTER<br/>CommAddress.CONTROL<br/>ROUTER_MANDATORY"]
+    end
+
+    TM["Timing Manager<br/>DEALER"]
+    DM["Dataset Manager<br/>DEALER"]
+    WM["Worker Manager<br/>DEALER"]
+    RM["Records Manager<br/>DEALER"]
+    OTHER["...every other<br/>component service"]
+
+    TM <-->|"Registration / Heartbeat<br/>StatusUpdate / Command"| ROUTER
+    DM <--> ROUTER
+    WM <--> ROUTER
+    RM <--> ROUTER
+    OTHER <--> ROUTER
+```
+
+Because the ROUTER is the only path between two non-controller services, a
+command aimed at a peer is relayed by a controller-side handler rather than sent
+directly — this is how `PROFILE_COMPLETE` and `PROFILE_CANCEL` reach their
+sibling services.
+
+Addressing is symmetric in both directions:
+
+- **Controller to service**: identified by the DEALER identity. A one-shot
+  request awaits a response; a fan-out sends to an explicit list of service IDs.
+  There is no untargeted command broadcast.
+- **Service to controller**: `send_command_to_controller()` on the same socket.
+
+Each command carries a correlation id and is answered exactly once, with an ack,
+a result, an error, or an explicit "no handler" response. See
+[`docs/dev/patterns.md`](dev/patterns.md) § "Control Channel Command Pattern".
+
+Registration is deliberately the *second* readiness proof a service gives: it
+runs after the event-bus connection probe succeeds, so a registered service has
+demonstrated both planes are live.
+
+**Heartbeats are sent on both planes, on purpose.** Every service emits a
+`Heartbeat` struct on the control channel *and* a `HeartbeatMessage` on the event
+bus each interval. These are not duplicates and neither may be removed as one:
+
+| Send | Consumer | Consequence of losing it |
+|---|---|---|
+| `Heartbeat` (control channel) | System Controller's service registry | The service is declared unhealthy and reaped. |
+| `HeartbeatMessage` (event bus) | `TimingManager` feeds it to `StickyCreditRouter.note_worker_heartbeat` | `WorkerLoad.last_heartbeat_ns` has no other source once the registration-time value ages out. Every worker eventually looks stale to `evict_stale_workers`, failing any sufficiently long run with `Fatal worker loss: worker_unavailable`. |
+
+The bus heartbeat is intentionally not gated on registration — the credit
+router's liveness clock is independent of the controller's registration
+handshake — while the control-channel heartbeat is, so that services do not
+provoke "unknown service" warnings before they have registered.
 
 ### State Management
 
@@ -263,11 +366,10 @@ AIPerf is built on three core principles:
 
 ## Deployment Modes
 
-AIPerf currently supports one local deployment model:
+AIPerf supports two deployment models:
 
 - **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments)
-
-Kubernetes is referenced by future-facing code paths, but no Kubernetes service-manager plugin or `ServiceRunType` is registered in this checkout; do not treat Kubernetes distributed execution as supported.
+- **Kubernetes Mode**: Control-plane services run as sibling containers in the controller pod, while workers and record processors run in external pods managed by JobSet.
 
 ## Configuration Envelope
 

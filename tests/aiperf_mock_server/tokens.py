@@ -3,6 +3,8 @@
 import logging
 import time
 import zlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -18,6 +20,7 @@ from aiperf_mock_server.models import (
     ImageGenerationRequest,
     RankingRequest,
     RequestT,
+    ResponsesRequest,
     SolidoRAGRequest,
     TGIGenerateRequest,
     flatten_completion_prompt_token_ids,
@@ -378,6 +381,8 @@ def _extract_request_content(request: RequestT) -> tuple[str, int | None]:
         return text, request.max_output_tokens
     elif isinstance(request, SolidoRAGRequest):
         return " ".join(request.query), None
+    elif isinstance(request, ResponsesRequest):
+        return request.prompt_text, request.max_output_tokens
     else:
         raise ValueError(f"Unsupported request type: {type(request)}")
 
@@ -412,6 +417,16 @@ def _extract_osl_fingerprint(request: RequestT) -> dict[str, object]:
         fp["max_tokens"] = request.max_tokens
         fp["min_tokens"] = request.min_tokens
         fp["ignore_eos"] = request.ignore_eos
+    elif isinstance(request, ResponsesRequest):
+        # OpenAI Responses calls it `max_output_tokens` — recorded under
+        # `max_completion_tokens` because both name the same semantic (the
+        # OSL cap) and keeping the JSONL schema uniform is more useful than
+        # preserving the API name-space. The endpoint field on each row
+        # tells consumers which API the cap came from.
+        fp["max_completion_tokens"] = request.max_output_tokens
+        fp["min_tokens"] = request.min_tokens
+        fp["ignore_eos"] = request.ignore_eos
+        fp["reasoning_effort"] = request.reasoning_effort
     return fp
 
 
@@ -525,6 +540,31 @@ def _cycle_tokens_reversed(prompt_tokens: list[str], num_tokens: int) -> list[st
     )
 
 
+@contextmanager
+def _prompt_generator_rng(seed: int | None) -> Iterator[None]:
+    """Provide PromptGenerator's required global RNG in standalone-server mode.
+
+    Normal AIPerf processes initialize the RNG during bootstrap, but the mock
+    server imports PromptGenerator directly. Preserve an existing owner when
+    tests or an embedding process already initialized it; otherwise keep the
+    temporary initialization scoped to corpus loading.
+    """
+    from aiperf.common import random_generator as rng
+    from aiperf.common.exceptions import InvalidStateError
+
+    initialized_here = False
+    try:
+        rng.derive("mock_server.corpus.initialization_probe")
+    except InvalidStateError:
+        rng.init(seed)
+        initialized_here = True
+    try:
+        yield
+    finally:
+        if initialized_here:
+            rng.reset()
+
+
 def _load_corpus() -> tuple[str, ...] | None:
     """Load and tokenize corpus from aiperf's shakespeare.txt at import time.
 
@@ -574,13 +614,26 @@ def _load_corpus() -> tuple[str, ...] | None:
                 trust_remote_code=server_config.tokenizer_trust_remote_code,
                 revision=server_config.tokenizer_revision,
             )
-            generator = PromptGenerator(config=PromptConfig(), tokenizer=tokenizer)
+            with _prompt_generator_rng(server_config.random_seed):
+                generator = PromptGenerator(
+                    prompts=PromptConfig(),
+                    prefix_prompts=None,
+                    tokenizer=tokenizer,
+                )
 
-            # Fast batch conversion, replace BPE space marker (Ġ) with actual space
-            raw_tokens = tokenizer._tokenizer.convert_ids_to_tokens(
-                generator._tokenized_corpus
+            # Decode through the public wrapper's batched call so both Hugging
+            # Face and the built-in tiktoken adapter produce the text
+            # fragments streamed by the mock server, without paying decode()
+            # overhead once per token.
+            token_ids = generator._tokenized_corpus
+            unique_token_ids = list(dict.fromkeys(token_ids))
+            decoded_tokens = tokenizer.decode_batch(
+                [[token_id] for token_id in unique_token_ids]
             )
-            tokens = tuple(tok.replace("Ġ", " ") for tok in raw_tokens)
+            decoded_by_id = dict(zip(unique_token_ids, decoded_tokens, strict=True))
+            tokens = tuple(decoded_by_id[token_id] for token_id in token_ids)
+        except TypeError:
+            raise
         except Exception as e:
             logger.warning(
                 f"Tokenizer failed ({e}), falling back to character-based chunking"

@@ -25,12 +25,12 @@ if __name__ == "__main__" and "tools" not in sys.modules:
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import argparse
-import json
 import re
 import time
 from collections import defaultdict
 from typing import Any
 
+import orjson
 import yaml
 from rich.traceback import Traceback
 
@@ -245,14 +245,13 @@ def generate_schemas(check: bool = False) -> int:
         ("plugins.schema.json", plug_schema),
     ]:
         content = (
-            json.dumps(
+            orjson.dumps(
                 {
                     "$schema": "https://json-schema.org/draft/2020-12/schema",
                     "$id": filename,
                     **schema,
-                },
-                indent=2,
-            )
+                }
+            ).decode("utf-8")
             + "\n"
         )
         path = SCHEMA_DIR / filename
@@ -512,6 +511,10 @@ def generate_enums_pyi() -> str | None:
             _generate_composite_enum_pyi(enum_name, config, yaml_plugins_for_composite)
         )
 
+    # Every category block ends with a blank separator; the last one would emit
+    # a trailing blank line that ruff-format strips right back out.
+    while lines and not lines[-1]:
+        lines.pop()
     return "\n".join(lines) + "\n"
 
 

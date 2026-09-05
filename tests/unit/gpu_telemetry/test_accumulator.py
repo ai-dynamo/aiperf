@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import MetricResult
 from aiperf.common.models.telemetry_models import (
@@ -58,20 +60,20 @@ def sample_telemetry_record() -> TelemetryRecord:
     """Create a sample TelemetryRecord with typical values."""
     return make_telemetry_record(
         timestamp_ns=1000000000,
-        dcgm_url="http://node1:9401/metrics",
+        telemetry_source_url="http://node1:9401/metrics",
         gpu_index=0,
         gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
         gpu_model_name="NVIDIA RTX 6000 Ada Generation",
         pci_bus_id="00000000:02:00.0",
         device="nvidia0",
         hostname="node1",
-        gpu_power_usage=75.5,
-        energy_consumption=1000.0,
-        gpu_utilization=85.0,
-        gpu_memory_used=15.26,
-        gpu_temperature=70.0,
-        xid_errors=0.0,
-        power_violation=120.0,
+        nvidia_power_usage=75.5,
+        nvidia_energy_consumption=1000.0,
+        nvidia_gpu_utilization=85.0,
+        nvidia_memory_used=15.26,
+        nvidia_temperature=70.0,
+        nvidia_xid_errors=0.0,
+        nvidia_power_violation=120.0,
     )
 
 
@@ -106,11 +108,14 @@ class TestGPUTelemetryAccumulator:
 
         await processor.process_telemetry_record(sample_telemetry_record)
 
-        dcgm_url = sample_telemetry_record.dcgm_url
+        telemetry_source_url = sample_telemetry_record.telemetry_source_url
         gpu_uuid = sample_telemetry_record.gpu_uuid
 
-        assert dcgm_url in processor._hierarchy.dcgm_endpoints
-        assert gpu_uuid in processor._hierarchy.dcgm_endpoints[dcgm_url]
+        assert telemetry_source_url in processor._hierarchy.telemetry_source_endpoints
+        assert (
+            gpu_uuid
+            in processor._hierarchy.telemetry_source_endpoints[telemetry_source_url]
+        )
 
     @pytest.mark.asyncio
     async def test_get_hierarchy(
@@ -132,10 +137,15 @@ class TestGPUTelemetryAccumulator:
         hierarchy = processor._hierarchy
 
         assert isinstance(hierarchy, TelemetryHierarchy)
-        assert sample_telemetry_record.dcgm_url in hierarchy.dcgm_endpoints
+        assert (
+            sample_telemetry_record.telemetry_source_url
+            in hierarchy.telemetry_source_endpoints
+        )
         assert (
             sample_telemetry_record.gpu_uuid
-            in hierarchy.dcgm_endpoints[sample_telemetry_record.dcgm_url]
+            in hierarchy.telemetry_source_endpoints[
+                sample_telemetry_record.telemetry_source_url
+            ]
         )
 
     @pytest.mark.asyncio
@@ -154,14 +164,14 @@ class TestGPUTelemetryAccumulator:
         for i in range(5):
             record = make_telemetry_record(
                 timestamp_ns=1000000000 + i * 1000000,
-                dcgm_url=sample_telemetry_record.dcgm_url,
+                telemetry_source_url=sample_telemetry_record.telemetry_source_url,
                 gpu_index=sample_telemetry_record.gpu_index,
                 gpu_uuid=sample_telemetry_record.gpu_uuid,
                 gpu_model_name=sample_telemetry_record.gpu_model_name,
-                gpu_power_usage=75.0 + i,
-                energy_consumption=1000.0 + i * 10,
-                gpu_utilization=80.0 + i,
-                gpu_memory_used=15.0 + i * 0.1,
+                nvidia_power_usage=75.0 + i,
+                nvidia_energy_consumption=1000.0 + i * 10,
+                nvidia_gpu_utilization=80.0 + i,
+                nvidia_memory_used=15.0 + i * 0.1,
             )
             await processor.process_telemetry_record(record)
 
@@ -173,8 +183,8 @@ class TestGPUTelemetryAccumulator:
 
         # Check that metrics are properly tagged
         result_tags = [r.tag for r in results]
-        assert any("gpu_power_usage" in tag for tag in result_tags)
-        assert any("energy_consumption" in tag for tag in result_tags)
+        assert any("nvidia_power_usage" in tag for tag in result_tags)
+        assert any("nvidia_energy_consumption" in tag for tag in result_tags)
 
     @pytest.mark.asyncio
     async def test_summarize_handles_no_metric_value(
@@ -194,7 +204,7 @@ class TestGPUTelemetryAccumulator:
             gpu_model_name="Test GPU",
         )
         mock_telemetry_data = GpuTelemetryData(metadata=mock_metadata)
-        processor._hierarchy.dcgm_endpoints = {
+        processor._hierarchy.telemetry_source_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-12345678": mock_telemetry_data,
             }
@@ -234,7 +244,7 @@ class TestGPUTelemetryAccumulator:
             "Unexpected error"
         )
 
-        processor._hierarchy.dcgm_endpoints = {
+        processor._hierarchy.telemetry_source_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-87654321": mock_telemetry_data,
             }
@@ -295,7 +305,7 @@ class TestGPUTelemetryAccumulator:
 
         mock_telemetry_data.get_metric_result.side_effect = side_effect_func
 
-        processor._hierarchy.dcgm_endpoints = {
+        processor._hierarchy.telemetry_source_endpoints = {
             "http://test:9401/metrics": {
                 "GPU-mixed-results": mock_telemetry_data,
             }
@@ -333,18 +343,18 @@ class TestGPUTelemetryAccumulator:
                 timestamp_ns=1000000000 + i * 1000000,
                 gpu_uuid="GPU-ef6ef310-f8e2-cef9-036e-8f12d59b5ffc",
                 gpu_model_name="NVIDIA RTX 6000",
-                gpu_power_usage=75.0 + i,
+                nvidia_power_usage=75.0 + i,
             )
             await processor.process_telemetry_record(record)
 
         results = await processor.summarize()
 
         # Check tag format: metric_name_dcgm_TAG_gpuINDEX_UUID
-        power_results = [r for r in results if "gpu_power_usage" in r.tag]
+        power_results = [r for r in results if "nvidia_power_usage" in r.tag]
         assert len(power_results) > 0
 
         tag = power_results[0].tag
-        assert "gpu_power_usage" in tag
+        assert "nvidia_power_usage" in tag
         assert "dcgm_http" in tag  # URL gets sanitized
         assert "node1" in tag
         assert "gpu0" in tag
@@ -369,7 +379,7 @@ class TestGPUTelemetryAccumulator:
                     gpu_index=gpu_index,
                     gpu_uuid=f"GPU-0000000{gpu_index}-0000-0000-0000-000000000000",
                     gpu_model_name="NVIDIA RTX 6000",
-                    gpu_power_usage=75.0 + gpu_index * 10 + i,
+                    nvidia_power_usage=75.0 + gpu_index * 10 + i,
                 )
                 await processor.process_telemetry_record(record)
 
@@ -381,3 +391,173 @@ class TestGPUTelemetryAccumulator:
 
         assert len(gpu0_results) > 0
         assert len(gpu1_results) > 0
+
+
+class TestAccumulatorProtocolSupport:
+    """``AccumulatorProtocol`` alias and analyzer time-range query support."""
+
+    @pytest.mark.asyncio
+    async def test_process_record_alias_and_query_time_range(
+        self, mock_run, mock_pub_client
+    ):
+        import numpy as np
+
+        accumulator = GPUTelemetryAccumulator(
+            run=mock_run,
+            pub_client=mock_pub_client,
+        )
+
+        empty = accumulator.query_time_range(0, 10_000_000_000)
+        assert empty.dtype == bool
+        assert len(empty) == 0
+
+        for ts in (1_000_000_000, 2_000_000_000, 3_000_000_000):
+            await accumulator.process_record(make_telemetry_record(timestamp_ns=ts))
+
+        mask = accumulator.query_time_range(2_000_000_000, 3_000_000_000)
+        assert mask.tolist() == [False, True, False]
+        assert np.count_nonzero(accumulator.query_time_range(0, 4_000_000_000)) == 3
+
+
+class TestRealtimeTelemetryTask:
+    """Realtime telemetry background task interval gating."""
+
+    @pytest.mark.asyncio
+    async def test_zero_interval_dashboard_task_waits_for_enable_and_reports(
+        self, mock_run, mock_pub_client, monkeypatch
+    ) -> None:
+        """Dashboard telemetry still polls when stats_interval=0.
+
+        The task must stay alive until ``START_REALTIME_TELEMETRY`` toggles the
+        panel on, then report once at the dashboard fallback cadence instead of
+        exiting before the enable event can wake it.
+        """
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(
+            run=mock_run,
+            pub_client=mock_pub_client,
+        )
+
+        async def report_once_then_stop() -> None:
+            accumulator.stop_requested = True
+
+        accumulator._report_realtime_metrics = AsyncMock(
+            side_effect=report_once_then_stop
+        )
+        monkeypatch.setattr(Environment.UI, "REALTIME_METRICS_INTERVAL", 0.0)
+
+        with patch(
+            "aiperf.gpu_telemetry.accumulator.asyncio.sleep",
+            new=AsyncMock(),
+        ):
+            task = asyncio.create_task(
+                accumulator._report_realtime_telemetry_metrics_task()
+            )
+            await asyncio.sleep(0)
+            assert not task.done()
+
+            accumulator.start_realtime_telemetry()
+            await task
+
+        accumulator._report_realtime_metrics.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_dashboard_realtime_mode_reports_each_tick(
+        self, mock_run, mock_pub_client
+    ):
+        """In dashboard realtime mode the loop reports then sleeps per tick."""
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
+        accumulator = GPUTelemetryAccumulator(
+            run=mock_run,
+            pub_client=mock_pub_client,
+        )
+
+        async def report_once_then_stop() -> None:
+            accumulator.stop_requested = True
+
+        accumulator._report_realtime_metrics = AsyncMock(
+            side_effect=report_once_then_stop
+        )
+
+        await accumulator._report_realtime_telemetry_metrics_task()
+
+        accumulator._report_realtime_metrics.assert_awaited_once()
+
+
+class TestRealtimeTelemetryPublishGate:
+    """``--api-port``/Kubernetes headless runs must also enable realtime telemetry."""
+
+    def test_dashboard_always_enabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.DASHBOARD
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert accumulator._realtime_telemetry_publish_enabled()
+
+    def test_none_ui_no_consumer_disabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = None
+        mock_run.cfg.runtime.service_run_type = "multiprocessing"
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert not accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode != GPUTelemetryMode.REALTIME_DASHBOARD
+
+    def test_none_ui_with_api_port_enabled_and_forces_mode(
+        self, mock_run, mock_pub_client
+    ) -> None:
+        # A local API server serves the web dashboard even with --ui-type none.
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = 9090
+        mock_run.cfg.runtime.service_run_type = "multiprocessing"
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+
+    def test_none_ui_under_kubernetes_enabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = None
+        mock_run.cfg.runtime.service_run_type = "kubernetes"
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", False):
+            assert accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+
+    def test_none_ui_env_override_enabled(self, mock_run, mock_pub_client) -> None:
+        from aiperf.common.enums import GPUTelemetryMode
+        from aiperf.plugin.enums import UIType
+
+        mock_run.cfg.runtime.ui = UIType.NONE
+        mock_run.cfg.runtime.api_port = None
+        mock_run.cfg.runtime.service_run_type = "multiprocessing"
+        mock_run.cfg.gpu_telemetry_mode = GPUTelemetryMode.SUMMARY
+        accumulator = GPUTelemetryAccumulator(run=mock_run, pub_client=mock_pub_client)
+
+        with patch.object(Environment.UI, "REALTIME_METRICS_ENABLED", True):
+            assert accumulator._realtime_telemetry_publish_enabled()
+        assert mock_run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD

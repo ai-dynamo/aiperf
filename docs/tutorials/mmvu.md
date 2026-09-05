@@ -23,11 +23,26 @@ Launch a vLLM server with a video-capable vision language model:
 <!-- setup-vllm-video-openai-endpoint-server -->
 ```bash
 docker pull vllm/vllm-openai:latest
-docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+docker run --gpus all -p 8000:8000 -e HF_TOKEN \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  vllm/vllm-openai:latest \
   --model Qwen/Qwen2-VL-2B-Instruct \
-  --enforce-eager
+  --enforce-eager \
+  --media-io-kwargs '{"video": {"num_frames": 16}}' \
+  --max-num-seqs 1
 ```
 <!-- /setup-vllm-video-openai-endpoint-server -->
+
+Video prompts are far larger than text or image prompts: every sampled frame
+expands into hundreds of vision placeholder tokens, so a single MMVU request
+can exceed 10k input tokens with default frame sampling. The vision encoder
+allocates its activations *outside* the KV-cache pool that vLLM pre-reserves,
+so raising `--gpu-memory-utilization` does not help — on a smaller GPU
+(~24 GB) the defaults OOM mid-prefill and kill the engine with
+`EngineDeadError`. The two flags above bound both dimensions:
+`--media-io-kwargs '{"video": {"num_frames": 16}}'` caps frames per video (and
+therefore prompt length), and `--max-num-seqs 1` keeps a single video prefill
+resident at a time. Raise both on larger GPUs.
 
 Verify the server is ready:
 

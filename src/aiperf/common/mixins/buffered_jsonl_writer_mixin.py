@@ -18,6 +18,15 @@ from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
 from aiperf.common.utils import yield_to_event_loop
 
+_MAX_PENDING_FLUSH_TASKS = 8
+"""Cap on batch-triggered flush tasks in flight at once.
+
+A ceiling, not a tuning knob: healthy flushes complete and leave the tracking
+set long before this is reached. It exists so an append burst that never yields
+to the event loop cannot schedule an unbounded number of flushes against a
+handle whose first failure has not surfaced yet.
+"""
+
 
 class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     """Mixin for buffered JSONL writing with automatic flushing.
@@ -46,7 +55,7 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         batch_size: int,
         flush_interval: float = Environment.METRICS.EXPORT_FLUSH_INTERVAL,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the buffered JSONL writer.
 
         Args:
@@ -75,9 +84,19 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         # @background_task / execute_async (which would add it to ``self.tasks``):
         # callers drain transient writes with ``wait_for_tasks()``, and a
         # perpetual loop in that set would make ``wait_for_tasks()`` block
-        # forever. We start it in ``_start_periodic_flush`` and cancel it in
-        # ``_close_file``.
+        # forever. We start it in ``_start_periodic_flush`` and cooperatively
+        # stop it in ``_close_file`` (signal, then await) so an in-flight
+        # iteration can finish before the final flush+close.
         self._periodic_flush_task: asyncio.Task | None = None
+        self._periodic_flush_stop = asyncio.Event()
+        # In-flight write from the periodic loop. Tracked separately from
+        # ``_flush_tasks`` so ``_close_file`` can drain it after a hard cancel
+        # without exposing it to the timeout-cancel branch that would defeat
+        # ``asyncio.shield``.
+        self._periodic_flush_in_flight: asyncio.Task | None = None
+        # The latest write failure is surfaced at finalization if retries have
+        # not recovered the buffered records.
+        self._write_error: Exception | None = None
 
     @on_init
     async def _open_file(self) -> None:
@@ -131,8 +150,15 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             self._buffer.append(json_bytes)
             self.lines_written += 1
 
-            # Check if we need to flush
-            if len(self._buffer) >= self._batch_size:
+            # A write error restores its detached batch to ``self._buffer``.
+            # Keep scheduling subsequent batch flushes: transient filesystem
+            # failures must recover without leaving all later records buffered.
+            # The in-flight cap still bounds a burst that does not yield to let
+            # any scheduled flush finish.
+            if (
+                len(self._flush_tasks) < _MAX_PENDING_FLUSH_TASKS
+                and len(self._buffer) >= self._batch_size
+            ):
                 buffer_to_flush = self._buffer
                 self._buffer = []
 
@@ -142,17 +168,54 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 task.add_done_callback(self._flush_tasks.discard)
 
         except Exception as e:
+            if self._write_error is None:
+                self._write_error = e
             self.error(f"Failed to write record: {e!r}")
 
     async def flush_buffer(self) -> None:
         """Flush the current internal buffer to disk.
 
-        Public counterpart to ``_flush_buffer``: swaps out the live buffer and
-        writes all pending records. Safe to call when the buffer is empty.
+        Public counterpart to ``_flush_buffer``: drains detached batch writes,
+        swaps out the live buffer, and writes all pending records. Safe to call
+        when the buffer is empty. Raises ``RuntimeError`` if any write has
+        failed or records remain unflushed, so callers can rely on it as a
+        fail-closed artifact-finalization barrier.
         """
+        # Drain detached batch writes first. Their tasks can finish and remove
+        # themselves from the tracking set while we await, so snapshot in a
+        # loop until no task remains.
+        while self._flush_tasks:
+            self._record_flush_failures(
+                await asyncio.gather(*list(self._flush_tasks), return_exceptions=True)
+            )
+        if (in_flight := self._periodic_flush_in_flight) is not None:
+            # Record rather than propagate the raw error: the barrier check
+            # below turns it into the RuntimeError callers expect.
+            try:
+                await asyncio.shield(in_flight)
+            except Exception as e:
+                self._record_write_error(e, "in-flight periodic flush failed")
+
         buffer_to_flush = self._buffer
         self._buffer = []
-        await self._flush_buffer(buffer_to_flush)
+        # Shield so a cancel between detaching the buffer and the write
+        # completing can't silently drop the records we already drained.
+        # Record rather than propagate, matching the in-flight drain above, so
+        # every failure route out of this barrier raises the same RuntimeError
+        # instead of leaking a raw OSError for a direct-flush failure only.
+        try:
+            await asyncio.shield(self._flush_buffer(buffer_to_flush))
+        except Exception as e:
+            self._record_write_error(e, "final flush failed")
+        if self._write_error is not None:
+            raise RuntimeError(
+                f"JSONL writer failed before artifact finalization: {self.output_file}"
+            ) from self._write_error
+        if self._buffer:
+            raise RuntimeError(
+                f"JSONL writer still has {len(self._buffer)} unflushed record(s): "
+                f"{self.output_file}"
+            )
 
     async def _flush_buffer(self, buffer_to_flush: list[bytes]) -> None:
         """Write buffered records to disk using bulk write.
@@ -167,10 +230,14 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             return
         async with self._file_lock:
             if self._file_handle is None:
-                self.error(
+                error = RuntimeError(
                     f"Tried to flush buffer, but file handle is not open: {self.output_file}"
                 )
-                return
+                self._buffer = buffer_to_flush + self._buffer
+                if self._write_error is None:
+                    self._write_error = error
+                self.error(str(error))
+                raise error
 
             try:
                 self.debug(lambda: f"Flushing {len(buffer_to_flush)} records to file")
@@ -180,13 +247,45 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 await self._file_handle.write(bulk_data)
                 await self._file_handle.flush()
                 self._last_flush_monotonic = time.monotonic()
+                self._write_error = None
+            except asyncio.CancelledError:
+                # ``_close_file`` cancels pending flush tasks once the drain
+                # times out. The batch is already detached from ``self._buffer``
+                # here, so without restoring it those records would vanish
+                # before the final flush gets a chance to write them.
+                self._buffer = buffer_to_flush + self._buffer
+                raise
             except Exception as e:
+                self._buffer = buffer_to_flush + self._buffer
+                if self._write_error is None:
+                    self._write_error = e
                 self.exception(f"Failed to flush buffer: {e!r}")
+                raise
+
+    def _record_write_error(self, error: BaseException, context: str) -> None:
+        """Remember a write failure without aborting the caller.
+
+        Shutdown paths must always reach the file-handle close, so they drain
+        flush tasks defensively instead of letting a raised ``OSError`` unwind
+        them. Keeping the first failure in ``_write_error`` is what preserves
+        the fail-closed contract: ``flush_buffer`` (the artifact-finalization
+        barrier) still raises for it even though teardown completed.
+        """
+        if self._write_error is None and isinstance(error, Exception):
+            self._write_error = error
+        self.error(f"JSONL writer {context}: {error!r}")
+
+    def _record_flush_failures(self, results: list) -> None:
+        """Record failures drained from a ``gather(..., return_exceptions=True)``."""
+        for result in results:
+            if isinstance(result, BaseException):
+                self._record_write_error(result, "pending flush task failed")
 
     @on_start
     async def _start_periodic_flush(self) -> None:
         """Start the self-managed periodic-flush loop on service start."""
         if self._periodic_flush_task is None or self._periodic_flush_task.done():
+            self._periodic_flush_stop.clear()
             self._periodic_flush_task = asyncio.create_task(
                 self._flush_buffer_periodically()
             )
@@ -197,7 +296,8 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         Bounds worst-case freshness of the JSONL file when the in-memory batch
         never reaches ``batch_size`` (e.g. very low arrival rate). The interval
         is the per-instance ``flush_interval`` set in ``__init__``. Runs until
-        cancelled by ``_close_file`` on shutdown.
+        ``_close_file`` sets ``_periodic_flush_stop`` (cooperative shutdown) or
+        the task is hard-cancelled as a last resort.
 
         Self-managed (not a ``@background_task``) so it never lands in
         ``self.tasks`` and never blocks ``wait_for_tasks()``, which callers use
@@ -208,17 +308,39 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
         interval, so a transient failure never permanently stops periodic
         flushing for the rest of the run.
         """
-        while True:
+        while not self._periodic_flush_stop.is_set():
             try:
-                await asyncio.sleep(self._flush_interval)
+                # Sleep until the next interval, or exit early when shutdown
+                # signals stop. Checking the event only between iterations
+                # lets an in-flight flush finish before the loop returns.
+                try:
+                    await asyncio.wait_for(
+                        self._periodic_flush_stop.wait(),
+                        timeout=self._flush_interval,
+                    )
+                    return
+                except TimeoutError:
+                    pass
+
                 if not self._buffer:
                     continue
                 buffer_to_flush = self._buffer
                 self._buffer = []
-                # Shield the flush so a cancel (from _close_file during
-                # teardown) can't interrupt an in-flight write and silently
-                # drop the records we already pulled out of self._buffer.
-                await asyncio.shield(self._flush_buffer(buffer_to_flush))
+                # Track + shield so a hard cancel (timeout fallback in
+                # _close_file, or lifecycle cancellation) cannot drop the
+                # already-detached batch: the inner task keeps running and
+                # _close_file awaits ``_periodic_flush_in_flight`` before
+                # closing the handle.
+                flush_task = asyncio.create_task(self._flush_buffer(buffer_to_flush))
+                self._periodic_flush_in_flight = flush_task
+                try:
+                    await asyncio.shield(flush_task)
+                finally:
+                    if (
+                        flush_task.done()
+                        and self._periodic_flush_in_flight is flush_task
+                    ):
+                        self._periodic_flush_in_flight = None
             except asyncio.CancelledError:
                 return
             except Exception as e:
@@ -226,25 +348,101 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
                 # Give some time to recover, just in case.
                 await asyncio.sleep(0.001)
 
+    async def _stop_periodic_flush(self) -> None:
+        """Cooperatively stop the periodic loop, then drain any in-flight write.
+
+        Prefers signaling ``_periodic_flush_stop`` so the loop finishes its
+        current iteration instead of hard-cancelling mid-``shield``. Hard
+        cancel is only the timeout fallback; in that case
+        ``_periodic_flush_in_flight`` is awaited so an orphaned shielded write
+        cannot race ``_final_flush_and_close`` and drop its chunk.
+        """
+        if self._periodic_flush_task is None:
+            return
+
+        self._periodic_flush_stop.set()
+        try:
+            await asyncio.wait_for(
+                self._periodic_flush_task,
+                timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+            )
+        except TimeoutError:
+            self.warning(
+                "Timeout waiting for periodic flush loop to stop during shutdown. "
+                "Cancelling the loop and draining any in-flight flush."
+            )
+            self._periodic_flush_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._periodic_flush_task
+        self._periodic_flush_task = None
+
+        if (in_flight := self._periodic_flush_in_flight) is not None:
+            # Never cancel: that would defeat the shield and drop the batch.
+            # A raised write error is recorded, not propagated, because this
+            # runs as the first statement of the @on_stop hook -- unwinding
+            # here would skip the final flush and leave the handle open.
+            try:
+                await in_flight
+            except Exception as e:
+                self._record_write_error(e, "in-flight periodic flush failed")
+            if self._periodic_flush_in_flight is in_flight:
+                self._periodic_flush_in_flight = None
+
+    async def _final_flush_and_close(self, buffer_to_flush: list[bytes]) -> None:
+        """Flush detached records then close the file handle.
+
+        Kept as one unit so a cancel cannot close the handle out from under an
+        in-flight write (which would drop already-detached records), and so the
+        handle is always closed even when the outer wait is cancelled.
+        """
+        try:
+            await self._flush_buffer(buffer_to_flush)
+        except Exception as e:
+            self._record_write_error(e, "failed to flush remaining buffer at shutdown")
+
+        async with self._file_lock:
+            if self._file_handle is not None:
+                try:
+                    await self._file_handle.close()
+                    self.debug(lambda: f"File handle closed: {self.output_file}")
+                except Exception as e:
+                    self.exception(f"Failed to close file handle during shutdown: {e}")
+                finally:
+                    self._file_handle = None
+
+    async def _await_shielded_cleanup(self, cleanup_task: asyncio.Task) -> None:
+        """Await cleanup without cancelling its flush-and-close operation.
+
+        Propagate outer cancellation promptly. The shielded task retains the
+        file handle until its own write and close complete, so cancellation
+        cannot race it or turn shutdown into an unbounded wait.
+        """
+        await asyncio.shield(cleanup_task)
+
     @on_stop
     async def _close_file(self) -> None:
         """Flush remaining buffer and close the file handle (called automatically on shutdown)."""
         # Stop the self-managed periodic-flush loop first so it can't race the
-        # final flush or keep the buffer churning during teardown.
-        if self._periodic_flush_task is not None:
-            self._periodic_flush_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._periodic_flush_task
-            self._periodic_flush_task = None
+        # final flush or keep the buffer churning during teardown. Cooperative
+        # stop lets a mid-flush iteration finish; any orphaned shielded write
+        # from a hard-cancel fallback is drained before we touch the handle.
+        await self._stop_periodic_flush()
 
         # Wait for any pending flush tasks to complete. Drain only the flush
         # tasks (not all of self.tasks) so unrelated subclass tasks are neither
         # waited on nor cancelled here.
         if self._flush_tasks:
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(*list(self._flush_tasks)),
-                    timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+                # return_exceptions so one failed batch write cannot unwind the
+                # hook before the remaining buffer is flushed and the handle is
+                # closed. The failure is recorded for the finalization barrier.
+                self._record_flush_failures(
+                    await asyncio.wait_for(
+                        asyncio.gather(
+                            *list(self._flush_tasks), return_exceptions=True
+                        ),
+                        timeout=Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT,
+                    )
                 )
             except TimeoutError:
                 self.warning(
@@ -257,21 +455,11 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
 
         buffer_to_flush = self._buffer
         self._buffer = []
-
-        try:
-            await self._flush_buffer(buffer_to_flush)
-        except Exception as e:
-            self.error(f"Failed to flush remaining buffer during shutdown: {e}")
-
-        async with self._file_lock:
-            if self._file_handle is not None:
-                try:
-                    await self._file_handle.close()
-                    self.debug(lambda: f"File handle closed: {self.output_file}")
-                except Exception as e:
-                    self.exception(f"Failed to close file handle during shutdown: {e}")
-                finally:
-                    self._file_handle = None
+        # Shield so a shutdown-path cancel can't interrupt the write and drop
+        # records already detached from self._buffer.
+        await self._await_shielded_cleanup(
+            asyncio.create_task(self._final_flush_and_close(buffer_to_flush))
+        )
 
         self.debug(
             f"{self.__class__.__name__}: {self.lines_written} JSONL lines written to {self.output_file}"

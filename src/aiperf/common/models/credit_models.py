@@ -8,6 +8,7 @@ from pydantic import ConfigDict, Field
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.types import PhaseKind
 
 
 class BasePhaseStats(AIPerfBaseModel):
@@ -17,6 +18,20 @@ class BasePhaseStats(AIPerfBaseModel):
 
     phase: CreditPhase = Field(
         ..., description="The type of credit phase, such as warmup or profiling."
+    )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index in the ordered phases list."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-provided unique phase name."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Phase semantic kind: warmup or profiling."
     )
 
     # Timestamp fields
@@ -34,6 +49,16 @@ class BasePhaseStats(AIPerfBaseModel):
         default=None,
         ge=0,
         description="The time in which the last credit was returned from the workers in nanoseconds. If None, the phase has not completed.",
+    )
+    baseline_start_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The timestamp after the phase START baseline request was published, when available.",
+    )
+    baseline_end_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The timestamp after the phase END baseline request was published, when available.",
     )
 
     # Expectation / stop condition fields
@@ -107,6 +132,20 @@ class BasePhaseStats(AIPerfBaseModel):
     was_cancelled: bool = Field(
         default=False, description="Whether the credit phase was cancelled."
     )
+
+    @property
+    def is_warmup(self) -> bool:
+        """Whether this phase has warmup semantics."""
+        return self.phase_kind == "warmup" or (
+            self.phase_kind is None and self.phase == CreditPhase.WARMUP
+        )
+
+    @property
+    def is_profiling(self) -> bool:
+        """Whether this phase has profiling semantics."""
+        return self.phase_kind == "profiling" or (
+            self.phase_kind is None and self.phase == CreditPhase.PROFILING
+        )
 
     @property
     def is_started(self) -> bool:

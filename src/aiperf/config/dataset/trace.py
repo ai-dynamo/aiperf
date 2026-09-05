@@ -98,3 +98,15 @@ class SynthesisConfig(BaseConfig):
             "Traces with output_length > max_osl are capped to this value (not filtered).",
         ),
     ]
+
+    allow_dataset_wrap: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Allow the finite weka/agentic trace pool to wrap (reuse "
+            "distinct roots across concurrency lanes) when concurrency exceeds "
+            "the number of eligible traces. Defaults to False: over-subscription "
+            "fails unless this is explicitly enabled or an active cache-bust "
+            "target already keeps repeated-trace traffic distinct.",
+        ),
+    ]

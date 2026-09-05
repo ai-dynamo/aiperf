@@ -31,7 +31,7 @@ and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
@@ -39,6 +39,7 @@ from pydantic import AfterValidator, BeforeValidator, Field
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AudioFormat,
+    CacheBustTarget,
     ConnectionReuseStrategy,
     ConvergenceStat,
     ExportLevel,
@@ -47,6 +48,8 @@ from aiperf.common.enums import (
     ImageSource,
     ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
+    PromptCorpus,
+    RandomCorpusStyle,
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
@@ -88,7 +91,7 @@ from aiperf.plugin.enums import (
 )
 
 # Default server-metrics export formats for CLIConfig, kept self-contained here
-# because aiperf.config.defaults does not carry the equivalent constant.
+# because no config module carries the equivalent constant.
 _DEFAULT_SERVER_METRICS_FORMATS: list[ServerMetricsFormat] = [
     ServerMetricsFormat.JSON,
     ServerMetricsFormat.CSV,
@@ -271,6 +274,56 @@ class CLIConfig(BaseConfig):
         ),
     ] = 5.0
 
+    reset_kv_cache: Annotated[
+        bool,
+        Field(
+            description="Enable once-per-cell KV-cache reset via POST to the endpoint."
+        ),
+        CLIParameter(name=("--reset-kv-cache",), group=Groups.ENDPOINT),
+    ] = False
+
+    reset_kv_cache_timeout_seconds: Annotated[
+        float | None,
+        Field(gt=0, description="Timeout seconds for reset_kv_cache control requests."),
+        CLIParameter(name=("--reset-kv-cache-timeout-seconds",), group=Groups.ENDPOINT),
+    ] = None
+
+    reset_kv_cache_path: Annotated[
+        str | None,
+        Field(
+            description="Relative path for reset_kv_cache (default /reset_prefix_cache)."
+        ),
+        CLIParameter(name=("--reset-kv-cache-path",), group=Groups.ENDPOINT),
+    ] = None
+
+    server_profiler: Annotated[
+        bool,
+        Field(description="Enable server profiler start/stop around profiling phases."),
+        CLIParameter(name=("--server-profiler",), group=Groups.ENDPOINT),
+    ] = False
+
+    server_profiler_timeout_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0, description="Timeout seconds for server_profiler control requests."
+        ),
+        CLIParameter(
+            name=("--server-profiler-timeout-seconds",), group=Groups.ENDPOINT
+        ),
+    ] = None
+
+    server_profiler_start_path: Annotated[
+        str | None,
+        Field(description="Relative path for profiler start (default /start_profile)."),
+        CLIParameter(name=("--server-profiler-start-path",), group=Groups.ENDPOINT),
+    ] = None
+
+    server_profiler_stop_path: Annotated[
+        str | None,
+        Field(description="Relative path for profiler stop (default /stop_profile)."),
+        CLIParameter(name=("--server-profiler-stop-path",), group=Groups.ENDPOINT),
+    ] = None
+
     api_key: Annotated[
         str | None,
         Field(
@@ -376,6 +429,26 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
+
+    per_chunk_usage: Annotated[
+        bool,
+        Field(
+            description=(
+                "Request per-chunk token usage on streaming responses by setting "
+                "stream_options.continuous_usage_stats, so the server reports "
+                "cumulative usage on every chunk instead of only the final one. "
+                "This lets inter-token latency subtract the first content chunk's "
+                "real token count (fixing TPS/user inflation when a server bundles "
+                "multiple tokens into the first streamed chunk). Requires a server "
+                "that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict "
+                "OpenAI rejects it. Requires --use-server-token-count."
+            ),
+        ),
+        CLIParameter(
+            name=("--per-chunk-usage",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.PER_CHUNK_USAGE
 
     connection_reuse_strategy: Annotated[
         ConnectionReuseStrategy,
@@ -606,6 +679,19 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    hf_weka_dataset: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). "
+            "Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other "
+            "`--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.",
+        ),
+        CLIParameter(
+            name=("--hf-weka-dataset",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
     dataset_filters: Annotated[
         list[str],
         Field(
@@ -625,6 +711,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
+            "`tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), "
             "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
@@ -633,6 +720,54 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--custom-dataset-type",),
+            group=Groups.INPUT,
+        ),
+    ] = None
+
+    ignore_trace_delays: Annotated[
+        bool,
+        Field(
+            description="Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, "
+            "Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back "
+            "instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode "
+            "before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).",
+        ),
+        CLIParameter(
+            name=("--ignore-trace-delays",),
+            group=Groups.INPUT,
+        ),
+    ] = False
+
+    use_think_time_only: Annotated[
+        bool,
+        Field(
+            description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) "
+            "instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded "
+            "`api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta "
+            "for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.",
+        ),
+        CLIParameter(
+            name=("--use-think-time-only",),
+            group=Groups.INPUT,
+        ),
+    ] = False
+
+    max_context_length: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=1,
+            description=(
+                "Maximum peak prompt+output context length (tokens) per Weka root "
+                "trace. Weka loaders (--custom-dataset-type weka_trace or a weka "
+                "--public-dataset) drop whole traces whose *recorded* peak exceeds "
+                "this ceiling at load time (filter-then-cap before "
+                "--num-dataset-entries). Not a DatasetManager tokenize filter; "
+                "rejected for non-Weka formats."
+            ),
+        ),
+        CLIParameter(
+            name=("--max-context-length",),
             group=Groups.INPUT,
         ),
     ] = None
@@ -651,6 +786,22 @@ class CLIConfig(BaseConfig):
             group=Groups.INPUT,
         ),
     ] = None
+
+    allow_dataset_wrap: Annotated[
+        bool,
+        Field(
+            description="Allow weka/agentic replay to wrap (reuse distinct eligible "
+            "traces across concurrency lanes) when concurrency exceeds the loaded "
+            "pool. Defaults to False: over-subscription fails unless wrapping is "
+            "explicitly enabled or an active --cache-bust target already keeps "
+            "repeated-trace traffic distinct.",
+        ),
+        CLIParameter(
+            name=("--allow-dataset-wrap",),
+            group=Groups.INPUT,
+            negative="--no-allow-dataset-wrap",
+        ),
+    ] = False
 
     random_seed: Annotated[
         int | None,
@@ -687,8 +838,11 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             description=(
-                "Path to a YAML configuration file. "
-                "CLI flags override values from the config file."
+                "Path to a YAML configuration file. CLI flags override "
+                "values from the config file. A flag that cannot be applied "
+                "on top of a config file is rejected by name rather than "
+                "ignored, so a run never silently differs from what was "
+                "asked for."
             ),
         ),
         CLIParameter(
@@ -1071,9 +1225,94 @@ class CLIConfig(BaseConfig):
         ),
     ] = 1
 
+    prompt_corpus: Annotated[
+        PromptCorpus | None,
+        Field(
+            description="Source corpus for synthetic prompt text generation. "
+            "'sonnet' uses Shakespeare sonnets. "
+            "'coding' uses realistic coding content (code, bash output, JSON, error tracebacks, git diffs). "
+            "Honored only for synthesized content (synthetic datasets and count/hash-id trace loaders); "
+            "verbatim formats ignore it. "
+            "When unset, the active dataset loader's default applies (most loaders default to 'sonnet'; "
+            "agentic-coding loaders such as weka_trace default to 'coding').",
+        ),
+        CLIParameter(
+            name=("--prompt-corpus",),
+            group=Groups.PROMPT,
+        ),
+    ] = None
+
+    ##############################################################################
+    # Cache Bust
+    ##############################################################################
+    cache_bust: Annotated[
+        CacheBustTarget,
+        Field(
+            description=(
+                "Where (and how) to inject a cache-bust marker. Two families: "
+                "(1) RID targets (system_prefix, system_suffix, first_turn_prefix, "
+                "first_turn_suffix) — inject a per-trajectory unique SHA-256 digest "
+                "marker that is identical across warmup and profiling, so warmup KV-cache "
+                "work transfers to profiling while preventing cross-trajectory cache sharing. "
+                "Prefix variants prepend at token 0; suffix variants append after existing "
+                "content. "
+                "(2) Warmup-isolation targets (warmup_isolation_system, "
+                "warmup_isolation_first_turn) — inject a constant '[warmup]' marker only "
+                "during the WARMUP phase; profiling sees no marker (fully cold start or "
+                "system-pre-warmed). Incompatible with agentic_replay timing mode. "
+                "'none' disables the feature (default). "
+                "See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust",),
+            group=Groups.CACHE_BUST,
+        ),
+    ] = CacheBustTarget.NONE
+
     ##############################################################################
     # Prefix Prompt
     ##############################################################################
+    system_prompt: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Verbatim system prompt text, identical across every conversation.\n"
+                "Sent as a system-role message ahead of all turns. Works with both\n"
+                "synthetic and file/public datasets; when the dataset already carries\n"
+                "its own system message, this text is prepended to it.\n"
+                "Tokens are additive: `--isl` continues to size the generated user prompt only.\n"
+                "Mutually exclusive with `--system-prompt-file`, "
+                "`--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
+    system_prompt_file: Annotated[
+        Path | None,
+        Field(
+            default=None,
+            description=(
+                "Path to a UTF-8 text file holding the verbatim system prompt.\n"
+                "Preferred over `--system-prompt` for real production prompts, which are\n"
+                "long enough that shell quoting mangles them. Read once at startup, so a\n"
+                "missing or unreadable file fails immediately rather than mid-run.\n"
+                "Mutually exclusive with `--system-prompt`, "
+                "`--shared-system-prompt-length`, and "
+                "`--num-prefix-prompts`/`--prefix-prompt-length`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt-file",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
     prompt_prefix_pool_size: Annotated[
         int,
         Field(
@@ -1200,9 +1439,10 @@ class CLIConfig(BaseConfig):
             ge=1,
             description="Token block size for hash-based prompt synthesis when dataset entries carry `hash_ids`: each `hash_id` maps to a cached "
             "block of `block_size` tokens, enabling simulation of KV-cache sharing patterns from production workloads. The total prompt length "
-            "equals `(num_hash_ids - 1) * block_size + final_block_size`. Only supported with synthetic datasets: with `--input-file` the flag is "
-            "rejected at convert time, and trace replay loaders always use the `default_block_size` from their plugin metadata "
-            "(16 for `bailian_trace`, 64 for `baseten_trace`, 512 for `mooncake_trace`).",
+            "equals `(num_hash_ids - 1) * block_size + final_block_size`. With `--input-file` this overrides the trace loader's "
+            "`default_block_size` plugin metadata (16 for `bailian_trace`, 512 for `mooncake_trace`) for loaders that reconstruct prompts from "
+            "`hash_ids`; it has no effect on `baseten_trace`, which replays literal recorded prompts. Set it when a trace was recorded at a block "
+            "size different from its loader default (e.g. a Mooncake-format trace recorded at 16).",
         ),
         CLIParameter(
             name=(
@@ -1229,6 +1469,54 @@ class CLIConfig(BaseConfig):
             group=Groups.ISL,
         ),
     ] = None
+
+    prompt_random_range_ratio: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
+            "The window is computed from `--random-corpus-style` (defaults to `vllm`): "
+            "vllm style → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); "
+            "sglang style → `[max(1, int(mean*r)), mean]` (lower-bounded). "
+            "Accepts a single float applied to both ISL and OSL. The JSON object form "
+            '`{"input": 0.3, "output": 0.5}` for independent values is accepted only under '
+            "vllm style; sglang style applies one ratio to both and requires a plain float. "
+            "Requires both `--isl` and `--osl` to be set explicitly — there is no default "
+            "mean for either. "
+            "Mutually exclusive with `--seq-dist`. "
+            "Under vllm style with a tokenizer configured, the ISL mean is automatically reduced by "
+            "`tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total "
+            "server-side input tokens, matching `vllm bench serve` semantics; sglang style "
+            "applies no such adjustment.",
+        ),
+        CLIParameter(
+            name=("--random-range-ratio",),
+            group=Groups.ISL,
+        ),
+    ] = None
+
+    prompt_random_corpus_style: Annotated[
+        RandomCorpusStyle,
+        Field(
+            default=RandomCorpusStyle.VLLM,
+            description="Benchmark style for RANDOM corpus generation. "
+            "Controls range ratio formula, token pool composition, and other "
+            "per-tool behaviors. "
+            "`vllm` (default) mirrors `vllm bench serve`: symmetric range window, "
+            "non-special token pool (special tokens excluded). "
+            "`sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: "
+            "lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). "
+            "Applies in two independent places: token-pool selection whenever "
+            "`--prompt-corpus random` is set (including with no `--random-range-ratio`, "
+            "where the pool is the only thing the style selects), and the range-window "
+            "formula, special-token accounting and RNG algorithm whenever "
+            "`--random-range-ratio` is set — the latter regardless of corpus.",
+        ),
+        CLIParameter(
+            name=("--random-corpus-style",),
+            group=Groups.ISL,
+        ),
+    ] = RandomCorpusStyle.VLLM
 
     ##############################################################################
     # Output Sequence Length (OSL)
@@ -1591,9 +1879,11 @@ class CLIConfig(BaseConfig):
     video_format: Annotated[
         VideoFormat,
         Field(
-            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). "
+            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (widely compatible container, VP9 by default). "
             "Format choice affects compatibility, file size, and encoding options. "
-            "Use `webm` for open-source workflows, `mp4` for maximum compatibility.",
+            "`mp4` is the more portable container, but note that the default VP9 "
+            "video and Opus audio are less widely supported by players than "
+            "H.264/AAC would be.",
         ),
         CLIParameter(
             name=("--video-format",),
@@ -1606,11 +1896,12 @@ class CLIConfig(BaseConfig):
         Field(
             description=(
                 "The video codec to use for encoding. Common options: "
-                "libvpx-vp9 (CPU, BSD-licensed, default for WebM), "
-                "libx264 (CPU, GPL-licensed, widely compatible), "
-                "libx265 (CPU, GPL-licensed, smaller files), "
-                "h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). "
-                "Any FFmpeg-supported codec can be used."
+                "libvpx-vp9 (CPU, BSD-licensed, default), "
+                "libvpx (CPU, BSD-licensed, VP8). "
+                "Any codec the local FFmpeg supports can be used, but the AIPerf "
+                "container ships a minimal FFmpeg build limited to VP8/VP9 video "
+                "with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc "
+                "require an FFmpeg build that includes them."
             ),
         ),
         CLIParameter(
@@ -1655,8 +1946,12 @@ class CLIConfig(BaseConfig):
         Field(
             description="Audio codec for the embedded audio track. "
             "If not specified, auto-selects based on video format: "
-            "aac for MP4, libvorbis for WebM. "
-            "Options: aac, libvorbis, libopus.",
+            "libopus for MP4, libvorbis for WebM. "
+            "Options: libvorbis, libopus, aac. The AIPerf container ships only "
+            "libvorbis and libopus; aac requires an FFmpeg build that "
+            "includes an AAC encoder. "
+            "libopus always encodes at 48 kHz, so any "
+            "--video-audio-sample-rate is resampled during muxing.",
         ),
         CLIParameter(
             name=("--video-audio-codec",),
@@ -1839,7 +2134,12 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=1,
-            description="Maximum output sequence length cap. Traces with output_length > max_osl are capped to max_osl.",
+            description=(
+                "Maximum output sequence length cap for top-level (parent) turns. "
+                "Turns with output_length > max_osl are capped to max_osl. "
+                "Subagent child turns are intentionally uncapped so their decode "
+                "load stays faithful; flat-chain sidecars still honor the cap."
+            ),
         ),
         CLIParameter(name=("--synthesis-max-osl",), group=Groups.SYNTHESIS),
     ] = None
@@ -2016,117 +2316,159 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
-    adaptive_scale: Annotated[
+    request_rate_series: Annotated[
+        Path | None,
+        Field(
+            description="JSON file containing request-rate points for piecewise-linear request-rate control.",
+        ),
+        CLIParameter(
+            name=("--request-rate-series",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    failed_request_threshold: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="Abort the run early when (failed_records / total_records) exceeds this "
+            "ratio. Default None disables the check. Only PROFILING-phase records "
+            "count toward the ratio. A grace floor of max(concurrency, 10) records "
+            "must accumulate before the check is armed, so a single early failure "
+            "cannot kill the run. When the threshold is exceeded a "
+            "PROFILE_CANCEL is broadcast: in-flight requests drain via the "
+            "normal cancel path, partial results are still aggregated, and the run "
+            "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
+            "in record_processor_service so the rate measures real failures only.",
+        ),
+        CLIParameter(
+            name=("--failed-request-threshold",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
+    trajectory_start_min_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="AGENTIC_REPLAY only: lower bound (inclusive) on the random start "
+            "position within each trajectory, expressed as a fraction of the "
+            "trace's total turn count. Sampled per trajectory at trajectory-build "
+            "time; deterministic given --random-seed.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-min-ratio",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = 0.25
+
+    trajectory_start_max_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description="AGENTIC_REPLAY only: upper bound (inclusive) on the random start "
+            "position within each trajectory, expressed as a fraction of the "
+            "trace's total turn count. The effective per-trace ceiling is "
+            "min(int(max_ratio * n), n - 2) so at least one profile turn remains "
+            "after warmup.",
+        ),
+        CLIParameter(
+            name=("--trajectory-start-max-ratio",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = 0.75
+
+    burst_phase_starts: Annotated[
         bool,
         Field(
-            description=(
-                "Enable stable single-run adaptive scale control. Use "
-                "--adaptive-scale-control variable:min,max:type to choose the "
-                "controlled variable and bounds, and --adaptive-scale-sla "
-                "metric:stat:op:threshold to define pass/fail criteria. Also "
-                "requires --benchmark-duration and --adaptive-sustain-duration."
-            ),
+            description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
+            "PROFILING-start dispatches into synchronized bursts instead of "
+            "spreading them by each request's recorded offset from t*. By "
+            "default (False) the phase starts are SPREAD: WARMUP requests are "
+            "aligned globally so every trajectory reaches its t* at the same "
+            "instant (the warmup end), and each lane's first PROFILING request "
+            "waits out its recorded gap after t* -- reproducing the recorded "
+            "arrival pattern at both phase boundaries. The rest of the replay "
+            "(inter-turn delays) is timing-faithful regardless of this flag; "
+            "it governs ONLY the burst-vs-spread of the two phase starts. Pass "
+            "--burst-phase-starts to fire each phase's first requests together "
+            "(faster concurrency ramp, synchronized start), e.g. for a "
+            "throughput-oriented run rather than a faithful arrival replay.",
         ),
-        CLIParameter(name=("--adaptive-scale",), group=Groups.LOAD_GENERATOR),
+        CLIParameter(
+            name=("--burst-phase-starts",),
+            group=Groups.LOAD_GENERATOR,
+        ),
     ] = False
 
-    adaptive_sustain_duration: Annotated[
+    trace_idle_gap_cap_seconds: Annotated[
         float | None,
         Field(
-            gt=0,
-            description="Duration in seconds to sustain load near the discovered adaptive scale boundary.",
+            default=None,
+            ge=0.0,
+            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
+            "For Weka trace replay, AIPerf looks at all parent and subagent request "
+            "submission timestamps within one root trace, compresses long gaps between "
+            "consecutive request submissions, and derives turn delays from the "
+            "compressed per-trace timeline. Original request api_time values are not "
+            "used to decide these idle gaps. When set for Weka, this takes precedence over "
+            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
+            "delays are not separately capped. Defaults to None (no per-trace "
+            "idle-gap compression).",
         ),
         CLIParameter(
-            name=("--adaptive-sustain-duration",), group=Groups.LOAD_GENERATOR
-        ),
-    ] = None
-
-    adaptive_assessment_period: Annotated[
-        float | None,
-        Field(
-            ge=1.0,
-            description="Duration in seconds for each adaptive scale SLA assessment window.",
-        ),
-        CLIParameter(
-            name=("--adaptive-assessment-period", "--adaptive-scale-assessment-period"),
+            name=("--trace-idle-gap-cap-seconds",),
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None
 
-    adaptive_scale_control: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description=(
-                "Compact adaptive scale control spec in variable:min,max:type "
-                "form. The variable is one of concurrency, prefill_concurrency, "
-                "request_rate, or users; min and max are required explicit "
-                "bounds; type is int for discrete controls and float for rate "
-                "controls. Examples: concurrency:1,1000:int, "
-                "prefill_concurrency:1,8:int, request_rate:1,200:float, "
-                "users:10,500:int. Do not combine this with expanded "
-                "--adaptive-control-* flags."
-            ),
-        ),
-        CLIParameter(name=("--adaptive-scale-control",), group=Groups.LOAD_GENERATOR),
-    ] = None
-
-    adaptive_control_variable: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="Adaptive scale control variable: concurrency, prefill_concurrency, request_rate, or users.",
-        ),
-        CLIParameter(
-            name=("--adaptive-control-variable",), group=Groups.LOAD_GENERATOR
-        ),
-    ] = None
-
-    adaptive_control_min: Annotated[
+    system_idle_gap_cap_seconds: Annotated[
         float | None,
         Field(
-            gt=0,
             default=None,
-            description="Minimum adaptive scale control value.",
-        ),
-        CLIParameter(name=("--adaptive-control-min",), group=Groups.LOAD_GENERATOR),
-    ] = None
-
-    adaptive_control_max: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            default=None,
-            description="Maximum adaptive scale control value. Inferred from the phase target when omitted.",
-        ),
-        CLIParameter(name=("--adaptive-control-max",), group=Groups.LOAD_GENERATOR),
-    ] = None
-
-    adaptive_scale_sla: Annotated[
-        list[str] | None,
-        Field(
-            default=None,
-            description=(
-                "SLA filter for adaptive scale. Format: "
-                "'metric_tag:stat:op:threshold'. Latency-family metrics "
-                "(request_latency, time_to_first_token/ttft, "
-                "inter_token_latency/itl/tpot) support percentile stats; "
-                "window scalar/rate metrics (request_throughput, "
-                "output_token_throughput, goodput, "
-                "goodput_ratio, success_rate, "
-                "error_rate, cancellation_rate) support {avg, min, max}. "
-                "Full metric/stat table: "
-                "[Adaptive SLA metric support]"
-                "(tutorials/yaml-config.md#adaptive-sla-metric-support). "
-                "op in {lt, le, gt, ge}; threshold is a float. Repeatable. "
-                "Example: --adaptive-scale-sla 'request_latency:p95:le:30000'."
-            ),
+            ge=0.0,
+            description="AGENTIC_REPLAY only: maximum time in seconds the "
+            "replay may remain globally idle while future requests are "
+            "scheduled. When no requests are in flight or ready, all pending "
+            "request timers shift earlier uniformly so the next request "
+            "arrives within this limit. Per-trace timing is otherwise "
+            "preserved. None disables the cap.",
         ),
         CLIParameter(
-            name=("--adaptive-scale-sla",),
+            name=("--system-idle-gap-cap-seconds",),
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None
+
+    ##############################################################################
+    # Scenario
+    ##############################################################################
+    scenario: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Lock all benchmark invariants for a named scenario "
+            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
+            "invariants raise ScenarioLockError at startup unless "
+            "--unsafe-override is also passed. Distinct from the sweep "
+            "``scenarios`` strategy (hand-picked named runs).",
+        ),
+        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
+    ] = None
+
+    unsafe_override: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Convert scenario lock errors to warnings; stamps "
+            "submission_valid=false in the aggregate output. No-op without "
+            "--scenario.",
+        ),
+        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
+    ] = False
 
     ##############################################################################
     # Warmup
@@ -2156,6 +2498,40 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    agentic_cache_warmup_duration: Annotated[
+        float | None,
+        Field(
+            gt=0,
+            description="Additional agentic replay warmup duration in seconds. "
+            "After the normal snapshot warmup drains, AIPerf continues the live "
+            "trajectories without recorded idle delays and with one-token outputs, "
+            "then drains and resumes profiling from the resulting trajectory state "
+            "using each live stream's residual next-turn delay.",
+        ),
+        CLIParameter(
+            name=("--agentic-cache-warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    agentic_warmup_grace_period: Annotated[
+        float | None,
+        Field(
+            ge=0,
+            description="AGENTIC_REPLAY only: grace period in seconds the "
+            "auto-synthesized warmup barrier waits for in-flight priming requests "
+            "after the warmup burst sends. The agentic warmup is synthesized from "
+            "the profiling phase rather than a user-declared warmup phase, so it "
+            "does NOT honor `--warmup-grace-period` (which requires "
+            "`--warmup-duration`). If not set, the warmup barrier waits "
+            "indefinitely until every primed trajectory returns.",
+        ),
+        CLIParameter(
+            name=("--agentic-warmup-grace-period",),
             group=Groups.WARMUP,
         ),
     ] = None
@@ -2368,12 +2744,13 @@ class CLIConfig(BaseConfig):
         Field(
             description="Base filename for ALL exported files. With prefix='foo' every "
             "output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, "
-            "`foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and "
-            "`foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
+            "`foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, "
+            "and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
             "historical per-file names are used: `profile_export_aiperf.{csv,json}` "
             "for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` "
-            "for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. "
-            "Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) "
+            "for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and "
+            "`server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, "
+            "`_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) "
             "are stripped from the supplied value.",
         ),
         CLIParameter(
@@ -2391,7 +2768,9 @@ class CLIConfig(BaseConfig):
             description="Controls which output files are generated. "
             "`summary`: Only aggregate metrics files (`.csv`, `.json`). "
             "`records`: Includes per-request metrics (`.jsonl`). "
-            "`raw`: Includes raw request/response data (`_raw.jsonl`).",
+            "`raw`: Includes raw request/response data (`_raw.jsonl`) and, unless "
+            "`--no-export-outputs-json` is passed, the generated text "
+            "(`_outputs.json`).",
         ),
         CLIParameter(
             name=("--export-level", "--profile-export-level"),
@@ -2443,6 +2822,26 @@ class CLIConfig(BaseConfig):
         CLIParameter(
             name=("--plot-required",),
             group=Groups.OUTPUT,
+        ),
+    ] = False
+
+    export_outputs_json: Annotated[
+        bool,
+        Field(
+            description=(
+                "Export generated response text after the run. When enabled, the "
+                "raw generated-text payload for each request is written to "
+                "`outputs.json` in the artifact directory, or to "
+                "`<prefix>_outputs.json` when `--profile-export-prefix` is set "
+                "(prefix `foo` gives `foo_outputs.json`). Implied by "
+                "`--export-level raw`; pass `--no-export-outputs-json` to opt out "
+                "of the extra file while keeping raw export."
+            ),
+        ),
+        CLIParameter(
+            name=("--export-outputs-json",),
+            group=Groups.OUTPUT,
+            negative="--no-export-outputs-json",
         ),
     ] = False
 
@@ -3318,10 +3717,12 @@ class CLIConfig(BaseConfig):
                 "SLA filter to attach to the adaptive-search or grid path. "
                 "Format: 'metric_tag:stat:op:threshold'. Stat in "
                 "{avg, min, max, p1, p5, p10, p25, p50, p75, p90, p95, p99}; "
-                "op in {lt, le, gt, ge}; threshold is "
-                "a float. Repeatable. Example: --search-sla "
+                "op in {lt, le, gt, ge}; threshold is a float in the metric's "
+                "native unit. For request_error_rate, 1 means 1% (percentage "
+                "points), unlike --error-rate-sla, which accepts a fraction. "
+                "Repeatable. Example: --search-sla "
                 "'time_to_first_token:p95:lt:200' --search-sla "
-                "'request_error_rate:p99:lt:0.05'. Composes with recipe-named "
+                "'request_error_rate:avg:lt:1'. Composes with recipe-named "
                 "SLA flags (--ttft-sla-ms etc.); the final filter list is "
                 "recipe filters first, then --search-sla filters in CLI order."
             ),
@@ -3468,7 +3869,8 @@ class CLIConfig(BaseConfig):
             description=(
                 "Maximum acceptable request error rate as a fraction in (0, 1) "
                 "(e.g. 0.05 = 5%). Maps to the `request_error_rate` metric tag "
-                "(p99). Consumed by the max-concurrency-under-sla recipe; ignored "
+                "(avg), converting the fraction to the metric's percentage-point "
+                "scale. Consumed by the max-concurrency-under-sla recipe; ignored "
                 "otherwise. Available without streaming."
             ),
         ),
@@ -4006,3 +4408,10 @@ class CLIConfig(BaseConfig):
     _gpu_telemetry_metrics_file: Path | None = None
 
     _server_metrics_urls: list[str] = []
+
+
+# The local worker-process limit does not apply to distributed Kubernetes
+# execution; KubeOptions.total_workers owns that surface instead.
+KubeCLIConfig: TypeAlias = Annotated[
+    CLIConfig, Parameter(parse=r"^(?!workers_max$).*$")
+]

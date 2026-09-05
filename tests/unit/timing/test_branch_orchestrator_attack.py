@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import (
+    CacheBustTarget,
     ConversationBranchMode,
     PrerequisiteKind,
 )
@@ -68,7 +69,7 @@ def _fork_branch(
         branch_id=branch_id,
         child_conversation_ids=child_ids,
         mode=ConversationBranchMode.FORK,
-        background=background,
+        is_background=background,
     )
 
 
@@ -943,7 +944,9 @@ async def test_pre_dispatch_then_regular_sampling_other_branches_still_fire():
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
 
     await orch.dispatch_pre_session_branches()
-    cs.start_pre_session_child.assert_called_once_with("early")
+    cs.start_pre_session_child.assert_called_once_with(
+        "early", cache_bust_marker=None, cache_bust_target=CacheBustTarget.NONE
+    )
 
     # Now the regular post-turn-0 return.
     await orch.intercept(_mk_credit("root", "corr-root", 0))

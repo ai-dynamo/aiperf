@@ -7,9 +7,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from aiperf.common.enums import CreditPhase
 from aiperf.plugin.enums import ArrivalPattern
 from aiperf.timing.adaptive_config import AdaptiveControlVariable
+from aiperf.timing.concurrency import PhaseRuntimeKey
 
 
 class AdaptiveControlBackend(Protocol):
@@ -50,7 +50,7 @@ class _BaseControlBackend:
 
 class SessionConcurrencyControlBackend(_BaseControlBackend):
     def __init__(
-        self, *, concurrency_manager, phase: CreditPhase, minimum: int, maximum: int
+        self, *, concurrency_manager, phase: PhaseRuntimeKey, minimum: int, maximum: int
     ):
         super().__init__("concurrency", minimum, maximum, minimum)
         self._concurrency_manager = concurrency_manager
@@ -63,7 +63,7 @@ class SessionConcurrencyControlBackend(_BaseControlBackend):
 
 class PrefillConcurrencyControlBackend(_BaseControlBackend):
     def __init__(
-        self, *, concurrency_manager, phase: CreditPhase, minimum: int, maximum: int
+        self, *, concurrency_manager, phase: PhaseRuntimeKey, minimum: int, maximum: int
     ):
         super().__init__("prefill_concurrency", minimum, maximum, minimum)
         self._concurrency_manager = concurrency_manager
@@ -154,7 +154,7 @@ def _build_concurrency_backend(*, strategy: Any, concurrency_manager, config):
     _validate_bounds(min_value, max_value, "concurrency")
     return SessionConcurrencyControlBackend(
         concurrency_manager=concurrency_manager,
-        phase=config.phase,
+        phase=config.phase_index if config.phase_index is not None else config.phase,
         minimum=min_value,
         maximum=max_value,
     )
@@ -185,7 +185,7 @@ def _build_prefill_concurrency_backend(*, strategy: Any, concurrency_manager, co
     _validate_bounds(min_value, max_value, "prefill_concurrency")
     return PrefillConcurrencyControlBackend(
         concurrency_manager=concurrency_manager,
-        phase=config.phase,
+        phase=config.phase_index if config.phase_index is not None else config.phase,
         minimum=min_value,
         maximum=max_value,
     )

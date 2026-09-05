@@ -4,8 +4,8 @@ import time
 
 import orjson
 import pytest
+from pytest import param
 
-from aiperf.common.enums import SSEFieldType
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEField, SSEMessage
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
@@ -48,26 +48,38 @@ class TestParseSSEMessage:
         "field_name,field_value,expected_name,expected_value",
         [
             # Standard SSE field types
-            ("data", "Hello World", SSEFieldType.DATA, "Hello World"),
-            ("event", "message", SSEFieldType.EVENT, "message"),
-            ("id", "123456", SSEFieldType.ID, "123456"),
-            ("retry", "5000", SSEFieldType.RETRY, "5000"),
+            param("data", "Hello World", "data", "Hello World", id="data"),
+            param("event", "message", "event", "message", id="event"),
+            param("id", "123456", "id", "123456", id="id"),
+            param("retry", "5000", "retry", "5000", id="retry"),
             # Custom field names
-            ("custom-field", "custom-value", "custom-field", "custom-value"),
-            ("X-Custom-Header", "header-value", "X-Custom-Header", "header-value"),
+            param(
+                "custom-field",
+                "custom-value",
+                "custom-field",
+                "custom-value",
+                id="custom",
+            ),
+            param(
+                "X-Custom-Header",
+                "header-value",
+                "X-Custom-Header",
+                "header-value",
+                id="custom-case-preserved",
+            ),
             # Case sensitivity tests (should preserve original case)
-            ("Data", "test", "Data", "test"),
-            ("EVENT", "test", "EVENT", "test"),
+            param("Data", "test", "Data", "test", id="data-case-preserved"),
+            param("EVENT", "test", "EVENT", "test", id="event-case-preserved"),
             # Empty values
-            ("data", "", SSEFieldType.DATA, ""),
-            ("event", "", SSEFieldType.EVENT, ""),
+            param("data", "", "data", "", id="empty-data"),
+            param("event", "", "event", "", id="empty-event"),
         ],
-    )
+    )  # fmt: skip
     def test_parse_single_field_messages(
         self,
         field_name: str,
         field_value: str,
-        expected_name: SSEFieldType | str,
+        expected_name: str,
         expected_value: str,
         base_perf_ns: int,
     ) -> None:
@@ -78,6 +90,7 @@ class TestParseSSEMessage:
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
         assert result.packets[0].name == expected_name
+        assert type(result.packets[0].name) is str
         assert result.packets[0].value == expected_value
 
     @pytest.mark.parametrize(
@@ -118,7 +131,8 @@ class TestParseSSEMessage:
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.COMMENT
+        assert result.packets[0].name == "comment"
+        assert type(result.packets[0].name) is str
         assert result.packets[0].value == comment_text
 
     def test_parse_multiline_complex_message(self, base_perf_ns: int) -> None:
@@ -139,12 +153,12 @@ field-without-value"""
 
         # Verify each field
         expected_fields = [
-            SSEField(name=SSEFieldType.DATA, value='{"message": "Hello"}'),
-            SSEField(name=SSEFieldType.EVENT, value="user-message"),
-            SSEField(name=SSEFieldType.ID, value="msg-123"),
-            SSEField(name=SSEFieldType.RETRY, value="3000"),
-            SSEField(name=SSEFieldType.DATA, value='{"continuation": "World"}'),
-            SSEField(name=SSEFieldType.COMMENT, value="This is a comment"),
+            SSEField(name="data", value='{"message": "Hello"}'),
+            SSEField(name="event", value="user-message"),
+            SSEField(name="id", value="msg-123"),
+            SSEField(name="retry", value="3000"),
+            SSEField(name="data", value='{"continuation": "World"}'),
+            SSEField(name="comment", value="This is a comment"),
             SSEField(name="custom-header", value="custom-value"),
             SSEField(name="field-without-value", value=None),
         ]
@@ -179,13 +193,13 @@ field-without-value"""
         "raw_message,field_name,field_value",
         [
             # Leading/trailing whitespace in field names and values
-            ("  data  :  test value  ", SSEFieldType.DATA, "test value"),
-            ("\tdata\t:\ttest\t", SSEFieldType.DATA, "test"),
-            ("data:value", SSEFieldType.DATA, "value"),  # No spaces around colon
+            ("  data  :  test value  ", "data", "test value"),
+            ("\tdata\t:\ttest\t", "data", "test"),
+            ("data:value", "data", "value"),  # No spaces around colon
             # Whitespace in field without colon
             ("  field-name  ", "field-name", None),
             # Whitespace in comments
-            ("  :  comment text  ", SSEFieldType.COMMENT, "comment text"),
+            ("  :  comment text  ", "comment", "comment text"),
         ],
     )
     def test_parse_whitespace_handling(
@@ -220,7 +234,7 @@ field-without-value"""
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
 
         # Value should be everything after the first colon
         expected_value = colon_content.split(":", 1)[1].strip()
@@ -237,7 +251,7 @@ field-without-value"""
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
         assert result.packets[0].value == json_data
 
     def test_parse_real_world_sse_example(self, base_perf_ns: int) -> None:
@@ -254,19 +268,19 @@ retry: 5000"""
         assert len(result.packets) == 5
 
         # Verify structure
-        assert result.packets[0].name == SSEFieldType.EVENT
+        assert result.packets[0].name == "event"
         assert result.packets[0].value == "message"
 
-        assert result.packets[1].name == SSEFieldType.DATA
+        assert result.packets[1].name == "data"
         assert '"id": "chatcmpl-123"' in result.packets[1].value  # type: ignore
 
-        assert result.packets[2].name == SSEFieldType.DATA
+        assert result.packets[2].name == "data"
         assert '"content": "Hello"' in result.packets[2].value  # type: ignore
 
-        assert result.packets[3].name == SSEFieldType.ID
+        assert result.packets[3].name == "id"
         assert result.packets[3].value == "msg_123"
 
-        assert result.packets[4].name == SSEFieldType.RETRY
+        assert result.packets[4].name == "retry"
         assert result.packets[4].value == "5000"
 
     @pytest.mark.parametrize(
@@ -288,7 +302,7 @@ retry: 5000"""
 
         assert result.perf_ns == base_perf_ns
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
         assert result.packets[0].value == special_chars.strip()
 
     def test_sse_message_inheritance(self, base_perf_ns: int) -> None:
@@ -309,7 +323,8 @@ retry: 5000"""
 
         field = result.packets[0]
         assert isinstance(field, SSEField)
-        assert field.name == SSEFieldType.DATA
+        assert field.name == "data"
+        assert type(field.name) is str
         assert field.value == "test_value"
 
     @pytest.mark.parametrize(
@@ -401,21 +416,24 @@ retry: 5000"""
         assert result1 is not result2
         assert result1.packets is not result2.packets
 
-    def test_sse_field_type_enum_usage(self, base_perf_ns: int) -> None:
-        """Test that SSEFieldType enum is used correctly."""
-        test_cases = [
-            ("data", SSEFieldType.DATA),
-            ("event", SSEFieldType.EVENT),
-            ("id", SSEFieldType.ID),
-            ("retry", SSEFieldType.RETRY),
-        ]
+    @pytest.mark.parametrize(
+        "field_str",
+        [
+            param("data", id="data"),
+            param("event", id="event"),
+            param("id", id="id"),
+            param("retry", id="retry"),
+        ],
+    )  # fmt: skip
+    def test_standard_fields_use_plain_strings(
+        self, field_str: str, base_perf_ns: int
+    ) -> None:
+        """Test that standard SSE field names are stored as exact strings."""
+        raw_message = f"{field_str}: test"
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
-        for field_str, expected_enum in test_cases:
-            raw_message = f"{field_str}: test"
-            result = SSEMessage.parse(raw_message, base_perf_ns)
-
-            assert result.packets[0].name == expected_enum
-            assert str(result.packets[0].name) == field_str
+        assert result.packets[0].name == field_str
+        assert type(result.packets[0].name) is str
 
     def test_comment_field_special_handling(self, base_perf_ns: int) -> None:
         """Test special handling of comment fields (empty field name)."""
@@ -423,7 +441,8 @@ retry: 5000"""
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.COMMENT
+        assert result.packets[0].name == "comment"
+        assert type(result.packets[0].name) is str
         assert result.packets[0].value == "this is a comment"
 
     @pytest.mark.parametrize(
@@ -437,14 +456,18 @@ retry: 5000"""
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
-        # The name should match exactly what was provided
-        if field_name_case.lower() in ["data", "event", "id", "retry"]:
-            # For standard fields, the enum should handle case insensitivity
-            expected_enum = getattr(SSEFieldType, field_name_case.upper())
-            assert result.packets[0].name == expected_enum
-        else:
-            # For non-standard fields, preserve exact case
-            assert result.packets[0].name == field_name_case
+        assert result.packets[0].name == field_name_case
+        assert type(result.packets[0].name) is str
+
+    def test_differently_cased_data_field_is_not_extracted(
+        self, base_perf_ns: int
+    ) -> None:
+        """Differently-cased names remain custom fields under the SSE protocol."""
+        result = SSEMessage.parse('Data: {"key": "value"}', base_perf_ns)
+
+        assert result.packets[0].name == "Data"
+        assert result.get_text() is None
+        assert result.get_json() is None
 
 
 class TestParseSSEMessageIncompleteJSON:
@@ -460,7 +483,7 @@ class TestParseSSEMessageIncompleteJSON:
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
 
         import orjson
 
@@ -474,7 +497,7 @@ class TestParseSSEMessageIncompleteJSON:
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
 
         import orjson
 
@@ -487,7 +510,7 @@ class TestParseSSEMessageIncompleteJSON:
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
 
         import orjson
 
@@ -500,7 +523,7 @@ class TestParseSSEMessageIncompleteJSON:
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 2
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
         assert result.packets[0].value == "plain text"
         assert result.packets[1].name == "custom-header"
 
@@ -510,10 +533,10 @@ class TestParseSSEMessageIncompleteJSON:
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 3
-        assert result.packets[0].name == SSEFieldType.DATA
-        assert result.packets[1].name == SSEFieldType.EVENT
+        assert result.packets[0].name == "data"
+        assert result.packets[1].name == "event"
         assert result.packets[1].value == "message"
-        assert result.packets[2].name == SSEFieldType.ID
+        assert result.packets[2].name == "id"
         assert result.packets[2].value == "123"
 
     def test_incomplete_json_followed_by_data_line(self, base_perf_ns: int) -> None:
@@ -522,8 +545,8 @@ class TestParseSSEMessageIncompleteJSON:
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 2
-        assert result.packets[0].name == SSEFieldType.DATA
-        assert result.packets[1].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
+        assert result.packets[1].name == "data"
 
     def test_real_world_bug_report_re_joined(self, base_perf_ns: int) -> None:
         """Reproduce the exact scenario from the bug report.
@@ -544,7 +567,7 @@ class TestParseSSEMessageIncompleteJSON:
         result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert len(result.packets) == 1
-        assert result.packets[0].name == SSEFieldType.DATA
+        assert result.packets[0].name == "data"
 
         parsed = orjson.loads(result.packets[0].value)
         assert parsed["id"] == "chatcmpl-1e910357-2256-4808-a201-44ee43860885"
@@ -663,12 +686,18 @@ class TestInspectMessageForError:
         assert "First error" in str(exc_info.value)
         assert "Second error" not in str(exc_info.value)
 
-    @pytest.mark.parametrize("event_case", ["error", "ERROR", "Error", "eRrOr"])
-    def test_error_event_case_insensitive(
-        self, event_case: str, base_perf_ns: int
+    @pytest.mark.parametrize(
+        "raw_message",
+        [
+            param("event: ERROR\n: Error message", id="uppercase-value"),
+            param("event: Error\n: Error message", id="titlecase-value"),
+            param("Event: error\n: Error message", id="titlecase-field"),
+        ],
+    )  # fmt: skip
+    def test_error_event_comparison_is_case_insensitive_raises(
+        self, raw_message: str, base_perf_ns: int
     ) -> None:
-        """Test that error event detection is case-insensitive."""
-        raw_message = f"event: {event_case}\n: Error message"
+        """Differently-cased error event names and values preserve legacy detection."""
         message = SSEMessage.parse(raw_message, base_perf_ns)
 
         with pytest.raises(SSEResponseError) as exc_info:

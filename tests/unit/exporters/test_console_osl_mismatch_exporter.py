@@ -191,6 +191,15 @@ class TestConsoleOSLMismatchExporter:
         output = await self._get_export_output(exporter)
         assert "Output Sequence Length Mismatch Warning" not in output
 
+    async def test_results_none_no_crash(self, mock_cfg):
+        """results=None must no-op rather than AttributeError on .get()."""
+        exporter = ConsoleOSLMismatchExporter(create_exporter_config(None, mock_cfg))
+        output = await self._get_export_output(exporter)
+        assert output == ""
+        assert exporter._get_mismatch_metric() is None
+        assert exporter._get_total_records() == 0
+        assert exporter._get_avg_diff() is None
+
     async def test_formatting_with_large_numbers(self, mock_cfg):
         """Test that large numbers are formatted with commas."""
         with patch(

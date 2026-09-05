@@ -8,6 +8,8 @@ and made available to test functions in the same directory and subdirectories.
 """
 
 import asyncio
+import os
+import time
 import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
@@ -57,6 +59,92 @@ DEFAULT_INPUT_TOKENS = 5
 DEFAULT_OUTPUT_TOKENS = 2
 
 _REAL_SLEEP = asyncio.sleep
+
+# Pristine stdlib clock functions, captured at import time before any test can
+# patch them. Used by the leaked-clock-patch guard below.
+_PRISTINE_CLOCK: dict[str, object] = {
+    name: getattr(time, name)
+    for name in (
+        "time",
+        "time_ns",
+        "monotonic",
+        "monotonic_ns",
+        "perf_counter",
+        "perf_counter_ns",
+    )
+}
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Fail the test that leaks a patch of a stdlib ``time.*`` clock function.
+
+    A leaked global clock patch is close to undebuggable without this guard:
+    ``asyncio.BaseEventLoop.time()`` calls ``time.monotonic()``, so once that
+    slot is left pointing at a stale fake, every event loop created afterwards
+    runs on a frozen clock, its timers never fire, and some unrelated test far
+    down the run hangs in ``epoll.poll()`` with nothing naming the culprit.
+
+    That is not hypothetical. ``TimeTraveler.start_traveling`` patches the
+    stdlib slots globally, so a *fixture* that also patches the same slot --
+    e.g. ``monkeypatch.setattr(some_module.time, "monotonic", ...)``, which
+    reaches the stdlib module rather than a module-local binding -- unwinds
+    against TimeTraveler's independent save/restore stack out of order:
+    ``monkeypatch`` is created early (as a dependency of the autouse
+    ``no_sleep``) so it undoes *after* TimeTraveler has already restored the
+    real function, re-installing a dead TimeTraveler bound method for the rest
+    of the process.
+
+    Patch a module-local binding instead: have the source do
+    ``from time import monotonic`` and patch ``some_module.monotonic``.
+
+    This is a teardown hookwrapper rather than an autouse fixture on purpose --
+    it must observe the slot after *all* fixture finalization, including
+    ``monkeypatch``, and no fixture can reliably order itself outside a builtin
+    that other autouse fixtures depend on.
+
+    The guard restores the pristine functions as well as failing, so one
+    offending test cannot cascade into the rest of the run.
+    """
+    result = yield
+    leaked = {
+        name: getattr(time, name)
+        for name, real in _PRISTINE_CLOCK.items()
+        if getattr(time, name) is not real
+    }
+    if leaked:
+        for name, real in _PRISTINE_CLOCK.items():
+            setattr(time, name, real)
+        raise RuntimeError(
+            f"{item.nodeid} leaked a patch of stdlib time functions: "
+            + ", ".join(f"time.{n} is {v!r}" for n, v in leaked.items())
+            + ". Patch a module-local binding (from time import monotonic ->"
+            " patch <module>.monotonic) instead of the stdlib time module."
+        )
+    return result
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _hf_offline_mode():
+    """Never load a real tokenizer over the network in unit tests.
+
+    Both HF_HUB_OFFLINE and TRANSFORMERS_OFFLINE are set: the loader's
+    forkserver tokenizer preload (``aiperf.dataset._tokenizer_preload``) and the
+    tokenizer validator's prefetch path spawn subprocesses that inherit this env
+    and bypass any in-process ``Tokenizer.from_pretrained`` patch. Mirrors the
+    integration / component_integration suites. tiktoken builtins are local and
+    unaffected; a real HF load fails fast offline instead of downloading.
+    """
+    keys = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    prev = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ[k] = "1"
+    yield
+    for k, v in prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(autouse=True)
@@ -288,6 +376,70 @@ def reset_random_generator() -> Generator[None, None, None]:
 
 
 @pytest.fixture(autouse=True)
+def _disable_weka_parallel_reconstruction(monkeypatch):
+    """Force WekaTraceLoader serial reconstruction across ALL unit tests.
+
+    Any unit test that drives ``create_dataset()`` / ``convert_to_conversations()``
+    over a weka_trace fixture with >= ``WEKA_PARALLEL_THRESHOLD`` (default 8) traces
+    triggers the parallel path, which spawns a real multiprocessing Pool. Those
+    workers load a real tokenizer via ``Tokenizer.from_pretrained`` -- but unit
+    tests stub the tokenizer with a MagicMock that doesn't survive the process
+    boundary, so the workers never produce results and ``pool.imap`` hangs forever.
+    Under ``pytest -n auto`` this wedges the whole xdist worker ("node down: Not
+    properly terminated") and the run stalls until CI's 45-minute timeout, leaving
+    orphaned pool processes. Weka-pool callers are spread across ``dataset/``,
+    ``config/``, and ``common/scenario/``, so the guard must live at the unit-test
+    root, not in a per-subdir conftest.
+
+    Uses ``monkeypatch`` rather than manual save/restore so a per-test override of
+    the same setting unwinds LIFO through the one function-scoped monkeypatch (a
+    manual ``finally`` restore racing a per-test monkeypatch of the same global
+    leaked stale values across tests under xdist sharding). Tests that specifically
+    exercise the parallel path re-enable it via their own ``monkeypatch``.
+    """
+    from aiperf.common import environment as env_mod
+
+    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_PARALLEL_WORKERS", 1)
+
+
+@pytest.fixture(autouse=True)
+def restore_kube_logger_level():
+    """Restore the ``aiperf.kube`` logger level after every test.
+
+    The kube CLI's ``--output json`` paths temporarily drop this logger to
+    WARNING so only JSON reaches stdout, and several tests set it explicitly to
+    assert that the ``finally`` restores it. Those tests mutate the real global
+    logger, so one that leaves it at ERROR silences every later test on the same
+    ``pytest -n auto`` worker that asserts on kube CLI output -- which showed up
+    as worker- and order-dependent "assert 'x' in ''" failures.
+    """
+    import logging
+
+    kube_logger = logging.getLogger("aiperf.kube")
+    original_level = kube_logger.level
+    yield
+    kube_logger.setLevel(original_level)
+
+
+@pytest.fixture(autouse=True)
+def isolate_last_kube_benchmark_file(tmp_path, monkeypatch):
+    """Redirect the kube CLI's last-benchmark cache into a per-test temp dir.
+
+    ``aiperf.kubernetes.console`` persists the most recent ``aiperf kube``
+    target to ``~/.aiperf/last_kube_benchmark.json`` so ``attach``/``logs``/
+    ``results`` can default to it. Left alone, the unit suite writes to the
+    developer's real home directory, and -- worse -- every ``pytest -n auto``
+    worker shares that one path, so a test that saves a benchmark can be read
+    back by an unrelated test on another worker. That surfaced as order- and
+    worker-dependent failures in the kube CLI tests.
+    """
+    monkeypatch.setattr(
+        "aiperf.kubernetes.console._LAST_BENCHMARK_FILE",
+        tmp_path / "last_kube_benchmark.json",
+    )
+
+
+@pytest.fixture(autouse=True)
 def reset_singleton_factories():
     """Reset singleton factory instances between tests to prevent state leakage.
 
@@ -305,6 +457,21 @@ def reset_singleton_factories():
     from aiperf.common.singleton import SingletonMeta
 
     SingletonMeta._instances.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_service_registry():
+    """Clear the process-wide ServiceRegistry singleton between tests.
+
+    ``aiperf.common.service_registry.ServiceRegistry`` is a module-level
+    instance, so registrations and expectations survive across tests in the
+    same worker and would otherwise leak quorum state into unrelated tests.
+    """
+    yield
+
+    from aiperf.common.service_registry import ServiceRegistry
+
+    ServiceRegistry.reset()
 
 
 @pytest.fixture
@@ -359,6 +526,9 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
             # Create MagicMock methods that you can assert on
             self.encode = MagicMock(side_effect=self._mock_encode)
             self.decode = MagicMock(side_effect=self._mock_decode)
+            self.encode_lengths_batch = MagicMock(
+                side_effect=self._mock_encode_lengths_batch
+            )
 
         @classmethod
         def from_pretrained(
@@ -382,6 +552,9 @@ def mock_tokenizer_cls() -> type[Tokenizer]:
 
         def _mock_decode(self, token_ids, **kwargs):
             return " ".join([f"token_{t}" for t in token_ids])
+
+        def _mock_encode_lengths_batch(self, texts: list[str]) -> list[int]:
+            return [len(self._mock_encode(t)) for t in texts]
 
     return MockTokenizer
 

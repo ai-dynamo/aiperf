@@ -24,15 +24,32 @@ class TelemetryRecordsMessage(BaseServiceMessage):
         ...,
         description="The ID of the telemetry data collector that collected the records.",
     )
-    dcgm_url: str = Field(
+    telemetry_source_url: str = Field(
         ...,
-        description="The DCGM endpoint URL that was contacted (e.g., 'http://localhost:9400/metrics')",
+        description="Source identifier URL for the collector that produced the records",
     )
     records: list[TelemetryRecord] = Field(
         ..., description="The telemetry records collected from GPU monitoring"
     )
     error: ErrorDetails | None = Field(
         default=None, description="The error details if telemetry collection failed."
+    )
+    sequence: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Producer-local delivery sequence. Positive values let the records "
+            "manager prove that every message preceding the completion marker "
+            "finished processing despite concurrent PULL dispatch."
+        ),
+    )
+    collection_complete: bool = Field(
+        default=False,
+        description=(
+            "Whether this is the producer's terminal in-band marker. The GPU "
+            "telemetry manager sends it after closing record admission so the "
+            "records manager can prove all earlier PUSH messages were processed."
+        ),
     )
 
     @property

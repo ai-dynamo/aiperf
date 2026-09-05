@@ -3,16 +3,22 @@
 
 from __future__ import annotations
 
+import hashlib
 from abc import abstractmethod
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.config.dataset.defaults import InputTokensDefaults
-from aiperf.dataset.generator.parallel_decode import parallel_decode
 from aiperf.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_loader import BaseFileLoader
+from aiperf.dataset.loader.hash_ids_synthesis import (
+    HashIdsPromptRequest,
+    HashIdsPromptSynthesisMixin,
+)
 from aiperf.dataset.synthesis.models import SynthesisParams
 from aiperf.dataset.synthesis.synthesizer import Synthesizer
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -21,6 +27,24 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 TraceT = TypeVar("TraceT")
+
+
+def _compute_file_hash(filepath: str) -> str:
+    """Compute SHA256 hash of file content (first 16 hex chars).
+
+    Falls back to hashing the filepath string if the file cannot be read.
+    Used as the per-file ``trace_id`` scope for ``HashIdRandomGenerator`` so
+    that two different trace files with overlapping ``hash_id`` values
+    produce different content.
+    """
+    try:
+        hasher = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()[:16]
+    except (OSError, TypeError):
+        return hashlib.sha256(str(filepath).encode()).hexdigest()[:16]
 
 
 def _has_meaningful_synthesis(synthesis: Any) -> bool:
@@ -42,7 +66,9 @@ def _has_meaningful_synthesis(synthesis: Any) -> bool:
     )
 
 
-class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
+class BaseTraceDatasetLoader(
+    HashIdsPromptSynthesisMixin, BaseFileLoader, Generic[TraceT]
+):
     """Base class for trace dataset loaders with hash_ids-based prompt generation.
 
     Provides common infrastructure for loading trace-format datasets
@@ -71,6 +97,14 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        self._delay_cap_tracker = DelayCapTracker(
+            cap_seconds=getattr(
+                self.run.cfg.get_default_dataset(),
+                "inter_turn_delay_cap_seconds",
+                None,
+            )
+        )
+        self._trace_id: str = ""
 
         # Fixed-schedule timestamp window lives on FixedSchedulePhase entries.
         # Read from the first profiling phase that exposes it (if any).
@@ -110,11 +144,15 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             tokenizer_cfg.revision if tokenizer_cfg is not None else "main"
         )
 
-        # Precedence: per-dataset block_size > plugin metadata default > hardcoded fallback.
-        # Only synthetic-style datasets carry prompts.block_size; FileDataset has no
-        # equivalent field, so fall through to the plugin/default chain.
+        # Precedence: user block_size (--isl-block-size) > plugin metadata default
+        # > hardcoded fallback. The hash-id trace loaders (mooncake/bailian/...)
+        # decode each hash_id into a block of this many tokens. The user override
+        # lands on FileDataset.block_size (routed by the converter for non-weka
+        # traces); a synthetic-via-file dataset carries it on prompts.block_size.
         prompts = getattr(dataset, "prompts", None)
-        user_block_size = getattr(prompts, "block_size", None) if prompts else None
+        user_block_size = getattr(dataset, "block_size", None)
+        if user_block_size is None and prompts is not None:
+            user_block_size = getattr(prompts, "block_size", None)
         if user_block_size is not None:
             self._block_size = user_block_size
         elif default_block_size is not None:
@@ -222,6 +260,26 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     # load_dataset — template method
     # ------------------------------------------------------------------
 
+    def _init_trace_scope(self) -> None:
+        """Set up per-file trace_id scope and clear stale block content.
+
+        Called from :meth:`load_dataset`. Computes a content hash of the
+        trace file and uses it as the ``trace_id`` for
+        :class:`HashIdRandomGenerator` so the same ``hash_id`` in two
+        different files produces different tokens. Also clears the
+        :class:`PromptGenerator` int-keyed block cache because it is scoped
+        to the previous file's ``trace_id``.
+
+        In inline-records mode ``self.filename`` is ``None``;
+        :func:`_compute_file_hash` falls back to hashing the string ``"None"``
+        so this stays crash-free and deterministic without a file on disk.
+        """
+        self._trace_id = _compute_file_hash(self.filename)
+        pg = self.prompt_generator
+        pg._hash_id_corpus_rng.set_trace_id(self._trace_id)
+        pg._cache.clear()
+        self.debug(lambda: f"Trace ID {self._trace_id} for {self.filename}")
+
     def load_dataset(self) -> dict[str, list[TraceT]]:
         """Load, filter, group, and optionally synthesize trace data.
 
@@ -232,6 +290,8 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        self._delay_cap_tracker.reset()
+        self._init_trace_scope()
         items: list[TraceT] = []
 
         for record_dict in self._iter_record_dicts():
@@ -295,7 +355,7 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
         )
         return Turn(
             timestamp=getattr(trace, "timestamp", None),
-            delay=getattr(trace, "delay", None),
+            delay=self._delay_cap_tracker.clamp(getattr(trace, "delay", None)),
             texts=[Text(name="text", contents=[prompt])],
             max_tokens=getattr(trace, "output_length", None),
             extra_body=request_body or getattr(trace, "extra", None),
@@ -306,14 +366,15 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
     ) -> list[Conversation]:
         """Convert trace sessions to :class:`Conversation` objects.
 
-        Uses a three-phase approach for optimal performance:
+        Uses a two-phase approach for optimal performance:
 
-        1. Build token sequences, checking the string cache first.
-        2. Batch parallel decode for all cache misses.
-        3. Assemble final :class:`Conversation` objects.
+        1. Collect hash_ids synthesis requests (skipping traces that carry a
+           literal ``text_input``).
+        2. Batch-synthesize prompts via the shared mixin, then assemble final
+           :class:`Conversation` objects.
         """
-        # Phase 1: Build token sequences and identify cache misses
-        pending_decodes: list[tuple[str, int, list[int], tuple]] = []
+        # Phase 1: Collect synthesis requests, short-circuiting literal prompts.
+        requests: list[HashIdsPromptRequest] = []
         conversations_data: dict[str, list[tuple[TraceT, str | None]]] = {}
 
         for session_id, traces in data.items():
@@ -323,55 +384,19 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
                 if text_input is not None:
                     conversations_data[session_id].append((trace, text_input))
                     continue
-
                 hash_ids: list[int] = getattr(trace, "hash_ids", None) or []
                 input_length: int = getattr(trace, "input_length", 0)
-
-                if hash_ids:
-                    cache_key = (
-                        tuple(hash_ids),
-                        input_length,
-                        self._block_size,
+                key = f"{session_id}:{idx}"
+                requests.append(
+                    HashIdsPromptRequest(
+                        key=key, hash_ids=hash_ids, input_length=input_length
                     )
-                    if cache_key in self.prompt_generator._decoded_cache:
-                        prompt = self.prompt_generator._decoded_cache[cache_key]
-                        conversations_data[session_id].append((trace, prompt))
-                    else:
-                        tokens = self.prompt_generator._build_token_sequence(
-                            input_length, hash_ids, self._block_size
-                        )
-                        pending_decodes.append((session_id, idx, tokens, cache_key))
-                        conversations_data[session_id].append((trace, None))
-                else:
-                    prompt = self.prompt_generator.generate(
-                        mean=input_length, stddev=0, hash_ids=[]
-                    )
-                    conversations_data[session_id].append((trace, prompt))
-
-        # Phase 2: Batch parallel decode for all cache misses
-        if pending_decodes:
-            self.debug(
-                lambda: (
-                    f"Parallel decoding {len(pending_decodes)} prompts "
-                    f"({len(data)} conversations)"
                 )
-            )
-            token_sequences = [p[2] for p in pending_decodes]
-            decoded_prompts = parallel_decode(
-                token_sequences,
-                self._tokenizer_name,
-                trust_remote_code=self._trust_remote_code,
-                revision=self._tokenizer_revision,
-            )
+                conversations_data[session_id].append((trace, None))
 
-            for (session_id, idx, _, cache_key), prompt in zip(
-                pending_decodes, decoded_prompts, strict=True
-            ):
-                self.prompt_generator._decoded_cache[cache_key] = prompt
-                trace, _ = conversations_data[session_id][idx]
-                conversations_data[session_id][idx] = (trace, prompt)
+        prompts_by_key = self.synthesize_prompts_from_hash_ids(requests)
 
-        # Phase 3: Build final conversation objects
+        # Phase 2: Build final conversation objects.
         conversations: list[Conversation] = []
         for session_id, trace_prompt_pairs in conversations_data.items():
             traces_in_session = [trace for trace, _ in trace_prompt_pairs]
@@ -380,11 +405,80 @@ class BaseTraceDatasetLoader(BaseFileLoader, Generic[TraceT]):
             conversation = Conversation(
                 session_id=session_id, context_mode=context_mode
             )
-            for trace, prompt in trace_prompt_pairs:
+            for idx, (trace, existing) in enumerate(trace_prompt_pairs):
+                prompt = (
+                    existing
+                    if existing is not None
+                    else prompts_by_key[f"{session_id}:{idx}"]
+                )
                 conversation.turns.append(self._build_turn(trace, prompt))
             conversations.append(conversation)
 
+        self._delay_cap_tracker.log_summary(logger_name=type(self).__module__)
         return conversations
+
+    # ------------------------------------------------------------------
+    # Opt-in parallel-convert path (multi-process, full session pipeline)
+    # ------------------------------------------------------------------
+
+    def convert_to_conversations_parallel(
+        self,
+        data: dict[str, list[TraceT]],
+        *,
+        num_workers: int | None = None,
+        batch_size: int = 100,
+    ) -> Iterator[Conversation]:
+        """Yield Conversations using a multi-process worker pool.
+
+        Opt-in alternative to the default in-process
+        :meth:`convert_to_conversations`. Workers share the tokenized corpus
+        via shared memory, each holds its own
+        :class:`HashIdRandomGenerator` seeded with the same
+        ``(base_seed, trace_id)``, and run reseed + sample + decode entirely
+        in-worker. For the exact-tile and last-block-partial layouts emitted
+        by Mooncake/Bailian/BurstGPT, output is byte-identical to the
+        in-process path.
+
+        Note: this path uses the simpler exact-tile / last-block-partial
+        layout only (no prefix-only-with-tail support). Loaders whose
+        ``input_length`` may exceed ``len(hash_ids) * block_size`` should
+        keep using the in-process path.
+        """
+        from aiperf.dataset.loader.parallel_convert import parallel_convert
+
+        sessions: list[tuple[str, list[dict]]] = []
+        for sid, traces in data.items():
+            sessions.append(
+                (
+                    sid,
+                    [
+                        {
+                            "hash_ids": getattr(t, "hash_ids", None) or [],
+                            "input_length": getattr(t, "input_length", 0),
+                            "output_length": getattr(t, "output_length", None),
+                            "timestamp": getattr(t, "timestamp", None),
+                            "delay": getattr(t, "delay", None),
+                            "text_input": self._get_text_input(t),
+                        }
+                        for t in traces
+                    ],
+                )
+            )
+
+        pg = self.prompt_generator
+        yield from parallel_convert(
+            sessions,
+            tokenizer_name=self._tokenizer_name,
+            corpus=pg._tokenized_corpus,
+            base_seed=pg._hash_id_corpus_rng.seed,
+            block_size=self._block_size,
+            sep_token=pg.tokenizer.block_separation_token_id,
+            trace_id=self._trace_id,
+            trust_remote_code=self._trust_remote_code,
+            revision=self._tokenizer_revision,
+            num_workers=num_workers,
+            batch_size=batch_size,
+        )
 
     # ------------------------------------------------------------------
     # Synthesis — shared orchestration with subclass hooks

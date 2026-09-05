@@ -86,6 +86,8 @@ navigation:
       path: tutorials/spec-bench.md
     - page: Profile with SPEED-Bench Dataset
       path: tutorials/speed-bench.md
+    - page: Per-Request Speculative-Decoding Metrics
+      path: tutorials/spec-decode-metrics.md
     - page: Profile with Bailian Traces
       path: tutorials/bailian-trace.md
     - page: Profile with BurstGPT Traces
@@ -104,6 +106,12 @@ navigation:
       path: tutorials/prefix-synthesis.md
     - page: Agentic Code Dataset Generator
       path: tutorials/agentic-code-generator.md
+    - page: Replay Weka Agentic Coding Traces
+      path: tutorials/weka-trace.md
+    - page: Replay TraceLab Agentic Coding Traces
+      path: tutorials/tracelab-trace.md
+    - page: InferenceX AgentX MVP Benchmark
+      path: tutorials/agentx-mvp.md
   - section: Load Patterns & Scheduling
     collapsed: true
     contents:
@@ -119,6 +127,8 @@ navigation:
       path: tutorials/prefill-concurrency.md
     - page: Adaptive Scale
       path: tutorials/adaptive-scale.md
+    - page: Multi-Phase Workflows
+      path: tutorials/multi-phase-workflows.md
     - page: Time-Based Benchmarking
       path: tutorials/time-based-benchmarking.md
     - page: Multi-URL Load Balancing
@@ -127,6 +137,10 @@ navigation:
       path: tutorials/request-cancellation.md
     - page: Warmup Phase Configuration
       path: tutorials/warmup.md
+    - page: Benchmark Control Hooks
+      path: tutorials/benchmark-control-hooks.md
+    - page: Control Hooks by Server (vLLM / SGLang / TRT-LLM)
+      path: tutorials/control-hooks-by-server.md
   - section: Metrics & Analysis
     collapsed: true
     contents:
@@ -194,6 +208,59 @@ navigation:
   - page: Conversation DAG Benchmarks
     path: benchmark-modes/dag.md
 
+- section: Kubernetes
+  collapsed: true
+  contents:
+  - page: Getting Started on Kubernetes
+    path: kubernetes/getting-started.md
+  - page: Deploy from Source Checkout
+    path: kubernetes/source-checkout-deploy.md
+  - page: End-to-End Workflow
+    path: kubernetes/workflow.md
+  - page: Config Init and Manifest Generation
+    path: kubernetes/init-and-generate.md
+  - page: Kubernetes Configuration Reference
+    path: kubernetes/configuration.md
+  - page: Production Deployment
+    path: kubernetes/production.md
+  - page: RBAC and Security
+    path: kubernetes/rbac-security.md
+  - page: Monitoring and Observability
+    path: kubernetes/monitoring.md
+  - page: Config Validation
+    path: kubernetes/validate.md
+  - page: CRD Validation Rules
+    path: kubernetes/crd-validation.md
+  - page: Preflight Checks
+    path: kubernetes/preflight.md
+  - page: Debug Command
+    path: kubernetes/debug-command.md
+  - page: Attach to a Running Benchmark
+    path: kubernetes/attach.md
+  - page: Logs
+    path: kubernetes/logs.md
+  - page: Results Server API Reference
+    path: kubernetes/results-api.md
+  - page: Web Dashboard
+    path: kubernetes/dashboard-ui.md
+  - page: Controller Pod Sidecars
+    path: kubernetes/sidecars.md
+  - page: Memory Estimator
+    path: kubernetes/memory-estimator.md
+  - page: Kueue Integration
+    path: kubernetes/kueue.md
+  - page: GPU Telemetry on Kubernetes
+    path: kubernetes/gpu-telemetry.md
+  - page: Direct Mode (no operator)
+    path: kubernetes/direct-mode.md
+  - page: Adaptive Search on Kubernetes
+    path: kubernetes/adaptive-search.md
+  - page: User-Defined Output Files
+    path: kubernetes/user-files.md
+  - page: AI-Assisted Debugging Guide
+    path: kubernetes/ai-debugging-guide.md
+
+
 - section: Accuracy
   collapsed: true
   contents:
@@ -209,22 +276,40 @@ navigation:
     path: environment-variables.md
   - page: AIPerf Metrics Reference
     path: metrics-reference.md
+  - page: GPU Telemetry & Power-Efficiency Dataflow
+    path: reference/gpu-telemetry-metrics-dataflow.md
   - page: Benchmark Datasets
     path: benchmark-datasets.md
   - page: Pre-Flight Tokenizer Auto Detection
     path: reference/tokenizer-auto-detection.md
+  - page: Input Sequence Length (ISL) Tokenization
+    path: reference/isl-tokenization.md
+  - page: Prompt Corpus Selection
+    path: reference/prompt-corpus.md
+  - page: Validating ISL/OSL Distributions with the Mock Server
+    path: reference/validating-isl-distribution.md
+  - page: ISL Budget Compensation Derivation
+    path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode
     path: reference/conversation-context-mode.md
   - page: List-Metric Aggregation
     path: reference/list-metric-aggregation.md
+  - page: Effective vs Active Metrics
+    path: reference/effective-vs-active-metrics.md
   - page: Vendor Usage Field Reference
     path: reference/vendor-usage-fields.md
+  - page: Per-Request Speculative-Decoding Acceptance
+    path: reference/spec-decode-acceptance.md
   - page: JSON Export Schema
     path: reference/json-export-schema.md
   - page: HTTP API Endpoints
     path: reference/api-endpoints.md
+  - page: Cache-Bust Targets
+    path: reference/cache-bust.md
   - page: YAML Config Roadmap
     path: reference/yaml-config-roadmap.md
+  - page: Mocking a ROCm Environment
+    path: reference/mock-amdsmi.md
 
 - section: Server Metrics
   collapsed: true
@@ -273,6 +358,8 @@ navigation:
     path: dev/sweep-orchestrator.md
   - page: YAML Config Future Goals
     path: dev/yaml-config-future-goals.md
+  - page: Kubernetes Flow
+    path: dev/kubernetes-flow.md
 
 - section: Troubleshooting
   collapsed: true

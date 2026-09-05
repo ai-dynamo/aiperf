@@ -316,6 +316,34 @@ benchmark:
     requests: 100
 ```
 
+### Persistent System Prompt
+
+To apply a system prompt to every turn of a conversation, author it as a leading turn with `"role": "system"`. AIPerf lifts that turn into the conversation-level system message, so it is prepended to every turn's request rather than dispatched as its own (user-less) request:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+```bash
+cat > system_prompt.jsonl << 'EOF'
+{"session_id": "chat_1", "turns": [{"role": "system", "text": "You are a terse assistant. Answer in one sentence."}, {"text": "What is machine learning?"}, {"text": "Give me an example."}]}
+EOF
+
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --input-file system_prompt.jsonl \
+    --custom-dataset-type multi_turn \
+    --streaming \
+    --url localhost:8000 \
+    --concurrency 2 \
+    --request-count 10
+```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+**Behavior:**
+- The system prompt persists across all turns and is not counted as a turn (the example above runs 2 turns, not 3).
+- Only a **leading**, **text-only** system turn is hoisted. A `system` turn that appears mid-conversation, one that carries image/audio/video media, or one that sets dispatch-time fields (`timestamp`, `delay`, `output_length`, `extra`) stays a normal turn.
+- Hoisting only takes effect on endpoints that send a system message (`chat`, `responses`, `messages`, `chat_embeddings`). On other endpoints (e.g. `completions`) the leading system turn is left in place, so it is dispatched as a normal turn rather than being silently dropped.
+- The same form works in the inline `records` config.
+
 ---
 
 ## Random Pool Datasets
@@ -411,6 +439,48 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 - Sampling with replacement (entries can repeat)
 - Use `--random-seed` for reproducibility
 
+### Multimodal batch sizes
+
+For multimodal workloads, `random_pool` supports per-modality batch-size flags that control how many items are packed into each request:
+
+| Flag | Field | Default | Notes |
+|---|---|---|---|
+| `--prompt-batch-size N` | `prompt_batch_size` | 1 | Text items per request. Set to `0` to disable text inputs entirely. |
+| `--image-batch-size N` | `image_batch_size` | 1 | Images per request. Set to `0` to disable image inputs. |
+| `--audio-batch-size N` | `audio_batch_size` | 1 | Audio items per request. Set to `0` to disable audio inputs. |
+| `--video-batch-size N` | `video_batch_size` | 1 | Video items per request. Set to `0` to disable video inputs. |
+
+Setting a batch size to `0` for a modality that is absent from the pool is a no-op: it neither suppresses anything nor counts as batching, so `--image-batch-size 0` against a single-file text-only pool leaves that pool sampled normally. A configuration where *every* modality is either absent from the pool or set to `0` produces empty requests and is rejected, since there is nothing left to send. Directory input rejects any batch size other than `1` regardless of which modalities are present, because pool contents are not known at config time -- see below.
+
+These flags are only valid with `format: random_pool` (set via `--custom-dataset-type random_pool` on the CLI, or `format: random_pool` directly in a YAML dataset config -- either selects the same format). Using them with other file dataset formats (e.g. `mooncake_trace`) is an error.
+
+Batch sizes other than 1 are also rejected outright whenever batching would discard pool identity: (1) multiple separately named pools -- directory input (multiple files, e.g. `queries.jsonl` / `passages.jsonl`) or inline YAML `records:` with multiple top-level keys (e.g. `records: {queries: [...], passages: [...]}`) both flatten into one anonymous pool per modality, discarding the names that name-sensitive endpoints (e.g. rankings) depend on; (2) a single pool whose entries embed named `Text`/`Image`/`Audio`/`Video` objects, or `Image` objects carrying `uuids` (vLLM cache-reuse IDs) -- reachable from a single file or a single-key inline `records:` list, not just directory input. Batch sizes only apply to a single unnamed pool with unnamed entries.
+
+The directory case is caught up front, before the benchmark starts. The remaining shapes are only visible once the pool has been parsed, so they surface when the dataset is built.
+
+Batching does not preserve per-entry associations across modalities. If a pool entry pairs a specific text with a specific image, a batch size > 1 flattens each modality into an independent pool and samples from them separately, so the original text-image pairing is not preserved in the resulting request. Use `single_turn` instead of `random_pool` if exact pairing must be preserved.
+
+The `pool.jsonl` file above is text-only, so `--image-batch-size` would have no images to sample. A multimodal `random_pool` needs an `image` field in the pool entries:
+
+```bash
+cat > multimodal_pool.jsonl << 'EOF'
+{"text": "Describe what you see in this image.", "image": "https://example.com/img1.png"}
+{"text": "What objects are visible here?", "image": "https://example.com/img2.png"}
+{"text": "Summarize the scene.", "image": "https://example.com/img3.png"}
+EOF
+
+aiperf profile \
+    --model Qwen/Qwen3-VL-7B \
+    --endpoint-type chat \
+    --input-file multimodal_pool.jsonl \
+    --custom-dataset-type random_pool \
+    --image-batch-size 2 \
+    --num-conversations 50 \
+    --streaming \
+    --concurrency 4 \
+    --url localhost:8000
+```
+
 ### Inline alternative (multi-pool)
 
 ```yaml
@@ -435,6 +505,71 @@ benchmark:
     concurrency: 2
     requests: 50
 ```
+
+---
+
+## Adding a System Prompt
+
+`--system-prompt` and `--system-prompt-file` attach a fixed system message to every
+conversation. Unlike `--shared-system-prompt-length`, which generates synthetic filler of a
+target token length, these take the **exact text** — so prefix-cache hit rates and TTFT
+reflect the system prompt your deployment actually sends.
+
+They work with every dataset kind: synthetic, file-based, and public.
+
+```bash
+# Inline, for short prompts
+aiperf profile -m Qwen/Qwen3-0.6B --url http://localhost:8000 \
+    --input-file ./data.jsonl \
+    --system-prompt "You are a terse assistant."
+
+# From a file, for real production prompts
+aiperf profile -m Qwen/Qwen3-0.6B --url http://localhost:8000 \
+    --input-file ./data.jsonl \
+    --system-prompt-file ./prod_system.txt
+```
+
+Or in YAML:
+
+```yaml
+dataset:
+  type: file
+  path: ./data.jsonl
+  system_prompt_file: ./prod_system.txt
+```
+
+Behavior worth knowing:
+
+- **Tokens are additive.** With `--isl 1000` and a 350-token system prompt, the request
+  carries roughly 1350 tokens: `--isl` continues to size the generated user prompt only.
+- **A dataset's own system message is kept.** If the dataset already authors one, your text
+  is prepended to it, separated by a blank line, and both are sent as a single system
+  message. Repeated system roles are mishandled by many OpenAI-compatible servers.
+- **The file is read once at startup**, so a missing or unreadable path fails immediately
+  rather than mid-benchmark. Paths containing a symlinked component are rejected — note that
+  on macOS this includes anything under `/tmp` or `$TMPDIR`, since `/var` is itself a symlink.
+- **Supported on `chat`, `responses`, `messages`, and `chat_embeddings`.** Endpoints with no
+  system role (`completions`, `embeddings`, the rankings endpoints) reject the option at
+  startup rather than silently dropping it.
+- **Mutually exclusive** with `--shared-system-prompt-length` and with
+  `--num-prefix-prompts`/`--prefix-prompt-length`, all of which fill the same slot. Setting
+  two of them is rejected at startup rather than one taking precedence, so a misconfigured
+  run fails before sending any requests. It does combine with
+  `--user-context-prompt-length` for a two-tier shared/per-session structure.
+
+> **Note:** `--num-prefix-prompts` and `--prefix-prompt-length` apply only to synthetic
+> datasets, and AIPerf rejects them at startup when combined with `--input-file` or
+> `--public-dataset` rather than ignoring them. `--system-prompt` has no such restriction.
+>
+> The same rule now covers every synthetic-generation flag: the media *shape* options
+> (`--image-width-mean`/`--image-height-mean`/`--image-format`, `--audio-length-mean`,
+> `--audio-format`, `--audio-sample-rates`, the `--video-*` family) and the
+> `--rankings-*` options. A file or public dataset supplies its own media and passages,
+> so these previously did nothing at all; they are now an error. The per-modality
+> batch-size flags remain supported with `--custom-dataset-type random_pool`, where they
+> control how many items are packed per request -- but only when `--input-file` points
+> at a single random-pool file, not a directory: a directory forms a separately named
+> pool per file, and batching across pools has no defined meaning.
 
 ---
 

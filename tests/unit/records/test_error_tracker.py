@@ -174,6 +174,32 @@ class TestErrorTracker:
         assert len(summary) == 1
         assert summary[0].count == 1
 
+    def test_indexed_phase_errors_also_roll_up_to_credit_phase(self, sample_error):
+        """Concrete phase errors are queryable by index and roll up by phase."""
+        tracker = ErrorTracker()
+
+        tracker.increment_error_count_for_phase(
+            CreditPhase.PROFILING, sample_error, phase_index=1
+        )
+        tracker.increment_error_count_for_phase(
+            CreditPhase.PROFILING, sample_error, phase_index=1
+        )
+        tracker.increment_error_count_for_phase(
+            CreditPhase.PROFILING, sample_error, phase_index=2
+        )
+
+        phase_one_summary = tracker.get_error_summary_for_phase(
+            CreditPhase.PROFILING, phase_index=1
+        )
+        phase_two_summary = tracker.get_error_summary_for_phase(
+            CreditPhase.PROFILING, phase_index=2
+        )
+        rollup_summary = tracker.get_error_summary_for_phase(CreditPhase.PROFILING)
+
+        assert phase_one_summary[0].count == 2
+        assert phase_two_summary[0].count == 1
+        assert rollup_summary[0].count == 3
+
     def test_errors_tracked_separately_by_phase(self, sample_error, another_error):
         """Errors in different phases are tracked independently."""
         tracker = ErrorTracker()

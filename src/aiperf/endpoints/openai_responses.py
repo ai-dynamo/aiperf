@@ -18,6 +18,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.common.types import JsonObject
+from aiperf.common.utils import is_truthy_flag
 from aiperf.endpoints import _openai_responses_replay as _replay
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
@@ -42,7 +43,9 @@ class ResponsesEndpoint(BaseEndpoint):
     # text parts contribute to the tokenisable text list, media parts
     # bump their respective counts.
     PART_TYPES: ClassVar[dict[MediaType, set[str]]] = {
-        MediaType.TEXT: {"input_text"},
+        # ``output_text`` appears on replayed assistant history items;
+        # omitting it undercounts ISL for multi-turn Responses payloads.
+        MediaType.TEXT: {"input_text", "output_text"},
         MediaType.IMAGE: {"input_image"},
         MediaType.AUDIO: {"input_audio"},
         # Responses API does not currently support video input.
@@ -150,26 +153,30 @@ class ResponsesEndpoint(BaseEndpoint):
     def build_messages(self, turns: list[Turn]) -> list[dict[str, Any]]:
         """Filter Responses-API replay-unsafe items out of raw_messages.
 
-        Same flatten-and-merge skeleton as ``BaseEndpoint.build_messages``
-        but drops output-only item types from each turn's
-        ``raw_messages`` before splicing. See
-        ``_REPLAY_UNSAFE_OUTPUT_ITEM_TYPES``.
+        Reuses ``BaseEndpoint._flatten_turns`` for the flatten-and-merge and
+        ``reset_context`` skeleton (sharing it avoids the drift that once let
+        this override silently drop the reset), supplying only the
+        Responses-specific per-item behaviour: dropping output-only item types
+        (see ``_REPLAY_UNSAFE_OUTPUT_ITEM_TYPES``) and tagging synthetic turns
+        with ``type: "message"``.
         """
-        messages: list[dict[str, Any]] = []
-        for turn in turns:
-            if turn.raw_messages:
-                for item in turn.raw_messages:
-                    if (
-                        isinstance(item, dict)
-                        and item.get("type") in self._REPLAY_UNSAFE_OUTPUT_ITEM_TYPES
-                    ):
-                        continue
-                    messages.append(item)
-                continue
+
+        def _transform(item: dict[str, Any]) -> dict[str, Any] | None:
+            if (
+                isinstance(item, dict)
+                and item.get("type") in self._REPLAY_UNSAFE_OUTPUT_ITEM_TYPES
+            ):
+                return None
+            return item
+
+        def _render(turn: Turn) -> dict[str, Any]:
             message = self._render_turn_message(turn)
             message["type"] = "message"
-            messages.append(message)
-        return messages
+            return message
+
+        return self._flatten_turns(
+            turns, transform_raw_item=_transform, render_synthetic=_render
+        )
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format OpenAI Responses API request payload from RequestInfo."""
@@ -183,15 +190,20 @@ class ResponsesEndpoint(BaseEndpoint):
         # lives in top-level ``instructions``. The per-conversation
         # ``user_context_message`` is prepended as a leading user item.
         input_items: list[dict[str, Any]] = []
-        if request_info.user_context_message:
-            input_items.append(
-                {
-                    "type": "message",
-                    "role": self.DEFAULT_TURN_ROLE,
-                    "content": request_info.user_context_message,
-                }
-            )
-        input_items.extend(self.build_messages(turns))
+        if request_info.previous_response_id:
+            # Stateful chaining: previous_response_id points to server-side history.
+            self._warn_chaining_isl_once()
+            input_items.extend(self.build_messages([turns[-1]]))
+        else:
+            if request_info.user_context_message:
+                input_items.append(
+                    {
+                        "type": "message",
+                        "role": self.DEFAULT_TURN_ROLE,
+                        "content": request_info.user_context_message,
+                    }
+                )
+            input_items.extend(self.build_messages(turns))
 
         # Conversation-level fields walk turns from the end so FORK-mode
         # children whose final turn lacks model/tools still inherit the parent's
@@ -205,6 +217,9 @@ class ResponsesEndpoint(BaseEndpoint):
             "model": model_name or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
+        if request_info.previous_response_id:
+            payload["previous_response_id"] = request_info.previous_response_id
+
         for key, value in (
             ("instructions", request_info.system_message or None),
             ("max_output_tokens", max_tokens),
@@ -222,6 +237,84 @@ class ResponsesEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    _warned_chaining_isl: bool = False
+
+    def _warn_chaining_isl_once(self) -> None:
+        """Warn once that chained turns only send the newest turn on the wire.
+
+        With ``previous_response_id`` the prior history lives server-side, so
+        client-side Input Sequence Length (the default) reflects only the newest
+        turn and undercounts the prompt the server actually prefills. Server-side
+        token counts (``use_server_token_count``) report the true prompt size.
+        """
+        if (
+            self._warned_chaining_isl
+            or self.model_endpoint.endpoint.use_server_token_count
+        ):
+            return
+        self._warned_chaining_isl = True
+        self.warning(
+            "Stateful Responses chaining is active (previous_response_id): only "
+            "the newest turn is sent on the wire, so client-side Input Sequence "
+            "Length undercounts the server-side prompt for chained turns. Enable "
+            "--use-server-token-count for accurate multi-turn ISL."
+        )
+
+    def extract_response_id(self, record: RequestRecord) -> str | None:
+        """Extract the server-generated response ID (``resp_<hash>``) for stateful
+        chaining, but only when storage was requested for this run.
+
+        ``store`` is a *request* parameter, not a standard field of the Responses
+        object: the OpenAI spec does not list it on the response, and real
+        servers (e.g. vLLM's agentic-api) accept it on the request but never
+        serialize it back onto ``response.created`` / ``response.completed``.
+        Gating on the echoed response ``store`` therefore never fires against
+        those servers and silently disables chaining. We instead chain when
+        storage was requested via ``--extra-inputs store:true`` (endpoint
+        ``extra``); a server that *does* echo ``store: true`` is honored too.
+        When neither is set we return ``None`` so the caller falls back to
+        sending the full history.
+
+        The response object lives under ``response`` for streaming lifecycle
+        events (``response.created`` / ``response.completed`` / ...) and at the
+        top level for a non-streaming response body.
+
+        A request that returns HTTP 200 but fails does not set
+        ``RequestRecord.error``. Streaming signals this via a
+        ``response.failed`` / ``response.incomplete`` event; a non-streaming
+        body signals it via top-level ``status``. In either case the advertised
+        id belongs to an aborted response, so chaining onto it would corrupt the
+        next turn and we return ``None`` regardless of the advertised id.
+        """
+        store_requested = self._store_requested()
+        resp_id: str | None = None
+        for response in record.responses:
+            json_obj = response.get_json()
+            if not isinstance(json_obj, dict):
+                continue
+            if _replay.is_failure_event(json_obj):
+                return None
+            nested = json_obj.get("response")
+            source = nested if isinstance(nested, dict) else json_obj
+            if _replay.is_failure_status(source):
+                return None
+            candidate = source.get("id")
+            if not (isinstance(candidate, str) and candidate):
+                continue
+            if store_requested or source.get("store"):
+                resp_id = candidate
+        return resp_id
+
+    def _store_requested(self) -> bool:
+        """Whether the run requested server-side storage via endpoint ``extra``.
+
+        ``EndpointInfo.extra`` is a list of ``(key, value)`` pairs; ``store`` may
+        arrive as a bool or a string depending on how ``--extra-inputs`` was
+        supplied.
+        """
+        store = dict(self.model_endpoint.endpoint.extra or []).get("store")
+        return is_truthy_flag(store)
 
     @staticmethod
     def _maybe_enable_usage_stream_options(
@@ -255,16 +348,85 @@ class ResponsesEndpoint(BaseEndpoint):
         json_obj = response.get_json()
         if not json_obj:
             return None
+        return self._route_parsed_json(json_obj, response.perf_ns)
 
+    def _route_parsed_json(
+        self, json_obj: JsonObject, perf_ns: int
+    ) -> ParsedResponse | None:
+        """Dispatch an already-deserialized response body to the streaming or
+        full-response parser.
+
+        Shared by ``parse_response`` (per-event) and ``extract_response_data``
+        (record-level) so the latter can inspect each body once for the
+        ``response.output_text.done`` de-duplication without re-parsing the
+        JSON a second time.
+        """
         # Streaming: events have a "type" field
         if "type" in json_obj:
-            return self._parse_streaming_event(json_obj, response.perf_ns)
+            return self._parse_streaming_event(json_obj, perf_ns)
 
         # Non-streaming: full response object
         if json_obj.get("object") == "response":
-            return self._parse_full_response(json_obj, response.perf_ns)
+            return self._parse_full_response(json_obj, perf_ns)
 
         return None
+
+    def extract_response_data(self, record: RequestRecord) -> list[ParsedResponse]:
+        """Extract parsed data, de-duplicating the streamed output text.
+
+        A streaming Responses turn carries the assistant text twice: once as
+        the chain of ``response.output_text.delta`` events and again, in full,
+        as the terminal ``response.output_text.done`` event. Tokenising both
+        doubles client-side output tokens (OSL / output-token-throughput ~2x).
+
+        Once a delta has carried text for an output/content part we treat that
+        part's terminal ``done`` as a structural envelope - mirroring the
+        ``response.function_call_arguments.done`` exclusion in
+        ``_streaming_event_data``. Tracking is keyed per
+        ``(output_index, content_index)`` so a done-only part (a server that
+        emits only the ``done`` event for that item, or deltas dropped under
+        load) is NOT suppressed by a sibling part that did stream - it stays the
+        sole text carrier and is still counted exactly once. The same holds for
+        the non-streaming convenience field, which emits no deltas at all.
+
+        The single forward pass is correct because a part's ``done`` event
+        always trails its deltas in SSE arrival order, which ``record.responses``
+        preserves.
+
+        ``parse_response`` itself is intentionally left emitting the ``done``
+        text: the worker's per-event callers (first-token detection, request
+        latency) treat it as a plain data-bearing event and neither sums
+        tokens, so they see no behavioral change.
+        """
+        parsed: list[ParsedResponse] = []
+        streamed_parts: set[tuple[Any, Any]] = set()
+        for response in record.responses:
+            json_obj = response.get_json()
+            if not json_obj:
+                continue
+            if isinstance(json_obj, dict):
+                event_type = json_obj.get("type")
+                part = (json_obj.get("output_index"), json_obj.get("content_index"))
+                if event_type == "response.output_text.delta" and json_obj.get("delta"):
+                    streamed_parts.add(part)
+                elif (
+                    event_type == "response.output_text.done" and part in streamed_parts
+                ):
+                    # This part's deltas already carried the text: drop the
+                    # duplicate TEXT but keep an empty-text response at the done
+                    # timestamp so content-timing metrics (request_latency uses
+                    # content_responses[-1].perf_ns; inter_chunk_latency walks
+                    # the gaps) are byte-for-byte unchanged from the pre-dedup
+                    # behavior. Empty text contributes zero output tokens.
+                    parsed.append(
+                        ParsedResponse(
+                            perf_ns=response.perf_ns, data=TextResponseData(text="")
+                        )
+                    )
+                    continue
+            if result := self._route_parsed_json(json_obj, response.perf_ns):
+                parsed.append(result)
+        return parsed
 
     def _parse_streaming_event(
         self, json_obj: JsonObject, perf_ns: int
@@ -332,6 +494,11 @@ class ResponsesEndpoint(BaseEndpoint):
             return ReasoningResponseData(reasoning=delta) if delta else None
 
         if event_type == "response.output_text.done":
+            # Sole-carrier fallback for the no-delta case (non-streaming
+            # convenience path, or a server that emits only the terminal
+            # event). When deltas already carried this text,
+            # ``extract_response_data`` drops this event before it reaches here
+            # so the output is tokenised exactly once, not doubled.
             text = json_obj.get("text")
             return TextResponseData(text=text) if text else None
 

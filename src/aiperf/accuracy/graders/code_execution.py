@@ -21,26 +21,29 @@ Wiring into aiperf:
     the generated code in a sandbox.
 
 Process model:
-    ``codegen_metrics`` uses a ``ProcessPoolExecutor`` with
-    ``num_process_evaluate=8`` workers under the hood. Those forks
-    happen inside the record-processor service, not in aiperf's HTTP
-    worker pool. Per-grade fork latency is ~50–200 ms on Linux plus
-    the actual code-execution time (capped by ``timeout=6``).
+    ``codegen_metrics`` forks a ``ProcessPoolExecutor`` internally,
+    which a multithreaded daemon (the record processor) cannot do
+    safely. Rather than run it in-process, the grader delegates each
+    grade to a dedicated single-threaded worker subprocess
+    (``_codegen_worker``) via ``CodegenGradingWorker``, keeping the
+    fork-based sandbox out of the daemon. See issue #1145.
 
 Reference: ``lighteval/tasks/tasks/lcb/main.py:CodegenMetric``
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from aiperf.accuracy.graders._codegen_worker_client import (
+    CodegenGradingWorker,
+    CodegenWorkerError,
+)
 from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
-from aiperf.common.utils import allow_daemon_children
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -49,7 +52,6 @@ _log = logging.getLogger(__name__)
 
 try:
     from lighteval.tasks.tasks.lcb.codegen_metrics import (
-        codegen_metrics,
         extract_code,
         translate_private_test_cases,
     )
@@ -57,7 +59,6 @@ try:
     _HAS_LIGHTEVAL_LCB = True
 except ImportError:  # pragma: no cover
     _HAS_LIGHTEVAL_LCB = False
-    codegen_metrics = None  # type: ignore[assignment]
     extract_code = None  # type: ignore[assignment]
     translate_private_test_cases = None  # type: ignore[assignment]
 
@@ -66,11 +67,6 @@ _MISSING_LIGHTEVAL_HINT = (
     "lighteval is not installed; the code_execution grader cannot "
     "run. Install with: uv pip install 'aiperf[accuracy]'."
 )
-
-# Lighteval's CodegenMetric defaults — reproduced here so the grader
-# behaves identically to the recipe.
-_LCB_PASS_AT_K = (1,)
-_LCB_NUM_PROCESSES = 8
 
 
 class CodeExecutionGrader(BaseGrader):
@@ -81,13 +77,14 @@ class CodeExecutionGrader(BaseGrader):
     ``_build_ground_truth``: a JSON object with ``starter_code``,
     ``public_test_cases``, ``private_test_cases``, and ``metadata``
     fields. We rebuild the lighteval-shaped sample
-    (``inputs``/``outputs``/``fn_name``) from the payload and call
-    lighteval's ``codegen_metrics`` with a 6-second per-test timeout.
+    (``inputs``/``outputs``/``fn_name``) from the payload and delegate
+    to the out-of-process grading worker, which runs lighteval's
+    ``codegen_metrics``.
 
     Returns ``correct=True`` when pass@1 == 1.0 (every test case
     passed), else ``correct=False``. ``unparsed=True`` when the
-    grader couldn't extract code from the response or lighteval
-    raised an exception during execution.
+    grader couldn't extract code from the response or the worker
+    raised a ``CodegenWorkerError`` during execution.
     """
 
     @classmethod
@@ -99,6 +96,7 @@ class CodeExecutionGrader(BaseGrader):
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run=run, **kwargs)
         self.check_available()
+        self._worker = CodegenGradingWorker()
 
     def extract_answer(self, response_text: str, **kwargs: Any) -> str:
         """Return the code block lighteval would extract from the response.
@@ -146,15 +144,13 @@ class CodeExecutionGrader(BaseGrader):
         generated_code = [[snippet]]
 
         try:
-            # ``codegen_metrics`` is synchronous and spins up a
-            # ProcessPoolExecutor internally — pushing it to a worker
-            # thread keeps the event loop free for other concurrent
-            # grade() calls during a benchmark run.
-            metrics, _ = await asyncio.to_thread(
-                _run_codegen_metrics, evaluation_sample, generated_code
+            metrics = await self._worker.grade_codegen(
+                evaluation_sample,
+                generated_code,
+                timeout=_derive_grade_timeout(len(inputs)),
             )
-        except Exception as exc:
-            _log.debug("lighteval codegen_metrics raised: %s", exc, exc_info=True)
+        except CodegenWorkerError as exc:
+            _log.debug("codegen grading worker failed: %s", exc)
             return _grading_failure(
                 response_text, ground_truth, f"sandboxed exec failed: {exc}"
             )
@@ -178,32 +174,26 @@ class CodeExecutionGrader(BaseGrader):
             ground_truth="<lcb test cases>",
         )
 
+    async def aclose(self) -> None:
+        """Terminate the grading worker and its process group on graceful stop.
 
-def _run_codegen_metrics(
-    evaluation_sample: list[dict[str, str]], generated_code: list[list[str]]
-) -> tuple[dict[str, Any], Any]:
-    """Run lighteval's ``codegen_metrics`` with the daemon flag cleared.
+        The abrupt ``os._exit`` force-kill path (where this never runs) is handled
+        worker-side by a death-pipe watcher; see ``_codegen_worker.py``.
+        """
+        await self._worker.aclose()
 
-    ``codegen_metrics`` fans out to a ProcessPoolExecutor. AIPerf runs the
-    record processor as a daemon (every service is spawned with
-    ``daemon=True``), and Python forbids daemons from spawning child
-    processes, so the flag must be cleared for the duration of the fork or
-    grading dies with "daemonic processes are not allowed to have children"
-    — silently mislabeled as unparsed.
 
-    TODO: This flag-flipping is a pragmatic workaround. The cleaner design is
-    to own the sandboxed-execution pool outside the daemon (e.g. a non-daemon
-    executor service the record processor delegates to) so no daemon state is
-    mutated. Revisit if sandboxed grading needs to scale beyond a single
-    per-record pool.
-    """
-    with allow_daemon_children():
-        return codegen_metrics(
-            evaluation_sample,
-            generated_code,
-            k_list=list(_LCB_PASS_AT_K),
-            num_process_evaluate=_LCB_NUM_PROCESSES,
-        )
+def _derive_grade_timeout(num_cases: int) -> float:
+    """Client-side wall-clock ceiling for one grade. lighteval caps a problem at
+    ``(6 + 1) * num_cases + 5`` seconds internally; add a margin and hard-cap so a
+    single wedged worker cannot stall the run, without firing on merely slow ones.
+    The cap is configurable via ``AIPERF_ACCURACY_LCB_GRADE_TIMEOUT_MAX_S``."""
+    from aiperf.common.environment import Environment
+
+    return min(
+        Environment.ACCURACY.LCB_GRADE_TIMEOUT_MAX_S,
+        7.0 * max(num_cases, 1) + 5.0 + 30.0,
+    )
 
 
 def _extract_pass_at_1(metrics: dict[str, Any]) -> float | None:

@@ -5,6 +5,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
 
+import orjson
 import pytest
 
 from aiperf.common.exceptions import PostProcessorDisabled
@@ -103,8 +104,6 @@ class TestOutputsJsonRecordProcessorProcessRecord:
     @pytest.mark.asyncio
     async def test_process_record_extracts_response_text(self, tmp_path: Path) -> None:
         """Verifies response text is concatenated from content_responses."""
-        import orjson
-
         config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)
@@ -139,12 +138,120 @@ class TestOutputsJsonRecordProcessorProcessRecord:
         assert fragment["response_text"] == "Hello world!"
 
     @pytest.mark.asyncio
+    async def test_process_record_captures_metrics_from_producer(
+        self, tmp_path: Path
+    ) -> None:
+        """Allowlisted metrics are captured off ctx.metrics into the fragment, so
+        outputs.json does not depend on the records JSONL export (F2)."""
+        from aiperf.common.messages.inference_messages import MetricRecordsData
+
+        config = _make_config(tmp_path, export_outputs_json=True)
+
+        record = MagicMock(spec=ParsedResponseRecord)
+        resp = MagicMock()
+        resp.data.get_text.return_value = "hi"
+        type(record).content_responses = PropertyMock(return_value=[resp])
+
+        metadata = MetricRecordMetadata(
+            session_num=0,
+            request_start_ns=1000000000,
+            request_end_ns=2000000000,
+            worker_id="worker-1",
+            record_processor_id="proc-1",
+            benchmark_phase="profiling",
+        )
+        produced = {
+            "metric_records": [
+                MetricRecordsData(metadata=metadata, metrics={"output_token_count": 42})
+            ]
+        }
+
+        processor = OutputsJsonRecordProcessor(
+            service_id="processor-1",
+            run=MagicMock(cfg=config),
+        )
+        async with aiperf_lifecycle(processor) as proc:
+            await proc.observe(
+                RecordObserverContext(
+                    record=record, metadata=metadata, produced=produced
+                )
+            )
+
+        fragment = orjson.loads(proc.output_file.read_bytes().strip())
+        assert fragment["metrics"]["output_token_count"] == 42
+
+    @pytest.mark.asyncio
+    async def test_process_record_captures_warmup_phase(self, tmp_path: Path) -> None:
+        """Warmup records are captured and tagged, so raw export's outputs.json
+        covers the same requests as profile_export_raw.jsonl."""
+        config = _make_config(tmp_path, export_outputs_json=True)
+
+        record = MagicMock(spec=ParsedResponseRecord)
+        resp = MagicMock()
+        resp.data.get_text.return_value = "warmup text"
+        type(record).content_responses = PropertyMock(return_value=[resp])
+
+        metadata = MetricRecordMetadata(
+            session_num=0,
+            request_start_ns=1000000000,
+            request_end_ns=2000000000,
+            worker_id="worker-1",
+            record_processor_id="proc-1",
+            benchmark_phase="warmup",
+        )
+
+        processor = OutputsJsonRecordProcessor(
+            service_id="processor-1",
+            run=MagicMock(cfg=config),
+        )
+        async with aiperf_lifecycle(processor) as proc:
+            await proc.observe(
+                RecordObserverContext(record=record, metadata=metadata, produced={})
+            )
+            output_file = proc.output_file
+
+        assert output_file.exists()
+        fragment = orjson.loads(output_file.read_text().splitlines()[0])
+        assert fragment["response_text"] == "warmup text"
+        assert fragment["benchmark_phase"] == "warmup"
+
+    @pytest.mark.asyncio
+    async def test_process_record_tags_profiling_phase(self, tmp_path: Path) -> None:
+        """Profiling records carry the phase too, so the exporter can partition."""
+        config = _make_config(tmp_path, export_outputs_json=True)
+
+        record = MagicMock(spec=ParsedResponseRecord)
+        resp = MagicMock()
+        resp.data.get_text.return_value = "profiling text"
+        type(record).content_responses = PropertyMock(return_value=[resp])
+
+        metadata = MetricRecordMetadata(
+            session_num=0,
+            request_start_ns=1000000000,
+            request_end_ns=2000000000,
+            worker_id="worker-1",
+            record_processor_id="proc-1",
+            benchmark_phase="profiling",
+        )
+
+        processor = OutputsJsonRecordProcessor(
+            service_id="processor-1",
+            run=MagicMock(cfg=config),
+        )
+        async with aiperf_lifecycle(processor) as proc:
+            await proc.observe(
+                RecordObserverContext(record=record, metadata=metadata, produced={})
+            )
+            output_file = proc.output_file
+
+        fragment = orjson.loads(output_file.read_text().splitlines()[0])
+        assert fragment["benchmark_phase"] == "profiling"
+
+    @pytest.mark.asyncio
     async def test_process_record_null_response_text_when_no_content(
         self, tmp_path: Path
     ) -> None:
         """When content_responses is empty, response_text is None."""
-        import orjson
-
         config = _make_config(tmp_path, export_outputs_json=True)
 
         record = MagicMock(spec=ParsedResponseRecord)

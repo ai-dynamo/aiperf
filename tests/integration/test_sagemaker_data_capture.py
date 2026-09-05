@@ -65,7 +65,8 @@ class TestSageMakerDataCaptureIntegration:
 
         assert result.exit_code == 0
         assert result.request_count == len(records)
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_capture_with_system_message(
         self,
@@ -164,7 +165,8 @@ class TestSageMakerDataCaptureIntegration:
 
         assert result.exit_code == 0
         assert result.request_count == 2
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"
 
     async def test_capture_auto_detection(
         self,
@@ -241,4 +243,5 @@ class TestSageMakerDataCaptureIntegration:
 
         assert result.exit_code == 0
         assert result.request_count == len(records)
-        assert result.has_all_outputs
+        assert result.has_all_outputs_except_inputs
+        assert result.inputs is None, "trace datasets skip inputs.json"

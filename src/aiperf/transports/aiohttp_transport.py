@@ -278,7 +278,7 @@ class AioHttpTransport(BaseTransport):
     async def send_request(
         self,
         request_info: RequestInfo,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | bytes,
         *,
         first_token_callback: FirstTokenCallback | None = None,
     ) -> RequestRecord:
@@ -323,17 +323,22 @@ class AioHttpTransport(BaseTransport):
                 request_info.model_endpoint.endpoint.request_content_type
                 == RequestContentType.MULTIPART_FORM_DATA
             )
+            # Pre-encoded bytes (PAYLOAD_BYTES fast path / raw payload replay)
+            # are sent verbatim; dicts are encoded here.
             body: bytes | aiohttp.FormData
-            if use_form_data:
-                # Request signers (SigV4) sign a fixed byte payload; multipart
-                # form-data bodies aren't signed. EndpointConfig rejects
-                # auth_type + multipart at config time, so this branch is only
-                # reachable with no signer configured.
+            if isinstance(payload, bytes):
+                body = payload
+            elif use_form_data:
                 body = self._build_form_data(payload)
             else:
-                signed = await self._sign_if_needed(
-                    "POST", url, headers, orjson.dumps(payload)
-                )
+                body = orjson.dumps(payload)
+
+            # Request signers (SigV4) sign a fixed byte payload; multipart
+            # form-data bodies aren't signed. EndpointConfig rejects
+            # auth_type + multipart at config time, so an unsigned FormData
+            # body means no signer is configured.
+            if not isinstance(body, aiohttp.FormData):
+                signed = await self._sign_if_needed("POST", url, headers, body)
                 url, headers, body = signed.url, signed.headers, signed.body
 
             match reuse_strategy:
@@ -502,7 +507,7 @@ class AioHttpTransport(BaseTransport):
     async def _submit_video_job(
         self,
         url: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | bytes,
         headers: dict[str, str],
         *,
         use_form_data: bool = False,
@@ -514,12 +519,15 @@ class AioHttpTransport(BaseTransport):
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         body: bytes | aiohttp.FormData
-        if use_form_data:
+        if isinstance(payload, bytes):
+            body = payload
+        elif use_form_data:
             body = self._build_form_data(payload)
         else:
-            signed = await self._sign_if_needed(
-                "POST", url, headers, orjson.dumps(payload)
-            )
+            body = orjson.dumps(payload)
+
+        if not isinstance(body, aiohttp.FormData):
+            signed = await self._sign_if_needed("POST", url, headers, body)
             url, headers, body = signed.url, signed.headers, signed.body
         record = await self.aiohttp_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
@@ -633,7 +641,7 @@ class AioHttpTransport(BaseTransport):
     async def _send_video_request_with_polling(
         self,
         request_info: RequestInfo,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | bytes,
     ) -> RequestRecord:
         """Send video generation request and poll until complete."""
         if self.aiohttp_client is None:

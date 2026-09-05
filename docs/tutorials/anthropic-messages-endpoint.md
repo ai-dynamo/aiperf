@@ -371,6 +371,7 @@ Notes:
 - The field is Anthropic-specific. Other endpoints (`chat`, `responses`, ...) ignore it.
 - Block contents flow into ISL accounting via the endpoint's system-prompt walk; see [Input token accounting (ISL)](#input-token-accounting-isl) below.
 - `raw_system` is currently populated by trace-replay loaders that ingest Anthropic-shaped traces; programmatic callers building `Turn` objects directly can set it as well.
+- `--cache-bust system-prefix` / `system-suffix` targets `raw_system` when it is set, since that is what actually ships. The marker is appended or prepended as its own `{"type": "text", ...}` block rather than being spliced into an existing block's text, so a neighbouring `cache_control` breakpoint stays attached to the bytes it was authored against.
 
 ### Audio and video are unsupported
 

@@ -4,6 +4,7 @@
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -71,6 +72,11 @@ def mock_results(sample_records):
         def was_cancelled(self):
             return False
 
+        # Mirrors ProfileResults: a complete run reports is_complete=True and
+        # no reason. Tests that need a degraded run override these.
+        is_complete: bool | None = True
+        incomplete_reason: str | None = None
+
         @property
         def error_summary(self):
             return []
@@ -79,6 +85,57 @@ def mock_results(sample_records):
 
 
 class TestMetricsJsonExporter:
+    @pytest.mark.asyncio
+    async def test_json_export_includes_public_dataset_provenance(self, mock_results):
+        cfg = BenchmarkConfig.model_validate(
+            {
+                "models": ["test-model"],
+                "endpoint": {
+                    "urls": ["http://localhost:8000/v1/chat/completions"],
+                    "type": "chat",
+                },
+                "datasets": [
+                    {
+                        "name": "main",
+                        "type": "public",
+                        "dataset": "semianalysis_cc_traces_weka_with_subagents",
+                        "entries": 393,
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 8,
+                        "duration": 1800,
+                    }
+                ],
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            exporter = MetricsJsonExporter(
+                make_exporter_config(
+                    results=mock_results,
+                    cfg=cfg,
+                    artifact_directory=output_dir,
+                    telemetry_results=None,
+                )
+            )
+            await exporter.export()
+
+            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
+                raw = json.load(f)
+
+        assert raw["metadata"]["dataset"] == {
+            "source_type": "public_dataset",
+            "loader": "semianalysis_cc_traces_weka_with_subagents",
+            "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
+            "hf_split": "train",
+            "num_dataset_entries": 393,
+        }
+
     @pytest.mark.asyncio
     async def test_metrics_json_exporter_creates_expected_json(
         self, mock_results, mock_cfg
@@ -160,6 +217,8 @@ class TestMetricsJsonExporter:
                 self.metrics = recs
                 self.start_ns = None
                 self.end_ns = None
+                self.is_complete = True
+                self.incomplete_reason = None
 
             @property
             def records(self):
@@ -278,6 +337,36 @@ class TestMetricsJsonExporter:
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
             raw = json.loads(expected_file.read_text())
             assert "run_info" not in raw
+
+    @pytest.mark.asyncio
+    async def test_degradation_is_recorded_in_the_json_artifact(
+        self, mock_results: Any, mock_cfg: CLIConfig
+    ) -> None:
+        """A stall-degraded run must be detectable by tooling, not just by eye.
+
+        The console banner is for humans; without these fields a machine
+        consumer cannot tell a degraded export from a clean one.
+        """
+        mock_results.is_complete = False
+        mock_results.incomplete_reason = "record stall: 40 of 100 records"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_cfg.artifact_directory = output_dir
+            exporter = MetricsJsonExporter(
+                make_exporter_config(
+                    results=mock_results, cli_config=mock_cfg, telemetry_results=None
+                )
+            )
+            await exporter.export()
+
+            raw = json.loads(
+                (
+                    output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
+                ).read_text()
+            )
+            assert raw["is_complete"] is False
+            assert raw["incomplete_reason"] == "record stall: 40 of 100 records"
 
     def test_metrics_json_exporter_inherits_from_base(self, mock_cfg):
         """Verify MetricsJsonExporter inherits from MetricsBaseExporter."""
@@ -520,6 +609,7 @@ class TestMetricsJsonExporterTelemetry:
             assert "gpu_index" in first_gpu
             assert "gpu_name" in first_gpu
             assert "gpu_uuid" in first_gpu
+            assert first_gpu["platform"] == "nvidia"
 
             # Verify metrics structure
             assert "metrics" in first_gpu
@@ -630,7 +720,7 @@ class TestMetricsJsonExporterTelemetry:
                                 hostname="test-host",
                                 metrics={
                                     # Metric with None values for percentiles
-                                    "gpu_power_usage": JsonMetricResult(
+                                    "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=100.0,
                                         min=None,
@@ -743,7 +833,7 @@ class TestMetricsJsonExporterTelemetry:
                                 gpu_uuid="GPU-123",
                                 hostname="node1",
                                 metrics={
-                                    "gpu_power_usage": JsonMetricResult(
+                                    "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=100.0,
                                         min=100.0,
@@ -814,7 +904,7 @@ class TestMetricsJsonExporterTelemetry:
                                 gpu_uuid="GPU-111",
                                 hostname="node1",
                                 metrics={
-                                    "gpu_power_usage": JsonMetricResult(
+                                    "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=105.0,
                                         min=100.0,
@@ -833,7 +923,7 @@ class TestMetricsJsonExporterTelemetry:
                                 gpu_uuid="GPU-222",
                                 hostname="node2",
                                 metrics={
-                                    "gpu_power_usage": JsonMetricResult(
+                                    "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=205.0,
                                         min=200.0,
@@ -902,7 +992,7 @@ class TestMetricsJsonExporterTelemetry:
                                 gpu_uuid="GPU-123",
                                 hostname="test-hostname",
                                 metrics={
-                                    "gpu_power_usage": JsonMetricResult(
+                                    "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=100.0,
                                         min=100.0,
@@ -960,6 +1050,8 @@ class TestMetricsJsonExporterWarmupMetrics:
             start_ns = None
             end_ns = None
             was_cancelled = False
+            is_complete = True
+            incomplete_reason = None
             error_summary = []
             branch_stats = None
 

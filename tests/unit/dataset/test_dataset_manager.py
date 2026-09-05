@@ -7,15 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CacheBustTarget, CommandType, MemoryMapFormat
 from aiperf.common.exceptions import ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationTurnRequestMessage,
+    DatasetConfigStatusRequest,
     DatasetConfiguredNotification,
 )
-from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.common.models import Conversation, Image, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.dataset import mmap_cache
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import (
     CustomDatasetType,
@@ -68,7 +71,7 @@ async def initialized_dataset_manager(mock_tokenizer, base_cfg):
 async def configured_dataset_manager(initialized_dataset_manager, base_cfg):
     """Create a fully configured DatasetManager ready for request handling."""
     await initialized_dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(service_id="test_service")
+        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
     )
     return initialized_dataset_manager
 
@@ -99,7 +102,7 @@ async def capture_published_messages(dataset_manager, cli_config):
     dataset_manager.publish = AsyncMock(side_effect=mock_publish)
 
     await dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(service_id="test_service")
+        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
     )
 
     return published_messages
@@ -283,7 +286,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Verify the loader's recommended strategy was used (SEQUENTIAL for ShareGPT)
@@ -309,7 +312,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # In v2, each dataset config has its own ``sampling`` default; the
@@ -346,7 +349,7 @@ class TestDatasetManagerSamplingStrategyDefaults:
 
         await dataset_manager.initialize()
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # Verify the explicit strategy was preserved, not overwritten by loader's SEQUENTIAL
@@ -372,7 +375,7 @@ class TestDatasetManagerMemoryAndClient:
         assert dataset_manager._dataset_client is None
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, client should be initialized
@@ -395,7 +398,7 @@ class TestDatasetManagerMemoryAndClient:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, in-memory dataset should be empty
@@ -415,7 +418,7 @@ class TestDatasetManagerMemoryAndClient:
         assert not dataset_manager.dataset_configured.is_set()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         # After configuration, event should be set
@@ -427,19 +430,25 @@ class TestDatasetManagerFallbackHandlers:
 
     @pytest.fixture
     async def dataset_manager_with_entries(self, mock_tokenizer):
-        """Create a configured dataset manager with multiple entries."""
+        """Create a configured dataset manager with multiple entries.
+
+        Uses multi-turn conversations so the dataset uses CONVERSATION mmap
+        format (multi-turn without responses cannot be preformatted into the
+        PAYLOAD_BYTES fast path, which the get_conversation fallback can't serve).
+        """
         cli_config = CLIConfig(
             model_names=["test-model"],
             num_dataset_entries=3,
+            conversation_turn_mean=2,
+            conversation_turn_stddev=0,
         )
-        CLIConfig()
         dataset_manager = DatasetManager(run=make_run_from_cli(cli_config))
 
         await dataset_manager.initialize()
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         return dataset_manager
@@ -596,7 +605,7 @@ class TestDatasetManagerTokenizerSkip:
             DatasetManager, "_configure_tokenizer", new_callable=AsyncMock
         ) as mock_configure_tokenizer:
             await dataset_manager._profile_configure_command(
-                ProfileConfigureCommand(service_id="test_service")
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
             mock_configure_tokenizer.assert_not_called()
 
@@ -617,7 +626,7 @@ class TestDatasetManagerTokenizerSkip:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         assert dataset_manager.tokenizer is not None
@@ -652,24 +661,81 @@ class TestDatasetManagerTokenizerSkip:
         dataset_manager.publish = AsyncMock()
 
         await dataset_manager._profile_configure_command(
-            ProfileConfigureCommand(service_id="test_service")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
         )
 
         assert dataset_manager.tokenizer is not None
 
-    @pytest.mark.skip(
-        reason="v1 CLIConfig validator that rejected tokenizer options on "
-        "non-tokenizing endpoints was not ported to v2; equivalent v2 validation "
-        "(if any) would live on BenchmarkConfig.",
-    )
     def test_tokenizer_rejected_when_explicitly_set_on_non_tokenizing_endpoint(self):
         """Tokenizer options are rejected for endpoints that don't tokenize input or produce tokens."""
+        from aiperf.config import BenchmarkConfig
+
         with pytest.raises(ValidationError, match="Tokenizer options cannot be used"):
-            CLIConfig(
-                model_names=["nvidia/nemoretriever-page-elements-v3"],
-                endpoint_type="image_retrieval",
-                tokenizer_name="test-model",
+            BenchmarkConfig(
+                models=["nvidia/nemoretriever-page-elements-v3"],
+                endpoint={"urls": ["http://x"], "type": "image_retrieval"},
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "prompts": {"isl": 64, "osl": 32},
+                    }
+                ],
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 10,
+                        "concurrency": 8,
+                    }
+                ],
+                tokenizer={"name": "test-model"},
             )
+
+    def test_tokenizer_allowed_when_unset_on_non_tokenizing_endpoint(self):
+        """The defaulted TokenizerConfig must not trip the rejection."""
+        from aiperf.config import BenchmarkConfig
+
+        config = BenchmarkConfig(
+            models=["nvidia/nemoretriever-page-elements-v3"],
+            endpoint={"urls": ["http://x"], "type": "image_retrieval"},
+            datasets=[
+                {"name": "main", "type": "synthetic", "prompts": {"isl": 64, "osl": 32}}
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 10,
+                    "concurrency": 8,
+                }
+            ],
+        )
+
+        assert config.tokenizer is not None
+
+    def test_tokenizer_allowed_on_tokenizing_endpoint(self):
+        """A chat endpoint tokenizes input, so explicit options are honored."""
+        from aiperf.config import BenchmarkConfig
+
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://x"], "type": "chat"},
+            datasets=[
+                {"name": "main", "type": "synthetic", "prompts": {"isl": 64, "osl": 32}}
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 10,
+                    "concurrency": 8,
+                }
+            ],
+            tokenizer={"name": "explicit-tokenizer"},
+        )
+
+        assert config.tokenizer.name == "explicit-tokenizer"
 
 
 # ============================================================================
@@ -952,3 +1018,160 @@ class TestAccuracyModeSamplingGuards:
         # accuracy datasets is SEQUENTIAL (matching the v1 mutation behavior).
         dataset = manager.run.cfg.get_default_dataset()
         assert dataset.sampling == DatasetSamplingStrategy.SEQUENTIAL
+
+
+# PAYLOAD_BYTES body-mutating feature gates (cache-bust)
+
+
+def _raw_payload_conversations() -> list[Conversation]:
+    """Conversations whose turns carry raw_payload (select PAYLOAD_BYTES)."""
+    return [
+        Conversation(session_id="s1", turns=[Turn(role="user", raw_payload={"a": 1})])
+    ]
+
+
+def _payload_bytes_cache_hit(tmp_path: Path) -> mmap_cache.CacheHit:
+    """Minimal CacheHit whose manifest reports PAYLOAD_BYTES.
+
+    The cache-hit gate is the first statement of ``_configure_from_cache_hit``
+    and raises before any file restore, so the on-disk paths need not exist.
+    """
+    manifest = mmap_cache.CacheManifest(
+        cache_key="test-key",
+        created_at=0.0,
+        num_conversations=1,
+        total_size_bytes=1,
+        mmap_format=str(MemoryMapFormat.PAYLOAD_BYTES),
+        dataset_metadata_json="{}",
+    )
+    return mmap_cache.CacheHit(
+        entry_dir=tmp_path,
+        data_path=tmp_path / "dataset.dat",
+        index_path=tmp_path / "index.dat",
+        manifest=manifest,
+    )
+
+
+async def _make_dataset_manager(cli_config: CLIConfig) -> DatasetManager:
+    """Build and initialize a DatasetManager for the given CLIConfig."""
+    CLIConfig()
+    dm = DatasetManager(run=make_run_from_cli(cli_config))
+    await dm.initialize()
+    dm.publish = AsyncMock()
+    return dm
+
+
+class TestPayloadBytesBodyMutatingGates:
+    """PAYLOAD_BYTES is refused whenever a body-mutating feature is active.
+
+    Covers both gates that key off ``_body_mutating_feature``: build-path
+    format selection (``_select_mmap_format``) and cache-hit adoption
+    (``_configure_from_cache_hit`` /
+    ``_reject_body_mutators_for_payload_bytes``).
+    """
+
+    @pytest.mark.asyncio
+    async def test_select_format_allows_payload_bytes_when_clean(
+        self, initialized_dataset_manager
+    ) -> None:
+        dm = initialized_dataset_manager
+
+        assert (
+            dm._select_mmap_format(_raw_payload_conversations())
+            == MemoryMapFormat.PAYLOAD_BYTES
+        )
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_rejects_payload_bytes_with_cache_bust(
+        self, mock_tokenizer, tmp_path
+    ) -> None:
+        dm = await _make_dataset_manager(
+            CLIConfig(
+                model_names=["test-model"], cache_bust=CacheBustTarget.SYSTEM_PREFIX
+            )
+        )
+
+        with pytest.raises(ValueError, match="cache-bust"):
+            await dm._configure_from_cache_hit(_payload_bytes_cache_hit(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_allows_payload_bytes_when_clean(
+        self, initialized_dataset_manager
+    ) -> None:
+        dm = initialized_dataset_manager
+        # No cache-bust: the pre-check must pass (no raise).
+        assert dm.run.cfg.get_cache_bust_target() == CacheBustTarget.NONE
+
+        dm._reject_body_mutators_for_payload_bytes(MemoryMapFormat.PAYLOAD_BYTES)
+
+
+class TestDatasetConfigStatusRequest:
+    """Late-join catch-up for DatasetConfiguredNotification.
+
+    DatasetConfiguredNotification is a one-shot PUB/SUB broadcast with no
+    replay. A RecordProcessor/RecordsManager that finishes subscribing after
+    DatasetManager already published it must be able to recover the config
+    via DatasetConfigStatusRequest instead of blocking for the full
+    CONFIGURATION_TIMEOUT.
+    """
+
+    @pytest.mark.asyncio
+    async def test_before_configuration_returns_no_notification(
+        self, initialized_dataset_manager
+    ) -> None:
+        """Before PROFILE_CONFIGURE has run, no notification has been
+        published yet -- the response must say so (None), so the requester
+        falls back to waiting on the normal PUB/SUB path."""
+        dm = initialized_dataset_manager
+
+        response = await dm._handle_dataset_config_status_request(
+            DatasetConfigStatusRequest(service_id="late_record_processor")
+        )
+
+        assert response.notification is None
+
+    @pytest.mark.asyncio
+    async def test_echoes_request_id_so_the_dealer_client_can_match_it(
+        self, initialized_dataset_manager
+    ) -> None:
+        """Regression: ZMQDealerRequestClient matches an in-flight request to
+        its response by ``response_message.request_id`` (see
+        ``aiperf.zmq.dealer_request_client``). A response that doesn't echo
+        the request's ``request_id`` is silently unmatched -- the caller's
+        request never resolves and every catch-up attempt times out instead
+        of self-healing."""
+        dm = initialized_dataset_manager
+
+        response = await dm._handle_dataset_config_status_request(
+            DatasetConfigStatusRequest(
+                service_id="late_record_processor", request_id="req-123"
+            )
+        )
+
+        assert response.request_id == "req-123"
+
+    @pytest.mark.asyncio
+    async def test_after_configuration_replays_last_notification(
+        self, configured_dataset_manager
+    ) -> None:
+        """After PROFILE_CONFIGURE has run and DatasetConfiguredNotification
+        was published, a late-joining requester must get back the exact
+        notification that was broadcast -- this is what lets a RecordProcessor
+        that missed the broadcast self-heal instead of hanging until the
+        300s dataset-configuration timeout."""
+        dm = configured_dataset_manager
+
+        published = [
+            call.args[0]
+            for call in dm.publish.call_args_list
+            if isinstance(call.args[0], DatasetConfiguredNotification)
+        ]
+        assert len(published) == 1
+
+        response = await dm._handle_dataset_config_status_request(
+            DatasetConfigStatusRequest(service_id="late_record_processor")
+        )
+
+        assert response.notification is not None
+        assert response.notification.metadata == published[0].metadata
+        assert response.notification.client_metadata == published[0].client_metadata

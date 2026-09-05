@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from aiperf.cli_runner._preflight import _readiness_auth_headers
+from aiperf.common.endpoint_auth import auth_headers_for_endpoint
 from aiperf.config import EndpointConfig
 
 
@@ -15,7 +15,7 @@ def test_messages_headers_use_x_api_key_and_version() -> None:
     return 4xx, which the probe's "status < 500 == ready" rule would misread
     as ready.
     """
-    headers = _readiness_auth_headers(
+    headers = auth_headers_for_endpoint(
         EndpointConfig(type="messages", urls=["http://server"], api_key="sk-ant-test")
     )
 
@@ -31,7 +31,7 @@ def test_messages_api_key_overrides_preconfigured_x_api_key() -> None:
     api_key, so real requests use the CLI key. Readiness must probe the same
     key, otherwise preflight validates a different credential than the run.
     """
-    headers = _readiness_auth_headers(
+    headers = auth_headers_for_endpoint(
         EndpointConfig(
             type="messages",
             urls=["http://server"],
@@ -45,7 +45,7 @@ def test_messages_api_key_overrides_preconfigured_x_api_key() -> None:
 
 def test_messages_headers_set_version_without_api_key() -> None:
     """anthropic-version is required even when no api_key is configured."""
-    headers = _readiness_auth_headers(
+    headers = auth_headers_for_endpoint(
         EndpointConfig(type="messages", urls=["http://server"])
     )
 
@@ -55,7 +55,7 @@ def test_messages_headers_set_version_without_api_key() -> None:
 
 def test_chat_headers_use_bearer() -> None:
     """OpenAI-compatible endpoints keep Authorization: Bearer."""
-    headers = _readiness_auth_headers(
+    headers = auth_headers_for_endpoint(
         EndpointConfig(type="chat", urls=["http://server"], api_key="sk-test")
     )
 

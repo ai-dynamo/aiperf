@@ -5,6 +5,7 @@ import contextlib
 import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 from pytest import param
 
@@ -248,7 +249,10 @@ class TestInferenceClient:
 
         inference_client.endpoint.format_payload.assert_not_called()
         call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
+        # raw_payload bypasses endpoint formatting but is canonicalised to
+        # bytes before transport dispatch (so the transport skips its own
+        # orjson.dumps and the record carries the exact wire payload).
+        assert call_args.kwargs["payload"] == orjson.dumps(raw_payload)
 
     @pytest.mark.asyncio
     async def test_send_request_sends_empty_raw_payload_without_formatting(
@@ -268,7 +272,7 @@ class TestInferenceClient:
 
         inference_client.endpoint.format_payload.assert_not_called()
         call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
+        assert call_args.kwargs["payload"] == orjson.dumps(raw_payload)
 
     @pytest.mark.asyncio
     async def test_send_request_preserves_raw_payload_formatter_conflicts(
@@ -298,10 +302,13 @@ class TestInferenceClient:
         await inference_client.send_request(request_info)
 
         call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == raw_payload
-        assert call_args.kwargs["payload"]["model"] == "payload-model"
-        assert call_args.kwargs["payload"]["stream"] is True
-        assert call_args.kwargs["payload"]["messages"][0]["content"] == "authored"
+        # Verbatim raw_payload, canonicalised to bytes (no endpoint-default
+        # overwrites of the authored top-level fields).
+        assert call_args.kwargs["payload"] == orjson.dumps(raw_payload)
+        sent = orjson.loads(call_args.kwargs["payload"])
+        assert sent["model"] == "payload-model"
+        assert sent["stream"] is True
+        assert sent["messages"][0]["content"] == "authored"
 
     @pytest.mark.asyncio
     async def test_send_request_formats_when_only_earlier_turn_has_raw_payload(
@@ -327,7 +334,7 @@ class TestInferenceClient:
 
         inference_client.endpoint.format_payload.assert_called_once_with(request_info)
         call_args = inference_client.transport.send_request.call_args
-        assert call_args.kwargs["payload"] == expected_payload
+        assert call_args.kwargs["payload"] == orjson.dumps(expected_payload)
 
     @pytest.mark.asyncio
     async def test_send_request_raises_on_empty_turns(self, inference_client):
@@ -382,15 +389,16 @@ class TestInferenceClient:
         assert result.model_name == "standalone-model"
 
     def test_finalize_request_record_hoists_per_turn_scalars(self, inference_client):
-        """max_tokens / audio_duration_seconds must be hoisted from the turns
-        onto the RecordContext so record metrics (requested_osl,
-        audio_duration) can read them off the record after the downcast.
+        """max_tokens / audio_duration_seconds / scheduled_send_ms must be
+        hoisted from the turns onto the RecordContext so record metrics can
+        read them off the record after the downcast strips ``turns``.
         """
         turn = Turn(
             texts=[Text(contents=["hoisted turn"])],
             role="user",
             max_tokens=128,
             audio_duration_seconds=12.5,
+            timestamp=42.5,
         )
         request_info = RequestInfo(
             model_endpoint=inference_client.model_endpoint,
@@ -415,6 +423,8 @@ class TestInferenceClient:
 
         assert result.request_info.max_tokens == 128
         assert result.request_info.audio_duration_seconds == 12.5
+        assert result.request_info.scheduled_send_ms == 42.5
+        assert "turns" not in result.request_info.model_dump()
 
     @pytest.mark.parametrize(
         "strip,expected_payload_bytes",

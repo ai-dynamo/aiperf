@@ -32,6 +32,7 @@ from aiperf.dataset.loader.baseten_trace import (
 )
 
 assert BasetenTraceDatasetLoader.can_load(filename="x.parquet") is False
+assert BasetenTraceDatasetLoader.can_load(filename="x.arrow") is False
 assert count_baseten_parquet_records_and_sessions("x.parquet") == (0, 0)
 
 try:

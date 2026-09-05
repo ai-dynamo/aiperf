@@ -27,10 +27,7 @@ Bad titles:
 
 ### Step 1: Determine the team
 
-Call `mcp__linear__list_teams` to retrieve available teams.
-
-- One team: use it silently.
-- Multiple teams: ask the user which team the issue belongs to.
+Use the **AIPerf** team. Do not call `list_teams` or ask the user.
 
 ### Step 2: Confirm the title
 

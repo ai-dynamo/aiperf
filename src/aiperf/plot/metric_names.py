@@ -12,8 +12,16 @@ derived metrics.
 from collections.abc import Mapping
 
 from aiperf.common.enums import MetricFlags, MetricType
-from aiperf.gpu_telemetry.constants import GPU_TELEMETRY_METRICS_CONFIG
+from aiperf.gpu_telemetry.constants import (
+    GPU_TELEMETRY_METRICS_CONFIG,
+    NVIDIA_TELEMETRY_FIELD_ALIASES,
+)
 from aiperf.metrics.metric_registry import MetricRegistry
+
+_GPU_DISPLAY_NAMES: dict[str, str] = {
+    field_name: display_name
+    for display_name, field_name, _ in GPU_TELEMETRY_METRICS_CONFIG
+}
 
 # Pre-compute all metric display names at module load time
 _ALL_METRIC_NAMES: dict[str, str] = {
@@ -24,9 +32,11 @@ _ALL_METRIC_NAMES: dict[str, str] = {
         if metric_class.header
     },
     # GPU telemetry metrics
+    **_GPU_DISPLAY_NAMES,
     **{
-        field_name: display_name
-        for display_name, field_name, _ in GPU_TELEMETRY_METRICS_CONFIG
+        legacy_name: _GPU_DISPLAY_NAMES[nvidia_name]
+        for legacy_name, nvidia_name in NVIDIA_TELEMETRY_FIELD_ALIASES.items()
+        if nvidia_name in _GPU_DISPLAY_NAMES
     },
     # Derived metrics calculated during data processing
     "output_token_throughput_per_gpu": "Output Token Throughput Per GPU",  # nosec
@@ -73,6 +83,13 @@ _GPU_METRIC_UNITS: dict[str, str] = {
     field_name: unit_enum.info.tag if hasattr(unit_enum, "info") else str(unit_enum)
     for _, field_name, unit_enum in GPU_TELEMETRY_METRICS_CONFIG
 }
+_GPU_METRIC_UNITS.update(
+    {
+        legacy_name: _GPU_METRIC_UNITS[nvidia_name]
+        for legacy_name, nvidia_name in NVIDIA_TELEMETRY_FIELD_ALIASES.items()
+        if nvidia_name in _GPU_METRIC_UNITS
+    }
+)
 
 
 def get_all_metric_display_names() -> Mapping[str, str]:
@@ -86,8 +103,8 @@ def get_all_metric_display_names() -> Mapping[str, str]:
         >>> names = get_all_metric_display_names()
         >>> names["time_to_first_token"]
         'Time to First Token'
-        >>> names["gpu_power_usage"]
-        'GPU Power Usage'
+        >>> names["nvidia_power_usage"]
+        'NVIDIA GPU Power Usage'
         >>> names["output_token_throughput_per_gpu"]
         'Output Token Throughput Per GPU'
     """
@@ -185,9 +202,9 @@ def get_gpu_metrics() -> list[str]:
 
     Examples:
         >>> metrics = get_gpu_metrics()
-        >>> 'gpu_utilization' in metrics
+        >>> 'nvidia_gpu_utilization' in metrics
         True
-        >>> 'gpu_memory_used' in metrics
+        >>> 'nvidia_memory_used' in metrics
         True
     """
     return _GPU_METRICS
@@ -198,15 +215,15 @@ def get_gpu_metric_unit(metric_name: str) -> str | None:
     Get the unit string for a GPU telemetry metric.
 
     Args:
-        metric_name: The GPU metric field name (e.g., "gpu_utilization")
+        metric_name: The GPU metric field name (e.g., "nvidia_gpu_utilization")
 
     Returns:
         Unit string (e.g., "%", "W", "°C") or None if not a GPU metric
 
     Examples:
-        >>> get_gpu_metric_unit("gpu_utilization")
+        >>> get_gpu_metric_unit("nvidia_gpu_utilization")
         '%'
-        >>> get_gpu_metric_unit("gpu_power_usage")
+        >>> get_gpu_metric_unit("nvidia_power_usage")
         'W'
         >>> get_gpu_metric_unit("unknown_metric")
         None
@@ -219,16 +236,16 @@ def get_metric_display_name_with_unit(metric_name: str) -> str:
     Get display name for a metric with unit suffix if available.
 
     Args:
-        metric_name: The metric identifier (e.g., "gpu_utilization")
+        metric_name: The metric identifier (e.g., "nvidia_gpu_utilization")
 
     Returns:
-        Human-readable display name with unit (e.g., "GPU Utilization (%)")
+        Human-readable display name with unit (e.g., "NVIDIA GPU Utilization (%)")
 
     Examples:
-        >>> get_metric_display_name_with_unit("gpu_utilization")
-        'GPU Utilization (%)'
-        >>> get_metric_display_name_with_unit("memory_copy_utilization")
-        'Memory Copy Utilization (%)'
+        >>> get_metric_display_name_with_unit("nvidia_gpu_utilization")
+        'NVIDIA GPU Utilization (%)'
+        >>> get_metric_display_name_with_unit("nvidia_memory_utilization")
+        'NVIDIA Memory Utilization (%)'
         >>> get_metric_display_name_with_unit("request_latency")
         'Request Latency'
     """

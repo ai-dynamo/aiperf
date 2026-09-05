@@ -404,8 +404,9 @@ class TestMetricsCsvExporterTelemetry:
             # Check for telemetry section with structured table format
             assert "Endpoint" in content
             assert "GPU_Index" in content
-            assert "GPU Power Usage (W)" in content or "GPU Power Usage" in content
-            assert "GPU Utilization (%)" in content or "GPU Utilization" in content
+            assert "Platform" in content
+            assert "NVIDIA GPU Power Usage (W)" in content
+            assert "NVIDIA GPU Utilization (%)" in content
 
     @pytest.mark.asyncio
     async def test_csv_export_without_telemetry_data(self, mock_cfg):
@@ -547,14 +548,14 @@ class TestMetricsCsvExporterTelemetry:
             gpu_uuid="GPU-123",
             hostname="test-node",
             metrics={
-                "gpu_power_usage": JsonMetricResult(
+                "nvidia_power_usage": JsonMetricResult(
                     unit="W", avg=100.0, min=90.0, max=110.0
                 ),
             },
         )
 
         # Metric check is now a simple dict lookup
-        assert "gpu_power_usage" in gpu_summary_with_metric.metrics
+        assert "nvidia_power_usage" in gpu_summary_with_metric.metrics
         assert "invalid_metric" not in gpu_summary_with_metric.metrics
 
         # GpuSummary without metrics
@@ -566,7 +567,7 @@ class TestMetricsCsvExporterTelemetry:
             metrics={},
         )
 
-        assert "gpu_power_usage" not in gpu_summary_without_metric.metrics
+        assert "nvidia_power_usage" not in gpu_summary_without_metric.metrics
 
     @pytest.mark.asyncio
     async def test_csv_export_telemetry_multi_endpoint(self, mock_cfg):
@@ -609,7 +610,7 @@ class TestMetricsCsvExporterTelemetry:
                                 gpu_uuid="GPU-111",
                                 hostname="node1",
                                 metrics={
-                                    "gpu_power_usage": JsonMetricResult(
+                                    "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=105.0,
                                         min=100.0,
@@ -628,7 +629,7 @@ class TestMetricsCsvExporterTelemetry:
                                 gpu_uuid="GPU-222",
                                 hostname="node2",
                                 metrics={
-                                    "gpu_power_usage": JsonMetricResult(
+                                    "nvidia_power_usage": JsonMetricResult(
                                         unit="W",
                                         avg=205.0,
                                         min=200.0,
@@ -797,7 +798,7 @@ class TestOptionalTelemetryHeaders:
                 namespace=namespace,
                 pod_name=pod_name,
                 metrics={
-                    "gpu_power_usage": JsonMetricResult(
+                    "nvidia_power_usage": JsonMetricResult(
                         unit="W", avg=300.0, min=280.0, max=320.0
                     )
                 },

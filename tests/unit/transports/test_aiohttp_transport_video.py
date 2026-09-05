@@ -706,3 +706,25 @@ class TestMultipartFormData:
             mock_submit.assert_called_once()
             _, kwargs = mock_submit.call_args
             assert kwargs.get("use_form_data") is True
+
+
+class TestVideoJobSubmissionPayloadEncoding:
+    """Pre-encoded bytes payloads are sent verbatim to the submit endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_submit_video_job_bytes_payload_sent_verbatim(self, transport):
+        transport.aiohttp_client.post_request.return_value = create_request_record(
+            status=201,
+            body=orjson.dumps({"id": "video-123", "status": "queued"}).decode(),
+        )
+        payload_bytes = orjson.dumps({"prompt": "verbatim replay"})
+
+        result = await transport._submit_video_job(
+            "http://localhost/v1/videos",
+            payload_bytes,
+            {"Content-Type": "application/json"},
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        sent_body = transport.aiohttp_client.post_request.call_args.args[1]
+        assert sent_body is payload_bytes

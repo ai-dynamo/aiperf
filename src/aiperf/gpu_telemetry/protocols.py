@@ -77,3 +77,19 @@ class GPUTelemetryAccumulatorProtocol(Protocol):
     def start_realtime_telemetry(self) -> None:
         """Start realtime telemetry publishing."""
         ...
+
+    def available_platforms(self) -> set[str]:
+        """Return the set of GPU platforms (e.g. ``"nvidia"``, ``"amd"``) with data."""
+        ...
+
+    def total_power_watts(
+        self, start_ns: int | None, end_ns: int | None, platform: str | None = None
+    ) -> tuple[float, int]:
+        """Per-vendor total of avg(power) over ``[start_ns, end_ns)``."""
+        ...
+
+    def total_energy_joules(
+        self, start_ns: int | None, end_ns: int | None, platform: str | None = None
+    ) -> tuple[float, int]:
+        """Per-vendor total energy (J) over ``[start_ns, end_ns)``."""
+        ...

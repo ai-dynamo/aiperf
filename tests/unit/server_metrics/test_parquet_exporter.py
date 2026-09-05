@@ -1419,3 +1419,30 @@ class TestParquetMetadataFields:
         metadata = table.schema.metadata
 
         assert b"aiperf.request_rate" not in metadata
+
+
+class TestHistogramWindowGuards:
+    """Time-filter guards for histogram row collection."""
+
+    def test_histogram_rows_empty_when_filter_ends_before_first_sample(
+        self, mock_cfg, histogram_hierarchy
+    ):
+        """A window ending before the first sample yields no rows (final_idx None)."""
+        mock_accumulator = create_mock_accumulator(mock_cfg, histogram_hierarchy)
+        # All histogram samples start at 500ms; the window ends at 100ms.
+        time_filter = TimeRangeFilter(start_ns=0, end_ns=100_000_000)
+        exporter = ServerMetricsParquetExporter(mock_accumulator, time_filter)
+
+        endpoint = "http://localhost:8081/metrics"
+        ts = histogram_hierarchy.endpoints[endpoint]
+        key, entry = next(iter(ts.metrics.items()))
+
+        rows = exporter._collect_histogram_rows(
+            endpoint=endpoint,
+            metric_name=key.name,
+            metric_entry=entry,
+            labels_dict=dict(key.labels) if key.labels else None,
+            label_keys=set(),
+        )
+
+        assert rows == []

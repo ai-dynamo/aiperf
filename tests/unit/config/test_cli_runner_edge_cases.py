@@ -261,6 +261,15 @@ class TestSingleRunErrorPaths:
 class TestMultiRunErrorPaths:
     """Verify error handling in _run_multi_benchmark."""
 
+    @pytest.fixture(autouse=True)
+    def mock_os_exit(self):
+        """Mock ``os._exit`` so the multi-run hang-protection terminator is a
+        no-op under the harness; the runner falls through to ``sys.exit``,
+        which pytest catches as ``SystemExit``. Without this the real
+        ``os._exit`` tears down the pytest process itself mid-test."""
+        with patch("os._exit") as mock:
+            yield mock
+
     @pytest.fixture
     def multi_plan(self) -> BenchmarkPlan:
         return _make_plan(
@@ -284,10 +293,6 @@ class TestMultiRunErrorPaths:
             _run_multi_benchmark(plan)
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
-    @pytest.mark.skip(
-        reason="Pre-existing failure: orchestrator.execute is async; MagicMock needs AsyncMock. "
-        "Unrelated to phases-list refactor."
-    )
     def test_zero_successful_runs_exits_1(
         self,
         mock_orchestrator_cls: Mock,
@@ -298,7 +303,7 @@ class TestMultiRunErrorPaths:
 
         failed = MagicMock(success=False, label="run_1")
         mock_orch = MagicMock()
-        mock_orch.execute = MagicMock(return_value=[failed, failed, failed])
+        mock_orch.execute = AsyncMock(return_value=[failed, failed, failed])
         mock_orchestrator_cls.return_value = mock_orch
 
         with pytest.raises(SystemExit) as exc_info:
@@ -307,10 +312,6 @@ class TestMultiRunErrorPaths:
         assert exc_info.value.code == 1
 
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
-    @pytest.mark.skip(
-        reason="Pre-existing failure: orchestrator.execute is async; MagicMock needs AsyncMock. "
-        "Unrelated to phases-list refactor."
-    )
     def test_one_successful_run_exits_1(
         self,
         mock_orchestrator_cls: Mock,
@@ -322,7 +323,7 @@ class TestMultiRunErrorPaths:
         success = MagicMock(success=True, label="run_1")
         failed = MagicMock(success=False, label="run_2")
         mock_orch = MagicMock()
-        mock_orch.execute = MagicMock(return_value=[success, failed, failed])
+        mock_orch.execute = AsyncMock(return_value=[success, failed, failed])
         mock_orchestrator_cls.return_value = mock_orch
 
         with pytest.raises(SystemExit) as exc_info:
@@ -334,10 +335,6 @@ class TestMultiRunErrorPaths:
     @patch("aiperf.orchestrator.aggregation.confidence.ConfidenceAggregation")
     @patch("aiperf.exporters.aggregate.AggregateConfidenceJsonExporter")
     @patch("aiperf.exporters.aggregate.AggregateConfidenceCsvExporter")
-    @pytest.mark.skip(
-        reason="Pre-existing failure: orchestrator.execute is async; MagicMock needs AsyncMock. "
-        "Unrelated to phases-list refactor."
-    )
     def test_two_successful_runs_aggregates(
         self,
         mock_csv_cls: Mock,
@@ -353,7 +350,7 @@ class TestMultiRunErrorPaths:
         failed = MagicMock(success=False, label="run_bad")
 
         mock_orch = MagicMock()
-        mock_orch.execute = MagicMock(return_value=[success, success, failed])
+        mock_orch.execute = AsyncMock(return_value=[success, success, failed])
         mock_orch.get_aggregate_path.return_value = tmp_path / "aggregate"
         mock_orchestrator_cls.return_value = mock_orch
 

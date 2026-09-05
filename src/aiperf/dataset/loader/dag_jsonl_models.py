@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.dataset.loader.models import validate_chat_messages
 
@@ -148,8 +149,9 @@ class DagTurn(AIPerfBaseModel):
     spawns: list[str | DagSpawn] = Field(
         default_factory=list,
         description="Child session ids to dispatch as SPAWN branches after "
-        "this turn completes (children start fresh, route freely). Each "
-        "entry may be a bare string (auto-join on next turn) or a "
+        "this turn completes (children start fresh; sticky-colocated on the "
+        "parent worker while its sticky entry is live, least-loaded after). "
+        "Each entry may be a bare string (auto-join on next turn) or a "
         "``DagSpawn`` object carrying a ``join_at`` index for delayed joins.",
     )
     delay: float = Field(
@@ -180,6 +182,47 @@ class DagTurn(AIPerfBaseModel):
         return v
 
 
+class DagRound(AIPerfBaseModel):
+    """One independently-authored round of an orchestrator ``rounds`` spine.
+
+    Used in the LIST form of :attr:`DagConversation.rounds`. Each round declares
+    its OWN branch session ids (and optional think-time), so the rounds are
+    distinct authored stages -- different system prompts, growing pre-baked
+    history, different multimodal payloads per round -- instead of the integer
+    ``rounds`` form that re-fires one shared branch set every round.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    spawns: list[str] = Field(
+        min_length=1,
+        description="This round's SPAWN branch session ids. Fanned out in "
+        "parallel when the round fires; the next round waits (join=all) for ALL "
+        "of them before firing. Each id must name another conversation in the "
+        "file; authored independently per round. The round is identified in raw "
+        "export by these branch session ids (each round uses distinct ones).",
+    )
+    think_time_ms: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Optional per-round think-time (milliseconds) the coordinator "
+        "waits after this round's branches drain, before releasing the next "
+        "round. Overrides the conversation-level 'think_time_ms' for this round; "
+        "when 'think_time_sigma' is set it is the lognormal median for this round.",
+    )
+
+    @field_validator("think_time_ms", mode="before")
+    @classmethod
+    def _reject_bool_think_time(cls, v: Any) -> Any:
+        # bool subclasses int, so Pydantic would coerce `true`/`false` into
+        # 1.0/0.0 ms and silently alter pacing. Reject up front.
+        if isinstance(v, bool):
+            raise ValueError(
+                f"think_time_ms must be numeric, not a boolean (got {v!r})"
+            )
+        return v
+
+
 class DagConversation(AIPerfBaseModel):
     """One line of a DAG JSONL file: a session with ordered turns."""
 
@@ -190,8 +233,74 @@ class DagConversation(AIPerfBaseModel):
         description="Unique identifier for this conversation within the file.",
     )
     turns: list[DagTurn] = Field(
-        min_length=1,
-        description="Ordered list of turns (non-empty).",
+        default_factory=list,
+        description="Ordered list of turns. Non-empty for normal conversations; "
+        "empty only for an orchestrator conversation (see 'orchestrator').",
+    )
+    orchestrator: bool = Field(
+        default=False,
+        description="Mark this as a request-less orchestrator: it sends no request "
+        "and re-fires its conversation-level 'spawns' children on every sampled "
+        "iteration. The loader synthesizes a single no-op (no_request) turn that "
+        "issues a virtual credit and desugars 'spawns' into a post-timing SPAWN "
+        "branch. Requires an empty authored turns list, a non-empty 'spawns', and "
+        "an empty 'pre_session_spawns'.",
+    )
+    spawns: list[str] = Field(
+        default_factory=list,
+        description="Conversation-level SPAWN children for an orchestrator "
+        "conversation. Desugared by the loader into a post-timing SPAWN branch on "
+        "the synthesized no-op turn, so the orchestrator re-fires them on every "
+        "sampled iteration (fire-and-forget). Only valid when 'orchestrator' is "
+        "true; per-turn spawning uses 'DagTurn.spawns' instead.",
+    )
+    think_time_ms: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Orchestrator-'rounds'-only. Per-round think-time (milliseconds) "
+        "the coordinator waits after a round's branches all complete, before "
+        "releasing the next round. Applied on turn 0 via the normal turn delay and "
+        "on each gated join turn via the branch orchestrator. A fixed value today; "
+        "a sampled distribution (per (instance, round)) plugs in at the same seam.",
+    )
+    think_time_sigma: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=10.0,
+        description="When set, per-round think-time is drawn from a lognormal whose "
+        "MEDIAN is 'think_time_ms' and log-space stddev is this value (independent "
+        "draw per (instance, round), reproducible under --random-seed). Requires "
+        "'think_time_ms'. Unset => fixed think-time.",
+    )
+    think_time_min_ms: float | None = Field(
+        default=None, ge=0.0, description="Optional lower clamp on the sampled draw."
+    )
+    think_time_max_ms: float | None = Field(
+        default=None, ge=0.0, description="Optional upper clamp on the sampled draw."
+    )
+    rounds: int | list[DagRound] | None = Field(
+        default=None,
+        description="Orchestrator-only. Synthesize a gated 'spine' instead of a "
+        "single fire-and-forget turn. Two forms:\n"
+        "- INT (N): N rounds that each re-fire the SHARED conversation-level "
+        "'spawns' children -- one repeated branch template.\n"
+        "- LIST of DagRound: each round authors its OWN 'spawns' (and optional "
+        "per-round think-time), so the rounds are distinct stages rather than "
+        "repetitions -- different prompts/history/multimodal per round.\n"
+        "Either form produces N+1 request-free turns (N spawning turns, each of "
+        "which the next round waits on with join=all, plus a terminal gate). "
+        "When unset, the orchestrator synthesizes a single fire-and-forget turn.",
+    )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Optional per-conversation context mode. When omitted, DAG "
+        "conversations default to DELTAS_WITHOUT_RESPONSES (multi-turn chat that "
+        "accumulates prior turns and threads live inference responses into the "
+        "history). Set 'message_array_with_responses' for payload isolation: each "
+        "turn is sent as its OWN complete authored message array with NO "
+        "accumulation of prior turns or live responses -- required when every "
+        "turn independently authors its own system prompt, pre-baked history, and "
+        "multimodal payload (e.g. an orchestrator spine's branch sessions).",
     )
     pre_session_spawns: list[str] = Field(
         default_factory=list,
@@ -202,3 +311,146 @@ class DagConversation(AIPerfBaseModel):
         "(background SPAWN only); children get a fresh correlation id "
         "with ``parent_correlation_id=None``.",
     )
+
+    @field_validator(
+        "rounds",
+        "think_time_ms",
+        "think_time_sigma",
+        "think_time_min_ms",
+        "think_time_max_ms",
+        mode="before",
+    )
+    @classmethod
+    def _reject_bool_scheduling_fields(cls, v: Any) -> Any:
+        # bool subclasses int, so Pydantic would coerce `true`/`false` for these
+        # numeric (and int|list ``rounds``) fields into 1/0 -- silently altering
+        # topology (a one-round spine) or pacing (1.0 ms). Reject up front.
+        if isinstance(v, bool):
+            raise ValueError(
+                "rounds / think_time_* must be numeric (or a list for 'rounds'), "
+                f"not a boolean (got {v!r}); check for a typo in your DAG JSONL file"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _validate_orchestrator(self) -> "DagConversation":
+        if not self.orchestrator:
+            if self.rounds is not None:
+                raise ValueError(
+                    "'rounds' is only valid on an orchestrator conversation "
+                    "(set 'orchestrator': true)"
+                )
+            if self.spawns:
+                raise ValueError(
+                    "conversation-level 'spawns' is only valid on an orchestrator "
+                    "conversation; a normal conversation uses per-turn "
+                    "'DagTurn.spawns' (top-level 'spawns' would be silently ignored)"
+                )
+            if not self.turns:
+                raise ValueError(
+                    "'turns' must be non-empty unless 'orchestrator' is true"
+                )
+            return self
+
+        if self.turns:
+            raise ValueError(
+                "orchestrator conversation must have an empty authored 'turns' "
+                "list (the loader synthesizes its single no-op turn)"
+            )
+        self._validate_orchestrator_rounds()
+        if self.pre_session_spawns:
+            raise ValueError(
+                "orchestrator conversation must not set 'pre_session_spawns'; "
+                "use conversation-level 'spawns' instead"
+            )
+        return self
+
+    def _validate_orchestrator_rounds(self) -> None:
+        """Validate the spawns/rounds shape of an orchestrator conversation.
+
+        LIST-form ``rounds`` authors branches per round (so conversation-level
+        ``spawns`` must be omitted); the INT/absent form re-fires the shared
+        conversation-level ``spawns``.
+        """
+        if isinstance(self.rounds, list):
+            if not self.rounds:
+                raise ValueError("orchestrator 'rounds' list must be non-empty")
+            if self.spawns:
+                raise ValueError(
+                    "with a per-round 'rounds' list, omit conversation-level "
+                    "'spawns' (each round declares its own 'spawns')"
+                )
+            # Each list-form round must own DISTINCT branch sessions: a child id
+            # reused across rounds would emit raw records with the same
+            # (root, conversation_id, turn_index) key, making per-round latency
+            # attribution ambiguous.
+            seen: set[str] = set()
+            for r in self.rounds:
+                for child in r.spawns:
+                    if child in seen:
+                        raise ValueError(
+                            f"child session id '{child}' is spawned by more than "
+                            "one round; each list-form round must own distinct "
+                            "branch sessions for unambiguous raw attribution"
+                        )
+                    seen.add(child)
+            return
+        if isinstance(self.rounds, int) and self.rounds < 1:
+            raise ValueError("'rounds' count must be >= 1")
+        if not self.spawns:
+            raise ValueError(
+                "orchestrator conversation requires a non-empty 'spawns' "
+                "(or a per-round 'rounds' list)"
+            )
+
+    @model_validator(mode="after")
+    def _validate_think_time(self) -> "DagConversation":
+        """Per-round think-time is exclusive to an orchestrator 'rounds' spine;
+        reject orphan/mis-placed/contradictory think-time config up front so it
+        can never silently no-op or reach the sampler as a bad value."""
+        think_fields = (
+            self.think_time_sigma,
+            self.think_time_min_ms,
+            self.think_time_max_ms,
+        )
+        if not self.orchestrator:
+            if self.think_time_ms is not None or any(
+                v is not None for v in think_fields
+            ):
+                raise ValueError(
+                    "'think_time_ms'/'think_time_sigma'/'think_time_min_ms'/"
+                    "'think_time_max_ms' are only valid on an orchestrator "
+                    "conversation with 'rounds' set"
+                )
+            return self
+        if self.think_time_ms is not None and self.rounds is None:
+            raise ValueError(
+                "'think_time_ms' requires 'rounds' (it is the per-round wait of the "
+                "gated spine); it has no meaning for a single fire-and-forget turn"
+            )
+        if self.think_time_sigma is not None and self.think_time_ms is None:
+            raise ValueError(
+                "'think_time_sigma' requires 'think_time_ms' (the lognormal median "
+                "to sample around)"
+            )
+        # Clamps apply to the SAMPLED draw only; without a distribution they would
+        # be silently ignored, so reject clamp-only configs.
+        clamp_set = (
+            self.think_time_min_ms is not None or self.think_time_max_ms is not None
+        )
+        if clamp_set and self.think_time_sigma is None:
+            raise ValueError(
+                "'think_time_min_ms'/'think_time_max_ms' require 'think_time_sigma' "
+                "(they clamp the sampled draw; a fixed think-time has nothing to clamp)"
+            )
+        # Ordered clamp: an inverted range silently collapses every draw.
+        if (
+            self.think_time_min_ms is not None
+            and self.think_time_max_ms is not None
+            and self.think_time_min_ms > self.think_time_max_ms
+        ):
+            raise ValueError(
+                "'think_time_min_ms' must be <= 'think_time_max_ms' "
+                f"(got {self.think_time_min_ms} > {self.think_time_max_ms})"
+            )
+        return self

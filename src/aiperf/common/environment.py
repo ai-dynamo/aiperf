@@ -12,6 +12,7 @@ Structure:
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
+    Environment.ENDPOINT.*       - Endpoint wire-format settings
     Environment.GPU.*            - GPU telemetry collection
     Environment.HTTP.*           - HTTP client socket and connection settings
     Environment.LOGGING.*        - Logging configuration
@@ -47,6 +48,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.finite import FiniteFloat
 from aiperf.config.loader.parsing import (
     parse_service_types,
     parse_str_or_csv_list,
@@ -71,7 +73,7 @@ class _AccuracySettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AIPERF_ACCURACY_")
 
-    CANCEL_RESULT_WAIT_SEC: float = Field(
+    CANCEL_RESULT_WAIT_SEC: FiniteFloat = Field(
         default=5.0,
         ge=0.0,
         description="Bounded time (seconds) the SystemController waits on the "
@@ -83,6 +85,18 @@ class _AccuracySettings(BaseSettings):
         "export. Set to 0 to skip the wait entirely.",
     )
 
+    LCB_GRADE_TIMEOUT_MAX_S: float = Field(
+        default=300.0,
+        gt=0.0,
+        description="Hard ceiling (seconds) on the client-side wall-clock timeout "
+        "for a single LiveCodeBench code-execution grade. The per-grade timeout "
+        "scales with the problem's test-case count (lighteval's internal budget "
+        "plus a margin) but is capped here so one wedged grading worker cannot "
+        "stall the whole run. Raise it if legitimately slow large problems are "
+        "being prematurely failed; lower it to fail wedged workers faster. "
+        "Consumed by ``aiperf.accuracy.graders.code_execution._derive_grade_timeout``.",
+    )
+
     LCB_RELEASE_TAG: str = Field(
         default="v4_v5",
         description="LiveCodeBench dataset subset (HF config name) "
@@ -92,10 +106,67 @@ class _AccuracySettings(BaseSettings):
         "are reproducible across runs and branches. Default "
         "``v4_v5`` matches lighteval's base subset; bump (e.g. to "
         "``v6``) when the team rebaselines against a newer snapshot. "
-        "The loader always passes ``trust_remote_code=True`` so LCB's "
-        "dataset-loading script can execute on ``datasets`` v4+ "
-        "(mirrors lighteval's reference opt-in). Consumed by "
+        "``trust_remote_code=True`` is required because LCB ships a "
+        "repository loading script; this is only compatible with "
+        "``datasets<4`` (``datasets>=4`` dropped loading-script support "
+        "entirely — the loader surfaces a clear error with a "
+        "``datasets<4`` pin). Consumed by "
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
+
+
+class _AgentXSettings(BaseSettings):
+    """Settings for the InferenceX AgentX scenario family.
+
+    Controls runtime knobs for the agentx scenario: the substring allowlist
+    and rate limit used to classify and gate context-overflow errors
+    (RFC 2026-04-26 §7), and the AgenticReplayStrategy double-recycle guard
+    window (RECYCLE_GUARD_MAX_WINDOW).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_AGENTX_",
+    )
+
+    CONTEXT_OVERFLOW_SUBSTRINGS: list[str] = Field(
+        default=[
+            "context length",
+            "maximum context",
+            "context_length_exceeded",
+            "prompt is too long",
+        ],
+        description="Case-insensitive substring allowlist used to classify a "
+        "server error response as a context-overflow event. Matched against "
+        "the raw response body and the OpenAI-style nested 'error.message' "
+        "field. Extend via AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS to "
+        "support additional inference-server vocabularies (vLLM, TGI, "
+        "TensorRT-LLM, ...). Empty list disables runtime detection.",
+    )
+    CONTEXT_OVERFLOW_RATE_LIMIT: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.01,
+        description="Strict upper bound on the per-run context-overflow rate "
+        "(context_overflow_count / total_responses) before a scenario "
+        "submission is flipped to submission_valid=false with reason "
+        "'context_overflow_rate_exceeded'. Default 0.01 (1%) matches the "
+        "scenario spec RFC 2026-04-26 §7. Comparison is strictly greater-than: "
+        "rate exactly equal to the limit is accepted. Has no effect on "
+        "non-scenario runs (no --scenario flag) or runs with zero responses.",
+    )
+    RECYCLE_GUARD_MAX_WINDOW: int = Field(
+        ge=1,
+        default=1_000_000,
+        description="Maximum number of recently-recycled root correlation_ids "
+        "retained by AgenticReplayStrategy's double-recycle guard (which raises "
+        "if a final-turn credit return is delivered twice and would re-spawn a "
+        "session). Without a bound the guard retains one entry per recycled "
+        "session for the entire PROFILING phase -- hundreds of MB of "
+        "unreclaimable memory on long, high-throughput durability ramps. Oldest "
+        "entries are evicted FIFO once the window is full; a duplicate delivered "
+        "after this many intervening recycles is no longer caught. Duplicate "
+        "deliveries are near-immediate in practice, so the default window is far "
+        "larger than any real gap; raise it for very high concurrency.",
     )
 
 
@@ -121,11 +192,26 @@ class _APIServerSettings(BaseSettings):
         default=[],
         description="List of CORS origins to allow (empty = no CORS, ['*'] = all origins)",
     )
+    SHUTDOWN_RESPONSE_DELAY_SECONDS: float = Field(
+        ge=0.0,
+        le=60.0,
+        default=0.5,
+        description="Seconds to wait after accepting POST /api/shutdown before stopping "
+        "the API service, allowing the HTTP response to reach the caller",
+    )
     SHUTDOWN_TIMEOUT: float = Field(
         ge=1.0,
         le=300.0,
         default=5.0,
         description="Timeout in seconds for graceful API server shutdown before force-cancelling",
+    )
+    GET_POD_STATES_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Timeout in seconds for API worker-state queries to the "
+        "SystemController. A short timeout lets progress and debug endpoints "
+        "fall back to their bus-fed cache while the controller is unavailable.",
     )
     POST_COMPLETE_GRACE: float = Field(
         ge=0.0,
@@ -133,7 +219,17 @@ class _APIServerSettings(BaseSettings):
         default=5.0,
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
-        "Set to 0 to skip the grace window and shut down immediately.",
+        "Set to 0 to skip the grace window and shut down immediately. Not used under "
+        "ServiceRunType.KUBERNETES, where the controller pod outlives its benchmark and "
+        "is retired explicitly via POST /api/shutdown instead -- see "
+        "FastAPIService._on_shutdown_command. A fixed window there is shorter than the "
+        "operator's monitor interval and strands the AIPerfJob in a pre-terminal phase.",
+    )
+    WEBSOCKET_MAX_CONNECTIONS: int = Field(
+        ge=1,
+        le=100000,
+        default=100,
+        description="Maximum simultaneous clients accepted by the API WebSocket endpoint",
     )
 
 
@@ -260,12 +356,121 @@ class _DatasetSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
+    REBROADCAST_INTERVAL: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=2.0,
+        description="Seconds between re-announcements of the dataset-configured "
+        "notification in Kubernetes. The notification is a one-shot broadcast and "
+        "sibling worker pods start seconds apart, so a pod that subscribes late "
+        "would otherwise never learn a dataset exists.",
+    )
+    REBROADCAST_WINDOW: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=120.0,
+        description="Total seconds to keep re-announcing the dataset-configured "
+        "notification for late-joining worker pods. Set 0 to disable.",
+    )
+    CATCH_UP_REQUEST_TIMEOUT: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=10.0,
+        description="Timeout in seconds for the one-shot DatasetConfigStatusRequest "
+        "a RecordProcessor/RecordsManager sends to DatasetManager when it hasn't yet "
+        "received DatasetConfiguredNotification. Recovers a subscriber that finished "
+        "subscribing after DatasetManager already published the one-shot notification, "
+        "instead of blocking for the full CONFIGURATION_TIMEOUT.",
+    )
+    BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
+        Field(
+            default="provided_session_id",
+            description="Session column used by the Baseten trace loader when both "
+            "supported columns exist. Set to poor_man_session_id for legacy traces. "
+            "If the selected column is absent, the loader uses the available column.",
+        )
+    )
+    STATE_POLL_INTERVAL: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=1.0,
+        description="Seconds between polls of pod-local dataset state while a worker "
+        "waits to become dispatchable. The dataset arrives via one-shot broadcasts; "
+        "a worker container that subscribes after they fire recovers by polling its "
+        "WorkerGroupManager at this interval instead of waiting forever.",
+    )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
         description="Base path for memory-mapped dataset files. If None, uses system temp directory. "
         "Set to a shared filesystem path for Kubernetes mounted volumes. "
         "Example: AIPERF_DATASET_MMAP_BASE_PATH=/mnt/shared-pvc "
         "creates files at /mnt/shared-pvc/aiperf_mmap_{benchmark_id}/",
+    )
+    MMAP_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
+        "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
+        "Set to False to force every run to re-tokenize and re-write its mmap files. "
+        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+    )
+    MMAP_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory holding the content-addressed mmap cache. If None, defaults to "
+        "~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains "
+        "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
+        "No automatic eviction is implemented yet -- delete the directory to reclaim disk. "
+        "Setting AIPERF_VERSION no longer busts the cache: the build-identity component of "
+        "the key is now taken from the installed package's commit sha (falling back to its "
+        "version), not from the environment. To force a re-tokenize, set "
+        "AIPERF_DATASET_MMAP_CACHE_ENABLED=false, point this variable at a fresh directory, "
+        "or delete the cache directory.",
+    )
+    MMAP_PREFAULT: bool = Field(
+        default=True,
+        description="If True, each memory-mapped dataset client walks every page of the "
+        "data file at open time (after madvise(MADV_WILLNEED)) to force-populate the OS "
+        "page cache. Reads afterwards are served warm, so no request pays a major page "
+        "fault mid-benchmark -- which would otherwise land in the measured latency. "
+        "Workers share the kernel page cache, so the disk read happens once regardless of "
+        "worker count. Costs a one-time startup pass proportional to dataset size; set to "
+        "False to trade predictable tail latency for faster startup on very large datasets.",
+    )
+    PREFORMAT_PAYLOADS: bool = Field(
+        default=False,
+        description="If True, pre-encode single-turn / self-contained synthetic "
+        "conversations to the PAYLOAD_BYTES mmap fast path at dataset-build time "
+        "so workers stream the bytes verbatim and skip per-request encoding. This "
+        "is a throughput optimization that DROPS input-tokenization metrics "
+        "(input_sequence_length, image counts) because the structured prompt is "
+        "discarded. Default False keeps the structured-turns (CONVERSATION) path "
+        "so those metrics are computed. Datasets that natively ship raw payloads "
+        "(raw_payload / inputs_json / mooncake-with-payload) always use "
+        "PAYLOAD_BYTES regardless of this flag; cache-bust runs always use "
+        "CONVERSATION regardless.",
+    )
+    DOWNLOAD_MAX_RETRIES: int = Field(
+        ge=0,
+        le=1000,
+        default=20,
+        description="Maximum number of retries for dataset download in Kubernetes worker "
+        "pods. Worker pods start downloading before the controller pod's api container "
+        "has finished booting, so the default is generous enough to ride out that "
+        "startup window. Set to 0 to fail on the first attempt.",
+    )
+    DOWNLOAD_RETRY_DELAY: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Initial delay in seconds between dataset download retries (doubles "
+        "each retry, capped by DOWNLOAD_MAX_BACKOFF_SECONDS)",
+    )
+    DOWNLOAD_MAX_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=300.0,
+        default=8.0,
+        description="Maximum seconds between dataset download retries. Without this cap "
+        "the exponential backoff would grow unboundedly and a late retry would sleep far "
+        "past the run's own startup deadline.",
     )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
@@ -294,6 +499,241 @@ class _DatasetSettings(BaseSettings):
         "dataset to a JSONL file. No hard cap.",
     )
 
+    TRACELAB_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), TraceLabTraceDatasetLoader recovers "
+        "subagent parent/child links by timing containment and nests each "
+        "recovered child as a subagent entry inside its parent trace. Set to "
+        "False to emit every recorded session as an independent flat trace, "
+        "which is the shape the corpus literally records.",
+    )
+    TRACELAB_CODEX_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), the TraceLab subagent join also "
+        "runs over codex sessions. Codex uses an async spawn/wait/close agent "
+        "lifecycle whose handles are stripped from the released corpus, so "
+        "only a coarse session-level window is available there and a session "
+        "fanning out several agents collapses them into one window. Set to "
+        "False to keep only the precise blocking-tool-call join.",
+    )
+    TRACELAB_MIN_SPAWN_MS: int = Field(
+        ge=0,
+        default=10000,
+        description="Minimum wall latency, in milliseconds, for a spawning "
+        "tool call to be treated as a subagent round-trip by the TraceLab "
+        "join. Short calls are overwhelmingly no-op or error returns, and "
+        "admitting them widens the containment window enough to start "
+        "capturing unrelated concurrent sessions.",
+    )
+
+    WEKA_PARALLEL_WORKERS: int = Field(
+        ge=0,
+        le=256,
+        default=0,
+        description="Number of worker processes for WekaTraceLoader parallel "
+        "reconstruction. 0 = auto (min(cpu_count - 1, 16, num_traces)). Set to 1 "
+        "to force serial reconstruction.",
+    )
+    WEKA_PARALLEL_THRESHOLD: int = Field(
+        ge=1,
+        le=100000,
+        default=8,
+        description="Minimum number of parent traces required before "
+        "WekaTraceLoader switches to the multi-process parallel reconstruction "
+        "path. Below this, the in-process serial path is used (Pool startup "
+        "overhead exceeds the speedup for tiny corpora).",
+    )
+    WEKA_SPLIT_FLATTENED_AGENTS: bool = Field(
+        default=True,
+        description="When True (default), WekaTraceLoader runs hash_id LCP "
+        "chain detection at both layers: untagged agent fan-outs recorded as "
+        "flat top-level requests split into per-agent child conversations "
+        "(::fa:NNN), and each subagent entry's inner requests split into "
+        "per-context-chain children (`::sa:agent_id` plus :fa:NNN siblings), "
+        "all with SPAWN/SPAWN_JOIN linkage so replay reproduces the recorded "
+        "concurrency. Set to False to disable detection at both layers: all "
+        "top-level requests serialize into one root conversation and each "
+        "subagent emits exactly one child with its inner requests in time "
+        "order. Detected chains at both layers are further split into genuine "
+        "agents and auxiliary one-shot sidecars (top-level ::fa: vs ::aux:; "
+        "subagent overflow :fa: vs :aux:) per WEKA_AUX_MAX_REQUESTS / "
+        "WEKA_AUX_ISL_RATIO / WEKA_AUX_ISL_FLOOR.",
+    )
+    WEKA_TOOL_SHAPED_MESSAGES: bool = Field(
+        default=False,
+        description="When True, WekaTraceLoader emits the OpenAI tool-call "
+        "wire shape for turns classified as tool-result continuations: the "
+        "same-delta assistant message gains a synthetic tool_calls entry and "
+        "the turn's new input is sent as a role='tool' message instead of "
+        "plain user text (content unchanged). Exercises the server's "
+        "tool-message chat-template path at the cost of exact ISL fidelity "
+        "(tool messages tokenize differently than plain user text). Only "
+        "turns with a recorded tool signal (input_types / prior stop) shape; "
+        "legacy traces are unaffected. Default False keeps the byte-exact "
+        "plain-user replay shape.",
+    )
+    WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
+        ge=0.0,
+        default=3600.0,
+        description="LCP chain-detection seam guard: the maximum wall-clock gap "
+        "(seconds) between a chain's last request and a candidate continuation "
+        "before that continuation is only accepted when it also keeps enough of "
+        "the prior context (see WEKA_SEAM_MIN_OVERLAP_RATIO). A genuine context "
+        "compaction continues promptly (seconds to minutes), so a low-overlap "
+        "join hours later is treated as a distinct session that merely shares a "
+        "base prefix and is spawned as its own conversation instead of being "
+        "stitched onto the chain (which would fabricate a multi-hour intra-"
+        "conversation idle gap). The guard fires only when BOTH this gap is "
+        "exceeded AND overlap is below the ratio, so prompt compactions at any "
+        "overlap and verbatim long-gap resumes at high overlap are preserved. "
+        "Raise toward infinity to disable the temporal half of the guard.",
+    )
+    WEKA_SEAM_MIN_OVERLAP_RATIO: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.5,
+        description="LCP chain-detection seam guard: the minimum shared-prefix "
+        "ratio (continuation's fork depth / the chain tail's block count) for a "
+        "far-future continuation to still be accepted as the same agent. Below "
+        "this, a continuation past WEKA_SEAM_MAX_GAP_SECONDS is spawned as a new "
+        "conversation rather than spliced on. Corpus data is bimodal -- real "
+        "compactions and verbatim resumes keep at least 94% of the prefix, while "
+        "coincidental base-prefix mis-merges keep under 50% -- so 0.5 sits in a wide "
+        "safe valley. Set to 0.0 to disable the overlap half of the guard.",
+    )
+    WEKA_AUX_MAX_REQUESTS: int = Field(
+        ge=0,
+        default=1,
+        description="Auxiliary (sidecar) classification: a detected worker "
+        "chain with at most this many requests is eligible to be reclassified "
+        "as an auxiliary one-shot call -- a tool-issued sidecar (web "
+        "fetch/search summary, title generation, a classifier) rather than a "
+        "sustained agent -- when it also passes the WEKA_AUX_ISL_* size test. "
+        "Applies to both top-level flat chains (::fa: -> ::aux:) and a "
+        "subagent's nested-LCP overflow (:fa: -> :aux:). Corpus sidecars are "
+        "overwhelmingly single-request, so the default is 1. Set to 0 to "
+        "disable aux classification (every worker chain keeps its agent tag). "
+        "Only applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_AUX_ISL_RATIO: float = Field(
+        ge=0.0,
+        default=0.10,
+        description="Auxiliary (sidecar) classification: an aux-eligible chain "
+        "(see WEKA_AUX_MAX_REQUESTS) is reclassified to a sidecar only when its "
+        "first request's input length is below max(WEKA_AUX_ISL_FLOOR, this "
+        "ratio * the enclosing main chain's peak input length -- the trace's for "
+        "flat chains, the subagent's for overflow). The ratio catches calls "
+        "small relative to a large conversation's accumulated context; the floor "
+        "catches them in absolute terms. Sidecars start from a fresh "
+        "few-thousand-token context vs the agent's tens-to-hundreds of "
+        "thousands.",
+    )
+    WEKA_AUX_ISL_FLOOR: int = Field(
+        ge=0,
+        default=16384,
+        description="Auxiliary (sidecar) classification: absolute input-length "
+        "floor (tokens) for the aux size test (see WEKA_AUX_ISL_RATIO). A chain "
+        "whose first-request input length is below max(this, ratio * main peak "
+        "ISL) is treated as an auxiliary one-shot sidecar. Keeps small "
+        "fresh-context calls classified as sidecars even when the enclosing "
+        "conversation is itself small.",
+    )
+    WEKA_AUX_CROSS_MODEL: bool = Field(
+        default=True,
+        description="Auxiliary (sidecar) classification: when True (default), an "
+        "aux-eligible chain (at most WEKA_AUX_MAX_REQUESTS requests) whose first "
+        "request runs on a different model than its enclosing main chain is "
+        "treated as a sidecar regardless of input length. An agent does not "
+        "switch models for its own reasoning, so a one-shot on a different model "
+        "is a tool-internal call -- e.g. a Haiku WebFetch summary fired by an "
+        "Opus agent, which can carry a large fetched-page payload and so escape "
+        "the WEKA_AUX_ISL_* size test. Set to False to classify purely by size.",
+    )
+    WEKA_AUX_REDUCTION_OSL_MAX: int = Field(
+        ge=0,
+        default=4000,
+        description="Auxiliary (sidecar) classification, reduction arm: a "
+        "single-request worker chain on the SAME model as its enclosing main "
+        "chain is reclassified to an auxiliary one-shot when its output length "
+        "is in (0, this) tokens AND its input length is at least "
+        "WEKA_AUX_ISL_FLOOR AND its input/output ratio exceeds "
+        "WEKA_AUX_REDUCTION_RATIO. This catches large-input/short-output "
+        "reductions (context compaction, subagent-result summaries, tool-output "
+        "digests) that the size and cross-model arms miss because they are "
+        "same-model and large. The bound separates a bounded summary from "
+        "generative agent output (a real agent emits long completions); corpus "
+        "reductions cap well below 4k output across every capture. Reductions "
+        "are emitted as ordinary ::aux: sidecars. Set to 0 to disable the "
+        "reduction arm. Only applies when "
+        "WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+    WEKA_AUX_REDUCTION_RATIO: float = Field(
+        ge=0.0,
+        default=20.0,
+        description="Auxiliary (sidecar) classification, reduction arm: the "
+        "minimum input-to-output token ratio for a same-model single-request "
+        "large-input chain to be treated as a reduction sidecar (see "
+        "WEKA_AUX_REDUCTION_OSL_MAX). A reduction consumes a large body and "
+        "emits a short summary, so input/output is high (corpus median ~120); "
+        "20 is a conservative floor that still excludes balanced request/"
+        "response calls. Only applies when WEKA_AUX_REDUCTION_OSL_MAX > 0.",
+    )
+    WEKA_WORKER_GROUP_MIN: int = Field(
+        ge=0,
+        default=3,
+        description="Parallel worker-group tagging: a coordinated parallel fan-"
+        "out must BOTH share a deep spawned context AND run concurrently. Workers "
+        "that forked from shared context (fork depth > 0) are first scoped by "
+        "their fork point (the parent request they branched off), then within "
+        "each scope split into connected components of overlapping active "
+        "[t0, t1) intervals; a component with at least this many members is "
+        "emitted as ::wg:{group}_{member} (group = the concurrent fan-out, member "
+        "= index by start time) instead of the generic ::fa: agent marker. The "
+        "fork-point scope keeps unrelated fan-outs apart (pure interval overlap "
+        "bridges a busy trace into one blob); the overlap split drops members "
+        "that share the fork point but never run concurrently. This isolates "
+        "genuine parallel sub-agent fan-out (the dominant agent population) from "
+        "solo agents, unlike keying on the first context block (shared by ~every "
+        "worker all session). Auxiliary chains are classified first, so a one-"
+        "shot sidecar never becomes a worker-group member. Set to 0 to disable "
+        "worker-group tagging (parallel workers keep the generic ::fa: tag). Only "
+        "applies when WEKA_SPLIT_FLATTENED_AGENTS is True.",
+    )
+
+    @model_validator(mode="after")
+    def validate_download_backoff_order(self) -> Self:
+        """Keep exponential retry backoff from starting above its configured cap."""
+        if self.DOWNLOAD_RETRY_DELAY > self.DOWNLOAD_MAX_BACKOFF_SECONDS:
+            raise ValueError(
+                "AIPERF_DATASET_DOWNLOAD_RETRY_DELAY must be less than or equal to "
+                "AIPERF_DATASET_DOWNLOAD_MAX_BACKOFF_SECONDS"
+            )
+        return self
+
+
+class _EndpointSettings(BaseSettings):
+    """Endpoint wire-format configuration.
+
+    Controls how AIPerf serializes message content when building request
+    payloads. The main knob is FORCE_CONTENT_PARTS, which overrides the
+    single-text fast path that emits a plain string for simple turns.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_ENDPOINT_",
+    )
+
+    FORCE_CONTENT_PARTS: bool = Field(
+        default=False,
+        description="When True, always emit the multi-part content array "
+        '(e.g. [{"type": "text", "text": "..."}]) for synthetic turns, '
+        "even when there is only a single text with no media. By default "
+        "(False) single-text turns emit a plain string to stay compatible "
+        "with servers that reject list-of-parts content for non-multimodal "
+        "inputs (e.g. OpenAI Dynamo). Enable when the target server requires "
+        "the structured content-parts shape unconditionally.",
+    )
+
 
 class _DagSettings(BaseSettings):
     """Settings for DAG benchmark mode (`dag_jsonl` input type)."""
@@ -304,12 +744,13 @@ class _DagSettings(BaseSettings):
 
     FAIL_FAST: bool = Field(
         default=False,
-        description="When True, abort the whole run on the first DAG child "
-        "error (cancel pending siblings, raise to PhaseRunner, terminate "
-        "phase). Default False - the orchestrator counts the error in "
+        description="When True, a single DAG child error aborts the parent and "
+        "every orphan sibling under the same branch (releases sticky refcounts "
+        "and calls issuer.abort_session); unrelated root sessions continue. "
+        "Default False - the orchestrator counts the error in "
         "BranchStats.children_errored, releases the join slot, drains pending "
-        "siblings, and continues the run. Set via "
-        "AIPERF_DAG_FAIL_FAST=1 for strict CI assertions.",
+        "siblings, and continues. Set via AIPERF_DAG_FAIL_FAST=1 for strict CI "
+        "assertions.",
     )
 
 
@@ -415,12 +856,6 @@ class _GPUSettings(BaseSettings):
         default=5.0,
         description="Delay in seconds before shutting down GPU telemetry service to allow command response transmission",
     )
-    THREAD_JOIN_TIMEOUT: float = Field(
-        ge=1.0,
-        le=300.0,
-        default=5.0,
-        description="Timeout in seconds for joining GPU telemetry collection threads during shutdown",
-    )
 
 
 class _HTTPSettings(BaseSettings):
@@ -457,22 +892,10 @@ class _HTTPSettings(BaseSettings):
         default=10485760,  # 10MB
         description="Socket receive buffer size in bytes (default: 10MB for high-throughput streaming)",
     )
-    SO_RCVTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket receive timeout in seconds",
-    )
     SO_SNDBUF: int = Field(
         ge=1024,
         default=10485760,  # 10MB
         description="Socket send buffer size in bytes (default: 10MB for high-throughput streaming)",
-    )
-    SO_SNDTIMEO: int = Field(
-        ge=1,
-        le=100000,
-        default=30,
-        description="Socket send timeout in seconds",
     )
     TCP_KEEPCNT: int = Field(
         ge=1,
@@ -540,12 +963,38 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-Session-ID with the stable X-Correlation-ID value. "
+        "This transport setting is the supported way to enable generic HTTP session "
+        "affinity. It is ADDITIVE (both headers are sent); --session-header only "
+        "RENAMES the single correlation header.",
+    )
+    X_SESSION_AFFINITY_FROM_CORRELATION_ID: bool = Field(
+        default=True,
+        description="Also send X-Session-Affinity with the stable X-Correlation-ID value.",
+    )
+    X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
+        default=False,
+        description="Also send X-SMG-Routing-Key with the stable X-Correlation-ID value. "
+        "This transport setting is the supported affinity path for the SGLang Model "
+        "Gateway manual routing policy.",
+    )
     X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, "
-        "plus X-Dynamo-Parent-Session-ID on subagent children. Use this with a Dynamo "
-        "frontend running --router-session-affinity-ttl-secs to pin every turn of a "
-        "session to the replica holding its KV prefix.",
+        "plus X-Dynamo-Parent-Session-ID on subagent children. This transport setting "
+        "is the supported affinity path for a Dynamo frontend running "
+        "--router-session-affinity-ttl-secs, pinning every turn of a session to the "
+        "replica holding its KV prefix.",
+    )
+    METRICS_SCRAPE_READ_TIMEOUT: float = Field(
+        ge=1.0,
+        le=3600.0,
+        default=30.0,
+        description="Socket read timeout in seconds for metrics scrape sessions "
+        "(server metrics and GPU telemetry). Bounds an endpoint that sends response "
+        "headers and then stalls, which a connect-only timeout cannot detect.",
     )
     VIDEO_POLL_INTERVAL: float = Field(
         ge=0.001,
@@ -585,11 +1034,11 @@ class _MetricsSettings(BaseSettings):
         env_prefix="AIPERF_METRICS_",
     )
 
-    ARRAY_INITIAL_CAPACITY: int = Field(
-        ge=100,
-        le=1000000,
-        default=10000,
-        description="Initial array capacity for metric storage dictionaries to minimize reallocation",
+    EXPORT_FLUSH_INTERVAL: float = Field(
+        ge=0.05,
+        le=60.0,
+        default=1.0,
+        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
     )
     USAGE_PCT_DIFF_THRESHOLD: float = Field(
         ge=0.0,
@@ -618,11 +1067,42 @@ class _MetricsSettings(BaseSettings):
         default="ragged",
         description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
     )
-    EXPORT_FLUSH_INTERVAL: float = Field(
-        ge=0.05,
-        le=60.0,
-        default=1.0,
-        description="Periodic flush interval (seconds) for buffered JSONL stream exporters (raw record writer, record export, gpu/server-metrics JSONL writers). Bounds the worst-case freshness of low-throughput export files when the in-memory batch never reaches batch_size.",
+
+
+class _OperatorSettings(BaseSettings):
+    """Kubernetes operator identity and namespace-ownership configuration.
+
+    Read by the kopf operator process and by ``aiperf kube`` when it reports
+    which operator owns a namespace.
+
+    The ``AIPERF_OPERATOR_`` prefix is shared with
+    ``aiperf.operator.environment.OperatorEnvironment``, which holds the
+    settings only the operator process reads. A new ``AIPERF_OPERATOR_*``
+    variable belongs here only if non-operator code (the CLI, a benchmark pod)
+    also reads it; check both files before adding one, so the two do not
+    collide on a name.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_OPERATOR_",
+    )
+
+    ID: str = Field(
+        default="",
+        description="Operator identity used to claim namespaces via a "
+        "coordination.k8s.io Lease named 'aiperf-operator'. Empty (the default) "
+        "means this is the cluster-wide global operator: it writes no Lease and "
+        "reconciles every namespace no scoped operator has claimed. Set a unique "
+        "id to run a scoped operator alongside the global one.",
+    )
+    CLAIM_LEASE_SECONDS: int = Field(
+        default=300,
+        ge=10,
+        le=86400,
+        description="Duration in seconds of the namespace-ownership Lease. "
+        "Renewed at one third of this interval. Deliberately long so a "
+        "crash-looping scoped operator keeps its namespaces across restarts; "
+        "only an uninstall lets the claim lapse to the global operator.",
     )
 
 
@@ -692,11 +1172,40 @@ class _RecordSettings(BaseSettings):
         env_prefix="AIPERF_RECORD_",
     )
 
+    CHECKPOINT_INTERVAL: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=30.0,
+        description="Seconds between partial-checkpoint writes during a "
+        "Kubernetes run. The results sidecar serves these before the "
+        "results-ready marker exists, and the operator treats a growing "
+        "checkpoint as evidence the controller is alive. Set to 0 to disable.",
+    )
+
     EXPORT_BATCH_SIZE: int = Field(
         ge=1,
         le=1000000,
         default=100,
         description="Batch size for record export results processor",
+    )
+    COMPLETION_STALL_TIMEOUT: float = Field(
+        ge=0.0,
+        le=86400.0,
+        default=300.0,
+        description="Seconds of ZERO record progress, after all credits are complete, "
+        "before the RecordsManager stops waiting and finalizes the run as degraded. "
+        "The completion barrier is event-driven: it needs one record per completed "
+        "request, so a request that completes without ever emitting a record leaves "
+        "the barrier permanently short and nothing re-triggers it. This bounds that "
+        "into a loud failure instead of an unbounded hang. The timer measures time "
+        "since the last record arrived, not total elapsed, so legitimately slow "
+        "aggregation is never cut short. Set 0 to disable.",
+    )
+    COMPLETION_STALL_CHECK_INTERVAL: float = Field(
+        gt=0.0,
+        le=3600.0,
+        default=10.0,
+        description="Seconds between record-progress stall checks after credits complete.",
     )
     RAW_EXPORT_BATCH_SIZE: int = Field(
         ge=1,
@@ -709,7 +1218,9 @@ class _RecordSettings(BaseSettings):
         le=100,
         default=4,
         description="Scale factor for number of record processors to spawn based on worker count. "
-        "Formula: 1 record processor for every X workers",
+        "Formula: 1 record processor for every X workers. The default of 4 is the ratio the "
+        "Kubernetes pod-sizing design was built around, alongside ~500 concurrent connections "
+        "per worker; see RuntimeConfig.record_processors_per_pod",
     )
     PROGRESS_REPORT_INTERVAL: float = Field(
         ge=0.1,
@@ -758,7 +1269,7 @@ class _SearchPlannerSettings(BaseSettings):
         default=0.05,
         description="Default SLA boundary search precision target. "
         "The bisection / smooth-isotonic bracket halts when "
-        "(infeasible_min - feasible_max) / infeasible_min < this value, "
+        "(infeasible_min - feasible_max) / infeasible_min stays below this value, "
         "and the cliff detector requires bracket_gap > this * x_hi to "
         "report a cliff. 5% mirrors perf_analyzer's --binary-search default.",
     )
@@ -828,11 +1339,38 @@ class _ServerMetricsSettings(BaseSettings):
         description="Time in seconds to continue collecting metrics after profiling completes, "
         "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
     )
+    PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=60.0,
+        description="Seconds RecordsManager waits for the final server-metrics scrape "
+        "command response. A timeout is non-fatal because the controller's result "
+        "join remains the authoritative completion barrier.",
+    )
+    CANCEL_RESULT_WAIT_SEC: FiniteFloat = Field(
+        default=5.0,
+        ge=0.0,
+        description="Bounded time (seconds) the SystemController waits on the "
+        "cancel (Ctrl+C) path for the ServerMetricsManager's result message "
+        "before proceeding to export. The normal completion path blocks on the "
+        "server-metrics shutdown gate indefinitely, but the cancel path must "
+        "not hang. Set to 0 to skip the wait entirely.",
+    )
     COLLECTION_INTERVAL: float = Field(
         ge=0.001,
         le=300.0,
         default=0.333,
         description="Server metrics collection interval in seconds (default: 333ms, ~3Hz)",
+    )
+    SCRAPE_TIMEOUT: float = Field(
+        ge=0.1,
+        le=600.0,
+        default=30.0,
+        description="Hard bound in seconds on a single manager-initiated scrape "
+        "(baseline, warmup boundary, and the final PROFILE_COMPLETE scrape). These "
+        "scrapes are awaited inline on the completion and cancel paths, so an "
+        "endpoint that stalls mid-response would otherwise block the terminal "
+        "server-metrics result forever.",
     )
     EXPORT_BATCH_SIZE: int = Field(
         ge=1,
@@ -846,11 +1384,53 @@ class _ServerMetricsSettings(BaseSettings):
         default=10,
         description="Timeout in seconds for checking server metrics endpoint reachability during init",
     )
+    REALTIME_PUBLISH_INTERVAL_SECONDS: float = Field(
+        ge=1e-9,
+        le=300.0,
+        default=1.0,
+        description="Minimum seconds between realtime server-metrics snapshot messages; "
+        "the one-nanosecond floor keeps conversion to integer nanoseconds positive",
+    )
     SHUTDOWN_DELAY: float = Field(
         ge=1.0,
         le=300.0,
         default=5.0,
         description="Delay in seconds before shutting down server metrics service to allow command response transmission",
+    )
+    CR_PROJECTION_MAX_SERIES: int = Field(
+        ge=1,
+        le=10000,
+        default=256,
+        description="Maximum series a single metric may carry into the Kubernetes "
+        "AIPerfJob status.serverMetrics projection. A metric with more series than "
+        "this is dropped whole rather than truncated, because a partial series list "
+        "would decode as a valid-but-wrong aggregate. This is a cardinality sanity "
+        "bound only -- CR_PROJECTION_MAX_BYTES is the real size backstop -- and is "
+        "counted per metric across all endpoints, so it must clear the worker or GPU "
+        "count of the largest deployment. The WebSocket feed and "
+        "server_metrics_export.json are unaffected.",
+    )
+    CR_PROJECTION_MAX_BYTES: int = Field(
+        ge=1024,
+        le=1048576,
+        default=262144,
+        description="Maximum serialized size in bytes of the Kubernetes AIPerfJob "
+        "status.serverMetrics projection. The cardinality caps bound how many labels "
+        "a series may carry but not how long each label string is, so this is the "
+        "authoritative guard against the 1.5 MB apiserver object ceiling. An "
+        "over-budget projection is dropped whole: exceeding the ceiling would have "
+        "the apiserver reject the entire status patch, silently stopping every other "
+        "status update (phases, liveMetrics, resultsExported, controllerFailure) "
+        "along with it.",
+    )
+    CR_PROJECTION_MAX_LABELS: int = Field(
+        ge=1,
+        le=1000,
+        default=16,
+        description="Maximum Prometheus labels a single series may carry into the "
+        "Kubernetes AIPerfJob status.serverMetrics projection. Labels form the series "
+        "identity in the dashboard, so a metric with an over-labeled series is dropped "
+        "whole rather than having its labels trimmed.",
     )
 
 
@@ -924,18 +1504,83 @@ class _TimingSettings(BaseSettings):
         default=0.1,
         description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
     )
+    HIGH_RES_TIMER: bool = Field(
+        default=True,
+        description="Use high-resolution rate-loop pacing instead of event-loop timers, which "
+        "quantize sub-millisecond sleeps to ~1ms granularity. Restores exact rate delivery and "
+        "arrival-distribution fidelity at high request rates. Uses a Linux timerfd (kernel "
+        "hrtimer, ~50us wakeup precision) when available, and a dedicated sleep thread on other "
+        "platforms (~100us POSIX, ~0.5ms Windows). Set to false to force event-loop timer pacing.",
+    )
+    MAX_CATCHUP_SECONDS: float = Field(
+        ge=0.0,
+        le=10.0,
+        default=0.01,
+        description="Maximum schedule backlog in seconds the rate loop is allowed to catch up on "
+        "before re-anchoring to the current time. Event-loop timers oversleep sub-millisecond "
+        "waits (~1ms granularity under uvloop/libuv); without a catch-up window every oversleep "
+        "permanently forfeits schedule and high request rates silently under-deliver. Bounded so "
+        "a genuine multi-second stall still re-anchors instead of firing a burst storm.",
+    )
 
 
-class _ServiceSettings(BaseSettings):
-    """Service lifecycle and inter-service communication configuration.
+class _PodSettings(BaseSettings):
+    """Kubernetes worker-pod monitoring configuration.
 
-    Controls timeouts for service registration, startup, shutdown, command handling,
-    connection probing, heartbeats, and profile operations.
+    Consumed by the Kubernetes service manager, which polls the Kubernetes API
+    for worker-pod phases and container-level failures.
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="AIPERF_SERVICE_",
+        env_prefix="AIPERF_POD_",
     )
+
+    MONITOR_INTERVAL: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=5.0,
+        description="Interval in seconds between worker-pod monitoring sweeps. "
+        "Bounds how quickly a Failed/Unknown worker pod is detected via the "
+        "Kubernetes API",
+    )
+    FAILURE_ABORT_THRESHOLD_PERCENT: float = Field(
+        ge=0.0,
+        le=100.0,
+        default=50.0,
+        description="Percentage of failed worker pods at which the Kubernetes "
+        "service manager signals the controller to abort the benchmark. Set to "
+        "0 to never abort on pod failures",
+    )
+
+
+class _ServiceHealthFields:
+    """Health server settings for Kubernetes probes."""
+
+    HEALTH_ENABLED: bool = Field(
+        default=False,
+        description="Enable the lightweight health server for Kubernetes liveness/readiness probes. "
+        "When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints.",
+    )
+    HEALTH_HOST: str = Field(
+        default="127.0.0.1",
+        description="Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments.",
+    )
+    HEALTH_PORT: int = Field(
+        ge=1,
+        le=65535,
+        default=8080,
+        description="Port for the health server HTTP endpoints (/healthz, /readyz).",
+    )
+    HEALTH_REQUEST_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=5.0,
+        description="Timeout in seconds for reading health check HTTP requests.",
+    )
+
+
+class _ServiceCommunicationFields:
+    """Service command and connection-probing configuration."""
 
     COMMAND_RESPONSE_TIMEOUT: float = Field(
         ge=1.0,
@@ -961,11 +1606,31 @@ class _ServiceSettings(BaseSettings):
         default=90.0,
         description="Maximum time in seconds to wait for connection probe response while waiting for initial connection to the zmq message bus",
     )
+
+
+class _ServiceSettings(_ServiceCommunicationFields, _ServiceHealthFields, BaseSettings):
+    """Service lifecycle and inter-service communication configuration.
+
+    Controls timeouts for service registration, startup, shutdown, command handling,
+    connection probing, heartbeats, and profile operations.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_SERVICE_",
+    )
+
     CREDIT_PROGRESS_REPORT_INTERVAL: float = Field(
         ge=1,
         le=100000.0,
         default=2.0,
         description="Interval in seconds between credit progress report messages",
+    )
+    WARMUP_PROGRESS_LOG_INTERVAL: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=30.0,
+        description="Interval in seconds between warmup progress heartbeat log messages. "
+        "Set to 0 to disable.",
     )
     DISABLE_UVLOOP: bool = Field(
         default=False,
@@ -976,6 +1641,33 @@ class _ServiceSettings(BaseSettings):
         le=100000.0,
         default=5.0,
         description="Interval in seconds between heartbeat messages for component services",
+    )
+    HEARTBEAT_MISSED_THRESHOLD: int = Field(
+        ge=1,
+        le=100,
+        default=3,
+        description="Consecutive heartbeat intervals a registered service may "
+        "miss before the watchdog suspects it. Failure then requires "
+        "HEARTBEAT_STALE_CONFIRMATION_TICKS consecutive stale watchdog ticks.",
+    )
+    CONTROLLER_FAILURE_SHUTDOWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=600.0,
+        description="Wall-clock cap for SystemController failure-path teardown, including child reaping and result export.",
+    )
+    FAILURE_SHUTDOWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=300.0,
+        default=30.0,
+        description="Wall-clock cap on the shutdown path inside "
+        "AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task "
+        "cancellation) does not complete within this window after a failed "
+        "on_init/on_start transition, a containerized (operator-managed) "
+        "service hard-exits via os._exit(1), preventing silent zombie "
+        "containers when cleanup blocks on a cancelled C-extension call. A "
+        "local run logs the wedged shutdown and reports the failure normally "
+        "instead, so the traceback and artifact export are not discarded.",
     )
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
@@ -1013,6 +1705,53 @@ class _ServiceSettings(BaseSettings):
         default=30.0,
         description="Timeout in seconds for service registration",
     )
+    REGISTRATION_PROGRESS_LOG_INTERVAL: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=5.0,
+        description="Interval in seconds between 'still waiting for services to "
+        "register' progress logs emitted by the service registry while blocked",
+    )
+    GROUP_HELLO_ATTEMPT_TIMEOUT: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=2.0,
+        description="Timeout in seconds for a single group-local GroupPeerHello "
+        "attempt before it is retried against the worker group manager",
+    )
+    GROUP_HELLO_TOTAL_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=120.0,
+        description="Total deadline in seconds for a group-local peer to get its "
+        "GroupPeerHello acknowledged before startup is failed",
+    )
+    GROUP_HELLO_RETRY_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=0.25,
+        description="Maximum seconds to pause between group-local GroupPeerHello retries",
+    )
+    GROUP_PEER_POLL_INTERVAL_SECONDS: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=0.2,
+        description="Seconds between polls while waiting for group-local peer registration "
+        "or shutdown acknowledgements",
+    )
+    HEARTBEAT_STALE_CONFIRMATION_TICKS: int = Field(
+        ge=1,
+        le=100,
+        default=2,
+        description="Consecutive watchdog ticks a stale service must survive before being reaped",
+    )
+    HEARTBEAT_WATCHDOG_DELAY_FACTOR: float = Field(
+        ge=1.0,
+        le=100.0,
+        default=2.0,
+        description="Heartbeat interval multiplier above which a delayed watchdog tick "
+        "skips stale-service decisions",
+    )
     START_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -1045,28 +1784,6 @@ class _ServiceSettings(BaseSettings):
         default=25.0,
         description="Warning threshold in milliseconds for event loop latency (default: 25ms). "
         "If the actual sleep duration exceeds the expected duration by this amount, a warning is logged.",
-    )
-    # Health server settings for Kubernetes probes
-    HEALTH_ENABLED: bool = Field(
-        default=False,
-        description="Enable the lightweight health server for Kubernetes liveness/readiness probes. "
-        "When enabled, non-API services will start an HTTP server serving /healthz and /readyz endpoints.",
-    )
-    HEALTH_HOST: str = Field(
-        default="127.0.0.1",
-        description="Host to bind the health server to. Use '0.0.0.0' for Kubernetes deployments.",
-    )
-    HEALTH_PORT: int = Field(
-        ge=1,
-        le=65535,
-        default=8080,
-        description="Port for the health server HTTP endpoints (/healthz, /readyz).",
-    )
-    HEALTH_REQUEST_TIMEOUT: float = Field(
-        ge=0.1,
-        le=60.0,
-        default=5.0,
-        description="Timeout in seconds for reading health check HTTP requests.",
     )
     # Windows-only: TCP-loopback fallback for ZMQ IPC sockets (pyzmq on
     # Windows does not support ipc://). Per-endpoint ports are derived
@@ -1155,6 +1872,55 @@ class _TokenizerSettings(BaseSettings):
         env_prefix="AIPERF_TOKENIZER_",
     )
 
+    BUNDLE_MAX_BYTES: int = Field(
+        ge=1,
+        le=1073741824,
+        default=52_428_800,
+        description="Maximum uncompressed tokenizer bundle size in bytes before the API "
+        "rejects it as containing unexpected model artifacts",
+    )
+    BUNDLE_BUILD_WARN_SECONDS: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=5.0,
+        description="On-demand tokenizer bundle build duration in seconds above which the "
+        "API logs a prewarm-miss warning",
+    )
+    DOWNLOAD_MAX_RETRIES: int = Field(
+        ge=1,
+        le=1000,
+        default=20,
+        description="Minimum retry budget for each tokenizer bundle download in a worker pod",
+    )
+    DOWNLOAD_INITIAL_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=300.0,
+        default=0.5,
+        description="Initial seconds between tokenizer bundle download retries",
+    )
+    DOWNLOAD_MAX_BACKOFF_SECONDS: float = Field(
+        gt=0.0,
+        le=300.0,
+        default=8.0,
+        description="Maximum seconds between tokenizer bundle download retries",
+    )
+    DOWNLOAD_REQUEST_TIMEOUT_SECONDS: float = Field(
+        gt=0.0,
+        le=3600.0,
+        default=300.0,
+        description="Total timeout in seconds for each tokenizer bundle HTTP request",
+    )
+
+    @model_validator(mode="after")
+    def validate_download_backoff_order(self) -> Self:
+        """Keep exponential retry backoff from starting above its configured cap."""
+        if self.DOWNLOAD_INITIAL_BACKOFF_SECONDS > self.DOWNLOAD_MAX_BACKOFF_SECONDS:
+            raise ValueError(
+                "AIPERF_TOKENIZER_DOWNLOAD_INITIAL_BACKOFF_SECONDS must be less than "
+                "or equal to AIPERF_TOKENIZER_DOWNLOAD_MAX_BACKOFF_SECONDS"
+            )
+        return self
+
     PRELOAD_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -1208,6 +1974,17 @@ class _UISettings(BaseSettings):
         env_prefix="AIPERF_UI_",
     )
 
+    CONSOLE_EXPORT_WIDTH: int = Field(
+        ge=40,
+        le=10000,
+        default=140,
+        description=(
+            "Fixed column width used to render the post-run console exporter "
+            "tables. Applied both to the recording console that produces "
+            "profile_export_console.txt and to the live console when stdout "
+            "is not a tty (so non-tty CI logs match the saved artifact)."
+        ),
+    )
     LOG_REFRESH_INTERVAL: float = Field(
         ge=0.01,
         le=100000.0,
@@ -1220,12 +1997,6 @@ class _UISettings(BaseSettings):
         default=1.0,
         description="Minimum percentage difference from last update to trigger a UI update (for non-dashboard UIs)",
     )
-    NOTIFICATION_TIMEOUT: int = Field(
-        ge=1,
-        le=100000,
-        default=3,
-        description="Duration in seconds to display UI notifications before auto-dismissing",
-    )
     REALTIME_METRICS_INTERVAL: float | None = Field(
         ge=0.0,
         le=1000.0,
@@ -1233,7 +2004,7 @@ class _UISettings(BaseSettings):
         description=(
             "Interval in seconds between real-time metrics messages (and the "
             "per-tick stats log block). 0 disables the log block; dashboards "
-            "still poll. When None, ``realtime_metrics_interval(ui_type)`` "
+            "still poll. When None, `realtime_metrics_interval(ui_type)` "
             "auto-defaults to 5.0 under --ui dashboard, 30.0 otherwise."
         ),
     )
@@ -1256,17 +2027,6 @@ class _UISettings(BaseSettings):
         default=0.1,
         description="Progress spinner refresh rate in seconds (default: 10 FPS)",
     )
-    CONSOLE_EXPORT_WIDTH: int = Field(
-        ge=40,
-        le=10000,
-        default=140,
-        description=(
-            "Fixed column width used to render the post-run console exporter "
-            "tables. Applied both to the recording console that produces "
-            "profile_export_console.txt and to the live console when stdout "
-            "is not a tty (so non-tty CI logs match the saved artifact)."
-        ),
-    )
 
 
 class _WorkerSettings(BaseSettings):
@@ -1286,6 +2046,104 @@ class _WorkerSettings(BaseSettings):
         le=100000.0,
         default=1.0,
         description="Interval in seconds between worker status checks by WorkerManager",
+    )
+    CLOCK_OFFSET_MIN_SAMPLES: int = Field(
+        ge=1,
+        le=10000,
+        default=5,
+        description="Clock-offset observations required before a worker reports calibration",
+    )
+    CLOCK_OFFSET_WINDOW_SIZE: int = Field(
+        ge=1,
+        le=10000,
+        default=20,
+        description="Recent worker clock-offset observations retained by the min filter",
+    )
+    CLOCK_OFFSET_MAX_ABS_SEC: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=3600.0,
+        description="Absolute plausibility bound in seconds on a single worker "
+        "clock-offset sample. A sample whose magnitude exceeds this is discarded "
+        "instead of entering the min-filter window, because no credit can plausibly "
+        "carry an issue timestamp that far from the receiving worker's clock. Set "
+        "to 0 to disable the bound. Kubernetes mode only.",
+    )
+    CLOCK_OFFSET_OUTLIER_FACTOR: float = Field(
+        ge=0.0,
+        le=1000.0,
+        default=4.0,
+        description="Multiplier on the median absolute deviation of the offset "
+        "window below which a new clock-offset sample is rejected as a low outlier. "
+        "Low outliers are the dangerous ones: the estimator is a minimum, so a "
+        "single spuriously low sample would set the correction for the whole "
+        "window. Set to 0 to disable low-outlier rejection. Kubernetes mode only.",
+    )
+    CLOCK_OFFSET_OUTLIER_FLOOR_SEC: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=0.001,
+        description="Floor in seconds on the low-outlier rejection band, so a window "
+        "of near-identical samples (median absolute deviation near zero) does not "
+        "reject every subsequent sample. Kubernetes mode only.",
+    )
+    CLOCK_OFFSET_RESET_AFTER_REJECTS: int = Field(
+        ge=1,
+        le=10000,
+        default=10,
+        description="Consecutive low-outlier rejections after which the clock-offset "
+        "window is cleared and re-seeded. A sustained run of rejections means the "
+        "true offset stepped down (controller restart, NTP step), not that the "
+        "samples are bad, so the filter must follow it. Kubernetes mode only.",
+    )
+    CLOCK_PROBE_MAX_RTT_SEC: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=0.05,
+        description="Plausibility bound in seconds on a single TimePing/TimePong "
+        "round trip. A probe slower than this is discarded rather than used as the "
+        "baseline RTT, because a probe queued behind real credits or delayed by a "
+        "GC pause would otherwise halve into a wildly overstated one-way transit "
+        "estimate. Set to 0 to disable the bound. Must be strictly less than "
+        "AIPERF_WORKER_CLOCK_PROBE_TIMEOUT when non-zero (a probe already timed "
+        "out before the bound check can fire). Kubernetes mode only.",
+    )
+    CLOCK_REMEASURE_INTERVAL: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=300.0,
+        description="Interval in seconds between worker baseline-RTT re-measurements. "
+        "The startup probe alone goes stale for the rest of the run when the "
+        "controller restarts or the network path changes, so the probe repeats on "
+        "this cadence. Raise it past the run duration to keep the startup probe as "
+        "the only measurement. Kubernetes mode only.",
+    )
+    CLOCK_PROBE_COUNT: int = Field(
+        ge=1,
+        le=1000,
+        default=5,
+        description="Successful startup TimePing/TimePong round trips targeted per worker",
+    )
+    CLOCK_PROBE_TIMEOUT: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=1.0,
+        description="Per-probe timeout in seconds for a single startup TimePing/"
+        "TimePong round trip. Kept short so an unreachable credit ROUTER costs a "
+        "fast retry instead of consuming AIPERF_WORKER_CLOCK_PROBE_BUDGET on one "
+        "probe. Kubernetes mode only.",
+    )
+    CLOCK_PROBE_BUDGET: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=30.0,
+        description="Total seconds a worker may spend on startup TimePing/TimePong "
+        "clock-offset RTT probes before giving up and announcing readiness "
+        "uncalibrated. Hard ceiling on the whole probe sequence, not per probe, so "
+        "a router that never echoes cannot stall worker registration past "
+        "AIPERF_SERVICE_REGISTRATION_TIMEOUT. Sized for real cluster startup, "
+        "where the credit ROUTER is commonly not echoing for the first several "
+        "seconds after a worker container starts. Kubernetes mode only.",
     )
     CPU_UTILIZATION_FACTOR: float = Field(
         ge=0.1,
@@ -1324,6 +2182,16 @@ class _WorkerSettings(BaseSettings):
         default=32,
         description="Absolute maximum number of workers to spawn, regardless of CPU count",
     )
+    MIN_ALIVE_FRACTION: float = Field(
+        ge=0.0,
+        le=1.0,
+        default=0.0,
+        description="Fail the benchmark when the number of dispatchable workers "
+        "remains below this fraction of the peak ever registered for one worker "
+        "staleness interval. TimingManager evaluates the count after worker "
+        "deregistration, so Kubernetes replacement pods can become dispatchable "
+        "before a transient loss is fatal. 0 disables the check.",
+    )
     STALE_TIME: float = Field(
         ge=0.1,
         le=1000.0,
@@ -1336,6 +2204,94 @@ class _WorkerSettings(BaseSettings):
         default=0.5,
         description="Interval in seconds between worker status summary messages",
     )
+    RAW_RECORD_UPLOAD_TIMEOUT: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=60.0,
+        description="Timeout in seconds to wait for worker pods to upload raw record files "
+        "to the controller API after benchmark completion.",
+    )
+    DEFAULT_WORKERS_PER_POD: int = Field(
+        ge=1,
+        le=100,
+        default=10,
+        description="Default number of worker subprocesses per Kubernetes worker pod. "
+        "Each pod downloads the dataset once and shares it across workers via mmap. "
+        "Packing exists because a node holds only ~65k ephemeral ports, which caps "
+        "concurrent connections per node; see RuntimeConfig.workers_per_pod",
+    )
+    DISPATCHABLE_POD_GRACE_PERIOD_SECONDS: float = Field(
+        ge=0.0,
+        le=300.0,
+        default=5.0,
+        description="Seconds the Kubernetes controller waits for every worker pod to "
+        "become dispatchable before allowing a healthy subset to start profiling",
+    )
+    RETURN_PROBE_BUDGET: float = Field(
+        ge=0.0,
+        le=100000.0,
+        default=30.0,
+        description="Total seconds a worker may spend probing the credit-RETURN "
+        "PUSH channel before announcing itself dispatchable. Credit dispatch and "
+        "credit returns ride two different sockets, so a DEALER that has "
+        "handshaked with the credit ROUTER proves nothing about the PUSH side; "
+        "without this gate a worker can be routed credits it can never return, "
+        "and the phase stalls until a run-level timeout. On expiry the worker "
+        "announces itself anyway with a warning, because the PUSH client buffers "
+        "unsendable returns and drains them on reconnect. 0 disables the gate.",
+    )
+    RETURN_PROBE_RETRY_DELAY: float = Field(
+        ge=0.001,
+        le=1000.0,
+        default=0.1,
+        description="Seconds between credit-RETURN channel probe attempts. Also "
+        "sets the attempt count, which is "
+        "AIPERF_WORKER_RETURN_PROBE_BUDGET divided by this delay.",
+    )
+    ROUTER_STALE_EVICTION_MULTIPLIER: float = Field(
+        ge=1.0,
+        le=100.0,
+        default=3.0,
+        description="Worker stale-time multiplier used by the credit router before "
+        "evicting a silent dispatchable worker",
+    )
+    ROUTER_STALE_SWEEP_DELAY_FACTOR: float = Field(
+        ge=1.0,
+        le=100.0,
+        default=2.0,
+        description="Sweep-interval multiplier above which the credit router's "
+        "stale-worker sweep considers its own tick to have been delayed and skips "
+        "eviction decisions for that sweep",
+    )
+    SESSION_CACHE_MAX_ENTRIES: int = Field(
+        ge=1,
+        le=10000000,
+        default=100_000,
+        description="Maximum multi-turn sessions cached by each worker before oldest "
+        "unpinned sessions are evicted",
+    )
+
+    @model_validator(mode="after")
+    def validate_clock_probe_rtt_bound(self) -> Self:
+        """Validate that CLOCK_PROBE_MAX_RTT_SEC is less than CLOCK_PROBE_TIMEOUT.
+
+        A probe that exceeds the timeout is never observed by the RTT guard --
+        asyncio.wait_for raises TimeoutError first.  Setting the bound at or above
+        the timeout makes the guard dead code and allows a near-timeout slow probe
+        (0.9s with defaults) to be accepted and its one-way estimate (450ms) to
+        be used for every subsequent timestamp correction.
+        """
+        if (
+            self.CLOCK_PROBE_MAX_RTT_SEC > 0
+            and self.CLOCK_PROBE_MAX_RTT_SEC >= self.CLOCK_PROBE_TIMEOUT
+        ):
+            raise ValueError(
+                f"AIPERF_WORKER_CLOCK_PROBE_MAX_RTT_SEC ({self.CLOCK_PROBE_MAX_RTT_SEC}s) "
+                f"must be strictly less than AIPERF_WORKER_CLOCK_PROBE_TIMEOUT "
+                f"({self.CLOCK_PROBE_TIMEOUT}s); a probe that already timed out can "
+                f"never trigger the RTT bound check."
+            )
+        return self
 
 
 class _ZMQSettings(BaseSettings):
@@ -1349,12 +2305,6 @@ class _ZMQSettings(BaseSettings):
         env_prefix="AIPERF_ZMQ_",
     )
 
-    CONTEXT_TERM_TIMEOUT: float = Field(
-        ge=1.0,
-        le=100000.0,
-        default=10.0,
-        description="Timeout in seconds for terminating the ZMQ context during shutdown",
-    )
     PULL_YIELD_INTERVAL: int = Field(
         ge=0,
         le=1_000_000,
@@ -1409,6 +2359,22 @@ class _ZMQSettings(BaseSettings):
         default=100_000,
         description="Maximum concurrency for ZMQ PULL clients",
     )
+    PUSH_DRAIN_TIMEOUT: float = Field(
+        ge=0.01,
+        le=60.0,
+        default=2.0,
+        description="Seconds to wait for in-flight PUSH tasks to complete during socket shutdown before cancelling them. "
+        "Prevents record loss when a worker process exits while push tasks are still queued.",
+    )
+    PROXY_TERMINATE_TIMEOUT: float = Field(
+        ge=0.01,
+        le=60.0,
+        default=5.0,
+        description="Seconds to wait for a `zmq.proxy_steerable` background thread to exit after sending it a "
+        "TERMINATE control command during proxy shutdown. The frontend/backend sockets it reads from must not be "
+        "closed until this thread has actually exited, since libzmq sockets are not safe to close while another "
+        "thread is blocked inside them.",
+    )
     PUSH_MAX_RETRIES: int = Field(
         ge=1,
         le=100,
@@ -1426,6 +2392,18 @@ class _ZMQSettings(BaseSettings):
         le=10000000,
         default=300000,  # 5 minutes
         description="Socket receive timeout in milliseconds (default: 5 minutes)",
+    )
+    RECONNECT_IVL: int = Field(
+        ge=0,
+        le=600000,
+        default=100,
+        description="Milliseconds before the first reconnect attempt for connecting ZMQ sockets",
+    )
+    RECONNECT_IVL_MAX: int = Field(
+        ge=0,
+        le=600000,
+        default=5000,
+        description="Maximum milliseconds for exponential reconnect backoff on connecting ZMQ sockets",
     )
     SNDTIMEO: int = Field(
         ge=1,
@@ -1462,6 +2440,31 @@ class _ZMQSettings(BaseSettings):
         "(subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``.",
     )
 
+    @model_validator(mode="after")
+    def validate_reconnect_ivl_max_not_below_reconnect_ivl(self) -> Self:
+        """Reject a reconnect backoff ceiling that sits below its starting interval.
+
+        ``ZMQBaseClient._configure_socket`` sets both options on every connecting
+        socket. libzmq treats ``RECONNECT_IVL_MAX == 0`` as "no exponential
+        backoff, retry every ``RECONNECT_IVL`` forever", so zero is a legitimate
+        sentinel and must stay accepted. A *nonzero* ceiling below the starting
+        interval is not: libzmq clamps each computed interval to the ceiling, so
+        the socket silently reconnects faster than the interval the operator
+        explicitly asked for, and the backoff the ceiling was meant to bound
+        never happens. Fail at config time rather than hiding the inversion in
+        reconnect timing nobody inspects.
+        """
+        if 0 < self.RECONNECT_IVL_MAX < self.RECONNECT_IVL:
+            raise ValueError(
+                f"AIPERF_ZMQ_RECONNECT_IVL_MAX ({self.RECONNECT_IVL_MAX}ms) must be "
+                f">= AIPERF_ZMQ_RECONNECT_IVL ({self.RECONNECT_IVL}ms) when nonzero; "
+                "a backoff ceiling below the starting interval clamps every "
+                "reconnect attempt down to the ceiling instead of backing off. "
+                "Use AIPERF_ZMQ_RECONNECT_IVL_MAX=0 to disable exponential backoff "
+                "and retry at a flat AIPERF_ZMQ_RECONNECT_IVL."
+            )
+        return self
+
 
 class _Environment(BaseSettings):
     """
@@ -1492,13 +2495,17 @@ class _Environment(BaseSettings):
         default_factory=_AccuracySettings,
         description="Accuracy benchmark settings (dataset version pins, etc.)",
     )
-    AWS: _AWSSettings = Field(
-        default_factory=_AWSSettings,
-        description="AWS request-signing settings (SigV4 credential rotation)",
+    AGENTX: _AgentXSettings = Field(
+        default_factory=_AgentXSettings,
+        description="InferenceX AgentX scenario settings (context-overflow detection, etc.)",
     )
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
+    )
+    AWS: _AWSSettings = Field(
+        default_factory=_AWSSettings,
+        description="AWS request-signing settings (SigV4 credential rotation)",
     )
     CHAT: _ChatSettings = Field(
         default_factory=_ChatSettings,
@@ -1519,6 +2526,10 @@ class _Environment(BaseSettings):
     DAG: _DagSettings = Field(
         default_factory=_DagSettings,
         description="DAG benchmark mode settings (dag_jsonl input type)",
+    )
+    ENDPOINT: _EndpointSettings = Field(
+        default_factory=_EndpointSettings,
+        description="Endpoint wire-format settings (content serialization, etc.)",
     )
     DEV: _DeveloperSettings = Field(
         default_factory=_DeveloperSettings,
@@ -1544,9 +2555,17 @@ class _Environment(BaseSettings):
         default_factory=_MLflowSettings,
         description="MLflow export settings",
     )
+    OPERATOR: _OperatorSettings = Field(
+        default_factory=_OperatorSettings,
+        description="Kubernetes operator identity and namespace-ownership settings",
+    )
     OTEL: _OTelSettings = Field(
         default_factory=_OTelSettings,
         description="OpenTelemetry metrics streaming settings",
+    )
+    POD: _PodSettings = Field(
+        default_factory=_PodSettings,
+        description="Kubernetes worker-pod monitoring settings",
     )
     RECORD: _RecordSettings = Field(
         default_factory=_RecordSettings,
@@ -1616,6 +2635,38 @@ class _Environment(BaseSettings):
         if self.SERVICE.PROFILE_CONFIGURE_TIMEOUT < self.DATASET.CONFIGURATION_TIMEOUT:
             raise ValueError(
                 f"AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT: {self.SERVICE.PROFILE_CONFIGURE_TIMEOUT} must be greater than or equal to AIPERF_DATASET_CONFIGURATION_TIMEOUT: {self.DATASET.CONFIGURATION_TIMEOUT}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_worker_stale_time_vs_heartbeat(self) -> Self:
+        """Validate the router's stale-worker cutoff outlives the heartbeat cadence.
+
+        ``StickyCreditRouter.evict_stale_workers`` computes its cutoff as
+        ``WORKER.STALE_TIME * WORKER.ROUTER_STALE_EVICTION_MULTIPLIER`` against
+        ``last_heartbeat_ns``, which is fed solely by ``TimingManager``'s
+        ``HeartbeatMessage`` handler. Workers emit those on their own
+        ``SERVICE.HEARTBEAT_INTERVAL`` timer, so the expected gap between two
+        heartbeats from a healthy worker is one interval. Validating against
+        ``INTERVAL * THRESHOLD`` was wrong: ``SERVICE.HEARTBEAT_MISSED_THRESHOLD``
+        is the *controller watchdog's* tolerance and never reaches this path.
+
+        The cutoff must still outlive the emission cadence with room for
+        scheduling jitter, or every worker looks stale on the very first sweep
+        and gets evicted -- terminal when it owns in-flight credits or sticky
+        sessions, regardless of ``WORKER.MIN_ALIVE_FRACTION``.
+        """
+        stale_cutoff = (
+            self.WORKER.STALE_TIME * self.WORKER.ROUTER_STALE_EVICTION_MULTIPLIER
+        )
+        if stale_cutoff <= self.SERVICE.HEARTBEAT_INTERVAL:
+            raise ValueError(
+                f"AIPERF_WORKER_STALE_TIME: {self.WORKER.STALE_TIME} "
+                f"(eviction cutoff = STALE_TIME * ROUTER_STALE_EVICTION_MULTIPLIER "
+                f"= {stale_cutoff}) must satisfy cutoff > "
+                f"AIPERF_SERVICE_HEARTBEAT_INTERVAL ({self.SERVICE.HEARTBEAT_INTERVAL}), "
+                "otherwise workers appear stale to the router before their heartbeat "
+                "cadence could plausibly reach it."
             )
         return self
 

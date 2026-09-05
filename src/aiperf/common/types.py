@@ -5,9 +5,9 @@ This module defines common used alias types for AIPerf. This both helps prevent 
 helps with type hinting.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from types import UnionType
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, Union
 
 from aiperf.common.enums import (
     CaseInsensitiveStrEnum,
@@ -22,7 +22,7 @@ from aiperf.plugin.enums import ServiceType, TransportType
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from aiperf.common.messages import CommandMessage, Message
+    from aiperf.common.messages import Message
     from aiperf.common.mixins import AIPerfLifecycleMixin, HooksMixin
     from aiperf.common.models import AIPerfBaseModel, Media, ModelEndpointInfo
     from aiperf.common.protocols import ServiceProtocol
@@ -35,9 +35,6 @@ BaseModelT = TypeVar("BaseModelT", bound="BaseModel")
 ClassEnumT = TypeVar("ClassEnumT", bound="CaseInsensitiveStrEnum")
 ClassProtocolT = TypeVar("ClassProtocolT", bound=Any)
 CommAddressType: TypeAlias = Union["CommAddress", str]
-CommandCallbackMapT: TypeAlias = dict[
-    "CommandType", Callable[["CommandMessage"], Awaitable[Any]]
-]
 CommandTypeT: TypeAlias = CommandType | str
 ConfigT = TypeVar("ConfigT", bound=Any, covariant=True)
 HooksMixinT = TypeVar("HooksMixinT", bound="HooksMixin")
@@ -56,6 +53,7 @@ MessageTypeT: TypeAlias = MessageType | str
 MetricTagT: TypeAlias = str
 ModelEndpointInfoT = TypeVar("ModelEndpointInfoT", bound="ModelEndpointInfo")
 OutputT = TypeVar("OutputT", bound=Any)
+PhaseKind: TypeAlias = Literal["warmup", "profiling"]
 PluginClassT = TypeVar("PluginClassT", bound=Any)
 ProtocolT = TypeVar("ProtocolT", bound=Any)
 RawRequestT = TypeVar("RawRequestT", bound=Any, contravariant=True)

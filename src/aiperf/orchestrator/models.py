@@ -43,6 +43,10 @@ class RunResult(AIPerfBaseModel):
     trial_index: int = Field(
         default=0, description="Zero-based trial index within the variation."
     )
+    was_cancelled: bool = Field(
+        default=False,
+        description="True when this run's profile export was written after a graceful Ctrl+C (partial metrics); scenario submissions must treat such runs as invalid.",
+    )
 
 
 VariationKey = tuple[str, tuple[tuple[str, Any], ...]]

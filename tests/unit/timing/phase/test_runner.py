@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.models import (
     ConversationMetadata,
@@ -14,6 +14,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import ArrivalPattern, DatasetSamplingStrategy, TimingMode
@@ -62,6 +63,14 @@ class MockStrategy:
         self.handle_credit_return_calls.append(credit)
 
 
+@dataclass
+class MockRateSettableStrategy(MockStrategy):
+    rate_updates: list[float] = field(default_factory=list)
+
+    def set_request_rate(self, rate: float) -> None:
+        self.rate_updates.append(rate)
+
+
 def mock_conc_mgr() -> MagicMock:
     m = MagicMock()
     m.configure_for_phase = MagicMock()
@@ -99,6 +108,7 @@ def cfg(
     conc_ramp: float | None = None,
     prefill_ramp: float | None = None,
     rate_ramp: float | None = None,
+    rate_series: RateSeriesConfig | None = None,
 ) -> CreditPhaseConfig:
     return CreditPhaseConfig(
         phase=phase,
@@ -114,6 +124,7 @@ def cfg(
         concurrency_ramp_duration_sec=conc_ramp,
         prefill_concurrency_ramp_duration_sec=prefill_ramp,
         request_rate_ramp_duration_sec=rate_ramp,
+        request_rate_series=rate_series,
     )
 
 
@@ -148,6 +159,7 @@ def conv_src() -> MagicMock:
 def pub() -> MagicMock:
     m = MagicMock()
     m.publish_phase_start = AsyncMock()
+    m.publish_phase_baseline_request = AsyncMock()
     m.publish_phase_sending_complete = AsyncMock()
     m.publish_phase_complete = AsyncMock()
     m.publish_progress = AsyncMock()
@@ -192,6 +204,141 @@ async def runner(
 
 
 class TestPhaseRunnerLifecycle:
+    async def test_fatal_control_node_failure_is_reraised_not_swallowed(
+        self, runner: PhaseRunner
+    ) -> None:
+        """A recorded request-free control-node failure must be re-raised. The
+        fatal-error callback also sets all_credits_returned_event, which drives
+        the wait's "all returned" early-return fast path -- so the surfacing
+        check must run AFTER the wait (never bypassed by that early return)."""
+        runner._raise_if_control_node_failed()  # no fatal error -> no-op
+        err = RuntimeError("virtual return callback blew up")
+        runner._progress.record_fatal_error(err)
+        with pytest.raises(RuntimeError, match="blew up"):
+            runner._raise_if_control_node_failed()
+
+    async def test_seamless_return_wait_fatal_error_forwards_not_completes(
+        self, runner: PhaseRunner
+    ) -> None:
+        """Seamless mode: ``run()`` never awaits the detached return-wait task,
+        so its done-callback must FORWARD a recorded fatal control-node failure
+        (via the error callback) instead of only logging and reporting a clean
+        completion -- otherwise the run reports success on a fatal failure."""
+        errors: list[BaseException] = []
+        completed: list[bool] = []
+        runner.set_phase_error_callback(errors.append)
+        runner.set_phase_complete_callback(lambda: completed.append(True))
+
+        err = RuntimeError("virtual return callback blew up")
+        runner._progress.record_fatal_error(err)
+
+        task = MagicMock()
+        task.cancelled.return_value = False
+        task.exception.return_value = None
+        runner._on_return_wait_complete(task)
+
+        assert errors == [err]  # forwarded so the orchestrator can fail the run
+        assert completed == [True]  # cleanup still runs
+
+    async def test_seamless_return_wait_task_exception_is_retrieved(
+        self, runner: PhaseRunner
+    ) -> None:
+        """If the detached wait task itself raised (not routed through the fatal
+        sink), the done-callback must retrieve ``task.exception()`` -- both so it
+        is not left as an unretrieved-task-exception and so it fails the run."""
+        errors: list[BaseException] = []
+        runner.set_phase_error_callback(errors.append)
+
+        boom = RuntimeError("background wait crashed")
+        task = MagicMock()
+        task.cancelled.return_value = False
+        task.exception.return_value = boom
+        runner._on_return_wait_complete(task)
+
+        task.exception.assert_called_once()  # retrieved, not swallowed
+        assert errors == [boom]
+
+    async def test_seamless_return_wait_clean_completion_does_not_forward(
+        self, runner: PhaseRunner
+    ) -> None:
+        """No fatal error and no task exception: the seamless done-callback must
+        report a clean completion and NOT invoke the error callback."""
+        errors: list[BaseException] = []
+        completed: list[bool] = []
+        runner.set_phase_error_callback(errors.append)
+        runner.set_phase_complete_callback(lambda: completed.append(True))
+
+        task = MagicMock()
+        task.cancelled.return_value = False
+        task.exception.return_value = None
+        runner._on_return_wait_complete(task)
+
+        assert errors == []
+        assert completed == [True]
+
+    async def test_baseline_boundary_capture_is_fire_and_forget(
+        self, runner: PhaseRunner, pub: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_publish(*args, **kwargs):
+            started.set()
+            await release.wait()
+
+        pub.publish_phase_baseline_request = AsyncMock(side_effect=slow_publish)
+
+        boundary_ns = runner._capture_baseline_boundary("phase-1", BaselineKind.START)
+
+        assert isinstance(boundary_ns, int)
+        await asyncio.wait_for(started.wait(), timeout=0.1)
+        pub.publish_phase_baseline_request.assert_called_once_with(
+            runner._config, "phase-1", BaselineKind.START
+        )
+        release.set()
+        await asyncio.sleep(0)
+
+    async def test_return_complete_waits_for_end_baseline_publish_before_phase_complete(
+        self, runner: PhaseRunner, pub: MagicMock
+    ) -> None:
+        events: list[str] = []
+        release_baseline = asyncio.Event()
+
+        async def slow_baseline_publish(*args, **kwargs):
+            events.append("baseline_start")
+            await release_baseline.wait()
+            events.append("baseline_done")
+
+        async def record_phase_complete(*args, **kwargs):
+            events.append("phase_complete")
+
+        pub.publish_phase_baseline_request = AsyncMock(
+            side_effect=slow_baseline_publish
+        )
+        pub.publish_phase_complete = AsyncMock(side_effect=record_phase_complete)
+        runner._baseline_start_ns = None
+        runner._baseline_end_ns = None
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._progress.all_credits_returned_event.set()
+
+        task = asyncio.create_task(
+            runner._wait_for_returning_complete(phase_id="phase-1")
+        )
+        await asyncio.wait_for(asyncio.sleep(0), timeout=0.1)
+
+        assert events == ["baseline_start"]
+        assert not task.done()
+        pub.publish_phase_complete.assert_not_called()
+
+        release_baseline.set()
+        await asyncio.wait_for(task, timeout=0.1)
+
+        assert events == ["baseline_start", "baseline_done", "phase_complete"]
+        pub.publish_phase_baseline_request.assert_called_once_with(
+            runner._config, "phase-1", BaselineKind.END
+        )
+
     async def test_run_creates_strategy_via_factory(
         self,
         conv_src: MagicMock,
@@ -401,6 +548,66 @@ class TestRamperCreation:
             await r.run(is_final_phase=True)
             assert len(r._rampers) == 0
 
+    async def test_rate_series_controller_created_for_rate_settable_strategy(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        rate_series = RateSeriesConfig(
+            points=[{"time_s": 0, "qps": 5}, {"time_s": 10, "qps": 15}]
+        )
+        r = make_runner(
+            cfg(rate=5.0, rate_series=rate_series),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockRateSettableStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+            assert len(r._rampers) == 1
+
+    async def test_rate_series_requires_rate_settable_strategy(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        rate_series = RateSeriesConfig(
+            points=[{"time_s": 0, "qps": 5}, {"time_s": 10, "qps": 15}]
+        )
+        r = make_runner(
+            cfg(rate=5.0, rate_series=rate_series),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+        )
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            await r.run(is_final_phase=True)
+            assert len(r._rampers) == 0
+
 
 class TestPhaseRunnerCancellation:
     async def test_cancel_sets_flag(self, runner: PhaseRunner) -> None:
@@ -437,6 +644,91 @@ class TestPhaseRunnerCancellation:
         assert runner._scheduler.pending_count > 0
         runner.cancel()
         assert runner._scheduler.pending_count == 0
+
+    async def test_cancelled_phase_is_not_a_grace_period_timeout(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """A cancelled phase must not be reported as a grace-period timeout.
+
+        Regression guard: the full-port re-port inherited origin/main's
+        ``grace_period_triggered=True`` on the cancellation completion path,
+        which mislabelled every cancelled phase (warmup early-abort, Ctrl-C,
+        ``--request-count`` cutoff) as a grace-period timeout in the console
+        phase-complete line, the OTEL metric, and the aggregated
+        ``ProfileResults`` flag. Cancellation is tracked via ``was_cancelled``.
+        """
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        with patch(
+            "aiperf.timing.phase.runner.plugins.get_class",
+            return_value=lambda **kw: MockStrategy(),
+        ):
+            r._was_cancelled = True
+            r._progress.all_credits_sent_event.set()
+            r._progress.all_credits_returned_event.set()
+            result = await r.run(is_final_phase=True)
+
+        assert r._lifecycle.grace_period_triggered is False
+        assert result.grace_period_timeout_triggered is False
+
+
+class TestSendingCompleteExecutionTaskFailure:
+    async def test_request_count_phase_raises_instead_of_hanging(
+        self, runner: PhaseRunner
+    ) -> None:
+        """A request-count phase has no ``expected_duration_sec``, so the
+        sending-complete wait has no timeout to fall back on. If the execution
+        task raises before the last credit is sent, the wait must fail fast and
+        the failure must propagate out of ``_wait_for_sending_complete`` (not
+        be logged and swallowed), matching ``run()``'s existing
+        except -> phase-failure path (#1041)."""
+        runner._lifecycle.start()
+        assert runner._lifecycle.time_left_in_seconds() is None
+
+        async def boom() -> None:
+            raise RuntimeError("send_credit: no workers available for routing")
+
+        runner._execution_task = runner.execute_async(boom())
+
+        with pytest.raises(RuntimeError, match="no workers available"):
+            await asyncio.wait_for(
+                runner._wait_for_sending_complete(MockStrategy()), timeout=5.0
+            )
+
+        # The finally block still ran: sending is marked complete so the rest
+        # of teardown (returning-wait, stats) does not also hang.
+        assert runner._lifecycle.is_sending_complete
+
+    async def test_duration_phase_still_times_out_normally(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+        time_traveler: MagicMock,
+    ) -> None:
+        """Duration-based phases keep their existing bounded-timeout behavior:
+        an execution task that never finishes still surfaces as a normal
+        timeout, not an exception, since #1041 only affects the timeout=None
+        (request-count) branch."""
+        r = make_runner(
+            cfg(reqs=None, dur=0.001), conv_src, pub, router, conc, cancel, cb
+        )
+        r._lifecycle.start()
+        never = asyncio.Event()
+        r._execution_task = r.execute_async(never.wait())
+
+        await r._wait_for_sending_complete(MockStrategy())
+
+        assert r._lifecycle.is_sending_complete
+        assert r._lifecycle.timeout_triggered
 
 
 class TestTimeoutHandling:
@@ -507,6 +799,95 @@ class TestTimeoutHandling:
         )
         assert result is False
 
+    async def test_indefinite_wait_raises_task_exception_instead_of_hanging(
+        self, runner: PhaseRunner
+    ) -> None:
+        """timeout=None has no bound to fall back on, so a raced task that
+        raises before the event is set must fail the wait fast (#1041) rather
+        than hang forever."""
+        event = asyncio.Event()
+
+        async def boom() -> None:
+            raise RuntimeError("send_credit: no workers available for routing")
+
+        task = asyncio.create_task(boom())
+
+        with pytest.raises(RuntimeError, match="no workers available"):
+            await asyncio.wait_for(
+                runner._wait_for_event_with_timeout(
+                    name="t", event=event, timeout=None, task_to_cancel=task
+                ),
+                timeout=5.0,
+            )
+
+    async def test_indefinite_wait_prioritizes_task_exception_over_simultaneous_event(
+        self, runner: PhaseRunner
+    ) -> None:
+        """If the event is already set and the raced task has already failed
+        by the time the wait begins, both futures can complete on the same
+        tick; the failure must still win, or the phase reports success on a
+        task that raised (CodeRabbit finding on #1041's own fix)."""
+        event = asyncio.Event()
+        event.set()
+
+        async def boom() -> None:
+            raise RuntimeError("send_credit: no workers available for routing")
+
+        task = asyncio.create_task(boom())
+        await asyncio.sleep(0)
+        assert task.done()
+
+        with pytest.raises(RuntimeError, match="no workers available"):
+            await asyncio.wait_for(
+                runner._wait_for_event_with_timeout(
+                    name="t", event=event, timeout=None, task_to_cancel=task
+                ),
+                timeout=5.0,
+            )
+
+    async def test_indefinite_wait_ignores_cancelled_task_and_keeps_waiting(
+        self, runner: PhaseRunner, time_traveler: MagicMock
+    ) -> None:
+        """A cancelled raced task is not a failure: the wait must keep
+        waiting for the event rather than raising CancelledError."""
+        event = asyncio.Event()
+        never = asyncio.Event()
+        task = asyncio.create_task(never.wait())
+        task.cancel()
+
+        async def set_later() -> None:
+            await asyncio.sleep(0.01)
+            event.set()
+
+        asyncio.create_task(set_later())
+        result = await runner._wait_for_event_with_timeout(
+            name="t", event=event, timeout=None, task_to_cancel=task
+        )
+        assert result is False
+
+    async def test_indefinite_wait_falls_through_when_task_finishes_cleanly(
+        self, runner: PhaseRunner, time_traveler: MagicMock
+    ) -> None:
+        """A raced task that finishes with no exception is not a failure
+        either: the wait must keep waiting for the event rather than
+        returning early just because the task is done."""
+        event = asyncio.Event()
+
+        async def finish_quietly() -> None:
+            return None
+
+        task = asyncio.create_task(finish_quietly())
+
+        async def set_later() -> None:
+            await asyncio.sleep(0.01)
+            event.set()
+
+        asyncio.create_task(set_later())
+        result = await runner._wait_for_event_with_timeout(
+            name="t", event=event, timeout=None, task_to_cancel=task
+        )
+        assert result is False
+
 
 class TestStuckSlotsRelease:
     async def test_release_calls_concurrency_manager(
@@ -545,7 +926,7 @@ class TestProgressReporting:
 
 
 class TestSeamlessMode:
-    async def test_returns_early_for_non_final_phase(
+    async def test_router_phase_state_waits_for_detached_return_drain(
         self,
         conv_src: MagicMock,
         pub: MagicMock,
@@ -555,12 +936,40 @@ class TestSeamlessMode:
         cb: MagicMock,
     ) -> None:
         r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
+        r._router_phase_started = True
+        pending_wait = MagicMock()
+        pending_wait.done.return_value = False
+        r._return_wait_task = pending_wait
+
+        r._detach_orchestrator_and_cleanup()
+
+        router.end_phase.assert_not_called()
+
+        completed_wait = MagicMock()
+        completed_wait.cancelled.return_value = False
+        completed_wait.exception.return_value = None
+        r._on_return_wait_complete(completed_wait)
+
+        router.end_phase.assert_called_once_with(CreditPhase.PROFILING, None)
+
+    async def test_returns_early_for_non_final_phase(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         with patch(
             "aiperf.timing.phase.runner.plugins.get_class",
             return_value=lambda **kw: MockStrategy(),
         ):
             r._progress.all_credits_sent_event.set()
-            result = await asyncio.wait_for(r.run(is_final_phase=False), timeout=1.0)
+            result = await asyncio.wait_for(
+                r.run(is_final_phase=False, seamless_to_next=True), timeout=1.0
+            )
             assert isinstance(result, CreditPhaseStats)
 
     async def test_waits_for_returns_on_final_phase(
@@ -572,7 +981,7 @@ class TestSeamlessMode:
         cancel: MagicMock,
         cb: MagicMock,
     ) -> None:
-        r = make_runner(cfg(seamless=True), conv_src, pub, router, conc, cancel, cb)
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
         with patch(
             "aiperf.timing.phase.runner.plugins.get_class",
             return_value=lambda **kw: MockStrategy(),
@@ -653,6 +1062,51 @@ class TestEdgeCases:
             with pytest.raises(RuntimeError):
                 await r.run(is_final_phase=True)
             mock_ramper.stop.assert_called_once()
+
+    async def test_timeout_skips_cancel_drain_when_all_credits_returned(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(cfg(dur=1.0), conv_src, pub, router, conc, cancel, cb)
+        stats = CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            start_ns=1,
+            sent_end_ns=2,
+            requests_end_ns=3,
+            final_requests_sent=94,
+            requests_sent=94,
+            requests_completed=94,
+            requests_cancelled=0,
+            final_requests_completed=94,
+            final_requests_cancelled=0,
+            final_request_errors=0,
+            final_sent_sessions=1,
+            final_completed_sessions=1,
+            final_cancelled_sessions=0,
+        )
+        r._progress.create_stats = MagicMock(return_value=stats)
+        # Force the post-timeout cancel branch: pretend credits are still
+        # outstanding at the initial check, time out the wait, then recompute
+        # need == 0 so the empty-drain guard sets the event without waiting.
+        r._progress.check_all_returned_or_cancelled = MagicMock(return_value=False)
+        r._lifecycle.start()
+        r._lifecycle.mark_sending_complete()
+
+        with patch.object(
+            r,
+            "_wait_for_event_with_timeout",
+            new=AsyncMock(return_value=True),
+        ):
+            await r._wait_for_returning_complete(MagicMock())
+
+        router.cancel_all_credits.assert_awaited_once()
+        assert r._progress.all_credits_returned_event.is_set()
+        r._concurrency_manager.release_stuck_slots.assert_not_called()
 
 
 class TestFixedScheduleConfigCorrection:
@@ -830,3 +1284,152 @@ class TestPhaseRunnerWorkerReadiness:
         real_router._register_worker("worker-1")
         await asyncio.wait_for(run_task, timeout=5.0)
         assert strategy.execute_called
+
+
+class TestWarmupProgressHeartbeat:
+    """Warmup emits a throttled INFO heartbeat in _progress_report_loop
+    (AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL, default 30s, 0 disables) so
+    headless warmup stays observable when no interactive UI consumes progress.
+    """
+
+    def test_format_warmup_progress_includes_returned_target_and_elapsed(self):
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=40,
+            requests_completed=30,
+            requests_cancelled=2,
+            request_errors=1,
+            total_expected_requests=50,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "Phase warmup progress" in msg
+        assert "returned=32/50" in msg  # completed + cancelled / target
+        assert "sent=40" in msg
+        assert "errors=1" in msg
+        assert "elapsed=" in msg
+
+    def test_format_warmup_progress_prefers_final_requests_sent(self):
+        # When both are populated, final_requests_sent is the primary target;
+        # total_expected_requests is only the fallback. Guards a regression
+        # that would silently prefer the fallback.
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=40,
+            requests_completed=30,
+            requests_cancelled=2,
+            final_requests_sent=42,
+            total_expected_requests=50,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "returned=32/42" in msg  # completed + cancelled / final_requests_sent
+        assert "/50" not in msg
+
+    def test_format_warmup_progress_without_target(self):
+        stats = CreditPhaseStats(
+            phase=CreditPhase.WARMUP,
+            requests_sent=5,
+            requests_completed=3,
+        )
+        msg = PhaseRunner._format_warmup_progress(stats)
+        assert "returned=3" in msg and "returned=3/" not in msg  # no target
+
+    def test_warmup_log_interval_env_field_exists(self):
+        # 0 disables; default is a positive heartbeat cadence.
+        assert Environment.SERVICE.WARMUP_PROGRESS_LOG_INTERVAL >= 0.0
+
+    async def _drive_progress_loop(
+        self,
+        runner: PhaseRunner,
+        pub: MagicMock,
+        monotonic_values: list[float],
+        stop_after_publishes: int,
+    ) -> MagicMock:
+        """Run _progress_report_loop with a controlled clock and stop it after
+        a fixed number of publish_progress calls. Returns the patched info mock.
+        """
+        stats = CreditPhaseStats(phase=runner._config.phase, requests_sent=1)
+        runner._progress.create_stats = MagicMock(return_value=stats)
+
+        publishes = 0
+
+        async def _publish(_stats: CreditPhaseStats) -> None:
+            nonlocal publishes
+            publishes += 1
+            if publishes >= stop_after_publishes:
+                raise asyncio.CancelledError
+
+        pub.publish_progress = AsyncMock(side_effect=_publish)
+
+        clock = iter(monotonic_values)
+        last = [monotonic_values[-1]]
+
+        def _monotonic() -> float:
+            try:
+                return next(clock)
+            except StopIteration:
+                return last[0]
+
+        info_mock = MagicMock()
+        with (
+            patch("aiperf.timing.phase.runner.time.monotonic", new=_monotonic),
+            patch.object(runner, "info", new=info_mock),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await runner._progress_report_loop()
+        return info_mock
+
+    async def test_warmup_heartbeat_throttled_to_once_per_interval(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        # interval=10; setup reads 0 (next_at=10). Loop reads now at 1,5,11,15,22:
+        # fires at 11 (next_at=21) and 22 (next_at=32) -> exactly 2 heartbeats.
+        with patch.object(Environment.SERVICE, "WARMUP_PROGRESS_LOG_INTERVAL", 10.0):
+            info_mock = await self._drive_progress_loop(
+                r, pub, [0, 1, 5, 11, 15, 22], stop_after_publishes=6
+            )
+        assert info_mock.call_count == 2
+
+    async def test_warmup_heartbeat_disabled_when_interval_zero(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.WARMUP), conv_src, pub, router, conc, cancel, cb
+        )
+        with patch.object(Environment.SERVICE, "WARMUP_PROGRESS_LOG_INTERVAL", 0.0):
+            info_mock = await self._drive_progress_loop(
+                r, pub, [0, 100, 200, 300], stop_after_publishes=3
+            )
+        info_mock.assert_not_called()
+
+    async def test_no_heartbeat_when_phase_not_warmup(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        r = make_runner(
+            cfg(phase=CreditPhase.PROFILING), conv_src, pub, router, conc, cancel, cb
+        )
+        with patch.object(Environment.SERVICE, "WARMUP_PROGRESS_LOG_INTERVAL", 10.0):
+            info_mock = await self._drive_progress_loop(
+                r, pub, [0, 11, 22, 33], stop_after_publishes=3
+            )
+        info_mock.assert_not_called()

@@ -53,6 +53,8 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 >
 > **pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.
 >
+> **Platform naming:** NVIDIA metrics from DCGM and pynvml are emitted under `nvidia_*` field names. AMD metrics from amdsmi are emitted under `amd_*` field names. Final GPU summaries include a `platform` field. Metric semantics are platform-specific; do not compare telemetry across NVIDIA and AMD platforms without validating the workload, collector behavior, and metric definitions.
+>
 > **amdsmi mode:** When using `--gpu-telemetry amdsmi`, DCGM endpoints are NOT used. Metrics are collected directly from local AMD GPUs via the amdsmi library and emitted under vendor-namespaced `amd_*` field names (`amd_power`, `amd_gfx_activity`, `amd_temperature`, etc.) rather than NVML-shaped names. On Instinct datacenter parts `amd_mm_activity` is generally absent (sensor returns `'N/A'`); `amd_throttle_status` is a 0.0/1.0 snapshot per scrape (amdsmi exposes a boolean state, not a duration counter).
 >
 > To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
@@ -175,20 +177,22 @@ Profiling: 64/64 |████████████████████�
 INFO     Benchmark completed successfully
 
 
-                          NVIDIA AIPerf | GPU Telemetry Summary
-                               1/1 DCGM endpoints reachable
+GPU telemetry platform: nvidia. Metric semantics are platform-specific; cross-platform comparisons require workload and collector validation.
+
+                          AIPerf | GPU Telemetry Summary
+                               1/1 telemetry sources reachable
                                     • localhost:9401 ✔
 
                       localhost:9401 | GPU 0 | NVIDIA H100 80GB HBM3
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┓
 ┃                       Metric ┃      avg ┃      min ┃      max ┃      p99 ┃      p90 ┃      p50 ┃   std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━┩
-│          GPU Power Usage (W) │   348.69 │   120.57 │   386.02 │   386.02 │   386.02 │   378.34 │ 85.97 │
-│      Energy Consumption (MJ) │     0.24 │     0.23 │     0.25 │     0.25 │     0.25 │     0.23 │  0.01 │
-│          GPU Utilization (%) │    45.82 │     0.00 │    66.00 │    66.00 │    66.00 │    66.00 │ 24.52 │
-│  Memory Copy Utilization (%) │    21.10 │     0.00 │    29.00 │    29.00 │    29.00 │    29.00 │ 10.11 │
-│         GPU Memory Used (GB) │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │  0.00 │
-│         GPU Memory Free (GB) │     9.39 │     9.39 │     9.39 │     9.39 │     9.39 │     9.39 │  0.00 │
+│   NVIDIA GPU Power Usage (W) │   348.69 │   120.57 │   386.02 │   386.02 │   386.02 │   378.34 │ 85.97 │
+│ NVIDIA Energy Consumption (MJ) │     0.24 │     0.23 │     0.25 │     0.25 │     0.25 │     0.23 │  0.01 │
+│   NVIDIA GPU Utilization (%) │    45.82 │     0.00 │    66.00 │    66.00 │    66.00 │    66.00 │ 24.52 │
+│  NVIDIA Memory Utilization (%) │    21.10 │     0.00 │    29.00 │    29.00 │    29.00 │    29.00 │ 10.11 │
+│  NVIDIA GPU Memory Used (GB) │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │  0.00 │
+│   Framebuffer Memory Free (MB) │ 9,387.26 │ 9,385.80 │ 9,387.90 │ 9,387.90 │ 9,387.90 │ 9,387.90 │  0.97 │
 │     SM Clock Frequency (MHz) │ 1,980.00 │ 1,980.00 │ 1,980.00 │ 1,980.00 │ 1,980.00 │ 1,980.00 │  0.00 │
 │ Memory Clock Frequency (MHz) │ 2,619.00 │ 2,619.00 │ 2,619.00 │ 2,619.00 │ 2,619.00 │ 2,619.00 │  0.00 │
 │      Memory Temperature (°C) │    45.99 │    41.00 │    48.00 │    48.00 │    48.00 │    46.00 │  2.08 │
@@ -410,17 +414,17 @@ The nvidia-ml-py library (pynvml) collects the following metrics directly from t
 
 | Metric | Description | Unit |
 |--------|-------------|------|
-| GPU Power Usage | Current power draw | W |
-| Energy Consumption | Total energy since boot | MJ |
-| GPU Utilization | GPU compute utilization | % |
-| Memory Utilization | Memory controller utilization | % |
-| GPU Memory Used | Framebuffer memory in use | GB |
-| GPU Temperature | GPU die temperature | °C |
-| SM Utilization | Streaming multiprocessor utilization | % |
-| Decoder Utilization | Video decoder utilization | % |
-| Encoder Utilization | Video encoder utilization | % |
-| JPEG Utilization | JPEG decoder utilization | % |
-| Power Violation | Throttling duration due to power limits | µs |
+| `nvidia_power_usage` | Current power draw | W |
+| `nvidia_energy_consumption` | Total energy since boot | MJ |
+| `nvidia_gpu_utilization` | GPU compute utilization | % |
+| `nvidia_memory_utilization` | Memory controller utilization | % |
+| `nvidia_memory_used` | Framebuffer memory in use | GB |
+| `nvidia_temperature` | GPU die temperature | °C |
+| `nvidia_sm_utilization` | Streaming multiprocessor utilization | % |
+| `nvidia_decoder_utilization` | Video decoder utilization | % |
+| `nvidia_encoder_utilization` | Video encoder utilization | % |
+| `nvidia_jpg_utilization` | JPEG decoder utilization | % |
+| `nvidia_power_violation` | Throttling duration due to power limits | µs |
 
 > [!NOTE]
 > Not all metrics are available on all GPU models. AIPerf gracefully handles missing metrics and reports only what the hardware supports.
@@ -473,6 +477,8 @@ AMD signals are emitted under their own vendor-namespaced field names (not alias
 | `amd_ecc_uncorrectable` | `amdsmi_get_gpu_total_ecc_count().uncorrectable_count` | Cumulative uncorrectable ECC error count. Counter — accumulator computes a delta. |
 | `amd_throttle_status` | `amdsmi_get_gpu_metrics_info().throttle_status` (and `indep_throttle_status`) | 0.0/1.0 snapshot per scrape — 1.0 if any throttle indicator is active. amdsmi exposes a state (bool/bitfield), not a duration counter; a fraction-throttled summary can be derived from the average. Field is left absent when both signals return `'N/A'` (sensor unsupported), so "unsupported" is not silently reported as "not throttled". |
 
+> **Plotting AMD activity:** the dual-axis "throughput + GPU utilization" plot prefers `nvidia_gpu_utilization` and falls back to `amd_gfx_activity` on AMD-only runs, labeling the axis by the actual signal ("AMD GFX Activity"). Because NVIDIA SM-occupancy utilization and AMD GFX activity are distinct physical signals, the plot always carries a subtitle noting the values are not comparable across vendors.
+
 ### Comparing DCGM vs pynvml vs amdsmi
 
 | Feature | DCGM | pynvml | amdsmi |
@@ -480,7 +486,7 @@ AMD signals are emitted under their own vendor-namespaced field names (not alias
 | Hardware | NVIDIA | NVIDIA | AMD ROCm |
 | Setup complexity | Requires container/service | `pip install nvidia-ml-py` | Ships with ROCm; install wheel from `/opt/rocm/share/amd_smi/` if missing |
 | Multi-node support | Yes (HTTP) | No (local) | No (local) |
-| Field naming | `gpu_*` (NVML-shaped) | `gpu_*` (NVML-shaped) | `amd_*` (vendor-namespaced) |
+| Field naming | `nvidia_*` | `nvidia_*` | `amd_*` |
 | Encoder/decoder util | Yes | Yes | No (Instinct GPUs report `'N/A'`) |
 | Error reporting | XID errors | (none) | ECC uncorrectable count (`amd_ecc_uncorrectable`) |
 | SM-level utilization | Yes (DCGM_FI_PROF_SM_ACTIVE) | Yes (GPM API) | Aliased to `gfx_activity` |
@@ -539,14 +545,18 @@ aiperf profile --model MODEL ... --gpu-telemetry localhost:9400 dashboard custom
 
 The CSV format is identical to DCGM exporter configuration. See the **vLLM setup section above** (Step 1: Create a custom metrics configuration) for the complete CSV format example with all available DCGM fields.
 
-**Behavior**: Custom metrics **extend** (not replace) the 7 core default metrics:
-- GPU Power Usage
-- Energy Consumption
-- GPU Utilization
-- GPU Memory Used
-- GPU Temperature
-- XID Errors
-- Power Violation
+**Behavior**: Custom metrics **extend** (not replace) the default NVIDIA metrics:
+- `nvidia_power_usage`
+- `nvidia_energy_consumption`
+- `nvidia_gpu_utilization`
+- `nvidia_memory_utilization`
+- `nvidia_memory_used`
+- `nvidia_temperature`
+- `nvidia_encoder_utilization`
+- `nvidia_decoder_utilization`
+- `nvidia_sm_utilization`
+- `nvidia_xid_errors`
+- `nvidia_power_violation`
 
 > [!NOTE]
 > The file path can be absolute or relative. Use `.csv` extension so AIPerf can distinguish it from DCGM endpoint URLs.
@@ -557,20 +567,22 @@ The CSV format is identical to DCGM exporter configuration. See the **vLLM setup
 ## Example Console Display:
 
 ```
-                                  NVIDIA AIPerf | GPU Telemetry Summary
-                                       1/1 DCGM endpoints reachable
+GPU telemetry platform: nvidia. Metric semantics are platform-specific; cross-platform comparisons require workload and collector validation.
+
+                                  AIPerf | GPU Telemetry Summary
+                                       1/1 telemetry sources reachable
                                             • localhost:9401 ✔
 
                               localhost:9401 | GPU 0 | NVIDIA H100 80GB HBM3
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┓
 ┃                       Metric ┃      avg ┃      min ┃      max ┃      p99 ┃      p90 ┃      p50 ┃   std ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━┩
-│          GPU Power Usage (W) │   348.69 │   120.57 │   386.02 │   386.02 │   386.02 │   378.34 │ 85.97 │
-│      Energy Consumption (MJ) │     0.24 │     0.23 │     0.25 │     0.25 │     0.25 │     0.23 │  0.01 │
-│          GPU Utilization (%) │    45.82 │     0.00 │    66.00 │    66.00 │    66.00 │    66.00 │ 24.52 │
-│  Memory Copy Utilization (%) │    21.10 │     0.00 │    29.00 │    29.00 │    29.00 │    29.00 │ 10.11 │
-│         GPU Memory Used (GB) │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │  0.00 │
-│         GPU Memory Free (GB) │     9.39 │     9.39 │     9.39 │     9.39 │     9.39 │     9.39 │  0.00 │
+│   NVIDIA GPU Power Usage (W) │   348.69 │   120.57 │   386.02 │   386.02 │   386.02 │   378.34 │ 85.97 │
+│ NVIDIA Energy Consumption (MJ) │     0.24 │     0.23 │     0.25 │     0.25 │     0.25 │     0.23 │  0.01 │
+│   NVIDIA GPU Utilization (%) │    45.82 │     0.00 │    66.00 │    66.00 │    66.00 │    66.00 │ 24.52 │
+│  NVIDIA Memory Utilization (%) │    21.10 │     0.00 │    29.00 │    29.00 │    29.00 │    29.00 │ 10.11 │
+│  NVIDIA GPU Memory Used (GB) │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │    92.70 │  0.00 │
+│   Framebuffer Memory Free (MB) │ 9,387.26 │ 9,385.80 │ 9,387.90 │ 9,387.90 │ 9,387.90 │ 9,387.90 │  0.97 │
 │     SM Clock Frequency (MHz) │ 1,980.00 │ 1,980.00 │ 1,980.00 │ 1,980.00 │ 1,980.00 │ 1,980.00 │  0.00 │
 │ Memory Clock Frequency (MHz) │ 2,619.00 │ 2,619.00 │ 2,619.00 │ 2,619.00 │ 2,619.00 │ 2,619.00 │  0.00 │
 │      Memory Temperature (°C) │    45.99 │    41.00 │    48.00 │    48.00 │    48.00 │    46.00 │  2.08 │
@@ -582,18 +594,18 @@ The CSV format is identical to DCGM exporter configuration. See the **vLLM setup
 ## Example CSV Export
 
 ```
-Endpoint,GPU_Index,GPU_Name,GPU_UUID,Metric,avg,min,max,p1,p5,p10,p25,p50,p75,p90,p95,p99,std
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,GPU Power Usage (W),348.69,120.57,386.02,120.57,120.57,,378.34,378.34,386.02,386.02,386.02,386.02,85.97
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,Energy Consumption (MJ),0.24,0.23,0.25,0.23,0.23,,0.23,0.23,0.25,0.25,0.25,0.25,0.01
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,GPU Utilization (%),45.82,0.00,66.00,0.00,0.00,,27.00,66.00,66.00,66.00,66.00,66.00,24.52
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,Memory Copy Utilization (%),21.10,0.00,29.00,0.00,0.00,,15.00,29.00,29.00,29.00,29.00,29.00,10.11
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,GPU Memory Used (GB),92.70,92.70,92.70,92.70,92.70,,92.70,92.70,92.70,92.70,92.70,92.70,0.00
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,GPU Memory Free (GB),9.39,9.39,9.39,9.39,9.39,,9.39,9.39,9.39,9.39,9.39,9.39,0.00
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,SM Clock Frequency (MHz),1980.00,1980.00,1980.00,1980.00,1980.00,,1980.00,1980.00,1980.00,1980.00,1980.00,1980.00,0.00
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,Memory Clock Frequency (MHz),2619.00,2619.00,2619.00,2619.00,2619.00,,2619.00,2619.00,2619.00,2619.00,2619.00,2619.00,0.00
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,Memory Temperature (°C),45.99,41.00,48.00,41.00,41.00,,46.00,46.00,48.00,48.00,48.00,48.00,2.08
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,GPU Temperature (°C),38.87,33.00,41.00,33.00,33.00,,39.00,39.00,41.00,41.00,41.00,41.00,2.38
-localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,XID Errors (count),0.00,0.00,0.00,0.00,0.00,,0.00,0.00,0.00,0.00,0.00,0.00,0.00
+Endpoint,GPU_Index,GPU_Name,GPU_UUID,Platform,Metric,avg,min,max,p1,p5,p10,p25,p50,p75,p90,p95,p99,std
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,NVIDIA GPU Power Usage (W),348.69,120.57,386.02,120.57,120.57,,378.34,378.34,386.02,386.02,386.02,386.02,85.97
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,NVIDIA Energy Consumption (MJ),0.24,0.23,0.25,0.23,0.23,,0.23,0.23,0.25,0.25,0.25,0.25,0.01
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,NVIDIA GPU Utilization (%),45.82,0.00,66.00,0.00,0.00,,27.00,66.00,66.00,66.00,66.00,66.00,24.52
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,NVIDIA Memory Utilization (%),21.10,0.00,29.00,0.00,0.00,,15.00,29.00,29.00,29.00,29.00,29.00,10.11
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,NVIDIA GPU Memory Used (GB),92.70,92.70,92.70,92.70,92.70,,92.70,92.70,92.70,92.70,92.70,92.70,0.00
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,Framebuffer Memory Free (MB),9387.26,9385.80,9387.90,9385.80,9385.80,,9385.80,9387.90,9387.90,9387.90,9387.90,9387.90,0.97
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,SM Clock Frequency (MHz),1980.00,1980.00,1980.00,1980.00,1980.00,,1980.00,1980.00,1980.00,1980.00,1980.00,1980.00,0.00
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,Memory Clock Frequency (MHz),2619.00,2619.00,2619.00,2619.00,2619.00,,2619.00,2619.00,2619.00,2619.00,2619.00,2619.00,0.00
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,Memory Temperature (°C),45.99,41.00,48.00,41.00,41.00,,46.00,46.00,48.00,48.00,48.00,48.00,2.08
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,NVIDIA GPU Temperature (°C),38.87,33.00,41.00,33.00,33.00,,39.00,39.00,41.00,41.00,41.00,41.00,2.38
+localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,nvidia,NVIDIA XID Errors (count),0.00,0.00,0.00,0.00,0.00,,0.00,0.00,0.00,0.00,0.00,0.00,0.00
 ```
 
 ## Example JSON Export
@@ -617,9 +629,10 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
             "gpu_index": 0,
             "gpu_name": "NVIDIA H100 80GB HBM3",
             "gpu_uuid": "GPU-afc3c15a-48a5-d669-0634-191c629f95fa",
+            "platform": "nvidia",
             "hostname": "69450c620e4d",
             "metrics": {
-              "gpu_power_usage": {
+              "nvidia_power_usage": {
                 "avg": 348.6908823529412,
                 "min": 120.57,
                 "max": 386.022,
@@ -636,7 +649,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "W"
               },
-              "energy_consumption": {
+              "nvidia_energy_consumption": {
                 "avg": 0.23782271866013072,
                 "min": 0.229901671,
                 "max": 0.246497393,
@@ -653,7 +666,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "MJ"
               },
-              "gpu_utilization": {
+              "nvidia_gpu_utilization": {
                 "avg": 45.8235294117647,
                 "min": 0.0,
                 "max": 66.0,
@@ -670,7 +683,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "%"
               },
-              "memory_copy_utilization": {
+              "nvidia_memory_utilization": {
                 "avg": 21.098039215686274,
                 "min": 0.0,
                 "max": 29.0,
@@ -687,7 +700,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "%"
               },
-              "gpu_memory_used": {
+              "nvidia_memory_used": {
                 "avg": 92.69685977516342,
                 "min": 92.69621555200001,
                 "max": 92.698312704,
@@ -704,24 +717,24 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "GB"
               },
-              "gpu_memory_free": {
-                "avg": 9.387256704836602,
-                "min": 9.385803776000001,
-                "max": 9.387900928,
-                "p1": 9.385803776000001,
-                "p5": 9.385803776000001,
+              "nvidia_fb_free": {
+                "avg": 9387.256704836602,
+                "min": 9385.803776000001,
+                "max": 9387.900928,
+                "p1": 9385.803776000001,
+                "p5": 9385.803776000001,
                 "p10": null,
-                "p25": 9.385803776000001,
-                "p50": 9.387900928,
-                "p75": 9.387900928,
-                "p90": 9.387900928,
-                "p95": 9.387900928,
-                "p99": 9.387900928,
-                "std": 0.0009674763104633748,
+                "p25": 9385.803776000001,
+                "p50": 9387.900928,
+                "p75": 9387.900928,
+                "p90": 9387.900928,
+                "p95": 9387.900928,
+                "p99": 9387.900928,
+                "std": 0.9674763104633748,
                 "count": 153,
-                "unit": "GB"
+                "unit": "MB"
               },
-              "sm_clock_frequency": {
+              "nvidia_sm_clock": {
                 "avg": 1980.0,
                 "min": 1980.0,
                 "max": 1980.0,
@@ -738,7 +751,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "MHz"
               },
-              "memory_clock_frequency": {
+              "nvidia_mem_clock": {
                 "avg": 2619.0,
                 "min": 2619.0,
                 "max": 2619.0,
@@ -755,7 +768,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "MHz"
               },
-              "memory_temperature": {
+              "nvidia_memory_temp": {
                 "avg": 45.99346405228758,
                 "min": 41.0,
                 "max": 48.0,
@@ -772,7 +785,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "°C"
               },
-              "gpu_temperature": {
+              "nvidia_temperature": {
                 "avg": 38.869281045751634,
                 "min": 33.0,
                 "max": 41.0,
@@ -789,7 +802,7 @@ localhost:9401,0,NVIDIA H100 80GB HBM3,GPU-afc3c15a-48a5-d669-0634-191c629f95fa,
                 "count": 153,
                 "unit": "°C"
               },
-              "xid_errors": {
+              "nvidia_xid_errors": {
                 "avg": 0.0,
                 "min": 0.0,
                 "max": 0.0,

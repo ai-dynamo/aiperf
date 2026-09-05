@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import gzip
 import multiprocessing as mp
 import threading
+from pathlib import Path
 
 import orjson
 import pytest
@@ -15,6 +17,84 @@ from aiperf.common.utils import (
     call_all_functions_self,
     load_json_str,
 )
+
+
+def _write_gz_jsonl(path: Path, rows: list[dict]) -> Path:
+    with gzip.open(path, "wb") as f:
+        for r in rows:
+            f.write(orjson.dumps(r) + b"\n")
+    return path
+
+
+def _write_plain_jsonl(path: Path, rows: list[dict]) -> Path:
+    path.write_bytes(b"".join(orjson.dumps(r) + b"\n" for r in rows))
+    return path
+
+
+class TestOpenTextMaybeGzip:
+    """``open_text_maybe_gzip`` detects gzip by magic bytes, not suffix."""
+
+    def test_plain_and_gz_produce_same_content(self, tmp_path: Path) -> None:
+        from aiperf.common.utils import open_text_maybe_gzip
+
+        row = {"session_id": "s1", "data": "hello"}
+        plain = _write_plain_jsonl(tmp_path / "a.jsonl", [row])
+        gz = _write_gz_jsonl(tmp_path / "a.jsonl.gz", [row])
+        with open_text_maybe_gzip(plain) as f:
+            plain_text = f.read()
+        with open_text_maybe_gzip(gz) as f:
+            gz_text = f.read()
+        assert plain_text == gz_text
+
+    def test_magic_byte_sniff_detects_gz_without_extension(
+        self, tmp_path: Path
+    ) -> None:
+        from aiperf.common.utils import open_text_maybe_gzip
+
+        row = {"k": "v"}
+        no_ext = tmp_path / "data"
+        with gzip.open(no_ext, "wb") as f:
+            f.write(orjson.dumps(row) + b"\n")
+        with open_text_maybe_gzip(no_ext) as f:
+            assert orjson.loads(f.readline()) == row
+
+    def test_record_counting_handles_gzipped_tracelab(self, tmp_path: Path) -> None:
+        """Two rows with the same session_id count as 1 session."""
+        from aiperf.config.dataset.resolver import DatasetResolver
+        from aiperf.plugin.enums import CustomDatasetType
+
+        rows = [
+            {"session_id": "s1", "round_index": 0},
+            {"session_id": "s1", "round_index": 1},
+        ]
+        gz = _write_gz_jsonl(tmp_path / "a.jsonl.gz", rows)
+        count, sessions = DatasetResolver._count_records_and_sessions(
+            str(gz), CustomDatasetType.TRACELAB
+        )
+        assert count == 2
+        assert sessions == 1
+
+    def test_type_inference_reads_first_gzipped_record(self, tmp_path: Path) -> None:
+        from aiperf.config.dataset.resolver import DatasetResolver
+
+        rows = [{"session_id": "s1", "prefix_tokens": 0}]
+        gz = _write_gz_jsonl(tmp_path / "a.jsonl.gz", rows)
+        assert DatasetResolver._read_first_jsonl_record(str(gz)) is not None
+
+    def test_count_records_returns_zero_on_truncated_gzip(self, tmp_path: Path) -> None:
+        """A truncated gzip triggers the EOFError/BadGzipFile handler and returns (0, 0)."""
+
+        from aiperf.config.dataset.resolver import DatasetResolver
+
+        gz = tmp_path / "trunc.jsonl.gz"
+        rows = [{"session_id": "s1"}] * 50
+        _write_gz_jsonl(gz, rows)
+        # Chop the last 30 bytes to corrupt the gzip stream.
+        data = gz.read_bytes()
+        gz.write_bytes(data[: max(len(data) - 30, 2)])
+        count, sessions = DatasetResolver._count_records_and_sessions(str(gz), None)
+        assert count == 0
+        assert sessions == 0
 
 
 class TestAllowDaemonChildren:

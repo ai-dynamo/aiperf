@@ -15,10 +15,13 @@ class BranchStatsDict(TypedDict):
     children_completed: int
     children_errored: int
     children_truncated: int
+    children_delayed: int
     parents_suspended: int
     parents_resumed: int
     parents_failed_due_to_child_error: int
     joins_suppressed: int
+    graphs_admitted: int
+    graphs_completed_to_end: int
 
 
 class BranchStats(AIPerfBaseModel):
@@ -50,6 +53,13 @@ class BranchStats(AIPerfBaseModel):
         "not dispatch; tallied separately from children_completed so "
         "observability stays accurate.",
     )
+    children_delayed: int = Field(
+        default=0,
+        ge=0,
+        description="Number of SPAWN child sessions whose turn-0 dispatch was "
+        "scheduled at its recorded offset from the branch spawn (child turn-0 "
+        "timestamp past the branch start) instead of dispatching immediately.",
+    )
     parents_suspended: int = Field(
         default=0,
         description="Number of parent sessions that paused to await an outstanding "
@@ -70,6 +80,20 @@ class BranchStats(AIPerfBaseModel):
         description="Number of joins released without firing because a stop "
         "condition (typically the --request-count cap) blocked the gated child "
         "from dispatching. Counts each join once. Reportable but not a failure.",
+    )
+    graphs_admitted: int = Field(
+        default=0,
+        ge=0,
+        description="Number of request-free orchestrator graph instances admitted "
+        "(turn 0 fired). One per sampled orchestrator firing.",
+    )
+    graphs_completed_to_end: int = Field(
+        default=0,
+        ge=0,
+        description="Number of orchestrator graph instances that reached END (the "
+        "terminal request-free gate completed after all rounds). "
+        "``graphs_admitted - graphs_completed_to_end`` is the count of graphs that "
+        "did not finish, so completion status is reconstructable from the export.",
     )
 
     def stats_dict(self) -> BranchStatsDict:

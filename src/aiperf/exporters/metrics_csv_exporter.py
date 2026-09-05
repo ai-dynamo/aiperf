@@ -28,7 +28,9 @@ class MetricsCsvExporter(MetricsBaseExporter):
         self._percentile_keys = _percentile_keys_from(STAT_KEYS)
         self.trace_or_debug(
             lambda: f"Initializing MetricsCsvExporter with config: {exporter_config}",
-            lambda: f"Initializing MetricsCsvExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing MetricsCsvExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:
@@ -203,6 +205,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
             "GPU_Index",
             "GPU_Name",
             "GPU_UUID",
+            "Platform",
         ]
         optional_headers, optional_fields = self._get_optional_headers_and_fields(
             "Hostname", "Namespace", "Pod Name"
@@ -259,8 +262,8 @@ class MetricsCsvExporter(MetricsBaseExporter):
             endpoint_display: Display name of the endpoint
             gpu_summary: GpuSummary with pre-computed metrics (from TelemetryExportData)
             optional_fields: List of optional fields to write to the row
-            metric_key: Internal metric name (e.g., "gpu_power_usage")
-            metric_display: Display name for the metric (e.g., "GPU Power Usage")
+            metric_key: Internal metric name (e.g., "nvidia_power_usage")
+            metric_display: Display name for the metric (e.g., "NVIDIA GPU Power Usage")
             unit: Unit of measurement (e.g., "W", "GB", "%")
         """
         try:
@@ -274,6 +277,7 @@ class MetricsCsvExporter(MetricsBaseExporter):
                 str(gpu_summary.gpu_index),
                 gpu_summary.gpu_name,
                 gpu_summary.gpu_uuid,
+                gpu_summary.platform,
                 metric_with_unit,
             ]
 

@@ -12,14 +12,25 @@ This test suite covers all aspects of the sequence distribution feature includin
 - Edge cases, error handling, and boundary conditions
 """
 
+import math
+
 import numpy as np
 import pytest
+from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import RandomCorpusStyle
 from aiperf.common.models.sequence_distribution import (
+    _CLASS_FOR_MODE,
     DistributionParser,
+    RangeRatioDistribution,
     SequenceLengthDistribution,
     SequenceLengthPair,
+    SequenceLengthSampler,
+    SGLangRangeRatioDistribution,
+    SGLangRatioConfig,
+    VLLMRatioConfig,
     create_balanced_distribution,
     create_uniform_distribution,
 )
@@ -746,3 +757,658 @@ class TestSequenceCaching:
         composer._clear_turn_cache(turn1_id)
         assert turn1_id not in composer._turn_sequence_cache
         assert turn2_id in composer._turn_sequence_cache
+
+
+def _vllm(
+    isl_mean: int, osl_mean: int, ratio: float | tuple[float, float], **kw: int
+) -> RangeRatioDistribution:
+    return RangeRatioDistribution(
+        VLLMRatioConfig(isl_mean=isl_mean, osl_mean=osl_mean, range_ratio=ratio, **kw)
+    )
+
+
+def _sglang(
+    isl_mean: int, osl_mean: int, ratio: float, **kw: int
+) -> SGLangRangeRatioDistribution:
+    return SGLangRangeRatioDistribution(
+        SGLangRatioConfig(isl_mean=isl_mean, osl_mean=osl_mean, range_ratio=ratio, **kw)
+    )
+
+
+class TestRangeRatioDistribution:
+    """Tests for vllm-style uniform ISL/OSL sampling around configured means."""
+
+    def test_implements_sequence_length_sampler_protocol(self):
+        assert isinstance(_vllm(100, 50, 0.2), SequenceLengthSampler)
+
+    def test_ratio_zero_is_fixed(self):
+        dist = _vllm(1024, 128, 0.0)
+        for _ in range(50):
+            assert dist.sample() == (1024, 128)
+
+    def test_bounds_are_computed_per_vllm_formula(self):
+        dist = _vllm(1024, 128, 0.3)
+        assert dist.input_bounds == (math.floor(1024 * 0.7), math.ceil(1024 * 1.3))
+        assert dist.output_bounds == (math.floor(128 * 0.7), math.ceil(128 * 1.3))
+
+    def test_samples_are_inclusive_on_both_ends(self):
+        dist = _vllm(100, 40, (0.5, 0.25))
+        in_low, in_high = dist.input_bounds
+        out_low, out_high = dist.output_bounds
+
+        samples = [dist.sample() for _ in range(2000)]
+        isls = [isl for isl, _ in samples]
+        osls = [osl for _, osl in samples]
+
+        assert min(isls) >= in_low
+        assert max(isls) <= in_high
+        assert min(osls) >= out_low
+        assert max(osls) <= out_high
+        assert in_low in isls and in_high in isls
+        assert out_low in osls and out_high in osls
+
+    def test_sample_values_are_python_ints(self):
+        isl, osl = _vllm(100, 40, 0.1).sample()
+        assert type(isl) is int
+        assert type(osl) is int
+
+    def test_independent_input_and_output_ratios(self):
+        dist = _vllm(1024, 128, (0.1, 0.5))
+        assert dist.input_bounds == (math.floor(1024 * 0.9), math.ceil(1024 * 1.1))
+        assert dist.output_bounds == (math.floor(128 * 0.5), math.ceil(128 * 1.5))
+
+    def test_vllm_input_allows_zero_matching_upstream(self):
+        # vllm bench allows 0-length input ranges; floor(1 * (1 - 0.9)) = 0 is valid.
+        assert _vllm(1, 1, 0.9).input_bounds[0] == 0
+
+    def test_output_always_floors_at_one(self):
+        dist = _vllm(1, 1, 0.9)
+        assert dist.output_bounds[0] >= 1
+        for _ in range(20):
+            _, osl = dist.sample()
+            assert osl >= 1
+
+    def test_sglang_input_floors_at_one(self):
+        dist = _sglang(1, 1, 0.9)
+        assert dist.input_bounds[0] >= 1
+        for _ in range(20):
+            isl, _ = dist.sample()
+            assert isl >= 1
+
+    @pytest.mark.parametrize("bad_ratio", [-0.1, 1.0, 1.5, float("inf"), float("nan")])
+    def test_rejects_isl_ratio_out_of_range(self, bad_ratio):
+        with pytest.raises(ValueError, match="ISL range_ratio"):
+            _vllm(100, 50, (bad_ratio, 0.1))
+
+    @pytest.mark.parametrize("bad_ratio", [-0.1, 1.0, 1.5, float("inf"), float("nan")])
+    def test_rejects_osl_ratio_out_of_range(self, bad_ratio):
+        with pytest.raises(ValueError, match="OSL range_ratio"):
+            _vllm(100, 50, (0.1, bad_ratio))
+
+    def test_rejects_non_positive_isl_mean(self):
+        with pytest.raises(ValueError, match="isl_mean"):
+            _vllm(0, 50, 0.1)
+
+    def test_rejects_non_positive_osl_mean(self):
+        with pytest.raises(ValueError, match="osl_mean"):
+            _vllm(100, 0, 0.1)
+
+    def test_sampling_is_deterministic_with_fixed_seed(self):
+        dist1 = _vllm(1024, 128, 0.3)
+        first_run = [dist1.sample() for _ in range(10)]
+
+        rng.reset()
+        rng.init(42)
+        dist2 = _vllm(1024, 128, 0.3)
+        second_run = [dist2.sample() for _ in range(10)]
+
+        assert first_run == second_run
+
+    def test_preseed_draws_all_isls_then_osls(self):
+        """preseed(seed) uses PCG64; sample reads from the cache."""
+        dist = _vllm(128, 128, 0.3)
+        n = 5
+        g = np.random.default_rng(0)
+        expected_isls = g.integers(
+            dist.input_bounds[0], dist.input_bounds[1] + 1, size=n
+        ).tolist()
+        expected_osls = g.integers(
+            dist.output_bounds[0], dist.output_bounds[1] + 1, size=n
+        ).tolist()
+
+        dist.preseed(n, 0)
+
+        for i in range(n):
+            isl, osl = dist.sample()
+            assert isl == expected_isls[i]
+            assert osl == expected_osls[i]
+
+    def test_preseed_isl_cache_is_body_only(self):
+        """Cached ISLs describe the body alone; prefixes are additive and added later.
+
+        preseed() takes no prefix_len — the prefix is prepended to the generated
+        body at request time, so the sampled distribution must be unaffected by
+        prefix configuration.
+        """
+        n = 5
+        dist = _vllm(128, 128, 0.3)
+        dist.preseed(n, 0)
+        low, high = dist._config.compute_input_bounds()
+
+        for _ in range(n):
+            isl, _ = dist.sample()
+            assert low <= isl <= high
+
+    def test_sample_past_cache_falls_back_to_live_draw(self):
+        """The ISL/OSL cache is sized per conversation but read once per turn,
+        so any multi-turn run outruns it. Exhaustion must degrade to a live
+        draw rather than raising `IndexError` out of the dataset composer.
+        """
+        dist = _vllm(64, 16, 0.3)
+        dist.preseed(2, 42)
+
+        cached = [dist.sample() for _ in range(2)]
+        assert len(cached) == 2
+
+        for _ in range(4):
+            isl, osl = dist.sample()
+            assert dist.input_bounds[0] <= isl <= dist.input_bounds[1]
+            assert dist.output_bounds[0] <= osl <= dist.output_bounds[1]
+
+    def test_sample_past_cache_warns_once(self, caplog):
+        """Degradation is otherwise invisible, so it warns exactly once."""
+        import logging
+
+        dist = _vllm(64, 16, 0.3)
+        dist.preseed(1, 42)
+        dist.sample()
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                dist.sample()
+
+        exhausted = [
+            r for r in caplog.records if "ISL/OSL cache exhausted" in r.getMessage()
+        ]
+        assert len(exhausted) == 1
+        assert "consumed once per turn" in exhausted[0].getMessage()
+
+    def test_sample_within_cache_is_unaffected(self):
+        """Draws inside the cache still come from the preseed stream in order."""
+        dist = _vllm(64, 16, 0.3)
+        dist.preseed(4, 42)
+        expected = list(zip(dist._isl_cache, dist._osl_cache, strict=True))
+
+        assert [dist.sample() for _ in range(4)] == expected
+
+    def test_preseed_exposes_rng_for_offset_draws(self):
+        """_preseed_rng after preseed is advanced past ISL+OSL draws."""
+        dist = _vllm(128, 128, 0.3)
+        dist.preseed(3, 42)
+        g_ref = np.random.default_rng(42)
+        g_ref.integers(dist.input_bounds[0], dist.input_bounds[1] + 1, size=3)
+        g_ref.integers(dist.output_bounds[0], dist.output_bounds[1] + 1, size=3)
+        assert int(dist._preseed_rng.integers(0, 1000)) == int(g_ref.integers(0, 1000))
+
+    def test_num_special_tokens_adjusts_isl_mean_only(self):
+        """Style's adjust_mean subtracts special tokens from isl_mean; osl is unchanged."""
+        dist_plain = _vllm(512, 128, 0.3)
+        dist_adjusted = _vllm(512, 128, 0.3, num_special_tokens=1)
+        assert dist_adjusted.input_bounds == (
+            math.floor(511 * 0.7),
+            math.ceil(511 * 1.3),
+        )
+        assert dist_adjusted.output_bounds == dist_plain.output_bounds
+
+    def test_num_special_tokens_vllm_allows_zero_adjusted_mean(self):
+        """vllm adjust_mean: max(0, isl_mean - n) — allows zero."""
+        assert _vllm(1, 128, 0.0, num_special_tokens=5).input_bounds == (0, 0)
+
+    def test_num_special_tokens_zero_is_identity(self):
+        """num_special_tokens=0 (default) leaves bounds unchanged."""
+        assert (
+            _vllm(512, 128, 0.3).input_bounds
+            == _vllm(512, 128, 0.3, num_special_tokens=0).input_bounds
+        )
+
+    def test_num_special_tokens_negative_raises(self):
+        """Negative num_special_tokens is invalid."""
+        with pytest.raises(ValueError, match="num_special_tokens"):
+            _vllm(512, 128, 0.3, num_special_tokens=-1)
+
+
+class TestRangeRatioDistributionSglangMode:
+    """sglang-mode semantics: lower-bounded window [max(1, int(mean*r)), mean]."""
+
+    def test_ratio_zero_gives_full_variability(self):
+        dist = _sglang(1024, 128, 0.0)
+        assert dist.input_bounds == (1, 1024)
+        assert dist.output_bounds == (1, 128)
+
+    def test_ratio_one_is_fixed_at_mean(self):
+        dist = _sglang(1024, 128, 1.0)
+        assert dist.input_bounds == (1024, 1024)
+        assert dist.output_bounds == (128, 128)
+        for _ in range(20):
+            assert dist.sample() == (1024, 128)
+
+    def test_ratio_half_gives_lower_bounded_window(self):
+        dist = _sglang(1024, 128, 0.5)
+        assert dist.input_bounds == (512, 1024)
+        assert dist.output_bounds == (64, 128)
+
+    def test_samples_never_exceed_mean(self):
+        dist = _sglang(200, 50, 0.3)
+        for _ in range(2000):
+            isl, osl = dist.sample()
+            assert 1 <= isl <= 200
+            assert 1 <= osl <= 50
+
+    def test_rejects_ratio_below_zero(self):
+        with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\]"):
+            _sglang(100, 50, -0.1)
+
+    def test_rejects_ratio_above_one(self):
+        with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\]"):
+            _sglang(100, 50, 1.5)
+
+    def test_rejects_json_dict_form(self):
+        """SGLang only allows a single ratio; independent input/output values are rejected."""
+        with pytest.raises(ValueError, match="single ratio"):
+            SGLangRatioConfig(
+                isl_mean=100, osl_mean=50, range_ratio='{"input": 0.3, "output": 0.5}'
+            )
+
+    def test_num_special_tokens_sglang_does_not_adjust_mean(self):
+        """sglang adjust_mean is a no-op — SGLang uses raw input_len without BOS subtraction."""
+        assert (
+            _sglang(128, 128, 0.3).input_bounds
+            == _sglang(128, 128, 0.3, num_special_tokens=5).input_bounds
+        )
+
+    def test_chat_template_len_is_not_a_config_field(self):
+        """The window must derive from the raw mean.
+
+        `chat_template_len` used to shrink `isl_mean` before bounds while the
+        composer ALSO subtracted the same overhead from each sampled ISL via
+        `first_turn_isl_adjustment` — charging it twice and landing wire ISL
+        ~13 tokens under the configured value under `--apply-chat-template`.
+        The plumbing is gone; `extra="forbid"` makes reintroducing it by
+        accident a hard error rather than a silent regression.
+        """
+        with pytest.raises(ValidationError, match="chat_template_len"):
+            SGLangRatioConfig(
+                isl_mean=128, osl_mean=16, range_ratio=1.0, chat_template_len=13
+            )
+        with pytest.raises(ValidationError, match="chat_template_len"):
+            VLLMRatioConfig(
+                isl_mean=128, osl_mean=16, range_ratio=0.3, chat_template_len=13
+            )
+
+    def test_window_matches_sglang_upstream_shape(self):
+        """Bounds come from the raw mean, matching SGLang's compute_random_lens.
+
+        Upstream computes `[max(int(full_len * ratio), 1), full_len]` and then
+        shifts each drawn sample by the overhead. Subtracting the overhead from
+        the mean first would rescale the LOWER bound too -- `int((mean-c)*r)`
+        instead of `int(mean*r)` -- yielding a different distribution rather
+        than a shifted one. At mean=100, r=0.5, overhead=10 that was (45, 90)
+        where upstream gives (50, 100).
+        """
+        assert _sglang(100, 16, 0.5).input_bounds == (50, 100)
+        assert _sglang(128, 16, 1.0).input_bounds == (128, 128)
+
+    def test_preseed_accepts_uint64_run_seed(self):
+        """A 64-bit run seed must not blow up the MT19937 global seeder.
+
+        `resolve_run_seed` returns `sha256(...)[:8]` as a uint64 for adaptive
+        sweeps and `multi_run.vary_seed_per_trial`, and `--random-seed` is only
+        bounded `ge=0`. Passing that straight to `numpy.random.seed` raises
+        "Seed must be between 0 and 2**32 - 1" and kills the DatasetManager.
+        """
+        from aiperf.common.random_generator import derive_variation_seed
+
+        seed = derive_variation_seed(42, "concurrency_10:trial:1")
+        assert seed >= 2**32
+
+        dist = _sglang(1024, 128, 0.5)
+        dist.preseed(4, seed)
+
+        assert len(dist._isl_cache) == 4
+        assert all(512 <= isl <= 1024 for isl in dist._isl_cache)
+
+    def test_preseed_uint64_seed_is_reproducible(self):
+        """Same uint64 seed => same draws, so folding stays deterministic."""
+        from aiperf.common.random_generator import derive_variation_seed
+
+        seed = derive_variation_seed(42, "concurrency_10")
+        a, b = _sglang(1024, 128, 0.5), _sglang(1024, 128, 0.5)
+        a.preseed(8, seed)
+        b.preseed(8, seed)
+        assert a._isl_cache == b._isl_cache
+        assert a._osl_cache == b._osl_cache
+
+    def test_preseed_small_seed_draws_are_unchanged_by_folding(self):
+        """Seeds under 2**32 fold to themselves, pinning pre-fix draw values."""
+        dist = _sglang(1024, 128, 0.5)
+        dist.preseed(4, 42)
+
+        np.random.seed(42)
+        expected_isl = np.random.randint(512, 1025, size=4).tolist()
+        assert dist._isl_cache == expected_isl
+
+    def test_preseed_does_not_mutate_global_numpy_state(self):
+        """MT19937 parity is achieved with a private RandomState, not by
+        seeding module-level `numpy.random`, so an unrelated global consumer
+        sees the same stream before and after a preseed."""
+        np.random.seed(7)
+        baseline = np.random.randint(0, 1000, size=3).tolist()
+
+        np.random.seed(7)
+        _sglang(1024, 128, 0.5).preseed(64, 12345)
+        after = np.random.randint(0, 1000, size=3).tolist()
+
+        assert after == baseline
+
+    def test_concurrent_distributions_have_independent_streams(self):
+        """Two preseeded distributions must not consume each other's draws.
+
+        With module-level `numpy.random` the second preseed reseeded the shared
+        state, so `a`'s deferred `_preseed_rng` reads (offset + BPE top-up draws
+        in PromptGenerator) silently continued from `b`'s stream.
+        """
+        a = _sglang(1024, 128, 0.5)
+        a.preseed(4, 42)
+        solo = a._preseed_rng.integers(0, 50000, size=3).tolist()
+
+        a2, b2 = _sglang(1024, 128, 0.5), _sglang(1024, 128, 0.5)
+        a2.preseed(4, 42)
+        b2.preseed(4, 99)
+        interleaved = a2._preseed_rng.integers(0, 50000, size=3).tolist()
+
+        assert interleaved == solo
+
+
+class TestParseRandomRangeRatio:
+    """Tests for --random-range-ratio CLI string parsing via VLLMRatioConfig."""
+
+    def _parse(self, s: str) -> tuple[float, float]:
+        return VLLMRatioConfig(isl_mean=1, osl_mean=1, range_ratio=s).range_ratio
+
+    def test_float_applies_to_both_dimensions(self):
+        assert self._parse("0.3") == (0.3, 0.3)
+
+    def test_zero_is_valid(self):
+        assert self._parse("0") == (0.0, 0.0)
+        assert self._parse("0.0") == (0.0, 0.0)
+
+    def test_whitespace_is_tolerated(self):
+        assert self._parse("  0.25  ") == (0.25, 0.25)
+
+    def test_json_dict_sets_input_and_output_independently(self):
+        assert self._parse('{"input": 0.3, "output": 0.5}') == (0.3, 0.5)
+
+    def test_json_dict_accepts_integer_values(self):
+        assert self._parse('{"input": 0, "output": 0}') == (0.0, 0.0)
+
+    @pytest.mark.parametrize("bad", [-0.1, 1.0, 1.5])
+    def test_float_out_of_range_rejected(self, bad):
+        with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\)"):
+            self._parse(str(bad))
+
+    def test_json_out_of_range_rejected(self):
+        with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\)"):
+            self._parse('{"input": 0.2, "output": 1.2}')
+
+    def test_json_missing_keys_rejected(self):
+        with pytest.raises(ValueError, match="missing keys"):
+            self._parse('{"input": 0.3}')
+
+    def test_json_extra_keys_rejected(self):
+        with pytest.raises(ValueError, match="unexpected keys"):
+            self._parse('{"input": 0.3, "output": 0.5, "extra": 1}')
+
+    def test_empty_value_rejected(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            self._parse("")
+
+    def test_whitespace_only_rejected(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            self._parse("   ")
+
+    def test_invalid_json_rejected(self):
+        with pytest.raises(ValueError, match="must be a float or a JSON object"):
+            self._parse("{not valid json")
+
+    def test_non_object_json_rejected(self):
+        # A bare JSON number string parses as a float via the first-try path,
+        # but a JSON array or string must error in the dict-parse branch.
+        with pytest.raises(ValueError, match="must be a float or a JSON object"):
+            self._parse("[0.3, 0.5]")
+
+    def test_registry_returns_correct_class_for_mode(self):
+        assert _CLASS_FOR_MODE[RandomCorpusStyle.VLLM] is RangeRatioDistribution
+        assert _CLASS_FOR_MODE[RandomCorpusStyle.SGLANG] is SGLangRangeRatioDistribution
+
+
+class TestRatioInputCoercion:
+    """`_coerce_ratio_input` must reject unhandled types, not pass them through.
+
+    Both callers destructure the result immediately, so a pass-through never
+    reached Pydantic's type check: `range_ratio=None` surfaced as a bare
+    `TypeError: cannot unpack non-iterable NoneType object` naming neither the
+    field nor the accepted forms.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param(None, id="none"),
+            param({"input": 0.3}, id="dict"),
+            param(["a", "b"], id="list-of-str"),
+            param({0.3}, id="set"),
+            param(object(), id="arbitrary-object"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "config_cls",
+        [param(VLLMRatioConfig, id="vllm"), param(SGLangRatioConfig, id="sglang")],
+    )  # fmt: skip
+    def test_unhandled_types_raise_validation_error(self, config_cls, value):
+        with pytest.raises(ValidationError):
+            config_cls(isl_mean=10, osl_mean=10, range_ratio=value)
+
+    @pytest.mark.parametrize(
+        "config_cls",
+        [param(VLLMRatioConfig, id="vllm"), param(SGLangRatioConfig, id="sglang")],
+    )  # fmt: skip
+    def test_bool_is_rejected(self, config_cls):
+        """bool is an int subclass, so `range_ratio: true` would coerce to 1.0 --
+        silently accepted by SGLang (range [0, 1]) as "pin at the mean". A YAML
+        bool here is a typo, not a ratio.
+        """
+        with pytest.raises(ValidationError, match="bool"):
+            config_cls(isl_mean=10, osl_mean=10, range_ratio=True)
+
+    def test_accepted_forms_still_work(self):
+        """Guard against over-rejecting: the documented forms must still parse."""
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio=0.3
+        ).range_ratio == (0.3, 0.3)
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio="0.3"
+        ).range_ratio == (0.3, 0.3)
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio=(0.2, 0.4)
+        ).range_ratio == (0.2, 0.4)
+        assert VLLMRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio='{"input": 0.2, "output": 0.4}'
+        ).range_ratio == (0.2, 0.4)
+        assert SGLangRatioConfig(
+            isl_mean=10, osl_mean=10, range_ratio=1.0
+        ).range_ratio == (1.0, 1.0)
+
+
+class TestFoldedSeedWarning:
+    """Seeds wider than MT19937's 32-bit limit are folded, which is lossy.
+
+    `fold_seed_to_uint32` reduces to `hi ^ lo` for `seed = hi * 2**32 + lo`, so
+    distinct seeds collide onto one SGLANG stream. The seed stays valid
+    everywhere else -- `derive()` hashes the full value and the VLLM/PCG64 path
+    takes it verbatim -- so this warns rather than rejects.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_warned(self):
+        from aiperf.common.models.sequence_distribution import _FoldedSeedWarnings
+
+        _FoldedSeedWarnings.reset()
+        yield
+        _FoldedSeedWarnings.reset()
+
+    def _preseed(self, seed):
+        _sglang(128, 16, 0.5).preseed(4, seed)
+
+    def test_seed_below_limit_does_not_warn(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._preseed(42)
+            self._preseed(2**32 - 1)
+        assert not [r for r in caplog.records if "MT19937" in r.getMessage()]
+
+    def test_seed_above_limit_warns_with_folded_value(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._preseed((1 << 32) | 4)  # folds to 1 ^ 4 == 5
+        warned = [r for r in caplog.records if "MT19937" in r.getMessage()]
+        assert len(warned) == 1
+        message = warned[0].getMessage()
+        assert "4294967300" in message, "names the seed the user passed"
+        assert "folded to 5" in message, "names the value actually used"
+        assert "sglang" in message, "names the affected style"
+
+    def test_warns_once_per_seed(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            for _ in range(4):
+                self._preseed((1 << 32) | 4)
+        assert len([r for r in caplog.records if "MT19937" in r.getMessage()]) == 1
+
+    def test_distinct_large_seeds_each_warn(self, caplog):
+        """A sweep re-seeding per variation should flag each aliasing seed."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            self._preseed((1 << 32) | 4)
+            self._preseed((1 << 33) | 9)
+        assert len([r for r in caplog.records if "MT19937" in r.getMessage()]) == 2
+
+    def test_aliasing_pair_produces_identical_sglang_draws(self):
+        """The warning exists because this is true: hi ^ lo collides."""
+        a, b = _sglang(128, 16, 0.5), _sglang(128, 16, 0.5)
+        a.preseed(6, 5)
+        b.preseed(6, (1 << 32) | 4)
+        assert a._isl_cache == b._isl_cache
+
+    def test_vllm_path_keeps_the_full_seed(self):
+        """Same pair must stay distinct on PCG64, so the warning is correctly
+        scoped to SGLANG rather than being a global seed limitation."""
+        a, b = _vllm(128, 16, 0.5), _vllm(128, 16, 0.5)
+        a.preseed(6, 5)
+        b.preseed(6, (1 << 32) | 4)
+        assert a._isl_cache != b._isl_cache
+
+
+class TestSGLangSpecialTokenAdjustment:
+    """SGLANG subtracts special tokens per-request AFTER sampling.
+
+    Mirrors upstream `sample_random_requests`, which shifts drawn lengths::
+
+        input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+    Subtracting from `isl_mean` instead would rescale the window's lower bound
+    (`int((mean-c)*r)` vs `int(mean*r)`), changing the distribution's shape
+    rather than shifting it. Before this, the field was ignored entirely and
+    wire ISL landed at `--isl + num_special` on BOS tokenizers.
+    """
+
+    def test_window_bounds_keep_the_raw_mean(self):
+        """The adjustment must not leak into the bounds."""
+        assert _sglang(128, 16, 0.5, num_special_tokens=1).input_bounds == (64, 128)
+        assert _sglang(128, 16, 0.5).input_bounds == (64, 128)
+
+    def test_sampled_isl_is_shifted_down(self):
+        with_special = _sglang(128, 16, 1.0, num_special_tokens=1)
+        without = _sglang(128, 16, 1.0)
+        # ratio 1.0 pins the window to [128, 128], so this is exact, not noise.
+        assert without.sample()[0] == 128
+        assert with_special.sample()[0] == 127
+
+    def test_preseeded_values_are_adjusted_exactly_once(self):
+        """The cache stores adjusted values and `sample` returns them verbatim;
+        applying the hook in both places would subtract twice."""
+        dist = _sglang(128, 16, 1.0, num_special_tokens=1)
+        dist.preseed(4, 42)
+        assert dist._isl_cache == [127, 127, 127, 127]
+        assert [dist.sample()[0] for _ in range(4)] == [127, 127, 127, 127]
+
+    def test_multi_special_token_tokenizer(self):
+        assert _sglang(128, 16, 1.0, num_special_tokens=2).sample()[0] == 126
+
+    def test_floors_at_one(self):
+        """Mirrors upstream's `max(1, ...)`: a tiny mean cannot go to zero."""
+        assert _sglang(1, 16, 1.0, num_special_tokens=5).sample()[0] == 1
+
+    def test_osl_is_not_adjusted(self):
+        """Upstream shifts `input_lens` only, never `output_lens`."""
+        dist = _sglang(128, 64, 1.0, num_special_tokens=1)
+        assert dist.sample()[1] == 64
+
+    def test_vllm_style_is_unaffected(self):
+        """VLLM folds specials into the bounds, so the post-sample hook is a
+        no-op there -- otherwise it would double-subtract."""
+        dist = _vllm(128, 16, 0.0, num_special_tokens=1)
+        assert dist.input_bounds == (127, 127)
+        assert dist.sample()[0] == 127
+
+
+class TestZeroLengthBodyIsEmittedVerbatim:
+    """A range-ratio window that bottoms out at 0 must not be floored to 1.
+
+    `calculate_num_tokens` routes through `sample_positive_normal_integer`,
+    whose `max(1, round(mean))` is correct for its original callers (a normal
+    draw around a positive mean cannot be 0) but wrong for an already-decided
+    length. The degenerate-config guard deliberately accepts `isl=1, r=0.0`
+    when a prefix covers the request -- vLLM does too, emitting prefix-only --
+    so flooring produced one token more than the reference.
+    """
+
+    def test_window_can_legitimately_bottom_out_at_zero(self):
+        cfg = VLLMRatioConfig(
+            isl_mean=1, osl_mean=16, num_special_tokens=1, range_ratio=0.0
+        )
+        assert cfg.compute_input_bounds() == (0, 0)
+
+    @pytest.mark.parametrize(
+        "isl_mean,ratio",
+        [
+            param(2, 0.5, id="isl2-r0.5"),
+            param(10, 0.9, id="isl10-r0.9"),
+            param(100, 0.99, id="isl100-r0.99"),
+        ],
+    )  # fmt: skip
+    def test_other_configs_reaching_a_zero_lower_bound(self, isl_mean, ratio):
+        """Not unique to --isl 1: any sufficiently high ratio gets there."""
+        low, _ = VLLMRatioConfig(
+            isl_mean=isl_mean, osl_mean=16, num_special_tokens=1, range_ratio=ratio
+        ).compute_input_bounds()
+        assert low == 0
+
+    def test_sampler_returns_zero_rather_than_flooring(self):
+        """The distribution itself must report the zero; the floor lived
+        downstream in the generator, not here."""
+        dist = _vllm(1, 16, 0.0, num_special_tokens=1)
+        assert dist.sample()[0] == 0

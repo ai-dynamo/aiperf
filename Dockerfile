@@ -97,6 +97,7 @@ RUN mkdir -p /opt/licenses/dpkg \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
         libogg-dev \
+        libopus-dev \
         libvorbis-dev \
         libvpx-dev \
         nasm \
@@ -106,9 +107,32 @@ RUN mkdir -p /opt/licenses/dpkg \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and build ffmpeg with libvpx (VP9 codec)
-ARG FFMPEG_VERSION=8.1.1
-RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
+# Build ffmpeg with libvpx (VP9), libvorbis and libopus.
+#
+# ENABLE_FFMPEG=0 skips the from-source compile entirely. This is the single
+# longest step in the image build (dominant under QEMU cross-arch emulation,
+# where it can exceed the rest of the build combined), and ffmpeg is only
+# needed for synthetic audio/video dataset generation. Builds that will never
+# exercise those workloads -- operator/controller images, CI smoke images --
+# can skip it. The stage still creates /opt/ffmpeg/{bin,lib} so the runtime
+# stage's unconditional `COPY --from=env-builder /opt/ffmpeg` stays valid;
+# the directories are simply empty, and aiperf's ffmpeg probe degrades to
+# "unavailable" at runtime rather than failing at import.
+#
+# When it is built, the codec set is deliberately minimal. A default build
+# ships hundreds of codecs; AIPerf only encodes VP8/VP9 with Vorbis or Opus, so
+# --disable-everything plus the allowlist below keeps the set small, and
+# --disable-autodetect stops configure linking stray dev packages. The artifact
+# still exceeds the lists: muxers add aac_adtstoasc (not an AAC codec), and
+# --enable-ffmpeg adds 18 filters. Verify with `ffmpeg -encoders`, not `-codecs`.
+ARG FFMPEG_VERSION=8.1.2
+ARG ENABLE_FFMPEG=1
+RUN if [ "${ENABLE_FFMPEG}" != "1" ]; then \
+        echo "ENABLE_FFMPEG=${ENABLE_FFMPEG}: skipping ffmpeg build"; \
+        mkdir -p /opt/ffmpeg/bin /opt/ffmpeg/lib /opt/licenses/ffmpeg; \
+        exit 0; \
+    fi; \
+    wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cd ffmpeg-${FFMPEG_VERSION} \
     && ./configure \
@@ -117,8 +141,26 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
         --disable-nonfree \
         --enable-shared \
         --disable-static \
+        --disable-autodetect \
+        --enable-zlib \
         --enable-libvorbis \
         --enable-libvpx \
+        --enable-libopus \
+        --disable-everything \
+        --disable-v4l2-m2m \
+        --disable-devices \
+        --disable-network \
+        --disable-programs \
+        --enable-ffmpeg \
+        --enable-ffprobe \
+        --enable-encoder=libvpx_vp8,libvpx_vp9,libvorbis,libopus \
+        --enable-decoder=rawvideo,png,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8 \
+        --enable-demuxer=rawvideo,image2,wav,matroska,mov \
+        --enable-muxer=webm,matroska,mp4 \
+        --enable-parser=png,vp9,opus,vorbis \
+        --enable-protocol=file,pipe \
+        --enable-filter=scale,format,aformat,aresample,anull,null,copy \
+        --enable-bsf=vp9_superframe \
         --disable-doc \
         --disable-htmlpages \
         --disable-manpages \
@@ -136,19 +178,22 @@ RUN wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cp -P /usr/lib/*/libvorbis.so* /usr/lib/*/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvorbis.so* /usr/lib/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvorbis.so not found"; exit 1; } \
     && cp -P /usr/lib/*/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || \
-       cp -P /usr/lib/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libogg.so not found"; exit 1; }
+       cp -P /usr/lib/libogg.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libogg.so not found"; exit 1; } \
+    && cp -P /usr/lib/*/libopus.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+       cp -P /usr/lib/libopus.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libopus.so not found"; exit 1; }
 
 # Collect copyright files for packages whose files we explicitly copy into the runtime.
 # `dpkg -S` resolves paths against the dpkg database, which only tracks files at
-# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so*, libvorbis.so*, libogg.so*
-# were copied from /usr/lib/, so querying /opt/ffmpeg/lib/ returns nothing for
-# them — we must query the /usr/lib/ source paths instead. /bin/bash is still
-# at its dpkg-tracked location.
+# their ORIGINAL locations. /opt/ffmpeg/lib/libvpx.so*, libvorbis.so*, libogg.so*,
+# libopus.so* were copied from /usr/lib/, so querying /opt/ffmpeg/lib/ returns
+# nothing for them — we must query the /usr/lib/ source paths instead. /bin/bash
+# is still at its dpkg-tracked location.
 RUN { dpkg -S /bin/bash 2>/dev/null; \
       for f in /usr/lib/*/libvpx.so* /usr/lib/libvpx.so* \
                /usr/lib/*/libvorbis.so* /usr/lib/libvorbis.so* \
                /usr/lib/*/libvorbisenc.so* /usr/lib/libvorbisenc.so* \
-               /usr/lib/*/libogg.so* /usr/lib/libogg.so*; do \
+               /usr/lib/*/libogg.so* /usr/lib/libogg.so* \
+               /usr/lib/*/libopus.so* /usr/lib/libopus.so*; do \
         [ -e "$f" ] && dpkg -S "$f" 2>/dev/null; \
       done; \
     } | awk -F: '{print $1}' \
@@ -166,18 +211,34 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
     && chown -R 1000:1000 /app \
     && chmod -R 755 /app
 
-# Install only the runtime dependencies using uv. --no-default-groups excludes
-# the PEP 735 dev group (hypothesis, pre-commit) so dev-only tooling does not
-# leak into the runtime image; the test/dev extras are not installed here either.
-COPY pyproject.toml .
-RUN uv sync --active --no-install-project --no-default-groups
+# Install the lock-resolved runtime dependencies using uv. --no-default-groups
+# excludes the PEP 735 dev group (hypothesis, pre-commit) so dev-only tooling
+# does not leak into the runtime image; the test/dev extras are not installed
+# here either.
+COPY pyproject.toml uv.lock .
+RUN uv sync --active --locked --no-install-project --no-default-groups --extra botorch
 
-# Copy the rest of the application
+# Copy the rest of the application.
+#
+# The [botorch] extra (optuna-integration, botorch, gpytorch, torch) ships in the
+# runtime image so cluster-side adaptive search gets the GP-backed sampler.
+# Without it BayesianSearchPlanner silently degrades to Optuna's TPE sampler at
+# runtime -- the search still runs, so the only signal is a WARNING buried in the
+# sweep-controller log.
+#
+# The botorch dependency set, including torch, is resolved from uv.lock so the
+# image build cannot select a newer incompatible release from an index.
 COPY --from=wheel-builder /dist /dist
-RUN uv pip install /dist/aiperf-*.whl \
+RUN WHEEL=$(ls /dist/aiperf-*.whl) \
+    && uv pip install --no-deps "aiperf[botorch] @ file://${WHEEL}" \
     && rm -rf /dist /workspace/pyproject.toml
 
-# Remove setuptools as it is not needed for the runtime image
+# Remove setuptools as it is not needed for the runtime image. Nothing imported
+# by the runtime entry points (aiperf CLI, kopf operator, results_server, the
+# dash dashboard) touches setuptools/pkg_resources -- dash only declares it as a
+# metadata dependency and its sole pkg_resources user is the build-time
+# component_generator. Must stay after every install in this stage so nothing
+# reinstalls it before the runtime venv COPY.
 RUN uv pip uninstall setuptools
 
 # Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
@@ -271,7 +332,7 @@ COPY --from=python-licenses /opt/licenses/python/ATTRIBUTIONS-Python.md /license
 # Copy bash with executable permissions preserved using --chmod
 COPY --from=env-builder --chown=1000:1000 --chmod=755 /bin/bash /bin/bash
 
-# Copy ffmpeg binaries and libraries (includes libvpx)
+# Copy ffmpeg binaries and libraries (includes libvpx, libvorbis, libogg, libopus)
 COPY --from=env-builder --chown=1000:1000 /opt/ffmpeg /opt/ffmpeg
 ENV PATH="/opt/ffmpeg/bin${PATH:+:${PATH}}"
 ENV LD_LIBRARY_PATH="/opt/ffmpeg/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"

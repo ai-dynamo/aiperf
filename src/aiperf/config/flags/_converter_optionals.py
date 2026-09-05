@@ -161,6 +161,40 @@ def _resolve_recipe_instance(cli: CLIConfig) -> Any | None:
         return None
 
 
+# Flags that only have meaning when the WHOLE profiling run repeats (>1 trial):
+# they govern behavior ACROSS trials. v1 rejected each at num_profile_runs==1
+# with a clear error; the port routed them but dropped the guard, silently
+# building a no-op single-run multi_run block. (output_key, --flag) for messages.
+_REPEAT_TRIAL_ONLY_FLAGS: tuple[tuple[str, str], ...] = (
+    ("set_consistent_seed", "--set-consistent-seed"),
+    (
+        "profile_run_disable_warmup_after_first",
+        "--profile-run-disable-warmup-after-first",
+    ),
+    ("profile_run_cooldown_seconds", "--profile-run-cooldown-seconds"),
+)
+
+
+def _reject_repeat_trial_flags_without_multiple_runs(cli: CLIConfig) -> None:
+    """Reject across-trial flags when only a single profiling run is configured.
+
+    Mirrors v1's ``num_profile_runs == 1`` guard. ``num_profile_runs`` is a
+    scalar int defaulting to 1, so ``> 1`` means the user opted into repeated
+    trials; otherwise these flags are no-ops and must fail loud rather than
+    silently produce a single-run ``multi_run`` block.
+    """
+    runs = cli.num_profile_runs if isinstance(cli.num_profile_runs, int) else 1
+    if runs > 1:
+        return
+    for field_name, flag in _REPEAT_TRIAL_ONLY_FLAGS:
+        if field_name in cli.model_fields_set:
+            raise ValueError(
+                f"{flag} only applies when running multiple trials "
+                f"(--num-profile-runs > 1). Either remove {flag} or add "
+                f"--num-profile-runs 5 (or higher)."
+            )
+
+
 def build_multi_run(
     cli: CLIConfig,
     *,
@@ -195,6 +229,7 @@ def build_multi_run(
         return None
     if recipe_output is None and "search_recipe" in sw.model_fields_set:
         raise ValueError("recipe_output must be precomputed before build_multi_run")
+    _reject_repeat_trial_flags_without_multiple_runs(sw)
     mapping = {
         "num_profile_runs": "num_runs",
         "profile_run_cooldown_seconds": "cooldown_seconds",

@@ -29,7 +29,7 @@ class TestImageGenerationEndpoint:
             f"""
             aiperf profile \
                 --model black-forest-labs/FLUX.1-dev \
-                --tokenizer gpt2 \
+                --tokenizer builtin \
                 --url {aiperf_mock_server.url} \
                 --endpoint-type image_generation \
                 --synthetic-input-tokens-mean 150 \

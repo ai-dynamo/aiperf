@@ -10,7 +10,7 @@ import orjson
 from aiperf.common.enums import ConversationContextMode, DatasetFormat
 from aiperf.common.models import Conversation
 from aiperf.common.tokenizer import Tokenizer
-from aiperf.common.utils import load_json_str
+from aiperf.common.utils import load_json_str, open_text_maybe_gzip
 from aiperf.config.dataset import FileDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
@@ -35,6 +35,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
         )
         self._inline_records = dataset.records
         self.loader: BaseLoader | None = None
+        # The resolved CustomDatasetType after create_dataset() runs (explicit,
+        # inline-default, or structurally inferred). Surfaced so the
+        # DatasetManager can make loader-specific decisions (e.g. the weka
+        # inputs.json skip) without re-inferring.
+        self.detected_dataset_type: CustomDatasetType | None = None
 
     def create_dataset(self) -> list[Conversation]:
         """Create conversations from a file, directory, or inline records.
@@ -70,6 +75,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         # Validate synthesis options are only used with mooncake_trace
         self._validate_synthesis_config(dataset_type)
 
+        self.detected_dataset_type = dataset_type
         self._create_loader_instance(dataset_type)
         dataset = self.loader.load_dataset()
         conversations = self.loader.convert_to_conversations(dataset)
@@ -132,16 +138,19 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 return self._infer_type(data=None, filename=file_path)
 
             # For files, read first non-empty line and use both content and path detection
-            with open(file_path, encoding="utf-8") as f:
-                for line in f:
-                    if not (line := line.strip()):
-                        continue
-                    try:
-                        data = load_json_str(line)
-                    except (orjson.JSONDecodeError, UnicodeDecodeError):
-                        # Non-JSON file (e.g. CSV) — fall back to filename-based detection
-                        return self._infer_type(data=None, filename=file_path)
-                    return self._infer_type(data=data, filename=file_path)
+            with open_text_maybe_gzip(file_path) as f:
+                try:
+                    for line in f:
+                        if not (line := line.strip()):
+                            continue
+                        try:
+                            data = load_json_str(line)
+                        except orjson.JSONDecodeError:
+                            # Non-JSON file (e.g. CSV) — fall back to filename-based detection
+                            return self._infer_type(data=None, filename=file_path)
+                        return self._infer_type(data=data, filename=file_path)
+                except UnicodeDecodeError:
+                    return self._infer_type(data=None, filename=file_path)
 
         except ValueError as e:
             self.exception(
@@ -251,6 +260,30 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 f"Either remove synthesis options or use a trace dataset type."
             )
 
+    def _select_trace_prompt_generator(self, loader_metadata: Any) -> Any:
+        """Pick the prompt generator for a trace loader based on its corpus.
+
+        Trace loaders decode ``hash_ids`` into prompt text by sampling token
+        blocks from the injected generator's ``_tokenized_corpus``. Coding-agent
+        traces (e.g. weka) register ``default_prompt_corpus: coding`` so the
+        reconstructed prompts resemble real tool-use content rather than the
+        default Shakespeare sonnets. Using the wrong corpus produces different
+        request bytes, ISL token counts, and prefix-cache-hit metrics.
+
+        Resolution goes through ``resolve_prompt_generator``: ``--prompt-corpus``
+        (via ``run.cfg.get_prompt_corpus()`` / ``prompts.corpus``) overrides the
+        loader's registered ``default_prompt_corpus`` string from plugin metadata.
+        """
+        from aiperf.dataset.generator.corpus import resolve_prompt_generator
+
+        return resolve_prompt_generator(
+            corpus=self.run.cfg.get_prompt_corpus(),
+            default_corpus=loader_metadata.default_prompt_corpus,
+            tokenizer=self.prompt_generator.tokenizer,
+            prompts=self._synthetic_prompts,
+            prefix_prompts=None,
+        )
+
     def _create_loader_instance(self, dataset_type: CustomDatasetType) -> None:
         """Initializes the dataset loader based on the custom dataset type.
 
@@ -265,7 +298,9 @@ class CustomDatasetComposer(BaseDatasetComposer):
                     "Trace datasets require a tokenizer for prompt synthesis. "
                     "Ensure the endpoint supports tokenization or provide a --tokenizer."
                 )
-            kwargs["prompt_generator"] = self.prompt_generator
+            kwargs["prompt_generator"] = self._select_trace_prompt_generator(
+                loader_metadata
+            )
 
             if loader_metadata.default_block_size is not None:
                 kwargs["default_block_size"] = loader_metadata.default_block_size

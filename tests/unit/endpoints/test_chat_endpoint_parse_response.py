@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ChatEndpoint parse_response functionality."""
 
+from unittest.mock import patch
+
 import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.models import record_models
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     RequestRecord,
@@ -64,6 +67,38 @@ class TestChatEndpointParseResponse:
         assert parsed.perf_ns == 123456789
         assert isinstance(parsed.data, TextResponseData)
         assert parsed.data.text == "Hello"
+
+    def test_process_responses_decodes_each_chunk_once(self, endpoint):
+        chunks = [
+            {
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": "Hello"}}],
+            },
+            {
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": " world"}}],
+            },
+        ]
+        record = RequestRecord(
+            responses=[
+                TextResponse(perf_ns=index, text=orjson.dumps(chunk).decode())
+                for index, chunk in enumerate(chunks, start=1)
+            ]
+        )
+
+        with patch(
+            "aiperf.common.models.record_models.load_json_str",
+            wraps=record_models.load_json_str,
+        ) as load_json:
+            parsed_responses, turn = endpoint.process_responses(
+                record, capture_assistant_turn=True
+            )
+
+        assert load_json.call_count == len(chunks)
+        assert len(parsed_responses) == len(chunks)
+        assert parsed_responses is record._parsed_responses_cache
+        assert turn is not None
+        assert turn.texts[0].contents == ["Hello world"]
 
     def test_parse_response_with_reasoning_content(self, endpoint):
         """Test parsing response with reasoning_content (reasoning-capable models)."""

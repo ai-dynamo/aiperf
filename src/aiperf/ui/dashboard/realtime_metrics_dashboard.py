@@ -68,13 +68,36 @@ class RealtimeMetricsTable(Widget):
         INTERNAL and EXPERIMENTAL metrics are already filtered upstream by
         summarize(), so only ERROR_ONLY and console_group=NONE need filtering here.
         """
-        metric_class = MetricRegistry.get_class(metric.tag)
+        metric_class = MetricRegistry.get_class_or_none(metric.tag)
+        if metric_class is None:
+            return False
         if metric_class.has_flags(MetricFlags.ERROR_ONLY):
             return True
         return (
             metric_class.console_group == MetricConsoleGroup.NONE
             and not Environment.DEV.SHOW_INTERNAL_METRICS
         )
+
+    def _metric_display_order(self, metric: MetricResult) -> int:
+        """Sort registered metrics first; keep unregistered metrics stable after."""
+        metric_class = MetricRegistry.get_class_or_none(metric.tag)
+        if metric_class is None or metric_class.display_order is None:
+            return sys.maxsize
+        return metric_class.display_order
+
+    def _metric_short_header(self, metric: MetricResult) -> str:
+        """Resolve the display header, falling back to the MetricResult itself."""
+        metric_class = MetricRegistry.get_class_or_none(metric.tag)
+        if metric_class is None:
+            short_header = metric.header
+            if metric.unit:
+                short_header = f"{short_header} ({metric.unit})"
+            return short_header
+
+        short_header = metric_class.short_header or metric_class.header
+        if not metric_class.short_header_hide_unit and metric.unit:
+            short_header = f"{short_header} ({metric.unit})"
+        return short_header
 
     def _initialize_columns(self) -> None:
         """Initialize table columns."""
@@ -98,8 +121,7 @@ class RealtimeMetricsTable(Widget):
             metric
             for metric in sorted(
                 metrics,
-                key=lambda m: MetricRegistry.get_class(m.tag).display_order
-                or sys.maxsize,
+                key=self._metric_display_order,
             )
             if not self._should_skip(metric)
         ]
@@ -138,11 +160,7 @@ class RealtimeMetricsTable(Widget):
         Note: Metrics are pre-converted to display units by summarize(),
         so values can be used directly without conversion.
         """
-        metric_class = MetricRegistry.get_class(metric.tag)
-        short_header = metric_class.short_header or metric_class.header
-        # Use the metric's unit directly (already converted to display unit)
-        if not metric_class.short_header_hide_unit and metric.unit:
-            short_header = f"{short_header} ({metric.unit})"
+        short_header = self._metric_short_header(metric)
         return [
             Text(
                 short_header,

@@ -6,12 +6,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, NonNegativeInt
 
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.branch_stats import BranchStats
 from aiperf.common.models.error_models import ErrorDetailsCount
 from aiperf.config.config import BenchmarkConfig
+from aiperf.gpu_telemetry.constants import UNKNOWN_GPU_TELEMETRY_PLATFORM
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
@@ -94,6 +95,10 @@ class GpuSummary(AIPerfBaseModel):
     gpu_index: int
     gpu_name: str
     gpu_uuid: str
+    platform: str = Field(
+        default=UNKNOWN_GPU_TELEMETRY_PLATFORM,
+        description="GPU telemetry platform namespace, e.g. 'nvidia', 'amd', or 'unknown'",
+    )
     hostname: str | None
     namespace: str | None = None
     pod_name: str | None = None
@@ -331,6 +336,18 @@ class JsonExportData(AIPerfBaseModel):
     input_config: BenchmarkConfig | None = None
     run_info: RunInfo | None = None
     was_cancelled: bool | None = None
+    is_complete: bool | None = Field(
+        default=None,
+        description=(
+            "False when the run degraded before finishing (for example the "
+            "record-stall watchdog fired), so tooling can reject the artifact "
+            "instead of comparing it against complete runs."
+        ),
+    )
+    incomplete_reason: str | None = Field(
+        default=None,
+        description="Human-readable cause when is_complete is False, else None.",
+    )
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
@@ -346,4 +363,16 @@ class JsonExportData(AIPerfBaseModel):
         default=None,
         description="Metrics computed from warmup-phase requests only. Profiling "
         "metrics remain in the top-level metric fields.",
+    )
+    pooled_spec_decode_acceptance_histogram: (
+        dict[NonNegativeInt, NonNegativeInt] | None
+    ) = Field(
+        default=None,
+        description=(
+            "Run-level pooled speculative-decoding acceptance histogram: "
+            "accepted-draft count j mapped to the total number of verify steps "
+            "that accepted exactly j draft tokens, summed across every request. "
+            "Its counts sum to total_spec_decode_steps. Present only when spec "
+            "decode was active; absent otherwise."
+        ),
     )

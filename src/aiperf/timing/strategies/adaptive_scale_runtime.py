@@ -32,7 +32,7 @@ class AdaptiveScaleRuntimeMixin:
         step_size: float | None = None,
         sla_values: dict[str, float] | None = None,
     ) -> None:
-        phase_name = getattr(self._config, "name", None)
+        phase_name = getattr(self._config, "phase_name", None)
         phase_id = phase_name or CreditPhase.PROFILING
         run = getattr(self, "run", None)
         run_id = getattr(run, "benchmark_id", None)
@@ -66,6 +66,9 @@ class AdaptiveScaleRuntimeMixin:
                 run_id=run_id,
                 phase_id=phase_id,
                 phase_name=phase_name,
+                phase_index=getattr(self._config, "phase_index", None),
+                profiling_index=getattr(self._config, "profiling_index", None),
+                phase_kind=getattr(self._config, "phase_kind", None),
                 adaptive_iteration=self._adaptive_iteration,
                 candidate_value=(self._control.current if before is None else before),
                 accepted_value=self._control.current,
@@ -131,7 +134,8 @@ class AdaptiveScaleRuntimeMixin:
     def _status_for_terminal_reason(reason: str) -> str:
         if reason == "max_control_value_reached_without_saturation":
             return "incomplete"
-        if reason.startswith("assessment_failed:") or reason in {
+        if reason.startswith(("assessment_failed:", "phase_failed:")) or reason in {
+            "phase_cancelled",
             "no_sustainable_concurrency_found",
             "sustain_failed_sla_unrecoverable",
             "sustain_failed_after_recovery",
@@ -175,5 +179,13 @@ class AdaptiveScaleRuntimeMixin:
             base_step=self._config.adaptive_scale_base_step,
             max_step_multiplier=self._config.adaptive_scale_max_step_multiplier,
             step_percent=self._config.adaptive_scale_step_percent,
+        )
+        summary.update(
+            {
+                "phase_index": getattr(self._config, "phase_index", None),
+                "profiling_index": getattr(self._config, "profiling_index", None),
+                "phase_name": getattr(self._config, "phase_name", None),
+                "phase_kind": getattr(self._config, "phase_kind", None),
+            }
         )
         self._artifacts.write_summary(self._summary_path, summary)

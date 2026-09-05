@@ -19,6 +19,10 @@ def _make_request_info(**overrides) -> RequestInfo:
         turn_index=0,
         x_request_id="r",
         x_correlation_id="x",
+        phase_index=2,
+        profiling_index=1,
+        phase_name="recovery",
+        phase_kind="profiling",
         agent_depth=2,
         parent_correlation_id="root",
         model_endpoint=ModelEndpointInfo.model_construct(),
@@ -38,22 +42,43 @@ class TestEnrichRequestRecord:
         assert type(enriched.request_info) is RecordContext
 
     def test_dag_fields_propagate(self):
-        ri = _make_request_info(agent_depth=3, parent_correlation_id="p")
+        ri = _make_request_info(
+            agent_depth=3, parent_correlation_id="p", root_correlation_id="root-1"
+        )
         record = RequestRecord()
         enriched = InferenceClient._enrich_request_record(record, ri)
         assert enriched.request_info.agent_depth == 3
         assert enriched.request_info.parent_correlation_id == "p"
+        assert enriched.request_info.root_correlation_id == "root-1"
+
+    def test_phase_identity_fields_propagate(self):
+        ri = _make_request_info(
+            phase_index=3,
+            profiling_index=2,
+            phase_name="storm",
+            phase_kind="profiling",
+        )
+        record = RequestRecord()
+        enriched = InferenceClient._enrich_request_record(record, ri)
+        assert enriched.request_info.phase_index == 3
+        assert enriched.request_info.profiling_index == 2
+        assert enriched.request_info.phase_name == "storm"
+        assert enriched.request_info.phase_kind == "profiling"
 
     def test_transport_extras_dropped(self):
         ri = _make_request_info()
         record = RequestRecord()
         enriched = InferenceClient._enrich_request_record(record, ri)
-        # downcast strips model_endpoint / endpoint_headers / drop_perf_ns,
-        # but ``turns``, ``system_message``, ``user_context_message`` were
-        # hoisted onto RecordContext (records pipeline reads them) and
-        # therefore survive the downcast.
+        # Downcast strips RequestInfo-only transport/payload-builder fields while
+        # keeping the hoisted scalar inputs the records pipeline reads.
         dump = enriched.request_info.model_dump()
         assert "model_endpoint" not in dump
         assert "endpoint_headers" not in dump
         assert "drop_perf_ns" not in dump
-        assert "turns" in dump
+        assert "turns" not in dump
+        assert "system_message" not in dump
+        assert "user_context_message" not in dump
+        assert "payload_bytes" in dump
+        assert "max_tokens" in dump
+        assert "audio_duration_seconds" in dump
+        assert "scheduled_send_ms" in dump
