@@ -30,7 +30,7 @@ is not set, since they would otherwise be silently ignored.
 1. Install the AWS extra (this pulls in `botocore` for credential handling):
 
 ```bash
-uv pip install aiperf[aws]
+uv pip install 'aiperf[aws]'
 ```
 
 2. Make sure your AWS credentials are working:
@@ -219,8 +219,12 @@ Two details matter behind an IAM-protected endpoint:
 
 If the probe were unsigned, API Gateway would answer `403`, and the readiness
 rule treats any status below `500` as "the server is up" -- so the run would
-start against an endpoint that rejects every request. Signing the probe is what
-makes preflight actually gate the benchmark.
+start against an endpoint that rejects every request. Signing the probe
+closes that gap: when a signer is configured, a `401`/`403` response is
+never treated as "ready" -- it's reported as a signature/credential
+misconfiguration (check region, service, and credentials) instead of
+silently letting the run start. Signing the probe is what makes preflight
+actually gate the benchmark.
 
 ## Examples
 
@@ -309,5 +313,5 @@ If that also fails, you need to set up credentials -- see [Setting Up Credential
 Install the AWS extra:
 
 ```bash
-uv pip install aiperf[aws]
+uv pip install 'aiperf[aws]'
 ```

@@ -9,7 +9,11 @@ probe strategies, selected via ``endpoint.wait_for_model_mode``:
   configured endpoint. Strongest signal: proves the full serving stack
   (frontend, scheduler, worker, forward pass) is live. Any HTTP status
   below 500 counts as ready — 4xx surfaces the same way on the first real
-  benchmark request and doesn't warrant hanging the probe.
+  benchmark request and doesn't warrant hanging the probe. Exception: a
+  401/403 from a *signed* request (a request signer is configured) fails
+  fast instead, since that almost always means the signature itself is
+  misconfigured rather than something the benchmark run would surface on
+  its own.
 - ``models`` — GET ``{url}/v1/models`` and verify the model id appears in
   ``data[]``. Cheap, no tokens consumed. Falls back to a plain GET on the
   base URL if ``/v1/models`` returns 404 so servers without a model list
@@ -140,6 +144,30 @@ def _response_status_and_error(record: Any) -> tuple[int | str, str]:
     return status_repr, error_repr
 
 
+def _raise_if_signed_auth_rejected(
+    *, status: int | None, signer: RequestSignerProtocol | None, request_url: str
+) -> None:
+    """Fail fast when a *signed* probe request is rejected as unauthorized.
+
+    A 401/403 on an unsigned request is expected to surface the same way on
+    the first real benchmark request, so it's left to retry/timeout like any
+    other probe failure. But when a ``signer`` (e.g. SigV4) is configured,
+    401/403 almost always means the signature itself is wrong — bad
+    credentials, region, or service name — and retrying for the full
+    ``timeout_s`` won't fix that. Raise immediately with a clear cause
+    instead of silently retrying until the probe times out.
+    """
+    if signer is None or status not in (401, 403):
+        return
+    raise RuntimeError(
+        f"Readiness probe to {request_url} was rejected with status {status} "
+        f"despite a request signer being configured. This usually means the "
+        f"signed request's credentials, region, or service are misconfigured "
+        f"(check --aws-region / --aws-service and your AWS credentials) — "
+        f"retrying will not fix a signature mismatch."
+    )
+
+
 def _models_response_ready(
     *,
     record: Any,
@@ -193,6 +221,9 @@ async def _base_url_ready_after_models_404(
             f"{fallback.status} — accepting as ready"
         )
         return True
+    _raise_if_signed_auth_rejected(
+        status=fallback.status, signer=signer, request_url=url
+    )
     _logger.info(
         f"/v1/models returned 404 and base URL returned "
         f"{fallback.status or 'error'} at {url} (attempt {attempt}), "
@@ -247,7 +278,9 @@ async def _wait_models(
 
     Falls back to a single GET on the base URL if ``/v1/models`` returns 404
     on any attempt — so servers that don't expose a model list still pass
-    when they respond at all.
+    when they respond at all. When a ``signer`` is configured and either
+    probe is rejected with 401/403, raises immediately instead of retrying
+    to the timeout — see ``_raise_if_signed_auth_rejected``.
     """
     deadline = time.monotonic() + timeout_s
     models_url = url.rstrip("/") + "/v1/models"
@@ -298,6 +331,9 @@ async def _wait_models(
             ):
                 return
         else:
+            _raise_if_signed_auth_rejected(
+                status=record.status, signer=signer, request_url=models_url
+            )
             status_repr, error_repr = _response_status_and_error(record)
             _logger.info(
                 f"Probe to {models_url} returned {status_repr} "
@@ -326,6 +362,13 @@ async def _wait_inference(
     server is live but our payload was rejected (bad auth / bad model /
     bad path), which surfaces the same way on the first real benchmark
     request. Only 5xx and connection errors trigger retries.
+
+    Exception: when a ``signer`` is configured (e.g. SigV4) and the response
+    is 401/403, this raises immediately instead of counting it as ready or
+    retrying — a rejected *signed* request almost always means the
+    signature itself is wrong (credentials/region/service), which no amount
+    of retrying will fix. Unsigned 401/403 keeps the documented behavior
+    above.
     """
     request_url, body = _build_inference_probe_request(
         url=url,
@@ -369,6 +412,9 @@ async def _wait_inference(
         )
 
         status = record.status
+        _raise_if_signed_auth_rejected(
+            status=status, signer=signer, request_url=request_url
+        )
         if status is not None and status < 500:
             _logger.info(
                 f"Inference probe ready at {request_url} "
