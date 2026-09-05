@@ -139,6 +139,49 @@ class TestIterInputsJsonChunks:
         assert 0 < len(chunks[-1]) <= chunk_bytes
         assert b"".join(chunks) == _single_dump(inputs)
 
+    @pytest.mark.parametrize("chunk_bytes", [0, -1])
+    def test_iter_inputs_json_chunks_rejects_non_positive_chunk_bytes(
+        self, chunk_bytes: int
+    ) -> None:
+        with pytest.raises(ValueError, match="chunk_bytes must be positive"):
+            next(iter_inputs_json_chunks(InputsFile(), chunk_bytes=chunk_bytes))
+
+    @pytest.mark.parametrize(
+        "inputs",
+        [
+            param(
+                InputsFile.model_validate(
+                    {
+                        "data": [],
+                        "export_meta": {"origin": "unit", "ids": [1, 2]},
+                    }
+                ),
+                id="top-level-extras-empty-data",
+            ),
+            param(
+                InputsFile.model_validate(
+                    {
+                        "data": [
+                            {"session_id": "s1", "payloads": [_payload("hi 0")]},
+                        ],
+                        "note": "extension field",
+                        "dropped_if_none": None,
+                    }
+                ),
+                id="top-level-extras-with-data",
+            ),
+        ],
+    )  # fmt: skip
+    def test_iter_inputs_json_chunks_preserves_top_level_extra_fields(
+        self, inputs: InputsFile
+    ) -> None:
+        chunk_bytes = 64
+        chunks = list(iter_inputs_json_chunks(inputs, chunk_bytes=chunk_bytes))
+
+        assert all(len(chunk) == chunk_bytes for chunk in chunks[:-1])
+        assert 0 < len(chunks[-1]) <= chunk_bytes
+        assert b"".join(chunks) == _single_dump(inputs)
+
 
 class TestGenerateInputsJsonFileStreaming:
     @pytest.mark.asyncio

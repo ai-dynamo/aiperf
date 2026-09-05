@@ -111,6 +111,11 @@ def _iter_session_pieces(session: SessionPayloads) -> Iterator[bytes]:
     yield b"\n      ]\n    }"
 
 
+def _iter_exact_slices(document: bytes, chunk_bytes: int) -> Iterator[bytes]:
+    for start in range(0, len(document), chunk_bytes):
+        yield document[start : start + chunk_bytes]
+
+
 def iter_inputs_json_chunks(
     inputs: InputsFile, chunk_bytes: int = INPUTS_JSON_WRITE_CHUNK_BYTES
 ) -> Iterator[bytes]:
@@ -122,6 +127,19 @@ def iter_inputs_json_chunks(
     newlines is exact and the concatenated chunks are byte-identical to
     encoding the whole ``InputsFile`` with ``OPT_INDENT_2`` in one call.
     """
+    if chunk_bytes <= 0:
+        raise ValueError(f"chunk_bytes must be positive, got {chunk_bytes}")
+    if inputs.model_extra:
+        # The hand-built envelope emits only the data array, so a document
+        # carrying top-level extra="allow" fields is encoded whole to keep
+        # every field and the exact byte layout of the one-shot dump, then
+        # sliced under the same write bound.
+        document = orjson.dumps(
+            inputs.model_dump(exclude_none=True, mode="json"),
+            option=orjson.OPT_INDENT_2,
+        )
+        yield from _iter_exact_slices(document, chunk_bytes)
+        return
     if not inputs.data:
         yield _INPUTS_JSON_EMPTY
         return
