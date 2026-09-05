@@ -326,8 +326,9 @@ class AioHttpTransport(BaseTransport):
             body: bytes | aiohttp.FormData
             if use_form_data:
                 # Request signers (SigV4) sign a fixed byte payload; multipart
-                # form-data bodies aren't signed - out of scope for the
-                # image_edit/video_generation endpoints that use them.
+                # form-data bodies aren't signed. EndpointConfig rejects
+                # auth_type + multipart at config time, so this branch is only
+                # reachable with no signer configured.
                 body = self._build_form_data(payload)
             else:
                 signed = await self._sign_if_needed(
