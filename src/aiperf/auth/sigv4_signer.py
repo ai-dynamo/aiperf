@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.environment import Environment
+from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.hooks import background_task, on_init
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.optional_dependencies import aws_dependency_message
@@ -22,6 +23,12 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
     Signs HTTP requests with AWS Signature Version 4 for authenticating
     against SageMaker, Bedrock, API Gateway, and other SigV4-protected endpoints.
     Uses botocore's credential chain for automatic credential discovery and refresh.
+
+    Initial resolution (``_init_credentials``, run at ``@on_init``) is also
+    offloaded via ``asyncio.to_thread``, since it runs the same synchronous,
+    potentially subprocess/network-bound provider chain as the periodic
+    re-resolution described below - running it inline would block the
+    event loop during service startup.
 
     Credential handling has two layers, addressing different failure modes:
 
@@ -77,15 +84,16 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         self._AWSRequest = AWSRequest
         self._Credentials = Credentials
 
-        self._reresolve_credentials()
+        await asyncio.to_thread(self._reresolve_credentials)
 
     def _reresolve_credentials(self) -> None:
         """Run botocore's credential provider chain from scratch.
 
-        Called synchronously at init, and periodically (off the event loop,
-        via asyncio.to_thread, see _periodic_reresolve_credentials below) - see
-        the class docstring for why this is distinct from the per-call
-        get_frozen_credentials() refresh.
+        Called at init, and periodically (both off the event loop, via
+        asyncio.to_thread - see _init_credentials and
+        _periodic_reresolve_credentials below) - see the class docstring
+        for why this is distinct from the per-call get_frozen_credentials()
+        refresh.
         """
         import botocore.session
 
@@ -145,6 +153,11 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         Returns:
             SignedRequest with original + auth headers merged
         """
+        if self._credentials is None:
+            raise NotInitializedError(
+                "SigV4RequestSigner not initialized. Call initialize() before sign()."
+            )
+
         # get_frozen_credentials() re-resolves (and refreshes if expired)
         # on every call - see the class docstring for the two-layer
         # refresh/re-resolve strategy. Offloaded to a thread because the

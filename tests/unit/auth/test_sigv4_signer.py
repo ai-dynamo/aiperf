@@ -13,6 +13,7 @@ pytest.importorskip("botocore")
 from aiperf.auth.base_signer import SignedRequest  # noqa: E402
 from aiperf.auth.sigv4_signer import SigV4RequestSigner  # noqa: E402
 from aiperf.common.enums import ModelSelectionStrategy  # noqa: E402
+from aiperf.common.exceptions import NotInitializedError  # noqa: E402
 from aiperf.common.hooks import AIPerfHook  # noqa: E402
 from aiperf.common.models.model_endpoint_info import (  # noqa: E402
     EndpointInfo,
@@ -147,6 +148,28 @@ class TestSigV4RequestSignerInitCredentials:
         ):
             await signer._init_credentials()
 
+    @pytest.mark.asyncio
+    async def test_init_credentials_offloads_reresolution_to_thread(self) -> None:
+        """The full credential provider chain (session creation, potential
+        credential_process subprocess calls, container/instance-metadata HTTP
+        requests) is synchronous I/O, so _init_credentials must not run it
+        inline on the event loop - it should offload via asyncio.to_thread,
+        the same way the periodic re-resolution and per-sign() refresh do."""
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = MagicMock()
+
+        with (
+            patch("botocore.session.Session", return_value=mock_session),
+            patch(
+                "aiperf.auth.sigv4_signer.asyncio.to_thread",
+                wraps=asyncio.to_thread,
+            ) as mock_to_thread,
+        ):
+            await signer._init_credentials()
+
+        mock_to_thread.assert_called_once_with(signer._reresolve_credentials)
+
 
 def _setup_signer_for_sign(
     signer: SigV4RequestSigner,
@@ -174,6 +197,16 @@ def _setup_signer_for_sign(
 
 
 class TestSigV4RequestSignerSign:
+    @pytest.mark.asyncio
+    async def test_sign_before_init_raises_not_initialized_error(self) -> None:
+        """Calling sign() on a signer that was never initialize_and_start()'d
+        must raise a diagnosable NotInitializedError, not an opaque
+        AttributeError from self._credentials being None."""
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+
+        with pytest.raises(NotInitializedError, match="SigV4RequestSigner"):
+            await signer.sign("POST", "https://example.com", {}, None)
+
     @pytest.mark.asyncio
     async def test_sign_adds_authorization_header(self) -> None:
         signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
@@ -238,6 +271,71 @@ class TestSigV4RequestSignerSign:
         _, call_service, call_region = mock_sigv4_cls.call_args[0]
         assert call_service == "bedrock-runtime"
         assert call_region == "ap-southeast-1"
+
+
+class TestSigV4RequestSignerRealSigning:
+    @pytest.mark.asyncio
+    async def test_sign_real_sigv4auth_signature_changes_with_body(self) -> None:
+        """Uses the real (unmocked) botocore SigV4Auth/AWSRequest/Credentials
+        to catch a regression where the body stops reaching the signature
+        (e.g. `AWSRequest(..., data=None)`). `_setup_signer_for_sign`
+        replaces `_SigV4Auth` with a MagicMock everywhere else in this file,
+        so none of those tests would notice such a mutation - the body only
+        affects the payload hash baked into SigV4's canonical request, never
+        a header value a mock-based test could inspect directly.
+
+        The request timestamp is frozen so the only thing that varies
+        between the two signs is the body; if the resulting `Authorization`
+        signatures were identical despite different bodies, the body did not
+        actually participate in signing.
+        """
+        import datetime as dt
+
+        from botocore.auth import SigV4Auth
+        from botocore.awsrequest import AWSRequest
+        from botocore.credentials import Credentials
+
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+
+        mock_frozen = MagicMock(
+            access_key="AKIDEXAMPLE", secret_key="secret", token=None
+        )
+        mock_creds = MagicMock()
+        mock_creds.get_frozen_credentials.return_value = mock_frozen
+        signer._credentials = mock_creds
+        signer._SigV4Auth = SigV4Auth
+        signer._AWSRequest = AWSRequest
+        signer._Credentials = Credentials
+
+        url = "https://example.sagemaker.us-east-1.amazonaws.com/invoke"
+        fixed_now = dt.datetime(2015, 8, 30, 12, 36, 0)
+
+        with patch("botocore.auth.get_current_datetime", return_value=fixed_now):
+            result_a = await signer.sign(
+                "POST",
+                url,
+                {"Content-Type": "application/json", "Host": "example.com"},
+                b'{"prompt": "hello"}',
+            )
+            result_b = await signer.sign(
+                "POST",
+                url,
+                {"Content-Type": "application/json", "Host": "example.com"},
+                b'{"prompt": "goodbye, and thanks for all the fish"}',
+            )
+
+        auth_a = result_a.headers["Authorization"]
+        auth_b = result_b.headers["Authorization"]
+
+        prefix_a, sig_a = auth_a.rsplit("Signature=", 1)
+        prefix_b, sig_b = auth_b.rsplit("Signature=", 1)
+
+        # Same credential scope and signed-header set (nothing about the
+        # request other than the body differs), but the signature itself
+        # must differ - proving the body was actually part of what got
+        # signed, not silently dropped (e.g. `data=None`).
+        assert prefix_a == prefix_b
+        assert sig_a != sig_b
 
 
 class TestSigV4RequestSignerPeriodicReresolution:
