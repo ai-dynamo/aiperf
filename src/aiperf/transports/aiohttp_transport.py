@@ -340,6 +340,13 @@ class AioHttpTransport(BaseTransport):
             if not isinstance(body, aiohttp.FormData):
                 signed = await self._sign_if_needed("POST", url, headers, body)
                 url, headers, body = signed.url, signed.headers, signed.body
+            elif self.request_signer is not None:
+                raise RuntimeError(
+                    "FormData body with a configured request_signer: signers "
+                    "sign a fixed byte payload and can't sign multipart "
+                    "form-data. EndpointConfig should have rejected "
+                    "auth_type + multipart at config time."
+                )
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -529,6 +536,13 @@ class AioHttpTransport(BaseTransport):
         if not isinstance(body, aiohttp.FormData):
             signed = await self._sign_if_needed("POST", url, headers, body)
             url, headers, body = signed.url, signed.headers, signed.body
+        elif self.request_signer is not None:
+            raise RuntimeError(
+                "FormData body with a configured request_signer: signers "
+                "sign a fixed byte payload and can't sign multipart "
+                "form-data. EndpointConfig should have rejected "
+                "auth_type + multipart at config time."
+            )
         record = await self.aiohttp_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
