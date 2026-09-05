@@ -18,6 +18,13 @@ This guide walks you through benchmarking inference endpoints protected by AWS I
 | SageMaker + vLLM/LMI container | Yes | No | Non-streaming only. SageMaker uses proprietary event framing instead of SSE. |
 | Bedrock Converse / InvokeModel | No | No | Different request/response schema -- not OpenAI-compatible |
 
+Endpoints that send `multipart/form-data` (`image_edit`, `video_generation`) are
+not supported: signing a multipart body is not implemented, so AIPerf rejects
+`--auth-type sigv4` for them at startup rather than sending unauthenticated
+requests. `--aws-region` and `--aws-service` are both required with
+`--auth-type sigv4`, and the `--aws-*` flags are rejected if `--auth-type sigv4`
+is not set, since they would otherwise be silently ignored.
+
 ## Before You Start
 
 1. Install the AWS extra (this pulls in `botocore` for credential handling):
