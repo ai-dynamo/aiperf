@@ -585,3 +585,44 @@ class EndpointConfig(BaseConfig):
                 f"video_generation); endpoint type {self.type} does not."
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_sigv4_auth(self) -> Self:
+        """Reject SigV4 configurations that would only fail at request time.
+
+        Runs after ``_validate_request_content_type`` so the multipart check
+        sees the auto-selected content type for form-data endpoints.
+        """
+        aws_flags = {
+            "--aws-region": self.aws_region,
+            "--aws-profile": self.aws_profile,
+            "--aws-service": self.aws_service,
+        }
+        if self.auth_type != RequestSignerType.SIGV4:
+            set_flags = sorted(flag for flag, val in aws_flags.items() if val is not None)
+            if set_flags:
+                raise ValueError(
+                    f"{', '.join(set_flags)} has no effect unless --auth-type is set "
+                    f"to 'sigv4'. Set --auth-type sigv4 to enable request signing."
+                )
+            return self
+
+        missing = [
+            flag
+            for flag in ("--aws-region", "--aws-service")
+            if not (aws_flags[flag] or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                f"--auth-type sigv4 requires {' and '.join(missing)} to be set to a "
+                f"non-empty value."
+            )
+
+        if self.request_content_type == RequestContentType.MULTIPART_FORM_DATA:
+            raise ValueError(
+                f"--auth-type sigv4 does not support multipart/form-data requests, "
+                f"which endpoint type {self.type} uses. Signing a multipart body is "
+                f"not implemented, and sending it unsigned would silently produce "
+                f"unauthenticated requests."
+            )
+        return self
