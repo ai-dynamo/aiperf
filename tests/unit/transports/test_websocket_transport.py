@@ -638,6 +638,10 @@ class TestReconnectChaining:
         await transport.stop()
 
     async def test_reconnect_with_store_proceeds(self) -> None:
+        # Endpoint-wide store:true is merged into every envelope by
+        # ResponsesEndpoint.format_payload, so the payloads carry store:true here
+        # exactly as they would on the wire. With server-side store the id
+        # persists, so a reconnect resolves it.
         transport = WebSocketTransport(
             model_endpoint=self._endpoint(extra=[("store", True)])
         )
@@ -645,14 +649,15 @@ class TestReconnectChaining:
         opened: list[FakeWS] = []
         transport._open = self._open_recorder(opened)
 
-        await transport.send_request(_request_info(is_final_turn=False), {"model": "m"})
+        await transport.send_request(
+            _request_info(is_final_turn=False), {"model": "m", "store": True}
+        )
         opened[0].closed = True
-        # With server-side store the id persists, so a reconnect resolves it.
         record = await transport.send_request(
             _request_info(
                 is_final_turn=True, turn_index=1, previous_response_id="resp_1"
             ),
-            {"model": "m", "previous_response_id": "resp_1"},
+            {"model": "m", "previous_response_id": "resp_1", "store": True},
         )
 
         assert record.error is None
@@ -671,13 +676,15 @@ class TestReconnectChaining:
         opened: list[FakeWS] = []
         transport._open = self._open_recorder(opened)
 
-        await transport.send_request(_request_info(is_final_turn=False), {"model": "m"})
+        await transport.send_request(
+            _request_info(is_final_turn=False), {"model": "m", "store": True}
+        )
         opened[0].closed = True
         await transport.send_request(
             _request_info(
                 is_final_turn=False, turn_index=1, previous_response_id="resp_1"
             ),
-            {"model": "m", "previous_response_id": "resp_1"},
+            {"model": "m", "previous_response_id": "resp_1", "store": True},
         )
 
         assert opened[0] not in transport._all
@@ -860,12 +867,16 @@ class TestForkCrossConnectionChaining:
         opened: list[FakeWS] = []
         transport._open = self._open_recorder(opened)
 
+        # Endpoint-wide store:true is merged into the envelope by format_payload,
+        # so the FORK child's chained turn carries store:true on the wire. On a
+        # brand-new child conversation (no _stored entry) that merged flag is the
+        # proxy the fresh-socket guard uses to allow the inherited id through.
         record = await transport.send_request(
             _request_info(
                 x_correlation_id="conv-child",
                 previous_response_id="resp_parent",
             ),
-            {"model": "m", "previous_response_id": "resp_parent"},
+            {"model": "m", "previous_response_id": "resp_parent", "store": True},
         )
 
         assert record.status == 200
@@ -873,3 +884,100 @@ class TestForkCrossConnectionChaining:
         sent = orjson.loads(opened[0].sent[0])
         assert sent["previous_response_id"] == "resp_parent"
         await transport.stop()
+
+
+def _ws_transport() -> WebSocketTransport:
+    return WebSocketTransport(
+        model_endpoint=create_model_endpoint_info(
+            base_url="ws://localhost:8000", custom_endpoint="/v1/responses"
+        )
+    )
+
+
+@pytest.mark.asyncio
+class TestOpenSocketOptions:
+    async def test_open_passes_max_msg_size_from_env(self, monkeypatch) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.ENDPOINT, "WEBSOCKET_MAX_MESSAGE_SIZE", 123456)
+        transport = _ws_transport()
+        await transport.initialize()
+        captured: dict[str, object] = {}
+
+        async def fake_ws_connect(url: str, **kwargs: object) -> FakeWS:
+            captured.update(kwargs)
+            return FakeWS([])
+
+        transport._session.ws_connect = fake_ws_connect
+
+        await transport._open(_request_info(), {})
+
+        assert captured["max_msg_size"] == 123456
+        await transport.stop()
+
+
+@pytest.mark.asyncio
+class TestRedirectGuard:
+    """The credential-TLS gate is bypassable if the ws:// handshake follows a
+    redirect to http://; aiohttp's ws_connect follows redirects and exposes no
+    way to disable them, so the transport refuses a socket that redirected."""
+
+    class _Resp:
+        def __init__(self, history: tuple, url: str) -> None:
+            self.history = history
+            self.url = url
+
+    async def test_rejects_socket_that_followed_redirect(self) -> None:
+        ws = FakeWS([])
+        ws._response = self._Resp(("prev-response",), "http://evil:9/ws")
+        with pytest.raises(ValueError, match="followed an HTTP redirect"):
+            await WebSocketTransport._reject_redirected_socket(ws)
+        assert ws.closed is True
+
+    async def test_redirect_rejection_message_redacts_url(self) -> None:
+        ws = FakeWS([])
+        ws._response = self._Resp(("prev",), "http://host/ws?api_key=supersecret")
+        with pytest.raises(ValueError) as exc_info:
+            await WebSocketTransport._reject_redirected_socket(ws)
+        assert "supersecret" not in str(exc_info.value)
+
+    async def test_allows_socket_without_redirect(self) -> None:
+        ws = FakeWS([])
+        ws._response = self._Resp((), "wss://host/v1/responses")
+        await WebSocketTransport._reject_redirected_socket(ws)
+        assert ws.closed is False
+
+    async def test_allows_socket_with_no_response_attr(self) -> None:
+        ws = FakeWS([])
+        await WebSocketTransport._reject_redirected_socket(ws)
+        assert ws.closed is False
+
+
+@pytest.mark.asyncio
+class TestStoredEviction:
+    """``_stored`` is bounded so a conversation halted before its final turn does
+    not leak an entry for the life of the run."""
+
+    async def test_stored_evicts_oldest_over_cap(self) -> None:
+        transport = _ws_transport()
+        transport._stored_max = 2
+
+        transport._remember_store("a", True)
+        transport._remember_store("b", True)
+        transport._remember_store("c", True)
+
+        assert "a" not in transport._stored
+        assert set(transport._stored) == {"b", "c"}
+
+    async def test_stored_eviction_is_lru_by_last_write(self) -> None:
+        transport = _ws_transport()
+        transport._stored_max = 2
+
+        transport._remember_store("a", True)
+        transport._remember_store("b", True)
+        transport._remember_store("a", False)  # refresh "a", so "b" is now oldest
+        transport._remember_store("c", True)
+
+        assert "b" not in transport._stored
+        assert set(transport._stored) == {"a", "c"}
+        assert transport._stored["a"] is False
