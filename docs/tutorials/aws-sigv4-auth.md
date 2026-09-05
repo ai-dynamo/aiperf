@@ -195,6 +195,33 @@ AIPerf refreshes AWS credentials automatically before each request. This means t
 
 The one exception: if your SSO session itself expires (they typically last 8-12 hours), you'll need to re-run `aws sso login` and restart the benchmark.
 
+## Requests Other Than the Benchmark Itself
+
+A benchmark run makes more than just inference requests, and all of them are
+signed with the same credential chain, region, and service:
+
+| Request | When it fires | Flags |
+|---|---|---|
+| Readiness probe (`/v1/models`, then a minimal inference request) | Before the run starts | `--wait-for-model-mode`, `--wait-for-model-timeout`, `--wait-for-model-interval` |
+| KV-cache reset hook | Before each run | `--reset-kv-cache`, `--reset-kv-cache-path` |
+| Server profiler start/stop hooks | At profiling phase start and end | `--server-profiler`, `--server-profiler-start-path`, `--server-profiler-stop-path` |
+
+Two details matter behind an IAM-protected endpoint:
+
+- **Each attempt is signed fresh.** A SigV4 signature embeds `x-amz-date` and
+  AWS rejects it outside a five-minute skew window. Readiness polling and
+  control-hook retry backoff both routinely run longer than that, so signing
+  once per URL would start failing partway through the wait.
+- **`--api-key` is suppressed on these paths when `--auth-type sigv4` is set**,
+  exactly as it is on the request path. The signer owns the `Authorization`
+  header; a stray `Authorization: Bearer ...` or `x-api-key` would overwrite or
+  conflict with it.
+
+If the probe were unsigned, API Gateway would answer `403`, and the readiness
+rule treats any status below `500` as "the server is up" -- so the run would
+start against an endpoint that rejects every request. Signing the probe is what
+makes preflight actually gate the benchmark.
+
 ## Examples
 
 ### High-Throughput API Gateway with Warmup
