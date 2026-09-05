@@ -54,6 +54,7 @@ def test_wait_inference_warns_on_endpoint_type_fallback(
             timeout_s=1.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
@@ -80,6 +81,7 @@ def test_wait_inference_dedicated_template_does_not_warn(
             timeout_s=1.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
@@ -104,6 +106,7 @@ def test_wait_inference_messages_uses_dedicated_template(
             timeout_s=1.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
@@ -204,6 +207,7 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
             timeout_s=2.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
