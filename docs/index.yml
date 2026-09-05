@@ -53,6 +53,8 @@ navigation:
       path: tutorials/synthetic-video.md
     - page: Template Endpoint
       path: tutorials/template-endpoint.md
+    - page: AWS SigV4 Authentication
+      path: tutorials/aws-sigv4-auth.md
   - section: Datasets & Inputs
     collapsed: true
     contents:

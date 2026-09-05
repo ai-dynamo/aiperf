@@ -1,0 +1,113 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Config-time validation of SigV4 auth settings.
+
+Each case here previously passed validation and failed at request time in
+every worker (internal botocore error, silently unauthenticated requests, or
+silently ignored flags) instead of failing fast at startup.
+"""
+
+from __future__ import annotations
+
+import pytest
+from pytest import param
+
+from aiperf.config.endpoint import EndpointConfig
+from aiperf.plugin.enums import EndpointType
+
+
+@pytest.mark.parametrize(
+    "kwargs,expected_message",
+    [
+        param(
+            {"auth_type": "sigv4"},
+            "requires --aws-region and --aws-service",
+            id="missing-both",
+        ),
+        param(
+            {"auth_type": "sigv4", "aws_service": "sagemaker"},
+            "requires --aws-region",
+            id="missing-region",
+        ),
+        param(
+            {"auth_type": "sigv4", "aws_region": "us-east-1"},
+            "requires --aws-service",
+            id="missing-service",
+        ),
+        param(
+            {"auth_type": "sigv4", "aws_region": "  ", "aws_service": "sagemaker"},
+            "requires --aws-region",
+            id="blank-region",
+        ),
+        param(
+            {"aws_region": "us-east-1"},
+            "--aws-region has no effect unless --auth-type is set",
+            id="aws-field-without-auth-type",
+        ),
+        param(
+            {"aws_profile": "prod"},
+            "--aws-profile has no effect unless --auth-type is set",
+            id="aws-profile-without-auth-type",
+        ),
+        param(
+            {
+                "type": EndpointType.IMAGE_EDIT,
+                "auth_type": "sigv4",
+                "aws_region": "us-east-1",
+                "aws_service": "sagemaker",
+            },
+            "does not support multipart/form-data",
+            id="sigv4-with-multipart-endpoint",
+        ),
+    ],
+)  # fmt: skip
+def test_invalid_sigv4_config_rejected(kwargs: dict, expected_message: str) -> None:
+    with pytest.raises(ValueError, match=expected_message):
+        EndpointConfig(urls=["http://localhost:8000"], **kwargs)
+
+
+def test_sigv4_with_plain_http_url_rejected() -> None:
+    with pytest.raises(ValueError, match="requires https:// URLs"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            auth_type="sigv4",
+            aws_region="us-east-1",
+            aws_service="sagemaker",
+        )
+
+
+def test_sigv4_requires_http_transport_gate() -> None:
+    """Non-HTTP transports never call _sign_if_needed, so a non-HTTP transport
+    plugin would resolve AWS credentials and sign nothing, silently producing
+    unauthenticated requests. Mirrors
+    test_control_hooks_require_http_transport_gate's model_construct pattern,
+    since "grpc" is not a registered transport plugin and would otherwise fail
+    normal field validation.
+    """
+    cfg = EndpointConfig.model_construct(
+        urls=["https://localhost:8000"],
+        auth_type="sigv4",
+        aws_region="us-east-1",
+        aws_service="sagemaker",
+        transport="grpc",
+    )
+    with pytest.raises(ValueError, match="requires HTTP transport"):
+        cfg._validate_sigv4_auth()
+
+
+def test_valid_sigv4_config_accepted() -> None:
+    config = EndpointConfig(
+        urls=["https://localhost:8000"],
+        auth_type="sigv4",
+        aws_region="us-east-1",
+        aws_service="sagemaker",
+        aws_profile="prod",
+    )
+    assert config.aws_region == "us-east-1"
+    assert config.aws_service == "sagemaker"
+
+
+def test_config_without_auth_or_aws_fields_accepted() -> None:
+    config = EndpointConfig(urls=["http://localhost:8000"])
+    assert config.auth_type is None

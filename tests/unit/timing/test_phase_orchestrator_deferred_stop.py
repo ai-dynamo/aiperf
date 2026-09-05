@@ -37,7 +37,7 @@ async def test_drain_awaits_stop_task_spawned_by_phase_complete_callback(
     released = asyncio.Event()
     stop_completed = False
 
-    async def slow_stop(*_args: object) -> None:
+    async def slow_stop(*_args: object, **_kwargs: object) -> None:
         nonlocal stop_completed
         await released.wait()
         stop_completed = True

@@ -37,6 +37,7 @@ from aiperf.config.control_hooks import (
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
+    RequestSignerType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -217,6 +218,42 @@ class EndpointConfig(BaseConfig):
             description="Transport plugin name. Currently only 'http' (aiohttp-based "
             "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
             "setting overrides auto-detection.",
+        ),
+    ]
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS region for the request. Required when auth_type='sigv4'.",
+        ),
+    ]
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Named AWS credentials profile. Unset uses boto3's default "
+            "credential chain.",
+        ),
+    ]
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            default=None,
+            description="Request signing method for authentication. When set, the selected "
+            "request_signer plugin signs every HTTP request sent by the HTTP transport. "
+            "Replaces Bearer token auth (api_key is ignored when auth_type is set).",
+        ),
+    ]
+
+    aws_service: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS service name for SigV4 request signing (e.g. 'execute-api', "
+            "'sagemaker', 'bedrock-runtime'). Required when auth_type='sigv4'.",
         ),
     ]
 
@@ -689,4 +726,69 @@ class EndpointConfig(BaseConfig):
                 "HTTP transport; unsupported transport "
                 f"{self.transport!r}"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_sigv4_auth(self) -> Self:
+        """Reject SigV4 configurations that would only fail at request time.
+
+        Runs after ``_validate_request_content_type`` so the multipart check
+        sees the auto-selected content type for form-data endpoints.
+        """
+        aws_flags = {
+            "--aws-region": self.aws_region,
+            "--aws-profile": self.aws_profile,
+            "--aws-service": self.aws_service,
+        }
+        if self.auth_type != RequestSignerType.SIGV4:
+            set_flags = sorted(
+                flag for flag, val in aws_flags.items() if val is not None
+            )
+            if set_flags:
+                raise ValueError(
+                    f"{', '.join(set_flags)} has no effect unless --auth-type is set "
+                    f"to 'sigv4'. Set --auth-type sigv4 to enable request signing."
+                )
+            return self
+
+        missing = [
+            flag
+            for flag in ("--aws-region", "--aws-service")
+            if not (aws_flags[flag] or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                f"--auth-type sigv4 requires {' and '.join(missing)} to be set to a "
+                f"non-empty value."
+            )
+
+        # Transport None means auto-detect HTTP from URL — allowed. Only the
+        # HTTP transport (aiohttp_transport.py) calls _sign_if_needed; any other
+        # transport would resolve AWS credentials and sign nothing, silently
+        # producing unauthenticated requests.
+        if self.transport is not None and self.transport != TransportType.HTTP:
+            raise ValueError(
+                "--auth-type sigv4 requires HTTP transport; unsupported transport "
+                f"{self.transport!r}"
+            )
+
+        if self.request_content_type == RequestContentType.MULTIPART_FORM_DATA:
+            raise ValueError(
+                f"--auth-type sigv4 does not support multipart/form-data requests, "
+                f"which endpoint type {self.type} uses. Signing a multipart body is "
+                f"not implemented, and sending it unsigned would silently produce "
+                f"unauthenticated requests."
+            )
+
+        # SigV4 signing adds AWS credentials (Authorization header and optional
+        # X-Amz-Security-Token) to outbound requests. Sending those over plain
+        # HTTP would expose them to interception, so require https for every
+        # configured URL.
+        for url in self.urls:
+            scheme = urlparse(url).scheme.lower()
+            if scheme != "https":
+                raise ValueError(
+                    f"--auth-type sigv4 requires https:// URLs; URL {url!r} uses "
+                    f"scheme {scheme!r}."
+                )
         return self

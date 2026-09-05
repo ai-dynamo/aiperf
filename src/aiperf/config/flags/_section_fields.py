@@ -17,6 +17,10 @@ from __future__ import annotations
 ENDPOINT_FIELDS: frozenset[str] = frozenset(
     {
         "api_key",
+        "auth_type",
+        "aws_profile",
+        "aws_region",
+        "aws_service",
         "connection_reuse_strategy",
         "custom_endpoint",
         "download_video_content",

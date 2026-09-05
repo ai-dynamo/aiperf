@@ -365,6 +365,23 @@ spec:
                         - http
                         description: Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected
                           from URL when unset; explicit setting overrides auto-detection.
+                      awsRegion:
+                        type: string
+                        description: AWS region for the request. Required when auth_type='sigv4'.
+                      awsProfile:
+                        type: string
+                        description: Named AWS credentials profile. Unset uses boto3's default credential chain.
+                      authType:
+                        type: string
+                        enum:
+                        - sigv4
+                        description: Request signing method for authentication. When set, the selected request_signer plugin
+                          signs every HTTP request sent by the HTTP transport. Replaces Bearer token auth (api_key is ignored
+                          when auth_type is set).
+                      awsService:
+                        type: string
+                        description: AWS service name for SigV4 request signing (e.g. 'execute-api', 'sagemaker', 'bedrock-runtime').
+                          Required when auth_type='sigv4'.
                       connectionReuse:
                         type: string
                         description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:
