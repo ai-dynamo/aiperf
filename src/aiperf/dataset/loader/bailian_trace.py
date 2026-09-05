@@ -77,8 +77,8 @@ class BailianTraceDatasetLoader(BaseTraceDatasetLoader[BailianTrace]):
     ) -> ConversationContextMode | None:
         """Bailian rows already carry their full context.
 
-        A follow-up's `input_length` is the parent's prompt plus the parent's
-        response plus the new text, and its `hash_ids` cover that whole span.
+        A follow-up's `input_length` is the history the service retained plus
+        the new text, and its `hash_ids` cover that whole span.
         Accumulating prior turns and live responses in front of it (the
         `DELTAS_WITHOUT_RESPONSES` default) would send roughly twice the
         recorded tokens at turn 2 and more at each later turn.
