@@ -343,8 +343,8 @@ def test_nested_chain_equal_t_disjoint_requests_split_deterministically():
     assert [r.hash_ids[0] for r in plans[1].requests] == [2]
 
 
-def test_nested_chain_detection_uses_root_trace_timeline():
-    """Mixed relative/absolute inner timestamps chain on the normalized root-trace timeline, not raw ``t``, forking where the raw timeline would have merged."""
+def test_nested_chain_detection_rejects_request_before_marker():
+    """A malformed nested timestamp is rejected instead of guessed to be relative."""
     entry = _make_subagent_entry(
         t=100.0,
         requests=[
@@ -356,11 +356,15 @@ def test_nested_chain_detection_uses_root_trace_timeline():
             ),
         ],
     )
-    plans = _expand_subagent_to_child_plans("tr", 0, 0, entry, 64)
-    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:fa:000"]
-    # Normalized coordinates carried on the plan requests themselves.
-    assert plans[0].requests[0].t == pytest.approx(110.0)
-    assert plans[1].requests[0].t == pytest.approx(150.0)
+    with pytest.raises(
+        DatasetLoaderError,
+        match=(
+            r"subagent 'a': inner request timestamp 10\.0 precedes its marker "
+            r"timestamp 100\.0; published Weka nested request timestamps must be "
+            r"absolute trace-relative values"
+        ),
+    ):
+        _expand_subagent_to_child_plans("tr", 0, 0, entry, 64)
 
 
 def test_spawned_chain_inherits_declared_prefix_only_when_proven():
@@ -420,8 +424,8 @@ def test_split_chains_disabled_emits_one_sequential_child():
     assert [r.hash_ids for r in plans[0].requests] == [[1], [50]]
 
 
-def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
-    """Child Turn timestamps live in root-trace coordinates, shifting relative inner ``t`` by ``entry.t`` at emission while delays stay the recorded gaps."""
+def test_absolute_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
+    """Child turn timestamps preserve absolute trace-relative Weka values."""
     sa = {
         "t": 10.0,
         "type": "subagent",
@@ -431,11 +435,11 @@ def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
         "total_tokens": 10,
         "tool_use_count": 1,
         "status": "completed",
-        # Relative inner timestamps: 0.0 and 5.0 seconds after the spawn
-        # marker at t=10 -> root-trace 10.0 and 15.0.
         "requests": [
-            _inner_request(t=0.0, api_time=1.0, hash_ids=[8]).model_dump(by_alias=True),
-            _inner_request(t=5.0, api_time=1.0, hash_ids=[8, 9]).model_dump(
+            _inner_request(t=10.0, api_time=1.0, hash_ids=[8]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=15.0, api_time=1.0, hash_ids=[8, 9]).model_dump(
                 by_alias=True
             ),
         ],
