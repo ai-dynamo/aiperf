@@ -146,6 +146,8 @@ def _fit_and_solve(planner: SmoothIsotonicSLAPlanner) -> int | float | None:
     candidate = float(root)
     if candidate <= planner.feasible_max or candidate >= planner.infeasible_min:
         candidate = (planner.feasible_max + planner.infeasible_min) / 2
+        if candidate <= planner.feasible_max or candidate >= planner.infeasible_min:
+            return None
     return candidate
 
 
