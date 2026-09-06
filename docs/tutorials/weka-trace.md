@@ -18,6 +18,9 @@ Each trace file is a single JSON object describing one coding conversation:
 - `requests` is an ordered list of normal API calls (`type: "n"`), streaming API calls (`type: "s"`), and subagent markers (`type: "subagent"`).
 - Each normal/streaming request carries `hash_ids` (KV-cache block identifiers) used to simulate cache reuse during replay.
 - Subagent markers point at nested sub-conversations — AIPerf replays them as separate concurrent child sessions that the parent waits on before resuming.
+- Every `t`, including an inner request's `t` inside a subagent marker, is an
+  absolute trace-relative timestamp. AIPerf rejects an inner request that starts
+  before its marker instead of guessing that its timestamp is marker-relative.
 
 AIPerf maps the format directly onto its DAG datastructure:
 
@@ -74,7 +77,7 @@ If you don't already have the trace corpus on disk, SemiAnalysis-published Huggi
 - [`semianalysisai/cc-traces-weka-061526`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-061526) — pinned historical full-context corpus (alias `semianalysis_cc_traces_weka_061526`): 233 v7 traces with full subagent fan-out.
 - [`semianalysisai/cc-traces-weka-061526-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-061526-256k) — 232-trace historical 256k-capped sibling (alias `semianalysis_cc_traces_weka_061526_256k`).
 - [`semianalysisai/cc-traces-weka-062126`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126) — pinned current full-context corpus (alias `semianalysis_cc_traces_weka_062126`): 393 v7 traces with full subagent fan-out (parent + child SPAWN/JOIN topology). This is the canonical AgentX MVP corpus.
-- [`semianalysisai/cc-traces-weka-062126-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126-256k) — 393-trace 256k-capped sibling (alias `semianalysis_cc_traces_weka_062126_256k`). Requests over the cap are filtered while surviving relative timestamps and subagent overlap are preserved.
+- [`semianalysisai/cc-traces-weka-062126-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126-256k) — 393-trace 256k-capped sibling (alias `semianalysis_cc_traces_weka_062126_256k`). Requests over the cap are filtered while surviving recorded timing and subagent overlap are preserved.
 
 ```bash
 aiperf profile \

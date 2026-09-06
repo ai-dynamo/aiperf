@@ -82,7 +82,10 @@ def _normal(t, in_tokens, out_tokens, hash_ids, model="m"):
 
 
 def _subagent(t, agent_id, inner_requests, model="m"):
-    """Build one WekaSubagentEntry dict."""
+    """Build a subagent from inner offsets, emitting absolute Weka timestamps."""
+    absolute_inner_requests = [
+        {**request, "t": t + request["t"]} for request in inner_requests
+    ]
     return {
         "t": t,
         "type": "subagent",
@@ -92,7 +95,7 @@ def _subagent(t, agent_id, inner_requests, model="m"):
         "total_tokens": 100,
         "tool_use_count": 1,
         "status": "completed",
-        "requests": inner_requests,
+        "requests": absolute_inner_requests,
         "models": [model],
         "tool_tokens": 10,
         "system_tokens": 5,
