@@ -48,9 +48,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from aiperf.common.environment import Environment
 from aiperf.config.config import BenchmarkConfig
-from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation, _set_nested_value
+from aiperf.config.sweep import AdaptiveSearchSweep, SweepVariation
+from aiperf.orchestrator.search_planner._shared_warmup import mutate_base
 from aiperf.orchestrator.search_planner._sla_helpers import (
     averaged_metric_value,
     iteration_feasibility,
@@ -84,20 +84,6 @@ _FIT_INTERNAL_PROBES = 3
 
 
 _PhaseLiteral = Literal["bracket", "fit", "replicate", "cliff_bisect"]
-
-
-def _find_phase_index(phases: list[dict[str, Any]], name: str) -> int | None:
-    """Return the first phase matching a literal name or semantic kind.
-
-    Defensive against malformed fixtures where a phase entry is not a dict
-    (e.g. test stubs); such entries are skipped rather than raising.
-    """
-    for idx, phase in enumerate(phases):
-        if not isinstance(phase, dict):
-            continue
-        if phase.get("name") == name or phase.get("kind") == name:
-            return idx
-    return None
 
 
 class SmoothIsotonicSLAPlanner(SearchPlanner):
@@ -386,101 +372,13 @@ class SmoothIsotonicSLAPlanner(SearchPlanner):
         return out
 
     def _mutate_base(self, value: int | float) -> BenchmarkConfig:
-        # mode="python" silences the when_used="json" credential redactors
-        # (api_key / headers). context={"include_secrets": True} silences
-        # the unconditional _redact_urls serializer that strips userinfo
-        # (user:pass@host) from endpoint.urls regardless of mode. Both
-        # are needed; without the context flag, URL-credentialed sweeps
-        # like postgres / MLflow URIs would hit "<redacted>" in the
-        # iteration's config and fail to authenticate. Mirrors the
-        # pattern in config/loader/plan.py (PR #972).
-        cfg_dict = self._base.model_dump(
-            mode="python",
-            exclude_none=True,
-            context={"include_secrets": True},
+        return mutate_base(
+            self._base,
+            self._dim,
+            value,
+            cfg=self._cfg,
+            first_probe_at=self._first_probe_at,
         )
-        _set_nested_value(cfg_dict, self._dim.path, value)
-        self._apply_sla_precision(cfg_dict)
-        self._apply_sla_warmup(cfg_dict, value)
-        return BenchmarkConfig.model_validate(cfg_dict)
-
-    def _apply_sla_precision(self, cfg_dict: dict[str, Any]) -> None:
-        """Override profiling-phase ``requests`` per ``cfg.sla_precision``.
-
-        Only fills in when the user did not specify ``requests`` on the
-        profiling phase already; explicit user values always win. Defensive
-        against degenerate fixtures where ``phases`` is missing/empty or the
-        profiling phase is absent.
-        """
-        target = Environment.SEARCH_PLANNER.SLA_PRECISION_REQUESTS.get(
-            self._cfg.sla_precision
-        )
-        if target is None:
-            return
-        phases = cfg_dict.get("phases")
-        if not phases:
-            return
-        idx = _find_phase_index(phases, "profiling")
-        if idx is None:
-            return
-        # ``exclude_none=True`` on dump means an unset ``requests`` is absent
-        # from the dict; treat both ``None`` and missing key as user-unset.
-        existing = phases[idx].get("requests")
-        if existing is None:
-            phases[idx]["requests"] = target
-
-    def _apply_sla_warmup(self, cfg_dict: dict[str, Any], value: int | float) -> None:
-        """Prepend a per-iteration ``warmup`` phase to ``cfg_dict["phases"]``.
-
-        Skipped when ``cfg.sla_warmup_seconds == 0`` (explicit user opt-out)
-        or when the profiling phase cannot be located. The warmup runs at the
-        profiling phase's load and is excluded from results. If the user
-        already declared a warmup phase, it is replaced — the unique-name
-        validator forbids two ``warmup`` entries.
-        """
-        if self._cfg.sla_warmup_seconds == 0:
-            self._first_probe_at.add(value)
-            return
-        phases = cfg_dict.get("phases")
-        if not phases:
-            return
-        idx = _find_phase_index(phases, "profiling")
-        if idx is None:
-            return
-
-        base_warmup = (
-            self._cfg.sla_warmup_seconds
-            if self._cfg.sla_warmup_seconds is not None
-            else Environment.SEARCH_PLANNER.DEFAULT_WARMUP_SECONDS
-        )
-        if value not in self._first_probe_at:
-            duration = max(
-                Environment.SEARCH_PLANNER.FIRST_PROBE_WARMUP_FLOOR, base_warmup
-            )
-            self._first_probe_at.add(value)
-        else:
-            duration = max(
-                Environment.SEARCH_PLANNER.REPLICATE_WARMUP_FLOOR, base_warmup
-            )
-
-        warmup_phase = {
-            **phases[idx],
-            "name": "warmup",
-            "kind": "warmup",
-            "duration": duration,
-            "exclude_from_results": True,
-        }
-        # A workload stop condition would end the warmup early once its count
-        # is sent; keep it duration-bounded.
-        warmup_phase.pop("requests", None)
-        warmup_phase.pop("sessions", None)
-        # Replace any user-declared warmup so the per-iteration sweep value
-        # drives the warmup; the unique-name validator on BenchmarkConfig
-        # forbids two phases named "warmup".
-        if phases and phases[0].get("name") == "warmup":
-            phases[0] = warmup_phase
-        else:
-            phases.insert(0, warmup_phase)
 
     def _extract_objective(self, results: list[RunResult]) -> float | None:
         values: list[float] = []
