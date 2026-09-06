@@ -4,6 +4,8 @@
 
 from pathlib import Path
 
+import orjson
+
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.common.environment import Environment
 from tests.unit.dataset.loader._shared_helpers import _make_loader, _write_trace
@@ -475,8 +477,26 @@ def test_parallel_inner_chains_under_parallel_reconstruction(tmp_path, monkeypat
         assert len(children[sid].turns) == 1
 
 
+def test_semianalysis_agentx_fixture_uses_absolute_nested_timestamps():
+    """Published AgentX nested request times are absolute trace-relative values."""
+    trace = orjson.loads(
+        (FIXTURES / "async_subagent_with_parallel_inner.json").read_bytes()
+    )
+    subagents = [
+        request for request in trace["requests"] if request["type"] == "subagent"
+    ]
+    nested_requests = [
+        (subagent["t"], request["t"])
+        for subagent in subagents
+        for request in subagent["requests"]
+    ]
+
+    assert nested_requests
+    assert all(request_t >= marker_t for marker_t, request_t in nested_requests)
+
+
 def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
-    """End-to-end regression against the real captured trace: one non-background SPAWN branch, two sibling children, and the join only on the late parent turn."""
+    """End-to-end regression against a real captured AgentX trace."""
     src = FIXTURES / "async_subagent_with_parallel_inner.json"
     assert src.exists(), f"regression fixture missing: {src}"
     # Loader requires a single file path or directory; copy into tmp_path
