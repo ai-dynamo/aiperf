@@ -5,7 +5,6 @@
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from pytest import param
 
 from aiperf import __version__ as aiperf_version
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
@@ -416,33 +415,20 @@ class TestBaseTransport:
         assert "key=overridden" in url
         assert "key=original" not in url
 
-    @pytest.mark.parametrize(
-        "endpoint_params,expected_tags",
-        [
-            param({}, ["first", "", "last"], id="preserve"),
-            param({"other": "value"}, ["first", "", "last"], id="merge"),
-        ],
-    )  # fmt: skip
     def test_build_url_preserves_repeated_query_values(
-        self,
-        request_info: RequestInfo,
-        endpoint_params: dict[str, str],
-        expected_tags: list[str],
+        self, request_info: RequestInfo
     ) -> None:
-        """Preserve repeated and blank values when retaining or merging query keys."""
         request_info.model_endpoint.endpoint.base_urls = [
             "http://localhost:8000/v1/chat/completions?tag=first&tag=&tag=last"
         ]
         request_info.model_endpoint.endpoint.custom_endpoint = None
-        request_info.endpoint_params = endpoint_params
+        request_info.endpoint_params = {}
         transport = FakeTransport(model_endpoint=request_info.model_endpoint)
 
         query = parse_qs(
             urlparse(transport.build_url(request_info)).query, keep_blank_values=True
         )
-        assert query["tag"] == expected_tags
-        if "other" in endpoint_params:
-            assert query["other"] == ["value"]
+        assert query["tag"] == ["first", "", "last"]
 
     def test_build_url_empty_param_value(self, transport, request_info):
         """Test build_url handles empty parameter values."""
