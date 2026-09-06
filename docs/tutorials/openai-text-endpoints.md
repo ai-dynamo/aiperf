@@ -26,6 +26,8 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 ## Profile Chat Completions API
 The Chat Completions API uses the `/v1/chat/completions` endpoint.
 
+If your server or gateway requires query parameters, include them in a quoted `--url`, for example `--url 'http://localhost:8000?tag=first&tag=second'`. AIPerf preserves both values of repeated parameters when constructing the request URL.
+
 ### Profile with synthetic inputs
 
 Run AIPerf against the Chat Completions endpoint using synthetic inputs:

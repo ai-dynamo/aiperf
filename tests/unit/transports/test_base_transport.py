@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 
 from aiperf import __version__ as aiperf_version
@@ -412,6 +414,21 @@ class TestBaseTransport:
         url = transport.build_url(request_info)
         assert "key=overridden" in url
         assert "key=original" not in url
+
+    def test_build_url_preserves_repeated_query_values(
+        self, request_info: RequestInfo
+    ) -> None:
+        request_info.model_endpoint.endpoint.base_urls = [
+            "http://localhost:8000/v1/chat/completions?tag=first&tag=&tag=last"
+        ]
+        request_info.model_endpoint.endpoint.custom_endpoint = None
+        request_info.endpoint_params = {}
+        transport = FakeTransport(model_endpoint=request_info.model_endpoint)
+
+        query = parse_qs(
+            urlparse(transport.build_url(request_info)).query, keep_blank_values=True
+        )
+        assert query["tag"] == ["first", "", "last"]
 
     def test_build_url_empty_param_value(self, transport, request_info):
         """Test build_url handles empty parameter values."""
