@@ -140,7 +140,7 @@ explicitly.
 
 - `PATH` is a dotted path resolved by `_set_nested_value` (the same primitive grid sweeps use). For named-list segments like `phases.profiling.concurrency`, the segment matches against the `name` field. Typos error loudly with the available names listed.
 - `LO` and `HI` are inclusive bounds parsed as floats. For `:int`, integer rounding happens at the planner boundary so candidates always coerce to integers before the run.
-- `:int` produces an integer-valued dimension, `:real` a real-valued dimension. Categorical dimensions are not supported by the current `SearchSpaceDimension` model.
+- `:int` produces an integer-valued dimension, `:real` a real-valued dimension. Categorical dimensions are not supported by the current `SearchSpaceDimension` model. The kind must match the field's type, e.g. `phases.profiling.concurrency` is `int`-only and requires `:int` (the bare `PATH:LO,HI` form defaults to `:real` and is rejected for `int` fields).
 
 Multi-dim:
 
@@ -550,7 +550,7 @@ flowchart LR
     class hist,SLA output
 ```
 
-The monotonic planner mirrors Triton perf_analyzer's `--binary-search`: each point's verdict is provisional until 2 trials agree (configurable via `AdaptiveSearchSweep.monotonic_stability_trials`, default `2`). Both 1D planners accept an `int` or `real` search-space dimension; the exponential probe doubles from `lo`, so `lo` must be positive (`lo >= 1` for `int`, `lo > 0` for `real`). A `real` boundary is reported as the band `[feasible_max, infeasible_min]` rather than an exact point.
+The monotonic planner mirrors Triton perf_analyzer's `--binary-search`: each point's verdict is provisional until 2 trials agree (configurable via `AdaptiveSearchSweep.monotonic_stability_trials`, default `2`). Both 1D planners accept an `int` or `real` search-space dimension; the exponential probe doubles from `lo`, so `lo` must be positive (`lo >= 1` for `int`, `lo > 0` for `real`). A dimension with `kind="real"` targeting an `int`-typed field (e.g. `concurrency`) is rejected at plan build, use `kind="int"` or a `float`-typed field such as `rate`. A `real` boundary is reported as the band `[feasible_max, infeasible_min]` rather than an exact point.
 
 #### `smooth_isotonic` (default)
 
