@@ -86,13 +86,17 @@ def test_build_search_planner_returns_none_when_not_adaptive() -> None:
     assert build_search_planner(plan) is None
 
 
-def test_build_search_planner_dispatches_via_plugin_registry(adaptive_plan: BenchmarkPlan) -> None:
+def test_build_search_planner_dispatches_via_plugin_registry(
+    adaptive_plan: BenchmarkPlan,
+) -> None:
     """The factory returns a SearchPlanner via plugin lookup."""
     planner = build_search_planner(adaptive_plan)
     assert isinstance(planner, SearchPlanner)
 
 
-def test_build_search_planner_rejects_real_dim_on_int_typed_field(adaptive_plan: BenchmarkPlan) -> None:
+def test_build_search_planner_rejects_real_dim_on_int_typed_field(
+    adaptive_plan: BenchmarkPlan,
+) -> None:
     """A kind='real' dimension targeting an int-typed phase field fails fast
     instead of crashing (or silently coercing) mid-search."""
     assert adaptive_plan.sweep is not None
@@ -103,7 +107,9 @@ def test_build_search_planner_rejects_real_dim_on_int_typed_field(adaptive_plan:
         build_search_planner(adaptive_plan)
 
 
-def test_build_search_planner_accepts_real_dim_on_float_typed_field(adaptive_plan: BenchmarkPlan) -> None:
+def test_build_search_planner_accepts_real_dim_on_float_typed_field(
+    adaptive_plan: BenchmarkPlan,
+) -> None:
     """A kind='real' dimension on a float-typed phase field builds normally."""
     assert adaptive_plan.sweep is not None
     adaptive_plan.sweep.search_space[0] = SearchSpaceDimension(
