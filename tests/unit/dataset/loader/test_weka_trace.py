@@ -1085,7 +1085,7 @@ def _subagent(*, agent_id: str, t: float, in_tokens: int, hash_ids: list[int]):
         "total_tokens": 100,
         "tool_use_count": 1,
         "status": "completed",
-        "requests": [_normal_req(t=0.0, in_tokens=in_tokens, hash_ids=hash_ids)],
+        "requests": [_normal_req(t=t, in_tokens=in_tokens, hash_ids=hash_ids)],
         "models": ["m"],
         "tool_tokens": 0,
         "system_tokens": 0,

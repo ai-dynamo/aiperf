@@ -32,13 +32,15 @@ def _subagent(
     *,
     t=1.0,
     inner_model="m",
-    inner=(("n", 0.0, 10, 1),),
+    inner=None,
     models=("m",),
     status="completed",
     duration_ms=1,
     total_tokens=0,
     tool_use_count=0,
 ):
+    if inner is None:
+        inner = (("n", t, 10, 1),)
     inner_reqs = [
         {"t": it, "type": "n", "model": inner_model, "in": ins, "out": outs}
         for _ty, it, ins, outs in inner
@@ -240,7 +242,7 @@ def test_subagent_inner_models_mismatch_declared_models_no_error(tmp_path, monke
 
 def test_subagent_with_hundred_inner_turns_scales(tmp_path, monkeypatch):
     """A subagent with 100 inner normal requests produces a child conversation with exactly 100 turns (large-fanout smoke test)."""
-    inner = tuple(("n", float(i), 10, 1) for i in range(100))
+    inner = tuple(("n", float(i + 1), 10, 1) for i in range(100))
     requests = [
         _normal(t=0.0),
         _subagent("a1", t=1.0, inner=inner),
@@ -295,13 +297,13 @@ def test_subagent_duration_tokens_tool_count_all_none_non_async_accepted(
 def test_subagent_requests_ordering_preserved_in_child_conversation(
     tmp_path, monkeypatch
 ):
-    """Inner request order is preserved while spawn-relative ``t`` values shift by the marker's t=5.0 onto the root timeline."""
+    """Absolute trace-relative inner timestamps are preserved in request order."""
     requests = [
         _normal(t=0.0),
         _subagent(
             "a1",
             t=5.0,
-            inner=(("n", 0.0, 10, 1), ("n", 1.0, 10, 1), ("n", 2.0, 10, 1)),
+            inner=(("n", 5.0, 10, 1), ("n", 6.0, 10, 1), ("n", 7.0, 10, 1)),
         ),
         _normal(t=10.0),
     ]
@@ -382,7 +384,7 @@ def test_subagent_inner_hash_id_collision_with_parent_does_not_raise(
             "status": "completed",
             "requests": [
                 {
-                    "t": 0.0,
+                    "t": 1.0,
                     "type": "n",
                     "model": "m",
                     "in": 10,
@@ -449,9 +451,9 @@ def test_three_adjacent_subagents_collapse_into_one_multi_child_branch(
         "collapse",
         [
             _normal(t=0.0, in_=10),
-            _subagent("a1", t=1.0, inner=(("n", 0.0, 5, 1),)),
-            _subagent("a2", t=2.0, inner=(("n", 0.0, 5, 1),)),
-            _subagent("a3", t=3.0, inner=(("n", 0.0, 5, 1),)),
+            _subagent("a1", t=1.0, inner=(("n", 1.0, 5, 1),)),
+            _subagent("a2", t=2.0, inner=(("n", 2.0, 5, 1),)),
+            _subagent("a3", t=3.0, inner=(("n", 3.0, 5, 1),)),
             _normal(t=5.0, in_=10),
         ],
     )

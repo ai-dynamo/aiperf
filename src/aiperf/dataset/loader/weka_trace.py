@@ -99,15 +99,13 @@ def _install_replay_dependencies(conversations: list[Conversation]) -> None:
 def _subagent_request_absolute_t(
     entry: WekaSubagentEntry, req: WekaNormalRequest
 ) -> float:
-    """Return a subagent inner request timestamp in root-trace coordinates.
-
-    Current Weka captures store inner request ``t`` as an absolute timestamp,
-    while older synthetic/unit fixtures used subagent-relative values. Treat a
-    child timestamp before the spawn marker as relative so both shapes land on
-    the same root-trace timeline.
-    """
+    """Validate and return a subagent request's absolute trace-relative timestamp."""
     if req.t + _JOIN_EPSILON_SECONDS < entry.t:
-        return entry.t + req.t
+        raise DatasetLoaderError(
+            f"subagent '{entry.agent_id}': inner request timestamp {req.t} precedes "
+            f"its marker timestamp {entry.t}; published Weka nested request "
+            "timestamps must be absolute trace-relative values"
+        )
     return req.t
 
 
@@ -436,10 +434,9 @@ def _expand_subagent_to_child_plans(
     back onto their chain via the seam-join election, so a context edit never
     fabricates an agent.
 
-    Inner timestamps are normalized to root-trace coordinates up front
-    (legacy captures recorded them relative to the spawn marker), so the
-    detection's temporal-feasibility rule, turn timing, and metric ordering
-    all share one timeline. Requests without hash evidence ride the main
+    Inner timestamps are validated as absolute root-trace coordinates up front,
+    so the detection's temporal-feasibility rule, turn timing, and metric
+    ordering all share one timeline. Requests without hash evidence ride the main
     chain in time order (no LCP evidence, spec section 8); a fully
     evidence-less subagent is therefore exactly one sequential child.
 
@@ -457,25 +454,14 @@ def _expand_subagent_to_child_plans(
     -- the system role is never fabricated for a thread that did not record
     the declared prefix.
     """
-    normalized_pairs = [
-        (
-            inner_idx,
-            req.model_copy(update={"t": _subagent_request_absolute_t(entry, req)})
-            if req.t + _JOIN_EPSILON_SECONDS < entry.t
-            else req,
-        )
-        for inner_idx, req in enumerate(entry.requests)
-    ]
-    normalized = [req for _, req in normalized_pairs]
-    inner_idx_by_normalized_idx = {
-        normalized_idx: inner_idx
-        for normalized_idx, (inner_idx, _) in enumerate(normalized_pairs)
-    }
+    for req in entry.requests:
+        _subagent_request_absolute_t(entry, req)
+    indexed_requests = list(enumerate(entry.requests))
 
     chain_items: list[list[tuple[int, WekaNormalRequest]]]
     chain_wg_coord: list[tuple[int, int] | None]
-    if not split_chains or not normalized:
-        ordered = sorted(enumerate(normalized), key=lambda it: (it[1].t, it[0]))
+    if not split_chains or not indexed_requests:
+        ordered = sorted(indexed_requests, key=lambda it: (it[1].t, it[0]))
         chain_items = [ordered]
         chain_wg_coord = [None]
         classify_main = [req for _, req in chain_items[0]]
@@ -490,7 +476,7 @@ def _expand_subagent_to_child_plans(
         # Same preamble rule as the top level: a leading prefix-disjoint
         # throwaway call must not found the main chain and hijack the
         # subagent's identity; it re-attaches to the main chain for replay.
-        preamble, detect_inner = _split_off_preamble(list(enumerate(normalized)))
+        preamble, detect_inner = _split_off_preamble(indexed_requests)
         detection = detect_agent_chains(
             detect_inner,
             seam_max_gap_seconds=Environment.DATASET.WEKA_SEAM_MAX_GAP_SECONDS,
@@ -527,10 +513,7 @@ def _expand_subagent_to_child_plans(
     plans: list[_ChildPlan] = []
     for chain_idx, chain_items_for_plan in enumerate(chain_items):
         chain_requests = [req for _, req in chain_items_for_plan]
-        request_inner_indices = [
-            inner_idx_by_normalized_idx[normalized_idx]
-            for normalized_idx, _ in chain_items_for_plan
-        ]
+        request_inner_indices = [inner_idx for inner_idx, _ in chain_items_for_plan]
         is_aux = is_reduction = False
         wg_coord: tuple[int, int] | None = None
         if chain_idx == 0:
