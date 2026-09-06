@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING
 
-from aiperf.config.phases import PhaseConfig
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkPlan
@@ -38,27 +38,27 @@ def build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
     config = plan.sweep
     real_dims = [dim for dim in config.search_space if dim.kind == "real"]
     if real_dims:
-        # kind="real" dimensions may only target fields that accept
-        # fractional values; int-typed phase fields would reject (or
-        # silently coerce) the fractional proposals mid-search.
-        int_fields: set[str] = set()
-        for model in get_args(get_args(PhaseConfig)[0]):
-            for name, field in model.model_fields.items():
-                ann = field.annotation
-                args = get_args(ann)
-                if ann is int or (
-                    args and all(a is int or a is type(None) for a in args)
-                ):
-                    int_fields.add(name)
-        for dim in real_dims:
-            leaf = dim.path.rsplit(".", 1)[-1]
-            if leaf in int_fields:
-                raise ValueError(
-                    f"search dimension {dim.path!r} has kind='real' but targets "
-                    f"int-typed phase field {leaf!r}; the planner would propose "
-                    f"fractional values that the phase config rejects. Use "
-                    f"kind='int', or target a float-typed field (e.g. 'rate')."
+        from aiperf.config.config import BenchmarkConfig
+        from aiperf.config.sweep import _set_nested_value
+
+        base = plan.configs[0] if plan.configs else None
+        if base is not None:
+            for dim in real_dims:
+                probe = base.model_dump(  # type: ignore[union-attr]
+                    mode="python", exclude_none=True, context={"include_secrets": True}
                 )
+                _set_nested_value(probe, dim.path, 0.5)
+                try:
+                    BenchmarkConfig.model_validate(probe)
+                except ValidationError as exc:
+                    if any(err.get("type") == "int_from_float" for err in exc.errors()):
+                        leaf = dim.path.rsplit(".", 1)[-1]
+                        raise ValueError(
+                            f"search dimension {dim.path!r} has kind='real' but targets "
+                            f"int-typed field {leaf!r}; the planner would propose "
+                            f"fractional values that the config rejects. Use "
+                            f"kind='int', or target a float-typed field (e.g. 'rate')."
+                        ) from exc
     if len(config.sla_tiers) >= 2:
         from aiperf.orchestrator.search_planner.multi_tier_planner import (
             MultiTierPlanner,

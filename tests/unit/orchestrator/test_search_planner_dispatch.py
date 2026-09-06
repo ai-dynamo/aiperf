@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.plugin.enums import SearchPlannerType
@@ -13,7 +14,7 @@ from aiperf.plugin.enums import SearchPlannerType
 
 @pytest.fixture
 def adaptive_plan():
-    """A MagicMock plan with the fields ``build_search_planner`` reads."""
+    """A plan with the fields ``build_search_planner`` reads."""
     plan = MagicMock()
     plan.sweep = AdaptiveSearchSweep(
         search_space=[
@@ -39,7 +40,23 @@ def adaptive_plan():
             )
         ],
     )
-    plan.configs = [MagicMock()]
+    plan.configs = [
+        BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "profiling", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "poisson",
+                        "rate": 1.0,
+                        "requests": 10,
+                    }
+                ],
+            }
+        )
+    ]
     return plan
 
 
@@ -69,7 +86,7 @@ def test_build_search_planner_rejects_real_dim_on_int_typed_field(adaptive_plan)
     adaptive_plan.sweep.search_space[0] = SearchSpaceDimension(
         path="phases.profiling.requests", lo=10, hi=1000, kind="real"
     )
-    with pytest.raises(ValueError, match="int-typed phase field 'requests'"):
+    with pytest.raises(ValueError, match="int-typed field 'requests'"):
         build_search_planner(adaptive_plan)
 
 
