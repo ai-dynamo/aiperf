@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
@@ -44,21 +45,26 @@ def build_search_planner(plan: BenchmarkPlan) -> SearchPlanner | None:
         base = plan.configs[0] if plan.configs else None
         if base is not None:
             for dim in real_dims:
+                lo = float(dim.lo)
+                hi = float(dim.hi)
+                mid = (lo + hi) / 2
+                probe_val = math.nextafter(mid, hi)
+                if probe_val <= lo or probe_val >= hi:
+                    probe_val = math.nextafter(mid, lo)
                 probe = base.model_dump(  # type: ignore[union-attr]
                     mode="python", exclude_none=True, context={"include_secrets": True}
                 )
-                _set_nested_value(probe, dim.path, 0.5)
+                _set_nested_value(probe, dim.path, probe_val)
                 try:
                     BenchmarkConfig.model_validate(probe)
                 except ValidationError as exc:
-                    if any(err.get("type") == "int_from_float" for err in exc.errors()):
-                        leaf = dim.path.rsplit(".", 1)[-1]
-                        raise ValueError(
-                            f"search dimension {dim.path!r} has kind='real' but targets "
-                            f"int-typed field {leaf!r}; the planner would propose "
-                            f"fractional values that the config rejects. Use "
-                            f"kind='int', or target a float-typed field (e.g. 'rate')."
-                        ) from exc
+                    leaf = dim.path.rsplit(".", 1)[-1]
+                    raise ValueError(
+                        f"search dimension {dim.path!r} has kind='real' but targets "
+                        f"int-typed field {leaf!r}; the planner would propose "
+                        f"fractional values that the config rejects. Use "
+                        f"kind='int', or target a float-typed field (e.g. 'rate')."
+                    ) from exc
     if len(config.sla_tiers) >= 2:
         from aiperf.orchestrator.search_planner.multi_tier_planner import (
             MultiTierPlanner,

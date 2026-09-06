@@ -116,3 +116,15 @@ def test_build_search_planner_accepts_real_dim_on_float_typed_field(
         path="phases.profiling.rate", lo=1.0, hi=10.0, kind="real"
     )
     assert isinstance(build_search_planner(adaptive_plan), SearchPlanner)
+
+
+def test_build_search_planner_rejects_real_dim_on_non_numeric_field(
+    adaptive_plan: BenchmarkPlan,
+) -> None:
+    """A kind='real' dimension on a non-numeric field fails fast."""
+    assert adaptive_plan.sweep is not None
+    adaptive_plan.sweep.search_space[0] = SearchSpaceDimension(
+        path="endpoint.type", lo=1, hi=10, kind="real"
+    )
+    with pytest.raises(ValueError, match="int-typed field 'type'"):
+        build_search_planner(adaptive_plan)
