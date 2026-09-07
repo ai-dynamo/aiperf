@@ -161,3 +161,35 @@ class ZMQDealerRequestClient(BaseZMQClient, TaskManagerMixin):
 
         await self.request_async(message, callback)
         return await asyncio.wait_for(future, timeout=timeout)
+
+    async def send(self, message: Message) -> None:
+        """Send a message without waiting for a response (fire-and-forget).
+
+        Unlike :meth:`request`, this does not register a callback or wait for a reply.
+        Useful for one-way notifications where delivery confirmation is not needed.
+
+        Args:
+            message: The message to send.
+
+        Raises:
+            CommunicationError: If the send fails.
+        """
+        await self._check_initialized()
+
+        if not isinstance(message, Message):
+            raise TypeError(
+                f"message must be an instance of Message, got {type(message).__name__}"
+            )
+
+        if not message.request_id:
+            message.request_id = str(uuid.uuid4())
+
+        request_json_bytes = message.to_json_bytes()
+        self.trace(lambda msg=request_json_bytes: f"Sending fire-and-forget: {msg}")
+
+        try:
+            await self.socket.send(request_json_bytes)
+        except Exception as e:
+            raise CommunicationError(
+                f"Exception sending message: {e.__class__.__qualname__} {e}",
+            ) from e

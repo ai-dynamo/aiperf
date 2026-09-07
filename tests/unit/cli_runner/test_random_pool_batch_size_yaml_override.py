@@ -12,7 +12,6 @@ All tests drive ``resolve_config`` with a real YAML file, not ``convert_cli_to_a
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -218,6 +217,10 @@ def test_batch_size_on_yaml_with_omitted_format_reports_effective_default(
     FileDataset.format defaults to DatasetFormat.SINGLE_TURN -- "got format:
     None" reads like a parse failure rather than "you didn't set format, so
     it's using the default".
+
+    The message is now phrased in CLI-flag terms rather than YAML-key terms,
+    but the property under test is unchanged: it must name the effective
+    default, never None.
     """
     pool = tmp_path / "pool.jsonl"
     pool.touch()
@@ -238,8 +241,12 @@ benchmark:
     yaml_path = tmp_path / "no_format.yaml"
     yaml_path.write_text(yaml_content)
     cli = _cli(prompt_batch_size=4)
-    with pytest.raises(ValueError, match=re.escape("got format: single_turn")):
+    with pytest.raises(ValueError, match="single_turn") as excinfo:
         resolve_config(cli, yaml_path)
+
+    assert "None" not in str(excinfo.value), (
+        "the effective default must be named, never a bare None"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -298,39 +305,38 @@ def test_batch_size_flag_on_synthetic_yaml_does_not_raise(
     assert cfg.benchmark.datasets[0].type == "synthetic"
 
 
-def test_prompt_batch_size_flag_on_synthetic_yaml_is_dropped_with_warning(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+def test_prompt_batch_size_flag_overrides_synthetic_yaml(
+    tmp_path: Path,
 ) -> None:
-    """Pins the known (pre-existing, out-of-scope-to-fix-here) gap: nothing in
-    the YAML+CLI path routes --prompt-batch-size onto a synthetic dataset's
-    prompts.batch_size, unlike the CLI-only path (no --config) where the same
-    flag applies correctly. The YAML value survives untouched and the explicit
-    CLI flag has no effect, inverting normal CLI-overrides-YAML precedence --
-    so it must at least warn, since the adjacent wrong-format file-dataset case
-    raises loudly for the same flag. If the value assertion starts failing, the
-    gap has been closed -- update this test to assert the override took effect.
+    """The gap this used to pin is closed.
+
+    Nothing in the YAML+CLI path routed --prompt-batch-size onto a synthetic
+    dataset's prompts.batch_size, so the flag was silently ignored and the
+    YAML value survived -- inverting normal CLI-overrides-YAML precedence.
+    build_dataset now serves both paths, so the flag applies here exactly as
+    it does without --config.
     """
     yaml_path = _write_synthetic_yaml(tmp_path, batch_size=1)
     cli = _cli(prompt_batch_size=4)
-    with caplog.at_level("WARNING", logger="aiperf.config.flags.resolver"):
-        cfg = resolve_config(cli, yaml_path)
-    assert cfg.benchmark.datasets[0].prompts.batch_size == 1
-    assert "--prompt-batch-size ignored" in caplog.text
+    cfg = resolve_config(cli, yaml_path)
+    assert cfg.benchmark.datasets[0].prompts.batch_size == 4
 
 
-def test_image_batch_size_flag_on_synthetic_yaml_is_dropped_with_warning(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+def test_image_batch_size_flag_creates_the_images_block(
+    tmp_path: Path,
 ) -> None:
-    """Companion to the text case: --image-batch-size against a synthetic YAML
-    dataset with no `images:` block doesn't even create one -- the flag has
-    zero effect end to end, not just a value mismatch, and warns accordingly.
+    """Companion to the text case.
+
+    --image-batch-size against a synthetic YAML with no `images:` block used
+    not to even create one: zero effect end to end, not just a value
+    mismatch. It now applies.
     """
     yaml_path = _write_synthetic_yaml(tmp_path, batch_size=1)
     cli = _cli(image_batch_size=2)
-    with caplog.at_level("WARNING", logger="aiperf.config.flags.resolver"):
-        cfg = resolve_config(cli, yaml_path)
-    assert cfg.benchmark.datasets[0].images is None
-    assert "--image-batch-size ignored" in caplog.text
+    cfg = resolve_config(cli, yaml_path)
+    images = cfg.benchmark.datasets[0].images
+    assert images is not None
+    assert images.batch_size == 2
 
 
 def test_batch_size_flag_applies_without_cli_custom_dataset_type(
@@ -351,3 +357,72 @@ def test_batch_size_flag_applies_without_cli_custom_dataset_type(
     assert "custom_dataset_type" not in cli.model_fields_set
     cfg = resolve_config(cli, yaml_path)
     assert _dataset(cfg).prompt_batch_size == 4
+
+
+def _write_single_turn_yaml(tmp_path: Path, pool_path: Path) -> Path:
+    """Write a minimal YAML config with a non-random_pool file dataset."""
+    yaml_content = f"""\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: file
+    format: single_turn
+    path: {pool_path}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    cfg_path = tmp_path / "single_turn.yaml"
+    cfg_path.write_text(yaml_content)
+    return cfg_path
+
+
+def test_batch_size_flag_applies_when_custom_dataset_type_overrides_yaml_format(
+    tmp_path: Path,
+) -> None:
+    """--custom-dataset-type random_pool overrides a non-random_pool YAML
+    format; the batch-size guard must judge the overridden format, not the
+    stale pre-override YAML value.
+
+    Regression: declared_format was read straight off the raw YAML dict
+    before build_dataset applies the --custom-dataset-type override, so this
+    raised "requires a random_pool dataset... declares format: single_turn"
+    even though --custom-dataset-type random_pool is exactly the format the
+    guard is checking for -- the guard and the resolver disagreed about what
+    the format was.
+    """
+    pool = tmp_path / "pool.jsonl"
+    pool.touch()
+    yaml_path = _write_single_turn_yaml(tmp_path, pool)
+    cli = _cli(custom_dataset_type="random_pool", prompt_batch_size=4)
+    cfg = resolve_config(cli, yaml_path)
+    dataset = _dataset(cfg)
+    assert dataset.format == "random_pool"
+    assert dataset.prompt_batch_size == 4
+
+
+def test_image_shape_flag_on_synthetic_yaml_with_no_images_block_still_generates_images(
+    tmp_path: Path,
+) -> None:
+    """--image-width-mean against a synthetic YAML with no `images:` block must
+    include images, not silently resolve to batch_size=0 ("disabled").
+
+    Regression: _apply_implicit_media_batch (which materializes batch_size=1
+    whenever a media-shape flag is set without an explicit batch size) was
+    suppressed wholesale in override mode to avoid stomping a YAML batch size
+    the user never mentioned. But when the YAML has no images: block at all,
+    there is nothing to stomp, and the model default batch_size=0 means
+    "disabled" -- a multimodal benchmark request silently degrades to
+    text-only with no error, since endpoints/base_endpoint.py skips falsy
+    content strings.
+    """
+    yaml_path = _write_synthetic_yaml(tmp_path)
+    cli = _cli(image_width_mean=64)
+    cfg = resolve_config(cli, yaml_path)
+    images = cfg.benchmark.datasets[0].images
+    assert images is not None
+    assert images.batch_size == 1

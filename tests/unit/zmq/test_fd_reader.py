@@ -10,7 +10,9 @@ are covered without a live ZMQ context.
 """
 
 import asyncio
+import contextlib
 import socket as stdlib_socket
+import unittest.mock
 from collections import deque
 
 import pytest
@@ -77,7 +79,7 @@ async def test_start_registers_fd_and_bootstrap_drains():
         assert received == [b"a", b"b"]
         assert reader._fd == r_sock.fileno()
     finally:
-        reader.stop()
+        await reader.stop()
         r_sock.close()
         w_sock.close()
 
@@ -85,17 +87,89 @@ async def test_start_registers_fd_and_bootstrap_drains():
     assert reader._fd is None
 
 
-def test_stop_without_start_is_safe():
+@pytest.mark.asyncio
+async def test_stop_without_start_is_safe():
     """stop() before start() (no fd/loop) is a no-op that still marks stopped."""
     reader = _make_reader(_FakeSocket())
-    reader.stop()
+    await reader.stop()
     assert reader._stopped is True
+
+
+@pytest.mark.asyncio
+async def test_stop_yields_to_loop_after_remove_reader():
+    """stop() must yield control back to the loop after remove_reader().
+
+    Some event loop implementations (e.g. uvloop, per libuv's deferred
+    ``uv__io_stop``) defer the actual FD-watcher deregistration by a loop
+    turn. ``ZMQBaseClient._shutdown_socket`` closes the underlying socket
+    immediately after ``stop()`` returns; if the closed fd is reused by a
+    new socket before the old watcher is fully detached, this can corrupt
+    the new registration or abort the process. ``stop()`` must therefore
+    give the loop at least one turn (e.g. ``await asyncio.sleep(0)``) after
+    ``remove_reader()`` so any deferred deregistration completes before
+    control returns to a caller that is about to close the socket.
+    """
+    r_sock, w_sock = stdlib_socket.socketpair()
+    r_sock.setblocking(False)
+    sock = _FakeSocket(fd=r_sock.fileno(), events=0)
+    reader = _make_reader(sock)
+    reader.start()
+
+    order: list[str] = []
+    real_sleep = asyncio.sleep
+
+    async def tracking_sleep(delay):
+        order.append("yielded")
+        await real_sleep(delay)
+
+    try:
+        with unittest.mock.patch("asyncio.sleep", tracking_sleep):
+            order.append("before_stop")
+            await reader.stop()
+            order.append("after_stop")
+    finally:
+        r_sock.close()
+        w_sock.close()
+
+    assert order == ["before_stop", "yielded", "after_stop"], (
+        "stop() must await asyncio.sleep(0) (or equivalent) after "
+        f"remove_reader() and before returning; observed order: {order}"
+    )
 
 
 def test_batch_limit_nonpositive_falls_back_to_256():
     """A <=0 batch_limit clamps to the 256 default."""
     assert _make_reader(_FakeSocket(), batch_limit=0)._batch_limit == 256
     assert _make_reader(_FakeSocket(), batch_limit=-5)._batch_limit == 256
+
+
+@pytest.mark.asyncio
+async def test_start_after_stop_is_noop():
+    """start() racing after stop() (per @background_task(immediate=True)'s
+    stop_event check -> yield_to_event_loop() -> start() window) must not
+    register a reader on a socket that is about to be closed.
+    """
+    r_sock, w_sock = stdlib_socket.socketpair()
+    r_sock.setblocking(False)
+    sock = _FakeSocket(fd=r_sock.fileno(), events=zmq.POLLIN)
+    dispatched: list = []
+    reader = _make_reader(sock, recv_one=lambda: b"x", dispatch=dispatched.append)
+
+    # stop() already ran (raced ahead of start()) before start() gets a turn.
+    reader._stopped = True
+    try:
+        reader.start()
+        await asyncio.sleep(0)
+
+        assert reader._fd is None, "start() must not register a reader once stopped"
+        assert reader._loop is None
+        assert dispatched == []
+    finally:
+        with contextlib.suppress(ValueError, OSError):
+            if reader._fd is not None:
+                asyncio.get_running_loop().remove_reader(reader._fd)
+        r_sock.close()
+        w_sock.close()
 
 
 # =============================================================================
@@ -191,6 +265,38 @@ def test_pump_drains_send_backlog_on_pollout():
     assert sent == [b"a"]
     # b"a" popped, b"b" stayed buffered after the HWM Again.
     assert list(reader._send_buf) == [b"b"]
+
+
+def test_pump_send_error_pops_poisoned_item_and_continues_draining():
+    """A non-Again ZMQError on a buffered send (e.g. EHOSTUNREACH from a
+    ROUTER_MANDATORY socket sending to a departed peer) must not poison the
+    send buffer forever.
+
+    The offending item is popped, reported via on_error, and draining
+    continues with the rest of the buffer -- it must not silently strand
+    everything behind it or kill recv re-arming.
+    """
+    sock = _FakeSocket(events=zmq.POLLOUT | zmq.POLLIN)
+    sent: list[bytes] = []
+    errors: list[Exception] = []
+    calls = {"n": 0}
+    poison_error = zmq.ZMQError(errno=113)  # EHOSTUNREACH
+
+    def send_one(item):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise poison_error
+        sent.append(item)
+
+    reader = _make_reader(sock, send_one=send_one, on_error=errors.append)
+    reader._send_buf.extend([b"poisoned", b"good"])
+    reader._pump()
+
+    assert list(reader._send_buf) == [], (
+        "poisoned item must be popped, not left blocking the buffer head"
+    )
+    assert sent == [b"good"], "draining must continue past the poisoned item"
+    assert errors == [poison_error], "the non-Again ZMQError must be reported"
 
 
 def test_pump_swallows_zmq_error():

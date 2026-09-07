@@ -16,7 +16,7 @@ class Message(AIPerfBaseModel):
     """Base message class with automatic routing by message_type.
 
     Uses AutoRoutedModel for high-performance single-parse JSON deserialization
-    with zero-copy dict routing. Supports nested discriminators (e.g., CommandMessage
+    with zero-copy dict routing. Supports nested discriminators (e.g., RecordsMessage
     routes by 'command' field).
 
     Each message model should inherit from this class, set the message_type field,

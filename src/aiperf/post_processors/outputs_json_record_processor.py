@@ -29,6 +29,10 @@ class OutputFragment(AIPerfBaseModel):
     turn_index: int = Field(ge=0, description="The turn index within the conversation.")
     conversation_id: str = Field(description="The conversation identifier.")
     x_request_id: str = Field(description="The unique request identifier.")
+    benchmark_phase: CreditPhase = Field(
+        description="The benchmark phase the request ran in. Warmup and profiling "
+        "responses are both captured; the exporter keeps them in separate arrays.",
+    )
     response_text: str | None = Field(
         default=None,
         description="The concatenated generated text from the model response.",
@@ -110,8 +114,6 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
         """Extract response text and allowlisted metrics, and write an output fragment."""
         record = ctx.record
         metadata = ctx.metadata
-        if metadata.benchmark_phase != CreditPhase.PROFILING:
-            return
 
         parts: list[str] = []
         for resp in record.content_responses:
@@ -141,6 +143,7 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
             turn_index=metadata.turn_index or 0,
             conversation_id=metadata.conversation_id or "",
             x_request_id=metadata.x_request_id or "",
+            benchmark_phase=metadata.benchmark_phase,
             response_text=response_text,
             request_start_ns=metadata.request_start_ns or 0,
             request_end_ns=metadata.request_end_ns or 0,

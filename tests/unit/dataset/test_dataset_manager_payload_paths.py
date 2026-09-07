@@ -23,13 +23,13 @@ import orjson
 import pytest
 from pytest import param
 
-from aiperf.common.enums import ConversationContextMode, MemoryMapFormat
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType, ConversationContextMode, MemoryMapFormat
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MemoryMapSerializationError, ServiceError
 from aiperf.common.messages import (
     ConversationRequestMessage,
     ConversationTurnRequestMessage,
-    ProfileConfigureCommand,
 )
 from aiperf.common.models import Conversation, ModelEndpointInfo, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
@@ -80,7 +80,7 @@ async def _configure_manager(run: BenchmarkRun) -> DatasetManager:
     await dataset_manager.initialize()
     dataset_manager.publish = AsyncMock()
     await dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(service_id="dm-test")
+        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
     )
     return dataset_manager
 

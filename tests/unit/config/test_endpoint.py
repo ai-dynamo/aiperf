@@ -92,6 +92,53 @@ def test_per_chunk_usage_with_server_token_count_is_valid() -> None:
     assert endpoint.per_chunk_usage is True
 
 
+@pytest.mark.parametrize(
+    "store_value",
+    [
+        param(True, id="bool_true"),
+        param("True", id="str_true_capitalized"),
+    ],
+)  # fmt: skip
+def test_responses_store_true_requires_server_token_count(store_value) -> None:
+    with pytest.raises(ValueError, match="Add --use-server-token-count"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.RESPONSES,
+            extra={"store": store_value},
+            use_server_token_count=False,
+        )
+
+
+def test_responses_store_true_with_server_token_count_is_valid() -> None:
+    endpoint = EndpointConfig(
+        urls=["http://localhost:8000"],
+        type=EndpointType.RESPONSES,
+        extra={"store": True},
+        use_server_token_count=True,
+    )
+    assert endpoint.extra["store"] is True
+
+
+@pytest.mark.parametrize(
+    "endpoint_type,extra",
+    [
+        param(EndpointType.RESPONSES, {"store": False}, id="responses_store_false"),
+        param(EndpointType.RESPONSES, {}, id="responses_no_store"),
+        param(EndpointType.CHAT, {"store": True}, id="chat_store_true"),
+    ],
+)  # fmt: skip
+def test_store_gate_does_not_reject_when_chaining_inactive(
+    endpoint_type, extra
+) -> None:
+    endpoint = EndpointConfig(
+        urls=["http://localhost:8000"],
+        type=endpoint_type,
+        extra=extra,
+        use_server_token_count=False,
+    )
+    assert endpoint.type == endpoint_type
+
+
 def _make_model_endpoint(
     base_url: str, transport: TransportType | None = None
 ) -> ModelEndpointInfo:

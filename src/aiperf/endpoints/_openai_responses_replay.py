@@ -38,10 +38,26 @@ _FAILURE_EVENT_TYPES = frozenset(
     {"response.failed", "response.incomplete", "response.error", "error"}
 )
 
+# Terminal failure states on a Response object itself (non-streaming body, or
+# the nested ``response`` of a streaming lifecycle event). Streaming carries
+# these as ``type`` events (above); a non-streaming HTTP 200 body carries no
+# ``type`` and instead reports the failure via top-level ``status``.
+_FAILURE_STATUSES = frozenset({"failed", "incomplete"})
+
 
 def is_failure_event(json_obj: JsonObject) -> bool:
     """True when ``json_obj`` is a Responses-API stream-end failure event."""
     return json_obj.get("type") in _FAILURE_EVENT_TYPES
+
+
+def is_failure_status(response_obj: JsonObject) -> bool:
+    """True when a Response object reports a terminal failure via ``status``.
+
+    Non-streaming responses return HTTP 200 with a body such as
+    ``{"status": "failed", ...}`` and no ``type`` field, so ``is_failure_event``
+    does not catch them. This inspects the object's own ``status``.
+    """
+    return response_obj.get("status") in _FAILURE_STATUSES
 
 
 def collect_response_items(

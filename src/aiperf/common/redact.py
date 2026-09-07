@@ -4,6 +4,9 @@
 
 import re
 from collections.abc import Sequence
+from copy import deepcopy
+from typing import Any
+from urllib.parse import unquote_plus
 
 REDACTED_VALUE = "<redacted>"
 
@@ -18,6 +21,8 @@ REDACTED_VALUE = "<redacted>"
 #   - x-functions-key: Azure Functions
 #   - aeg-sas-key: Azure Event Grid
 #   - x-amz-security-token: AWS STS temporary credentials
+#   - cookie / set-cookie: session credentials
+#   - x-auth-token / x-access-token / x-session-token: common custom auth headers
 _SENSITIVE_HEADER_NAMES = frozenset(
     {
         "authorization",
@@ -29,8 +34,58 @@ _SENSITIVE_HEADER_NAMES = frozenset(
         "x-functions-key",
         "aeg-sas-key",
         "x-amz-security-token",
+        "cookie",
+        "set-cookie",
+        "x-auth-token",
+        "x-access-token",
+        "x-session-token",
+        "x-csrf-token",
+        "x-xsrf-token",
     }
 )
+
+# ``EndpointConfig.headers`` accepts arbitrary user-supplied headers, so an
+# exact-name allowlist can never be complete: a deployment may authenticate with
+# ``X-Acme-Token`` or ``X-Tenant-Secret``. Any header whose name contains one of
+# these fragments is therefore treated as credential-bearing. Deliberately
+# fail-safe: over-redacting a benign header only costs readability, while
+# under-redacting leaks a credential into artifacts, logs, and (via
+# ``validate_kubernetes_credential_transport``) an unencrypted K8s ConfigMap.
+_SENSITIVE_HEADER_SUBSTRINGS: tuple[str, ...] = (
+    "auth",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "cookie",
+    "apikey",
+    "api-key",
+    "api_key",
+    "session",
+    "signature",
+    "sas-key",
+    "access-key",
+    "private-key",
+)
+
+
+def is_sensitive_header_name(name: str) -> bool:
+    """Return True if a header name is treated as credential-bearing.
+
+    Single source of truth for every header gate: the redactors, the
+    out-of-band credential extractor, and the Kubernetes Secret-transport
+    validator all route through this so they cannot disagree about which
+    headers need protection.
+
+    Args:
+        name: Header name, any casing.
+    """
+    lowered = name.lower()
+    if lowered in _SENSITIVE_HEADER_NAMES:
+        return True
+    return any(fragment in lowered for fragment in _SENSITIVE_HEADER_SUBSTRINGS)
+
 
 # Pre-compiled regex patterns for redacting credentials in arbitrary strings.
 # Patterns must handle plain text ("Authorization: Bearer <key>"),
@@ -73,13 +128,14 @@ _STRING_REDACTION_PATTERNS = [
 def redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
     """Return a copy of headers with sensitive values replaced by REDACTED_VALUE.
 
-    Matches against _SENSITIVE_HEADER_NAMES (case-insensitive).
+    Matches via :func:`is_sensitive_header_name` (case-insensitive: the exact
+    provider header list plus credential-shaped custom names).
     Returns None if input is None.
     """
     if headers is None:
         return None
     return {
-        k: (REDACTED_VALUE if k.lower() in _SENSITIVE_HEADER_NAMES else v)
+        k: (REDACTED_VALUE if is_sensitive_header_name(k) else v)
         for k, v in headers.items()
     }
 
@@ -96,7 +152,7 @@ def extract_sensitive_headers(headers: dict[str, str] | None) -> dict[str, str]:
     """
     if not headers:
         return {}
-    return {k: v for k, v in headers.items() if k.lower() in _SENSITIVE_HEADER_NAMES}
+    return {k: v for k, v in headers.items() if is_sensitive_header_name(k)}
 
 
 def redact_header_tuples(
@@ -108,7 +164,7 @@ def redact_header_tuples(
     used by InputConfig.headers.
     """
     return [
-        (name, REDACTED_VALUE if name.lower() in _SENSITIVE_HEADER_NAMES else value)
+        (name, REDACTED_VALUE if is_sensitive_header_name(name) else value)
         for name, value in headers
     ]
 
@@ -169,6 +225,26 @@ _STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@
 # legitimate ``key:value@...`` tokens on non-URL flags like ``--header
 # X-User-Email:alice@example.com`` or ``--mlflow-tag owner:alice@acme.com``.
 _STRAY_BARE_USERINFO_PATTERN = re.compile(r"(^|[\s'\"])([^\s:@'\"/?#]+:[^\s@'\"/?#]+)@")
+
+# Query parameters that conventionally carry credentials. The pattern matches a
+# complete parameter name (it is applied with ``fullmatch``) so ordinary values
+# such as ``token_count`` and ``monkey`` are preserved. ``[-_ ]?`` rather than
+# ``[-_]?`` because ``+`` in a query string decodes to a space, so ``api+key``
+# is the same parameter as ``api_key``.
+_SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN = re.compile(
+    r"(?:"
+    r"api[-_ ]?key|apikey|key|token|access[-_ ]?token|auth[-_ ]?token|"
+    r"bearer[-_ ]?token|id[-_ ]?token|refresh[-_ ]?token|secret|"
+    r"client[-_ ]?secret|password|passwd|credential|access[-_ ]?key[-_ ]?id|"
+    r"awsaccesskeyid|sig|signature|x-amz-signature|x-amz-security-token|"
+    r"x-amz-credential|x-goog-signature|x-goog-credential"
+    r")",
+    re.IGNORECASE,
+)
+
+# Splits a URL query string into (separator, raw name, raw value) triples. The
+# name/value spans stop at ``&`` and ``#`` so a fragment is never swallowed.
+_URL_QUERY_PARAMETER_PATTERN = re.compile(r"([?&])([^=&#]*)=([^&#]*)")
 
 # Flag tokens that open a ``consume_multiple=True`` URL-value window. Only
 # these flags have the multi-value leak — ``--otel-url`` / ``--mlflow-tracking-uri``
@@ -321,8 +397,37 @@ def build_cli_command() -> str:
     return redact_cli_command(cmd)
 
 
+def _redact_sensitive_query_parameters(url: str) -> str:
+    """Replace the value of every credential-carrying query parameter.
+
+    Only the value span is rewritten; the separator and the parameter name are
+    re-emitted byte-for-byte. Rebuilding the URL through ``urlsplit``/
+    ``urlencode`` would additionally normalize escaping, parameter ordering and
+    path bytes, changing URLs that carry no credentials at all.
+
+    A server percent-decodes the parameter name before dispatching, so
+    ``api%5Fkey``, ``%61pi_key`` and ``api_key`` all name the same parameter.
+    Matching the raw text alone therefore lets any encoded spelling smuggle a
+    secret through unredacted, so the name is decoded before matching.
+    """
+
+    def _redact_parameter(match: re.Match[str]) -> str:
+        separator, name = match.group(1), match.group(2)
+        try:
+            decoded_name = unquote_plus(name, errors="strict")
+        except UnicodeDecodeError:
+            # Undecodable octets cannot name a sensitive parameter on the
+            # server either; fall back to the raw text rather than dropping it.
+            decoded_name = name
+        if not _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(decoded_name):
+            return match.group(0)
+        return f"{separator}{name}={REDACTED_VALUE}"
+
+    return _URL_QUERY_PARAMETER_PATTERN.sub(_redact_parameter, url)
+
+
 def redact_url(url: str) -> str:
-    """Strip userinfo (user:password@) from a URL to prevent credential leakage.
+    """Redact credentials in URL userinfo and sensitive query parameters.
 
     Handles URIs of any scheme (http, https, postgresql, mysql, sqlite, file,
     etc.) plus bare ``user:pass@host`` URLs. Returns the URL unchanged if no
@@ -340,10 +445,42 @@ def redact_url(url: str) -> str:
         r"\1" + REDACTED_VALUE + "@",
         url,
     )
-    # Once a scheme is present, do not fall through to the bare-userinfo regex:
-    # that regex matches on ``^[^@:]+:[^@]+@`` which would eat ``https://host/?a@b``
-    # starting from the ``https:`` prefix.
-    if result != url or "://" in url:
-        return result
-    # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
-    return re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", url)
+    if result == url and "://" not in url:
+        # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
+        result = re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", result)
+    return _redact_sensitive_query_parameters(result)
+
+
+def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Return a credential-safe copy of a CR spec or benchmark configuration.
+
+    Kubernetes CRs use the public ``apiKey`` spelling while Python model dumps
+    may use ``api_key``. Both shapes cross persistence and API boundaries, so
+    the canonical redactor intentionally handles both without normalizing the
+    rest of the user-authored document.
+    """
+    redacted = deepcopy(spec)
+    benchmark = redacted.get("benchmark", redacted)
+    if not isinstance(benchmark, dict):
+        return redacted
+    endpoint = benchmark.get("endpoint")
+    if not isinstance(endpoint, dict):
+        return redacted
+
+    for key in ("apiKey", "api_key"):
+        if endpoint.get(key) is not None:
+            endpoint[key] = REDACTED_VALUE
+
+    headers = endpoint.get("headers")
+    if isinstance(headers, dict):
+        endpoint["headers"] = redact_headers(headers) or {}
+
+    for key in ("urls", "url"):
+        urls = endpoint.get(key)
+        if isinstance(urls, str):
+            endpoint[key] = redact_url(urls)
+        elif isinstance(urls, list):
+            endpoint[key] = [
+                redact_url(url) if isinstance(url, str) else url for url in urls
+            ]
+    return redacted

@@ -24,6 +24,16 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 
+def _dependency_tags(metric: type) -> set[str]:
+    """All tags a metric depends on for ordering, required or not.
+
+    ``optional_metrics`` orders and validates identically to
+    ``required_metrics``; the two differ only in whether ``_check_metrics``
+    treats absence as fatal.
+    """
+    return (metric.required_metrics or set()) | (metric.optional_metrics or set())
+
+
 class MetricRegistry:
     """
     A registry for metrics.
@@ -224,7 +234,7 @@ class MetricRegistry:
 
         # Validate that all required metrics are registered, and that the dependencies are allowed
         for metric in all_classes:
-            for required_tag in metric.required_metrics or set():
+            for required_tag in _dependency_tags(metric):
                 # Validate that the dependency is registered
                 if required_tag not in all_tags:
                     raise MetricTypeError(
@@ -246,7 +256,7 @@ class MetricRegistry:
         """Get all of the required tags, recursively, for a given list of metric tags."""
         required_tags = set(tags)
         for metric_class in cls.classes_for(tags):
-            for required_tag in metric_class.required_metrics or set():
+            for required_tag in _dependency_tags(metric_class):
                 if required_tag not in required_tags:
                     required_tags.add(required_tag)
                     required_tags.update(cls._get_all_required_tags([required_tag]))
@@ -293,7 +303,7 @@ class MetricRegistry:
 
         for metric in cls.classes_for(all_required_tags):
             # Add the metric with its required dependencies
-            sorter.add(metric.tag, *(metric.required_metrics or set()))
+            sorter.add(metric.tag, *_dependency_tags(metric))
 
         try:
             # Get the dependency order

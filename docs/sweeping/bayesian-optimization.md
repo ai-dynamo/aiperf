@@ -6,16 +6,14 @@
 
 > **New users start here:** [Search Recipes](search-recipes.md) bundle the BO knobs below into named presets such as `--search-recipe max-throughput-ttft-sla --ttft-sla-ms 200`. The 1D-saturation case (max-passing-concurrency under an SLA) is covered in [1D SLA saturation](#1d-sla-saturation-max-concurrency-under-sla-and-max-goodput-under-slo) below. Use the explicit `--search-*` flags documented on this page when no recipe matches your workflow.
 
-> **Kubernetes execution — *coming soon*.** Every `--search-*` flag
-> documented below is designed to work unchanged under cluster execution
-> via the `AIPerfSweep` CRD + `aiperf kube sweep` CLI. The cluster-side
-> path is finalized on the upcoming K8s integration branch but not yet
-> on `main`. When it ships, BO will run inside an in-cluster
-> `sweep-controller` pod that creates one child `AIPerfJob` CR per
-> iteration; `search_history.json` and `sweep_aggregate/` artifacts are
-> served via the operator's results API instead of being written to the
-> local artifacts directory. Until then, run BO with `aiperf profile`
-> locally.
+> **Kubernetes execution.** The same `--search-*` flags work with
+> `aiperf kube sweep -f <config.yaml>`; unlike `aiperf profile`,
+> `kube sweep` requires a base config file. The CLI writes the adaptive
+> search into an `AIPerfSweep` CR, and the in-cluster `sweep-controller`
+> runs the same planner and orchestrator while creating child `AIPerfJob`
+> CRs for each proposed point and trial. Epoch-scoped `search_history.json`
+> and `sweep_aggregate/` artifacts are published through the sweep results
+> API.
 
 `aiperf profile --search-space ... --search-metric ... --search-direction ... --search-max-iterations ...` runs an adaptive outer loop instead of a grid sweep. Each iteration the planner asks Optuna for the next point in the search space, runs `--num-profile-runs` benchmarks at it, scores the configured objective, and feeds the result back to the optimizer.
 

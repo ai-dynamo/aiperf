@@ -49,4 +49,9 @@ class TestValidateCommand:
             validate(missing)
 
         assert exc.value.code == 1
-        assert "is not a file" in capsys.readouterr().out
+        # The message is printed through Rich, which hard-wraps to the console
+        # width, and it embeds tmp_path, whose length varies with the username
+        # and the test name. Either can push the wrap into the middle of the
+        # phrase being matched, so collapse the wrapping before asserting.
+        out = " ".join(capsys.readouterr().out.split())
+        assert "is not a file" in out

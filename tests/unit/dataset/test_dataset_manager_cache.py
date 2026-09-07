@@ -17,10 +17,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import orjson
 import pytest
 
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
-from aiperf.common.messages.command_messages import ProfileConfigureCommand
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.dataset import mmap_cache
@@ -32,8 +34,6 @@ from tests.unit.conftest import make_run_from_cli
 def _write_legacy_cache_entry_with_inputs_json(
     cache_key: str, tmp_path: Path
 ) -> mmap_cache.CacheHit:
-    import orjson
-
     entry_dir = mmap_cache.cache_dir() / cache_key
     entry_dir.mkdir(parents=True)
     (entry_dir / "dataset.dat").write_bytes(b"DATA")
@@ -104,7 +104,7 @@ async def _run_configure(run: BenchmarkRun) -> DatasetManager:
     await dataset_manager.initialize()
     dataset_manager.publish = AsyncMock()
     await dataset_manager._profile_configure_command(
-        ProfileConfigureCommand(service_id="dm-test")
+        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
     )
     return dataset_manager
 
@@ -308,7 +308,6 @@ class TestDatasetManagerCacheEdgeCases:
         """A HIT whose manifest dataset_metadata_json fails validation must be
         treated as a MISS: restored files removed, poisoned cache entry
         invalidated, and the full pipeline re-run (so populate can heal)."""
-        import orjson
 
         from aiperf.common.models import DatasetMetadata
 

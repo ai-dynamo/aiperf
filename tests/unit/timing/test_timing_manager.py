@@ -3,17 +3,17 @@
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.messages import (
-    CommandMessage,
+    BaseServiceErrorMessage,
     DatasetConfiguredNotification,
-    ProfileCancelCommand,
-    ProfileConfigureCommand,
 )
 from aiperf.common.models import DatasetMetadata, MemoryMapClientMetadata
 from aiperf.config.flags.cli_config import CLIConfig
@@ -100,9 +100,7 @@ class TestTimingManagerDatasetConfiguration:
         ) as mock_orch:
             task = asyncio.create_task(
                 mgr._profile_configure_command(
-                    ProfileConfigureCommand.model_construct(
-                        service_id="test-system-controller", config={}
-                    )
+                    Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                 )
             )
             await asyncio.sleep(0.2)
@@ -131,9 +129,7 @@ class TestTimingManagerDatasetConfiguration:
             pytest.raises(asyncio.TimeoutError),
         ):
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
     @pytest.mark.asyncio
@@ -162,9 +158,7 @@ class TestTimingManagerDatasetConfiguration:
             "aiperf.timing.manager.PhaseOrchestrator", return_value=mock_engine
         ) as mock_orch:
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
             assert mock_orch.call_args.kwargs["dataset_metadata"] == mock_metadata
 
@@ -173,7 +167,7 @@ class TestTimingManagerCancelCommand:
     @pytest.mark.asyncio
     async def test_cancel_calls_orchestrator_cancel(self, configured_manager) -> None:
         await configured_manager._handle_profile_cancel_command(
-            ProfileCancelCommand.model_construct(service_id="test-controller")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
         configured_manager._phase_orchestrator.cancel.assert_called_once()
 
@@ -183,14 +177,14 @@ class TestTimingManagerCancelCommand:
     ) -> None:
         mgr = create_manager(cli_config)
         await mgr._handle_profile_cancel_command(
-            ProfileCancelCommand.model_construct(service_id="test-controller")
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         )
 
     @pytest.mark.asyncio
     async def test_cancel_can_be_called_multiple_times(
         self, configured_manager
     ) -> None:
-        cmd = ProfileCancelCommand.model_construct(service_id="test-controller")
+        cmd = Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL)
         await configured_manager._handle_profile_cancel_command(cmd)
         await configured_manager._handle_profile_cancel_command(cmd)
         assert configured_manager._phase_orchestrator.cancel.call_count == 2
@@ -203,9 +197,7 @@ class TestTimingManagerStartProfilingAndInitialization:
     ) -> None:
         mgr = create_manager(cli_config)
         with pytest.raises(InvalidStateError, match="No phase orchestrator configured"):
-            await mgr._on_start_profiling(
-                CommandMessage.model_construct(service_id="test-controller")
-            )
+            await mgr._on_start_profiling(Command(cid="c-1", cmd=CommandType.SHUTDOWN))
 
     @pytest.mark.asyncio
     async def test_start_profiling_calls_orchestrator_start(
@@ -221,9 +213,7 @@ class TestTimingManagerStartProfilingAndInitialization:
         mock_orchestrator.start = mock_start
         mgr._phase_orchestrator = mock_orchestrator
 
-        await mgr._on_start_profiling(
-            CommandMessage.model_construct(service_id="test-controller")
-        )
+        await mgr._on_start_profiling(Command(cid="c-1", cmd=CommandType.SHUTDOWN))
         await asyncio.sleep(0.05)  # Allow execute_async to run
         assert start_called.is_set()
 
@@ -237,9 +227,7 @@ class TestTimingManagerStartProfilingAndInitialization:
             InvalidStateError, match="Dataset metadata is not available"
         ):
             await mgr._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
     def test_creates_timing_config_from_cfg(self, create_manager, cli_config) -> None:
@@ -260,3 +248,173 @@ class TestTimingManagerStartProfilingAndInitialization:
             mgr._phase_orchestrator is None
             and not mgr._dataset_configured_event.is_set()
         )
+
+
+class TestTimingManagerWorkerFloor:
+    @pytest.mark.asyncio
+    async def test_deregistered_workers_below_floor_abort_after_grace(
+        self, configured_manager, monkeypatch
+    ) -> None:
+        """A sustained dispatchable-worker loss fails the benchmark at TimingManager."""
+        manager = configured_manager
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
+        manager._publish_phase_failure_and_wait = AsyncMock()
+        manager._kill = AsyncMock()
+        manager.sticky_router._workers = {
+            "worker-1": MagicMock(),
+        }
+        manager.sticky_router._workers_cache = list(
+            manager.sticky_router._workers.values()
+        )
+        manager.sticky_router._peak_worker_count = 2
+        monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.75)
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 0.0)
+
+        manager._on_dispatchable_worker_count_changed(1)
+        assert manager._worker_floor_abort_task is not None
+        await manager._worker_floor_abort_task
+
+        manager.phase_publisher.request_profile_cancel.assert_awaited_once()
+        manager._phase_orchestrator.cancel.assert_awaited_once()
+        manager._publish_phase_failure_and_wait.assert_awaited_once()
+        manager._kill.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_worker_reregistration_cancels_pending_floor_abort(
+        self, configured_manager, monkeypatch
+    ) -> None:
+        """A Kubernetes replacement that becomes dispatchable before grace is safe."""
+        manager = configured_manager
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager._publish_phase_failure = MagicMock()
+        manager.sticky_router._workers = {"worker-1": MagicMock()}
+        manager.sticky_router._workers_cache = list(
+            manager.sticky_router._workers.values()
+        )
+        manager.sticky_router._peak_worker_count = 2
+        monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.75)
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 0.01)
+
+        manager._on_dispatchable_worker_count_changed(1)
+        manager.sticky_router._workers["worker-2"] = MagicMock()
+        manager.sticky_router._workers_cache = list(
+            manager.sticky_router._workers.values()
+        )
+        manager._on_dispatchable_worker_count_changed(2)
+        await asyncio.sleep(0.02)
+
+        manager._phase_orchestrator.cancel.assert_not_awaited()
+        manager._publish_phase_failure.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_worker_floor_failure_publishes_before_killing_manager(
+        self, configured_manager, monkeypatch
+    ) -> None:
+        manager = configured_manager
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
+        manager.sticky_router._workers = {"worker-1": MagicMock()}
+        manager.sticky_router._workers_cache = list(
+            manager.sticky_router._workers.values()
+        )
+        manager.sticky_router._peak_worker_count = 2
+        monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.75)
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 0.0)
+        events: list[str] = []
+
+        async def publish_failure(_exc: BaseException) -> None:
+            events.append("failure")
+
+        async def kill() -> None:
+            assert events == ["failure"]
+            events.append("kill")
+
+        manager._publish_phase_failure_and_wait = publish_failure
+        manager._kill = kill
+
+        await manager._abort_if_worker_floor_remains_breached()
+
+        assert events == ["failure", "kill"]
+
+    @pytest.mark.asyncio
+    async def test_worker_loss_publishes_failure_before_killing_manager(
+        self, configured_manager
+    ) -> None:
+        manager = configured_manager
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
+        events: list[str] = []
+
+        async def publish(message: BaseServiceErrorMessage) -> None:
+            assert "Fatal worker loss" in message.error.message
+            events.append("failure")
+
+        async def kill() -> None:
+            assert events == ["failure"]
+            events.append("kill")
+
+        manager.publish = publish
+        manager._kill = kill
+
+        await manager._abort_for_worker_loss("worker_unavailable: worker stopped")
+
+        assert events == ["failure", "kill"]
+
+    @pytest.mark.asyncio
+    async def test_worker_loss_callback_aborts_profiling_immediately_on_kubernetes(
+        self, configured_manager
+    ) -> None:
+        """A lost sticky worker makes the active benchmark terminal on Kubernetes,
+        where pod loss is confirmed by the apiserver."""
+        from aiperf.plugin.enums import ServiceRunType
+
+        manager = configured_manager
+        manager.run.cfg.runtime.service_run_type = ServiceRunType.KUBERNETES
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
+        manager._publish_phase_failure_and_wait = AsyncMock()
+        manager._kill = AsyncMock()
+
+        manager.sticky_router._on_worker_lost("worker_unavailable: worker stopped")
+        await manager._worker_loss_abort_task
+
+        manager.phase_publisher.request_profile_cancel.assert_awaited_once()
+        manager._phase_orchestrator.cancel.assert_awaited_once()
+        manager._publish_phase_failure_and_wait.assert_awaited_once()
+        manager._kill.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_worker_loss_callback_defers_to_floor_grace_in_local_mode(
+        self, configured_manager
+    ) -> None:
+        """A stale-heartbeat worker loss must not instantly kill a local
+        (multiprocessing) run, since the router has no ground truth to
+        distinguish a dead worker from one merely starved by the event loop.
+        The loss should instead be left to the worker-floor grace period
+        (``_on_dispatchable_worker_count_changed`` / ``MIN_ALIVE_FRACTION``).
+        """
+        from aiperf.plugin.enums import ServiceRunType
+
+        manager = configured_manager
+        assert (
+            manager.run.cfg.runtime.service_run_type == ServiceRunType.MULTIPROCESSING
+        )
+        manager._profiling_active = True
+        manager._phase_orchestrator.cancel = AsyncMock()
+        manager.phase_publisher.request_profile_cancel = AsyncMock()
+        manager._publish_phase_failure_and_wait = AsyncMock()
+        manager._kill = AsyncMock()
+
+        manager.sticky_router._on_worker_lost("worker_unavailable: worker stopped")
+        assert manager._worker_loss_abort_task is None
+
+        manager.phase_publisher.request_profile_cancel.assert_not_awaited()
+        manager._phase_orchestrator.cancel.assert_not_awaited()
+        manager._publish_phase_failure_and_wait.assert_not_awaited()
+        manager._kill.assert_not_awaited()

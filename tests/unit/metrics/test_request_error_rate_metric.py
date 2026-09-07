@@ -55,13 +55,24 @@ class TestRequestErrorRateMetric:
         with pytest.raises(NoMetricValue, match="No completed requests"):
             RequestErrorRateMetric().derive_value(results)
 
-    def test_error_rate_missing_request_count_raises(self):
+    def test_error_rate_missing_request_count_reports_all_errors(self):
         results = MetricResultsDict()
         results[ErrorRequestCountMetric.tag] = 5
-        with pytest.raises(NoMetricValue):
-            RequestErrorRateMetric().derive_value(results)
+        assert RequestErrorRateMetric().derive_value(results) == approx(100.0)
 
-    def test_error_rate_required_metrics_declared(self):
-        assert RequestErrorRateMetric.required_metrics == frozenset(
-            {RequestCountMetric.tag}
+    def test_counter_dependencies_are_optional(self):
+        assert RequestErrorRateMetric.required_metrics is None
+        assert RequestErrorRateMetric.optional_metrics == frozenset(
+            {
+                RequestCountMetric.tag,
+                ErrorRequestCountMetric.tag,
+            }
         )
+
+    def test_registry_orders_optional_counters_before_error_rate(self):
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        order = MetricRegistry.create_dependency_order_for([RequestErrorRateMetric.tag])
+        error_rate_index = order.index(RequestErrorRateMetric.tag)
+        for tag in RequestErrorRateMetric.optional_metrics:
+            assert order.index(tag) < error_rate_index

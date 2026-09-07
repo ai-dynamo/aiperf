@@ -123,3 +123,38 @@ def test_offsets_track_first_value_position(extends):
 
 def test_supports_per_record_replay_flag_true():
     assert RaggedSeries.SUPPORTS_PER_RECORD_REPLAY is True
+
+
+# ---------------------------------------------------------------------------
+# Concurrent-ingestion safety (e2dfc150a5)
+# ---------------------------------------------------------------------------
+
+
+def test_get_values_for_mask_clips_out_of_bounds_record_indices() -> None:
+    """Record indices >= len(mask) must not raise IndexError.
+
+    Before e2dfc150a5, ``record_mask[rec_idx]`` raised when new records arrived
+    (event loop) after the mask snapshot was taken (asyncio.to_thread), giving
+    indices equal to the mask length.
+    """
+    series = RaggedSeries(initial_capacity=8, offsets_capacity=8)
+    # Three records, mask snapshotted at length 2.
+    series.extend(0, [1.0, 2.0])
+    series.extend(1, [3.0])
+    series.extend(2, [9.0])  # record 2 is past the mask snapshot
+
+    mask = np.array([True, True])  # length 2 — record 2 is out of bounds
+    # Pre-fix: IndexError: index 2 is out of bounds for axis 0 with size 2
+    result = series.get_values_for_mask(mask)
+    # record 2's value is excluded (out of bounds), records 0+1 are included.
+    np.testing.assert_array_equal(np.sort(result), [1.0, 2.0, 3.0])
+
+
+def test_get_values_for_mask_excludes_all_when_mask_is_empty_snapshot() -> None:
+    """An empty mask snapshot excludes all values without raising."""
+    series = RaggedSeries(initial_capacity=4, offsets_capacity=4)
+    series.extend(0, [5.0])
+
+    mask = np.zeros(0, dtype=bool)
+    result = series.get_values_for_mask(mask)
+    assert len(result) == 0

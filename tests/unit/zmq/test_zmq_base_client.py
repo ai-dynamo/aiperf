@@ -5,7 +5,7 @@ Tests for zmq_base_client.py - BaseZMQClient class.
 """
 
 import asyncio
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import zmq
@@ -390,3 +390,129 @@ class TestBaseZMQClientIdentity:
         await client.initialize()
 
         assert self.get_identity_calls(mock_zmq_socket) == [identity]
+
+
+# ---------------------------------------------------------------------------
+# _shutdown_socket drains in-flight push tasks (0e73989253)
+# ---------------------------------------------------------------------------
+
+
+class TestBaseZMQClientIPCCleanup:
+    """_cleanup_ipc_file must remove every IPC socket file the client bound."""
+
+    def test_cleanup_ipc_file_removes_additional_bind_address_socket_file(
+        self, mock_zmq_context, tmp_path
+    ) -> None:
+        """A dual-bound client must unlink both its primary and secondary IPC files."""
+        primary = tmp_path / "primary.sock"
+        secondary = tmp_path / "secondary.sock"
+        primary.touch()
+        secondary.touch()
+
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.PULL,
+            address=f"ipc://{primary}",
+            bind=True,
+            additional_bind_address=f"ipc://{secondary}",
+        )
+
+        client._cleanup_ipc_file()
+
+        assert not primary.exists()
+        assert not secondary.exists()
+
+    def test_cleanup_ipc_file_leaves_files_when_not_bound(
+        self, mock_zmq_context, tmp_path
+    ) -> None:
+        """A connecting client owns no socket file and must not unlink one."""
+        primary = tmp_path / "primary.sock"
+        primary.touch()
+
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.PUSH,
+            address=f"ipc://{primary}",
+            bind=False,
+        )
+
+        client._cleanup_ipc_file()
+
+        assert primary.exists()
+
+    def test_cleanup_ipc_file_ignores_non_ipc_additional_address(
+        self, mock_zmq_context, tmp_path
+    ) -> None:
+        """A TCP secondary bind address must not be treated as a filesystem path."""
+        primary = tmp_path / "primary.sock"
+        primary.touch()
+
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.PULL,
+            address=f"ipc://{primary}",
+            bind=True,
+            additional_bind_address="tcp://0.0.0.0:5557",
+        )
+
+        client._cleanup_ipc_file()
+
+        assert not primary.exists()
+
+
+class TestShutdownSocketDrain:
+    """_shutdown_socket must wait for in-flight scheduler tasks before closing.
+
+    Before 0e73989253, _shutdown_socket called scheduler.cancel_all()
+    immediately, dropping any unsent ZMQ PUSH messages on the floor when
+    the process exited under LINGER=0.
+
+    After the fix, it installs a drain observer and waits (up to
+    PUSH_DRAIN_TIMEOUT) for the scheduler to become idle before cancelling.
+    """
+
+    @pytest.mark.asyncio
+    async def test_drain_observer_is_waited_before_cancel_all(
+        self, mock_zmq_context, mock_zmq_socket
+    ) -> None:
+        """set_drain_observer must be called before cancel_all() on a non-idle scheduler."""
+        scheduler_mock = MagicMock()
+        # First call: not idle (triggers drain path); subsequent: idle (skips the
+        # second `if not scheduler.is_idle()` guard after the observer is set).
+        scheduler_mock.is_idle.side_effect = [False, False]
+        drain_calls: list[str] = []
+
+        async def _noop_wait_for(coro, timeout):
+            drain_calls.append("waited")
+
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.PUSH,
+            address="tcp://127.0.0.1:5599",
+            bind=False,
+        )
+        await client.initialize()
+        client.scheduler = scheduler_mock
+
+        with patch("asyncio.wait_for", side_effect=_noop_wait_for):
+            await client._shutdown_socket()
+
+        assert "waited" in drain_calls, "_shutdown_socket must await the drain observer"
+        scheduler_mock.cancel_all.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_idle_scheduler_skips_drain_and_cancels_directly(
+        self, mock_zmq_context, mock_zmq_socket
+    ) -> None:
+        """An idle scheduler must skip the drain wait and call cancel_all directly."""
+        scheduler_mock = MagicMock()
+        scheduler_mock.is_idle.return_value = True
+
+        client = BaseZMQClient(
+            socket_type=zmq.SocketType.PUSH,
+            address="tcp://127.0.0.1:5600",
+            bind=False,
+        )
+        await client.initialize()
+        client.scheduler = scheduler_mock
+
+        await client._shutdown_socket()
+
+        scheduler_mock.set_drain_observer.assert_not_called()
+        scheduler_mock.cancel_all.assert_called_once()

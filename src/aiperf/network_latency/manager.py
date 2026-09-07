@@ -8,14 +8,12 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from aiperf.common.base_component_service import BaseComponentService
+from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommAddress, CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_command, on_stop
 from aiperf.common.messages import (
     NetworkLatencyRecordMessage,
-    ProfileCancelCommand,
-    ProfileCompleteCommand,
-    ProfileStartCommand,
 )
 from aiperf.common.models import ErrorDetails, NetworkLatencySample
 from aiperf.common.protocols import PushClientProtocol
@@ -96,7 +94,7 @@ class NetworkLatencyManager(BaseComponentService):
         return host, port
 
     @on_command(CommandType.PROFILE_START)
-    async def _on_start_profiling(self, message: ProfileStartCommand) -> None:
+    async def _on_start_profiling(self, message: Command) -> None:
         """Create, resolve, and start a probe collector per unique target.
 
         Resolves each target host once (so probes time pure TCP connect) and
@@ -142,9 +140,7 @@ class NetworkLatencyManager(BaseComponentService):
         )
 
     @on_command(CommandType.PROFILE_COMPLETE)
-    async def _handle_profile_complete_command(
-        self, message: ProfileCompleteCommand
-    ) -> None:
+    async def _handle_profile_complete_command(self, message: Command) -> None:
         """Top up to MIN_SAMPLES with synchronous probes, then stop all collectors.
 
         Idempotent: a no-op once collectors have been stopped.
@@ -188,9 +184,7 @@ class NetworkLatencyManager(BaseComponentService):
         await self._stop_all_collectors()
 
     @on_command(CommandType.PROFILE_CANCEL)
-    async def _handle_profile_cancel_command(
-        self, message: ProfileCancelCommand
-    ) -> None:
+    async def _handle_profile_cancel_command(self, message: Command) -> None:
         """Stop all probe collectors when profiling is cancelled."""
         await self._stop_all_collectors()
 

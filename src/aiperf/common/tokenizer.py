@@ -763,6 +763,26 @@ class Tokenizer:
         self._require_init()
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
+    def decode_batch(self, token_id_lists: list[list[int]], **kwargs) -> list[str]:
+        """Decode many token ID sequences with a single batched call.
+
+        Avoids paying the per-call kwarg-merge and dispatch overhead of
+        `decode()` once per sequence, which matters when decoding a corpus of
+        individual tokens (e.g. mock-server startup).
+
+        Args:
+            token_id_lists: A list of token ID sequences to decode.
+
+        Returns:
+            One decoded string per input sequence, in order.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return self._tokenizer._encoding.decode_batch(token_id_lists)
+        return self._tokenizer.batch_decode(
+            token_id_lists, **{**self._decode_args, **kwargs}
+        )
+
     def encode_lengths_batch(
         self, texts: list[str], chunk_size: int = 4096
     ) -> list[int]:
