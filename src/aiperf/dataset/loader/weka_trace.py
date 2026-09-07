@@ -100,7 +100,7 @@ def _subagent_request_absolute_t(
     entry: WekaSubagentEntry, req: WekaNormalRequest
 ) -> float:
     """Validate and return a subagent request's absolute trace-relative timestamp."""
-    if req.t + _JOIN_EPSILON_SECONDS < entry.t:
+    if req.t < entry.t:
         raise DatasetLoaderError(
             f"subagent '{entry.agent_id}': inner request timestamp {req.t} precedes "
             f"its marker timestamp {entry.t}; published Weka nested request "
