@@ -111,8 +111,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
             )
 
         self.debug(
-            lambda service_id=service_id,
-            type=message_type: f"Registering request handler for {service_id} with message type {type}"
+            lambda service_id=service_id, type=message_type: (
+                f"Registering request handler for {service_id} with message type {type}"
+            )
         )
         self._request_handlers[message_type] = (service_id, handler, fire_and_forget)
 
@@ -201,7 +202,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
                 )
             except TimeoutError:
                 self.warning(
-                    lambda req_id=request_id: f"Timed out waiting for a response to request {req_id}"
+                    lambda req_id=request_id: (
+                        f"Timed out waiting for a response to request {req_id}"
+                    )
                 )
                 response = ErrorMessage(
                     request_id=request_id,
@@ -213,7 +216,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
 
             if response is None:
                 self.warning(
-                    lambda req_id=request_id: f"Got None as response for request {req_id}"
+                    lambda req_id=request_id: (
+                        f"Got None as response for request {req_id}"
+                    )
                 )
                 response = ErrorMessage(
                     request_id=request_id,
@@ -281,7 +286,9 @@ class ZMQRouterReplyClient(BaseZMQClient):
                     # Retries and uuid reuse both produce duplicates, so
                     # reject inline instead of clobbering.
                     self.warning(
-                        lambda req_id=request.request_id: f"Duplicate request_id {req_id}, rejecting"
+                        lambda req_id=request.request_id: (
+                            f"Duplicate request_id {req_id}, rejecting"
+                        )
                     )
                     self.execute_async(
                         self._send_duplicate_request_error(

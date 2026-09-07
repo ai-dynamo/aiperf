@@ -197,8 +197,8 @@ class TestUserCentricCreditReturn:
         meta.turns[1].has_forks = True
 
         captured: list = []
-        strategy._credit_issuer.issue_credit = (
-            lambda turn: captured.append(turn) or True
+        strategy._credit_issuer.issue_credit = lambda turn: (
+            captured.append(turn) or True
         )
         # setup_phase registered the t=0 replacement user; use its session id.
         x_correlation_id = next(iter(strategy._session_to_user))

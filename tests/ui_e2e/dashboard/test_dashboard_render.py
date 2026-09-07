@@ -355,9 +355,11 @@ class TestDashboardRenderConfig:
         console_errors: list[str] = []
         _page.on(
             "console",
-            lambda msg: console_errors.append(msg.text)
-            if msg.type in ("error", "warning")
-            else None,
+            lambda msg: (
+                console_errors.append(msg.text)
+                if msg.type in ("error", "warning")
+                else None
+            ),
         )
 
         with _run_server(cfg_builder()) as base_url:
@@ -440,9 +442,11 @@ class TestDashboardV2Render:
         console_errors: list[str] = []
         _page.on(
             "console",
-            lambda msg: console_errors.append(f"{msg.type}: {msg.text}")
-            if msg.type in ("error",)
-            else None,
+            lambda msg: (
+                console_errors.append(f"{msg.type}: {msg.text}")
+                if msg.type in ("error",)
+                else None
+            ),
         )
 
         with _run_server(_build_multi_phase_cfg()) as base_url:

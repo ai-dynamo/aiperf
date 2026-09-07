@@ -47,8 +47,8 @@ def _stub_pg(loader) -> None:
     loader.prompt_generator._tokenized_corpus = list(range(10000, 11000))
     loader.prompt_generator._corpus_size = 1000
     stub_hash_id_corpus_rng(loader.prompt_generator)
-    loader.prompt_generator.tokenizer.decode.side_effect = (
-        lambda toks: f"<dec:{len(toks)}>"
+    loader.prompt_generator.tokenizer.decode.side_effect = lambda toks: (
+        f"<dec:{len(toks)}>"
     )
     loader._tokenizer_name = "t"
     loader._trust_remote_code = False

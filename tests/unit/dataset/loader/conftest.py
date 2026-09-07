@@ -188,8 +188,8 @@ def stub_hash_id_corpus_rng(prompt_generator) -> None:
         state["h"] = h
 
     prompt_generator._hash_id_corpus_rng.reseed_for_hash_id.side_effect = _reseed
-    prompt_generator._hash_id_corpus_rng.randrange.side_effect = (
-        lambda n: state["h"] % n
+    prompt_generator._hash_id_corpus_rng.randrange.side_effect = lambda n: (
+        state["h"] % n
     )
 
 

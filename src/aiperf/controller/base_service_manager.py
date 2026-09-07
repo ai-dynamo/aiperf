@@ -116,8 +116,10 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
             # final metrics from the survivors only.
             if self._suspected_stale.pop(info.service_id, None):
                 self.debug(
-                    lambda i=info: f"Service '{i.service_id}' ({i.service_type}) "
-                    "is silent but its process is alive; clearing strike"
+                    lambda i=info: (
+                        f"Service '{i.service_id}' ({i.service_type}) "
+                        "is silent but its process is alive; clearing strike"
+                    )
                 )
             return
 
@@ -125,10 +127,12 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         if strikes < Environment.SERVICE.HEARTBEAT_STALE_CONFIRMATION_TICKS:
             self._suspected_stale[info.service_id] = strikes
             self.debug(
-                lambda i=info: f"Service '{i.service_id}' ({i.service_type}) "
-                f"appears stale ({strikes}/"
-                f"{Environment.SERVICE.HEARTBEAT_STALE_CONFIRMATION_TICKS}); "
-                "awaiting confirmation"
+                lambda i=info: (
+                    f"Service '{i.service_id}' ({i.service_type}) "
+                    f"appears stale ({strikes}/"
+                    f"{Environment.SERVICE.HEARTBEAT_STALE_CONFIRMATION_TICKS}); "
+                    "awaiting confirmation"
+                )
             )
             return
 
