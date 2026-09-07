@@ -297,7 +297,6 @@ def test_subagent_duration_tokens_tool_count_all_none_non_async_accepted(
 def test_subagent_requests_ordering_preserved_in_child_conversation(
     tmp_path, monkeypatch
 ):
-    """Absolute trace-relative inner timestamps are preserved in request order."""
     requests = [
         _normal(t=0.0),
         _subagent(

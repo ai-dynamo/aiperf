@@ -367,6 +367,20 @@ def test_nested_chain_detection_rejects_request_before_marker():
         _expand_subagent_to_child_plans("tr", 0, 0, entry, 64)
 
 
+def test_nested_chain_detection_rejects_request_just_before_marker():
+    entry = _make_subagent_entry(
+        t=100.0,
+        requests=[
+            _inner_request(t=99.9999995, api_time=1.0, hash_ids=[1]).model_dump(
+                by_alias=True
+            ),
+        ],
+    )
+
+    with pytest.raises(DatasetLoaderError, match=r"precedes its marker timestamp"):
+        _expand_subagent_to_child_plans("tr", 0, 0, entry, 64)
+
+
 def test_spawned_chain_inherits_declared_prefix_only_when_proven():
     """Spawned-chain turn-0 tool/system attribution requires hash proof; only a fork whose first request matches the declared-prefix blocks inherits them."""
 
@@ -425,7 +439,6 @@ def test_split_chains_disabled_emits_one_sequential_child():
 
 
 def test_absolute_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
-    """Child turn timestamps preserve absolute trace-relative Weka values."""
     sa = {
         "t": 10.0,
         "type": "subagent",
