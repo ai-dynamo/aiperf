@@ -111,6 +111,7 @@ class FakeApiserver:
         custom = MagicMock()
         custom.get_namespaced_custom_object = AsyncMock(side_effect=self._get)
         custom.patch_namespaced_custom_object = AsyncMock(side_effect=self._patch)
+        custom.patch_namespaced_custom_object_status = AsyncMock(side_effect=self._patch)
         k8s_client_binding_sites = [
             "aiperf.kubernetes.client.k8s_client",
             "aiperf.operator.client_cache.k8s_client",
