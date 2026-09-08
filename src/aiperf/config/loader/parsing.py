@@ -494,17 +494,20 @@ _MOVED_TO_PUBLIC_DATASET = frozenset(
 
 
 def reject_moved_custom_dataset_type(input: Any) -> Any:
-    """Point relocated ``--custom-dataset-type`` values at their new flag.
+    """Point relocated dataset-format values at their new flag.
 
     Runs before enum coercion so the message names the replacement command
-    rather than listing every remaining valid value.
+    rather than listing every remaining valid value. Shared by the
+    ``--custom-dataset-type`` flag and the YAML ``format:`` key, which are two
+    spellings of the same choice and must migrate identically.
 
     Raises:
         ValueError: If the value moved to ``--public-dataset``.
     """
     if isinstance(input, str) and input in _MOVED_TO_PUBLIC_DATASET:
         raise ValueError(
-            f"'{input}' is no longer a --custom-dataset-type. SPEED-Bench "
+            f"'{input}' is no longer a custom dataset format "
+            f"(--custom-dataset-type / YAML 'format:'). SPEED-Bench "
             f"subsets are now selected with --public-dataset, and AIPerf "
             f"resolves the dataset for you, so --input-file is not needed:\n"
             f"    aiperf profile --public-dataset {input} ...\n"

@@ -662,9 +662,6 @@ custom_dataset_loader:
       SPEED-Bench qualitative split from HuggingFace (nvidia). 880 prompts across
       11 semantic domains for measuring speculative decoding acceptance rates.
 
-  # ---------------------------------------------------------------------------
-  # SPEED-Bench: qualitative split per category (80 prompts each)
-  # ---------------------------------------------------------------------------
 
   speed_bench_throughput_1k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput1KLoader
@@ -696,9 +693,6 @@ custom_dataset_loader:
       SPEED-Bench throughput split at ~32K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
 
-  # ---------------------------------------------------------------------------
-  # SPEED-Bench: throughput per entropy tier (512 prompts each per ISL bucket)
-  # ---------------------------------------------------------------------------
   tracelab:
     class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
     description: |

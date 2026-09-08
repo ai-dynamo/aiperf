@@ -24,9 +24,14 @@ Resolves the placeholder rows in `nvidia/SPEED-Bench` by refetching prompt text
 from the 14 upstream source datasets. Consumed by
 `aiperf.dataset.loader.speed_bench_public`.
 
-`tests/unit/dataset/loader/test_vendored_speed_bench_prepare.py` pins the sha256
-so an accidental local edit fails CI. Verifying against live upstream is a
-separate, network-gated check — the pin is the contract that matters offline.
+`tests/unit/dataset/loader/test_vendored_speed_bench_prepare.py` holds two
+checks. `test_vendored_prepare_script_is_unmodified` pins the sha256 offline, so
+an accidental local edit fails CI. `test_vendored_prepare_script_matches_upstream`
+is `@pytest.mark.network` and refetches the pinned commit from
+`raw.githubusercontent.com`; only that one can establish that the vendored bytes
+are upstream's rather than merely unchanged, and it is what backs the
+Apache-2.0 §4(b) "Unmodified" claim below. It skips when upstream is
+unreachable, so the offline pin remains the contract that always holds.
 
 ### Why this file and not `specdec_bench`
 

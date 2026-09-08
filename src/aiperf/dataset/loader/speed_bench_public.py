@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import orjson
 
-from aiperf.common.exceptions import ConfigurationError, DatasetLoaderError
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.dataset.loader.base_public_dataset import (
     AIPERF_DATASET_CACHE_DIR,
@@ -23,7 +24,44 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 SPEED_BENCH_CACHE_DIR = AIPERF_DATASET_CACHE_DIR / "speed-bench"
+# ``--hf-subset`` is a user-facing override that becomes a filename.
+_CONFIG_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 HLE_ACCESS_URL = "https://huggingface.co/datasets/cais/hle"
+
+# Pinned so the rows -- and therefore the source URLs the vendored resolver
+# fetches -- cannot change under a run. An unpinned load would let an upstream
+# edit redirect resolution at arbitrary hosts.
+SPEED_BENCH_REVISION = "487aa718444e816458d1a0a52bfce7a454285cf4"
+
+# Hosts the published dataset legitimately sources prompt text from. Row
+# ``source`` values drive what the vendored resolver fetches, so anything
+# outside this set is refused before a request is made.
+_ALLOWED_SOURCE_HOSTS = frozenset(
+    {
+        "huggingface.co",
+        "raw.githubusercontent.com",
+        "opencompass.openxlab.space",
+    }
+)
+
+
+def validate_config_name(config: str) -> None:
+    """Reject a config name that would escape the cache directory.
+
+    ``config`` reaches here from ``--hf-subset``, a documented user-facing
+    override, and is interpolated into a filesystem path.
+
+    Raises:
+        ConfigurationError: If ``config`` is not a bare SPEED-Bench config name.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if not _CONFIG_NAME_RE.fullmatch(config):
+        raise ConfigurationError(
+            f"Invalid SPEED-Bench config {config!r}. Expected a bare config "
+            f"name such as 'qualitative' or 'throughput_1k' (letters, digits, "
+            f"underscores and hyphens only)."
+        )
 
 
 class SpeedBenchPublicLoader(BasePublicDatasetLoader):
@@ -85,13 +123,43 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
 
         A plain function of the config name so the synchronous preflight phase
         can consult it without constructing a loader.
+
+        Raises:
+            ConfigurationError: If ``config`` is not a bare SPEED-Bench config
+                name. It reaches here from ``--hf-subset``, a documented
+                user-facing override, and is interpolated into a filesystem
+                path -- an absolute path or ``..`` segment would otherwise write
+                outside the cache directory.
         """
+        validate_config_name(config)
         return SPEED_BENCH_CACHE_DIR / f"{config}.jsonl"
 
     @property
     def cache_path(self) -> Path:
         """Where the resolved config for this loader is cached."""
         return self.cache_path_for(self.config)
+
+    @staticmethod
+    def _required_config(loader_kwargs: dict[str, Any]) -> str:
+        """Read the config name a preflight hook was invoked for.
+
+        The hooks are called through a getattr-based dispatcher, so a
+        registration that omits ``hf_subset`` metadata would otherwise surface
+        as a bare KeyError from inside preflight with no indication of which
+        plugin entry is wrong.
+
+        Raises:
+            ConfigurationError: If no config name was supplied.
+        """
+        from aiperf.config.loader.errors import ConfigurationError
+
+        config = loader_kwargs.get("hf_subset")
+        if not config:
+            raise ConfigurationError(
+                "SPEED-Bench preflight requires a config name. Set 'hf_subset' "
+                "on the public_dataset_loader plugin entry, or pass --hf-subset."
+            )
+        return config
 
     @classmethod
     def preflight_access(cls, **loader_kwargs: Any) -> None:
@@ -107,7 +175,7 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
         """
         from aiperf.config.loader.errors import ConfigurationError
 
-        if cls.cache_path_for(loader_kwargs["hf_subset"]).exists():
+        if cls.cache_path_for(cls._required_config(loader_kwargs)).exists():
             return
 
         try:
@@ -209,10 +277,16 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
         """
         from aiperf.config.loader.errors import ConfigurationError
 
-        config = loader_kwargs["hf_subset"]
-        if cls.cache_path_for(config).exists():
-            return
+        config = cls._required_config(loader_kwargs)
+        cache_path = cls.cache_path_for(config)
         try:
+            if cache_path.exists():
+                # A cache hit is still untrusted input: the documented
+                # pre-staging workflow copies a file in from elsewhere, so the
+                # "complete data or an error" invariant has to hold here too,
+                # not only on the path that produced the file.
+                cls._reject_unresolved(config, cache_path, delete_on_failure=False)
+                return
             cls.resolve_config(config)
         except DatasetLoaderError as e:
             raise ConfigurationError(str(e)) from e
@@ -225,6 +299,10 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
                 None, self.resolve_config, self.config
             )
             source = self.cache_path
+        else:
+            # Validate a pre-existing cache for the same reason preflight does:
+            # this is the path a pre-staged or hand-copied file arrives on.
+            self._reject_unresolved(self.config, source, delete_on_failure=False)
 
         with open(source, encoding="utf-8") as f:
             rows = [orjson.loads(line) for line in f if line.strip()]
@@ -247,6 +325,8 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             DatasetLoaderError: If resolution fails or leaves rows unresolved.
         """
         import logging
+
+        from aiperf.config.loader.errors import ConfigurationError
 
         try:
             from aiperf.dataset.loader.vendor import speed_bench_prepare
@@ -275,7 +355,13 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             from datasets import load_dataset as hf_load_dataset
 
             cls._reset_resolver_state(speed_bench_prepare)
-            dataset = hf_load_dataset(hf_dataset_name, config, split=hf_split)
+            dataset = hf_load_dataset(
+                hf_dataset_name,
+                config,
+                split=hf_split,
+                revision=SPEED_BENCH_REVISION,
+            )
+            cls._reject_untrusted_sources(dataset)
             # Whole-config, in upstream's row order -- see the class docstring.
             dataset = speed_bench_prepare._resolve_external_data(dataset, config)
             dataset = dataset.map(
@@ -288,19 +374,54 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             )
             dataset.to_json(tmp_path)
             cls._reject_unresolved(config, tmp_path)
+            # Publish atomically: a half-written cache must never look complete
+            # to the next run, which would silently benchmark placeholder text.
+            tmp_path.replace(cache_path)
         except DatasetLoaderError:
-            tmp_path.unlink(missing_ok=True)
             raise
         except Exception as e:
             # Covers the write itself: an ENOSPC or permissions failure in
             # to_json would otherwise leave a partial file behind.
-            tmp_path.unlink(missing_ok=True)
             raise DatasetLoaderError(cls._resolution_failed_message(config, e)) from e
+        finally:
+            # A finally rather than per-handler unlinks so cancellation, which
+            # is a BaseException and escapes both excepts, cannot strand a
+            # multi-GB partial in the cache dir. A no-op once replace() ran.
+            tmp_path.unlink(missing_ok=True)
 
-        # Publish atomically: a half-written cache must never look complete to
-        # the next run, which would silently benchmark placeholder text.
-        tmp_path.replace(cache_path)
         return cache_path
+
+    @classmethod
+    def _reject_untrusted_sources(cls, dataset: Any) -> None:
+        """Refuse rows whose ``source`` points outside the known dataset hosts.
+
+        The vendored resolver dispatches on each row's ``source`` and fetches it
+        verbatim, so a row is an input that selects a URL. Screening here keeps
+        the check outside the vendored file, which must stay byte-identical to
+        upstream.
+
+        Raises:
+            DatasetLoaderError: If any row names an unexpected host.
+        """
+        from urllib.parse import urlparse
+
+        offenders: set[str] = set()
+        for source in dataset["source"] if "source" in dataset.column_names else []:
+            if not source:
+                continue
+            host = urlparse(str(source)).netloc.split("@")[-1].split(":")[0]
+            # Bare "org/dataset" identifiers have no netloc and are resolved
+            # through the HuggingFace client rather than fetched directly.
+            if host and host not in _ALLOWED_SOURCE_HOSTS:
+                offenders.add(host)
+
+        if offenders:
+            raise DatasetLoaderError(
+                f"SPEED-Bench rows reference unexpected source hosts: "
+                f"{', '.join(sorted(offenders))}. Resolution fetches prompt text "
+                f"from each row's source, so AIPerf refuses hosts outside the "
+                f"published set ({', '.join(sorted(_ALLOWED_SOURCE_HOSTS))})."
+            )
 
     @staticmethod
     def _reset_resolver_state(speed_bench_prepare: Any) -> None:
@@ -317,7 +438,9 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
         speed_bench_prepare.HLE_RNG = np.random.default_rng(42)
 
     @classmethod
-    def _reject_unresolved(cls, config: str, path: Path) -> None:
+    def _reject_unresolved(
+        cls, config: str, path: Path, *, delete_on_failure: bool = True
+    ) -> None:
         """Fail if any row still holds placeholder text.
 
         Upstream's source dispatch has no terminal ``else``, so an unrecognised
@@ -329,7 +452,10 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
 
         unresolved = sum(1 for row in rows if cls._has_placeholder(row))
         if unresolved:
-            path.unlink(missing_ok=True)
+            # Only remove a file this process wrote; never delete a cache the
+            # user pre-staged, or a failed run destroys their input.
+            if delete_on_failure:
+                path.unlink(missing_ok=True)
             raise DatasetLoaderError(
                 f"SPEED-Bench '{config}': {unresolved} of {len(rows)} rows "
                 f"were left unresolved by the prepare step, which reports "
@@ -396,11 +522,21 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             )
 
         if not conversations:
+            # Rows are dropped by two independent filters, and naming the wrong
+            # one sends the user to check a category they never set.
+            if self.category:
+                raise DatasetLoaderError(
+                    f"SPEED-Bench category {self.category!r} matched none of the "
+                    f"{total} rows in config {self.config!r}. Verify the category "
+                    f"exists in this split -- the qualitative and throughput "
+                    f"splits have different category names."
+                )
             raise DatasetLoaderError(
-                f"SPEED-Bench category {self.category!r} matched none of the "
-                f"{total} rows in config {self.config!r}. Verify the category "
-                f"exists in this split -- the qualitative and throughput splits "
-                f"have different category names."
+                f"SPEED-Bench config {self.config!r} produced no usable "
+                f"conversations from {total} rows: every row's messages were "
+                f"empty or whitespace. The cached resolution at "
+                f"{self.cache_path_for(self.config)} is corrupt -- delete it and "
+                f"re-run to resolve the dataset again."
             )
         return conversations
 

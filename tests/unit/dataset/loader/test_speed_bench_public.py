@@ -6,14 +6,17 @@ from unittest.mock import Mock, patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.loader.errors import ConfigurationError
+from aiperf.config.loader.parsing import _MOVED_TO_PUBLIC_DATASET
 from aiperf.dataset.loader.speed_bench import SpeedBenchRow
 from aiperf.dataset.loader.speed_bench_public import (
     HLE_ACCESS_URL,
     SpeedBenchPublicLoader,
+    validate_config_name,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from tests.unit.conftest import make_run_from_cli
@@ -286,8 +289,16 @@ class TestResolveConfig:
         """Stand in for a datasets.Dataset through the calls resolve_config makes."""
 
         class _FakeDataset:
+            column_names = ["source"]
+
             def __init__(self, rows):
                 self._rows = rows
+
+            def __contains__(self, key):
+                return key in self.column_names
+
+            def __getitem__(self, key):
+                return [r.get("source", "") for r in self._rows]
 
             def map(self, fn, remove_columns=None):
                 return _FakeDataset([{**r, **fn(r)} for r in self._rows])
@@ -450,15 +461,7 @@ class TestMovedNameMigration:
     error would strand anyone with an existing script or tutorial command.
     """
 
-    @pytest.mark.parametrize(
-        "name",
-        [
-            "speed_bench_coding",
-            "speed_bench_summarization",
-            "speed_bench_throughput_1k_mixed",
-            "speed_bench_throughput_32k_high_entropy",
-        ],
-    )
+    @pytest.mark.parametrize("name", sorted(_MOVED_TO_PUBLIC_DATASET))
     def test_moved_name_points_at_the_new_flag(self, name) -> None:
         from pydantic import ValidationError
 
@@ -468,6 +471,20 @@ class TestMovedNameMigration:
         message = str(excinfo.value)
         assert "--public-dataset" in message
         assert f"--public-dataset {name}" in message
+
+    def test_every_moved_name_is_a_registered_public_dataset(self) -> None:
+        """The error names a replacement command, so it must actually exist.
+
+        The set is built by comprehension over ISL buckets and entropy tiers,
+        so a typo there yields a plausible-looking name that resolves to
+        nothing. Spot-checking a few members cannot catch that; this walks all
+        of them against the registry.
+        """
+        from aiperf.plugin.enums import PublicDatasetType
+
+        registered = {member.value for member in PublicDatasetType}
+
+        assert registered >= _MOVED_TO_PUBLIC_DATASET
 
     @pytest.mark.parametrize(
         "name", ["speed_bench_qualitative", "speed_bench_throughput_1k"]
@@ -624,3 +641,147 @@ class TestSessionIdFallback:
         conversations = await _loader().convert_to_conversations(data)
 
         assert conversations[0].session_id == "a" * 32
+
+
+class TestConfigNameValidation:
+    """``--hf-subset`` is a user-facing override interpolated into a filepath."""
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            param("../../../etc/passwd", id="parent_traversal"),
+            param("/tmp/evil", id="absolute_path"),
+            param("a/b", id="nested_path"),
+            param("", id="empty"),
+        ],
+    )  # fmt: skip
+    def test_path_escaping_config_names_are_rejected(self, config: str) -> None:
+        with pytest.raises(ConfigurationError, match="Invalid SPEED-Bench config"):
+            validate_config_name(config)
+
+    @pytest.mark.parametrize(
+        "config", [param("qualitative", id="qualitative"), param("throughput_1k", id="throughput")]
+    )  # fmt: skip
+    def test_published_config_names_are_accepted(self, config: str) -> None:
+        validate_config_name(config)
+
+
+class TestUntrustedSourceRejection:
+    """Row ``source`` values select what the vendored resolver fetches.
+
+    The dispatch happens inside the vendored file, which must stay byte-identical
+    to upstream, so the screen lives here instead.
+    """
+
+    class _FakeDataset:
+        def __init__(self, sources: list[str]) -> None:
+            self._sources = sources
+            self.column_names = ["source"]
+
+        def __contains__(self, key: str) -> bool:
+            return key in self.column_names
+
+        def __getitem__(self, key: str) -> list[str]:
+            return self._sources
+
+    def test_rows_pointing_at_unexpected_hosts_are_refused(self) -> None:
+        dataset = self._FakeDataset(
+            ["http://127.0.0.1:8123/private.jsonl?src=RUCAIBox/BAMBOO"]
+        )
+
+        with pytest.raises(DatasetLoaderError, match="unexpected source hosts"):
+            SpeedBenchPublicLoader._reject_untrusted_sources(dataset)
+
+    def test_published_sources_are_accepted(self) -> None:
+        dataset = self._FakeDataset(
+            [
+                "https://huggingface.co/datasets/cais/hle/tree/021a3d71",
+                "https://raw.githubusercontent.com/RUCAIBox/BAMBOO/f230f206/x.jsonl",
+                "http://opencompass.openxlab.space/utils/AdaLEval/stackselect_1k.json",
+                "",
+            ]
+        )
+
+        SpeedBenchPublicLoader._reject_untrusted_sources(dataset)
+
+
+class TestCachedInputIsValidated:
+    """A cache hit is untrusted: the documented pre-staging workflow copies a
+    file in from elsewhere, so the completeness invariant must hold on read."""
+
+    def _cache_with(self, tmp_path, rows: list[dict]):
+        cached = tmp_path / "qualitative.jsonl"
+        cached.write_text("\n".join(orjson.dumps(r).decode() for r in rows) + "\n")
+        return cached
+
+    def test_preflight_rejects_a_pre_staged_cache_holding_placeholders(
+        self, tmp_path
+    ) -> None:
+        cached = self._cache_with(tmp_path, [_row("a" * 32, "qa", PLACEHOLDER)])
+
+        with (
+            patch.object(
+                SpeedBenchPublicLoader, "cache_path_for", staticmethod(lambda c: cached)
+            ),
+            pytest.raises(ConfigurationError, match="unresolved"),
+        ):
+            SpeedBenchPublicLoader.preflight_materialize(hf_subset="qualitative")
+
+        assert cached.exists(), "a user-supplied cache must never be deleted"
+
+    async def test_load_dataset_rejects_a_pre_staged_cache_holding_placeholders(
+        self, tmp_path
+    ) -> None:
+        cached = self._cache_with(tmp_path, [_row("a" * 32, "qa", PLACEHOLDER)])
+
+        with (
+            patch.object(
+                SpeedBenchPublicLoader, "cache_path_for", staticmethod(lambda c: cached)
+            ),
+            pytest.raises(DatasetLoaderError, match="unresolved"),
+        ):
+            await _loader().load_dataset()
+
+        assert cached.exists()
+
+
+class TestMissingDependencyPanel:
+    def test_missing_datasets_raises_the_error_profile_quiets_on(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """profile.py passes quiet_for=(config.loader.errors.ConfigurationError,).
+
+        Raising the same-named class from aiperf.common.exceptions instead
+        prints a raw traceback -- the exact outcome the preflight exists to
+        avoid.
+        """
+        import sys
+
+        monkeypatch.setattr(
+            SpeedBenchPublicLoader,
+            "cache_path_for",
+            staticmethod(lambda c: tmp_path / f"{c}.jsonl"),
+        )
+        monkeypatch.setitem(sys.modules, "aiperf.dataset.loader.vendor", None)
+
+        with pytest.raises(ConfigurationError, match="partial install"):
+            SpeedBenchPublicLoader.resolve_config("qualitative")
+
+
+class TestPlaceholderSentinelStaysPinned:
+    """The sentinel exists in two independently-versioned files.
+
+    ``vendor/speed_bench_prepare.py`` is upstream verbatim and must not be
+    edited, so it cannot import the AIPerf copy. If a vendor bump changes the
+    string, every placeholder check in AIPerf silently stops matching and
+    unresolved rows would be benchmarked as real prompts. This test is the only
+    thing holding the two equal.
+    """
+
+    def test_aiperf_copy_matches_the_vendored_copy(self):
+        pytest.importorskip("datasets")
+        pytest.importorskip("tiktoken")
+
+        from aiperf.dataset.loader.vendor import speed_bench_prepare
+
+        assert SpeedBenchRow.TURNS_PLACEHOLDER == speed_bench_prepare.TURNS_PLACEHOLDER

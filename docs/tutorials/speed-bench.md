@@ -95,6 +95,11 @@ several GB from the source datasets. The result is cached under
 category of that config, so only the first run pays for it. Delete the file to
 refetch.
 
+That path is relative to the working directory you launch `aiperf` from, which
+every AIPerf public dataset shares. Running from a different directory resolves
+the config again from scratch, so run from a consistent directory -- or
+pre-stage the file as shown below -- if you want the cache to be reused.
+
 Resolution runs before AIPerf starts its services, so the download is not part
 of any measured run.
 

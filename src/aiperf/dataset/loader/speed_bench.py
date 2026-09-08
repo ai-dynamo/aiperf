@@ -166,6 +166,35 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
         """Return whether a JSON object matches the SPEED-Bench JSONL shape."""
         return is_speed_bench_row(data)
 
+    def _suggested_public_dataset(self) -> str:
+        """Name the registered ``--public-dataset`` entry replacing this file.
+
+        The split is authoritative rather than ``self.category``, which is None
+        for every shipped entry and would always suggest the qualitative split
+        even for a throughput file. Category names are also not composed
+        uniformly across splits -- qualitative registers ``speed_bench_coding``
+        while throughput registers ``speed_bench_throughput_1k_low_entropy`` --
+        so a composed name is only used when the registry actually holds it.
+        """
+        from aiperf.plugin.enums import PublicDatasetType
+
+        registered = {member.value for member in PublicDatasetType}
+        split = getattr(self, "split_filename", None)
+        split_name = f"speed_bench_{Path(split).stem}" if split else None
+
+        candidates = []
+        if self.category:
+            if split_name:
+                candidates.append(f"{split_name}_{self.category}")
+            candidates.append(f"speed_bench_{self.category}")
+        if split_name:
+            candidates.append(split_name)
+        candidates.append("speed_bench_qualitative")
+
+        return next(
+            (c for c in candidates if c in registered), "speed_bench_qualitative"
+        )
+
     def load_dataset(self) -> dict[str, list[MultiTurn]]:
         """Load SPEED-Bench multi-turn data from a JSONL file.
 
@@ -236,7 +265,7 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
                 f"SPEED-Bench ships without the prompt text for rows whose source "
                 f"datasets do not permit redistribution. Let AIPerf fetch and "
                 f"resolve it instead of pointing at a file: "
-                f"aiperf profile --public-dataset speed_bench_{self.category or 'qualitative'} ... "
+                f"aiperf profile --public-dataset {self._suggested_public_dataset()} ... "
                 f"One of the 14 sources, cais/hle, is gated: accept its terms at "
                 f"{HLE_ACCESS_URL} (approval is automatic, and required per user "
                 f"-- HuggingFace grants access to individuals, not organizations), "

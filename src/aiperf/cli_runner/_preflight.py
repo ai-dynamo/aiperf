@@ -201,7 +201,12 @@ def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
 
 
 def _public_dataset_loaders(plan: BenchmarkPlan):
-    """Yield ``(LoaderClass, loader_kwargs)`` for each public dataset in the plan.
+    """Yield ``(LoaderClass, loader_kwargs)`` for each public dataset in the plan."""
+    yield from _public_dataset_loaders_for_configs(plan.configs)
+
+
+def _public_dataset_loaders_for_configs(configs):
+    """Yield ``(LoaderClass, loader_kwargs)`` for each public dataset in ``configs``.
 
     Reads plugin metadata directly rather than going through the composer,
     which needs a live run. Only the fields the preflight hooks act on are
@@ -215,7 +220,7 @@ def _public_dataset_loaders(plan: BenchmarkPlan):
     from aiperf.plugin.enums import PluginType
 
     seen: set[tuple[type, str | None]] = set()
-    for cfg in plan.configs:
+    for cfg in configs:
         dataset = cfg.get_default_dataset()
         if not isinstance(dataset, PublicDataset):
             continue
@@ -284,4 +289,20 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
         )
 
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
+        _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)
+
+
+def preflight_public_datasets_for_run(run) -> None:
+    """Run the public-dataset preflights for a single serialized ``BenchmarkRun``.
+
+    The Kubernetes ``aiperf service`` entry point never calls ``run_benchmark``,
+    so without this the gate probe and the resolution download would both fall
+    inside ``DatasetManager``'s configure step and trip
+    ``AIPERF_DATASET_CONFIGURATION_TIMEOUT``. Only the dataset_manager container
+    calls this: it is the sole service that composes the dataset, and every
+    other pod would download the same multi-GB resolution into a private
+    filesystem for nothing.
+    """
+    for LoaderClass, kwargs in _public_dataset_loaders_for_configs([run.cfg]):
+        _call_optional_hook(LoaderClass, "preflight_access", kwargs)
         _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)

@@ -4,6 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import orjson
 import pytest
 from pytest import param
 
@@ -672,3 +673,45 @@ class TestSpeedBenchAutoDetection:
         ]
 
         assert offenders == []
+
+
+class TestSpeedBenchAutoDetectionThroughProduction:
+    """Exercises the real `_infer_type` loop, not a reimplementation of it.
+
+    `test_no_shipped_custom_entry_is_category_bearing` pins the registry, but it
+    reimplements the exclusion in its own comprehension, so it stays green if
+    `_infer_type` stopped consulting `plugins.is_autodetectable` entirely. These
+    drive a prepared SPEED-Bench row through the production detection path.
+    """
+
+    def _row(self) -> dict:
+        return {
+            "question_id": "a" * 32,
+            "category": "coding",
+            "messages": [{"role": "user", "content": "Write a function."}],
+        }
+
+    def test_prepared_qualitative_file_resolves_to_exactly_one_loader(
+        self, create_cfg_and_composer, tmp_path
+    ):
+        _, composer = create_cfg_and_composer()
+        path = tmp_path / "qualitative.jsonl"
+        path.write_text(orjson.dumps(self._row()).decode() + "\n", encoding="utf-8")
+
+        assert (
+            composer._infer_type(self._row(), filename=path)
+            == CustomDatasetType.SPEED_BENCH_QUALITATIVE
+        )
+
+    def test_prepared_throughput_file_resolves_to_its_own_split_loader(
+        self, create_cfg_and_composer, tmp_path
+    ):
+        """The split loaders are filename-gated; detection must honor that."""
+        _, composer = create_cfg_and_composer()
+        path = tmp_path / "throughput_1k.jsonl"
+        path.write_text(orjson.dumps(self._row()).decode() + "\n", encoding="utf-8")
+
+        assert (
+            composer._infer_type(self._row(), filename=path)
+            == CustomDatasetType.SPEED_BENCH_THROUGHPUT_1K
+        )

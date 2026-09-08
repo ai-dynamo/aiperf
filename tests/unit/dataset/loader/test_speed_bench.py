@@ -5,12 +5,18 @@ import json
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import MultiTurn
-from aiperf.dataset.loader.speed_bench import SpeedBenchLoader, SpeedBenchRow
+from aiperf.dataset.loader.speed_bench import (
+    SpeedBenchLoader,
+    SpeedBenchQualitativeLoader,
+    SpeedBenchRow,
+    SpeedBenchThroughput1KLoader,
+)
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from tests.unit.conftest import make_run_from_cli
 
@@ -540,3 +546,34 @@ class TestSpeedBenchLoaderMultiTurn:
         assert set(dataset) == {_qid("speed-coding-1")}
         assert len(turns) == 2
         assert [turn.text for turn in turns] == ["Code Q1", "Code Q2"]
+
+
+class TestSuggestedPublicDataset:
+    """The placeholder error is the main migration path off custom files.
+
+    A suggestion naming an unregistered loader turns one clear failure into
+    two, so every rendered name must exist in the registry.
+    """
+
+    @pytest.mark.parametrize(
+        ("loader_cls", "category", "expected"),
+        [
+            param(SpeedBenchQualitativeLoader, None, "speed_bench_qualitative", id="qualitative_no_category"),
+            param(SpeedBenchQualitativeLoader, "coding", "speed_bench_coding", id="qualitative_category"),
+            param(SpeedBenchThroughput1KLoader, None, "speed_bench_throughput_1k", id="throughput_no_category"),
+            param(SpeedBenchThroughput1KLoader, "low_entropy", "speed_bench_throughput_1k_low_entropy", id="throughput_category"),
+            param(SpeedBenchThroughput1KLoader, "not_a_category", "speed_bench_throughput_1k", id="unknown_category_falls_back_to_split"),
+        ],
+    )  # fmt: skip
+    def test_suggestion_is_a_registered_public_dataset(
+        self, loader_cls, category, expected
+    ):
+        from aiperf.plugin.enums import PublicDatasetType
+
+        loader = loader_cls.__new__(loader_cls)
+        loader.category = category
+
+        suggested = loader._suggested_public_dataset()
+
+        assert suggested == expected
+        assert suggested in {member.value for member in PublicDatasetType}

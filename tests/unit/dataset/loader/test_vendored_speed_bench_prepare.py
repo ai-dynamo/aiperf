@@ -10,6 +10,8 @@ silently changes published numbers, so pin the hash and route fixes upstream.
 import hashlib
 from pathlib import Path
 
+import pytest
+
 VENDORED = (
     Path(__file__).resolve().parents[4]
     / "src/aiperf/dataset/loader/vendor/speed_bench_prepare.py"
@@ -37,4 +39,39 @@ def test_vendored_prepare_script_is_unmodified():
         f"{VENDORED.name} no longer matches upstream commit {UPSTREAM_COMMIT}. "
         "Do not edit vendored files: fix it upstream in NVIDIA-NeMo/Skills, "
         "then re-vendor and update UPSTREAM_COMMIT/UPSTREAM_SHA256 together."
+    )
+
+
+UPSTREAM_URL = (
+    "https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/"
+    f"{UPSTREAM_COMMIT}/nemo_skills/dataset/speed-bench/prepare.py"
+)
+
+
+@pytest.mark.network
+def test_vendored_prepare_script_matches_upstream():
+    """Pin the vendored bytes to upstream, not just to themselves.
+
+    The offline gate above proves only that nobody edited the file locally --
+    ``UPSTREAM_SHA256`` was derived from the checked-in bytes, so it can never
+    establish that what was vendored is what upstream published. Only a fetch
+    can, which is why this is separate and network-marked. The vendor README's
+    Apache-2.0 section 4(b) "unmodified" claim rests on this test.
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(UPSTREAM_URL, timeout=30) as response:
+            upstream = response.read()
+    except (urllib.error.URLError, TimeoutError) as e:
+        pytest.skip(f"upstream unreachable: {e}")
+
+    upstream_digest = hashlib.sha256(upstream.replace(b"\r\n", b"\n")).hexdigest()
+
+    assert upstream_digest == UPSTREAM_SHA256, (
+        f"The vendored file does not match {UPSTREAM_URL}. Either the pinned "
+        "commit was force-pushed, or what was vendored was never upstream's "
+        "bytes. Re-vendor from the URL above and update UPSTREAM_COMMIT and "
+        "UPSTREAM_SHA256 together."
     )

@@ -16,6 +16,7 @@ from aiperf.cli_runner._preflight import (
     _preflight_dataset_access,
     _preflight_dataset_materialize,
     _public_dataset_loaders,
+    preflight_public_datasets_for_run,
 )
 from aiperf.config.dataset import FileDataset, PublicDataset
 
@@ -163,3 +164,60 @@ class TestOptionalHooks:
 
         with patch("aiperf.plugin.plugins.get_class", return_value=OddLoader):
             _preflight_dataset_access(plan)
+
+
+class TestKubernetesServiceEntryPoint:
+    """`aiperf service` never calls run_benchmark.
+
+    Without an explicit call the gate probe and the resolution download both
+    land inside DatasetManager's configure step, which is bounded by
+    AIPERF_DATASET_CONFIGURATION_TIMEOUT.
+    """
+
+    def test_both_hooks_run_for_a_serialized_run(self) -> None:
+        run = SimpleNamespace(
+            cfg=SimpleNamespace(get_default_dataset=lambda: _public("speed_bench_qa"))
+        )
+        calls: list[str] = []
+
+        class RecordingLoader:
+            @staticmethod
+            def preflight_access(**kwargs):
+                calls.append("access")
+
+            @staticmethod
+            def preflight_materialize(**kwargs):
+                calls.append("materialize")
+
+        with patch("aiperf.plugin.plugins.get_class", return_value=RecordingLoader):
+            preflight_public_datasets_for_run(run)
+
+        assert calls == ["access", "materialize"]
+
+    def test_gate_failure_surfaces_before_the_handshake(self) -> None:
+        from aiperf.config.loader.errors import ConfigurationError
+
+        run = SimpleNamespace(
+            cfg=SimpleNamespace(get_default_dataset=lambda: _public("speed_bench_qa"))
+        )
+
+        with (
+            patch(
+                "aiperf.dataset.loader.speed_bench_public.SpeedBenchPublicLoader"
+                ".preflight_access",
+                side_effect=ConfigurationError("gated"),
+            ),
+            pytest.raises(ConfigurationError, match="gated"),
+        ):
+            preflight_public_datasets_for_run(run)
+
+    def test_non_public_dataset_is_a_no_op(self) -> None:
+        run = SimpleNamespace(
+            cfg=SimpleNamespace(
+                get_default_dataset=lambda: FileDataset(
+                    name="main", type="file", path="x.jsonl"
+                )
+            )
+        )
+
+        preflight_public_datasets_for_run(run)
