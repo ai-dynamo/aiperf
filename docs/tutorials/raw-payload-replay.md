@@ -167,6 +167,8 @@ Raw payload conversations use `message_array_with_responses` [context mode](../r
 
 This is the correct behavior because raw payloads already contain the complete message history for each turn. In directory mode, each line in a session file should include all prior context needed for that point in the conversation (see the multi-turn examples above).
 
+If you instead want each turn to carry only the *new* messages and have AIPerf thread the live model responses (including tool calls) into the history between turns, use the Mooncake trace format with `"message_mode": "delta"` -- see [Replaying Message Deltas with Live Responses](../benchmark-modes/trace-replay.md#replaying-message-deltas-with-live-responses).
+
 ---
 
 ## Tips
