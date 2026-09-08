@@ -28,6 +28,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
     Annotations,
     Containers,
     JobSetLabels,
@@ -2036,7 +2037,7 @@ async def _claim_startup_failure(
                 namespace=namespace,
                 name=context.parent_name,
                 body=_startup_failure_claim_ops(live_body, context.fingerprint),
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
     except ApiException as exc:
         if exc.status == 404:
@@ -2545,7 +2546,7 @@ async def _patch_event_status(
                 namespace=namespace,
                 name=parent_name,
                 body=operations,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
         return True
     except ApiException as exc:

@@ -20,7 +20,10 @@ import aiohttp
 import kopf
 
 from aiperf.common.endpoint_credentials import redact_sweep_public_data
-from aiperf.kubernetes.constants import AIPerfLabels
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    AIPerfLabels,
+)
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_API_VERSION,
     AIPERF_JOB_KIND,
@@ -302,7 +305,7 @@ async def _patch_sweep_controller_failure(
                 name=sweep_name,
                 body=patch,
                 field_manager=JOBSET_TERMINAL_FIELD_MANAGER,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
     except ApiException as exc:
         if exc.status == 404:
