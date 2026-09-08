@@ -23,7 +23,10 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import PodTemplateConfig
-from aiperf.kubernetes.constants import JSON_PATCH_CONTENT_TYPE
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    MERGE_PATCH_CONTENT_TYPE,
+)
 
 # =============================================================================
 # Mock ApiClient + accessor patchers
@@ -252,6 +255,16 @@ def build_sample_pod_template() -> PodTemplateConfig:
 # =============================================================================
 
 
+# The only media types the custom-object patch endpoints advertise, mapped to the
+# body shape each one obliges the caller to send. Anything else -- a typo, or a
+# real-but-unsupported type such as application/strategic-merge-patch+json -- is
+# a 415 from the apiserver, not a body-shape question.
+SUPPORTED_PATCH_CONTENT_TYPES = {
+    JSON_PATCH_CONTENT_TYPE: list,
+    MERGE_PATCH_CONTENT_TYPE: dict,
+}
+
+
 def decode_patch_like_apiserver(
     body: dict[str, Any] | list[dict[str, Any]],
     content_type: str | None,
@@ -260,13 +273,13 @@ def decode_patch_like_apiserver(
 
     Lets a fake catch a body/content-type mismatch that a bare ``AsyncMock``
     would accept. ``None`` means the caller omitted ``_content_type`` and gets
-    the kubernetes_asyncio default.
+    the kubernetes_asyncio default. An unadvertised media type raises 415 rather
+    than being waved through as a merge patch.
     """
-    expected = (
-        list
-        if (content_type or JSON_PATCH_CONTENT_TYPE) == JSON_PATCH_CONTENT_TYPE
-        else dict
-    )
+    content_type = content_type or JSON_PATCH_CONTENT_TYPE
+    expected = SUPPORTED_PATCH_CONTENT_TYPES.get(content_type)
+    if expected is None:
+        raise ApiException(status=415, reason="Unsupported Media Type")
     if not isinstance(body, expected):
         raise ApiException(status=400, reason="Bad Request")
 
