@@ -28,6 +28,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.kubernetes.constants import JSON_PATCH_CONTENT_TYPE
+
 
 class FakeApiserver:
     """In-memory fake apiserver shared across one test scenario."""
@@ -68,8 +70,18 @@ class FakeApiserver:
         plural: str,
         name: str,
         body: dict[str, Any] | list[dict[str, Any]],
+        _content_type: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
+        # kubernetes_asyncio defaults to JSON_PATCH_CONTENT_TYPE, under which a
+        # merge-patch dict is rejected 400 "cannot unmarshal object into Go
+        # value of type []handlers.jsonPatchOp". Decode like the apiserver so a
+        # call site that omits or contradicts _content_type fails here rather
+        # than only against a real cluster.
+        content_type = _content_type or JSON_PATCH_CONTENT_TYPE
+        expected = list if content_type == JSON_PATCH_CONTENT_TYPE else dict
+        if not isinstance(body, expected):
+            raise ApiException(status=400, reason="Bad Request")
         key = (namespace, plural, name)
         self.patches.append((key, copy.deepcopy(body)))
         if key in self.patch_404:
