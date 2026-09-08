@@ -23,7 +23,7 @@ from aiperf.cli_commands.kube.cleanup import _is_terminal, cleanup
 from aiperf.cli_commands.kube.delete import delete
 from aiperf.cli_commands.kube.shutdown import shutdown
 from aiperf.kubernetes.environment import K8sEnvironment
-from tests.unit.cli_commands.kube._patch_contract import strict_patch_mock
+from tests.harness.k8s import strict_patch_mock
 
 
 @asynccontextmanager

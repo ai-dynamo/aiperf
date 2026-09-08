@@ -23,6 +23,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.config import AIPerfConfig
 from aiperf.config.deployment import PodTemplateConfig
+from aiperf.kubernetes.constants import JSON_PATCH_CONTENT_TYPE
 
 # =============================================================================
 # Mock ApiClient + accessor patchers
@@ -244,3 +245,44 @@ def build_sample_pod_template() -> PodTemplateConfig:
         ],
         service_account_name="my-service-account",
     )
+
+
+# =============================================================================
+# Patch content-type contract
+# =============================================================================
+
+
+def decode_patch_like_apiserver(
+    body: dict[str, Any] | list[dict[str, Any]],
+    content_type: str | None,
+) -> None:
+    """Raise 400 when a patch body's shape contradicts its content type.
+
+    ``kubernetes_asyncio`` selects the first content type it advertises when
+    the caller omits ``_content_type``, and for every ``patch_*`` method that
+    is ``JSON_PATCH_CONTENT_TYPE``. A merge-patch dict sent that way reaches
+    the apiserver under an RFC 6902 header and is rejected with 400 "cannot
+    unmarshal object into Go value of type []handlers.jsonPatchOp".
+
+    Test doubles built on a bare ``AsyncMock`` accept that call, so the bug is
+    invisible until it hits a real cluster. Fakes call this to decode instead.
+    """
+    expected = (
+        list
+        if (content_type or JSON_PATCH_CONTENT_TYPE) == JSON_PATCH_CONTENT_TYPE
+        else dict
+    )
+    if not isinstance(body, expected):
+        raise ApiException(status=400, reason="Bad Request")
+
+
+def strict_patch_mock() -> AsyncMock:
+    """An ``AsyncMock`` patch method that 400s on a body/content-type mismatch."""
+
+    async def _patch(
+        *, body: Any, _content_type: str | None = None, **_: Any
+    ) -> dict[str, Any]:
+        decode_patch_like_apiserver(body, _content_type)
+        return {}
+
+    return AsyncMock(side_effect=_patch)

@@ -19,7 +19,7 @@ from pytest import param
 
 from aiperf.cli_commands.kube.cancel import cancel
 from aiperf.kubernetes.console import LastBenchmarkInfo
-from tests.unit.cli_commands.kube._patch_contract import strict_patch_mock
+from tests.harness.k8s import strict_patch_mock
 
 
 @asynccontextmanager

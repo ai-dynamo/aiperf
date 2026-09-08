@@ -20,6 +20,7 @@ from aiperf.operator.namespace_claim import (
     NamespaceClaimConflict,
     watched_namespaces_from_argv,
 )
+from tests.harness.k8s import decode_patch_like_apiserver
 
 
 class FakeCoordinationApi:
@@ -63,12 +64,7 @@ class FakeCoordinationApi:
         body: dict[str, Any],
         _content_type: str | None = None,
     ) -> V1Lease:
-        # kubernetes_asyncio defaults to application/json-patch+json, under
-        # which the apiserver expects an RFC 6902 operation array and rejects
-        # a merge-patch object with a 400.
-        content_type = _content_type or "application/json-patch+json"
-        if content_type == "application/json-patch+json" and not isinstance(body, list):
-            raise ApiException(status=400, reason="Bad Request")
+        decode_patch_like_apiserver(body, _content_type)
         if namespace not in self.leases:
             raise ApiException(status=404, reason="Not Found")
         self.patches.append(namespace)
