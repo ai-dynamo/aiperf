@@ -56,8 +56,19 @@ class FakeCoordinationApi:
         return body
 
     async def patch_namespaced_lease(
-        self, *, name: str, namespace: str, body: dict[str, Any]
+        self,
+        *,
+        name: str,
+        namespace: str,
+        body: dict[str, Any],
+        _content_type: str | None = None,
     ) -> V1Lease:
+        # kubernetes_asyncio defaults to application/json-patch+json, under
+        # which the apiserver expects an RFC 6902 operation array and rejects
+        # a merge-patch object with a 400.
+        content_type = _content_type or "application/json-patch+json"
+        if content_type == "application/json-patch+json" and not isinstance(body, list):
+            raise ApiException(status=400, reason="Bad Request")
         if namespace not in self.leases:
             raise ApiException(status=404, reason="Not Found")
         self.patches.append(namespace)
@@ -462,6 +473,35 @@ async def test_renew_patch_carries_the_resource_version_it_read() -> None:
     await claim.renew()
 
     assert bodies[0]["metadata"]["resourceVersion"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_renew_patch_declares_the_merge_patch_content_type() -> None:
+    """Left to the client default the merge-patch body ships as a JSON patch,
+    the apiserver 400s, and every renewal silently drops its claim."""
+    api = FakeCoordinationApi()
+    claim = claim_for(api, "test-op")
+    await claim.acquire("aiperf-test")
+
+    content_types: list[str | None] = []
+    original = api.patch_namespaced_lease
+
+    async def recording_patch(
+        *,
+        name: str,
+        namespace: str,
+        body: dict[str, Any],
+        _content_type: str | None = None,
+    ):
+        content_types.append(_content_type)
+        return await original(
+            name=name, namespace=namespace, body=body, _content_type=_content_type
+        )
+
+    api.patch_namespaced_lease = recording_patch  # type: ignore[method-assign]
+    await claim.renew()
+
+    assert content_types == ["application/merge-patch+json"]
 
 
 @pytest.mark.asyncio
