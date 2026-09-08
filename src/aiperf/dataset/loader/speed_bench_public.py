@@ -373,10 +373,19 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
                 remove_columns=["turns"],
             )
             dataset.to_json(tmp_path)
-            cls._reject_unresolved(config, tmp_path)
+            rows = cls._reject_unresolved(config, tmp_path)
             # Publish atomically: a half-written cache must never look complete
             # to the next run, which would silently benchmark placeholder text.
             tmp_path.replace(cache_path)
+            # Without this the run reports only the multi-GB source downloads
+            # (which land in the HuggingFace cache, not here) and then a small
+            # JSONL, leaving no way to tell a complete resolution from a
+            # truncated one.
+            logging.getLogger(__name__).info(
+                f"Resolved SPEED-Bench '{config}': {rows} prompts written to "
+                f"{cache_path} ({cache_path.stat().st_size / 1e6:.1f} MB). The "
+                f"source datasets themselves stay in the HuggingFace cache."
+            )
         except DatasetLoaderError:
             raise
         except Exception as e:
@@ -440,8 +449,8 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
     @classmethod
     def _reject_unresolved(
         cls, config: str, path: Path, *, delete_on_failure: bool = True
-    ) -> None:
-        """Fail if any row still holds placeholder text.
+    ) -> int:
+        """Fail if any row still holds placeholder text; return the row count.
 
         Upstream's source dispatch has no terminal ``else``, so an unrecognised
         source yields placeholder text and exits successfully. Exit status is
@@ -463,6 +472,8 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
                 f"benchmark placeholder text. Re-run to retry; if it persists, "
                 f"one of the source datasets is unavailable."
             )
+
+        return len(rows)
 
     @staticmethod
     def _has_placeholder(row: dict[str, Any]) -> bool:

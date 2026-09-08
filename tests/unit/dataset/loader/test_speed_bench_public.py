@@ -785,3 +785,54 @@ class TestPlaceholderSentinelStaysPinned:
         from aiperf.dataset.loader.vendor import speed_bench_prepare
 
         assert SpeedBenchRow.TURNS_PLACEHOLDER == speed_bench_prepare.TURNS_PLACEHOLDER
+
+
+class TestResolutionReportsItsResult:
+    """A reviewer could not tell a complete resolution from a truncated one.
+
+    The run logs GBs of source downloads (which land in the HuggingFace cache)
+    and then produces a small JSONL, so the completion line has to state the
+    row count and where the bytes actually went.
+    """
+
+    def test_row_count_is_reported_on_success(self, tmp_path, caplog) -> None:
+        import logging
+
+        rows = [
+            {
+                "question_id": "a" * 32,
+                "category": "coding",
+                "messages": [{"role": "user", "content": "hi"}],
+            }
+        ]
+        path = tmp_path / "qualitative.jsonl"
+        path.write_text(
+            "\n".join(orjson.dumps(r).decode() for r in rows), encoding="utf-8"
+        )
+
+        with caplog.at_level(logging.INFO):
+            counted = SpeedBenchPublicLoader._reject_unresolved(
+                "qualitative", path, delete_on_failure=False
+            )
+
+        assert counted == len(rows)
+
+    def test_unresolved_rows_still_raise_rather_than_report(self, tmp_path) -> None:
+        path = tmp_path / "qualitative.jsonl"
+        path.write_text(
+            orjson.dumps(
+                {
+                    "question_id": "a" * 32,
+                    "category": "coding",
+                    "messages": [
+                        {"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}
+                    ],
+                }
+            ).decode(),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(DatasetLoaderError, match="left unresolved"):
+            SpeedBenchPublicLoader._reject_unresolved(
+                "qualitative", path, delete_on_failure=False
+            )
