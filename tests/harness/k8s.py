@@ -256,16 +256,11 @@ def decode_patch_like_apiserver(
     body: dict[str, Any] | list[dict[str, Any]],
     content_type: str | None,
 ) -> None:
-    """Raise 400 when a patch body's shape contradicts its content type.
+    """Reject a body whose shape contradicts its content type, as the apiserver does.
 
-    ``kubernetes_asyncio`` selects the first content type it advertises when
-    the caller omits ``_content_type``, and for every ``patch_*`` method that
-    is ``JSON_PATCH_CONTENT_TYPE``. A merge-patch dict sent that way reaches
-    the apiserver under an RFC 6902 header and is rejected with 400 "cannot
-    unmarshal object into Go value of type []handlers.jsonPatchOp".
-
-    Test doubles built on a bare ``AsyncMock`` accept that call, so the bug is
-    invisible until it hits a real cluster. Fakes call this to decode instead.
+    Lets a fake catch a body/content-type mismatch that a bare ``AsyncMock``
+    would accept. ``None`` means the caller omitted ``_content_type`` and gets
+    the kubernetes_asyncio default.
     """
     expected = (
         list

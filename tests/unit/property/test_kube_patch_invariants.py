@@ -1,23 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Mechanical "global invariant" test for Kubernetes patch content types.
+"""Mechanical "global invariant" test: every patch call names its content type.
 
-``kubernetes_asyncio`` picks the first content type each ``patch_*`` method
-advertises whenever the caller omits ``_content_type``, and for every one of
-them that is ``application/json-patch+json``. A merge-patch dict sent that way
-reaches the apiserver under an RFC 6902 header and is rejected:
-
-    400 error decoding patch: json: cannot unmarshal object into Go value of
-    type []handlers.jsonPatchOp
-
-This is invisible to unit tests built on ``AsyncMock`` and only fails against a
-real cluster, which is how it shipped twice -- once in ``aiperf kube cancel``
-and once in the operator's namespace-lease renewal, where the 400 was swallowed
-by a best-effort handler and silently dropped every namespace claim.
-
-The contract: every ``patch_namespaced_*`` call in ``src/aiperf`` names its
-content type explicitly. Pair ``JSON_PATCH_CONTENT_TYPE`` with a list of RFC
-6902 operations and ``MERGE_PATCH_CONTENT_TYPE`` with a dict.
+``kubernetes_asyncio`` picks JSON Patch when ``_content_type`` is omitted, so a
+merge-patch dict sent that way is rejected by the apiserver. An ``AsyncMock``
+accepts the call, making the break visible only against a real cluster.
 """
 
 from __future__ import annotations
@@ -46,15 +33,15 @@ def _patch_call_sites() -> list[tuple[str, int, set[str]]]:
     return sites
 
 
-def test_patch_call_sites_exist() -> None:
-    """Guard the guard: a scan that finds nothing would pass vacuously."""
-    assert len(_patch_call_sites()) >= 20
-
-
 def test_every_patch_names_its_content_type() -> None:
+    sites = _patch_call_sites()
+    # Not an inventory: any non-zero count is fine. Zero means the scan itself
+    # broke, which would let the assertion below pass without checking anything.
+    assert sites, f"no patch_namespaced_* calls found under {SRC_ROOT}"
+
     unguarded = [
         f"{path}:{line}"
-        for path, line, kwargs in _patch_call_sites()
+        for path, line, kwargs in sites
         if "_content_type" not in kwargs
     ]
     assert not unguarded, (

@@ -64,19 +64,10 @@ class TestKubeCancel:
         custom.patch_namespaced_custom_object.assert_awaited_once()
         kwargs = custom.patch_namespaced_custom_object.await_args.kwargs
         assert kwargs["body"] == {"spec": {"cancel": True}}
+        assert kwargs["_content_type"] == "application/merge-patch+json"
         assert kwargs["plural"] == "aiperfjobs"
         assert kwargs["name"] == "job-1"
         assert kwargs["namespace"] == "bench"
-
-    @pytest.mark.asyncio
-    async def test_patch_declares_the_merge_patch_content_type(self) -> None:
-        """A ``{"spec": ...}`` body under the client's default JSON-patch header
-        is rejected by the apiserver with a 400, which broke `kube cancel`
-        against every real cluster."""
-        custom = _custom([{"status": {"phase": "Running"}}, ApiException(status=404)])
-        await _run(custom)
-        kwargs = custom.patch_namespaced_custom_object.await_args.kwargs
-        assert kwargs["_content_type"] == "application/merge-patch+json"
 
     @pytest.mark.asyncio
     async def test_success_hint_uses_live_status_command(self) -> None:
