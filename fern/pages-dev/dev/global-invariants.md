@@ -45,6 +45,8 @@ plus the fuzzer in
 [`test_pydantic_field_fuzz.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/test_pydantic_field_fuzz.py)
 and the round-trip in
 [`test_dump_config_roundtrip.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/test_dump_config_roundtrip.py).
+The Kubernetes patch content-type invariant lives alongside them in
+[`test_kube_patch_invariants.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/test_kube_patch_invariants.py).
 
 ### `test_every_json_exporter_calls_scrub_non_finite`
 
@@ -131,6 +133,31 @@ fuzzed), all distribution types
 (`FixedDistribution`, `NormalDistribution`, `LogNormalDistribution`,
 `MultimodalDistribution`, `EmpiricalDistribution`), and
 `CLIConfig`.
+
+### Kubernetes patch content type: `test_kube_patch_invariants.py`
+
+Lives in
+[`tests/unit/property/test_kube_patch_invariants.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/test_kube_patch_invariants.py)
+and walks the AST of every `patch_*` call under `src/aiperf/`. Two
+assertions, no baseline:
+
+- `test_every_patch_names_its_content_type` — the call must pass
+  `_content_type=` rather than inheriting the `kubernetes_asyncio`
+  default, which is always the first type the endpoint advertises
+  (`application/json-patch+json`).
+- `test_every_patch_pairs_its_body_shape_with_its_content_type` — when
+  both the constant and a literal body are visible at the call site,
+  `JSON_PATCH_CONTENT_TYPE` must carry a list of RFC 6902 operations
+  and `MERGE_PATCH_CONTENT_TYPE` must carry a dict.
+
+Presence alone is not enough: a dict body sent under an RFC 6902
+header produces `400 cannot unmarshal object into Go value of type
+[]handlers.jsonPatchOp`, which is why the second assertion exists. The
+runtime half of the same rule lives in
+`tests.harness.k8s.decode_patch_like_apiserver`, which test fakes call
+so a mismatch — or an unadvertised media type, which raises 415 —
+fails locally instead of only against a real cluster. A bare
+`AsyncMock` accepts every shape and hides both.
 
 ## The baseline-ratchet pattern
 
