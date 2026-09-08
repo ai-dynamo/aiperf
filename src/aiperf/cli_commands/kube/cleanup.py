@@ -150,6 +150,7 @@ async def cleanup(
                         namespace=namespace,
                         name=name,
                         body={"spec": {"cancel": True}},
+                        _content_type="application/merge-patch+json",
                     )
                 await custom.delete_namespaced_custom_object(
                     group=AIPERF_JOB_GROUP,

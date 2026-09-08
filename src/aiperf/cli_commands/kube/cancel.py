@@ -139,6 +139,7 @@ async def cancel(
                 namespace=namespace,
                 name=job_id,
                 body={"spec": {"cancel": True}},
+                _content_type="application/merge-patch+json",
             )
             kube_console.print_success(
                 f"Cancellation requested for {job_id} in namespace {namespace}"
