@@ -84,6 +84,7 @@ async def cancel(
         from aiperf.kubernetes import cli_helpers
         from aiperf.kubernetes import console as kube_console
         from aiperf.kubernetes.client import k8s_client
+        from aiperf.kubernetes.constants import MERGE_PATCH_CONTENT_TYPE
         from aiperf.kubernetes.cr_refs import (
             AIPERF_JOB_GROUP,
             AIPERF_JOB_VERSION,
@@ -139,7 +140,7 @@ async def cancel(
                 namespace=namespace,
                 name=job_id,
                 body={"spec": {"cancel": True}},
-                _content_type="application/merge-patch+json",
+                _content_type=MERGE_PATCH_CONTENT_TYPE,
             )
             kube_console.print_success(
                 f"Cancellation requested for {job_id} in namespace {namespace}"

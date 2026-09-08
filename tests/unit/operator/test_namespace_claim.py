@@ -465,9 +465,17 @@ async def test_renew_patch_carries_the_resource_version_it_read() -> None:
     bodies: list[dict[str, Any]] = []
     original = api.patch_namespaced_lease
 
-    async def recording_patch(*, name: str, namespace: str, body: dict[str, Any]):
+    async def recording_patch(
+        *,
+        name: str,
+        namespace: str,
+        body: dict[str, Any],
+        _content_type: str | None = None,
+    ):
         bodies.append(body)
-        return await original(name=name, namespace=namespace, body=body)
+        return await original(
+            name=name, namespace=namespace, body=body, _content_type=_content_type
+        )
 
     api.patch_namespaced_lease = recording_patch  # type: ignore[method-assign]
     await claim.renew()
@@ -510,7 +518,12 @@ async def test_renew_releases_the_namespace_on_a_conflicting_patch() -> None:
 
     class ConflictingApi(FakeCoordinationApi):
         async def patch_namespaced_lease(
-            self, *, name: str, namespace: str, body: dict[str, Any]
+            self,
+            *,
+            name: str,
+            namespace: str,
+            body: dict[str, Any],
+            _content_type: str | None = None,
         ) -> V1Lease:
             raise ApiException(status=409, reason="Conflict")
 
