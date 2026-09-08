@@ -266,7 +266,7 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
                 f"datasets do not permit redistribution. Let AIPerf fetch and "
                 f"resolve it instead of pointing at a file: "
                 f"aiperf profile --public-dataset {self._suggested_public_dataset()} ... "
-                f"One of the 14 sources, cais/hle, is gated: accept its terms at "
+                f"One of the sources, cais/hle, is gated: accept its terms at "
                 f"{HLE_ACCESS_URL} (approval is automatic, and required per user "
                 f"-- HuggingFace grants access to individuals, not organizations), "
                 f"then run 'hf auth login'. "

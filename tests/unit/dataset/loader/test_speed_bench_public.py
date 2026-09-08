@@ -836,3 +836,60 @@ class TestResolutionReportsItsResult:
             SpeedBenchPublicLoader._reject_unresolved(
                 "qualitative", path, delete_on_failure=False
             )
+
+
+@pytest.mark.network
+class TestAllowlistMatchesThePublishedDataset:
+    """The allowlist is a denylist for everything else, so a gap breaks resolution.
+
+    It was originally written from the documented source list and omitted
+    `github.com` and `www.gutenberg.org`, which rejected every config on a cold
+    cache -- invisible to every offline test, because they all supply their own
+    fake rows. Only reading the real dataset can catch this.
+    """
+
+    CONFIGS = (
+        "qualitative",
+        "throughput_1k",
+        "throughput_2k",
+        "throughput_8k",
+        "throughput_16k",
+        "throughput_32k",
+    )
+
+    def test_allowlist_covers_every_published_source_host(self) -> None:
+        from urllib.parse import urlparse
+
+        datasets = pytest.importorskip("datasets")
+
+        from aiperf.dataset.loader.speed_bench_public import (
+            _ALLOWED_SOURCE_HOSTS,
+            SPEED_BENCH_REVISION,
+        )
+
+        found: set[str] = set()
+        for config in self.CONFIGS:
+            try:
+                rows = datasets.load_dataset(
+                    "nvidia/SPEED-Bench",
+                    config,
+                    split="test",
+                    revision=SPEED_BENCH_REVISION,
+                )
+            except Exception as e:
+                pytest.skip(f"SPEED-Bench unreachable: {e}")
+
+            if "source" not in rows.column_names:
+                continue
+            for source in rows["source"]:
+                if not source:
+                    continue
+                host = urlparse(str(source)).netloc.split("@")[-1].split(":")[0]
+                if host:
+                    found.add(host)
+
+        assert found <= _ALLOWED_SOURCE_HOSTS, (
+            f"SPEED-Bench rows reference hosts missing from the allowlist: "
+            f"{sorted(found - _ALLOWED_SOURCE_HOSTS)}. Resolution rejects every "
+            f"affected config until they are added or the fetch is rerouted."
+        )

@@ -36,11 +36,17 @@ SPEED_BENCH_REVISION = "487aa718444e816458d1a0a52bfce7a454285cf4"
 # Hosts the published dataset legitimately sources prompt text from. Row
 # ``source`` values drive what the vendored resolver fetches, so anything
 # outside this set is refused before a request is made.
+# The complete set of source hosts across all six configs at
+# SPEED_BENCH_REVISION, enumerated from the dataset itself rather than from the
+# docs -- see test_allowlist_covers_every_published_source_host, which refetches
+# and fails if a revision bump introduces a host not listed here.
 _ALLOWED_SOURCE_HOSTS = frozenset(
     {
         "huggingface.co",
         "raw.githubusercontent.com",
+        "github.com",
         "opencompass.openxlab.space",
+        "www.gutenberg.org",
     }
 )
 
@@ -340,7 +346,7 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
         cache_path = cls.cache_path_for(config)
         logging.getLogger(__name__).info(
             f"Resolving SPEED-Bench '{config}': downloading prompt text from "
-            f"its 14 source datasets. This is several GB and can take tens of "
+            f"its source datasets. This is several GB and can take tens of "
             f"minutes, but it happens once -- the result is cached to "
             f"{cache_path} and shared by every {config} category. Delete that "
             f"file to refetch."
