@@ -23,6 +23,7 @@ from aiperf.cli_commands.kube.cleanup import _is_terminal, cleanup
 from aiperf.cli_commands.kube.delete import delete
 from aiperf.cli_commands.kube.shutdown import shutdown
 from aiperf.kubernetes.environment import K8sEnvironment
+from tests.unit.cli_commands.kube._patch_contract import strict_patch_mock
 
 
 @asynccontextmanager
@@ -90,7 +91,7 @@ def _custom(*, get: Any = None, listing: dict | None = None) -> MagicMock:
         get_namespaced_custom_object=AsyncMock(side_effect=get),
         list_namespaced_custom_object=AsyncMock(side_effect=_list),
         delete_namespaced_custom_object=AsyncMock(),
-        patch_namespaced_custom_object=AsyncMock(),
+        patch_namespaced_custom_object=strict_patch_mock(),
     )
 
 
@@ -244,6 +245,16 @@ class TestCleanup:
             "spec": {"cancel": True}
         }
         custom.delete_namespaced_custom_object.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_all_cancel_patch_declares_the_merge_patch_content_type(self) -> None:
+        """Same 400 as `kube cancel`: a merge-patch body needs its own header,
+        or the client ships it as an RFC 6902 array and the apiserver rejects it."""
+        custom = _custom(listing={"items": [_cr("live-1", "Running")]})
+        with _patched(custom):
+            await cleanup(force=True, all_benchmarks=True)
+        kwargs = custom.patch_namespaced_custom_object.await_args.kwargs
+        assert kwargs["_content_type"] == "application/merge-patch+json"
 
     @pytest.mark.asyncio
     async def test_dry_run_deletes_nothing(self) -> None:

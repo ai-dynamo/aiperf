@@ -19,6 +19,7 @@ from pytest import param
 
 from aiperf.cli_commands.kube.cancel import cancel
 from aiperf.kubernetes.console import LastBenchmarkInfo
+from tests.unit.cli_commands.kube._patch_contract import strict_patch_mock
 
 
 @asynccontextmanager
@@ -29,7 +30,7 @@ async def _fake_client(**_: Any):
 def _custom(get_side_effect: Any) -> MagicMock:
     return MagicMock(
         get_namespaced_custom_object=AsyncMock(side_effect=get_side_effect),
-        patch_namespaced_custom_object=AsyncMock(),
+        patch_namespaced_custom_object=strict_patch_mock(),
     )
 
 
@@ -66,6 +67,16 @@ class TestKubeCancel:
         assert kwargs["plural"] == "aiperfjobs"
         assert kwargs["name"] == "job-1"
         assert kwargs["namespace"] == "bench"
+
+    @pytest.mark.asyncio
+    async def test_patch_declares_the_merge_patch_content_type(self) -> None:
+        """A ``{"spec": ...}`` body under the client's default JSON-patch header
+        is rejected by the apiserver with a 400, which broke `kube cancel`
+        against every real cluster."""
+        custom = _custom([{"status": {"phase": "Running"}}, ApiException(status=404)])
+        await _run(custom)
+        kwargs = custom.patch_namespaced_custom_object.await_args.kwargs
+        assert kwargs["_content_type"] == "application/merge-patch+json"
 
     @pytest.mark.asyncio
     async def test_success_hint_uses_live_status_command(self) -> None:
