@@ -6,6 +6,7 @@ from aiperf.common.models import (
     InferenceServerResponse,
     ParsedResponse,
     RequestInfo,
+    TextResponse,
 )
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 
@@ -85,11 +86,14 @@ class AudioTranscriptionEndpoint(BaseEndpoint):
     def parse_response(
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
-        json_obj = response.get_json()
-        if json_obj is not None:
+        # Text-format transcripts may themselves be valid JSON, including objects.
+        is_text_response = isinstance(response, TextResponse) and (
+            response.content_type or ""
+        ).lower().startswith("text/")
+        json_obj = None if is_text_response else response.get_json()
+        if isinstance(json_obj, dict):
             # response_format json / verbose_json: transcript is the "text" field.
-            # Use ``is not None`` (not truthiness) so an empty ``{}`` error body
-            # yields no transcript rather than falling through to get_text().
+            # An empty JSON object must not fall through to the raw transcript.
             text = json_obj.get("text")
             usage = json_obj.get("usage")
         else:

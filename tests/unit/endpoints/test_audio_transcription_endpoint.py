@@ -7,8 +7,9 @@ import base64
 import orjson
 import pytest
 from pydantic import TypeAdapter
+from pytest import param
 
-from aiperf.common.models import Audio, Text, Turn
+from aiperf.common.models import Audio, Text, TextResponse, Turn
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.endpoints.openai_audio_transcription import (
     AudioTranscriptionEndpoint,
@@ -175,6 +176,42 @@ class TestAudioTranscriptionEndpoint:
         result = endpoint.parse_response(response)
         assert result is not None
         assert result.usage is None
+
+    @pytest.mark.parametrize(
+        "transcript",
+        [
+            param("42", id="integer"),
+            param("0", id="zero"),
+            param("true", id="boolean"),
+            param("null", id="null"),
+            param('"hello"', id="quoted-string"),
+            param("[1,2]", id="array"),
+            param("{}", id="empty-object"),
+            param('{"text":"hello"}', id="object"),
+            param("Hello world", id="plain-text"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            param("text/plain", id="plain"),
+            param("Text/Plain; charset=utf-8", id="charset"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_plain_text_preserves_json_looking_transcript(
+        self,
+        endpoint: AudioTranscriptionEndpoint,
+        transcript: str,
+        content_type: str,
+    ) -> None:
+        response = TextResponse(perf_ns=123, text=transcript, content_type=content_type)
+
+        result = endpoint.parse_response(response)
+
+        assert result is not None
+        assert result.data.get_text() == transcript
+        assert result.usage is None
+        assert result.perf_ns == response.perf_ns
 
     def test_parse_response_empty_body_returns_none(
         self, endpoint: AudioTranscriptionEndpoint

@@ -10,6 +10,11 @@ AIPerf supports benchmarking Automatic Speech Recognition (ASR) models using pub
 speech datasets from HuggingFace. Each dataset entry sends real speech audio alongside a fixed
 "Transcribe this audio." prompt to measure end-to-end transcription latency and throughput.
 
+For Whisper-compatible `/v1/audio/transcriptions` servers, use
+`--endpoint-type audio_transcription`. JSON responses provide the transcript in
+`text`; text responses preserve the entire body, including transcripts such as
+`42` that also happen to be valid JSON.
+
 Five ASR datasets are built in:
 
 | Dataset | `--public-dataset` | Auth Required | Description |
