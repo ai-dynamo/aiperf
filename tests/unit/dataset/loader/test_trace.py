@@ -431,11 +431,7 @@ class TestMooncakeTraceDatasetLoader:
     ):
         """Test conversion of trace data to conversations."""
         # Mock parallel_decode to return decoded prompts
-        mock_parallel_decode.return_value = [
-            "decoded prompt 1",
-            "decoded prompt 2",
-            "decoded prompt 3",
-        ]
+        mock_parallel_decode.return_value = ["decoded prompt"]
 
         # Setup trace data
         trace_data = {
@@ -1182,8 +1178,14 @@ class TestMooncakeTraceReproducibility:
 
         This tests the strict=True behavior in zip() that guards against silent data loss.
         """
-        # Mock parallel_decode to return FEWER results than expected
+        # Mock parallel_decode to return FEWER results than unique sequences.
         mock_parallel_decode.return_value = ["decoded prompt 1"]  # Only 1, expecting 3
+        mock_prompt_generator._cache = None
+        mock_prompt_generator._build_token_sequence.side_effect = [
+            [1, 2],
+            [3, 4, 5],
+            [6],
+        ]
 
         trace_data = {
             "session-1": [

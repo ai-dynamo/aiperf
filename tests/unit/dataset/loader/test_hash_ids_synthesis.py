@@ -10,9 +10,10 @@ from aiperf.dataset.loader.hash_ids_synthesis import (
 
 
 def test_mixin_decodes_via_parallel_decode_for_hash_id_requests():
-    """Non-empty hash_ids requests build a token sequence then decode via ``parallel_decode`` with no per-process string cache."""
+    """Without a real ``_cache`` map, the mixin decodes the full token sequence."""
     pg = MagicMock()
     pg.tokenizer.resolved_name = "test-tok"
+    pg._cache = MagicMock()  # not a dict -> full-sequence fallback
     pg._build_token_sequence.return_value = [10, 20, 30]
 
     class _Loader(HashIdsPromptSynthesisMixin):
@@ -34,7 +35,86 @@ def test_mixin_decodes_via_parallel_decode_for_hash_id_requests():
 
     assert result == {"a": "decoded-prompt"}
     mock_decode.assert_called_once()
+    assert mock_decode.call_args.args[0] == [[10, 20, 30]]
     pg._build_token_sequence.assert_called_once_with(10, [1, 2], 64)
+
+
+def test_mixin_decodes_unique_hash_blocks_once():
+    """Shared hash_ids across requests decode each unique block a single time."""
+    pg = MagicMock()
+    pg.tokenizer.resolved_name = "test-tok"
+    pg._cache = {1: [10, 11], 2: [20], 3: [30, 31]}
+    pg._build_token_sequence.side_effect = lambda n, hids, bs: sum(
+        (pg._cache[h] for h in hids), []
+    )
+
+    class _Loader(HashIdsPromptSynthesisMixin):
+        pass
+
+    loader = _Loader()
+    loader.prompt_generator = pg
+    loader._tokenizer_name = "test-tok"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = 64
+
+    requests = [
+        HashIdsPromptRequest(key="a", hash_ids=[1, 2], input_length=3),
+        HashIdsPromptRequest(key="b", hash_ids=[1, 3], input_length=4),
+        HashIdsPromptRequest(key="c", hash_ids=[1, 2], input_length=3),
+    ]
+
+    def fake_decode(seqs, *args, **kwargs):
+        return ["|".join(str(t) for t in seq) for seq in seqs]
+
+    with patch(
+        "aiperf.dataset.loader.hash_ids_synthesis.parallel_decode",
+        side_effect=fake_decode,
+    ) as mock_decode:
+        result = loader.synthesize_prompts_from_hash_ids(requests)
+
+    assert mock_decode.call_count == 1
+    decoded_seqs = mock_decode.call_args.args[0]
+    assert len(decoded_seqs) == 3
+    assert {tuple(s) for s in decoded_seqs} == {(10, 11), (20,), (30, 31)}
+    assert result["a"] == "10|11" + "20"
+    assert result["b"] == "10|11" + "30|31"
+    assert result["c"] == result["a"]
+
+
+def test_mixin_decodes_prefix_only_tail_as_separate_piece():
+    """Unhashed tails (prefix-only layout) are decoded once per unique tail."""
+    pg = MagicMock()
+    pg._cache = {1: [10, 11]}
+    pg._build_token_sequence.return_value = [10, 11, 99, 100]
+
+    class _Loader(HashIdsPromptSynthesisMixin):
+        pass
+
+    loader = _Loader()
+    loader.prompt_generator = pg
+    loader._tokenizer_name = "test-tok"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = None
+    loader._block_size = 2
+
+    requests = [
+        HashIdsPromptRequest(key="a", hash_ids=[1], input_length=4),
+        HashIdsPromptRequest(key="b", hash_ids=[1], input_length=4),
+    ]
+
+    def fake_decode(seqs, *args, **kwargs):
+        return [f"p{i}" for i, _ in enumerate(seqs)]
+
+    with patch(
+        "aiperf.dataset.loader.hash_ids_synthesis.parallel_decode",
+        side_effect=fake_decode,
+    ) as mock_decode:
+        result = loader.synthesize_prompts_from_hash_ids(requests)
+
+    assert len(mock_decode.call_args.args[0]) == 2
+    assert result["a"] == result["b"]
+    assert result["a"] == "p0p1"
 
 
 def test_mixin_falls_back_to_generator_for_empty_hash_ids():

@@ -393,7 +393,7 @@ class TestBailianTraceDatasetLoader:
     def test_convert_to_conversations(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
-        mock_parallel_decode.return_value = ["decoded prompt 1", "decoded prompt 2"]
+        mock_parallel_decode.return_value = ["decoded prompt"]
 
         trace_data = {
             "100": [
@@ -486,7 +486,9 @@ class TestBailianTraceDatasetLoader:
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
         """strict=True in zip guards against silent data loss."""
-        mock_parallel_decode.return_value = ["only one"]  # expecting 2
+        mock_parallel_decode.return_value = ["only one"]  # expecting 2 unique sequences
+        mock_prompt_generator._cache = None
+        mock_prompt_generator._build_token_sequence.side_effect = [[1], [2]]
 
         trace_data = {
             "1": [
@@ -528,6 +530,12 @@ class TestBailianTraceDatasetLoader:
             "prompt turn 1",
             "prompt turn 2",
             "prompt turn 3",
+        ]
+        mock_prompt_generator._cache = None
+        mock_prompt_generator._build_token_sequence.side_effect = [
+            [1],
+            [2],
+            [3],
         ]
 
         trace_data = {

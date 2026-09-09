@@ -2,17 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared hash_ids -> decoded prompt synthesis used by Weka and trace loaders.
 
-The 2-phase pipeline:
+The pipeline:
 
-1. Build a token sequence for each requested (hash_ids, input_length) pair.
-2. Batch-parallel-decode all sequences across worker processes.
-3. Return a ``{caller_key: prompt}`` map so the caller can thread prompts
-   back into its own conversation-assembly loop.
+1. Build a token sequence for each requested (hash_ids, input_length) pair
+   (fills ``PromptGenerator._cache`` with unique hash blocks).
+2. Parallel-decode each unique hash block (and any unhashed tail) once.
+3. Concatenate the decoded block strings per request.
+
+Mooncake/Bailian traces reuse the same block hashes across tens of thousands
+of requests. Decoding every full prompt repeats tokenizer work proportional to
+``requests * ISL``. Decoding unique blocks is proportional to
+``unique_blocks * block_size``.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 
 from aiperf.dataset.generator.parallel_decode import parallel_decode
@@ -30,6 +36,11 @@ class HashIdsPromptRequest:
 
     input_length: int
     """Target input token count."""
+
+
+def _unique_block_decode_workers() -> int:
+    """Cap decode workers high enough for large unique-block batches."""
+    return min(os.cpu_count() or 4, 64)
 
 
 class HashIdsPromptSynthesisMixin:
@@ -53,30 +64,43 @@ class HashIdsPromptSynthesisMixin:
     def synthesize_prompts_from_hash_ids(
         self, requests: list[HashIdsPromptRequest]
     ) -> dict[str, str]:
-        pending: list[tuple[str, list[int]]] = []
+        pending: list[tuple[str, list[tuple[str, object]]]] = []
         result: dict[str, str] = {}
+        piece_tokens: dict[tuple[str, object], list[int]] = {}
+
+        pg = self.prompt_generator
+        cache = getattr(pg, "_cache", None)
+        cache_is_map = isinstance(cache, dict)
 
         for req in requests:
             if not req.hash_ids:
-                result[req.key] = self.prompt_generator.generate(
+                result[req.key] = pg.generate(
                     mean=req.input_length, stddev=0, hash_ids=[]
                 )
                 continue
-            tokens = self.prompt_generator._build_token_sequence(
+            tokens = pg._build_token_sequence(
                 req.input_length, req.hash_ids, self._block_size
             )
-            pending.append((req.key, tokens))
+            piece_keys = _piece_keys_for_request(
+                hash_ids=req.hash_ids,
+                tokens=tokens,
+                cache=cache if cache_is_map else None,
+                piece_tokens=piece_tokens,
+            )
+            pending.append((req.key, piece_keys))
 
-        if pending:
-            token_sequences = [p[1] for p in pending]
-            decoded = parallel_decode(
-                token_sequences,
+        if piece_tokens:
+            piece_order = list(piece_tokens)
+            decoded_list = parallel_decode(
+                [piece_tokens[k] for k in piece_order],
                 self._tokenizer_name,
                 trust_remote_code=self._trust_remote_code,
-                revision=self._tokenizer_revision,
+                revision=self._tokenizer_revision or "main",
+                max_workers=_unique_block_decode_workers(),
             )
-            for (key, _tokens), prompt in zip(pending, decoded, strict=True):
-                result[key] = prompt
+            decoded = dict(zip(piece_order, decoded_list, strict=True))
+            for key, piece_keys in pending:
+                result[key] = "".join(decoded[k] for k in piece_keys)
 
         return result
 
@@ -107,3 +131,37 @@ class HashIdsPromptSynthesisMixin:
             return ""
         tokens = self.sample_partial_tail_tokens(n_tokens, seed)
         return self.prompt_generator.tokenizer.decode(tokens)
+
+
+def _piece_keys_for_request(
+    *,
+    hash_ids: list[int],
+    tokens: list[int],
+    cache: dict[int, list[int]] | None,
+    piece_tokens: dict[tuple[str, object], list[int]],
+) -> list[tuple[str, object]]:
+    """Map one request onto unique decode pieces (hash blocks + optional tail).
+
+    Falls back to decoding the full token sequence when ``_cache`` is missing
+    entries (tests that stub ``_build_token_sequence`` without filling the
+    cache).
+    """
+    if cache is not None and all(hid in cache for hid in hash_ids):
+        hashed_len = 0
+        keys: list[tuple] = []
+        for hid in hash_ids:
+            key = ("h", hid)
+            if key not in piece_tokens:
+                piece_tokens[key] = list(cache[hid])
+            keys.append(key)
+            hashed_len += len(cache[hid])
+        tail = tokens[hashed_len:]
+        if tail:
+            tkey = ("t", tuple(tail))
+            piece_tokens.setdefault(tkey, list(tail))
+            keys.append(tkey)
+        return keys
+
+    skey = ("s", tuple(tokens))
+    piece_tokens.setdefault(skey, list(tokens))
+    return [skey]

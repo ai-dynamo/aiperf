@@ -102,11 +102,12 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
 
     in_process_prompts: list[str] = []
     for tr in traces:
-        tokens = pg._build_token_sequence(
-            tr["input_length"], tr["hash_ids"], block_size
-        )
+        pg._build_token_sequence(tr["input_length"], tr["hash_ids"], block_size)
         in_process_prompts.append(
-            pg.tokenizer.decode(tokens, skip_special_tokens=False)
+            "".join(
+                pg.tokenizer.decode(pg._cache[hid], skip_special_tokens=False)
+                for hid in tr["hash_ids"]
+            )
         )
 
     # Reset PG state so the worker sees a fresh trace_id scope.

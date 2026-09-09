@@ -14,8 +14,10 @@ services run as daemons.
 This module is the opt-in counterpart to the in-process 3-phase pipeline used
 by ``BaseTraceDatasetLoader.convert_to_conversations``. Both paths reseed
 ``HashIdRandomGenerator`` identically per ``(seed, trace_id, hash_id)`` so the
-two paths produce byte-identical output for the exact-tile and
-last-block-partial input layouts emitted by Mooncake/Bailian/BurstGPT loaders.
+two paths produce matching prompts for the exact-tile and last-block-partial
+input layouts emitted by Mooncake/Bailian/BurstGPT loaders. Prompts are the
+concatenation of per-block ``tokenizer.decode`` strings (each unique hash_id is
+decoded once per worker).
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ class _WorkerState:
     sep_token: int | None
     sample_tokens: Callable[..., list[int]]
     block_cache: dict[int, list[int]] = field(default_factory=dict)
+    block_text_cache: dict[int, str] = field(default_factory=dict)
 
 
 # Set once per worker process by _init_worker; read by _process_batch.
@@ -136,6 +139,7 @@ def _process_batch(
     decode = _worker_state.tokenizer.decode
     sample_tokens = _worker_state.sample_tokens
     block_cache = _worker_state.block_cache
+    block_text_cache = _worker_state.block_text_cache
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
         cached = block_cache.get(hash_id)
@@ -154,6 +158,14 @@ def _process_batch(
                 f"trace or a --isl-block-size that disagrees with the recorded blocks."
             )
         return cached
+
+    def get_block_text(hash_id: int, size: int) -> str:
+        tokens = get_block_tokens(hash_id, size)
+        text = block_text_cache.get(hash_id)
+        if text is None:
+            text = decode(tokens, skip_special_tokens=False)
+            block_text_cache[hash_id] = text
+        return text
 
     results = []
     for session_id, traces in batch:
@@ -184,11 +196,11 @@ def _process_batch(
                         f"0 and less than or equal to {block_size}."
                     )
 
-                tokens: list[int] = []
+                parts: list[str] = []
                 for i, hid in enumerate(hash_ids):
                     size = final_block_size if i == m - 1 else block_size
-                    tokens.extend(get_block_tokens(hid, size))
-                prompt = decode(tokens, skip_special_tokens=False)
+                    parts.append(get_block_text(hid, size))
+                prompt = "".join(parts)
             else:
                 prompt = ""
 
