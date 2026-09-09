@@ -127,6 +127,7 @@ class EmbeddingsEndpoint(BaseEndpoint):
             return ParsedResponse(
                 perf_ns=response.perf_ns,
                 data=EmbeddingResponseData(embeddings=embeddings),
+                usage=json_obj.get("usage"),
             )
 
         else:

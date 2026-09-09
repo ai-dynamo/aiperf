@@ -4,9 +4,12 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.models import ParsedResponseRecord, RequestRecord, TextResponse
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -17,8 +20,15 @@ from aiperf.common.models.record_models import (
     EmbeddingResponseData,
     InferenceServerResponse,
 )
+from aiperf.endpoints.nim_embeddings import NIMEmbeddingsEndpoint
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
+from aiperf.metrics.metric_dicts import MetricRecordDict
+from aiperf.metrics.types.usage_metrics import (
+    UsagePromptTokensMetric,
+    UsageTotalTokensMetric,
+)
 from aiperf.plugin.enums import EndpointType
+from tests.unit.endpoints.conftest import create_model_endpoint
 
 
 class TestEmbeddingsEndpointParseResponse:
@@ -58,6 +68,7 @@ class TestEmbeddingsEndpointParseResponse:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
+        assert parsed.usage is None
         assert parsed.perf_ns == 123456789
         assert isinstance(parsed.data, EmbeddingResponseData)
         assert len(parsed.data.embeddings) == 1
@@ -276,3 +287,37 @@ class TestEmbeddingsEndpointParseResponse:
 
         assert parsed is not None
         assert parsed.data.embeddings[0] == [0.1, 0.2]
+
+
+@pytest.mark.parametrize(
+    "endpoint_class,endpoint_type",
+    [
+        param(EmbeddingsEndpoint, EndpointType.EMBEDDINGS, id="openai"),
+        param(NIMEmbeddingsEndpoint, EndpointType.NIM_EMBEDDINGS, id="nim"),
+    ],
+)  # fmt: skip
+def test_embeddings_usage_reaches_token_metrics(
+    endpoint_class: type[EmbeddingsEndpoint], endpoint_type: EndpointType
+) -> None:
+    endpoint = endpoint_class(create_model_endpoint(endpoint_type))
+    usage = {"prompt_tokens": 8, "total_tokens": 8}
+    response = TextResponse(
+        perf_ns=2,
+        content_type="application/json",
+        text=orjson.dumps(
+            {
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2]}],
+                "usage": usage,
+            }
+        ).decode(),
+    )
+    request = RequestRecord(
+        responses=[response], status=200, start_perf_ns=1, end_perf_ns=3
+    )
+    parsed = endpoint.extract_response_data(request)
+    record = ParsedResponseRecord(request=request, responses=parsed)
+
+    assert parsed[0].usage == usage
+    assert record.final_usage == usage
+    for metric_class in (UsagePromptTokensMetric, UsageTotalTokensMetric):
+        assert metric_class().parse_record(record, MetricRecordDict()) == 8
