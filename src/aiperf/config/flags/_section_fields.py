@@ -69,6 +69,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "public_dataset",
         "random_seed",
         "use_think_time_only",
+        "weka_nested_timestamp_basis",
         # ----- conversation modality -----
         "conversation_num",
         "conversation_num_dataset_entries",

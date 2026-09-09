@@ -71,7 +71,7 @@ def _write_trace(
 
 def _loader_for(path: Path, uc=None) -> WekaTraceLoader:
     loader = WekaTraceLoader(
-        filename=str(path), user_config=uc if uc is not None else _mk_user_config()
+        filename=str(path), run=uc if uc is not None else _mk_user_config()
     )
     _stub_prompt_generator_for_reconstructor(loader)
     loader._tokenizer_name = "test-tok"

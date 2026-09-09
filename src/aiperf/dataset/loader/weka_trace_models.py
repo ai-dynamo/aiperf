@@ -24,7 +24,8 @@ class WekaNormalRequest(AIPerfBaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     t: float = Field(
-        description="Request timestamp in seconds from conversation start."
+        description="Request timestamp in seconds. Top-level requests use root-trace "
+        "time; nested requests use the corpus-selected Weka timestamp basis."
     )
     type: Literal["n"] = Field(description="Discriminator: normal API call.")
     model: str = Field(description="Model identifier for this request.")
@@ -61,7 +62,8 @@ class WekaStreamingRequest(AIPerfBaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     t: float = Field(
-        description="Request timestamp in seconds from conversation start."
+        description="Request timestamp in seconds. Top-level requests use root-trace "
+        "time; nested requests use the corpus-selected Weka timestamp basis."
     )
     type: Literal["s"] = Field(description="Discriminator: streaming API call.")
     model: str = Field(description="Model identifier for this request.")

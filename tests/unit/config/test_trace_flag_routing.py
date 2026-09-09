@@ -32,11 +32,12 @@ def trace_jsonl(tmp_path: Path) -> Path:
 
 
 def _file_cli(trace_jsonl: Path, **extra: object) -> CLIConfig:
+    dataset_type = extra.pop("custom_dataset_type", CustomDatasetType.MOONCAKE_TRACE)
     return CLIConfig(
         model_names=["test-model"],
         endpoint_type="chat",
         input_file=str(trace_jsonl),
-        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+        custom_dataset_type=dataset_type,
         **extra,
     )
 
@@ -162,6 +163,29 @@ class TestTraceDelayFlagRouting:
         assert out.get("use_think_time_only") is True
         ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
         assert ds.use_think_time_only is True
+
+    @pytest.mark.parametrize(
+        "cli_factory_id",
+        [param("file", id="file"), param("public", id="public_weka_hf")],
+    )
+    def test_weka_nested_timestamp_basis_routes(
+        self, trace_jsonl: Path, cli_factory_id: str
+    ) -> None:
+        def _cli() -> CLIConfig:
+            return (
+                _file_cli(
+                    trace_jsonl,
+                    custom_dataset_type=CustomDatasetType.WEKA_TRACE,
+                    weka_nested_timestamp_basis="relative",
+                )
+                if cli_factory_id == "file"
+                else _public_cli(weka_nested_timestamp_basis="relative")
+            )
+
+        out = build_dataset(_cli())
+        assert out["weka_nested_timestamp_basis"] == "relative"
+        ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
+        assert ds.weka_nested_timestamp_basis == "relative"
 
     @pytest.mark.parametrize(
         "cli_factory_id",

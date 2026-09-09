@@ -340,6 +340,16 @@ class FileDataset(SystemPromptMixin):
         ),
     ]
 
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"],
+        Field(
+            default="auto",
+            description="Corpus-wide interpretation of timestamps nested inside "
+            "Weka subagent markers. Auto scans all traces before reconstruction; "
+            "absolute uses root-trace time and relative adds the marker time.",
+        ),
+    ]
+
     sampling: Annotated[
         DatasetSamplingStrategy,
         Field(
@@ -695,6 +705,18 @@ class FileDataset(SystemPromptMixin):
         return self
 
     @model_validator(mode="after")
+    def _validate_weka_timestamp_basis_scope(self) -> FileDataset:
+        """Reject an explicit Weka timestamp policy on a known non-Weka format."""
+        if "weka_nested_timestamp_basis" not in self.model_fields_set:
+            return self
+        if self.format not in (DatasetFormat.WEKA_TRACE, DatasetFormat.SINGLE_TURN):
+            raise ValueError(
+                "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
+                f"only applies to Weka traces; got format {self.format}."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_source_xor(self) -> FileDataset:
         path_set = self.path is not None
         records_set = self.records is not None
@@ -871,6 +893,16 @@ class PublicDataset(SystemPromptMixin):
         ),
     ]
 
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"],
+        Field(
+            default="auto",
+            description="Corpus-wide interpretation of timestamps nested inside "
+            "Weka subagent markers. Auto scans all traces before reconstruction; "
+            "absolute uses root-trace time and relative adds the marker time.",
+        ),
+    ]
+
     inter_turn_delay_cap_seconds: Annotated[
         float | None,
         Field(
@@ -1043,6 +1075,18 @@ class PublicDataset(SystemPromptMixin):
                 "max_context_length (--max-context-length) only applies to "
                 f"Weka public datasets; got dataset {self.dataset}. It filters "
                 "by recorded peak prompt+output length at load time."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_weka_timestamp_basis_scope(self) -> PublicDataset:
+        """Reject an explicit Weka timestamp policy on non-Weka datasets."""
+        if "weka_nested_timestamp_basis" not in self.model_fields_set:
+            return self
+        if "weka" not in str(self.dataset).lower():
+            raise ValueError(
+                "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
+                f"only applies to Weka public datasets; got dataset {self.dataset}."
             )
         return self
 
