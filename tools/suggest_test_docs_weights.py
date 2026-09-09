@@ -46,6 +46,8 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -193,14 +195,53 @@ def fetch_test_docs_jobs(run_id: int) -> list[tuple[int, str]]:
     return out
 
 
-def fetch_job_log(job_id: int) -> str:
-    # Job logs contain ANSI escape sequences; gh refuses to print those
-    # without this flag, even when stdout is captured rather than a tty.
-    return _gh(
-        "api",
-        f"/repos/{_repo_slug()}/actions/jobs/{job_id}/logs",
-        "--allow-escape-sequences",
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Surface the 302 to the log-storage blob URL instead of following it.
+
+    ``urlopen`` forwards the Authorization header to every hop by default,
+    but the blob-storage host rejects a GitHub bearer token with 401. The
+    log content itself lives at that unauthenticated, pre-signed URL.
+    """
+
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def _gh_token() -> str:
+    return (
+        os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+        or _gh("auth", "token").strip()
     )
+
+
+def fetch_job_log(job_id: int) -> str:
+    """Fetch one job's raw text log via the REST API directly.
+
+    Deliberately bypasses ``gh api .../logs``: that endpoint's log bodies
+    contain ANSI escape sequences, and gh refuses to print those without
+    ``--allow-escape-sequences`` -- a flag only present from gh 2.97
+    onward, so pinning to it would break on any older gh a contributor
+    happens to have installed locally.
+    """
+    url = f"https://api.github.com/repos/{_repo_slug()}/actions/jobs/{job_id}/logs"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {_gh_token()}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(req) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        if e.code not in (301, 302, 303, 307, 308):
+            raise
+        with urllib.request.urlopen(e.headers["Location"]) as resp:
+            return resp.read().decode("utf-8", errors="replace")
 
 
 def _repo_slug() -> str:
