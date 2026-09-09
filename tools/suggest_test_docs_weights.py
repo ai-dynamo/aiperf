@@ -40,6 +40,7 @@ Exits 0 even when suggestions are emitted; it's a report, not a gate.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import logging
 import os
@@ -49,8 +50,11 @@ import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+from typing import IO
 
 # Reach the existing parser/data_types so we don't duplicate the bash-block
 # extraction logic. Both modules import each other by bare name, so we have
@@ -195,36 +199,81 @@ def fetch_test_docs_jobs(run_id: int) -> list[tuple[int, str]]:
     return out
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Surface the 302 to the log-storage blob URL instead of following it.
+HTTP_TIMEOUT_SECONDS = 30
 
-    ``urlopen`` forwards the Authorization header to every hop by default,
-    but the blob-storage host rejects a GitHub bearer token with 401. The
-    log content itself lives at that unauthenticated, pre-signed URL.
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow the 302 to the log blob, but drop the GitHub bearer token.
+
+    ``urlopen`` replays the Authorization header on every hop, and the
+    pre-signed blob-storage URL holding the log rejects a GitHub token
+    with 401.
     """
 
-    def redirect_request(self, *_args, **_kwargs):
-        return None
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+        return new
 
 
-def _gh_token() -> str:
+@lru_cache(maxsize=1)
+def _gh_host() -> str:
+    """Host owning the target repo, enterprise-aware, ``github.com`` by default."""
+    return os.environ.get("GH_HOST") or "github.com"
+
+
+@lru_cache(maxsize=1)
+def _api_base() -> str:
+    base = os.environ.get("GITHUB_API_URL")
+    if base:
+        return base.rstrip("/")
+    host = _gh_host()
     return (
-        os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_TOKEN")
-        or _gh("auth", "token").strip()
+        "https://api.github.com" if host == "github.com" else f"https://{host}/api/v3"
     )
 
 
-def fetch_job_log(job_id: int) -> str:
-    """Fetch one job's raw text log via the REST API directly.
+@lru_cache(maxsize=1)
+def _gh_token() -> str:
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        return token.strip()
+    return _gh("auth", "token", "--hostname", _gh_host()).strip()
 
-    Deliberately bypasses ``gh api .../logs``: that endpoint's log bodies
-    contain ANSI escape sequences, and gh refuses to print those without
-    ``--allow-escape-sequences`` -- a flag only present from gh 2.97
-    onward, so pinning to it would break on any older gh a contributor
-    happens to have installed locally.
+
+@lru_cache(maxsize=1)
+def _log_opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(_StripAuthOnRedirect)
+
+
+def _decode_log(raw: bytes, job_id: int) -> str:
+    text = raw.decode("utf-8", errors="replace")
+    if "\ufffd" in text:
+        log.warning(
+            "Job %d log contained undecodable bytes; substituted U+FFFD. "
+            "Test-run counts for this shard may be incomplete.",
+            job_id,
+        )
+    return text
+
+
+def fetch_job_log(job_id: int) -> str:
+    """Fetch one job's raw text log over REST rather than ``gh api``.
+
+    Job logs contain ANSI escape sequences, which gh refuses to emit
+    without ``--allow-escape-sequences`` (gh 2.97+); going direct keeps
+    this working on whatever gh a contributor has installed.
     """
-    url = f"https://api.github.com/repos/{_repo_slug()}/actions/jobs/{job_id}/logs"
+    url = f"{_api_base()}/repos/{_repo_slug()}/actions/jobs/{job_id}/logs"
     req = urllib.request.Request(
         url,
         headers={
@@ -233,17 +282,18 @@ def fetch_job_log(job_id: int) -> str:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(req) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+        with _log_opener().open(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
+            return _decode_log(resp.read(), job_id)
     except urllib.error.HTTPError as e:
-        if e.code not in (301, 302, 303, 307, 308):
-            raise
-        with urllib.request.urlopen(e.headers["Location"]) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+        with e:
+            detail = e.read().decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            f"GET {url} failed: HTTP {e.code} {e.reason}: {detail}"
+        ) from e
 
 
+@lru_cache(maxsize=1)
 def _repo_slug() -> str:
     slug = os.environ.get("GITHUB_REPOSITORY")
     if slug:
@@ -464,9 +514,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     runs: list[TestRun] = []
-    for job_id, job_name in jobs:
+    log.info("Fetching logs for %d shards...", len(jobs))
+    _gh_token()  # resolve once up front so the pool never races on the fallback
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+        logs = list(pool.map(lambda job: fetch_job_log(job[0]), jobs))
+    for (job_id, job_name), log_text in zip(jobs, logs, strict=True):
         log.info("Parsing log for shard %s (job %d)...", job_name, job_id)
-        log_text = fetch_job_log(job_id)
         runs.extend(parse_shard_log(log_text, job_id=job_id, job_name=job_name))
 
     log.info("Collected %d test-run records.", len(runs))
