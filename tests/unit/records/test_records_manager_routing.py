@@ -30,6 +30,7 @@ from aiperf.plugin.enums import AccumulatorType, PluginType, StreamExporterType
 from aiperf.records.records_manager import RecordsManager
 from aiperf.records.records_manager_processing import (
     load_accumulators,
+    load_stream_exporters,
 )
 
 # ---------------------------------------------------------------------------
@@ -374,16 +375,18 @@ class TestFinalizeStreamExporters:
             },
         )
 
-        await mgr._finalize_stream_exporters()
+        errors = await mgr._finalize_stream_exporters()
 
         exp1.finalize.assert_called_once()
         exp2.finalize.assert_called_once()
+        assert errors == []
 
     @pytest.mark.asyncio
     async def test_finalize_empty_exporters_noop(self) -> None:
         mgr = _make_finalize_manager_mock({})
-        await mgr._finalize_stream_exporters()
+        errors = await mgr._finalize_stream_exporters()
         mgr.error.assert_not_called()
+        assert errors == []
 
     @pytest.mark.asyncio
     async def test_finalize_error_logged_per_exporter(self) -> None:
@@ -398,12 +401,19 @@ class TestFinalizeStreamExporters:
             },
         )
 
-        await mgr._finalize_stream_exporters()
+        errors = await mgr._finalize_stream_exporters()
 
         exp1.finalize.assert_called_once()
         exp2.finalize.assert_called_once()
         mgr.error.assert_called_once()
         assert "flush failed" in mgr.error.call_args[0][0]
+        assert len(errors) == 1
+        assert errors[0].type == "RuntimeError"
+        assert errors[0].details == {
+            "stage": "stream_export_finalize",
+            "exporter": str(StreamExporterType.RECORD_EXPORT),
+            "fatal": True,
+        }
 
     @pytest.mark.asyncio
     async def test_finalize_multiple_errors(self) -> None:
@@ -418,9 +428,39 @@ class TestFinalizeStreamExporters:
             },
         )
 
-        await mgr._finalize_stream_exporters()
+        errors = await mgr._finalize_stream_exporters()
 
         assert mgr.error.call_count == 2
+        assert [error.type for error in errors] == ["RuntimeError", "ValueError"]
+
+    @pytest.mark.asyncio
+    async def test_finalize_best_effort_exporter_error_is_not_fatal(self) -> None:
+        """A downed telemetry collector must not invalidate a complete artifact set.
+
+        ``OTelMetricsResultsProcessor.is_best_effort`` is honored on the dispatch
+        path; finalize must honor it too, or a dead OTel sidecar withholds
+        ``ResultsExportedMessage`` for a byte-perfect ``profile_export.json``.
+        """
+        best_effort = StubStreamExporter()
+        best_effort.is_best_effort = True
+        best_effort.finalize.side_effect = RuntimeError("collector unreachable")
+        durable = StubStreamExporter()
+        durable.finalize.side_effect = ValueError("half-written jsonl")
+        mgr = _make_finalize_manager_mock(
+            {
+                StreamExporterType.OTEL_METRICS_STREAMER: best_effort,
+                StreamExporterType.RECORD_EXPORT: durable,
+            },
+        )
+
+        errors = await mgr._finalize_stream_exporters()
+
+        assert [error.details["fatal"] for error in errors] == [False, True]
+        assert errors[0].details == {
+            "stage": "stream_export_finalize",
+            "exporter": str(StreamExporterType.OTEL_METRICS_STREAMER),
+            "fatal": False,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -514,3 +554,28 @@ class TestLoadAccumulatorsConstructionFailure:
 
         assert AccumulatorType.METRIC_RESULTS not in accumulators
         host.error.assert_not_called()
+
+
+def test_records_manager_loaders_exclude_server_metrics_owners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server-metric raw handlers belong only to ServerMetricsManager."""
+    entries = {
+        PluginType.ACCUMULATOR: [_make_entry("server_metrics", ["server_metrics"])],
+        PluginType.STREAM_EXPORTER: [
+            _make_entry("server_metrics_jsonl_writer", ["server_metrics"])
+        ],
+    }
+    monkeypatch.setattr(
+        "aiperf.records.records_manager_processing.plugins.iter_entries",
+        lambda plugin_type: entries[plugin_type],
+    )
+    get_class = MagicMock()
+    monkeypatch.setattr(
+        "aiperf.records.records_manager_processing.plugins.get_class", get_class
+    )
+    host = _make_loader_host()
+
+    assert load_accumulators(host, excluded_record_types={"server_metrics"}) == {}
+    assert load_stream_exporters(host, excluded_record_types={"server_metrics"}) == {}
+    get_class.assert_not_called()

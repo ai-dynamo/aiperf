@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import ConversationBranchMode, ConversationContextMode
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.dataset_models import DatasetMetadata
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -421,3 +421,89 @@ class TestMessageArrayWithoutResponsesRejected:
                 sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
                 default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
             )
+
+
+class TestSessionPreviousResponseId:
+    """Tests for UserSession previous_response_id storage and reset_context handling."""
+
+    @pytest.mark.parametrize(
+        "reset_turn",
+        [
+            param(
+                Turn(
+                    raw_messages=[{"role": "user", "content": "Q2"}],
+                    reset_context=True,
+                ),
+                id="with_raw_messages",
+            ),
+            param(Turn(reset_context=True), id="synthetic_no_raw_messages"),
+        ],
+    )  # fmt: skip
+    def test_advance_turn_clears_previous_response_id_on_reset_context(
+        self, reset_turn: Turn
+    ) -> None:
+        conv = Conversation(
+            conversation_id="test-conv-reset",
+            turns=[
+                Turn(raw_messages=[{"role": "user", "content": "Q1"}]),
+                reset_turn,
+            ],
+        )
+        session = UserSession(
+            x_correlation_id="test-corr",
+            num_turns=2,
+            conversation=conv,
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+        session.advance_turn(0)
+        session.store_response_id("resp_turn0")
+        assert session.previous_response_id == "resp_turn0"
+
+        # A context reset always breaks the wire chain, regardless of whether the
+        # turn carries raw_messages: chaining would retain discarded history.
+        session.advance_turn(1)
+        assert session.previous_response_id is None
+
+    def test_advance_turn_preserves_previous_response_id_without_reset_context(
+        self,
+    ) -> None:
+        conv = Conversation(
+            conversation_id="test-conv-normal",
+            turns=[
+                Turn(messages=[{"role": "user", "content": "Q1"}]),
+                Turn(messages=[{"role": "user", "content": "Q2"}]),
+            ],
+        )
+        session = UserSession(
+            x_correlation_id="test-corr",
+            num_turns=2,
+            conversation=conv,
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+        session.advance_turn(0)
+        session.store_response_id("resp_turn0")
+        assert session.previous_response_id == "resp_turn0"
+
+        session.advance_turn(1)
+        assert session.previous_response_id == "resp_turn0"
+
+    def test_seed_from_parent_copies_previous_response_id(self) -> None:
+        manager = UserSessionManager()
+        conv = Conversation(
+            conversation_id="test-conv-fork",
+            turns=[Turn(messages=[{"role": "user", "content": "Q1"}])],
+        )
+        parent = manager.create_and_store("parent-corr", conv, num_turns=1)
+        parent.store_response_id("resp_parent_last")
+        child = manager.create_and_store(
+            "child-corr",
+            conv,
+            num_turns=1,
+            parent_correlation_id="parent-corr",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+        assert child.previous_response_id is None
+
+        manager.seed_from_parent("child-corr", "parent-corr")
+
+        assert child.previous_response_id == "resp_parent_last"

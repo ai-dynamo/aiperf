@@ -320,15 +320,15 @@ def on_message(
     Example:
     ```python
     class MyService(MessageBusClientMixin):
-        @on_message(MessageType.STATUS)
-        def _on_status_message(self, message: StatusMessage) -> None:
+        @on_message(MessageType.HEARTBEAT)
+        def _on_heartbeat_message(self, message: HeartbeatMessage) -> None:
             pass
     ```
 
     The above is the equivalent to setting:
     ```python
-    MyService._on_status_message.__aiperf_hook_type__ = AIPerfHook.ON_MESSAGE
-    MyService._on_status_message.__aiperf_hook_params__ = (MessageType.STATUS,)
+    MyService._on_heartbeat_message.__aiperf_hook_type__ = AIPerfHook.ON_MESSAGE
+    MyService._on_heartbeat_message.__aiperf_hook_params__ = (MessageType.HEARTBEAT,)
     ```
     """
     return _hook_decorator_with_params(AIPerfHook.ON_MESSAGE, message_types)
@@ -458,15 +458,18 @@ def on_request(
 def on_command(
     *command_types: CommandTypeT | Callable[[SelfT], Iterable[CommandTypeT]],
 ) -> Callable:
-    """Decorator to specify that the function is a hook that should be called when a CommandMessage with the given
-    command type(s) is received from the message bus.
+    """Decorator to specify that the function is a hook that should be called when a Command with the given
+    command type(s) arrives on the DEALER/ROUTER control channel.
     See :func:`aiperf.common.hooks._hook_decorator_for_message_types`.
+
+    Returning ``None`` makes the dispatcher answer with ``CommandAck``; returning
+    a value makes it answer with ``CommandOk`` carrying the serialized result.
 
     Example:
     ```python
     class MyService(BaseComponentService):
         @on_command(CommandType.PROFILE_START)
-        def _on_profile_start(self, message: ProfileStartCommand) -> CommandResponse:
+        async def _on_profile_start(self, message: Command) -> None:
             pass
     ```
 

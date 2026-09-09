@@ -4,6 +4,7 @@
 
 import csv
 import io
+import math
 
 from aiperf.exporters.aggregate.aggregate_base_exporter import AggregateBaseExporter
 
@@ -41,13 +42,8 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
         buf = io.StringIO()
         writer = csv.writer(buf)
 
-        # Write metrics section FIRST (for test compatibility)
         self._write_metrics_section(writer)
-
-        # Blank line separator (same as MetricsCsvExporter)
         writer.writerow([])
-
-        # Write metadata section
         self._write_metadata_section(writer)
 
         return buf.getvalue()
@@ -122,7 +118,7 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
             decimals: Number of decimal places
 
         Returns:
-            str: Formatted number or empty string if None
+            str: Formatted number, or empty string for None and NaN
         """
         if value is None:
             return ""
@@ -131,5 +127,10 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
                 return "inf"
             if value == float("-inf"):
                 return "-inf"
+            # NaN compares equal to nothing, so it fell through both branches
+            # above and was written as the literal `nan`, which no CSV consumer
+            # reads back as missing. The sibling sweep exporter blanks it.
+            if math.isnan(value):
+                return ""
             return f"{value:.{decimals}f}"
         return str(value)

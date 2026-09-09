@@ -568,7 +568,7 @@ def test_execute_multi_benchmark_wires_sweep_table_logger() -> None:
         ),
         patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator") as mock_orch_cls,
         patch("aiperf.orchestrator.local_executor.LocalSubprocessExecutor"),
-        patch("aiperf.cli_runner._multi_run._build_search_planner", return_value=None),
+        patch("aiperf.cli_runner._multi_run.build_search_planner", return_value=None),
         patch("aiperf.cli_runner._multi_run._log_search_planner_active"),
         patch("asyncio.run", return_value=[]),
     ):
@@ -595,7 +595,7 @@ def test_execute_multi_benchmark_skips_table_when_suppressed() -> None:
         ),
         patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator") as mock_orch_cls,
         patch("aiperf.orchestrator.local_executor.LocalSubprocessExecutor"),
-        patch("aiperf.cli_runner._multi_run._build_search_planner", return_value=None),
+        patch("aiperf.cli_runner._multi_run.build_search_planner", return_value=None),
         patch("aiperf.cli_runner._multi_run._log_search_planner_active"),
         patch("asyncio.run", return_value=[]),
     ):

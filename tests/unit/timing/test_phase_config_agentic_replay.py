@@ -3,11 +3,13 @@
 """AGENTIC_REPLAY warmup/profiling CreditPhaseConfig construction."""
 
 import pydantic
+import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.config.phases import PhaseConfig
+from aiperf.config.phases import BasePhaseConfig, PhaseConfig
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import (
+    AGENTIC_WARMUP_PHASE_NAME,
     _build_agentic_warmup_config,
     _build_profiling_config,
 )
@@ -203,3 +205,43 @@ def test_cache_warmup_explicit_warmup_grace_overrides_benchmark_grace() -> None:
 
     assert warmup is not None
     assert warmup.grace_period_sec == 7.0
+
+
+def test_build_agentic_warmup_config_synthesized_phase_stamps_reserved_identity() -> (
+    None
+):
+    """The synthesized warmup carries an explicit name and kind, not None."""
+    warmup = _build_agentic_warmup_config(_ar_profiling_phase())
+
+    assert warmup is not None
+    assert warmup.phase_name == AGENTIC_WARMUP_PHASE_NAME
+    assert warmup.phase_kind == "warmup"
+    # ``phase_index`` addresses cfg.phases; the synthesized warmup is not in
+    # that list, so it stays unindexed (and stays out of per-phase artifacts).
+    assert warmup.phase_index is None
+    assert warmup.profiling_index is None
+
+
+def test_agentic_warmup_phase_name_rejected_as_user_phase_name_raises_error() -> None:
+    """No user-declared phase can collide: the name pattern admits no '.'."""
+    with pytest.raises(pydantic.ValidationError):
+        _PHASE_ADAPTER.validate_python(
+            {
+                "name": AGENTIC_WARMUP_PHASE_NAME,
+                "kind": "warmup",
+                "type": "concurrency",
+                "concurrency": 1,
+                "duration": 1,
+            }
+        )
+
+
+def test_agentic_warmup_phase_name_is_a_safe_path_segment() -> None:
+    """The reserved name is used in logs and status; keep it path-safe."""
+    assert "/" not in AGENTIC_WARMUP_PHASE_NAME
+    assert not AGENTIC_WARMUP_PHASE_NAME.startswith(".")
+    assert not AGENTIC_WARMUP_PHASE_NAME.endswith(".")
+    assert (
+        AGENTIC_WARMUP_PHASE_NAME.split(".", 1)[0].upper()
+        not in BasePhaseConfig._windows_reserved_phase_names
+    )

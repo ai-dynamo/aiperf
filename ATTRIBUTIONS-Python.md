@@ -801,7 +801,7 @@ Apache License
   - `Homepage`: https://github.com/aio-libs/aiosignal
 
 
-## alembic (1.18.5)
+## alembic (1.19.0)
 
 ### Licenses
 License: `MIT`
@@ -830,7 +830,7 @@ SOFTWARE.
 ```
 
 
-## annotated-doc (0.0.4)
+## annotated-doc (0.0.5)
 
 ### Licenses
 License: `MIT`
@@ -868,7 +868,7 @@ THE SOFTWARE.
   - `Repository`: https://github.com/fastapi/annotated-doc
 
 
-## annotated-types (0.7.0)
+## annotated-types (0.8.0)
 
 ### Licenses
 License: `MIT License`
@@ -904,7 +904,7 @@ SOFTWARE.
   - `Source`: https://github.com/annotated-types/annotated-types
 
 
-## anyio (4.14.1)
+## anyio (4.14.2)
 
 ### Licenses
 License: `MIT`
@@ -1045,7 +1045,7 @@ THE SOFTWARE.
   - `Homepage`: https://github.com/google/brotli
 
 
-## certifi (2026.6.17)
+## certifi (2026.7.22)
 
 ### Licenses
 License: `MPL-2.0`
@@ -1079,7 +1079,7 @@ one at http://mozilla.org/MPL/2.0/.
   - `Source`: https://github.com/certifi/python-certifi
 
 
-## cffi (2.1.0)
+## cffi (2.1.1)
 
 ### Licenses
 License: `MIT`
@@ -1195,7 +1195,7 @@ OTHER DEALINGS IN THE SOFTWARE.
   - `Repository`: https://github.com/plotly/choreographer
 
 
-## click (8.2.1)
+## click (8.3.3)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -1240,7 +1240,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pallets/click/
 
 
-## colorlog (6.10.1)
+## colorlog (6.12.0)
 
 ### Licenses
 License: `MIT`
@@ -1392,7 +1392,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.```
   - `repository`: https://github.com/matplotlib/cycler
 
 
-## cyclopts (4.20.0)
+## cyclopts (4.22.5)
 
 ### Licenses
 License: `Apache-2.0`
@@ -1861,7 +1861,7 @@ limitations under the License.
   - `Source`: https://github.com/dbc-team/dash-bootstrap-components/
 
 
-## datasets (5.0.0)
+## datasets (5.0.1)
 
 ### Licenses
 License: `Apache 2.0`
@@ -2165,7 +2165,7 @@ SOFTWARE.
   - `repository`: https://github.com/rr-/docstring_parser
 
 
-## fastapi (0.139.0)
+## fastapi (0.141.1)
 
 ### Licenses
 License: `MIT`
@@ -2418,7 +2418,7 @@ License: `Apache Software License`
   - `Homepage`: https://github.com/kkroening/ffmpeg-python
 
 
-## filelock (3.29.6)
+## filelock (3.32.2)
 
 ### Licenses
 License: `MIT`
@@ -3226,7 +3226,7 @@ THE SOFTWARE.
   - `Source`: https://github.com/PythonCharmers/python-future
 
 
-## greenlet (3.5.3)
+## greenlet (3.5.4)
 
 ### Licenses
 License: `MIT AND PSF-2.0`
@@ -3301,7 +3301,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `Homepage`: https://github.com/python-hyper/h11
 
 
-## hf-xet (1.5.1)
+## hf-xet (1.6.0)
 
 ### Licenses
 License: `Apache Software License`
@@ -4343,7 +4343,7 @@ SOFTWARE.
   - `Repository`: https://github.com/geopozo/logistro
 
 
-## mako (1.3.12)
+## mako (1.4.0)
 
 ### Licenses
 License: `MIT`
@@ -4478,7 +4478,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/pallets/markupsafe/
 
 
-## matplotlib (3.11.0)
+## matplotlib (3.11.1)
 
 ### Licenses
 License: `Python Software Foundation License`
@@ -5676,7 +5676,7 @@ SUCH DAMAGE.
   - `Source Code`: https://github.com/uqfoundation/multiprocess
 
 
-## narwhals (2.23.0)
+## narwhals (2.24.0)
 
 ### Licenses
 License: `MIT License`
@@ -6552,7 +6552,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   - `source`: https://github.com/ijl/orjson
 
 
-## packaging (26.2)
+## packaging (26.3)
 
 ### Licenses
 License: `Apache-2.0 OR BSD-2-Clause`
@@ -9583,7 +9583,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/python-pillow/Pillow
 
 
-## platformdirs (4.10.0)
+## platformdirs (4.11.0)
 
 ### Licenses
 License: `MIT`
@@ -10213,7 +10213,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/giampaolo/psutil
 
 
-## pyarrow (24.0.0)
+## pyarrow (25.0.0)
 
 ### Licenses
 License: `Apache-2.0`
@@ -12972,7 +12972,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/theskumar/python-dotenv
 
 
-## pytz (2026.2)
+## pytz (2026.3.post1)
 
 ### Licenses
 License: `MIT`
@@ -13695,7 +13695,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   - `Tracker`: https://github.com/zeromq/pyzmq/issues
 
 
-## regex (2026.6.28)
+## regex (2026.7.19)
 
 ### Licenses
 License: `Apache-2.0 AND CNRI-Python`
@@ -14891,7 +14891,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/mwaskom/seaborn
 
 
-## sentencepiece (0.2.1)
+## sentencepiece (0.2.2)
 
 ### Licenses
 License: `Apache-2.0`
@@ -15407,7 +15407,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Source`: https://github.com/Kludex/starlette
 
 
-## starlette-compress (1.7.1)
+## starlette-compress (1.8.0)
 
 ### Licenses
 License: `0BSD`
@@ -15495,7 +15495,7 @@ License: `Apache Software License`
   - `Source`: https://github.com/huggingface/tokenizers
 
 
-## tqdm (4.68.4)
+## tqdm (4.70.0)
 
 ### Licenses
 License: `MPL-2.0 AND MIT`
@@ -15560,7 +15560,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   - `wiki`: https://github.com/tqdm/tqdm/wiki
 
 
-## transformers (5.13.0)
+## transformers (5.14.1)
 
 ### Licenses
 License: `Apache 2.0 License`
@@ -15776,7 +15776,7 @@ Copyright 2018- The Hugging Face team. All rights reserved.
   - `Homepage`: https://github.com/huggingface/transformers
 
 
-## typer (0.26.8)
+## typer (0.27.1)
 
 ### Licenses
 License: `MIT`
@@ -16148,7 +16148,7 @@ SOFTWARE.
   - `Source`: https://github.com/pydantic/typing-inspection
 
 
-## tzdata (2026.2)
+## tzdata (2026.3)
 
 ### Licenses
 License: `Apache-2.0`
@@ -16480,7 +16480,7 @@ SOFTWARE.
   - `Issue tracker`: https://github.com/urllib3/urllib3/issues
 
 
-## uvicorn (0.50.2)
+## uvicorn (0.52.1)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -16802,7 +16802,7 @@ SOFTWARE.
   - `Source`: https://github.com/samuelcolvin/watchfiles
 
 
-## websockets (16.0)
+## websockets (17.0.1)
 
 ### Licenses
 License: `BSD-3-Clause`
@@ -16923,7 +16923,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   - `Homepage`: https://github.com/ifduyue/python-xxhash
 
 
-## yarl (1.24.2)
+## yarl (1.24.5)
 
 ### Licenses
 License: `Apache-2.0`

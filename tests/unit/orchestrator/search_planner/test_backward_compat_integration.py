@@ -153,24 +153,24 @@ def _drive_planner(
 
 
 class TestDispatchIdentity:
-    """Verify _build_search_planner returns the same planner type for
+    """Verify build_search_planner returns the same planner type for
     single-tier configs, whether sla_tiers=[] or absent entirely."""
 
     def test_empty_sla_tiers_returns_smooth_isotonic(self) -> None:
         """Empty sla_tiers list dispatches to SmoothIsotonicSLAPlanner."""
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
 
         plan = _make_plan(sla_tiers=[])
-        planner = _build_search_planner(plan)
+        planner = build_search_planner(plan)
         assert isinstance(planner, SmoothIsotonicSLAPlanner)
         assert not isinstance(planner, MultiTierPlanner)
 
     def test_no_sla_tiers_field_returns_smooth_isotonic(self) -> None:
         """Default (no sla_tiers specified) dispatches to SmoothIsotonicSLAPlanner."""
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
 
         plan = _make_plan()
-        planner = _build_search_planner(plan)
+        planner = build_search_planner(plan)
         assert isinstance(planner, SmoothIsotonicSLAPlanner)
         assert not isinstance(planner, MultiTierPlanner)
 
@@ -186,13 +186,13 @@ class TestBehavioralIdentity:
 
     def test_same_config_produces_identical_probe_sequence(self) -> None:
         """Two planners created from the same config produce identical probes."""
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
 
         plan_a = _make_plan(sla_tiers=[])
         plan_b = _make_plan(sla_tiers=[])
 
-        planner_a = _build_search_planner(plan_a)
-        planner_b = _build_search_planner(plan_b)
+        planner_a = build_search_planner(plan_a)
+        planner_b = build_search_planner(plan_b)
 
         # TTFT crosses 200ms at concurrency ~75 (TTFT = 50 + c * 2)
         curve = {x: 50.0 + x * 2.0 for x in range(1, 257)}
@@ -205,13 +205,13 @@ class TestBehavioralIdentity:
 
     def test_empty_tiers_and_default_tiers_produce_same_planner_type(self) -> None:
         """Configs with empty sla_tiers and default sla_tiers resolve to same type."""
-        from aiperf.cli_runner._strategy import _build_search_planner
+        from aiperf.orchestrator.search_planner import build_search_planner
 
         plan_explicit_empty = _make_plan(sla_tiers=[])
         plan_default = _make_plan()
 
-        planner_explicit = _build_search_planner(plan_explicit_empty)
-        planner_default = _build_search_planner(plan_default)
+        planner_explicit = build_search_planner(plan_explicit_empty)
+        planner_default = build_search_planner(plan_default)
 
         assert type(planner_explicit) is type(planner_default)
 

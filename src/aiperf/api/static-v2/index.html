@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIPerf Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+
+  <!-- Import map: resolve browser runtime modules from the dashboard origin.
+       Vendored via tools/vendor_ui_deps.py -- see MANIFEST there for pinned
+       versions/hashes. Mirrors operator/ui/index.html's import map. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "preact": "./vendor/preact.mjs",
+      "preact/hooks": "./vendor/preact-hooks.mjs",
+      "htm/preact": "./vendor/htm-preact.mjs",
+      "@preact/signals": "./vendor/signals.mjs"
+    }
+  }
+  </script>
+  <!-- Chart.js for the live throughput/latency chart. Loaded before the app
+       module so window.Chart is available by the time the component mounts. -->
+  <script src="./vendor/chart.umd.min.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

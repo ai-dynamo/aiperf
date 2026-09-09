@@ -25,6 +25,15 @@ def is_tty() -> bool:
     return sys.stdout is not None and getattr(sys.stdout, "isatty", lambda: False)()
 
 
+def is_truthy_flag(value: Any) -> bool:
+    """Whether a config/extra value represents a truthy boolean flag.
+
+    ``--extra-inputs`` values may arrive as a real bool or as a string
+    (e.g. ``store:true``), so accept ``True`` and case-insensitive ``"true"``.
+    """
+    return value is True or (isinstance(value, str) and value.strip().lower() == "true")
+
+
 async def call_all_functions_self(
     self_: object, funcs: list[Callable], *args, **kwargs
 ) -> None:

@@ -1,0 +1,317 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Kube list command: list benchmark jobs and their status."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Annotated
+
+from cyclopts import App, Parameter
+
+from aiperf.config.kube import KubeManageOptions
+
+if TYPE_CHECKING:
+    from aiperf.kubernetes.models import AIPerfJobInfo
+
+app = App(name="list")
+
+
+@app.default
+async def list_jobs(
+    job_id: Annotated[str | None, Parameter(help="Specific job ID to check.")] = None,
+    *,
+    all_namespaces: Annotated[
+        bool,
+        Parameter(
+            name=["-A", "--all-namespaces"],
+            help="Search in all namespaces (default). Ignored when --namespace is set.",
+        ),
+    ] = True,
+    running: Annotated[
+        bool, Parameter(name=["--running"], help="Show only running jobs.")
+    ] = False,
+    completed: Annotated[
+        bool, Parameter(name=["--completed"], help="Show only completed jobs.")
+    ] = False,
+    failed: Annotated[
+        bool, Parameter(name=["--failed"], help="Show only failed jobs.")
+    ] = False,
+    wide: Annotated[
+        bool,
+        Parameter(
+            name=["-w", "--wide"],
+            help="Show additional columns (model, endpoint, error).",
+        ),
+    ] = False,
+    watch: Annotated[
+        bool,
+        Parameter(
+            name=["--watch"],
+            help="Refresh the list every few seconds until interrupted.",
+        ),
+    ] = False,
+    interval: Annotated[
+        int,
+        Parameter(
+            name=["--interval"],
+            help="Refresh interval in seconds (used with --watch).",
+        ),
+    ] = 5,
+    manage_options: KubeManageOptions | None = None,
+) -> None:
+    """List AIPerf benchmark jobs and their status.
+
+    Lists AIPerfJob custom resources with operator-provided status.
+    By default searches all namespaces. Use --namespace to limit scope.
+
+    Examples:
+        # List all AIPerf jobs (all namespaces)
+        aiperf kube list
+
+        # Watch jobs with live refresh
+        aiperf kube list --watch
+
+        # List only running jobs
+        aiperf kube list --running
+
+        # List jobs in a specific namespace
+        aiperf kube list --namespace aiperf-bench
+
+        # Get status of a specific job
+        aiperf kube list abc123
+    """
+    from aiperf import cli_utils
+    from aiperf.kubernetes import client as kube_client_mod
+
+    manage_options = manage_options or KubeManageOptions()
+    status_filter = _resolve_status_filter(
+        running=running, completed=completed, failed=failed
+    )
+    search_all = all_namespaces and manage_options.namespace is None
+
+    with cli_utils.exit_on_error(title="Error Listing Kubernetes Jobs"):
+        namespace = _resolve_list_namespace(manage_options, search_all=search_all)
+        async with kube_client_mod.k8s_client(
+            kubeconfig=manage_options.kubeconfig,
+            context=manage_options.kube_context,
+        ) as api:
+            await _run_list_loop(
+                api,
+                namespace=namespace,
+                search_all=search_all,
+                status_filter=status_filter,
+                job_id=job_id,
+                wide=wide,
+                watch=watch,
+                interval=interval,
+            )
+
+
+def _resolve_list_namespace(
+    manage_options: KubeManageOptions, *, search_all: bool
+) -> str | None:
+    """Namespace for a scoped list, or ``None`` for a cluster-wide list.
+
+    A scoped list never falls back to ``default``: an unset ``--namespace``
+    resolves through the same ``resolve_benchmark_namespace`` contract the rest
+    of the kube CLI uses, which reads the active context and errors rather than
+    guessing a namespace the user is not watching.
+    """
+    if search_all:
+        return None
+
+    from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
+
+    return resolve_benchmark_namespace(
+        manage_options.namespace,
+        manage_options.kubeconfig,
+        manage_options.kube_context,
+    )
+
+
+def _resolve_status_filter(
+    *, running: bool, completed: bool, failed: bool
+) -> str | None:
+    from aiperf.kubernetes import console as kube_console
+
+    active_filters = [
+        ("Running", running),
+        ("Completed", completed),
+        ("Failed", failed),
+    ]
+    selected = [name for name, active in active_filters if active]
+    if len(selected) > 1:
+        kube_console.print_error(
+            f"Only one status filter can be used at a time, got: {', '.join(f'--{s.lower()}' for s in selected)}"
+        )
+        raise SystemExit(1)
+    return selected[0] if selected else None
+
+
+async def _run_list_loop(
+    api: object,
+    *,
+    namespace: str | None,
+    search_all: bool,
+    status_filter: str | None,
+    job_id: str | None,
+    wide: bool,
+    watch: bool,
+    interval: int,
+) -> None:
+    import asyncio
+
+    from aiperf.kubernetes import console as kube_console
+
+    while True:
+        jobs = await _fetch_jobs(
+            api,
+            namespace=namespace,
+            search_all=search_all,
+            status_filter=status_filter,
+            job_id=job_id,
+        )
+
+        if not jobs:
+            filter_msg = f" with phase '{status_filter}'" if status_filter else ""
+            kube_console.print_info(f"No AIPerf jobs found{filter_msg}")
+            if not watch:
+                return
+        else:
+            if watch:
+                # Clear screen for live refresh
+                kube_console.console.clear()
+            kube_console.print_aiperfjob_table(
+                jobs, wide=wide, owners=await _namespace_owners(api, jobs)
+            )
+
+        if not watch:
+            return
+
+        try:
+            await asyncio.sleep(interval)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            return
+
+
+async def _read_namespace_owner(
+    coord_api: object, ns: str, lease_name: str, duration: int
+) -> str:
+    """Return the OWNER cell for a single namespace via a namespaced GET."""
+
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    from aiperf.kubernetes.lease import lease_holder_if_live
+
+    try:
+        lease = await coord_api.read_namespaced_lease(lease_name, ns)
+        holder = lease_holder_if_live(lease, default_duration=duration)
+        return holder if holder else "-"
+    except ApiException as exc:
+        # 404 is "no Lease in this namespace", i.e. no scoped operator claimed
+        # it, which is exactly what "-" means. Only an unreadable claim (403,
+        # or anything else) is genuinely unknown.
+        return "-" if exc.status == 404 else "?"
+    except Exception:
+        return "?"
+
+
+async def _namespace_owners(api: object, jobs: list[AIPerfJobInfo]) -> dict[str, str]:
+    """Map each job namespace to the OWNER cell describing who reconciles it.
+
+    ``"-"`` means no live claim, i.e. the cluster-wide operator reconciles that
+    namespace. ``"?"`` means the claim could not be read at all (typically no
+    RBAC on ``leases``) and is deliberately distinct from ``"-"``: "nobody
+    claimed this" and "we are not allowed to look" are different facts.
+
+    Attempts a single cluster-wide list first (fast, one call under ``--watch``).
+    If that returns 403 (namespace-scoped user), falls back to per-namespace reads
+    so each namespace the caller can access still shows ownership.
+    """
+    from kubernetes_asyncio.client import CoordinationV1Api, V1ObjectMeta
+    from kubernetes_asyncio.client.exceptions import ApiException
+
+    from aiperf.common.environment import Environment
+    from aiperf.kubernetes.constants import LEASE_NAME
+    from aiperf.kubernetes.lease import lease_holder_if_live
+
+    namespaces = {job.namespace for job in jobs if job.namespace}
+    if not namespaces:
+        return {}
+
+    coord_api = CoordinationV1Api(api)
+    duration = Environment.OPERATOR.CLAIM_LEASE_SECONDS
+    owners: dict[str, str] = dict.fromkeys(namespaces, "-")
+    try:
+        listing = await coord_api.list_lease_for_all_namespaces(
+            field_selector=f"metadata.name={LEASE_NAME}"
+        )
+        for lease in listing.items or []:
+            namespace = (lease.metadata or V1ObjectMeta()).namespace
+            if namespace not in owners:
+                continue
+            holder = lease_holder_if_live(lease, default_duration=duration)
+            if holder:
+                owners[namespace] = holder
+    except ApiException as exc:
+        if exc.status != 403:
+            return dict.fromkeys(namespaces, "?")
+        for ns in namespaces:
+            owners[ns] = await _read_namespace_owner(
+                coord_api, ns, LEASE_NAME, duration
+            )
+    except Exception:
+        return dict.fromkeys(namespaces, "?")
+    return owners
+
+
+async def _fetch_jobs(
+    api: object,
+    *,
+    namespace: str | None,
+    search_all: bool,
+    status_filter: str | None,
+    job_id: str | None,
+) -> list[AIPerfJobInfo]:
+    """Fetch job list from cluster."""
+    from aiperf.kubernetes.client import (
+        find_aiperf_job,
+        list_aiperf_jobs,
+        list_jobsets,
+    )
+
+    if job_id:
+        job_info = await find_aiperf_job(api, job_id, namespace)
+        return [job_info] if job_info else []
+
+    jobs = await list_aiperf_jobs(
+        api,
+        namespace=namespace,
+        all_namespaces=search_all,
+        status_filter=status_filter,
+    )
+
+    if not jobs:
+        from aiperf.kubernetes.models import AIPerfJobInfo
+
+        jobsets = await list_jobsets(
+            api,
+            namespace=namespace,
+            all_namespaces=search_all,
+            job_id=job_id,
+            status_filter=status_filter,
+        )
+        jobs = [
+            AIPerfJobInfo(
+                name=js.name,
+                namespace=js.namespace,
+                phase=js.status,
+                job_id=js.job_id,
+                jobset_name=js.name,
+                created=js.created,
+                model=js.model,
+                endpoint=js.endpoint,
+            )
+            for js in jobsets
+        ]
+    return jobs

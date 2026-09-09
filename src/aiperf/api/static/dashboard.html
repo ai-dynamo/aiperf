@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIPerf Live Dashboard</title>
+    <style>
+        :root {
+            --nvidia-green: #76B900;
+            --nvidia-green-light: #93d50a;
+            --nvidia-green-dark: #5a8f00;
+            --nvidia-green-glow: rgba(118, 185, 0, 0.3);
+            --bg-primary: #0d0d0d;
+            --bg-card: #161616;
+            --bg-dark: #0a0a0a;
+            --bg-elevated: #1e1e1e;
+            --border: #2a2a2a;
+            --border-subtle: #222222;
+            --text: #f0f0f0;
+            --text-muted: #999999;
+            --text-dim: #666666;
+            --error: #ef4444;
+            --error-glow: rgba(239, 68, 68, 0.3);
+            --warning: #eab308;
+            --phase-warmup: #eab308;
+            --phase-profiling: #3b82f6;
+            --phase-grace: #f97316;
+            --phase-records: #06b6d4;
+            --phase-complete: #22c55e;
+            --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, var(--bg-primary) 0%, #0a0f05 100%);
+            color: var(--text);
+            padding: 1.5rem 2rem;
+            min-height: 100vh;
+        }
+        h1 {
+            color: var(--text);
+            font-size: 1.75rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        h1::before {
+            content: '';
+            display: inline-block;
+            width: 4px;
+            height: 1.5rem;
+            background: var(--nvidia-green);
+            border-radius: 2px;
+        }
+        h2 {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+        .status {
+            padding: 0.35rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .connected {
+            background: rgba(118, 185, 0, 0.15);
+            color: var(--nvidia-green);
+            box-shadow: 0 0 12px var(--nvidia-green-glow);
+            animation: pulse-green 2s ease-in-out infinite;
+        }
+        .disconnected {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--error);
+            box-shadow: 0 0 12px var(--error-glow);
+        }
+        @keyframes pulse-green {
+            0%, 100% { box-shadow: 0 0 12px var(--nvidia-green-glow); }
+            50% { box-shadow: 0 0 20px var(--nvidia-green-glow); }
+        }
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 1rem;
+        }
+        @media (max-width: 1200px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+        }
+        .right-column {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 7rem);
+            gap: 1rem;
+        }
+        .right-column .card {
+            margin-bottom: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .right-column .card .metrics-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+        }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: var(--shadow-sm);
+        }
+        .card:last-child { margin-bottom: 0; }
+
+        /* Phase Progress */
+        .phase-section { margin-bottom: 1rem; display: none; }
+        .phase-section.visible { display: block; }
+        .phase-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.4rem;
+        }
+        .phase-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            --phase-color: var(--text-muted);
+        }
+        .phase-label .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--phase-color);
+            animation: pulse-dot 1.5s ease-in-out infinite;
+        }
+        .phase-label .dot.inactive { animation: none; opacity: 0.3; }
+        .phase-label .dot.complete { animation: none; }
+        .phase-label .phase-name { color: var(--phase-color); }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .phase-warmup { --phase-color: var(--phase-warmup); }
+        .phase-profiling { --phase-color: var(--phase-profiling); }
+        .phase-grace { --phase-color: var(--phase-grace); }
+        .phase-records { --phase-color: var(--phase-records); }
+        .phase-complete { --phase-color: var(--phase-complete); }
+        .phase-stats {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-variant-numeric: tabular-nums;
+        }
+        .progress-bar {
+            background: var(--bg-dark);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            height: 24px;
+            overflow: hidden;
+            position: relative;
+        }
+        .progress-fill {
+            height: 100%;
+            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--bg-primary);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            min-width: 36px;
+        }
+        .progress-fill.warmup { background: linear-gradient(90deg, #a16207, var(--phase-warmup), #facc15); }
+        .progress-fill.profiling { background: linear-gradient(90deg, #1d4ed8, var(--phase-profiling), #60a5fa); }
+        .progress-fill.grace { background: linear-gradient(90deg, #c2410c, var(--phase-grace), #fb923c); }
+        .progress-fill.records { background: linear-gradient(90deg, #0891b2, var(--phase-records), #22d3ee); }
+        .progress-fill.complete { background: linear-gradient(90deg, #15803d, var(--phase-complete), #4ade80); }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.6rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-subtle);
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+        .stat-item.hidden { display: none; }
+        .stat-label {
+            font-size: 0.65rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .stat-value {
+            font-size: 1rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--text);
+        }
+        .stat-value.green { color: var(--nvidia-green); }
+        .stat-value.yellow { color: var(--warning); }
+        .stat-value.red { color: var(--error); }
+
+        /* Unified Data Table (metrics + workers) */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+        .data-table th {
+            text-align: left;
+            padding: 0.5rem 0.6rem;
+            font-size: 0.65rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid var(--border-subtle);
+            background: var(--bg-dark);
+            position: sticky;
+            top: 0;
+        }
+        .data-table th:not(:first-child) { text-align: right; }
+        .data-table td {
+            padding: 0.5rem 0.6rem;
+            border-bottom: 1px solid var(--border-subtle);
+            font-variant-numeric: tabular-nums;
+        }
+        .data-table td:not(:first-child) { text-align: right; }
+        .data-table tr:hover { background: var(--bg-elevated); }
+        .data-table.metrics td:not(:first-child) { color: var(--nvidia-green); }
+        .metric-name { font-weight: 500; color: var(--text); }
+        .metric-unit { font-size: 0.7rem; color: var(--text-dim); margin-left: 0.25rem; }
+        .server-metric-group td {
+            background: var(--bg-elevated);
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            padding: 0.4rem 0.6rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .metrics-scroll {
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+
+        /* Workers */
+        .worker-id { font-weight: 500; color: #22d3ee; font-size: 0.75rem; }
+        .worker-status {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .worker-status.healthy { background: rgba(118, 185, 0, 0.15); color: var(--nvidia-green); }
+        .worker-status.high_load { background: rgba(234, 179, 8, 0.15); color: var(--warning); }
+        .worker-status.error { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+        .worker-status.idle { background: rgba(102, 102, 102, 0.15); color: var(--text-dim); }
+        .worker-status.stale { background: rgba(102, 102, 102, 0.1); color: var(--text-dim); opacity: 0.6; }
+        .workers-scroll {
+            overflow-y: auto;
+            max-height: 200px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+
+        /* Log */
+        #log {
+            background: var(--bg-dark);
+            border: 1px solid var(--border-subtle);
+            padding: 0.6rem 0.8rem;
+            border-radius: var(--radius-sm);
+            font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+            font-size: 0.7rem;
+            max-height: 100px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+        .log-entry {
+            padding: 0.15rem 0;
+            color: var(--text-dim);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .log-entry:last-child { border-bottom: none; }
+
+        /* Config Bar */
+        .config-bar {
+            display: none;
+            flex-wrap: wrap;
+            gap: 0.5rem 1.25rem;
+            padding: 0.75rem 1.25rem;
+            margin-bottom: 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-sm);
+            align-items: center;
+        }
+        .config-bar.visible { display: flex; }
+        .config-item {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+        }
+        .config-label {
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 0.6rem;
+            font-weight: 600;
+        }
+        .config-value {
+            color: var(--nvidia-green);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+        .config-sep {
+            width: 1px;
+            height: 1rem;
+            background: var(--border);
+        }
+    </style>
+</head>
+<body>
+    <div class="header-row">
+        <h1>AIPerf Live Dashboard</h1>
+        <span id="status" class="status disconnected">Disconnected</span>
+    </div>
+
+    <div id="config-bar" class="config-bar"></div>
+
+    <div class="dashboard-grid">
+        <div class="left-column">
+            <div class="card">
+                <h2>Progress</h2>
+                <div id="warmup-section" class="phase-section">
+                    <div class="phase-header">
+                        <span class="phase-label phase-warmup">
+                            <span class="dot inactive"></span>
+                            <span class="phase-name">Warmup</span>
+                        </span>
+                        <span id="warmup-stats" class="phase-stats">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="warmup-fill" class="progress-fill warmup" style="width: 0%">0%</div>
+                    </div>
+                </div>
+                <div id="warmup-grace-section" class="phase-section">
+                    <div class="phase-header">
+                        <span class="phase-label phase-grace">
+                            <span class="dot inactive"></span>
+                            <span class="phase-name">Warmup Grace</span>
+                        </span>
+                        <span id="warmup-grace-stats" class="phase-stats">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="warmup-grace-fill" class="progress-fill grace" style="width: 0%">0%</div>
+                    </div>
+                </div>
+                <div id="profiling-section" class="phase-section">
+                    <div class="phase-header">
+                        <span class="phase-label phase-profiling">
+                            <span class="dot inactive"></span>
+                            <span class="phase-name">Profiling</span>
+                        </span>
+                        <span id="profiling-stats" class="phase-stats">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="profiling-fill" class="progress-fill profiling" style="width: 0%">0%</div>
+                    </div>
+                </div>
+                <div id="profiling-grace-section" class="phase-section">
+                    <div class="phase-header">
+                        <span class="phase-label phase-grace">
+                            <span class="dot inactive"></span>
+                            <span class="phase-name">Grace Period</span>
+                        </span>
+                        <span id="profiling-grace-stats" class="phase-stats">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="profiling-grace-fill" class="progress-fill grace" style="width: 0%">0%</div>
+                    </div>
+                </div>
+                <div id="records-section" class="phase-section">
+                    <div class="phase-header">
+                        <span class="phase-label phase-records">
+                            <span class="dot inactive"></span>
+                            <span class="phase-name">Records</span>
+                        </span>
+                        <span id="records-stats" class="phase-stats">--</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="records-fill" class="progress-fill records" style="width: 0%">0%</div>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">Status</span>
+                        <span id="current-status" class="stat-value">Waiting</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Live Concurrency</span>
+                        <span id="in-flight" class="stat-value">0 requests</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Errors</span>
+                        <span id="errors" class="stat-value green">0 / 0 (0.0%)</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Request Rate</span>
+                        <span id="request-rate" class="stat-value">--</span>
+                    </div>
+                    <div id="processing-rate-item" class="stat-item hidden">
+                        <span class="stat-label">Processing Rate</span>
+                        <span id="processing-rate" class="stat-value">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Elapsed</span>
+                        <span id="elapsed" class="stat-value">--</span>
+                    </div>
+                    <div id="grace-elapsed-item" class="stat-item hidden">
+                        <span class="stat-label">Grace Period</span>
+                        <span id="grace-elapsed" class="stat-value">--</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">ETA</span>
+                        <span id="eta" class="stat-value">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Workers <span id="worker-summary" style="color: var(--text-dim); font-weight: 400; text-transform: none; letter-spacing: 0;"></span></h2>
+                <div class="workers-scroll">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Worker</th>
+                                <th>Status</th>
+                                <th>In-flight</th>
+                                <th>Done</th>
+                                <th>Failed</th>
+                                <th>CPU</th>
+                                <th>Memory</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workers-body">
+                            <tr><td colspan="7" style="color: var(--text-dim)">Waiting for workers...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Event Log</h2>
+                <div id="log"></div>
+            </div>
+        </div>
+
+        <div class="right-column">
+            <div class="card" style="flex: 1; min-height: 0;">
+                <h2>Real-Time Metrics</h2>
+                <div class="metrics-scroll">
+                    <table class="data-table metrics">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>avg</th>
+                                <th>min</th>
+                                <th>max</th>
+                                <th>p99</th>
+                                <th>p90</th>
+                                <th>p50</th>
+                            </tr>
+                        </thead>
+                        <tbody id="metrics-body-main">
+                            <tr><td colspan="7" style="color: var(--text-dim)">Waiting for data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="server-metrics-card" class="card" style="flex: 0 0 auto; max-height: 320px; display: none;">
+                <h2>Server Metrics</h2>
+                <div class="metrics-scroll">
+                    <table class="data-table metrics">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>avg</th>
+                                <th>min</th>
+                                <th>max</th>
+                                <th>p99</th>
+                                <th>p90</th>
+                                <th>p50</th>
+                            </tr>
+                        </thead>
+                        <tbody id="server-metrics-body">
+                            <tr><td colspan="7" style="color: var(--text-dim)">Waiting for server metrics...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card" style="flex: 0 0 280px;">
+                <h2>GPU Telemetry</h2>
+                <div class="metrics-scroll">
+                    <table class="data-table metrics">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th>avg</th>
+                                <th>min</th>
+                                <th>max</th>
+                                <th>p99</th>
+                                <th>p90</th>
+                                <th>p50</th>
+                            </tr>
+                        </thead>
+                        <tbody id="telemetry-body">
+                            <tr><td colspan="7" style="color: var(--text-dim)">Waiting for GPU data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM references ---
+
+        const $ = id => document.getElementById(id);
+
+        const el = {
+            status: $('status'),
+            currentStatus: $('current-status'),
+            inFlight: $('in-flight'),
+            errors: $('errors'),
+            requestRate: $('request-rate'),
+            processingRateItem: $('processing-rate-item'),
+            processingRate: $('processing-rate'),
+            elapsed: $('elapsed'),
+            graceElapsedItem: $('grace-elapsed-item'),
+            graceElapsed: $('grace-elapsed'),
+            eta: $('eta'),
+            metricsBody: $('metrics-body-main'),
+            telemetryBody: $('telemetry-body'),
+            serverMetricsCard: $('server-metrics-card'),
+            serverMetricsBody: $('server-metrics-body'),
+            workersBody: $('workers-body'),
+            workerSummary: $('worker-summary'),
+            log: $('log'),
+            configBar: $('config-bar'),
+        };
+
+        const PHASE_IDS = ['warmup', 'warmup-grace', 'profiling', 'profiling-grace', 'records'];
+        const phaseEl = Object.fromEntries(PHASE_IDS.map(id => [id, {
+            section: $(`${id}-section`),
+            fill: $(`${id}-fill`),
+            stats: $(`${id}-stats`),
+        }]));
+
+        // --- Utilities ---
+
+        const escapeHtml = str => {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        };
+        const formatNumber = n => n != null ? n.toLocaleString() : '--';
+        const formatRate = n => n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+        const nowNs = () => Date.now() * 1e6;
+        const toStateKey = phase => phase === 'warmup' ? 'warmup' : 'profiling';
+        const waitingRow = msg => `<tr><td colspan="7" style="color: var(--text-dim)">${msg}</td></tr>`;
+
+        const formatValue = v => {
+            if (v == null) return '--';
+            if (typeof v !== 'number') return String(v);
+            return Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : v < 1 ? v.toFixed(3) : v.toFixed(2);
+        };
+
+        const formatTime = seconds => {
+            if (seconds == null || seconds < 0) return '--';
+            const d = Math.floor(seconds / 86400);
+            const h = Math.floor((seconds % 86400) / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            if (d > 0) return `${d}d ${h}h ${m}m`;
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        };
+
+        const formatBytes = bytes => {
+            if (bytes == null) return 'N/A';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let i = 0, v = bytes;
+            while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+            return `${v.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+        };
+
+        const shortWorkerId = id => {
+            if (!id) return '';
+            const parts = id.split('-');
+            return parts.length <= 2 ? id : parts.slice(-2).join('-');
+        };
+
+        // --- State ---
+
+        const createPhaseState = () => ({
+            completed: 0, sent: 0, cancelled: 0, requestErrors: 0,
+            totalExpectedRequests: null, expectedDurationSec: null,
+            expectedNumSessions: null, expectedGracePeriodSec: null,
+            completedSessions: 0,
+            startNs: null, sentEndNs: null, requestsEndNs: null,
+            timeoutTriggered: false, active: false, complete: false,
+        });
+
+        const createRecordsState = () => ({
+            successRecords: 0, errorRecords: 0, finalRequestsCompleted: null,
+            startNs: null, recordsEndNs: null, active: false, complete: false,
+        });
+
+        const createDefaultWorker = () => ({
+            status: 'idle', startupState: null, inFlight: 0, completed: 0, failed: 0, cpu: null, memory: null,
+        });
+
+        const state = {
+            warmup: createPhaseState(),
+            profiling: createPhaseState(),
+            records: createRecordsState(),
+            currentPhase: null,
+        };
+        let workers = {};
+
+        // --- Logging ---
+
+        const log = msg => {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
+            el.log.appendChild(entry);
+            el.log.scrollTop = el.log.scrollHeight;
+            if (el.log.children.length > 20) el.log.removeChild(el.log.firstChild);
+        };
+
+        // --- Config ---
+
+        const fetchConfig = epoch => {
+            fetch('/api/config')
+                .then(r => r.ok ? r.json() : null)
+                .then(cfg => { if (cfg && epoch === connectionEpoch) renderConfig(cfg); })
+                .catch(() => {});
+        };
+
+        const renderConfig = cfg => {
+            // Schema matches BenchmarkConfig (src/aiperf/config/config.py): top-level
+            // is { models, endpoint, datasets, phases, ... } — no `loadgen`/`input`.
+            const ep = cfg.endpoint || {};
+            const phases = cfg.phases || [];
+            const items = [];
+            const add = (label, value) => items.push({ label, value: String(value) });
+
+            const modelNames = (cfg.models?.items || []).map(m => m?.name).filter(Boolean);
+            if (modelNames.length) add('Model', modelNames.join(', '));
+            if (ep.type) add('Endpoint', ep.type + (ep.streaming ? ' (streaming)' : ''));
+            if (ep.urls?.length) add('URL', ep.urls.length === 1 ? ep.urls[0] : `${ep.urls.length} URLs`);
+
+            // Phases are a list of named phase configs (post-2026-04 list-with-name).
+            const showName = phases.length > 1;
+            for (const phase of phases) {
+                if (!phase) continue;
+                const prefix = showName ? `${phase.name ?? ''} ` : '';
+                if (phase.type) add(`${prefix}Type`, phase.type);
+                if (phase.concurrency != null) add(`${prefix}Concurrency`, phase.concurrency);
+                if (phase.prefill_concurrency != null) add(`${prefix}Prefill`, phase.prefill_concurrency);
+                if (phase.rate != null) add(`${prefix}Rate`, `${phase.rate} QPS`);
+                if (phase.users != null) add(`${prefix}Users`, phase.users);
+                if (phase.requests != null) add(`${prefix}Requests`, Number(phase.requests).toLocaleString());
+                if (phase.duration != null) {
+                    const durSec = typeof phase.duration === 'number' ? phase.duration : null;
+                    add(`${prefix}Duration`, durSec != null ? formatTime(durSec) : String(phase.duration));
+                }
+                if (phase.sessions != null) add(`${prefix}Sessions`, Number(phase.sessions).toLocaleString());
+            }
+
+            if (!items.length) return;
+
+            el.configBar.innerHTML = items.map((item, i) =>
+                `<span class="config-item"><span class="config-label">${escapeHtml(item.label)}</span>` +
+                `<span class="config-value">${escapeHtml(item.value)}</span></span>` +
+                (i < items.length - 1 ? '<span class="config-sep"></span>' : '')
+            ).join('');
+            el.configBar.classList.add('visible');
+        };
+
+        // --- Bootstrap from /api/progress (handles page refresh mid-benchmark) ---
+
+        const fetchProgress = epoch => {
+            fetch('/api/progress')
+                .then(r => r.ok ? r.json() : null)
+                .then(data => { if (data && epoch === connectionEpoch) bootstrapProgress(data); })
+                .catch(() => {});
+        };
+
+        const bootstrapProgress = data => {
+            // Skip if WS messages already populated state
+            if (state.warmup.startNs || state.profiling.startNs) return;
+
+            const phases = data.phases || {};
+            for (const [phaseName, stats] of Object.entries(phases)) {
+                if (!stats.start_ns) continue;
+
+                const key = toStateKey(phaseName);
+                applyStats(state[key], stats);
+                state[key].active = !stats.requests_end_ns;
+                state[key].complete = !!stats.requests_end_ns;
+                if (stats.final_requests_completed) {
+                    state[key].completed = stats.final_requests_completed;
+                }
+                updatePhaseDisplay(key, state[key]);
+
+                const totalRecords = (stats.success_records || 0) + (stats.error_records || 0);
+                if (totalRecords > 0) {
+                    state.records.successRecords = stats.success_records || 0;
+                    state.records.errorRecords = stats.error_records || 0;
+                    if (stats.final_requests_completed) {
+                        state.records.finalRequestsCompleted = stats.final_requests_completed;
+                    }
+                    if (stats.start_ns) state.records.startNs = stats.start_ns;
+                    state.records.recordsEndNs = stats.records_end_ns || null;
+                    state.records.active = !stats.records_end_ns;
+                    state.records.complete = !!stats.records_end_ns;
+                }
+            }
+
+            if ((state.records.active || state.records.complete) && allRequestPhasesFinished()) {
+                state.currentPhase = 'records';
+                updateRecordsDisplay();
+            }
+            updateStats();
+        };
+
+        // --- Progress calculations (matches CreditPhaseStats logic) ---
+
+        const calculateProgress = p => {
+            if (p.complete) return 100;
+            const pcts = [];
+            if (p.totalExpectedRequests > 0) pcts.push((p.completed / p.totalExpectedRequests) * 100);
+            if (p.expectedDurationSec > 0 && p.startNs) {
+                pcts.push(((nowNs() - p.startNs) / 1e9 / p.expectedDurationSec) * 100);
+            }
+            if (p.expectedNumSessions > 0) pcts.push((p.completedSessions / p.expectedNumSessions) * 100);
+            return pcts.length ? Math.min(Math.max(...pcts), 100) : 0;
+        };
+
+        // Matches ProgressDashboard._get_grace_period_progress
+        const calculateGraceProgress = p => {
+            if (p.expectedGracePeriodSec && p.expectedGracePeriodSec !== Infinity && p.sentEndNs) {
+                return Math.min(((nowNs() - p.sentEndNs) / 1e9 / p.expectedGracePeriodSec) * 100, 100);
+            }
+            return p.sent > 0 ? ((p.completed + p.cancelled) / p.sent) * 100 : 0;
+        };
+
+        const getProgressLabel = p => {
+            const pct = calculateProgress(p);
+            if (p.totalExpectedRequests > 0) {
+                return `${formatNumber(p.completed)} / ${formatNumber(p.totalExpectedRequests)} requests (${pct.toFixed(1)}%)`;
+            }
+            if (p.expectedNumSessions > 0) {
+                return `${formatNumber(p.completedSessions)} / ${formatNumber(p.expectedNumSessions)} sessions (${pct.toFixed(1)}%)`;
+            }
+            if (p.expectedDurationSec > 0) {
+                const elapsed = p.startNs ? (nowNs() - p.startNs) / 1e9 : 0;
+                return `${formatTime(elapsed)} / ${formatTime(p.expectedDurationSec)} (${pct.toFixed(1)}%)`;
+            }
+            return `${pct.toFixed(1)}%`;
+        };
+
+        const getGraceProgressLabel = p => {
+            const completed = p.completed + p.cancelled;
+            const pct = p.sent > 0 ? (completed / p.sent * 100) : 0;
+            return `${formatNumber(completed)} / ${formatNumber(p.sent)} returned (${pct.toFixed(1)}%)`;
+        };
+
+        // --- UI rendering ---
+
+        const renderMetricsTable = (metrics, targetEl) => {
+            if (!metrics?.length) return;
+            targetEl.innerHTML = metrics.map(m =>
+                `<tr><td><span class="metric-name">${escapeHtml(m.header || m.tag)}</span>` +
+                `<span class="metric-unit">${escapeHtml(m.unit || '')}</span></td>` +
+                `<td>${formatValue(m.avg)}</td><td>${formatValue(m.min)}</td>` +
+                `<td>${formatValue(m.max)}</td><td>${formatValue(m.p99)}</td>` +
+                `<td>${formatValue(m.p90)}</td><td>${formatValue(m.p50)}</td></tr>`
+            ).join('');
+        };
+
+        const updateProgressBar = (phaseId, pct, label, barClass, isActive, isComplete) => {
+            const pe = phaseEl[phaseId];
+            pe.fill.style.width = `${Math.min(pct, 100)}%`;
+            pe.fill.textContent = `${Math.round(pct)}%`;
+            pe.stats.textContent = label;
+            pe.section.classList.add('visible');
+
+            const dot = pe.section.querySelector('.dot');
+            const labelEl = pe.section.querySelector('.phase-label');
+
+            dot.classList.remove('inactive', 'complete');
+            labelEl.className = 'phase-label';
+            pe.fill.className = 'progress-fill';
+            pe.fill.classList.add(barClass);
+
+            if (isComplete) {
+                dot.classList.add('complete');
+                labelEl.classList.add('phase-complete');
+                pe.fill.classList.add('complete');
+                pe.fill.classList.remove(barClass);
+            } else {
+                labelEl.classList.add(`phase-${barClass}`);
+                if (!isActive) dot.classList.add('inactive');
+            }
+        };
+
+        const updatePhaseDisplay = (key, p) => {
+            const barClass = key === 'warmup' ? 'warmup' : 'profiling';
+            const graceId = `${key}-grace`;
+
+            if (p.timeoutTriggered) {
+                updateProgressBar(key, 100, getProgressLabel(p), barClass, false, true);
+                const isRequestsComplete = p.requestsEndNs != null;
+                updateProgressBar(graceId, calculateGraceProgress(p), getGraceProgressLabel(p),
+                    'grace', !isRequestsComplete, isRequestsComplete);
+            } else {
+                updateProgressBar(key, calculateProgress(p), getProgressLabel(p), barClass, p.active, p.complete);
+                phaseEl[graceId].section.classList.remove('visible');
+            }
+        };
+
+        const updateRecordsDisplay = () => {
+            const r = state.records;
+            const total = r.successRecords + r.errorRecords;
+            if (total === 0) return;
+
+            let expected = r.finalRequestsCompleted || state.profiling.totalExpectedRequests || 0;
+            if (expected === 0) return;
+            expected = Math.max(expected, total);
+
+            const pct = (total / expected) * 100;
+            updateProgressBar('records', pct,
+                `${formatNumber(total)} / ${formatNumber(expected)} (${pct.toFixed(1)}%)`,
+                'records', r.active && !r.complete, r.complete);
+        };
+
+        const renderWorkers = () => {
+            const ids = Object.keys(workers).sort();
+            if (!ids.length) return;
+
+            const activeCount = ids.filter(id => ['healthy', 'high_load'].includes(workers[id].status)).length;
+            el.workerSummary.textContent = `(${activeCount}/${ids.length} active)`;
+
+            const KNOWN_STATUSES = ['healthy', 'high_load', 'error', 'idle', 'stale'];
+            el.workersBody.innerHTML = ids.map(id => {
+                const w = workers[id];
+                const startupLabel = w.startupState && w.startupState !== 'ready'
+                    ? ` (${w.startupState.replaceAll('_', ' ')})`
+                    : '';
+                const statusLabel = `${(w.status || 'idle').replace('_', ' ')}${startupLabel}`;
+                // Restrict CSS class to known enum values — the status string comes
+                // from the wire and a stray space would break layout.
+                const statusClass = KNOWN_STATUSES.includes(w.status) ? w.status : 'idle';
+                const cpu = w.cpu != null ? `${w.cpu.toFixed(1)}%` : 'N/A';
+                return `<tr>` +
+                    `<td><span class="worker-id">${escapeHtml(shortWorkerId(id))}</span></td>` +
+                    `<td><span class="worker-status ${statusClass}">${escapeHtml(statusLabel)}</span></td>` +
+                    `<td>${formatNumber(w.inFlight)}</td><td>${formatNumber(w.completed)}</td>` +
+                    `<td>${formatNumber(w.failed)}</td><td>${cpu}</td><td>${formatBytes(w.memory)}</td></tr>`;
+            }).join('');
+        };
+
+        const allRequestPhasesFinished = () => {
+            const { warmup: w, profiling: p } = state;
+            if (!w.startNs && !p.startNs) return false;
+            return !(w.startNs && !w.complete) && !(p.startNs && !p.complete);
+        };
+
+        const getActiveCreditPhase = () => {
+            if (state.profiling.active || state.profiling.completed > 0) return { st: state.profiling, key: 'profiling' };
+            if (state.warmup.active || state.warmup.completed > 0) return { st: state.warmup, key: 'warmup' };
+            return { st: state.profiling, key: 'profiling' };
+        };
+
+        const updateStatus = () => {
+            const { records: r, profiling: p, warmup: w } = state;
+            let label = 'Waiting';
+            if (r.complete && r.recordsEndNs) label = 'Complete';
+            else if (p.complete && p.requestsEndNs && r.active) label = 'Processing';
+            else if (p.timeoutTriggered && !p.requestsEndNs) label = 'Grace Period';
+            else if (p.active || p.completed > 0) label = 'Profiling';
+            else if (w.timeoutTriggered && !w.requestsEndNs) label = 'Warmup Grace';
+            else if (w.active || w.completed > 0) label = 'Warmup';
+            el.currentStatus.textContent = label;
+        };
+
+        const updateStats = () => {
+            const { st: cp } = getActiveCreditPhase();
+            const r = state.records;
+            const requestsComplete = cp.requestsEndNs != null;
+            const totalRecords = r.successRecords + r.errorRecords;
+
+            // In-flight
+            el.inFlight.textContent = requestsComplete ? '--'
+                : `${formatNumber(Math.max(0, cp.sent - cp.completed - cp.cancelled))} requests`;
+
+            // Errors (records-based when available, otherwise credit-phase-based)
+            const [errorCount, totalCount] = totalRecords > 0
+                ? [r.errorRecords, totalRecords]
+                : [state.warmup.requestErrors + state.profiling.requestErrors,
+                   state.warmup.completed + state.profiling.completed];
+            const errorPct = totalCount > 0 ? (errorCount / totalCount * 100) : 0;
+            el.errors.textContent = `${formatNumber(errorCount)} / ${formatNumber(totalCount)} (${errorPct.toFixed(1)}%)`;
+            el.errors.className = `stat-value ${errorPct > 10 ? 'red' : errorPct > 0 ? 'yellow' : 'green'}`;
+
+            // Request rate
+            if (cp.startNs && cp.completed > 0) {
+                const elapsedSec = (nowNs() - cp.startNs) / 1e9;
+                if (elapsedSec > 0) el.requestRate.textContent = `${formatRate(cp.completed / elapsedSec)} requests/s`;
+            }
+
+            // Processing rate
+            if (r.active && r.startNs && totalRecords > 0) {
+                const recElapsed = (nowNs() - r.startNs) / 1e9;
+                if (recElapsed > 0) {
+                    el.processingRateItem.classList.remove('hidden');
+                    el.processingRate.textContent = `${formatRate(totalRecords / recElapsed)} records/s`;
+                }
+            }
+
+            // Elapsed
+            if (!requestsComplete && cp.startNs) {
+                el.elapsed.textContent = formatTime((nowNs() - cp.startNs) / 1e9);
+            } else if (requestsComplete && r.active && r.startNs) {
+                el.elapsed.textContent = formatTime((nowNs() - r.startNs) / 1e9);
+            }
+
+            // Grace period elapsed
+            if (cp.timeoutTriggered && cp.sentEndNs && !requestsComplete) {
+                el.graceElapsedItem.classList.remove('hidden');
+                el.graceElapsed.textContent = formatTime((nowNs() - cp.sentEndNs) / 1e9);
+            } else {
+                el.graceElapsedItem.classList.add('hidden');
+            }
+
+            // ETA
+            if (!requestsComplete) {
+                const pct = calculateProgress(cp);
+                if (pct > 0 && pct < 100 && cp.startNs) {
+                    const elapsedSec = (nowNs() - cp.startNs) / 1e9;
+                    el.eta.textContent = formatTime(elapsedSec / (pct / 100) - elapsedSec);
+                } else {
+                    el.eta.textContent = '--';
+                }
+            } else if (r.active && !r.complete && r.startNs && totalRecords > 0) {
+                const expected = r.finalRequestsCompleted || state.profiling.totalExpectedRequests || 0;
+                if (expected > 0 && totalRecords < expected) {
+                    const procRate = totalRecords / ((nowNs() - r.startNs) / 1e9);
+                    el.eta.textContent = procRate > 0 ? formatTime((expected - totalRecords) / procRate) : '--';
+                } else {
+                    el.eta.textContent = '--';
+                }
+            } else {
+                el.eta.textContent = '--';
+            }
+
+            updateStatus();
+        };
+
+        // --- State updates ---
+
+        const applyStats = (phaseState, stats) => {
+            if (stats.requests_completed != null) phaseState.completed = Number(stats.requests_completed);
+            if (stats.requests_sent != null) phaseState.sent = Number(stats.requests_sent);
+            if (stats.requests_cancelled != null) phaseState.cancelled = Number(stats.requests_cancelled);
+            if (stats.request_errors != null) phaseState.requestErrors = Number(stats.request_errors);
+            if (stats.completed_sessions != null) phaseState.completedSessions = Number(stats.completed_sessions);
+            if (stats.total_expected_requests != null) phaseState.totalExpectedRequests = Number(stats.total_expected_requests);
+            if (stats.expected_duration_sec != null) phaseState.expectedDurationSec = Number(stats.expected_duration_sec);
+            if (stats.expected_num_sessions != null) phaseState.expectedNumSessions = Number(stats.expected_num_sessions);
+            if (stats.expected_grace_period_sec != null) phaseState.expectedGracePeriodSec = Number(stats.expected_grace_period_sec);
+            if (stats.start_ns && !phaseState.startNs) phaseState.startNs = Number(stats.start_ns);
+            if (stats.sent_end_ns) phaseState.sentEndNs = Number(stats.sent_end_ns);
+            if (stats.requests_end_ns) phaseState.requestsEndNs = Number(stats.requests_end_ns);
+            if (stats.timeout_triggered || stats.grace_period_timeout_triggered) phaseState.timeoutTriggered = true;
+        };
+
+        // --- Message handling ---
+
+        const handleMessage = msg => {
+            if (msg.type === 'subscribed') {
+                log(`Subscribed: ${msg.message_types.join(', ')}`);
+                return;
+            }
+
+            const stats = msg.stats || {};
+            const phase = stats.phase || msg.phase;
+
+            switch (msg.message_type) {
+                case 'credit_phase_start': {
+                    const key = toStateKey(phase);
+                    state[key] = createPhaseState();
+                    applyStats(state[key], stats);
+                    state[key].startNs = stats.start_ns ? Number(stats.start_ns) : nowNs();
+                    state[key].active = true;
+                    state.currentPhase = key;
+                    log(`Phase started: ${phase}`);
+                    updatePhaseDisplay(key, state[key]);
+                    updateStatus();
+                    break;
+                }
+
+                case 'credit_phase_progress': {
+                    const key = toStateKey(phase);
+                    applyStats(state[key], stats);
+                    state[key].active = true;
+                    state.currentPhase = key;
+                    updatePhaseDisplay(key, state[key]);
+                    updateStats();
+                    break;
+                }
+
+                case 'credit_phase_sending_complete': {
+                    const key = toStateKey(phase);
+                    applyStats(state[key], stats);
+                    state[key].active = true;
+                    log(`Sending complete: ${phase}${state[key].timeoutTriggered ? ' (grace period)' : ''}`);
+                    updatePhaseDisplay(key, state[key]);
+                    updateStats();
+                    break;
+                }
+
+                case 'credit_phase_complete': {
+                    const key = toStateKey(phase);
+                    applyStats(state[key], stats);
+                    state[key].active = false;
+                    state[key].complete = true;
+                    if (stats.final_requests_completed) {
+                        state[key].completed = Number(stats.final_requests_completed);
+                    }
+                    log(`Phase complete: ${phase}`);
+                    updatePhaseDisplay(key, state[key]);
+                    const hasRecords = (state.records.successRecords + state.records.errorRecords) > 0;
+                    if (state.records.active && hasRecords && allRequestPhasesFinished()) {
+                        state.currentPhase = 'records';
+                        updateRecordsDisplay();
+                    }
+                    updateStats();
+                    break;
+                }
+
+                case 'processing_stats': {
+                    const procStats = msg.processing_stats || {};
+                    state.records.successRecords = Number(procStats.success_records) || 0;
+                    state.records.errorRecords = Number(procStats.error_records) || 0;
+                    if (procStats.final_requests_completed) {
+                        state.records.finalRequestsCompleted = Number(procStats.final_requests_completed);
+                    }
+                    if (procStats.start_ns && !state.records.startNs) {
+                        state.records.startNs = Number(procStats.start_ns);
+                    }
+                    const totalRecordsNow = state.records.successRecords + state.records.errorRecords;
+                    if (totalRecordsNow > 0) state.records.active = true;
+                    if (state.records.active && allRequestPhasesFinished()) {
+                        state.currentPhase = 'records';
+                        updateRecordsDisplay();
+                        updateStats();
+                    }
+                    break;
+                }
+
+                case 'all_records_received': {
+                    const finalStats = msg.final_processing_stats || {};
+                    if (finalStats.success_records != null) state.records.successRecords = Number(finalStats.success_records);
+                    if (finalStats.error_records != null) state.records.errorRecords = Number(finalStats.error_records);
+                    if (finalStats.records_end_ns) state.records.recordsEndNs = Number(finalStats.records_end_ns);
+                    state.records.active = false;
+                    state.records.complete = true;
+                    log('Records processing complete');
+                    if (allRequestPhasesFinished()) updateRecordsDisplay();
+                    updateStats();
+                    break;
+                }
+
+                case 'worker_health': {
+                    const wid = msg.service_id;
+                    if (wid) {
+                        if (!workers[wid]) workers[wid] = createDefaultWorker();
+                        const ts = msg.task_stats || {};
+                        workers[wid].completed = ts.completed || 0;
+                        workers[wid].failed = ts.failed || 0;
+                        workers[wid].inFlight = (ts.total || 0) - (ts.completed || 0) - (ts.failed || 0);
+                        if (msg.health) {
+                            workers[wid].cpu = msg.health.cpu_usage;
+                            workers[wid].memory = msg.health.memory_usage;
+                        }
+                        renderWorkers();
+                    }
+                    break;
+                }
+
+                case 'worker_status_summary': {
+                    const statuses = msg.worker_statuses || {};
+                    const startupStates = msg.worker_startup_states || {};
+                    for (const sid in statuses) {
+                        if (!workers[sid]) workers[sid] = createDefaultWorker();
+                        workers[sid].status = statuses[sid];
+                    }
+                    for (const sid in startupStates) {
+                        if (!workers[sid]) workers[sid] = createDefaultWorker();
+                        workers[sid].startupState = startupStates[sid];
+                    }
+                    renderWorkers();
+                    break;
+                }
+
+                case 'realtime_metrics':
+                    if (msg.metrics) renderMetricsTable(msg.metrics, el.metricsBody);
+                    break;
+
+                case 'realtime_telemetry_metrics':
+                    if (msg.metrics) renderMetricsTable(msg.metrics, el.telemetryBody);
+                    break;
+
+                case 'realtime_server_metrics':
+                    if (msg.endpoint_summaries) renderServerMetrics(msg.endpoint_summaries);
+                    break;
+            }
+        };
+
+        // --- Server Metrics ---
+
+        const SERVER_PREFIX_RE = /^(vllm:|sglang:|trtllm:|dynamo_|nv_)/;
+
+        const cleanMetricName = (name, description) => {
+            if (description && description.length <= 45) return description;
+            const cleaned = name.replace(SERVER_PREFIX_RE, '');
+            return cleaned.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        };
+
+        const labelSuffix = labels => {
+            if (!labels || !Object.keys(labels).length) return '';
+            const parts = Object.entries(labels).map(([k, v]) => `${k}=${v}`);
+            return ` [${parts.join(', ')}]`;
+        };
+
+        const mapServerStats = (type, stats) => {
+            if (type === 'counter') {
+                return {
+                    avg: stats.rate, min: stats.rate_min, max: stats.rate_max,
+                    p99: null, p90: null, p50: null,
+                };
+            }
+            if (type === 'histogram') {
+                return {
+                    avg: stats.avg, min: null, max: null,
+                    p99: stats.p99_estimate, p90: stats.p90_estimate, p50: stats.p50_estimate,
+                };
+            }
+            return {
+                avg: stats.avg, min: stats.min, max: stats.max,
+                p99: stats.p99, p90: stats.p90, p50: stats.p50,
+            };
+        };
+
+        const renderServerMetrics = summaries => {
+            if (!summaries || !Object.keys(summaries).length) return;
+
+            const endpoints = Object.entries(summaries);
+            const multiEndpoint = endpoints.length > 1;
+            const rows = [];
+
+            for (const [name, ep] of endpoints) {
+                if (multiEndpoint) {
+                    rows.push(`<tr class="server-metric-group"><td colspan="7">${escapeHtml(name)}</td></tr>`);
+                }
+                const metrics = ep.metrics || {};
+                for (const [metricName, metric] of Object.entries(metrics)) {
+                    const series = metric.series || [];
+                    const displayUnit = metric.type === 'counter' && metric.unit
+                        ? `${metric.unit}/s` : (metric.unit || '');
+                    const displayName = cleanMetricName(metricName, metric.description);
+
+                    for (const s of series) {
+                        const suffix = series.length > 1 ? labelSuffix(s.labels) : '';
+                        const mapped = mapServerStats(metric.type, s.stats || {});
+                        rows.push(
+                            `<tr><td><span class="metric-name">${escapeHtml(displayName + suffix)}</span>` +
+                            `<span class="metric-unit">${escapeHtml(displayUnit)}</span></td>` +
+                            `<td>${formatValue(mapped.avg)}</td><td>${formatValue(mapped.min)}</td>` +
+                            `<td>${formatValue(mapped.max)}</td><td>${formatValue(mapped.p99)}</td>` +
+                            `<td>${formatValue(mapped.p90)}</td><td>${formatValue(mapped.p50)}</td></tr>`
+                        );
+                    }
+                }
+            }
+
+            if (rows.length) {
+                el.serverMetricsBody.innerHTML = rows.join('');
+                el.serverMetricsCard.style.display = '';
+            }
+        };
+
+        const fetchServerMetrics = epoch => {
+            fetch('/api/server-metrics')
+                .then(r => r.ok ? r.json() : null)
+                .then(data => {
+                    if (epoch !== connectionEpoch) return;
+                    if (data?.endpoint_summaries) renderServerMetrics(data.endpoint_summaries);
+                })
+                .catch(() => {});
+        };
+
+        // --- Reset ---
+
+        const resetProgressBar = phaseId => {
+            const pe = phaseEl[phaseId];
+            pe.section.classList.remove('visible');
+            pe.fill.style.width = '0%';
+            pe.fill.textContent = '0%';
+            pe.stats.textContent = '--';
+        };
+
+        const resetDashboard = () => {
+            state.warmup = createPhaseState();
+            state.profiling = createPhaseState();
+            state.records = createRecordsState();
+            state.currentPhase = null;
+            workers = {};
+
+            el.currentStatus.textContent = 'Waiting';
+            el.inFlight.textContent = '0 requests';
+            el.errors.textContent = '0 / 0 (0.0%)';
+            el.errors.className = 'stat-value green';
+            el.requestRate.textContent = '--';
+            el.processingRateItem.classList.add('hidden');
+            el.processingRate.textContent = '--';
+            el.elapsed.textContent = '--';
+            el.graceElapsedItem.classList.add('hidden');
+            el.graceElapsed.textContent = '--';
+            el.eta.textContent = '--';
+
+            PHASE_IDS.forEach(resetProgressBar);
+
+            el.metricsBody.innerHTML = waitingRow('Waiting for data...');
+            el.serverMetricsBody.innerHTML = waitingRow('Waiting for server metrics...');
+            el.serverMetricsCard.style.display = 'none';
+            el.telemetryBody.innerHTML = waitingRow('Waiting for GPU data...');
+            el.workersBody.innerHTML = waitingRow('Waiting for workers...');
+            el.workerSummary.textContent = '';
+            el.configBar.innerHTML = '';
+            el.configBar.classList.remove('visible');
+        };
+
+        // --- WebSocket connection ---
+
+        // Each connect() bumps this; fetch callbacks from a previous connection
+        // must not clobber state populated by the current WS.
+        let connectionEpoch = 0;
+        let reconnectTimer = null;
+
+        const connect = () => {
+            if (reconnectTimer !== null) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            const epoch = ++connectionEpoch;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            log('Connecting...');
+
+            ws.onopen = () => {
+                el.status.textContent = 'Connected';
+                el.status.className = 'status connected';
+                log('Connected');
+                fetchConfig(epoch);
+                fetchProgress(epoch);
+                fetchServerMetrics(epoch);
+                ws.send(JSON.stringify({
+                    type: 'subscribe',
+                    message_types: [
+                        'realtime_metrics', 'realtime_telemetry_metrics', 'realtime_server_metrics',
+                        'credit_phase_progress', 'credit_phase_start',
+                        'credit_phase_sending_complete', 'credit_phase_complete',
+                        'processing_stats', 'all_records_received',
+                        'worker_health', 'worker_status_summary',
+                    ],
+                }));
+            };
+
+            ws.onclose = () => {
+                el.status.textContent = 'Disconnected';
+                el.status.className = 'status disconnected';
+                resetDashboard();
+                log('Disconnected, reconnecting...');
+                reconnectTimer = setTimeout(connect, 2000);
+            };
+
+            ws.onerror = () => log('WebSocket error');
+
+            ws.onmessage = event => {
+                try { handleMessage(JSON.parse(event.data)); }
+                catch (e) { log(`Parse error: ${e.message}`); }
+            };
+        };
+
+        window.addEventListener('beforeunload', () => {
+            if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+        });
+
+        connect();
+    </script>
+</body>
+</html>

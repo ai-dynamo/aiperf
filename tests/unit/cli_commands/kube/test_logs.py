@@ -1,0 +1,279 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Unit tests for `aiperf kube logs` helpers.
+
+The top-level `logs()` command is exercised in `test_kube.py`; this file
+targets the small pure helpers (`_collect_log_targets`) and the
+`--output <dir>` save-to-directory path.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from pytest import param
+
+from aiperf.cli_commands.kube.logs import _collect_log_targets, logs
+from aiperf.config.kube import KubeManageOptions
+
+
+def _pod(name: str, containers: list[str]) -> MagicMock:
+    """Build a mock pod object with .spec.containers[*].name and .metadata.name."""
+    pod = MagicMock()
+    pod.metadata.name = name
+    pod.spec.containers = [MagicMock(name=c) for c in containers]
+    # mock.name is special; assign explicitly
+    for mock_c, real_name in zip(pod.spec.containers, containers, strict=False):
+        mock_c.name = real_name
+    return pod
+
+
+class TestCollectLogTargets:
+    """Tests for the pure `_collect_log_targets` helper."""
+
+    def test_no_container_filter_returns_all_containers(self) -> None:
+        """Omitting `container` yields every container on every pod."""
+        pods = [_pod("a", ["c1", "c2"]), _pod("b", ["c3"])]
+        targets = _collect_log_targets(pods, container=None)
+        labels = [(p.metadata.name, c) for p, c in targets]
+        assert labels == [("a", "c1"), ("a", "c2"), ("b", "c3")]
+
+    def test_container_filter_matches_only_named(self) -> None:
+        """A container filter keeps only pods that have that container."""
+        pods = [_pod("a", ["c1", "c2"]), _pod("b", ["other"])]
+        targets = _collect_log_targets(pods, container="c1")
+        labels = [(p.metadata.name, c) for p, c in targets]
+        assert labels == [("a", "c1")]
+
+    def test_container_filter_unknown_yields_empty(self) -> None:
+        """Unknown container name yields no targets."""
+        pods = [_pod("a", ["c1"])]
+        assert _collect_log_targets(pods, container="missing") == []
+
+    def test_no_pods_returns_empty(self) -> None:
+        """Empty pod list trivially yields empty targets."""
+        assert _collect_log_targets([], container=None) == []
+
+    @pytest.mark.parametrize(
+        "containers",
+        [
+            param([], id="no-containers"),
+            param(["only"], id="single-container"),
+        ],
+    )  # fmt: skip
+    def test_pod_without_matching_container_contributes_nothing(
+        self, containers: list[str]
+    ) -> None:
+        """Pods without the filter name contribute nothing to the targets list."""
+        pods = [_pod("a", containers)]
+        assert _collect_log_targets(pods, container="nope") == []
+
+
+class TestLogsOutputDirectory:
+    """Tests for the `--output` save-to-directory code path."""
+
+    async def test_output_flag_invokes_save_helper(self, tmp_path: Path) -> None:
+        """When --output is set, logs delegates to `_save_logs_to_directory`."""
+        out_dir = tmp_path / "saved-logs"
+        opts = KubeManageOptions(namespace="ns-1")
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=("jid", "ns-1"),
+            ),
+            patch(
+                "aiperf.cli_commands.kube.logs._save_logs_to_directory",
+                new=AsyncMock(),
+            ) as mock_save,
+            patch(
+                "aiperf.cli_commands.kube.logs._print_pod_logs",
+                new=AsyncMock(),
+            ) as mock_print_pod,
+        ):
+            await logs(job_id="jid", manage_options=opts, output=out_dir)
+
+        mock_save.assert_awaited_once()
+        mock_print_pod.assert_not_awaited()
+        # First positional arg is job_id
+        assert mock_save.await_args.args[0] == "jid"
+
+    async def test_no_output_flag_streams_to_stdout(self) -> None:
+        """Without --output, logs delegates to `_print_pod_logs`."""
+        opts = KubeManageOptions(namespace="ns-1")
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=("jid", "ns-1"),
+            ),
+            patch(
+                "aiperf.cli_commands.kube.logs._save_logs_to_directory",
+                new=AsyncMock(),
+            ) as mock_save,
+            patch(
+                "aiperf.cli_commands.kube.logs._print_pod_logs",
+                new=AsyncMock(),
+            ) as mock_print_pod,
+        ):
+            await logs(job_id="jid", manage_options=opts)
+
+        mock_save.assert_not_awaited()
+        mock_print_pod.assert_awaited_once()
+
+    async def test_unresolved_job_id_returns_without_fetching(self) -> None:
+        """An unaddressable target fetches nothing and fails the shell."""
+        opts = KubeManageOptions()
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=None,
+            ),
+            patch(
+                "aiperf.cli_commands.kube.logs._save_logs_to_directory",
+                new=AsyncMock(),
+            ) as mock_save,
+            patch(
+                "aiperf.cli_commands.kube.logs._print_pod_logs",
+                new=AsyncMock(),
+            ) as mock_print_pod,
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            await logs(manage_options=opts)
+
+        mock_save.assert_not_awaited()
+        mock_print_pod.assert_not_awaited()
+        assert exc_info.value.code == 1
+
+    async def test_unresolved_job_id_with_ignore_not_found_exits_zero(self) -> None:
+        """--ignore-not-found still fetches nothing but leaves the exit code at 0."""
+        opts = KubeManageOptions()
+
+        with (
+            patch(
+                "aiperf.kubernetes.cli_helpers.resolve_job_id_and_namespace",
+                return_value=None,
+            ),
+            patch(
+                "aiperf.cli_commands.kube.logs._save_logs_to_directory",
+                new=AsyncMock(),
+            ) as mock_save,
+            patch(
+                "aiperf.cli_commands.kube.logs._print_pod_logs",
+                new=AsyncMock(),
+            ) as mock_print_pod,
+        ):
+            await logs(manage_options=opts, ignore_not_found=True)
+
+        mock_save.assert_not_awaited()
+        mock_print_pod.assert_not_awaited()
+
+
+class TestLogsSaveHelper:
+    """Tests for `_save_logs_to_directory`."""
+
+    async def test_invokes_save_pod_logs_and_reports_files_written(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        """`save_pod_logs` is awaited and the success line counts real files.
+
+        The helper no longer pre-creates the output directory: leaving an empty
+        tree behind a success line was the Finding-10 defect, so directory
+        creation now belongs to `save_pod_logs`, which only runs it when there
+        is something to write.
+        """
+        from aiperf.cli_commands.kube.logs import _save_logs_to_directory
+        from aiperf.kubernetes.logs import SavedPodLogs
+
+        out_dir = tmp_path / "new-dir" / "nested"
+        opts = KubeManageOptions(kubeconfig="/tmp/kc", kube_context="dev")
+        saved = SavedPodLogs(
+            logs_dir=out_dir / "logs",
+            pods_matched=2,
+            files_written=["ctrl-0.log", "worker-0.log"],
+        )
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _fake_client(**_kw):
+            yield MagicMock()
+
+        with (
+            patch("aiperf.kubernetes.client.k8s_client", new=_fake_client),
+            patch(
+                "aiperf.kubernetes.logs.save_pod_logs",
+                new=AsyncMock(return_value=saved),
+            ) as mock_save,
+        ):
+            found = await _save_logs_to_directory("jid", "ns", out_dir, opts)
+
+        assert found is True
+        mock_save.assert_awaited_once()
+        # outcome line goes through kube_console and names what was written
+        assert "Saved logs for 2 of 2 pod(s)" in capsys.readouterr().out
+
+
+class TestLogStreamingThroughKubeConsole:
+    """Bug 2: streaming and buffered log paths must go through kube_console."""
+
+    async def test_print_pod_log_routes_through_kube_console(self) -> None:
+        """`_print_pod_log` writes to `kube_console.console`, never raw print."""
+        from aiperf.cli_commands.kube.logs import _print_pod_log
+
+        core = MagicMock()
+        core.read_namespaced_pod_log = AsyncMock(return_value="line one\nline two\n")
+
+        with patch("aiperf.kubernetes.console.console") as mock_console:
+            await _print_pod_log(
+                core, pod_name="p", namespace="ns", container="c", tail=None
+            )
+
+        mock_console.print.assert_called_once_with(
+            "line one\nline two", highlight=False, markup=False, soft_wrap=True
+        )
+
+    async def test_stream_pod_log_routes_through_kube_console(self) -> None:
+        """`_stream_pod_log` streams every chunk via `kube_console.console`."""
+        from aiperf.cli_commands.kube.logs import _stream_pod_log
+
+        class _FakeContent:
+            def __init__(self, lines: list[bytes]) -> None:
+                self._lines = lines
+
+            def __aiter__(self):
+                self._iter = iter(self._lines)
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration from None
+
+        raw = MagicMock()
+        raw.content = _FakeContent([b"hello\n", b"world\n"])
+        raw.release = AsyncMock()
+
+        core = MagicMock()
+        core.read_namespaced_pod_log = AsyncMock(return_value=raw)
+
+        with patch("aiperf.kubernetes.console.console") as mock_console:
+            await _stream_pod_log(
+                core, pod_name="p", namespace="ns", container="c", tail=None
+            )
+
+        printed = [c.args[0] for c in mock_console.print.call_args_list]
+        assert printed == ["hello", "world"]
+        # All calls suppress markup/highlighting (raw log lines may contain `[`)
+        # and soft-wrap, so a long URL is never broken mid-token.
+        for call in mock_console.print.call_args_list:
+            assert call.kwargs == {
+                "highlight": False,
+                "markup": False,
+                "soft_wrap": True,
+            }

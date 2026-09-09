@@ -89,19 +89,42 @@ class FdEdgeReader:
         self._stopped = False
 
     def start(self) -> None:
-        """Register the FD reader and drain anything already queued."""
+        """Register the FD reader and drain anything already queued.
+
+        No-ops if :meth:`stop` already ran. Callers driven by
+        ``@background_task(immediate=True)`` check ``stop_event`` and then
+        ``await yield_to_event_loop()`` *before* invoking the method that
+        calls this; if ``stop()`` fires during that await window, without
+        this guard ``start()`` would still register a reader on a socket
+        about to be closed, leaking the registration.
+        """
+        if self._stopped:
+            return
         self._loop = asyncio.get_running_loop()
         self._fd = self._socket.getsockopt(zmq.FD)
         self._loop.add_reader(self._fd, self._pump)
         self._pump()
 
-    def stop(self) -> None:
-        """Unregister the FD reader."""
+    async def stop(self) -> None:
+        """Unregister the FD reader.
+
+        ``remove_reader`` is asynchronous under some event loop
+        implementations (e.g. uvloop, whose deregistration follows libuv's
+        deferred ``uv__io_stop`` semantics): the deregistration is scheduled
+        but not guaranteed complete when ``remove_reader`` returns. Callers
+        close the underlying socket immediately after ``stop()`` returns; if
+        the closed fd is reused by a newly-created socket before the old
+        watcher is fully detached, this can corrupt the new registration or
+        abort the process. Yielding once after ``remove_reader`` gives the
+        loop a turn to finish any deferred deregistration before control
+        returns to a caller that is about to close the socket.
+        """
         self._stopped = True
         if self._fd is not None and self._loop is not None:
             with contextlib.suppress(ValueError, OSError):
                 self._loop.remove_reader(self._fd)
             self._fd = None
+        await asyncio.sleep(0)
 
     def send(self, item: Any) -> None:
         """Send an item synchronously (NOBLOCK), buffering only if the HWM blocks.
@@ -122,6 +145,27 @@ class FdEdgeReader:
         # Keep the FD armed for recv and schedule a drain if work remains.
         self._rearm()
 
+    def _drain_send_buf(self, events: int) -> int:
+        """Flush buffered sends while POLLOUT is set; returns the latest EVENTS."""
+        while self._send_buf and (events & zmq.POLLOUT):
+            try:
+                self._send_one(self._send_buf[0])  # type: ignore[misc]
+            except zmq.Again:
+                break
+            except zmq.ZMQError as e:
+                # A non-HWM send failure (e.g. EHOSTUNREACH from a
+                # ROUTER_MANDATORY socket sending to a departed peer) must
+                # not strand the buffer behind the poisoned item forever:
+                # drop it, report it, and keep draining what's left.
+                self._send_buf.popleft()
+                if self._on_error is not None:
+                    self._on_error(e)
+                events = self._socket.getsockopt(zmq.EVENTS)
+                continue
+            self._send_buf.popleft()
+            events = self._socket.getsockopt(zmq.EVENTS)
+        return events
+
     def _pump(self) -> None:
         if self._stopped:
             return
@@ -136,13 +180,7 @@ class FdEdgeReader:
                 self._dispatch(item)
                 drained += 1
                 events = self._socket.getsockopt(zmq.EVENTS)
-            while self._send_buf and (events & zmq.POLLOUT):
-                try:
-                    self._send_one(self._send_buf[0])  # type: ignore[misc]
-                except zmq.Again:
-                    break
-                self._send_buf.popleft()
-                events = self._socket.getsockopt(zmq.EVENTS)
+            events = self._drain_send_buf(events)
         except (zmq.ContextTerminated, zmq.ZMQError):
             return
         except Exception as e:  # drain boundary; report this pass

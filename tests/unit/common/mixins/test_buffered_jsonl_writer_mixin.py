@@ -6,11 +6,15 @@ import contextlib
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import BaseModel
 
-from aiperf.common.mixins.buffered_jsonl_writer_mixin import BufferedJSONLWriterMixin
+from aiperf.common.mixins.buffered_jsonl_writer_mixin import (
+    _MAX_PENDING_FLUSH_TASKS,
+    BufferedJSONLWriterMixin,
+)
 
 
 class SampleRecord(BaseModel):
@@ -134,6 +138,195 @@ class TestBufferedJSONLWriterMixin:
         assert temp_output_file.exists(), "File with content should be preserved"
 
     @pytest.mark.asyncio
+    async def test_explicit_finalize_propagates_and_preserves_failed_write(
+        self, temp_output_file
+    ):
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=10,
+        )
+        await writer.initialize()
+        await writer.buffered_write(SampleRecord(id=1, value="must-not-drop"))
+        real_write = writer._file_handle.write
+        writer._file_handle.write = AsyncMock(side_effect=OSError("disk full"))
+
+        # Every failure route out of the finalization barrier raises the same
+        # RuntimeError, with the underlying write error kept as __cause__.
+        with pytest.raises(
+            RuntimeError, match="failed before artifact finalization"
+        ) as excinfo:
+            await writer.flush_buffer()
+
+        assert isinstance(excinfo.value.__cause__, OSError)
+        assert "disk full" in str(excinfo.value.__cause__)
+        assert len(writer._buffer) == 1
+        assert writer._write_error is not None
+        writer._file_handle.write = real_write
+        await writer._close_file()
+
+    @pytest.mark.asyncio
+    async def test_buffered_write_bounds_flushes_when_appends_never_yield(
+        self, temp_output_file
+    ):
+        """A burst that never yields must still bound doomed flush attempts.
+
+        Companion to the ``_write_error`` breaker test below, which yields
+        between appends so each flush task runs and records the failure before
+        the next append checks it. That yield is what makes the breaker look
+        sufficient, and it is not: ``buffered_write`` *schedules* the flush
+        rather than awaiting it, so a caller appending in a tight loop never
+        lets a flush run. ``_write_error`` is still None at every batch
+        boundary, the breaker passes, and 300 appends at batch_size 10
+        scheduled 30 flushes against a handle already known-bad by the time
+        any of them ran.
+
+        The in-flight cap closes that window: it does not depend on the
+        failure having surfaced yet.
+        """
+        batch_size = 10
+        num_records = 300
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=batch_size,
+        )
+        await writer.initialize()
+        writer._file_handle.write = AsyncMock(side_effect=OSError("disk full"))
+
+        flush_calls = 0
+        real_flush_buffer = writer._flush_buffer
+
+        async def counting_flush_buffer(buffer_to_flush):
+            nonlocal flush_calls
+            flush_calls += 1
+            return await real_flush_buffer(buffer_to_flush)
+
+        writer._flush_buffer = counting_flush_buffer
+
+        all_tasks: list[asyncio.Task] = []
+        real_execute_async = writer.execute_async
+
+        def tracking_execute_async(coro):
+            task = real_execute_async(coro)
+            all_tasks.append(task)
+            return task
+
+        writer.execute_async = tracking_execute_async
+
+        # No yield anywhere in this loop: the whole point is that no flush
+        # gets a chance to run and set ``_write_error``.
+        for i in range(num_records):
+            await writer.buffered_write(SampleRecord(id=i, value=f"record_{i}"))
+
+        assert len(all_tasks) <= _MAX_PENDING_FLUSH_TASKS, (
+            f"burst scheduled {len(all_tasks)} flush tasks against a single "
+            f"broken handle; cap is {_MAX_PENDING_FLUSH_TASKS}"
+        )
+
+        await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        assert flush_calls <= _MAX_PENDING_FLUSH_TASKS
+        assert writer._write_error is not None
+        # Bounded, never lossy: every record either made it into a restored
+        # batch or is still queued behind the cap.
+        assert writer.lines_written == num_records
+        assert len(writer._buffer) == num_records
+
+        writer._file_handle.write = AsyncMock(return_value=None)
+        await writer._close_file()
+
+    @pytest.mark.asyncio
+    async def test_transient_batch_write_failure_recovers_on_later_flush(
+        self, temp_output_file
+    ) -> None:
+        """A recovered writer must flush the batch restored after a transient error."""
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=1,
+        )
+        await writer.initialize()
+        real_write = writer._file_handle.write
+        write_attempts = 0
+
+        async def flaky_write(data: bytes) -> None:
+            nonlocal write_attempts
+            write_attempts += 1
+            if write_attempts == 1:
+                raise OSError("temporary disk error")
+            await real_write(data)
+
+        writer._file_handle.write = flaky_write
+
+        await writer.buffered_write(SampleRecord(id=1, value="first"))
+        await asyncio.gather(*list(writer._flush_tasks), return_exceptions=True)
+        assert len(writer._buffer) == 1
+
+        await writer.buffered_write(SampleRecord(id=2, value="second"))
+        await asyncio.gather(*list(writer._flush_tasks), return_exceptions=True)
+        await writer.flush_buffer()
+
+        assert writer._write_error is None
+        assert [
+            json.loads(line) for line in temp_output_file.read_text().splitlines()
+        ] == [
+            {"id": 1, "value": "first"},
+            {"id": 2, "value": "second"},
+        ]
+        await writer._close_file()
+
+    async def test_buffered_write_retries_after_persistent_write_error(
+        self, temp_output_file
+    ):
+        """Persistent failures retain every record while each later batch retries."""
+        batch_size = 10
+        num_records = 20
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=batch_size,
+        )
+        await writer.initialize()
+        writer._file_handle.write = AsyncMock(side_effect=OSError("disk full"))
+
+        flush_calls = 0
+        real_flush_buffer = writer._flush_buffer
+
+        async def counting_flush_buffer(buffer_to_flush):
+            nonlocal flush_calls
+            flush_calls += 1
+            return await real_flush_buffer(buffer_to_flush)
+
+        writer._flush_buffer = counting_flush_buffer
+
+        all_tasks: list[asyncio.Task] = []
+        real_execute_async = writer.execute_async
+
+        def tracking_execute_async(coro):
+            task = real_execute_async(coro)
+            all_tasks.append(task)
+            return task
+
+        writer.execute_async = tracking_execute_async
+
+        for i in range(num_records):
+            await writer.buffered_write(SampleRecord(id=i, value=f"record_{i}"))
+            # Yield so a just-detached flush task actually runs and records
+            # ``_write_error`` before the next append checks it -- mirrors
+            # production, where writes interleave with real event-loop I/O
+            # instead of firing every batch synchronously back-to-back.
+            await asyncio.sleep(0)
+        # Retrieve every flush task's result so a failed task's exception
+        # doesn't surface as an "exception was never retrieved" warning.
+        if all_tasks:
+            await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        assert writer._write_error is not None
+        assert flush_calls > 1
+        assert writer.lines_written == num_records
+        assert len(writer._buffer) == num_records
+
+        writer._file_handle.write = AsyncMock(return_value=None)
+        await writer._close_file()
+
+    @pytest.mark.asyncio
     async def test_periodic_flush_loop_survives_unexpected_error(
         self, temp_output_file
     ):
@@ -220,16 +413,10 @@ class TestBufferedJSONLWriterMixin:
         await asyncio.gather(unrelated_task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_close_file_closes_handle_when_cancelled_mid_flush(
+    async def test_close_file_propagates_cancel_while_final_flush_continues(
         self, temp_output_file
     ):
-        """Cancel during the final flush must still close the file handle.
-
-        ``asyncio.shield`` keeps the flush running, but ``CancelledError`` still
-        exits the outer ``_close_file`` await. Cleanup must finish flush+close
-        before returning so the handle is not leaked and drained records are
-        not dropped by closing under an in-flight write.
-        """
+        """Cancellation must not wait indefinitely for a shielded final flush."""
         writer = BufferedJSONLWriterMixin[SampleRecord](
             output_file=temp_output_file,
             batch_size=10,
@@ -256,12 +443,14 @@ class TestBufferedJSONLWriterMixin:
         assert flush_started.is_set(), "final flush never started"
 
         close_task.cancel()
-        # Let the cancel land on the shield await before unblocking the flush.
-        await asyncio.sleep(0)
-        flush_continue.set()
-        with contextlib.suppress(asyncio.CancelledError):
-            await close_task
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(close_task, timeout=0.1)
 
+        flush_continue.set()
+        for _ in range(10_000):
+            if writer._file_handle is None:
+                break
+            await asyncio.sleep(0)
         assert writer._file_handle is None
         with open(temp_output_file) as f:
             lines = [line.strip() for line in f if line.strip()]
@@ -391,3 +580,111 @@ class TestBufferedJSONLWriterMixin:
             lines = [line.strip() for line in f if line.strip()]
         assert len(lines) == 1
         assert json.loads(lines[0])["id"] == 7
+
+    @pytest.mark.asyncio
+    async def test_close_file_survives_failed_detached_flush(self, temp_output_file):
+        """A failed detached batch write must not abort shutdown.
+
+        ``_flush_buffer`` raises on write failure so the finalization barrier
+        can fail closed. If ``_close_file`` drained the flush tasks with a bare
+        ``gather``, that raise would unwind the @on_stop hook before the
+        remaining buffer was flushed and before the handle was closed --
+        silently truncating the file instead of failing loudly.
+        """
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=1000,  # only explicit/detached flushes drain the buffer
+        )
+        await writer.initialize()
+
+        real_write = writer._file_handle.write
+        attempts: list[bytes] = []
+
+        async def flaky_write(data: bytes) -> None:
+            attempts.append(data)
+            if len(attempts) == 1:
+                raise OSError("disk full")
+            await real_write(data)
+
+        writer._file_handle.write = flaky_write
+
+        # Detached batch write that fails, exactly as buffered_write schedules it.
+        task = writer.execute_async(writer._flush_buffer([b'{"id": 1, "value": "a"}']))
+        writer._flush_tasks.add(task)
+        task.add_done_callback(writer._flush_tasks.discard)
+
+        await writer.buffered_write(SampleRecord(id=2, value="written-after-failure"))
+        await writer._close_file()
+
+        assert writer._file_handle is None, "handle left open after a failed flush"
+        assert writer._write_error is None, (
+            "a successful shutdown retry must clear the transient write failure"
+        )
+        with open(temp_output_file) as f:
+            ids = {json.loads(line)["id"] for line in f if line.strip()}
+        assert ids == {1, 2}, f"records dropped during shutdown: {ids}"
+
+    @pytest.mark.asyncio
+    async def test_stop_periodic_flush_survives_failed_in_flight_write(
+        self, temp_output_file
+    ):
+        """A failing in-flight periodic write must not abort teardown.
+
+        ``_stop_periodic_flush`` is the first statement of ``_close_file``, so
+        letting the drained write's exception escape aborts shutdown before any
+        remaining records are flushed or the handle is closed.
+        """
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=1000,
+            flush_interval=0.0,
+        )
+        await writer.initialize()
+
+        flush_started = asyncio.Event()
+        flush_continue = asyncio.Event()
+
+        async def failing_flush(buffer_to_flush: list[bytes]) -> None:
+            flush_started.set()
+            await flush_continue.wait()
+            # Mirror _flush_buffer's re-prepend so the batch is retried later.
+            writer._buffer = buffer_to_flush + writer._buffer
+            raise OSError("disk full")
+
+        writer._flush_buffer = failing_flush
+        writer._buffer.append(b'{"id": 7, "value": "orphan"}')
+        writer.lines_written += 1  # else _close_file deletes the "empty" file
+        loop_task = asyncio.create_task(writer._flush_buffer_periodically())
+        writer._periodic_flush_task = loop_task
+
+        for _ in range(10_000):
+            if flush_started.is_set() or loop_task.done():
+                break
+            await asyncio.sleep(0)
+        assert flush_started.is_set(), "periodic flush never started"
+        in_flight = writer._periodic_flush_in_flight
+        assert in_flight is not None
+
+        # Hard-cancel mid-shield leaves the failing write orphaned.
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
+        flush_continue.set()
+
+        await writer._stop_periodic_flush()
+
+        assert writer._periodic_flush_in_flight is None
+        assert writer._write_error is not None, (
+            "the failed in-flight write must be retained until its retry succeeds"
+        )
+
+        # Restore the real writer so the re-prepended record can recover.
+        del writer._flush_buffer
+        await writer.flush_buffer()
+        assert writer._write_error is None
+
+        await writer._close_file()
+        assert writer._file_handle is None
+        with open(temp_output_file) as f:
+            ids = {json.loads(line)["id"] for line in f if line.strip()}
+        assert ids == {7}, f"orphaned record dropped: {ids}"

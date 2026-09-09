@@ -32,6 +32,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Total Output Sequence Length](#total-output-sequence-length)
     - [Total Input Sequence Length](#total-input-sequence-length)
     - [E2E Output Token Throughput](#e2e-output-token-throughput)
+    - [E2E Normalized Interactivity](#e2e-normalized-interactivity)
     - [Output Token Throughput](#output-token-throughput)
     - [Total Token Throughput](#total-token-throughput)
   - [Image Metrics](#image-metrics)
@@ -111,6 +112,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Request Throughput](#request-throughput)
     - [Request Count](#request-count)
     - [Error Request Count](#error-request-count)
+    - [Request Error Rate](#request-error-rate)
     - [Minimum Request Timestamp](#minimum-request-timestamp)
     - [Maximum Response Timestamp](#maximum-response-timestamp)
     - [Benchmark Duration](#benchmark-duration)
@@ -512,6 +514,34 @@ e2e_output_token_throughput = output_sequence_length / request_latency_seconds
 - Available for non-streaming responses (unlike Output Token Throughput Per User which requires streaming).
 - Flags: `PRODUCES_TOKENS_ONLY | LARGER_IS_BETTER`
 - Depends on Output Sequence Length and Request Latency metrics.
+- Its `p10`/`p25` percentiles are numerically the same order statistic as [E2E Normalized Interactivity](#e2e-normalized-interactivity)'s `p90`/`p75` — see that metric for when to prefer the named InferenceX scalar.
+
+---
+
+### E2E Normalized Interactivity
+
+**Type:** [Derived Metric](#derived-metrics) (injected post-aggregation)
+
+> [!NOTE]
+> Emitted as two named percentile scalars, `e2e_normalized_interactivity_p90` and `e2e_normalized_interactivity_p75`, in tokens/sec/user. Reproduces the x-axis InferenceX renders for AgentX Pareto curves, so `aiperf profile` yields the point directly with no post-processing. Available for both streaming and non-streaming responses.
+
+The rate at which a user receives output tokens **including** the prefill wait (TTFT). Unlike [Output Token Throughput Per User](#output-token-throughput-per-user) (`1 / ITL`, decode-only), it charges the whole end-to-end latency, so a large TTFT relative to the tokens produced pulls it down — prefill-delaying cannot inflate it.
+
+**Formula:**
+```python
+# per-request ratio, in seconds per output token
+ratio = request_latency_seconds / output_sequence_length
+# invert AFTER taking the percentile (slow-tail convention)
+e2e_normalized_interactivity_p90 = 1.0 / percentile(ratio, 90)
+e2e_normalized_interactivity_p75 = 1.0 / percentile(ratio, 75)
+```
+
+**Notes:**
+- The percentile is taken over the seconds-per-token ratio and then inverted (`1 / p(x)`, **not** `p(1 / x)`). A higher percentile names a slower, more pessimistic tail, so `p90` is the effective token rate of the 90th-percentile worst request. This differs from `p90` of the per-request rate, which would report the fast tail.
+- **Relationship to [E2E Output Token Throughput](#e2e-output-token-throughput).** Because `x -> 1/x` is monotone, `1 / p90(latency/OSL)` is the same order statistic as `p10(OSL/latency)` *over the same requests*. The two differ only in the space the linear interpolation happens in: on a 300-request run they agree to roughly `1e-9` relative, widening to about `1e-3` for small (n < 100) heavy-tailed samples. Note this metric additionally requires `TTFT > 0` and `ISL > 0`, whereas `E2EOutputTokenThroughputMetric` drops a record only when `request_latency` is zero, so the two populations can diverge on a run with zero-length inputs. They are kept as a distinct named family because they pin InferenceX's exact convention (invert *after* the percentile). Prefer this metric when you need the exact AgentX Pareto x-axis; the throughput percentiles are equivalent otherwise.
+- Request-weighted: every request with positive, finite `request_latency`, `output_sequence_length`, and (when present) `time_to_first_token` and `input_sequence_length` contributes one sample, matching InferenceX's filter. The filter can shrink the sample; `count` is not exported for this derived scalar, so a `debug` log reports how many requests were dropped.
+- Percentile uses numpy-linear interpolation, matching InferenceX's `quantile`, so values line up exactly for identical inputs.
+- Reported once per run (not per `--slice-duration` timeslice), matching InferenceX's run-level definition.
 
 ---
 
@@ -1609,7 +1639,7 @@ good_request_fraction = good_request_count / attempted if attempted > 0 else 0.0
 
 **Unit:** `RATIO` (0.0–1.0)
 
-**Required upstream metrics:** `good_request_count`, `request_count`. `error_request_count` is included in the denominator when present (it is `ERROR_ONLY` and absent on clean runs).
+**Required upstream metrics:** None. Each counter may legitimately be absent: valid-request counters on an all-error run, and `error_request_count` on a clean run.
 
 **Notes:**
 - Requires SLO thresholds to be configured (e.g., `--goodput`); without SLOs, `good_request_count` is always 0 and this metric is 0.
@@ -1740,6 +1770,22 @@ error_request_count = sum(1 for r in records if not r.valid)
 
 **Notes:**
 - Error rate can be computed as `error_request_count / (request_count + error_request_count)`.
+
+---
+
+### Request Error Rate
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The percentage of completed requests that ended in error.
+
+**Formula:**
+```python
+request_error_rate = 100.0 * error_request_count / (request_count + error_request_count)
+```
+
+**Notes:**
+- Omitted only when both successful and error counts are zero.
 
 ---
 

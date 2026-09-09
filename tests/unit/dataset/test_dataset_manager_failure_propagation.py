@@ -23,11 +23,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.messages import (
     DatasetConfigurationFailedNotification,
-    ProfileConfigureCommand,
 )
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
@@ -79,7 +80,7 @@ class TestDatasetManagerPublishesFailureNotification:
         ):
             await asyncio.wait_for(
                 dataset_manager._profile_configure_command(
-                    ProfileConfigureCommand(service_id="test_service")
+                    Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                 ),
                 timeout=5.0,
             )
@@ -117,7 +118,7 @@ class TestDatasetManagerPublishesFailureNotification:
         ):
             await asyncio.wait_for(
                 dataset_manager._profile_configure_command(
-                    ProfileConfigureCommand(service_id="test_service")
+                    Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                 ),
                 timeout=5.0,
             )
@@ -143,9 +144,7 @@ class TestTimingManagerAbortsOnDatasetFailure:
     ) -> None:
         configure_task = asyncio.create_task(
             timing_manager._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
         )
 
@@ -182,9 +181,7 @@ class TestTimingManagerAbortsOnDatasetFailure:
         with pytest.raises(InvalidStateError, match="pre-broadcast failure"):
             await asyncio.wait_for(
                 timing_manager._profile_configure_command(
-                    ProfileConfigureCommand.model_construct(
-                        service_id="test-system-controller", config={}
-                    )
+                    Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                 ),
                 timeout=2.0,
             )
@@ -200,7 +197,5 @@ class TestTimingManagerAbortsOnDatasetFailure:
             pytest.raises(asyncio.TimeoutError),
         ):
             await timing_manager._profile_configure_command(
-                ProfileConfigureCommand.model_construct(
-                    service_id="test-system-controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )

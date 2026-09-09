@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: ${{ matrix.runner }}
     # Windows x64 runners can finish the component tier just past 30 minutes.
-    timeout-minutes: 45
+    timeout-minutes: 90
     # Force CPython UTF-8 mode so file reads default to UTF-8 instead of the
     # Windows cp1252 code page (no-op on POSIX). Without it, reading a UTF-8
     # file on Windows raises UnicodeDecodeError on bytes like 0x8f.
@@ -92,7 +92,7 @@ jobs:
       shell: bash
       run: |
         uv venv .venv --python ${{ matrix.python-version }}
-        uv pip install -e ".[test]"
+        uv sync --locked --extra test --no-dev
         uv pip install -e "tests/aiperf_mock_server[dev]"
         uv run python -c "import aiperf_mock_server"
         uv run python tools/generate_plugin_artifacts.py --enums

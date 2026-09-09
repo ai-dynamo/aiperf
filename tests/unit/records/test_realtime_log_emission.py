@@ -248,3 +248,62 @@ def test_zero_interval_falls_back_to_nonzero_cadence() -> None:
     assert rm_module.RecordsManager._default_realtime_interval(rm) == 30.0
     rm.run = SimpleNamespace(cfg=SimpleNamespace(ui_type=UIType.DASHBOARD))
     assert rm_module.RecordsManager._default_realtime_interval(rm) == 5.0
+
+
+def _publish_gate_manager(
+    *, ui_type, api_port, service_run_type="multiprocessing"
+) -> MagicMock:
+    rm = MagicMock(spec=rm_module.RecordsManager)
+    rm.run = SimpleNamespace(
+        cfg=SimpleNamespace(
+            ui_type=ui_type,
+            runtime=SimpleNamespace(
+                api_port=api_port, service_run_type=service_run_type
+            ),
+        )
+    )
+    rm._is_kubernetes_run = lambda: str(service_run_type).lower() == "kubernetes"
+    return rm
+
+
+def test_realtime_publish_gate_dashboard_always_enabled() -> None:
+    from aiperf.plugin.enums import UIType
+
+    rm = _publish_gate_manager(ui_type=UIType.DASHBOARD, api_port=None)
+    with patch.object(rm_module.Environment.UI, "REALTIME_METRICS_ENABLED", False):
+        assert rm_module.RecordsManager._realtime_metrics_publish_enabled(rm)
+
+
+def test_realtime_publish_gate_none_ui_no_consumer_disabled() -> None:
+    from aiperf.plugin.enums import UIType
+
+    rm = _publish_gate_manager(ui_type=UIType.NONE, api_port=None)
+    with patch.object(rm_module.Environment.UI, "REALTIME_METRICS_ENABLED", False):
+        assert not rm_module.RecordsManager._realtime_metrics_publish_enabled(rm)
+
+
+def test_realtime_publish_gate_none_ui_with_api_port_enabled() -> None:
+    # A local API server serves the web dashboard even with --ui-type none.
+    from aiperf.plugin.enums import UIType
+
+    rm = _publish_gate_manager(ui_type=UIType.NONE, api_port=9090)
+    with patch.object(rm_module.Environment.UI, "REALTIME_METRICS_ENABLED", False):
+        assert rm_module.RecordsManager._realtime_metrics_publish_enabled(rm)
+
+
+def test_realtime_publish_gate_none_ui_under_kubernetes_enabled() -> None:
+    from aiperf.plugin.enums import UIType
+
+    rm = _publish_gate_manager(
+        ui_type=UIType.NONE, api_port=None, service_run_type="kubernetes"
+    )
+    with patch.object(rm_module.Environment.UI, "REALTIME_METRICS_ENABLED", False):
+        assert rm_module.RecordsManager._realtime_metrics_publish_enabled(rm)
+
+
+def test_realtime_publish_gate_none_ui_env_override_enabled() -> None:
+    from aiperf.plugin.enums import UIType
+
+    rm = _publish_gate_manager(ui_type=UIType.NONE, api_port=None)
+    with patch.object(rm_module.Environment.UI, "REALTIME_METRICS_ENABLED", True):
+        assert rm_module.RecordsManager._realtime_metrics_publish_enabled(rm)

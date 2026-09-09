@@ -270,11 +270,13 @@ class TestStickyRouterWorkerRace:
     async def test_credit_to_unregistered_worker(self, benchmark_run):
         r = StickyCreditRouter(run=benchmark_run, service_id="tr")
         r._workers = {"w1": WorkerLoad(worker_id="w1", in_flight_credits=5)}
-        r._workers["w1"].active_credit_ids = set(range(5))
+        r._workers["w1"].active_credit_ids = {("profiling", None, i) for i in range(5)}
         r._workers_cache = list(r._workers.values())
         r._cancellation_pending = True
         r._unregister_worker("w1")
-        r._track_credit_returned("w1", 0, cancelled=True, error_reported=False)
+        r._track_credit_returned(
+            "w1", _credit(cid=0), cancelled=True, error_reported=False
+        )
 
     async def test_worker_registration_during_routing(self, benchmark_run):
         r = StickyCreditRouter(run=benchmark_run, service_id="tr")
@@ -438,7 +440,12 @@ class TestStickySessionRace:
         assert xcid not in r._sticky_sessions
         assert r._workers["w1"].in_flight_credits == 3
         for cid in [2, 0, 1]:
-            r._track_credit_returned("w1", cid, cancelled=False, error_reported=False)
+            r._track_credit_returned(
+                "w1",
+                _credit(cid=cid, conv="c1", tidx=cid, nt=3),
+                cancelled=False,
+                error_reported=False,
+            )
         assert (
             r._workers["w1"].in_flight_credits == 0
             and r._workers["w1"].total_completed_credits == 3
@@ -1128,10 +1135,12 @@ class TestRouterLoadBalancing:
         r._register_worker("w1")
         w = r._workers["w1"]
         for i in range(100):
-            r._track_credit_sent("w1", i)
+            r._track_credit_sent("w1", _credit(cid=i))
             assert w.in_flight_credits == i + 1
         for i in range(100):
-            r._track_credit_returned("w1", i, cancelled=False, error_reported=False)
+            r._track_credit_returned(
+                "w1", _credit(cid=i), cancelled=False, error_reported=False
+            )
             assert w.in_flight_credits == 99 - i
         assert (
             w.in_flight_credits == 0
@@ -1150,8 +1159,8 @@ class TestCancellation:
             "w1": WorkerLoad(worker_id="w1", in_flight_credits=3),
             "w2": WorkerLoad(worker_id="w2", in_flight_credits=2),
         }
-        r._workers["w1"].active_credit_ids = {1, 2, 3}
-        r._workers["w2"].active_credit_ids = {4, 5}
+        r._workers["w1"].active_credit_ids = {("profiling", None, i) for i in (1, 2, 3)}
+        r._workers["w2"].active_credit_ids = {("profiling", None, i) for i in (4, 5)}
         r._workers_cache = list(r._workers.values())
         await r.cancel_all_credits()
         assert r._router_client.send_to.call_count == 2
@@ -1169,7 +1178,7 @@ class TestCancellation:
             "w1": WorkerLoad(worker_id="w1", in_flight_credits=0),
             "w2": WorkerLoad(worker_id="w2", in_flight_credits=5),
         }
-        r._workers["w2"].active_credit_ids = set(range(5))
+        r._workers["w2"].active_credit_ids = {("profiling", None, i) for i in range(5)}
         r._workers_cache = list(r._workers.values())
         await r.cancel_all_credits()
         assert (

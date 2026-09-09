@@ -5,6 +5,8 @@ Tests for zmq_proxy_base.py and zmq_proxy_sockets.py - ZMQ proxy classes.
 """
 
 import asyncio
+import threading
+import time
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -395,6 +397,53 @@ class TestProxyEdgeCases:
         assert ZMQProxyType.XPUB_XSUB in registered_names
         assert ZMQProxyType.DEALER_ROUTER in registered_names
         assert ZMQProxyType.PUSH_PULL in registered_names
+
+
+class TestProxyShutdownRace:
+    """Regression tests for the proxy-shutdown use-after-free race.
+
+    `zmq.proxy_steerable` runs in a real OS thread via `asyncio.to_thread`.
+    Cancelling the wrapping asyncio Task does not stop that thread, so closing
+    the frontend/backend sockets before the thread has actually exited is a
+    data race that crashed `system_controller` with SIGSEGV/SIGABRT in
+    production. This test drives a real, `time.sleep`-blocked fake
+    `zmq.proxy_steerable` running in a genuine OS thread (not a coroutine
+    mock), so "did `stop()` wait for the thread to actually finish" is a
+    deterministic, timing-based observation rather than a hope.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_waits_for_proxy_thread_to_exit_before_closing_sockets(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """`stop()` must not return until the background `zmq.proxy_steerable`
+        thread has actually finished exiting - otherwise the frontend/backend
+        sockets it closes next may still be in use by that thread."""
+        config = ZMQTCPConfig()
+        thread_finished = threading.Event()
+
+        def fake_proxy_steerable(frontend, backend, capture=None, control=None):
+            # Simulate the real zmq.proxy_steerable blocking loop taking a
+            # moment to actually exit (e.g. draining in-flight messages)
+            # after being asked to stop.
+            time.sleep(0.3)
+            thread_finished.set()
+
+        with patch("zmq.proxy_steerable", side_effect=fake_proxy_steerable):
+            proxy = ZMQXPubXSubProxy.from_config(config.event_bus_proxy_config)
+            await proxy.initialize()
+            await proxy.start()
+            # Let the background task actually launch the OS thread.
+            await asyncio.sleep(0)
+
+            await proxy.stop()
+
+        assert thread_finished.is_set(), (
+            "proxy.stop() returned before the background zmq.proxy_steerable "
+            "thread actually exited - the frontend/backend sockets it closes "
+            "may still be in use by that thread (use-after-free race)"
+        )
+        assert mock_zmq_socket.close.call_count >= 2
 
 
 class TestProxyMonitor:

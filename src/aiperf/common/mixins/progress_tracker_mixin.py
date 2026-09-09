@@ -57,14 +57,28 @@ class ProgressTracker:
     """Progress tracker for the benchmark suite."""
 
     def __init__(self):
-        self._phases: dict[CreditPhase, CombinedPhaseStats] = {}
+        self._phases: dict[str, CombinedPhaseStats] = {}
         self._last_update_ns: int | None = None
 
-    def _get_phase_progress(self, phase: CreditPhase) -> CombinedPhaseStats:
+    @staticmethod
+    def _phase_name(stats: CreditPhaseStats | PhaseRecordsStats) -> str:
+        """Return the phase's stable user-facing identity."""
+        return stats.phase_name or str(stats.phase)
+
+    def _get_phase_progress(
+        self, stats: CreditPhaseStats | PhaseRecordsStats
+    ) -> CombinedPhaseStats:
         """Get or create the combined phase stats for a phase."""
-        if phase not in self._phases:
-            self._phases[phase] = CombinedPhaseStats(phase=phase)
-        return self._phases[phase]
+        phase_name = self._phase_name(stats)
+        if phase_name not in self._phases:
+            self._phases[phase_name] = CombinedPhaseStats(
+                phase=stats.phase,
+                phase_index=stats.phase_index,
+                profiling_index=stats.profiling_index,
+                phase_name=phase_name,
+                phase_kind=stats.phase_kind,
+            )
+        return self._phases[phase_name]
 
     def _update_phase_progress(
         self,
@@ -99,9 +113,10 @@ class ProgressTracker:
         updates[f"{prefix}_per_second"] = per_second
         updates[f"{prefix}_eta_sec"] = eta_sec
 
-        current = self._get_phase_progress(stats.phase)
-        self._phases[stats.phase] = current.model_copy(update=updates)
-        return self._phases[stats.phase]
+        phase_name = self._phase_name(stats)
+        current = self._get_phase_progress(stats)
+        self._phases[phase_name] = current.model_copy(update=updates)
+        return self._phases[phase_name]
 
     def update_requests_stats(self, stats: CreditPhaseStats) -> CombinedPhaseStats:
         """Update the requests stats for a phase."""

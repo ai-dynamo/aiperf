@@ -68,7 +68,7 @@ def is_zstd_available() -> bool:
         return False
 
 
-def _parse_accept_encoding(header: str) -> dict[str, float]:
+def parse_accept_encoding(header: str) -> dict[str, float]:
     """Parse Accept-Encoding header into {encoding: quality} mapping."""
     return {
         m.group(1): float(m.group(2)) if m.group(2) else 1.0
@@ -95,7 +95,7 @@ def select_encoding(
     if not accept_encoding:
         return default
 
-    accepted = _parse_accept_encoding(accept_encoding)
+    accepted = parse_accept_encoding(accept_encoding)
 
     if accepted.get("zstd", 0) > 0 and is_zstd_available():
         return CompressionEncoding.ZSTD

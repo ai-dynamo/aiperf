@@ -29,6 +29,10 @@ The router classes that back these routes live under [`src/aiperf/api/routers/`]
 | `GET` | `/readyz` | `text/plain` (`ok` / `not ready`) | Kubernetes readiness probe. 200 only when the service is `RUNNING`. |
 | `GET` | `/docs`, `/redoc`, `/openapi.json` | (FastAPI defaults) | Auto-generated OpenAPI documentation. |
 
+## Breaking change: `/api/progress` `phases` keys
+
+`ProgressResponse.phases` is keyed by each phase's concrete name (`CombinedPhaseStats.phase_name`), falling back to the plain `CreditPhase` value (e.g. `"profiling"`) only when the phase has no explicit name. Prior releases keyed this dict by the closed `CreditPhase` enum, so `progress["phases"]["profiling"]` was always a valid lookup. DAG/multi-instance phases now carry user-assigned names, so that fixed lookup can silently miss. Consumers should iterate `phases.values()` and match on each entry's `phase` field instead of indexing by a hardcoded `CreditPhase` string.
+
 ## Secret redaction
 
 `cli_command` is captured from `sys.argv` at `BenchmarkRun` construction and redacted by [`build_cli_command()`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/redact.py) before it is stored — so the string returned from `/api/run` and written to `profile_export_aiperf.json` is the same redacted form. `--api-key`-shaped flags, credential-bearing `--header` values (e.g. `Authorization: Bearer …`), and userinfo embedded in URL-typed flags (`--url`, `-u`, `--otel-url`, `--mlflow-tracking-uri`) are all scrubbed to `<redacted>`.
