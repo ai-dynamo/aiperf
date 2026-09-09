@@ -652,6 +652,13 @@ jobs:
           set -euo pipefail
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           IMAGE_TAG="${CONTAINER_TAG}-${{ matrix.arch }}"
+          # A matrix row without cache_tag renders as empty here, which would
+          # silently build against a malformed "aiperf:" ref instead of failing.
+          CACHE_TAG="${{ matrix.cache_tag }}"
+          if [[ -z "${CACHE_TAG}" ]]; then
+            echo "::error::matrix row '${{ matrix.arch }}' is missing a cache_tag field"
+            exit 1
+          fi
 
           refresh_ecr_token() {
             while sleep 21600; do
@@ -666,8 +673,8 @@ jobs:
           docker buildx build \
             --platform "${{ matrix.platform }}" \
             --target   runtime \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:${{ matrix.cache_tag }}" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:${{ matrix.cache_tag }},mode=max" \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:${CACHE_TAG}" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:${CACHE_TAG},mode=max" \
             --push \
             --tag "${REGISTRY}/aiperf:${IMAGE_TAG}" \
             .
