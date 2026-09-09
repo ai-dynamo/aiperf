@@ -166,7 +166,7 @@ these at startup rather than failing partway into a run:
 
 | Flag | Why |
 |---|---|
-| `--wait-for-model` | The readiness probe is an unsigned out-of-band request. |
+| `--wait-for-model-timeout` | The readiness probe is an unsigned out-of-band request. |
 | `--reset-kv-cache`, server profiler hooks | Control-plane hooks call the server unsigned. |
 | Multipart endpoints (`image_edit`, `audio_transcription`) | Streamed multipart bodies never materialize as the bytes SigV4 must hash. |
 | Polling endpoints (`video_generation`) | Job submit/poll bypasses signing. |

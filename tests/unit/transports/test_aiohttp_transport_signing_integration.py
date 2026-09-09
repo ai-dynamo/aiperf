@@ -23,6 +23,11 @@ from unittest.mock import AsyncMock
 import orjson
 import pytest
 
+# botocore ships only in the optional aiperf[aws] extra, and CI installs
+# "--extra test --no-dev" on Windows-on-ARM. Skip the module rather than
+# failing collection there; these tests decode real eventstream frames.
+pytest.importorskip("botocore")
+
 from aiperf.common.models import RequestRecord
 from aiperf.transports.aiohttp_transport import AioHttpTransport
 from tests.unit.transports.conftest import create_model_endpoint_info
@@ -46,7 +51,17 @@ def static_aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
     monkeypatch.delenv("AWS_PROFILE", raising=False)
     # SigV4 mixes a timestamp into the signature; freeze it so two signatures
-    # taken moments apart are comparable.
+    # taken moments apart are comparable. The symbol is botocore's consolidated
+    # clock accessor, present since the 1.34.0 floor declared in pyproject.
+    # Assert rather than skip: silently not freezing would make
+    # test_pre_encoded_bytes_sign_identically_to_the_equivalent_dict flaky
+    # instead of failing, and that test is a regression guard worth keeping loud.
+    import botocore.auth
+
+    assert hasattr(botocore.auth, "get_current_datetime"), (
+        "botocore.auth.get_current_datetime is missing; the aws extra's "
+        "botocore floor (>=1.34.0) no longer matches what these tests patch."
+    )
     monkeypatch.setattr("botocore.auth.get_current_datetime", lambda: _FROZEN)
 
 

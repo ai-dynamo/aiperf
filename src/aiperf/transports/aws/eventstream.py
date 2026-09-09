@@ -70,9 +70,11 @@ def _split_complete_lines(buffer: bytearray) -> tuple[list[bytes], bytearray]:
     while b"\n" in buffer:
         line, _, rest = buffer.partition(b"\n")
         buffer = bytearray(rest)
-        stripped = line.strip()
-        if stripped:
-            lines.append(bytes(stripped))
+        # Emptiness is judged on the stripped form, but the line keeps its
+        # bytes: ``AwsEventStreamMessage.raw_line`` is the undecoded wire
+        # content, and raw-record exports must reproduce what was sent.
+        if line.strip():
+            lines.append(bytes(line))
     return lines, buffer
 
 
@@ -166,9 +168,10 @@ class AwsEventStreamReader:
                 lines, line_buffer = _split_complete_lines(line_buffer)
                 for line in lines:
                     yield _stream_message_for_line(line, chunk_perf_ns)
-        stripped = line_buffer.strip()
-        if stripped:
-            yield _stream_message_for_line(bytes(stripped), time.perf_counter_ns())
+        # Same rule as the main loop: emptiness on the stripped form, bytes
+        # as received on the message.
+        if line_buffer.strip():
+            yield _stream_message_for_line(bytes(line_buffer), time.perf_counter_ns())
 
     @staticmethod
     def inspect_message_for_error(message: AwsEventStreamMessage) -> None:

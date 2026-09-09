@@ -562,7 +562,7 @@ API authentication key for the endpoint. When provided, automatically included i
 
 #### `--transport`, `--transport-type` `<str>`
 
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
+Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). `http` uses aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. `sagemaker` invokes AWS SageMaker Runtime and is normally derived from `--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.
 <br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`
@@ -2187,7 +2187,7 @@ API authentication key for the endpoint. When provided, automatically included i
 
 #### `--transport`, `--transport-type` `<str>`
 
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
+Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). `http` uses aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. `sagemaker` invokes AWS SageMaker Runtime and is normally derived from `--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.
 <br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`
@@ -3807,7 +3807,7 @@ API authentication key for the endpoint. When provided, automatically included i
 
 #### `--transport`, `--transport-type` `<str>`
 
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
+Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). `http` uses aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. `sagemaker` invokes AWS SageMaker Runtime and is normally derived from `--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.
 <br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`
@@ -5934,7 +5934,7 @@ API authentication key for the endpoint. When provided, automatically included i
 
 #### `--transport`, `--transport-type` `<str>`
 
-Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
+Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). `http` uses aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. `sagemaker` invokes AWS SageMaker Runtime and is normally derived from `--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.
 <br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`

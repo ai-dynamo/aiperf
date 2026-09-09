@@ -15,7 +15,7 @@ This guide walks you through benchmarking inference endpoints protected by AWS I
 | Scenario | Non-Streaming | Streaming | Notes |
 |----------|:---:|:---:|-------|
 | API Gateway + vLLM/TGI/NIM | Yes | Yes | Standard HTTP + SSE |
-| SageMaker + vLLM/LMI container | Yes | No | Non-streaming only. SageMaker uses proprietary event framing instead of SSE. |
+| SageMaker + vLLM/LMI container | Yes | Yes | Use `--sagemaker-endpoint-name`; see the [SageMaker tutorial](aws-sagemaker.md). AIPerf decodes AWS eventstream framing. |
 | Bedrock Converse / InvokeModel | No | No | Different request/response schema -- not OpenAI-compatible |
 
 ## Before You Start
@@ -85,7 +85,18 @@ aiperf profile \
     --request-count 100
 ```
 
-Streaming is not supported for SageMaker endpoints because SageMaker uses a proprietary event stream format instead of SSE. Do not pass `--streaming` with SageMaker.
+For SageMaker specifically, prefer `--sagemaker-endpoint-name` over the manual
+`--url` + `--endpoint` form shown above -- it derives the URL, the signing scope,
+and the correct streaming operation for you, and it supports `--streaming`:
+
+```bash
+aiperf profile -m my-model --endpoint-type chat --streaming \
+    --sagemaker-endpoint-name my-endpoint --aws-region us-east-1
+```
+
+See the [AWS SageMaker tutorial](aws-sagemaker.md) for the full walkthrough. The
+manual form above still works for endpoints that need an explicit URL, such as
+VPC/PrivateLink.
 
 ## Figuring Out Your Region and Service Name
 
@@ -256,7 +267,7 @@ startup:
 
 | Combined with `--auth-type` | Why it is rejected |
 |---|---|
-| `--wait-for-model` | The readiness probe is an out-of-band request that is not signed. |
+| `--wait-for-model-timeout` | The readiness probe is an out-of-band request that is not signed. |
 | `--reset-kv-cache`, server profiler hooks | Control-plane hooks call the server out of band, unsigned. |
 | Multipart endpoints (`image_edit`, `audio_transcription`) | aiohttp streams multipart bodies, so they never materialize as the exact bytes SigV4 must hash. |
 | Polling endpoints (`video_generation`) | Job submit/poll runs on a path that bypasses signing. |

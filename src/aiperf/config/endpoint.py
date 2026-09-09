@@ -104,6 +104,20 @@ class TemplateConfig(BaseConfig):
     ]
 
 
+def _is_cleartext_remote(url: str) -> bool:
+    """Whether ``url`` would send request headers unencrypted off-box.
+
+    Loopback is deliberately not treated as cleartext-remote: the documented
+    mock-server workflow signs against ``http://localhost``, and headers that
+    never leave the machine are not disclosed by the absence of TLS.
+    """
+    parsed = urlparse(url if "://" in url else f"http://{url}")
+    if parsed.scheme != "http":
+        return False
+    host = (parsed.hostname or "").lower()
+    return not (host in {"localhost", "::1"} or host.startswith("127."))
+
+
 def _transport_botocore_service_id(transport: TransportType | None) -> str | None:
     """Return the botocore service id the given transport signs as, if any.
 
@@ -601,6 +615,18 @@ class EndpointConfig(BaseConfig):
                 "safe default to guess."
             )
 
+        # Without a name there is nothing to put in /endpoints/{name}/invocations,
+        # and the request would go out against an empty path segment and fail
+        # remotely with nothing pointing back at the cause. An explicit --endpoint
+        # path is the exception: get_url() uses it verbatim and never builds the
+        # SageMaker route at all.
+        if self.path is None and not self.sagemaker.endpoint_name:
+            raise ValueError(
+                "The SageMaker transport requires --sagemaker-endpoint-name "
+                "(or an explicit --endpoint path to use instead); without it the "
+                "request path would be /endpoints//invocations."
+            )
+
         return self
 
     @model_validator(mode="after")
@@ -877,11 +903,24 @@ class EndpointConfig(BaseConfig):
                 "Use a JSON endpoint type, or drop --auth-type."
             )
 
+        # Signing puts credential material on the wire: the signature itself and,
+        # for temporary credentials, the x-amz-security-token bearer token. Over
+        # cleartext that is a credential disclosure, not merely unencrypted
+        # traffic. Loopback is exempt so the in-repo mock server stays usable.
+        insecure = [url for url in self.urls if _is_cleartext_remote(url)]
+        if insecure:
+            raise ValueError(
+                f"auth_type={self.auth_type} signs every request, which puts the "
+                "signature and any session token into the request headers. "
+                "Sending those over plain HTTP would disclose them: "
+                f"{', '.join(insecure)}. Use https, or drop --auth-type."
+            )
+
         if self.wait_for_model_timeout > 0:
             raise ValueError(
-                "--wait-for-model issues an out-of-band readiness probe that "
-                "request signing does not cover, so it would be rejected under "
-                f"auth_type={self.auth_type}. Drop --wait-for-model."
+                "--wait-for-model-timeout issues an out-of-band readiness probe "
+                "that request signing does not cover, so it would be rejected "
+                f"under auth_type={self.auth_type}. Drop --wait-for-model-timeout."
             )
 
         return self

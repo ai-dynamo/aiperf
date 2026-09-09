@@ -99,6 +99,10 @@ otel = [
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
 aws = [
+  # 1.34.0 is the floor for two things this depends on: the public
+  # ``botocore.eventstream`` frame decoder, and ``botocore.auth``'s consolidated
+  # clock accessor (``get_current_datetime``), which the signing tests freeze to
+  # make signatures reproducible. Lowering this silently breaks those tests.
   "botocore>=1.34.0",
 ]
 test = [

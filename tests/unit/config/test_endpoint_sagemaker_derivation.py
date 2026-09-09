@@ -88,3 +88,45 @@ class TestSageMakerFieldsAreOptional:
         assert cfg.sagemaker.target_model is None
         assert cfg.sagemaker.inference_component_name is None
         assert cfg.sagemaker.target_variant is None
+
+
+class TestEndpointNameIsRequired:
+    """``--transport sagemaker`` without an endpoint name would otherwise build
+    ``/endpoints//invocations`` and fail remotely with nothing pointing at the
+    cause."""
+
+    def test_sagemaker_transport_without_endpoint_name_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="--sagemaker-endpoint-name"):
+            EndpointConfig.model_validate(
+                {
+                    "type": "chat",
+                    "transport": "sagemaker",
+                    "aws_region": "us-west-2",
+                    "urls": ["https://runtime.sagemaker.us-west-2.amazonaws.com"],
+                }
+            )
+
+    def test_empty_endpoint_name_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="--sagemaker-endpoint-name"):
+            EndpointConfig.model_validate(
+                {
+                    "type": "chat",
+                    "transport": "sagemaker",
+                    "aws_region": "us-west-2",
+                    "urls": ["https://runtime.sagemaker.us-west-2.amazonaws.com"],
+                    "sagemaker": {"endpoint_name": ""},
+                }
+            )
+
+    def test_an_explicit_path_makes_the_endpoint_name_unnecessary(self) -> None:
+        """``get_url`` uses ``path`` verbatim in that case, so no name is needed."""
+        cfg = EndpointConfig.model_validate(
+            {
+                "type": "chat",
+                "transport": "sagemaker",
+                "aws_region": "us-west-2",
+                "urls": ["https://runtime.sagemaker.us-west-2.amazonaws.com"],
+                "path": "/endpoints/other/invocations",
+            }
+        )
+        assert cfg.path == "/endpoints/other/invocations"

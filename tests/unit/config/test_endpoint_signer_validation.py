@@ -10,6 +10,7 @@ into a benchmark, from a request aiperf sent unsigned.
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config.control_hooks import ResetKvCacheConfig, ServerProfilerConfig
 from aiperf.config.endpoint import EndpointConfig
@@ -61,7 +62,7 @@ def test_multipart_endpoint_with_signer_is_rejected() -> None:
 
 
 def test_wait_for_model_with_signer_is_rejected() -> None:
-    with pytest.raises(ValidationError, match="--wait-for-model"):
+    with pytest.raises(ValidationError, match="--wait-for-model-timeout"):
         _endpoint(wait_for_model_timeout=30.0)
 
 
@@ -89,3 +90,41 @@ def test_unsigned_endpoints_keep_every_rejected_feature() -> None:
     assert cfg.auth_type is None
     assert cfg.wait_for_model_timeout == 30.0
     assert cfg.reset_kv_cache is not None
+
+
+class TestSigningRequiresTls:
+    """Signing puts credential material on the wire -- the SigV4 signature and,
+    for temporary credentials, the ``x-amz-security-token`` bearer token. Over
+    cleartext HTTP that is a credential disclosure, so it is refused rather than
+    sent. Loopback is exempt so the in-repo mock server stays usable."""
+
+    def test_cleartext_http_to_a_remote_host_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="https"):
+            _endpoint(urls=["http://sagemaker.example.com"])
+
+    def test_https_is_accepted(self) -> None:
+        cfg = _endpoint(urls=["https://sagemaker.example.com"])
+        assert cfg.urls == ["https://sagemaker.example.com"]
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("http://localhost:8000", id="localhost"),
+            param("http://127.0.0.1:8000", id="ipv4-loopback"),
+            param("http://[::1]:8000", id="ipv6-loopback"),
+        ],
+    )
+    def test_loopback_over_http_is_allowed(self, url: str) -> None:
+        """The documented mock-server workflow signs against http://localhost."""
+        assert _endpoint(urls=[url]).urls == [url]
+
+    def test_one_bad_url_among_several_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="https"):
+            _endpoint(urls=["https://good.example.com", "http://bad.example.com"])
+
+    def test_unsigned_endpoints_may_still_use_http(self) -> None:
+        """The rule is about protecting credentials, not about mandating TLS."""
+        cfg = EndpointConfig.model_validate(
+            {"urls": ["http://anywhere.example.com"], "type": "chat"}
+        )
+        assert cfg.auth_type is None
