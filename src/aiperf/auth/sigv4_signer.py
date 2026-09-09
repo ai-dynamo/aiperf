@@ -15,6 +15,24 @@ if TYPE_CHECKING:
     from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 
+def _transport_botocore_service_id(transport) -> str | None:
+    """Return the botocore service id the active transport signs as, if any.
+
+    Read off the transport class so a second AWS transport (Bedrock) needs no
+    change here. None for every transport that is not AWS-specific.
+    """
+    if transport is None:
+        return None
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return None
+    return getattr(transport_cls, "botocore_service_id", None)
+
+
 class SigV4RequestSigner(AIPerfLifecycleMixin):
     """AWS SigV4 request signer using botocore.
 
@@ -51,6 +69,9 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         super().__init__(**kwargs)
         self.region: str | None = model_endpoint.endpoint.aws_region
         self.service: str | None = model_endpoint.endpoint.aws_signing_service
+        self.botocore_service_id: str | None = _transport_botocore_service_id(
+            model_endpoint.transport
+        )
         self.profile: str | None = model_endpoint.endpoint.aws_profile
         self._credentials = None
 
@@ -93,6 +114,19 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         # credentials). We keep that object - not a frozen snapshot - so
         # that sign() can call get_frozen_credentials() on every request,
         # which triggers botocore's built-in expiry-based refresh check.
+        if not self.service and self.botocore_service_id:
+            # Resolve the signing name from AWS's own service model rather than
+            # mapping it here: sagemaker-runtime signs as 'sagemaker' and
+            # bedrock-runtime as 'bedrock', and only the model knows that.
+            # Falls back to the service id if the lookup fails, which is right
+            # for the many services where the two are identical.
+            try:
+                self.service = session.get_service_model(
+                    self.botocore_service_id
+                ).signing_name
+            except Exception:
+                self.service = self.botocore_service_id
+
         credentials = session.get_credentials()
         if credentials is None:
             raise ValueError(

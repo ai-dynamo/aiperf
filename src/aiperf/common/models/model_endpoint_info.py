@@ -173,6 +173,24 @@ class EndpointInfo(AIPerfBaseModel):
         description="Named AWS credentials profile to resolve credentials from. "
         "None uses the default botocore resolution chain.",
     )
+    sagemaker_endpoint_name: str | None = Field(
+        default=None,
+        description="Name of the SageMaker endpoint to invoke. Forms the "
+        "/endpoints/{name}/invocations request path.",
+    )
+    sagemaker_target_model: str | None = Field(
+        default=None,
+        description="SageMaker TargetModel for multi-model endpoints. Not sent on "
+        "streaming requests; defaults to the request's model name.",
+    )
+    sagemaker_inference_component_name: str | None = Field(
+        default=None,
+        description="SageMaker InferenceComponentName to target.",
+    )
+    sagemaker_target_variant: str | None = Field(
+        default=None,
+        description="SageMaker production variant to pin every request to.",
+    )
     aws_signing_service: str | None = Field(
         default=None,
         description="AWS SigV4 signing name (credential scope). Required when "
@@ -250,6 +268,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 aws_region=ep.aws_region,
                 aws_profile=ep.aws_profile,
                 aws_signing_service=ep.aws_signing_service,
+                sagemaker_endpoint_name=ep.sagemaker.endpoint_name,
+                sagemaker_target_model=ep.sagemaker.target_model,
+                sagemaker_inference_component_name=ep.sagemaker.inference_component_name,
+                sagemaker_target_variant=ep.sagemaker.target_variant,
             ),
             transport=ep.transport,
         )

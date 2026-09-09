@@ -224,6 +224,7 @@ spec:
                         type: string
                         enum:
                         - http
+                        - sagemaker
                         description: Transport plugin name. Auto-detected from the URL scheme when unset.
                       awsRegion:
                         type: string
@@ -244,6 +245,28 @@ spec:
                           ''sagemaker'', ''bedrock''). This is the service''s signing name, which is not always its API id:
                           the ''sagemaker-runtime'' API signs as ''sagemaker'', and ''bedrock-runtime'' signs as ''bedrock''.
                           Required when auth_type=''sigv4''.'
+                      sagemaker:
+                        type: object
+                        description: SageMaker Runtime routing options. Setting sagemaker.endpoint_name selects the SageMaker
+                          transport.
+                        properties:
+                          endpointName:
+                            type: string
+                            description: 'Name of the SageMaker endpoint to invoke. Setting this is normally all that is needed:
+                              it selects the SageMaker transport, enables SigV4 signing, and derives the runtime base URL
+                              from aws_region.'
+                          targetModel:
+                            type: string
+                            description: SageMaker TargetModel value, for multi-model endpoints. Not sent on streaming requests,
+                              which the API does not accept it on. Defaults to the request's model name when not set explicitly.
+                          inferenceComponentName:
+                            type: string
+                            description: SageMaker InferenceComponentName to target, for endpoints hosting multiple inference
+                              components.
+                          targetVariant:
+                            type: string
+                            description: SageMaker production variant to pin every request to, bypassing the endpoint's traffic
+                              split. Useful for benchmarking one variant of an A/B deployment in isolation.
                       connectionReuse:
                         type: string
                         description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:

@@ -563,7 +563,7 @@ API authentication key for the endpoint. When provided, automatically included i
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`
 
@@ -581,6 +581,22 @@ Request signing method for authentication. When set, the selected `request_signe
 #### `--aws-signing-service` `<str>`
 
 AWS SigV4 signing name -- the credential scope the signature is bound to (e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, which is not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and `bedrock-runtime` signs as `bedrock`. Required when `--auth-type sigv4`.
+
+#### `--sagemaker-endpoint-name` `<str>`
+
+Name of the SageMaker endpoint to invoke. Usually the only AWS flag needed besides `--aws-region`: it selects the SageMaker transport, turns on SigV4 signing, and derives the runtime URL. Note that the endpoint type's usual path (e.g. `/v1/chat/completions`) is NOT used -- SageMaker routes on the request body, so every endpoint type is invoked through `/endpoints/{name}/invocations`.
+
+#### `--sagemaker-target-model` `<str>`
+
+SageMaker `TargetModel` value, for multi-model endpoints. Defaults to the request's model name. Not sent on streaming requests -- the streaming operation does not accept it.
+
+#### `--sagemaker-inference-component-name` `<str>`
+
+SageMaker `InferenceComponentName` to target, for endpoints hosting multiple inference components.
+
+#### `--sagemaker-target-variant` `<str>`
+
+SageMaker production variant to pin every request to, bypassing the endpoint's traffic split. Use to benchmark one variant of an A/B deployment in isolation.
 
 #### `--use-legacy-max-tokens`
 
@@ -2172,7 +2188,7 @@ API authentication key for the endpoint. When provided, automatically included i
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`
 
@@ -2190,6 +2206,22 @@ Request signing method for authentication. When set, the selected `request_signe
 #### `--aws-signing-service` `<str>`
 
 AWS SigV4 signing name -- the credential scope the signature is bound to (e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, which is not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and `bedrock-runtime` signs as `bedrock`. Required when `--auth-type sigv4`.
+
+#### `--sagemaker-endpoint-name` `<str>`
+
+Name of the SageMaker endpoint to invoke. Usually the only AWS flag needed besides `--aws-region`: it selects the SageMaker transport, turns on SigV4 signing, and derives the runtime URL. Note that the endpoint type's usual path (e.g. `/v1/chat/completions`) is NOT used -- SageMaker routes on the request body, so every endpoint type is invoked through `/endpoints/{name}/invocations`.
+
+#### `--sagemaker-target-model` `<str>`
+
+SageMaker `TargetModel` value, for multi-model endpoints. Defaults to the request's model name. Not sent on streaming requests -- the streaming operation does not accept it.
+
+#### `--sagemaker-inference-component-name` `<str>`
+
+SageMaker `InferenceComponentName` to target, for endpoints hosting multiple inference components.
+
+#### `--sagemaker-target-variant` `<str>`
+
+SageMaker production variant to pin every request to, bypassing the endpoint's traffic split. Use to benchmark one variant of an A/B deployment in isolation.
 
 #### `--use-legacy-max-tokens`
 
@@ -3776,7 +3808,7 @@ API authentication key for the endpoint. When provided, automatically included i
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`
 
@@ -3794,6 +3826,22 @@ Request signing method for authentication. When set, the selected `request_signe
 #### `--aws-signing-service` `<str>`
 
 AWS SigV4 signing name -- the credential scope the signature is bound to (e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, which is not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and `bedrock-runtime` signs as `bedrock`. Required when `--auth-type sigv4`.
+
+#### `--sagemaker-endpoint-name` `<str>`
+
+Name of the SageMaker endpoint to invoke. Usually the only AWS flag needed besides `--aws-region`: it selects the SageMaker transport, turns on SigV4 signing, and derives the runtime URL. Note that the endpoint type's usual path (e.g. `/v1/chat/completions`) is NOT used -- SageMaker routes on the request body, so every endpoint type is invoked through `/endpoints/{name}/invocations`.
+
+#### `--sagemaker-target-model` `<str>`
+
+SageMaker `TargetModel` value, for multi-model endpoints. Defaults to the request's model name. Not sent on streaming requests -- the streaming operation does not accept it.
+
+#### `--sagemaker-inference-component-name` `<str>`
+
+SageMaker `InferenceComponentName` to target, for endpoints hosting multiple inference components.
+
+#### `--sagemaker-target-variant` `<str>`
+
+SageMaker production variant to pin every request to, bypassing the endpoint's traffic split. Use to benchmark one variant of an A/B deployment in isolation.
 
 #### `--use-legacy-max-tokens`
 
@@ -5887,7 +5935,7 @@ API authentication key for the endpoint. When provided, automatically included i
 #### `--transport`, `--transport-type` `<str>`
 
 Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme (`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.
-<br/>_Choices: [`http`]_
+<br/>_Choices: [`http`, `sagemaker`]_
 
 #### `--aws-region` `<str>`
 
@@ -5905,6 +5953,22 @@ Request signing method for authentication. When set, the selected `request_signe
 #### `--aws-signing-service` `<str>`
 
 AWS SigV4 signing name -- the credential scope the signature is bound to (e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, which is not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and `bedrock-runtime` signs as `bedrock`. Required when `--auth-type sigv4`.
+
+#### `--sagemaker-endpoint-name` `<str>`
+
+Name of the SageMaker endpoint to invoke. Usually the only AWS flag needed besides `--aws-region`: it selects the SageMaker transport, turns on SigV4 signing, and derives the runtime URL. Note that the endpoint type's usual path (e.g. `/v1/chat/completions`) is NOT used -- SageMaker routes on the request body, so every endpoint type is invoked through `/endpoints/{name}/invocations`.
+
+#### `--sagemaker-target-model` `<str>`
+
+SageMaker `TargetModel` value, for multi-model endpoints. Defaults to the request's model name. Not sent on streaming requests -- the streaming operation does not accept it.
+
+#### `--sagemaker-inference-component-name` `<str>`
+
+SageMaker `InferenceComponentName` to target, for endpoints hosting multiple inference components.
+
+#### `--sagemaker-target-variant` `<str>`
+
+SageMaker production variant to pin every request to, bypassing the endpoint's traffic split. Use to benchmark one variant of an A/B deployment in isolation.
 
 #### `--use-legacy-max-tokens`
 

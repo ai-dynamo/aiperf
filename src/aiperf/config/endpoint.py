@@ -35,6 +35,7 @@ from aiperf.config.control_hooks import (
     require_relative_path,
 )
 from aiperf.config.loader.parsing import normalize_http_urls
+from aiperf.config.sagemaker import SageMakerConfig
 from aiperf.plugin.enums import (
     EndpointType,
     RequestSignerType,
@@ -101,6 +102,26 @@ class TemplateConfig(BaseConfig):
             "Use dot notation for nested fields: 'choices.0.message.content'.",
         ),
     ]
+
+
+def _transport_botocore_service_id(transport: TransportType | None) -> str | None:
+    """Return the botocore service id the given transport signs as, if any.
+
+    Read off the transport class rather than mapped here, so adding a second
+    AWS transport (Bedrock) needs no change in this module. Returns None for
+    transports that are not AWS-specific, which is every transport today except
+    SageMaker.
+    """
+    if transport is None:
+        return None
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return None
+    return getattr(transport_cls, "botocore_service_id", None)
 
 
 class EndpointConfig(BaseConfig):
@@ -255,6 +276,15 @@ class EndpointConfig(BaseConfig):
             "service's signing name, which is not always its API id: the "
             "'sagemaker-runtime' API signs as 'sagemaker', and 'bedrock-runtime' signs "
             "as 'bedrock'. Required when auth_type='sigv4'.",
+        ),
+    ]
+
+    sagemaker: Annotated[
+        SageMakerConfig,
+        Field(
+            default_factory=SageMakerConfig,
+            description="SageMaker Runtime routing options. Setting "
+            "sagemaker.endpoint_name selects the SageMaker transport.",
         ),
     ]
 
@@ -483,6 +513,28 @@ class EndpointConfig(BaseConfig):
             if "urls" not in data:
                 data["urls"] = [url] if isinstance(url, str) else url
 
+        # Derive the SageMaker runtime base URL. This has to happen before
+        # field validation because `urls` is required, so an after-validator
+        # would never run -- the user would get "urls: Field required" instead
+        # of anything about SageMaker.
+        sagemaker = data.get("sagemaker") or {}
+        endpoint_name = (
+            sagemaker.get("endpoint_name")
+            if isinstance(sagemaker, dict)
+            else getattr(sagemaker, "endpoint_name", None)
+        )
+        if endpoint_name and not data.get("urls"):
+            region = data.get("aws_region")
+            if not region:
+                raise ValueError(
+                    "SageMaker endpoints require --aws-region: it selects both the "
+                    "runtime hostname and the SigV4 credential scope, and there is "
+                    "no safe default to guess."
+                )
+            from aiperf.transports.aws.regions import dns_suffix
+
+            data["urls"] = [f"https://runtime.sagemaker.{region}.{dns_suffix(region)}"]
+
         # Auto-detect template type
         if "template" in data and data["template"] is not None and "type" not in data:
             data["type"] = EndpointType.TEMPLATE
@@ -519,6 +571,36 @@ class EndpointConfig(BaseConfig):
         underscore flag for the scenario resolver's defensive ``getattr``.
         """
         self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
+
+    @model_validator(mode="after")
+    def _derive_sagemaker_settings(self) -> Self:
+        """Fill in everything ``--sagemaker-endpoint-name`` implies.
+
+        Defined above ``_validate_endpoint_boundaries`` because that validator
+        inspects ``urls``, and the derived URL has to exist by then
+        (``mode="after"`` validators run in definition order).
+
+        Only ever fills unset values: anything the user set explicitly wins, so
+        an explicit ``--url`` still points at a VPC/PrivateLink endpoint or a
+        custom domain.
+        """
+        if self.sagemaker.endpoint_name and self.transport is None:
+            self.transport = TransportType.SAGEMAKER
+
+        if self.transport != TransportType.SAGEMAKER:
+            return self
+
+        if self.auth_type is None:
+            self.auth_type = RequestSignerType.SIGV4
+
+        if not self.aws_region:
+            raise ValueError(
+                "SageMaker endpoints require --aws-region: it selects both the "
+                "runtime hostname and the SigV4 credential scope, and there is no "
+                "safe default to guess."
+            )
+
         return self
 
     @model_validator(mode="after")
@@ -756,7 +838,14 @@ class EndpointConfig(BaseConfig):
                 flag
                 for flag, value in (
                     ("--aws-region", self.aws_region),
-                    ("--aws-signing-service", self.aws_signing_service),
+                    # Only required when nothing else can supply the scope. A
+                    # transport that declares a botocore service id derives it
+                    # from AWS's own service model instead.
+                    (
+                        "--aws-signing-service",
+                        self.aws_signing_service
+                        or _transport_botocore_service_id(self.transport),
+                    ),
                 )
                 if not value
             ]

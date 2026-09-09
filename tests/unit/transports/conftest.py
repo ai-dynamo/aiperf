@@ -46,6 +46,10 @@ def create_model_endpoint_info(
     aws_region: str | None = None,
     aws_signing_service: str | None = None,
     aws_profile: str | None = None,
+    sagemaker_endpoint_name: str | None = None,
+    sagemaker_target_model: str | None = None,
+    sagemaker_inference_component_name: str | None = None,
+    sagemaker_target_variant: str | None = None,
 ) -> ModelEndpointInfo:
     """Factory function to create ModelEndpointInfo instances."""
     return ModelEndpointInfo(
@@ -65,6 +69,10 @@ def create_model_endpoint_info(
             aws_region=aws_region,
             aws_signing_service=aws_signing_service,
             aws_profile=aws_profile,
+            sagemaker_endpoint_name=sagemaker_endpoint_name,
+            sagemaker_target_model=sagemaker_target_model,
+            sagemaker_inference_component_name=sagemaker_inference_component_name,
+            sagemaker_target_variant=sagemaker_target_variant,
         ),
     )
 
