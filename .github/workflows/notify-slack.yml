@@ -1,0 +1,200 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Reusable Slack failure notifier.
+# Lists the calling run's jobs via the Actions API and posts one alert per
+# configured webhook when any job failed or timed out. Both webhooks are
+# optional; a green run or a missing secret posts nothing and stays green.
+# Call from a job with `if: always()`, `needs:` on every reported job, and
+# `permissions: actions: read`.
+name: Notify Slack
+
+on:
+  workflow_call:
+    inputs:
+      pipeline_name:
+        description: "Pipeline name shown in the alert header, e.g. AIPerf Nightly."
+        required: true
+        type: string
+      commit:
+        description: "Commit SHA shown in the alert; defaults to the workflow's github.sha."
+        required: false
+        type: string
+        default: ""
+      version:
+        description: "Artifact version shown in the alert, e.g. the nightly wheel version."
+        required: false
+        type: string
+        default: ""
+      runs_on:
+        description: "Runner label for the notifier job."
+        required: false
+        type: string
+        default: ubuntu-latest
+      ignored_jobs:
+        description: "Newline-separated substrings; failed jobs whose names contain one are not reported."
+        required: false
+        type: string
+        default: ""
+      mention:
+        description: "Slack IDs to mention in the call-to-action, comma or space separated: S... for a team (user group), U... for a user. Ready-made mrkdwn mentions are passed through."
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL:
+        description: "Incoming webhook for the release automation channel."
+        required: false
+      SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL:
+        description: "Incoming webhook for the AIPerf dev channel."
+        required: false
+
+jobs:
+  notify-slack:
+    name: Notify Slack
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Collect failed jobs
+        id: failed-jobs
+        shell: bash
+        env:
+          GITHUB_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          IGNORED_JOBS:  ${{ inputs.ignored_jobs }}
+          MENTION:       ${{ inputs.mention }}
+          PIPELINE_NAME: ${{ inputs.pipeline_name }}
+          COMMIT:        ${{ inputs.commit || github.sha }}
+          VERSION:       ${{ inputs.version }}
+          TRIGGER:       ${{ github.event_name }}
+          RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          # The API caps per_page at 100; page so large runs do not drop failures.
+          JOBS_ACC=$(mktemp)
+          page=1
+          while [ "${page}" -le 20 ]; do
+            PAGE_JSON=$(mktemp)
+            curl -sS --fail --retry 3 --retry-all-errors --retry-delay 3 \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100&page=${page}" \
+              > "${PAGE_JSON}"
+            jq -c '(.jobs // [])[]' "${PAGE_JSON}" >> "${JOBS_ACC}"
+            [ "$(jq '(.jobs // []) | length' "${PAGE_JSON}")" -lt 100 ] && break
+            page=$((page + 1))
+          done
+
+          IGNORED_JSON=$(printf '%s\n' "${IGNORED_JOBS}" | jq -R 'gsub("^\\s+|\\s+$"; "")' | jq -s 'map(select(length > 0))')
+
+          # A job that exceeds timeout-minutes ends as "cancelled", so count it too.
+          # Reusable-workflow jobs are named "caller / callee / job"; keep the ends.
+          FAILED_JOBS=$(jq -rs --argjson ignored "${IGNORED_JSON}" '
+            map(select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled"))
+            | map(select(.name as $n | ($ignored | any(. as $i | $n | contains($i))) | not))
+            | map(":failed: "
+                  + (.name | split(" / ") | if length > 2 then .[0] + " > " + .[-1] else .[-1] end)
+                  + (if .conclusion == "failure" then "" else " (" + .conclusion + ")" end))
+            | .[]' "${JOBS_ACC}")
+
+          if [ -z "$(printf '%s' "${FAILED_JOBS}" | tr -d '[:space:]')" ]; then
+            echo "No reportable failed jobs."
+            echo "has_failures=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "${FAILED_JOBS}"
+
+          # Slack caps a section at 3000 characters; cap lines first, then bytes.
+          TOTAL=$(printf '%s\n' "${FAILED_JOBS}" | wc -l)
+          if [ "${TOTAL}" -gt 25 ]; then
+            FAILED_JOBS="$(printf '%s\n' "${FAILED_JOBS}" | sed -n '1,25p')"$'\n'"... and $((TOTAL - 25)) more"
+          fi
+          if [ "${#FAILED_JOBS}" -gt 2900 ]; then
+            FAILED_JOBS="${FAILED_JOBS:0:2900}"$'\n'"... (truncated)"
+          fi
+
+          # Bare IDs become mrkdwn mentions: S... -> <!subteam^S...>, U.../W... -> <@U...>.
+          MENTION_MARKUP=""
+          IFS=', ' read -r -a ids <<< "${MENTION}"
+          for id in "${ids[@]}"; do
+            case "${id}" in
+              \<*)   MENTION_MARKUP="${MENTION_MARKUP} ${id}" ;;
+              S*)    MENTION_MARKUP="${MENTION_MARKUP} <!subteam^${id}>" ;;
+              U*|W*) MENTION_MARKUP="${MENTION_MARKUP} <@${id}>" ;;
+              *)     MENTION_MARKUP="${MENTION_MARKUP} ${id}" ;;
+            esac
+          done
+          MENTION_MARKUP="${MENTION_MARKUP# }"
+
+          CTA="please investigate and post a preliminary debug with clear next steps to action, address, and drive to closure."
+          if [ -n "${MENTION_MARKUP}" ]; then
+            CALL_TO_ACTION="${MENTION_MARKUP} ${CTA}"
+          else
+            CALL_TO_ACTION="${CTA^}"
+          fi
+
+          # jq escapes quotes and backslashes in job names.
+          PAYLOAD=$(jq -n \
+            --arg header ":crescent_moon: ${PIPELINE_NAME} failed — $(date -u +%Y-%m-%d)" \
+            --arg commit "${COMMIT:0:7}" \
+            --arg version "${VERSION:-unknown}" \
+            --arg run_url "${RUN_URL}" \
+            --arg trigger "${TRIGGER}" \
+            --arg failed "${FAILED_JOBS}" \
+            --arg cta "${CALL_TO_ACTION}" \
+            '{
+              text: $header,
+              blocks: [
+                {type: "header", text: {type: "plain_text", text: $header, emoji: true}},
+                {type: "section", fields: [
+                  {type: "mrkdwn", text: ("*Commit:*\n`" + $commit + "`")},
+                  {type: "mrkdwn", text: ("*Version:*\n`" + $version + "`")}]},
+                {type: "section", text: {type: "mrkdwn", text: ("*Failed jobs*\n" + $failed)}},
+                {type: "context", elements: [
+                  {type: "mrkdwn", text: ("<" + $run_url + "|GitHub Actions run> · trigger `" + $trigger + "`")}]},
+                {type: "section", text: {type: "mrkdwn", text: $cta}}
+              ]}')
+          DELIM="SLACK_PAYLOAD_${RANDOM}${RANDOM}"
+          {
+            echo "SLACK_PAYLOAD<<${DELIM}"
+            echo "${PAYLOAD}"
+            echo "${DELIM}"
+          } >> "${GITHUB_ENV}"
+          echo "has_failures=true" >> "${GITHUB_OUTPUT}"
+
+      # The secrets context is not usable in `if:`; expose presence as outputs.
+      - name: Resolve configured webhooks
+        id: targets
+        if: steps.failed-jobs.outputs.has_failures == 'true'
+        env:
+          RELEASE_WEBHOOK: ${{ secrets.SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL }}
+          DEV_WEBHOOK:     ${{ secrets.SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL }}
+        run: |
+          echo "release=$([ -n "${RELEASE_WEBHOOK}" ] && echo true || echo false)" >> "${GITHUB_OUTPUT}"
+          echo "dev=$([ -n "${DEV_WEBHOOK}" ] && echo true || echo false)" >> "${GITHUB_OUTPUT}"
+          if [ -z "${RELEASE_WEBHOOK}${DEV_WEBHOOK}" ]; then
+            echo "::warning::Failed jobs found but no Slack webhook is configured; no alert sent"
+          fi
+
+      # errors: true makes a rejected delivery (revoked webhook, bad payload) fail
+      # the step; the action's default swallows it and leaves the job green.
+      - name: Notify release automation channel
+        if: steps.failed-jobs.outputs.has_failures == 'true' && steps.targets.outputs.release == 'true'
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a  # v2.1.1
+        with:
+          webhook: ${{ secrets.SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          errors: true
+          payload: ${{ env.SLACK_PAYLOAD }}
+
+      - name: Notify AIPerf dev channel
+        if: ${{ !cancelled() && steps.failed-jobs.outputs.has_failures == 'true' && steps.targets.outputs.dev == 'true' }}
+        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a  # v2.1.1
+        with:
+          webhook: ${{ secrets.SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          errors: true
+          payload: ${{ env.SLACK_PAYLOAD }}
