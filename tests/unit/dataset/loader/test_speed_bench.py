@@ -238,6 +238,94 @@ class TestSpeedBenchLoader:
         assert conversation.turns[0].texts[0].contents == ["Answer tersely."]
 
 
+class TestSpeedBenchLoaderCategoryTagging:
+    """Every turn carries its row's category on ``Turn.source_kind``.
+
+    The worker copies ``source_kind`` onto the request and the record processor
+    writes it to ``MetricRecordMetadata.source_kind``, so this is what lets one
+    run over an aggregate split be split per category afterwards.
+    """
+
+    def test_turns_carry_their_row_category_as_source_kind(self, create_jsonl_file):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"), category="math"
+                ),
+            ],
+        )
+
+        conversations = loader.convert_to_conversations(dataset)
+
+        by_id = {c.session_id: c for c in conversations}
+        assert by_id[_qid("speed-coding-1")].turns[0].source_kind == "coding"
+        assert by_id[_qid("speed-math-1")].turns[0].source_kind == "math"
+
+    def test_every_turn_of_a_multi_turn_row_carries_the_category(
+        self, create_jsonl_file
+    ):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-chat-1"),
+                    category="roleplay",
+                    messages=[
+                        {"role": "user", "content": "Play a pirate."},
+                        {"role": "user", "content": "Now find the treasure."},
+                    ],
+                )
+            ],
+        )
+
+        conversation = loader.convert_to_conversations(dataset)[0]
+
+        assert len(conversation.turns) == 2
+        assert [turn.source_kind for turn in conversation.turns] == [
+            "roleplay",
+            "roleplay",
+        ]
+
+    def test_category_filtered_run_still_tags_its_rows(self, create_jsonl_file):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"), category="math"
+                ),
+            ],
+            category="math",
+        )
+
+        conversations = loader.convert_to_conversations(dataset)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].source_kind == "math"
+
+    def test_entropy_tier_is_tagged_like_a_qualitative_category(
+        self, create_jsonl_file
+    ):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-tp-1"), category="high_entropy"
+                )
+            ],
+        )
+
+        conversation = loader.convert_to_conversations(dataset)[0]
+
+        assert conversation.turns[0].source_kind == "high_entropy"
+
+
 class TestSpeedBenchLoaderCategoryFiltering:
     def test_no_category_returns_all_rows(self, create_jsonl_file):
         _, dataset = _load_speed_bench_file(
