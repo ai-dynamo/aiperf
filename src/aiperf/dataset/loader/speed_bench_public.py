@@ -35,9 +35,8 @@ SPEED_BENCH_REVISION = "487aa718444e816458d1a0a52bfce7a454285cf4"
 
 # Hosts the published dataset legitimately sources prompt text from. Row
 # ``source`` values drive what the vendored resolver fetches, so anything
-# outside this set is refused before a request is made.
-# The complete set of source hosts across all six configs at
-# SPEED_BENCH_REVISION, enumerated from the dataset itself rather than from the
+# outside this set is refused before a request is made. Enumerated from the
+# dataset itself across all six configs at SPEED_BENCH_REVISION, not from the
 # docs -- see test_allowlist_covers_every_published_source_host, which refetches
 # and fails if a revision bump introduces a host not listed here.
 _ALLOWED_SOURCE_HOSTS = frozenset(
@@ -224,7 +223,7 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
     def _gate_explanation(cls) -> str:
         """Why this step exists and why no tool can do it for you."""
         return (
-            f"'{cls._GATED_SOURCE}' is the only gated source of the 14, and it "
+            f"'{cls._GATED_SOURCE}' is the only gated source dataset, and it "
             f"appears in every SPEED-Bench config. Access is granted to "
             f"individual users rather than organizations, and HuggingFace "
             f"provides no API for requesting it, so this cannot be automated."

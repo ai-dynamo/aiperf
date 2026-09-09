@@ -221,3 +221,38 @@ class TestKubernetesServiceEntryPoint:
         )
 
         preflight_public_datasets_for_run(run)
+
+
+class TestResolutionOutputStaysReadable:
+    """Root INFO switches on httpx's per-request logging.
+
+    Resolution makes hundreds of requests, including the 404s `datasets` emits
+    while probing for a legacy loading script before falling back to parquet. A
+    reviewer reported that flood as a suspected failure, so the progress message
+    this handler exists to show must not be buried by it.
+    """
+
+    def test_noisy_third_party_loggers_are_quieted(self, monkeypatch) -> None:
+        import logging
+
+        root = logging.getLogger()
+        monkeypatch.setattr(root, "handlers", [])
+        for name in ("httpx", "httpcore", "urllib3", "filelock"):
+            logging.getLogger(name).setLevel(logging.NOTSET)
+
+        _preflight_dataset_materialize(_plan(_public("sharegpt")))
+
+        for name in ("httpx", "httpcore", "urllib3", "filelock"):
+            assert logging.getLogger(name).level == logging.WARNING, name
+
+    def test_an_existing_logging_setup_is_left_alone(self, monkeypatch) -> None:
+        """A caller who configured logging deliberately must keep their levels."""
+        import logging
+
+        root = logging.getLogger()
+        monkeypatch.setattr(root, "handlers", [logging.NullHandler()])
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+
+        _preflight_dataset_materialize(_plan(_public("sharegpt")))
+
+        assert logging.getLogger("httpx").level == logging.DEBUG

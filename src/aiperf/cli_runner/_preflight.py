@@ -287,6 +287,14 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
             level=logging.INFO,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         )
+        # Root INFO also switches on httpx's per-request logging, and resolution
+        # makes hundreds of requests -- including the 404s `datasets` expects
+        # while probing for a legacy loading script before falling back to
+        # parquet. That output buries the progress message this handler exists
+        # to show and reads like a failing run. Only narrowed when we installed
+        # the handler ourselves, so a caller's own logging config still wins.
+        for noisy in ("httpx", "httpcore", "urllib3", "filelock"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
 
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
         _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)
