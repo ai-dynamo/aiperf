@@ -89,8 +89,14 @@ SPEED-Bench needs their own HuggingFace account and their own click; it cannot
 be accepted once on a team's behalf. In CI, use a service account onboarded
 once by a human and store its token as a secret.
 
-**Budget disk and time for the first run.** Resolving a config downloads
-several GB from the source datasets. The result is cached under
+**Budget disk and time for the first run.** Resolving a config downloads its
+source datasets in full -- on the order of 10 GB or more, into the HuggingFace
+cache (`~/.cache/huggingface/hub`), not into AIPerf's cache. What AIPerf writes
+is only the extracted prompt text, which is far smaller: roughly 2 MB for
+`qualitative`, up to ~200 MB for `throughput_32k`. A small resolved file after a
+large download is expected, not a sign of a truncated dataset -- AIPerf logs the
+row count and file size when it finishes so you can confirm. The result is
+cached under
 `.cache/aiperf/datasets/speed-bench/<config>.jsonl` and shared by every
 category of that config, so only the first run pays for it. Delete the file to
 refetch.
