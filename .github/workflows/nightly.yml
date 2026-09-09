@@ -652,7 +652,10 @@ jobs:
           # arm64 build fails at `uv sync --locked` claiming uv.lock is
           # stale, even though a --no-cache build on a native arm64 builder
           # with the identical lockfile succeeds cleanly. Bust the tag so
-          # future arm64 builds stop pulling the bad cache layers.
+          # future arm64 builds stop pulling the bad cache layers. See
+          # ai-dynamo/aiperf#1403. If a future incident poisons the cache
+          # again, bump this suffix again (v3, v4, ...) rather than reusing
+          # a tag that may already be bad.
           CACHE_TAG="cache-${{ matrix.arch }}"
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             CACHE_TAG="cache-arm64-v2"
