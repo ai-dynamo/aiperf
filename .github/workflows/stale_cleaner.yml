@@ -2,21 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # https://github.com/actions/stale
-# This workflow is used to close stale issues and PRs after 30 days of inactivity.
-# Scheduled to run every day at 1:30 AM PST.
-# Configured to close issues with the label 'bug' after 30 days of inactivity.
-# Configured to close all PRs after 30 days of inactivity.
-# Configured to close the issue and PR after 5 days of inactivity.
-# Configured to delete the branch of the PR after 5 days of inactivity.
-
 
 name: 'Close stale issues and PRs'
 on:
   schedule:
-    - cron: '30 9 * * *'
+    - cron: '30 9 * * *' # 09:30 UTC daily
 
 permissions:
-  actions: write
   contents: write # only for delete-branch option
   issues: write
   pull-requests: write
