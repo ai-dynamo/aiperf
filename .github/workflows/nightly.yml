@@ -409,9 +409,14 @@ jobs:
           - arch: amd64
             platform: linux/amd64
             runner: prod-aiperf-builder-amd-v1
+            cache_tag: cache-amd64
           - arch: arm64
             platform: linux/arm64
             runner: prod-aiperf-builder-arm-v1
+            # Versioned to bypass poisoned registry cache layers
+            # (ai-dynamo/aiperf#1403). Bump the suffix again (v3, v4, ...)
+            # rather than reusing a tag that may already be bad.
+            cache_tag: cache-arm64-v2
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -648,14 +653,6 @@ jobs:
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           IMAGE_TAG="${CONTAINER_TAG}-${{ matrix.arch }}"
 
-          # arm64 cache tag is versioned to bypass poisoned registry cache
-          # layers (ai-dynamo/aiperf#1403). Bump the suffix again (v3, v4,
-          # ...) rather than reusing a tag that may already be bad.
-          CACHE_TAG="cache-${{ matrix.arch }}"
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            CACHE_TAG="cache-arm64-v2"
-          fi
-
           refresh_ecr_token() {
             while sleep 21600; do
               aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
@@ -669,8 +666,8 @@ jobs:
           docker buildx build \
             --platform "${{ matrix.platform }}" \
             --target   runtime \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:${CACHE_TAG}" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:${CACHE_TAG},mode=max" \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:${{ matrix.cache_tag }}" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:${{ matrix.cache_tag }},mode=max" \
             --push \
             --tag "${REGISTRY}/aiperf:${IMAGE_TAG}" \
             .
