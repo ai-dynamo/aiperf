@@ -194,7 +194,13 @@ def fetch_test_docs_jobs(run_id: int) -> list[tuple[int, str]]:
 
 
 def fetch_job_log(job_id: int) -> str:
-    return _gh("api", f"/repos/{_repo_slug()}/actions/jobs/{job_id}/logs")
+    # Job logs contain ANSI escape sequences; gh refuses to print those
+    # without this flag, even when stdout is captured rather than a tty.
+    return _gh(
+        "api",
+        f"/repos/{_repo_slug()}/actions/jobs/{job_id}/logs",
+        "--allow-escape-sequences",
+    )
 
 
 def _repo_slug() -> str:
