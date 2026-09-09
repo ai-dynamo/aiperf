@@ -648,6 +648,16 @@ jobs:
           REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           IMAGE_TAG="${CONTAINER_TAG}-${{ matrix.arch }}"
 
+          # cache-arm64 has been poisoned since 2026-08-31: every nightly's
+          # arm64 build fails at `uv sync --locked` claiming uv.lock is
+          # stale, even though a --no-cache build on a native arm64 builder
+          # with the identical lockfile succeeds cleanly. Bust the tag so
+          # future arm64 builds stop pulling the bad cache layers.
+          CACHE_TAG="cache-${{ matrix.arch }}"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            CACHE_TAG="cache-arm64-v2"
+          fi
+
           refresh_ecr_token() {
             while sleep 21600; do
               aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
@@ -661,8 +671,8 @@ jobs:
           docker buildx build \
             --platform "${{ matrix.platform }}" \
             --target   runtime \
-            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }}" \
-            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }},mode=max" \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:${CACHE_TAG}" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:${CACHE_TAG},mode=max" \
             --push \
             --tag "${REGISTRY}/aiperf:${IMAGE_TAG}" \
             .
