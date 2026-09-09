@@ -341,12 +341,14 @@ class FileDataset(SystemPromptMixin):
     ]
 
     weka_nested_timestamp_basis: Annotated[
-        Literal["auto", "absolute", "relative"],
+        Literal["auto", "absolute", "relative"] | None,
         Field(
-            default="auto",
+            default=None,
             description="Corpus-wide interpretation of timestamps nested inside "
-            "Weka subagent markers. Auto scans all traces before reconstruction; "
-            "absolute uses root-trace time and relative adds the marker time.",
+            "Weka subagent markers. Unset uses auto for Weka inputs. Auto selects "
+            "relative if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute; this heuristic cannot certify uniform conventions. "
+            "Absolute uses root-trace time and relative adds the marker time.",
         ),
     ]
 
@@ -707,7 +709,7 @@ class FileDataset(SystemPromptMixin):
     @model_validator(mode="after")
     def _validate_weka_timestamp_basis_scope(self) -> FileDataset:
         """Reject an explicit Weka timestamp policy on a known non-Weka format."""
-        if "weka_nested_timestamp_basis" not in self.model_fields_set:
+        if self.weka_nested_timestamp_basis is None:
             return self
         if self.format not in (DatasetFormat.WEKA_TRACE, DatasetFormat.SINGLE_TURN):
             raise ValueError(
@@ -894,12 +896,14 @@ class PublicDataset(SystemPromptMixin):
     ]
 
     weka_nested_timestamp_basis: Annotated[
-        Literal["auto", "absolute", "relative"],
+        Literal["auto", "absolute", "relative"] | None,
         Field(
-            default="auto",
+            default=None,
             description="Corpus-wide interpretation of timestamps nested inside "
-            "Weka subagent markers. Auto scans all traces before reconstruction; "
-            "absolute uses root-trace time and relative adds the marker time.",
+            "Weka subagent markers. Unset uses auto for Weka inputs. Auto selects "
+            "relative if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute; this heuristic cannot certify uniform conventions. "
+            "Absolute uses root-trace time and relative adds the marker time.",
         ),
     ]
 
@@ -1081,7 +1085,7 @@ class PublicDataset(SystemPromptMixin):
     @model_validator(mode="after")
     def _validate_weka_timestamp_basis_scope(self) -> PublicDataset:
         """Reject an explicit Weka timestamp policy on non-Weka datasets."""
-        if "weka_nested_timestamp_basis" not in self.model_fields_set:
+        if self.weka_nested_timestamp_basis is None:
             return self
         if "weka" not in str(self.dataset).lower():
             raise ValueError(

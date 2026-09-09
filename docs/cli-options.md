@@ -667,7 +667,7 @@ HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-tr
 
 #### `--weka-nested-timestamp-basis` `<str>`
 
-Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' scans the entire corpus and rejects mixed or inconclusive conventions.
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
 <br/>_Default: `auto`_
 
 #### `--dataset-filter` `<list>`
@@ -2264,7 +2264,7 @@ HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-tr
 
 #### `--weka-nested-timestamp-basis` `<str>`
 
-Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' scans the entire corpus and rejects mixed or inconclusive conventions.
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
 <br/>_Default: `auto`_
 
 #### `--dataset-filter` `<list>`
@@ -3856,7 +3856,7 @@ HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-tr
 
 #### `--weka-nested-timestamp-basis` `<str>`
 
-Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' scans the entire corpus and rejects mixed or inconclusive conventions.
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
 <br/>_Default: `auto`_
 
 #### `--dataset-filter` `<list>`
@@ -5955,7 +5955,7 @@ HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-tr
 
 #### `--weka-nested-timestamp-basis` `<str>`
 
-Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' scans the entire corpus and rejects mixed or inconclusive conventions.
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
 <br/>_Default: `auto`_
 
 #### `--dataset-filter` `<list>`
