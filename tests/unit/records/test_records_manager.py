@@ -4,17 +4,22 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
 
+from aiperf.accuracy.accumulator import AccuracyAccumulator
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.messages import BaseServiceErrorMessage
+from aiperf.common.messages import (
+    BaseServiceErrorMessage,
+    DatasetConfiguredNotification,
+)
 from aiperf.common.messages.inference_messages import (
     MetricRecordsData,
     RecordsMessage,
@@ -22,7 +27,10 @@ from aiperf.common.messages.inference_messages import (
 from aiperf.common.messages.telemetry_messages import TelemetryRecordsMessage
 from aiperf.common.models import (
     BranchStats,
+    ConversationMetadata,
     CreditPhaseStats,
+    DatasetMetadata,
+    MemoryMapClientMetadata,
     MetricResult,
     PhaseRecordsStats,
     ProcessRecordsResult,
@@ -44,7 +52,14 @@ from aiperf.credit.messages import (
 from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.cache_reporting_hint import CACHE_REPORTING_HINT
-from aiperf.plugin.enums import AccumulatorType, TimingMode, UIType
+from aiperf.plugin.enums import (
+    AccumulatorType,
+    AccuracyBenchmarkType,
+    DatasetSamplingStrategy,
+    EndpointType,
+    TimingMode,
+    UIType,
+)
 from aiperf.records import records_manager as records_manager_module
 from aiperf.records import records_manager_processing
 from aiperf.records.error_tracker import ErrorTracker
@@ -52,6 +67,7 @@ from aiperf.records.records_manager import ErrorTrackingState, RecordsManager
 from aiperf.records.records_manager_processing import LoadedAnalyzer
 from aiperf.records.records_tracker import RecordsTracker
 from aiperf.timing.config import CreditPhaseConfig
+from tests.unit.conftest import make_benchmark_run
 
 # Helper functions
 
@@ -1835,6 +1851,49 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert manager._dataset_configured_event.is_set()
         assert acc.metadata == message.metadata
         assert exp.metadata == message.metadata
+
+    @pytest.mark.asyncio
+    async def test_real_accuracy_accumulator_receives_dispatch(self) -> None:
+        """Guards the duck-typed dispatch loop against a silent break: a real
+        ``AccuracyAccumulator`` (not a stub) must pick up the resolved task
+        universe from a real ``DatasetConfiguredNotification`` routed through
+        ``RecordsManager._on_dataset_configured``."""
+        manager = RecordsManager.__new__(RecordsManager)
+        manager._dataset_configured_event = asyncio.Event()
+        acc = AccuracyAccumulator(
+            run=make_benchmark_run(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.COMPLETIONS,
+                streaming=False,
+                accuracy={"benchmark": AccuracyBenchmarkType.MMLU},
+            )
+        )
+        manager._accumulators = {AccumulatorType.ACCURACY: acc}
+        manager._stream_exporters = {}
+        message = DatasetConfiguredNotification(
+            service_id="test-dataset-manager",
+            metadata=DatasetMetadata(
+                sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+                conversations=[
+                    ConversationMetadata(
+                        conversation_id="conv-0", accuracy_task="math"
+                    ),
+                    ConversationMetadata(
+                        conversation_id="conv-1", accuracy_task="physics"
+                    ),
+                ],
+            ),
+            client_metadata=MemoryMapClientMetadata(
+                data_file_path=Path("/tmp/test_data.mmap"),
+                index_file_path=Path("/tmp/test_index.mmap"),
+                conversation_count=2,
+                total_size_bytes=1024,
+            ),
+        )
+
+        await manager._on_dataset_configured(message)
+
+        assert acc._configured_tasks == {"math", "physics"}
 
     @pytest.mark.asyncio
     async def test_on_metric_records_waits_for_dataset_configured(self) -> None:

@@ -98,7 +98,7 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         total_evaluated = len(scoped)
         total_passed = sum(1 for r in scoped if r.passed)
         overall_unparsed = sum(1 for r in scoped if r.unparsed)
-        accuracy_rate = total_passed / total_evaluated if total_evaluated else 0.0
+        accuracy_rate = total_passed / total_evaluated if total_evaluated else None
 
         task_total: dict[str, int] = defaultdict(int)
         task_passed: dict[str, int] = defaultdict(int)
@@ -120,15 +120,19 @@ class AccuracyAccumulator(BaseMetricsProcessor):
                 total=total,
                 passed=passed,
                 unparsed=unparsed,
-                accuracy_rate=passed / total if total else 0.0,
-                unparsed_rate=unparsed / total if total else 0.0,
+                accuracy_rate=passed / total if total else None,
+                unparsed_rate=unparsed / total if total else None,
             )
 
         for task in self._configured_tasks:
             per_task.setdefault(
                 task,
                 TaskAccuracyStats(
-                    total=0, passed=0, unparsed=0, accuracy_rate=0.0, unparsed_rate=0.0
+                    total=0,
+                    passed=0,
+                    unparsed=0,
+                    accuracy_rate=None,
+                    unparsed_rate=None,
                 ),
             )
 

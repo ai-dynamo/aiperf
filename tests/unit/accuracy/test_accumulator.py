@@ -190,7 +190,7 @@ class TestAccuracyAccumulator:
         assert physics.total == 0
         assert physics.passed == 0
         assert physics.unparsed == 0
-        assert physics.accuracy_rate == 0.0
+        assert physics.accuracy_rate is None
 
     async def test_configured_tasks_with_zero_records_still_produce_a_summary(
         self,

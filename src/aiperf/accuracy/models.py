@@ -9,6 +9,7 @@ from pydantic import Field
 from typing_extensions import TypedDict
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import RecordData
 from aiperf.common.models.base_models import AIPerfBaseModel
 
@@ -166,11 +167,17 @@ class TaskAccuracyStats(AIPerfBaseModel):
     unparsed: int = Field(
         ge=0, description="Number that needed a regex fallback for this task"
     )
-    accuracy_rate: float = Field(
-        ge=0, le=1, description="passed/total for this task, 0.0 when total==0"
+    accuracy_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="passed/total for this task, None when total==0",
     )
-    unparsed_rate: float = Field(
-        ge=0, le=1, description="unparsed/total for this task, 0.0 when total==0"
+    unparsed_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="unparsed/total for this task, None when total==0",
     )
 
 
@@ -183,10 +190,11 @@ class AccuracySummary(AIPerfBaseModel):
     total_passed: int = Field(
         ge=0, description="Total responses graded correct across all tasks"
     )
-    accuracy_rate: float = Field(
+    accuracy_rate: FiniteFloat | None = Field(
+        default=None,
         ge=0,
         le=1,
-        description="total_passed/total_evaluated, 0.0 when total_evaluated==0",
+        description="total_passed/total_evaluated, None when total_evaluated==0",
     )
     overall_unparsed: int = Field(
         ge=0,

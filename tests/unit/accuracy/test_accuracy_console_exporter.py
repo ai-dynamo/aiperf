@@ -141,8 +141,8 @@ class TestAccuracyConsoleExporterExport:
         await exporter.export(console)
 
         output = buf.getvalue()
-        assert "physics" in output
-        assert "N/A" in output
+        physics_line = next(line for line in output.splitlines() if "physics" in line)
+        assert "N/A" in physics_line
 
     async def test_warns_when_all_responses_unparsed(self) -> None:
         """Smoke-test J regression: when 100% of responses fail to parse,
