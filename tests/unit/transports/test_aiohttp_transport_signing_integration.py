@@ -189,3 +189,52 @@ async def test_signed_credentials_are_redacted_out_of_the_request_record(
     assert "AKIAIOSFODNN7EXAMPLE" not in flattened
     assert "Signature=" not in flattened
     assert "FwoGZXIv" not in flattened
+
+
+class TestSignedRequestsDoNotFollowRedirects:
+    """aiohttp strips ``Authorization`` when a redirect crosses origins, but it
+    has no such rule for custom headers -- ``X-Amz-Security-Token`` would be
+    replayed to the redirect target, which is a bearer credential going somewhere
+    the user never configured (and possibly over cleartext).
+
+    Following a redirect would fail anyway: SigV4 signs the Host header, so the
+    replayed signature is invalid for the new origin. Refusing to follow loses
+    nothing and closes the leak.
+    """
+
+    @pytest.mark.asyncio
+    async def test_redirects_are_disabled_for_signed_requests(
+        self, static_aws_credentials: None
+    ) -> None:
+        transport = await _signed_transport()
+        await _send_and_capture(transport, _PAYLOAD)
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_redirects_are_disabled_on_the_cancellation_path_too(
+        self, static_aws_credentials: None
+    ) -> None:
+        """``post_request`` routes cancellable requests through a different
+        helper, so the guard has to survive that branch as well."""
+        transport = await _signed_transport()
+        request_info = create_request_info(transport.model_endpoint)
+        request_info.cancel_after_ns = 10_000_000_000
+
+        await transport.send_request(request_info, _PAYLOAD)
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_unsigned_requests_keep_following_redirects(self) -> None:
+        """No credentials on the wire, so the existing behaviour is untouched."""
+        transport = AioHttpTransport(model_endpoint=create_model_endpoint_info())
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(return_value=RequestRecord())
+
+        await _send_and_capture(transport, _PAYLOAD)
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert "allow_redirects" not in kwargs

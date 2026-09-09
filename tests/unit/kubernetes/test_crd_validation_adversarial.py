@@ -526,3 +526,19 @@ class TestSageMakerEndpointRequiresUrlsOrEndpointName:
     def test_the_same_holds_for_the_sweep_crd(self) -> None:
         endpoint = _endpoint_node(_sweep_spec_node())
         assert "urls" not in cast(list, endpoint.get("required", []))
+
+    def test_an_endpoint_name_without_a_region_is_rejected_at_admission(self) -> None:
+        """EndpointConfig rejects this combination, but only after the apiserver
+        has already accepted the resource. Mirroring it in CEL means the user
+        finds out on `kubectl apply` rather than from a failed job."""
+        for node in (
+            _endpoint_node(_job_spec_node()),
+            _endpoint_node(_sweep_spec_node()),
+        ):
+            rules = [
+                cast(dict, r)["rule"]
+                for r in cast(list, node.get("x-kubernetes-validations", []))
+            ]
+            assert any(
+                "endpointName" in rule and "awsRegion" in rule for rule in rules
+            ), f"no endpointName-requires-awsRegion rule among: {rules}"

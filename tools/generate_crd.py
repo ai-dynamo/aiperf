@@ -620,6 +620,21 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
                     "runtime URL is derived from endpoint.awsRegion)"
                 ),
             },
+            {
+                # The derived URL and the SigV4 credential scope both come from
+                # the region, so an endpoint name without one is rejected by
+                # EndpointConfig. Mirrored here so `kubectl apply` reports it
+                # instead of the resource being admitted and the job failing.
+                "rule": (
+                    "!has(self.sagemaker) || "
+                    "!has(self.sagemaker.endpointName) || "
+                    "has(self.awsRegion)"
+                ),
+                "message": (
+                    "endpoint.awsRegion is required when "
+                    "endpoint.sagemaker.endpointName is set"
+                ),
+            },
             # Tier 1B — type=template requires template.
             {
                 "rule": (

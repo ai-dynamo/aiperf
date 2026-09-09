@@ -414,6 +414,8 @@ spec:
                     - rule: has(self.urls) || (has(self.sagemaker) && has(self.sagemaker.endpointName))
                       message: endpoint.urls is required unless endpoint.sagemaker.endpointName is set (the SageMaker runtime
                         URL is derived from endpoint.awsRegion)
+                    - rule: '!has(self.sagemaker) || !has(self.sagemaker.endpointName) || has(self.awsRegion)'
+                      message: endpoint.awsRegion is required when endpoint.sagemaker.endpointName is set
                     - rule: '!has(self.type) || self.type != ''template'' || has(self.template)'
                       message: endpoint.template is required when endpoint.type='template'
                     - rule: '!has(self.template) || !has(self.type) || self.type == ''template'''
