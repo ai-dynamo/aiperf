@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/config/schema/aiperf-config.schema.json
+# @template
+# title: SPEED-Bench Per-Category Matrix in One Run
+# description: One run over all 11 qualitative SPEED-Bench categories, split per category from per-request spec-decode records.
+# category: Datasets
+# tags: speed-bench, speculative-decoding, per-request-metrics, acceptance-length
+# difficulty: beginner
+# features: aggregate dataset, per-request spec-decode metrics, records export
+#
+# SPEED-Bench Per-Category Matrix in One Run
+# ==========================================
+# The recommended SPEED-Bench workflow on vLLM. A single run over the aggregate
+# `speed_bench_qualitative` split covers all 11 categories at once: each request
+# carries its row's category into the per-request records, and each response
+# carries its own speculative-decoding acceptance, so
+# `aiperf speed-bench-report` can rebuild the per-category matrix afterwards.
+#
+# Requires vLLM started with `--per-request-spec-decode-metrics summary`
+# (or `detailed`), direct -- not behind Dynamo, which strips the field. On
+# SGLang / TensorRT-LLM / NIM-LLM, or behind Dynamo, use the
+# `speed_bench_sweep` template instead: acceptance can only be scraped from the
+# server there, which takes one run per category.
+#
+# Prepare the dataset first (see docs/tutorials/speed-bench.md):
+#   curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py \
+#       | python3 - --output_dir ./datasets/speed-bench
+#
+# Run:
+#   aiperf profile --config speed_bench_per_request.yaml
+#   aiperf speed-bench-report ./artifacts/speed_bench_per_request
+#
+# For the entropy-tier matrix at a fixed ISL, point the dataset at a throughput
+# split instead (`throughput_1k.jsonl` with format `speed_bench_throughput_1k`);
+# the report then produces low_entropy / mixed / high_entropy columns.
+
+schemaVersion: "2.0"
+
+randomSeed: 42
+
+benchmark:
+  model: ${MODEL_NAME:meta-llama/Llama-3.1-8B-Instruct}
+
+  endpoint:
+    url: ${INFERENCE_URL:http://localhost:8000/v1/chat/completions}
+    type: chat
+    streaming: true
+    timeout: 600.0
+    # Greedy decoding keeps acceptance comparable with published numbers. Drop
+    # `temperature` for reasoning models and follow the model card instead.
+    extra:
+      temperature: 0
+      max_completion_tokens: 4096
+
+  datasets:
+    - name: main
+      type: file
+      path: datasets/speed-bench/qualitative.jsonl
+      format: speed_bench_qualitative
+
+  phases:
+    - name: warmup
+      type: concurrency
+      excludeFromResults: true
+      requests: 50
+      concurrency: 8
+
+    - name: profiling
+      type: concurrency
+      # All 880 qualitative prompts (80 per category x 11 categories), each
+      # issued once so every category cell reflects per-prompt acceptance
+      # rather than random oversampling.
+      requests: 880
+      concurrency: 16
+
+  # Acceptance rides the responses, so the Prometheus scrape adds nothing here.
+  serverMetrics:
+    enabled: false
+
+  artifacts:
+    dir: ./artifacts/speed_bench_per_request
+    summary: [json]
+    # Required: the per-request trace is what carries the category labels and
+    # the acceptance records the report groups by.
+    records: [jsonl]

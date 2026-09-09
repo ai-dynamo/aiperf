@@ -212,8 +212,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
     source_kind: str | None = Field(
         default=None,
         description=(
-            "Loader-specific source classification for this request, when "
-            "provided by the dataset loader."
+            "Loader-specific label for the request's origin, when provided by "
+            "the dataset loader: the Weka reconstruction kind (weka_main, "
+            "weka_flat) or the SPEED-Bench row's benchmark category (coding, "
+            "math, low_entropy). Lets a consumer group records by their source "
+            "without re-reading the input dataset."
         ),
     )
     credit_issued_ns: int | None = Field(
@@ -894,8 +897,11 @@ class RecordContext(AIPerfBaseModel):
     source_kind: str | None = Field(
         default=None,
         description=(
-            "Loader-specific source classification for this request, when "
-            "provided by the dataset loader."
+            "Loader-specific label for the request's origin, when provided by "
+            "the dataset loader: the Weka reconstruction kind (weka_main, "
+            "weka_flat) or the SPEED-Bench row's benchmark category (coding, "
+            "math, low_entropy). Lets a consumer group records by their source "
+            "without re-reading the input dataset."
         ),
     )
     x_request_id: str = Field(
