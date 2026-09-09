@@ -225,34 +225,58 @@ class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-@lru_cache(maxsize=1)
+def _host_from_url(url: str) -> str | None:
+    """Host portion of a git remote or server URL, without scheme, user, or port."""
+    m = re.match(r"(?:[\w+.-]+://)?(?:[^@/]+@)?([^/:]+)", url.strip())
+    return m.group(1) if m else None
+
+
 def _gh_host() -> str:
     """Host owning the target repo, enterprise-aware, ``github.com`` by default."""
-    return os.environ.get("GH_HOST") or "github.com"
+    host = os.environ.get("GH_HOST")
+    if host:
+        return host
+    for url in (os.environ.get("GITHUB_SERVER_URL"), _git_remote_url()):
+        host = _host_from_url(url) if url else None
+        if host:
+            return host
+    return "github.com"
 
 
-@lru_cache(maxsize=1)
-def _api_base() -> str:
+def _api_base(host: str) -> str:
     base = os.environ.get("GITHUB_API_URL")
     if base:
         return base.rstrip("/")
-    host = _gh_host()
     return (
         "https://api.github.com" if host == "github.com" else f"https://{host}/api/v3"
     )
 
 
-@lru_cache(maxsize=1)
-def _gh_token() -> str:
+def _gh_token(host: str) -> str:
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if token:
         return token.strip()
-    return _gh("auth", "token", "--hostname", _gh_host()).strip()
+    return _gh("auth", "token", "--hostname", host).strip()
 
 
-@lru_cache(maxsize=1)
-def _log_opener() -> urllib.request.OpenerDirector:
-    return urllib.request.build_opener(_StripAuthOnRedirect)
+@dataclass(frozen=True)
+class GhContext:
+    """Per-run constants for the REST log fetch, resolved once before any request."""
+
+    api_base: str
+    repo_slug: str
+    token: str
+    opener: urllib.request.OpenerDirector
+
+
+def resolve_gh_context() -> GhContext:
+    host = _gh_host()
+    return GhContext(
+        api_base=_api_base(host),
+        repo_slug=_repo_slug(),
+        token=_gh_token(host),
+        opener=urllib.request.build_opener(_StripAuthOnRedirect),
+    )
 
 
 def _decode_log(raw: bytes, job_id: int) -> str:
@@ -266,31 +290,49 @@ def _decode_log(raw: bytes, job_id: int) -> str:
     return text
 
 
-def fetch_job_log(job_id: int) -> str:
+def fetch_job_log(job_id: int, ctx: GhContext) -> str:
     """Fetch one job's raw text log over REST rather than ``gh api``.
 
     Job logs contain ANSI escape sequences, which gh refuses to emit
     without ``--allow-escape-sequences`` (gh 2.97+); going direct keeps
     this working on whatever gh a contributor has installed.
     """
-    url = f"{_api_base()}/repos/{_repo_slug()}/actions/jobs/{job_id}/logs"
+    url = f"{ctx.api_base}/repos/{ctx.repo_slug}/actions/jobs/{job_id}/logs"
     req = urllib.request.Request(
         url,
         headers={
-            "Authorization": f"Bearer {_gh_token()}",
+            "Authorization": f"Bearer {ctx.token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
     try:
-        with _log_opener().open(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
+        with ctx.opener.open(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
             return _decode_log(resp.read(), job_id)
     except urllib.error.HTTPError as e:
-        with e:
-            detail = e.read().decode("utf-8", errors="replace").strip()
+        # The log endpoint 302s to blob storage; report whichever hop failed.
+        failed_url = e.geturl() or url
+        try:
+            with e:
+                detail = e.read().decode("utf-8", errors="replace").strip()
+        except OSError as read_err:
+            detail = f"<response body unreadable: {read_err}>"
         raise RuntimeError(
-            f"GET {url} failed: HTTP {e.code} {e.reason}: {detail}"
+            f"GET {failed_url} failed for job {job_id}: "
+            f"HTTP {e.code} {e.reason}: {detail}"
         ) from e
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise RuntimeError(f"GET {url} failed for job {job_id}: {e}") from e
+
+
+@lru_cache(maxsize=1)
+def _git_remote_url() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"], text=True
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
 
 
 @lru_cache(maxsize=1)
@@ -299,15 +341,11 @@ def _repo_slug() -> str:
     if slug:
         return slug
     # Best-effort: parse from git remote
-    try:
-        url = subprocess.check_output(
-            ["git", "config", "--get", "remote.origin.url"], text=True
-        ).strip()
+    url = _git_remote_url()
+    if url:
         m = re.search(r"[:/]([\w-]+/[\w-]+?)(?:\.git)?$", url)
         if m:
             return m.group(1)
-    except subprocess.CalledProcessError:
-        pass
     raise RuntimeError(
         "Cannot determine repo slug; set $GITHUB_REPOSITORY or run inside a git checkout."
     )
@@ -515,10 +553,23 @@ def main(argv: list[str] | None = None) -> int:
 
     runs: list[TestRun] = []
     log.info("Fetching logs for %d shards...", len(jobs))
-    _gh_token()  # resolve once up front so the pool never races on the fallback
+    ctx = resolve_gh_context()
+
+    def _fetch(job: tuple[int, str]) -> str | None:
+        job_id, job_name = job
+        log.info("Fetching log for shard %s (job %d)...", job_name, job_id)
+        try:
+            return fetch_job_log(job_id, ctx)
+        except (RuntimeError, OSError) as e:
+            # Informational report: one unreachable shard must not discard the rest.
+            log.warning("Skipping shard %s (job %d): %s", job_name, job_id, e)
+            return None
+
     with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
-        logs = list(pool.map(lambda job: fetch_job_log(job[0]), jobs))
+        logs = list(pool.map(_fetch, jobs))
     for (job_id, job_name), log_text in zip(jobs, logs, strict=True):
+        if log_text is None:
+            continue
         log.info("Parsing log for shard %s (job %d)...", job_name, job_id)
         runs.extend(parse_shard_log(log_text, job_id=job_id, job_name=job_name))
 
