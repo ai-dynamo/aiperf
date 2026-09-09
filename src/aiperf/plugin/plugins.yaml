@@ -908,7 +908,8 @@ custom_dataset_loader:
       Code sessions with preserved per-request hash_ids, timing, and subagent
       topology. Input is either a single trace JSON file or a directory of
       per-conversation JSON files. Subagent entries spawn concurrent child
-      sessions via SPAWN + SPAWN_JOIN prerequisites.
+      sessions via SPAWN + SPAWN_JOIN prerequisites. Nested timestamps support
+      corpus-wide auto detection or explicit absolute/relative interpretation.
       Usage: --custom-dataset-type weka_trace --input-file path/to/traces/
     metadata:
       is_trace: true

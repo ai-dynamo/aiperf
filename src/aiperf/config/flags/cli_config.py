@@ -642,6 +642,20 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"],
+        Field(
+            description="Interpretation of timestamps inside Weka subagent entries. "
+            "'absolute' treats them as root-trace timestamps, 'relative' adds the "
+            "subagent marker timestamp, and 'auto' scans the entire corpus and "
+            "rejects mixed or inconclusive conventions.",
+        ),
+        CLIParameter(
+            name=("--weka-nested-timestamp-basis",),
+            group=Groups.INPUT,
+        ),
+    ] = "auto"
+
     dataset_filters: Annotated[
         list[str],
         Field(

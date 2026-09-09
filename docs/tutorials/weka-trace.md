@@ -18,9 +18,22 @@ Each trace file is a single JSON object describing one coding conversation:
 - `requests` is an ordered list of normal API calls (`type: "n"`), streaming API calls (`type: "s"`), and subagent markers (`type: "subagent"`).
 - Each normal/streaming request carries `hash_ids` (KV-cache block identifiers) used to simulate cache reuse during replay.
 - Subagent markers point at nested sub-conversations — AIPerf replays them as separate concurrent child sessions that the parent waits on before resuming.
-- Every `t`, including an inner request's `t` inside a subagent marker, is an
-  absolute trace-relative timestamp. AIPerf rejects an inner request that starts
-  before its marker instead of guessing that its timestamp is marker-relative.
+- Weka producers use two nested timestamp conventions. Raw
+  `kv-cache-tester` traces store subagent request `t` values relative to the
+  subagent marker, while SemiAnalysis-published AgentX traces store them as
+  absolute root-trace timestamps. AIPerf resolves one convention for the whole
+  input corpus and canonicalizes every nested request to root-absolute time
+  before reconstruction.
+
+The default `--weka-nested-timestamp-basis auto` scans every trace before any
+conversation is emitted. A first nested request at the marker is evidence for
+`absolute`; one at zero is evidence for `relative`. Mixed decisive evidence is
+rejected, and a corpus whose values cannot distinguish the two interpretations
+must use `--weka-nested-timestamp-basis absolute` or `relative`. AIPerf logs one
+INFO summary naming the resolved basis and the number of traces, subagents, and
+inner requests validated. In explicit `absolute` mode, an inner request more
+than one microsecond before its marker is rejected; smaller floating-point
+jitter is clamped to the marker so replay never starts a child before spawn.
 
 AIPerf maps the format directly onto its DAG datastructure:
 
@@ -40,6 +53,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --input-file artifacts/kv-cache-tester/traces/ \
+    --weka-nested-timestamp-basis auto \
     --fixed-schedule
 ```
 
