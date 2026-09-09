@@ -16,7 +16,6 @@ Both pin merge decisions that a future refactor could silently undo:
   ``build_headers`` would leave them out and the server would reject them.
 """
 
-import datetime
 import re
 from unittest.mock import AsyncMock
 
@@ -33,8 +32,6 @@ from aiperf.transports.aiohttp_transport import AioHttpTransport
 from tests.unit.transports.conftest import create_model_endpoint_info
 from tests.unit.transports.test_aiohttp_transport import create_request_info
 
-_FROZEN = datetime.datetime(2026, 9, 8, 12, 0, 0, tzinfo=datetime.UTC)
-
 _PAYLOAD: dict[str, object] = {
     "model": "test-model",
     "messages": [{"role": "user", "content": "Hi"}],
@@ -43,26 +40,21 @@ _PAYLOAD: dict[str, object] = {
 
 @pytest.fixture
 def static_aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the credential chain and the clock so signatures are reproducible."""
+    """Pin the credential chain so signing is deterministic apart from the clock.
+
+    Deliberately does NOT freeze time. Doing so would mean patching a botocore
+    internal, and the accessor moved: ``botocore.auth.get_current_datetime``
+    only exists from 1.40.2, while this extra's floor is 1.34.0 because nothing
+    in production needs anything newer. The tests below assert on the bytes
+    handed to the signer instead of on the resulting signature, which is both
+    the property actually under test and clock-independent.
+    """
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
     monkeypatch.setenv(
         "AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     )
     monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
     monkeypatch.delenv("AWS_PROFILE", raising=False)
-    # SigV4 mixes a timestamp into the signature; freeze it so two signatures
-    # taken moments apart are comparable. The symbol is botocore's consolidated
-    # clock accessor, present since the 1.34.0 floor declared in pyproject.
-    # Assert rather than skip: silently not freezing would make
-    # test_pre_encoded_bytes_sign_identically_to_the_equivalent_dict flaky
-    # instead of failing, and that test is a regression guard worth keeping loud.
-    import botocore.auth
-
-    assert hasattr(botocore.auth, "get_current_datetime"), (
-        "botocore.auth.get_current_datetime is missing; the aws extra's "
-        "botocore floor (>=1.34.0) no longer matches what these tests patch."
-    )
-    monkeypatch.setattr("botocore.auth.get_current_datetime", lambda: _FROZEN)
 
 
 async def _signed_transport() -> AioHttpTransport:
@@ -94,38 +86,61 @@ def _signed_headers(authorization: str) -> list[str]:
     return match.group(1).split(";")
 
 
+async def _signed_body(transport: AioHttpTransport, payload: object) -> bytes:
+    """Return the exact bytes the signer hashed for one request.
+
+    Spies on the real signer rather than patching it: what SigV4 hashes has to
+    be the same bytes that go on the wire, and asserting on the resulting
+    signature instead would only prove that indirectly -- while dragging in a
+    dependency on freezing botocore's clock.
+    """
+    real_sign = transport.request_signer.sign
+    hashed: list[bytes | None] = []
+
+    async def spy(method, url, headers, body):
+        hashed.append(body)
+        return await real_sign(method, url, headers, body)
+
+    transport.request_signer.sign = spy
+    wire_body, _ = await _send_and_capture(transport, payload)
+
+    assert len(hashed) == 1, f"expected exactly one signing call, got {len(hashed)}"
+    # The bytes signed and the bytes sent must be the same object-equal value;
+    # signing a body that is later re-encoded is the exact bug this guards.
+    assert hashed[0] == wire_body
+    return wire_body
+
+
 @pytest.mark.asyncio
-async def test_pre_encoded_bytes_sign_identically_to_the_equivalent_dict(
+async def test_pre_encoded_bytes_are_signed_as_the_exact_wire_bytes(
     static_aws_credentials: None,
 ) -> None:
-    """The PAYLOAD_BYTES fast path must produce the same signature as the dict
-    it was encoded from -- proving the body is signed after encoding, verbatim."""
-    dict_transport = await _signed_transport()
-    dict_body, dict_headers = await _send_and_capture(dict_transport, _PAYLOAD)
+    """The PAYLOAD_BYTES fast path must hash the same bytes as the dict it was
+    encoded from, which is what proves signing happens after the body is final.
 
-    bytes_transport = await _signed_transport()
+    Signing before that branch resolves raises TypeError on a bytes payload;
+    signing a re-encoded body would hash something the server never receives.
+    """
     pre_encoded = orjson.dumps(_PAYLOAD)
-    bytes_body, bytes_headers = await _send_and_capture(bytes_transport, pre_encoded)
 
-    # The pre-encoded bytes reach the wire untouched...
-    assert bytes_body == pre_encoded
+    dict_body = await _signed_body(await _signed_transport(), _PAYLOAD)
+    bytes_body = await _signed_body(await _signed_transport(), pre_encoded)
+
     assert dict_body == pre_encoded
-    # ...and hash to the same signature as the dict form.
-    assert bytes_headers["Authorization"] == dict_headers["Authorization"]
-    assert "Signature=" in bytes_headers["Authorization"]
+    assert bytes_body == pre_encoded
 
 
 @pytest.mark.asyncio
-async def test_a_different_body_yields_a_different_signature(
+async def test_the_signed_request_carries_a_signature(
     static_aws_credentials: None,
 ) -> None:
-    """Guards the test above: identical signatures must mean the body was
-    actually hashed, not that signing ignores the body entirely."""
+    """Guards the test above: hashing the right bytes is only meaningful if the
+    request is actually signed."""
     transport = await _signed_transport()
-    _, headers_a = await _send_and_capture(transport, _PAYLOAD)
-    _, headers_b = await _send_and_capture(transport, {**_PAYLOAD, "model": "other"})
+    _, headers = await _send_and_capture(transport, _PAYLOAD)
 
-    assert headers_a["Authorization"] != headers_b["Authorization"]
+    assert headers["Authorization"].startswith("AWS4-HMAC-SHA256 ")
+    assert "Signature=" in headers["Authorization"]
 
 
 @pytest.mark.asyncio
