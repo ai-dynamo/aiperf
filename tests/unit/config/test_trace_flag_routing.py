@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from pytest import param
 
+from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
@@ -19,6 +20,7 @@ from aiperf.config.flags.resolver import (
     resolve_config,
 )
 from aiperf.config.loader.errors import ConfigurationError
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
 
 _WEKA_HF = PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
@@ -49,6 +51,90 @@ def _public_cli(**extra: object) -> CLIConfig:
         public_dataset=_WEKA_HF,
         **extra,
     )
+
+
+class TestWekaTimestampConfigRoundTrip:
+    @pytest.mark.parametrize("format", ["single_turn", "multi_turn", "mooncake_trace"])
+    def test_non_weka_file_round_trip(self, trace_jsonl: Path, format: str) -> None:
+        dataset = FileDataset(
+            type="file", name="default", path=trace_jsonl, format=format
+        )
+        dumped = dataset.model_dump(mode="json", exclude_none=True)
+        assert "weka_nested_timestamp_basis" not in dumped
+        assert FileDataset.model_validate(dumped).weka_nested_timestamp_basis is None
+        assert (
+            FileDataset.model_validate(dataset.model_dump()).weka_nested_timestamp_basis
+            is None
+        )
+
+    @pytest.mark.parametrize("source", ["file", "public"])
+    def test_non_weka_benchmark_run_round_trip(
+        self, trace_jsonl: Path, source: str, tmp_path: Path
+    ) -> None:
+        cli = (
+            _file_cli(trace_jsonl, custom_dataset_type=CustomDatasetType.MULTI_TURN)
+            if source == "file"
+            else CLIConfig(
+                model_names=["test-model"], public_dataset=PublicDatasetType.SHAREGPT
+            )
+        )
+        run = BenchmarkRun(
+            benchmark_id="weka-config-roundtrip",
+            cfg=convert_cli_to_aiperf(cli).benchmark,
+            artifact_dir=tmp_path,
+        )
+        restored = BenchmarkRun.model_validate(
+            run.model_dump(mode="json", exclude_none=True)
+        )
+        assert restored.cfg.datasets[0].weka_nested_timestamp_basis is None
+
+    @pytest.mark.parametrize("basis", ["auto", "absolute", "relative"])
+    @pytest.mark.parametrize("source", ["file", "public"])
+    def test_weka_basis_survives_round_trip(
+        self, trace_jsonl: Path, basis: str, source: str
+    ) -> None:
+        dataset = (
+            FileDataset(
+                type="file",
+                name="default",
+                path=trace_jsonl,
+                format="weka_trace",
+                weka_nested_timestamp_basis=basis,
+            )
+            if source == "file"
+            else PublicDataset(
+                type="public",
+                name="default",
+                dataset=_WEKA_HF,
+                weka_nested_timestamp_basis=basis,
+            )
+        )
+        restored = type(dataset).model_validate(
+            dataset.model_dump(mode="json", exclude_none=True)
+        )
+        assert restored.weka_nested_timestamp_basis == basis
+
+    @pytest.mark.parametrize("basis", ["auto", "absolute", "relative"])
+    @pytest.mark.parametrize("source", ["file", "public"])
+    def test_explicit_weka_basis_rejected_for_known_non_weka(
+        self, trace_jsonl: Path, basis: str, source: str
+    ) -> None:
+        with pytest.raises(ValueError, match="weka-nested-timestamp-basis"):
+            if source == "file":
+                FileDataset(
+                    type="file",
+                    name="default",
+                    path=trace_jsonl,
+                    format="multi_turn",
+                    weka_nested_timestamp_basis=basis,
+                )
+            else:
+                PublicDataset(
+                    type="public",
+                    name="default",
+                    dataset=PublicDatasetType.SHAREGPT,
+                    weka_nested_timestamp_basis=basis,
+                )
 
 
 class TestPromptCorpusRouting:

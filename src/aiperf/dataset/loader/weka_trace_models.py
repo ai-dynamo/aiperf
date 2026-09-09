@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, PrivateAttr
 
 from aiperf.common.models import AIPerfBaseModel
 
@@ -145,6 +145,8 @@ class WekaTrace(AIPerfBaseModel):
     """A single Weka trace file."""
 
     model_config = ConfigDict(extra="forbid")
+
+    _weka_timestamp_resolution: Any = PrivateAttr(default=None)
 
     id: str = Field(description="Trace identifier (session ID).")
     models: list[str] = Field(description="Models used in the trace.")

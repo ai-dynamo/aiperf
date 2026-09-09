@@ -45,7 +45,6 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
-    from aiperf.dataset.loader.weka_trace import _WekaTimestampResolution
 
 
 class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
@@ -114,11 +113,9 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._validate_rows, ds)
 
-    def _load_all_traces(
-        self, ds: Any, total_rows: int
-    ) -> tuple[dict[str, list[WekaTrace]], _WekaTimestampResolution]:
+    def _load_all_traces(self, ds: Any, total_rows: int) -> dict[str, list[WekaTrace]]:
         """Validate and timestamp-canonicalize every HF row before selection."""
-        self.info(f"Loading all {total_rows} traces")
+        self.info(f"Preflighting all {total_rows} traces before selection")
         out: dict[str, list[WekaTrace]] = {}
         source_by_trace: dict[str, str] = {}
         for i, row in enumerate(ds):
@@ -136,10 +133,10 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
                 )
             out[trace.id] = [trace]
             source_by_trace[trace.id] = f"row {i} of {self.hf_dataset_name}"
-        normalized, resolution = self._weka.preflight_nested_timestamps(
+        normalized, _ = self._weka.preflight_nested_timestamps(
             out, source_by_trace=source_by_trace
         )
-        return normalized, resolution
+        return normalized
 
     def _validate_rows(self, ds: Any) -> dict[str, list[WekaTrace]]:
         """Validate HF rows with filter-then-cap selection.
@@ -170,9 +167,8 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         synthesis = getattr(dataset, "synthesis", None)
         max_osl = getattr(synthesis, "max_osl", None) if synthesis else None
 
-        all_traces, timestamp_resolution = self._load_all_traces(ds, total_rows)
+        all_traces = self._load_all_traces(ds, total_rows)
         if num_entries is None and max_ctx is None:
-            self._weka.mark_timestamps_preflighted(all_traces, timestamp_resolution)
             return all_traces
 
         def _candidates() -> Any:
@@ -205,7 +201,6 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         out = {}
         for trace_id, trace in kept_pairs:
             out[trace_id] = [trace]
-        self._weka.mark_timestamps_preflighted(out, timestamp_resolution)
         self.info(
             f"Loaded {len(out)}/{total_rows} eligible traces "
             f"(filter-then-cap; --num-dataset-entries={num_entries}, "

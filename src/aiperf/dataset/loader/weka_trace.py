@@ -104,6 +104,7 @@ class _WekaTimestampResolution:
     subagent_count: int
     inner_request_count: int
     clamped_request_count: int
+    heuristic_evidence_count: int = 0
     warning: str | None = None
 
 
@@ -122,11 +123,13 @@ def _validate_weka_timestamp(value: float, *, location: str, field: str) -> None
 
 @dataclass
 class _WekaTimestampScan:
-    absolute_evidence: list[str] = field(default_factory=list)
-    relative_evidence: list[str] = field(default_factory=list)
-    entries: list[tuple[str, WekaSubagentEntry]] = field(default_factory=list)
+    first_absolute_evidence: str | None = None
+    first_relative_evidence: str | None = None
+    relative_evidence_count: int = 0
+    subagent_count: int = 0
     trace_count: int = 0
     inner_request_count: int = 0
+    all_populated_markers_zero: bool = True
 
 
 def _scan_weka_trace_timestamps(
@@ -150,7 +153,9 @@ def _scan_weka_trace_timestamps(
             location=location,
             field=f"subagent '{request.agent_id}' marker t",
         )
-        scan.entries.append((trace_id, request))
+        scan.subagent_count += 1
+        if request.requests and request.t != 0.0:
+            scan.all_populated_markers_zero = False
         for inner_idx, inner in enumerate(request.requests):
             _validate_weka_timestamp(
                 inner.t,
@@ -158,51 +163,38 @@ def _scan_weka_trace_timestamps(
                 field=f"subagent '{request.agent_id}' inner request[{inner_idx}].t",
             )
             scan.inner_request_count += 1
+            if inner.t < request.t - _JOIN_EPSILON_SECONDS:
+                scan.relative_evidence_count += 1
+                if scan.first_relative_evidence is None:
+                    scan.first_relative_evidence = (
+                        f"{location}, subagent '{request.agent_id}', inner "
+                        f"request[{inner_idx}] (marker={request.t}, inner={inner.t})"
+                    )
         if not request.requests:
             continue
         first_t = request.requests[0].t
         looks_absolute = abs(first_t - request.t) <= _JOIN_EPSILON_SECONDS
-        looks_relative = abs(first_t) <= _JOIN_EPSILON_SECONDS
         evidence = (
             f"{location}, subagent '{request.agent_id}' "
             f"(marker={request.t}, first_inner={first_t})"
         )
-        if looks_absolute and not looks_relative:
-            scan.absolute_evidence.append(evidence)
-        elif looks_relative and not looks_absolute:
-            scan.relative_evidence.append(evidence)
+        if (
+            looks_absolute
+            and request.t > _JOIN_EPSILON_SECONDS
+            and scan.first_absolute_evidence is None
+        ):
+            scan.first_absolute_evidence = evidence
 
 
-def _infer_weka_timestamp_basis(
-    scan: _WekaTimestampScan, source_by_trace: dict[str, str]
-) -> tuple[str, str]:
-    """Infer one basis from decisive corpus-wide anchor evidence."""
-    if scan.absolute_evidence and scan.relative_evidence:
-        raise DatasetLoaderError(
-            "Weka corpus mixes decisive nested timestamp conventions; "
-            f"absolute evidence: {scan.absolute_evidence[0]}; relative evidence: "
-            f"{scan.relative_evidence[0]}. Set one convention for the whole corpus."
-        )
-    if scan.absolute_evidence:
-        return "absolute", "inferred"
-    if scan.relative_evidence:
-        return "relative", "inferred"
-    if not scan.entries or scan.inner_request_count == 0:
+def _infer_weka_timestamp_basis(scan: _WekaTimestampScan) -> tuple[str, str]:
+    """Apply the Weka corpus heuristic selected for auto mode."""
+    if scan.relative_evidence_count:
+        return "relative", "auto_heuristic"
+    if scan.subagent_count == 0 or scan.inner_request_count == 0:
         return "absolute", "not_applicable"
-    if all(entry.t == 0.0 for _, entry in scan.entries if entry.requests):
+    if scan.all_populated_markers_zero:
         return "absolute", "ambiguous_but_equivalent"
-    trace_id, entry = next(
-        (trace_id, entry)
-        for trace_id, entry in scan.entries
-        if entry.requests and entry.t != 0.0
-    )
-    location = _weka_trace_location(trace_id, source_by_trace)
-    raise DatasetLoaderError(
-        "Could not infer one Weka nested timestamp basis for the whole "
-        f"corpus from {location}, subagent '{entry.agent_id}' "
-        f"(marker={entry.t}, first_inner={entry.requests[0].t}). "
-        "Specify --weka-nested-timestamp-basis absolute or relative."
-    )
+    return "absolute", "auto_heuristic"
 
 
 def _canonicalize_weka_subagent(
@@ -211,10 +203,11 @@ def _canonicalize_weka_subagent(
     """Canonicalize one subagent's requests to root-absolute time."""
     inner_requests: list[_NormalRequestT] = []
     clamped = 0
+    changed = False
     for inner_idx, inner in enumerate(request.requests):
         canonical_t = inner.t
         if basis == "absolute":
-            if inner.t + _JOIN_EPSILON_SECONDS < request.t:
+            if inner.t < request.t - _JOIN_EPSILON_SECONDS:
                 raise DatasetLoaderError(
                     f"{location}, subagent '{request.agent_id}': inner "
                     f"request[{inner_idx}] timestamp {inner.t} precedes its marker "
@@ -222,7 +215,7 @@ def _canonicalize_weka_subagent(
                 )
             canonical_t = max(inner.t, request.t)
             clamped += canonical_t != inner.t
-        else:
+        elif basis == "relative":
             canonical_t = request.t + inner.t
             _validate_weka_timestamp(
                 canonical_t,
@@ -232,12 +225,17 @@ def _canonicalize_weka_subagent(
                     f"{request.t}"
                 ),
             )
-        inner_requests.append(
-            inner
-            if canonical_t == inner.t
-            else inner.model_copy(update={"t": canonical_t})
-        )
-    return request.model_copy(update={"requests": inner_requests}), clamped
+        else:
+            raise ValueError(f"Unsupported Weka nested timestamp basis: {basis!r}")
+        if canonical_t == inner.t:
+            inner_requests.append(inner)
+        else:
+            inner_requests.append(inner.model_copy(update={"t": canonical_t}))
+            changed = True
+    canonical = (
+        request.model_copy(update={"requests": inner_requests}) if changed else request
+    )
+    return canonical, clamped
 
 
 def _canonicalize_weka_trace(
@@ -246,6 +244,7 @@ def _canonicalize_weka_trace(
     """Canonicalize every nested request in one validated trace."""
     outer: list[_NormalRequestT | WekaSubagentEntry] = []
     clamped = 0
+    changed = False
     for request in trace.requests:
         if isinstance(request, WekaNormalRequest | WekaStreamingRequest):
             outer.append(request)
@@ -255,7 +254,11 @@ def _canonicalize_weka_trace(
         )
         outer.append(canonical)
         clamped += entry_clamped
-    return trace.model_copy(update={"requests": outer}), clamped
+        changed |= canonical is not request
+    canonical_trace = (
+        trace.model_copy(update={"requests": outer}) if changed else trace.model_copy()
+    )
+    return canonical_trace, clamped
 
 
 def _canonicalize_weka_nested_timestamps(
@@ -265,6 +268,11 @@ def _canonicalize_weka_nested_timestamps(
     source_by_trace: dict[str, str],
 ) -> tuple[dict[str, list[WekaTrace]], _WekaTimestampResolution]:
     """Resolve one nested timestamp basis for the corpus and emit absolute time."""
+    if configured_basis not in {"auto", "absolute", "relative"}:
+        raise ValueError(
+            "configured_basis must be 'auto', 'absolute', or 'relative'; "
+            f"got {configured_basis!r}"
+        )
     scan = _WekaTimestampScan()
     for trace_id, traces in data.items():
         for trace in traces:
@@ -272,15 +280,15 @@ def _canonicalize_weka_nested_timestamps(
                 trace_id, trace, source_by_trace=source_by_trace, scan=scan
             )
     basis, reason = (
-        _infer_weka_timestamp_basis(scan, source_by_trace)
+        _infer_weka_timestamp_basis(scan)
         if configured_basis == "auto"
         else (configured_basis, "configured")
     )
     warning = None
-    if configured_basis == "relative" and scan.absolute_evidence:
+    if configured_basis == "relative" and scan.first_absolute_evidence is not None:
         warning = (
             "Configured relative Weka timestamps conflict with absolute-looking "
-            f"anchor evidence at {scan.absolute_evidence[0]}; honoring the explicit "
+            f"anchor evidence at {scan.first_absolute_evidence}; honoring the explicit "
             "corpus-wide setting because timestamp values cannot prove their basis."
         )
     normalized: dict[str, list[WekaTrace]] = {}
@@ -294,15 +302,42 @@ def _canonicalize_weka_nested_timestamps(
             )
             normalized[trace_id].append(canonical)
             clamped += trace_clamped
-    return normalized, _WekaTimestampResolution(
+    resolution = _WekaTimestampResolution(
         basis=basis,
         reason=reason,
         trace_count=scan.trace_count,
-        subagent_count=len(scan.entries),
+        subagent_count=scan.subagent_count,
         inner_request_count=scan.inner_request_count,
         clamped_request_count=clamped,
+        heuristic_evidence_count=scan.relative_evidence_count,
         warning=warning,
     )
+    for traces in normalized.values():
+        for trace in traces:
+            trace._weka_timestamp_resolution = resolution
+    return normalized, resolution
+
+
+def _read_preflighted_timestamp_resolution(
+    data: dict[str, list[WekaTrace]],
+) -> _WekaTimestampResolution | None:
+    """Recover canonicalization metadata without relying on container identity."""
+    resolutions = [
+        trace._weka_timestamp_resolution for traces in data.values() for trace in traces
+    ]
+    if not resolutions or all(resolution is None for resolution in resolutions):
+        return None
+    if any(resolution is None for resolution in resolutions):
+        raise DatasetLoaderError(
+            "Weka corpus mixes raw and already-canonicalized traces; provide one "
+            "consistent corpus boundary"
+        )
+    first = resolutions[0]
+    if any(resolution != first for resolution in resolutions[1:]):
+        raise DatasetLoaderError(
+            "Weka corpus combines traces canonicalized by different preflight runs"
+        )
+    return first
 
 
 def _request_end_seconds(start_seconds: float, api_time: float | None) -> float:
@@ -1134,9 +1169,6 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._path = Path(filename) if filename is not None else None
         self.prompt_generator = prompt_generator
         self._source_by_trace: dict[str, str] = {}
-        self._preflighted_timestamp_corpus: (
-            tuple[dict[str, list[WekaTrace]], _WekaTimestampResolution] | None
-        ) = None
 
         # Resolve all config reads off the v2 BenchmarkRun once at construction
         # so the (large) reconstruction body references plain instance
@@ -1146,9 +1178,19 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         # FixedSchedulePhase entries.
         cfg = self.run.cfg
         dataset = cfg.get_default_dataset()
-        self._weka_nested_timestamp_basis = nested_timestamp_basis or getattr(
-            dataset, "weka_nested_timestamp_basis", "auto"
+        configured_basis = (
+            nested_timestamp_basis
+            if nested_timestamp_basis is not None
+            else getattr(dataset, "weka_nested_timestamp_basis", None)
         )
+        self._weka_nested_timestamp_basis = (
+            "auto" if configured_basis is None else configured_basis
+        )
+        if self._weka_nested_timestamp_basis not in {"auto", "absolute", "relative"}:
+            raise ValueError(
+                "nested_timestamp_basis must be 'auto', 'absolute', or 'relative'; "
+                f"got {self._weka_nested_timestamp_basis!r}"
+            )
         tokenizer_cfg = cfg.tokenizer
         model_names = cfg.get_model_names()
         synthesis = getattr(dataset, "synthesis", None)
@@ -1840,11 +1882,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         """
         self._delay_cap_tracker.reset()
 
-        preflighted = self._preflighted_timestamp_corpus
-        if preflighted is None or data is not preflighted[0]:
-            data, timestamp_resolution = self.preflight_nested_timestamps(data)
-        else:
-            timestamp_resolution = preflighted[1]
+        data, timestamp_resolution = self.preflight_nested_timestamps(data)
         self._log_timestamp_resolution(timestamp_resolution)
 
         # Track subagents whose branch was dropped during the second pass;
@@ -1990,6 +2028,9 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         source_by_trace: dict[str, str] | None = None,
     ) -> tuple[dict[str, list[WekaTrace]], _WekaTimestampResolution]:
         """Resolve and canonicalize one timestamp basis before corpus selection."""
+        preflighted = _read_preflighted_timestamp_resolution(data)
+        if preflighted is not None:
+            return data, preflighted
         if source_by_trace is not None:
             self._source_by_trace = source_by_trace
         elif not self._source_by_trace:
@@ -2005,22 +2046,43 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             source_by_trace=self._source_by_trace,
         )
 
-    def mark_timestamps_preflighted(
-        self,
-        data: dict[str, list[WekaTrace]],
-        resolution: _WekaTimestampResolution,
-    ) -> None:
-        """Carry a public-loader preflight result into delegated reconstruction."""
-        self._preflighted_timestamp_corpus = (data, resolution)
-
     def _log_timestamp_resolution(
         self, timestamp_resolution: _WekaTimestampResolution
     ) -> None:
         """Emit one auditable corpus-level timestamp interpretation summary."""
+        if timestamp_resolution.reason == "auto_heuristic":
+            evidence = timestamp_resolution.heuristic_evidence_count
+            if timestamp_resolution.basis == "relative":
+                decision = (
+                    f"auto heuristic found {evidence} nested request(s) with "
+                    "inner.t < marker.t - 1e-6 and selected relative for the "
+                    "whole corpus"
+                )
+            else:
+                decision = (
+                    "auto heuristic found no nested request with "
+                    "inner.t < marker.t - 1e-6 and selected absolute for the "
+                    "whole corpus"
+                )
+            decision += (
+                "; this heuristic is not proof of the producer format and cannot "
+                "reliably detect mixed producer conventions"
+            )
+        elif timestamp_resolution.reason == "ambiguous_but_equivalent":
+            decision = (
+                "auto selected absolute because every populated subagent marker is "
+                "zero, where relative and absolute interpretations are equivalent"
+            )
+        elif timestamp_resolution.reason == "not_applicable":
+            decision = (
+                "timestamp basis is not applicable because no nested requests exist"
+            )
+        else:
+            decision = "basis was explicitly configured"
         self.info(
             "Weka nested timestamp basis "
             f"{timestamp_resolution.basis!r} "
-            f"({timestamp_resolution.reason}); validated "
+            f"({decision}); validated "
             f"{timestamp_resolution.trace_count} trace(s), "
             f"{timestamp_resolution.subagent_count} subagent(s), and "
             f"{timestamp_resolution.inner_request_count} inner request(s); "
