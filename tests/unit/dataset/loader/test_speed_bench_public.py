@@ -893,3 +893,118 @@ class TestAllowlistMatchesThePublishedDataset:
             f"{sorted(found - _ALLOWED_SOURCE_HOSTS)}. Resolution rejects every "
             f"affected config until they are added or the fetch is rerouted."
         )
+
+
+class TestEmptyCacheNamesTheRealCause:
+    """A message that blames the wrong filter sends users to the wrong fix.
+
+    The zero-row case previously read "from 0 rows: every row's messages were
+    empty", which asserts something about rows that do not exist.
+    """
+
+    def _loader(self, path):
+        loader = SpeedBenchPublicLoader.__new__(SpeedBenchPublicLoader)
+        loader.config = "qualitative"
+        loader.category = None
+        loader.multi_turn = False
+        return loader
+
+    @pytest.mark.asyncio
+    async def test_no_rows_at_all_says_so(self, tmp_path) -> None:
+        path = tmp_path / "qualitative.jsonl"
+        path.write_text("", encoding="utf-8")
+
+        with patch.object(
+            SpeedBenchPublicLoader, "cache_path_for", staticmethod(lambda c: path)
+        ):
+            loader = self._loader(path)
+            with pytest.raises(DatasetLoaderError, match="holds no rows at all"):
+                await loader.convert_to_conversations(await loader.load_dataset())
+
+    @pytest.mark.asyncio
+    async def test_blank_rows_report_their_count(self, tmp_path) -> None:
+        path = tmp_path / "qualitative.jsonl"
+        path.write_text(
+            "\n".join(
+                orjson.dumps(
+                    {
+                        "question_id": "a" * 32,
+                        "category": "coding",
+                        "messages": [{"role": "user", "content": " "}],
+                    }
+                ).decode()
+                for _ in range(3)
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.object(
+            SpeedBenchPublicLoader, "cache_path_for", staticmethod(lambda c: path)
+        ):
+            loader = self._loader(path)
+            with pytest.raises(DatasetLoaderError, match="every one of its 3 rows"):
+                await loader.convert_to_conversations(await loader.load_dataset())
+
+
+@pytest.mark.network
+class TestRegisteredEntriesMatchThePublishedDataset:
+    """Every registered selector must actually address rows that exist.
+
+    `plugins.yaml` declares an `hf_subset` and `category` per entry and
+    advertises a row count in its description. Nothing offline can confirm the
+    pair resolves to anything: a renamed upstream category yields zero rows and
+    a re-split yields silently fewer. Resolution preserves row count -- it only
+    fills in prompt text -- so the raw dataset is enough to check this, and
+    reading it costs one small parquet per config.
+    """
+
+    def _expected(self, hf_subset: str, category: str | None) -> int:
+        if hf_subset == "qualitative":
+            return 880 if category is None else 80
+        return 1536 if category is None else 512
+
+    def test_every_entry_yields_its_documented_row_count(self) -> None:
+        import collections
+
+        datasets = pytest.importorskip("datasets")
+
+        from aiperf.dataset.loader.speed_bench_public import SPEED_BENCH_REVISION
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        entries = [
+            (entry.name, plugins.get_public_dataset_loader_metadata(entry.name))
+            for entry, _ in plugins.iter_all(PluginType.PUBLIC_DATASET_LOADER)
+            if entry.name.startswith("speed_bench")
+        ]
+        assert entries, "no SPEED-Bench public dataset entries are registered"
+
+        counts: dict[str, collections.Counter] = {}
+        mismatches = []
+        for name, metadata in sorted(entries):
+            if metadata.hf_subset not in counts:
+                try:
+                    rows = datasets.load_dataset(
+                        "nvidia/SPEED-Bench",
+                        metadata.hf_subset,
+                        split="test",
+                        revision=SPEED_BENCH_REVISION,
+                    )
+                except Exception as e:
+                    pytest.skip(f"SPEED-Bench unreachable: {e}")
+                counts[metadata.hf_subset] = collections.Counter(rows["category"])
+
+            tally = counts[metadata.hf_subset]
+            actual = (
+                sum(tally.values())
+                if metadata.category is None
+                else tally[metadata.category]
+            )
+            expected = self._expected(metadata.hf_subset, metadata.category)
+            if actual != expected:
+                mismatches.append(f"{name}: {actual} rows, expected {expected}")
+
+        assert not mismatches, (
+            "Registered SPEED-Bench entries no longer match the published "
+            "dataset:\n  " + "\n  ".join(mismatches)
+        )

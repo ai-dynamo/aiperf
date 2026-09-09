@@ -548,10 +548,14 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
                     f"exists in this split -- the qualitative and throughput "
                     f"splits have different category names."
                 )
+            cause = (
+                "the cache file holds no rows at all"
+                if total == 0
+                else f"every one of its {total} rows had empty or whitespace messages"
+            )
             raise DatasetLoaderError(
                 f"SPEED-Bench config {self.config!r} produced no usable "
-                f"conversations from {total} rows: every row's messages were "
-                f"empty or whitespace. The cached resolution at "
+                f"conversations: {cause}. The cached resolution at "
                 f"{self.cache_path_for(self.config)} is corrupt -- delete it and "
                 f"re-run to resolve the dataset again."
             )
