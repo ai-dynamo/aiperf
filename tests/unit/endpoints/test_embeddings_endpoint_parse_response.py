@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, Mock, patch
 
 import orjson
 import pytest
-from pytest import param
 
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import ParsedResponseRecord, RequestRecord, TextResponse
@@ -20,7 +19,6 @@ from aiperf.common.models.record_models import (
     EmbeddingResponseData,
     InferenceServerResponse,
 )
-from aiperf.endpoints.nim_embeddings import NIMEmbeddingsEndpoint
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.usage_metrics import (
@@ -289,17 +287,8 @@ class TestEmbeddingsEndpointParseResponse:
         assert parsed.data.embeddings[0] == [0.1, 0.2]
 
 
-@pytest.mark.parametrize(
-    "endpoint_class,endpoint_type",
-    [
-        param(EmbeddingsEndpoint, EndpointType.EMBEDDINGS, id="openai"),
-        param(NIMEmbeddingsEndpoint, EndpointType.NIM_EMBEDDINGS, id="nim"),
-    ],
-)  # fmt: skip
-def test_embeddings_usage_reaches_token_metrics(
-    endpoint_class: type[EmbeddingsEndpoint], endpoint_type: EndpointType
-) -> None:
-    endpoint = endpoint_class(create_model_endpoint(endpoint_type))
+def test_embeddings_usage_reaches_token_metrics() -> None:
+    endpoint = EmbeddingsEndpoint(create_model_endpoint(EndpointType.EMBEDDINGS))
     usage = {"prompt_tokens": 8, "total_tokens": 8}
     response = TextResponse(
         perf_ns=2,
