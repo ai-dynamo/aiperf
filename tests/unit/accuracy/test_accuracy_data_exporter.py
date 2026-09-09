@@ -39,7 +39,9 @@ def _make_exporter(tmp_path: Path, records: list[MetricResult]) -> AccuracyDataE
     return exporter
 
 
-def _make_metric(tag: str, correct: int, total: int, accuracy: float) -> MetricResult:
+def _make_metric(
+    tag: str, correct: int, total: int, accuracy: float | None
+) -> MetricResult:
     return MetricResult(
         tag=tag,
         header=tag,
@@ -74,6 +76,21 @@ class TestAccuracyDataExporterExport:
         assert rows[1] == ["OVERALL", "8", "10", "1", "0.8000"]
         assert rows[2] == ["algebra", "3", "5", "1", "0.6000"]
         assert rows[3] == ["history", "5", "5", "0", "1.0000"]
+
+    async def test_export_renders_blank_accuracy_for_zero_total_task(
+        self, tmp_path: Path
+    ) -> None:
+        records = [
+            _make_metric("accuracy.overall", correct=0, total=0, accuracy=None),
+            _make_metric("accuracy.task.physics", correct=0, total=0, accuracy=None),
+        ]
+        exporter = _make_exporter(tmp_path, records)
+
+        await exporter.export()
+
+        rows = list(csv.reader(exporter._csv_path.open()))
+        assert rows[1] == ["OVERALL", "0", "0", "0", ""]
+        assert rows[2] == ["physics", "0", "0", "0", ""]
 
     async def test_export_skips_non_accuracy_metrics(self, tmp_path: Path) -> None:
         records = [

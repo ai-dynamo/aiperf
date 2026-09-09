@@ -144,8 +144,9 @@ class AccuracyAccumulator(BaseMetricsProcessor):
     async def export_results(self, ctx: ExportContext) -> AccuracySummary | None:
         """Return an ``AccuracySummary`` scoped to ``ctx.phase`` (all if None).
 
-        Returns None when no records fall in scope so RecordsManager can skip
-        publishing, mirroring ``ServerMetricsAccumulator.export_results``.
+        Returns None only when no records fall in scope and no tasks are
+        configured; otherwise returns a zero-filled summary so RecordsManager
+        still publishes the configured tasks.
         """
         return self._build_summary(ctx.phase)
 
