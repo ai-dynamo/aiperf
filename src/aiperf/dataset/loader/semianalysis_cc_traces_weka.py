@@ -45,6 +45,7 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+    from aiperf.dataset.loader.weka_trace import _WekaTimestampResolution
 
 
 class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
@@ -113,10 +114,13 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._validate_rows, ds)
 
-    def _load_all_traces(self, ds: Any, total_rows: int) -> dict[str, list[WekaTrace]]:
-        """Validate every HF row when no filter-then-cap constraints apply."""
+    def _load_all_traces(
+        self, ds: Any, total_rows: int
+    ) -> tuple[dict[str, list[WekaTrace]], _WekaTimestampResolution]:
+        """Validate and timestamp-canonicalize every HF row before selection."""
         self.info(f"Loading all {total_rows} traces")
         out: dict[str, list[WekaTrace]] = {}
+        source_by_trace: dict[str, str] = {}
         for i, row in enumerate(ds):
             try:
                 trace = WekaTrace.model_validate(row)
@@ -131,7 +135,11 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
                     f"{self.hf_dataset_name}"
                 )
             out[trace.id] = [trace]
-        return out
+            source_by_trace[trace.id] = f"row {i} of {self.hf_dataset_name}"
+        normalized, resolution = self._weka.preflight_nested_timestamps(
+            out, source_by_trace=source_by_trace
+        )
+        return normalized, resolution
 
     def _validate_rows(self, ds: Any) -> dict[str, list[WekaTrace]]:
         """Validate HF rows with filter-then-cap selection.
@@ -162,20 +170,16 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         synthesis = getattr(dataset, "synthesis", None)
         max_osl = getattr(synthesis, "max_osl", None) if synthesis else None
 
-        def _candidates() -> Any:
-            for i, row in enumerate(ds):
-                try:
-                    trace = WekaTrace.model_validate(row)
-                except ValidationError as e:
-                    raise DatasetLoaderError(
-                        f"Row {i} of {self.hf_dataset_name} failed WekaTrace "
-                        f"validation: {e}"
-                    ) from e
-                peak = _trace_peak_context_length(trace, max_osl=max_osl)
-                yield (i, trace), peak
-
+        all_traces, timestamp_resolution = self._load_all_traces(ds, total_rows)
         if num_entries is None and max_ctx is None:
-            return self._load_all_traces(ds, total_rows)
+            self._weka.mark_timestamps_preflighted(all_traces, timestamp_resolution)
+            return all_traces
+
+        def _candidates() -> Any:
+            for trace_id, traces in all_traces.items():
+                trace = traces[0]
+                peak = _trace_peak_context_length(trace, max_osl=max_osl)
+                yield (trace_id, trace), peak
 
         kept_pairs, stats = filter_then_cap(
             _candidates(),
@@ -199,13 +203,9 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
             )
 
         out = {}
-        for i, trace in kept_pairs:
-            if trace.id in out:
-                raise DatasetLoaderError(
-                    f"Duplicate trace id '{trace.id}' at row {i} of "
-                    f"{self.hf_dataset_name}"
-                )
-            out[trace.id] = [trace]
+        for trace_id, trace in kept_pairs:
+            out[trace_id] = [trace]
+        self._weka.mark_timestamps_preflighted(out, timestamp_resolution)
         self.info(
             f"Loaded {len(out)}/{total_rows} eligible traces "
             f"(filter-then-cap; --num-dataset-entries={num_entries}, "
