@@ -228,17 +228,16 @@ class TestLoadDatasetRowValidation:
             hf_dataset_name=_NO_SUBAGENTS_HF_DATASET_NAME,
             prompt_generator=MagicMock(),
         )
-        absolute = _make_trace_dict("absolute")
-        absolute["requests"].append(_subagent(10.0, 10.0))
-        relative_filtered_out = _make_trace_dict("relative")
-        relative_filtered_out["requests"][0]["in"] = 1_000
-        relative_filtered_out["requests"].append(_subagent(10.0, 0.0))
+        valid = _make_trace_dict("valid")
+        malformed_filtered_out = _make_trace_dict("malformed")
+        malformed_filtered_out["requests"][0]["in"] = 1_000
+        malformed_filtered_out["requests"].append(_subagent(10.0, float("nan")))
 
         with pytest.raises(
             DatasetLoaderError,
-            match=r"mixes decisive.*row 0.*row 1",
+            match=r"Trace 'malformed' in row 1.*must be finite",
         ):
-            loader._validate_rows([absolute, relative_filtered_out])
+            loader._validate_rows([valid, malformed_filtered_out])
 
 
 # Delegation to WekaTraceLoader

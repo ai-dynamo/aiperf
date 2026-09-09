@@ -26,14 +26,25 @@ Each trace file is a single JSON object describing one coding conversation:
   before reconstruction.
 
 The default `--weka-nested-timestamp-basis auto` scans every trace before any
-conversation is emitted. A first nested request at the marker is evidence for
-`absolute`; one at zero is evidence for `relative`. Mixed decisive evidence is
-rejected, and a corpus whose values cannot distinguish the two interpretations
-must use `--weka-nested-timestamp-basis absolute` or `relative`. AIPerf logs one
-INFO summary naming the resolved basis and the number of traces, subagents, and
-inner requests validated. In explicit `absolute` mode, an inner request more
-than one microsecond before its marker is rejected; smaller floating-point
-jitter is clamped to the marker so replay never starts a child before spawn.
+conversation is emitted. If any nested request has `t` more than one
+microsecond before its marker, AIPerf interprets every nested timestamp in the
+corpus as `relative`; otherwise it interprets the corpus as `absolute`. This is
+a compatibility heuristic, not proof of the producer format: a sufficiently
+delayed relative request can look absolute, mixed producer conventions are not
+always detectable from timestamp values alone, and one malformed absolute
+request before its marker makes the heuristic select relative for the whole
+corpus. Use
+`--weka-nested-timestamp-basis absolute` or `relative` when the producer is
+known. AIPerf logs one INFO summary naming the resolved basis, the heuristic or
+configured decision, and the number of traces, subagents, and inner requests
+validated. In explicit `absolute` mode, an inner request more than one
+microsecond before its marker is rejected; smaller floating-point jitter is
+clamped to the marker so replay never starts a child before spawn.
+
+Canonicalization metadata is attached only to in-memory trace objects so
+copied or reordered containers are not shifted a second time. Serializing and
+reparsing those objects creates a new raw Weka input boundary and runs the
+configured or automatic interpretation again.
 
 AIPerf maps the format directly onto its DAG datastructure:
 
