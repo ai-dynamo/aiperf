@@ -117,7 +117,7 @@ jobs:
     # ``always() && runner.os == 'Windows'`` guard on the second step,
     # GitHub Actions' implicit ``success()`` short-circuits the
     # component-integration step on any unit-test failure.
-    - name: Run unit and zmq tests (Windows)
+    - name: Run unit, ui, and zmq tests (Windows)
       # Merged into one invocation to pay collection overhead once instead of
       # twice. tests/unit/conftest.py's no_sleep patch applies only to
       # tests/unit/**; tests/zmq/** uses real asyncio.sleep as before.
@@ -125,9 +125,11 @@ jobs:
       # fixture and zmq tests use neither, so they run with a real-time loop.
       # --continue-on-collection-errors preserves the previous two-step
       # behaviour where a unit collection error did not block the zmq suite.
+      # tests/ui mirrors the POSIX `make test-ci` scope (`pytest tests/unit
+      # tests/ui`).
       if: runner.os == 'Windows'
       run: |
-        uv run pytest tests/unit tests/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
+        uv run pytest tests/unit tests/ui tests/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
       # ``!cancelled()`` overrides the implicit ``success()`` so component
       # integration still runs even if the unit-test step failed — matching
