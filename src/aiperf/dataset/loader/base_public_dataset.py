@@ -51,10 +51,25 @@ class BasePublicDatasetLoader(BaseLoader):
 
     def __init__(self, run: BenchmarkRun | None = None, **kwargs):
         super().__init__(run=run, **kwargs)
-        self.http_client = AioHttpClient(
-            timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT
-        )
+        self._http_client: AioHttpClient | None = None
         self.cache_filepath = AIPERF_DATASET_CACHE_DIR / self.filename
+
+    @property
+    def http_client(self) -> AioHttpClient:
+        """HTTP client for URL-backed datasets, created on first use.
+
+        Built lazily because ``AioHttpClient`` opens a ``TCPConnector``, which
+        requires a running event loop. Constructing it eagerly meant any
+        synchronous caller -- notably the preflight phase, which runs before
+        the event loop exists -- crashed with ``RuntimeError: no running event
+        loop`` merely by instantiating a loader, even one that never fetches
+        over HTTP.
+        """
+        if self._http_client is None:
+            self._http_client = AioHttpClient(
+                timeout=Environment.DATASET.PUBLIC_DATASET_TIMEOUT
+            )
+        return self._http_client
 
     async def load_dataset(self) -> dict[str, Any]:
         """Load the dataset and convert it to AIPerf Conversation format.
@@ -188,6 +203,33 @@ class BasePublicDatasetLoader(BaseLoader):
         return not (
             prompt_too_short or output_too_short or prompt_too_long or combined_too_long
         )
+
+    @classmethod
+    def preflight_access(cls, **loader_kwargs: Any) -> None:
+        """Cheaply verify the dataset is reachable, before any bulk download.
+
+        Runs in the CLI process before services start. Keep it sub-second: its
+        purpose is to turn "authenticate first" into an immediate answer rather
+        than one the user receives after a long fetch. Default is a no-op.
+
+        Raises:
+            ConfigurationError: If the dataset cannot be accessed.
+        """
+        return None
+
+    @classmethod
+    def preflight_materialize(cls, **loader_kwargs: Any) -> None:
+        """Fetch and cache whatever this dataset needs before services start.
+
+        For loaders whose first use triggers a large download, doing it here
+        keeps it out of ``DatasetManager``, where it would block the profiling
+        handshake and trip ``AIPERF_DATASET_CONFIGURATION_TIMEOUT``. Must be
+        idempotent -- a populated cache makes it a no-op. Default is a no-op.
+
+        Raises:
+            ConfigurationError: If the dataset could not be materialized.
+        """
+        return None
 
     @classmethod
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:

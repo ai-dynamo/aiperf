@@ -1,0 +1,5 @@
+# Vendored third-party sources are checked out byte-for-byte on every platform.
+# Their value is being identical to a pinned upstream commit, and CI asserts a
+# sha256 over the raw bytes -- newline conversion on Windows checkouts would
+# change the digest without changing the content.
+src/aiperf/dataset/loader/vendor/** -text

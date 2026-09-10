@@ -195,6 +195,8 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         detected_type = None
         for entry, LoaderClass in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER):
+            if not plugins.is_autodetectable(entry):
+                continue
             if LoaderClass.can_load(data, filename):
                 self.info(
                     f"Loader {LoaderClass.__name__} can handle the input file data format."

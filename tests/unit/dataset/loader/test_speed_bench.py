@@ -5,11 +5,18 @@ import json
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import MultiTurn
-from aiperf.dataset.loader.speed_bench import SpeedBenchLoader, SpeedBenchRow
+from aiperf.dataset.loader.speed_bench import (
+    SpeedBenchLoader,
+    SpeedBenchQualitativeLoader,
+    SpeedBenchRow,
+    SpeedBenchThroughput1KLoader,
+)
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from tests.unit.conftest import make_run_from_cli
 
@@ -275,21 +282,26 @@ class TestSpeedBenchLoaderCategoryFiltering:
             == "Implement binary search."
         )
 
-    def test_category_filter_no_matches_returns_empty(self, create_jsonl_file):
-        _, dataset = _load_speed_bench_file(
-            create_jsonl_file,
-            [
-                _make_speed_bench_row(
-                    question_id=_qid("speed-math-1"), category="math"
-                ),
-                _make_speed_bench_row(
-                    question_id=_qid("speed-stem-1"), category="stem"
-                ),
-            ],
-            category="coding",
-        )
+    def test_category_filter_no_matches_raises(self, create_jsonl_file):
+        """An empty dataset is never survivable downstream.
 
-        assert dict(dataset) == {}
+        It previously warned and returned ``{}``, then died ~26s later inside
+        timing_manager with ``conversation_ids cannot be empty`` and a SIGKILL,
+        long after the cause had scrolled off screen.
+        """
+        with pytest.raises(DatasetLoaderError, match="matched none of the 2 rows"):
+            _load_speed_bench_file(
+                create_jsonl_file,
+                [
+                    _make_speed_bench_row(
+                        question_id=_qid("speed-math-1"), category="math"
+                    ),
+                    _make_speed_bench_row(
+                        question_id=_qid("speed-stem-1"), category="stem"
+                    ),
+                ],
+                category="coding",
+            )
 
     def test_category_stored_on_loader(self, create_jsonl_file):
         unfiltered_loader, _ = _load_speed_bench_file(
@@ -362,7 +374,103 @@ class TestSpeedBenchLoaderRowValidation:
         filename = _write_speed_bench_file(create_jsonl_file, [placeholder_row])
         loader = SpeedBenchLoader(filename=filename, run=_make_run())
 
-        with pytest.raises(ValidationError, match="placeholder"):
+        with pytest.raises(DatasetLoaderError, match="placeholder text"):
+            loader.load_dataset()
+
+    def test_load_dataset_rejects_prefixed_placeholder_content(self, create_jsonl_file):
+        """Upstream appends per-row detail after the sentinel.
+
+        An equality check misses these rows; 144 of SPEED-Bench's 494 unprepared
+        rows take this prefixed form.
+        """
+        prefixed_row = _make_speed_bench_row(
+            question_id="0123456789abcdef0123456789abcdef",
+            category="coding",
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"{SpeedBenchRow.TURNS_PLACEHOLDER} (hle: question 4718)",
+                }
+            ],
+        )
+        filename = _write_speed_bench_file(create_jsonl_file, [prefixed_row])
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
+
+        with pytest.raises(DatasetLoaderError, match="placeholder text"):
+            loader.load_dataset()
+
+    def test_load_dataset_placeholder_error_counts_every_bad_row(
+        self, create_jsonl_file
+    ):
+        """The message must report scale, not just fail on the first bad row."""
+        rows = [
+            _make_speed_bench_row(
+                question_id=_qid(f"speed-ok-{i}"),
+                messages=[{"role": "user", "content": f"Real prompt {i}"}],
+            )
+            for i in range(2)
+        ] + [
+            _make_speed_bench_row(
+                question_id=_qid(f"speed-bad-{i}"),
+                messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}],
+            )
+            for i in range(3)
+        ]
+        filename = _write_speed_bench_file(create_jsonl_file, rows)
+        loader = SpeedBenchLoader(filename=filename, run=_make_run())
+
+        with pytest.raises(DatasetLoaderError, match=r"3 of 5 SPEED-Bench rows"):
+            loader.load_dataset()
+
+    def test_complete_category_loads_from_partially_prepared_file(
+        self, create_jsonl_file
+    ):
+        """Placeholder counts must describe the request, not the whole file.
+
+        `qa` is complete in the published dataset while `summarization` is
+        entirely placeholder. Counting whole-file refused a request that was
+        fully satisfiable, with a message describing rows the user never asked
+        for.
+        """
+        rows = [
+            _make_speed_bench_row(
+                question_id=_qid("speed-qa-1"),
+                category="qa",
+                messages=[{"role": "user", "content": "A real question."}],
+            ),
+            _make_speed_bench_row(
+                question_id=_qid("speed-sum-1"),
+                category="summarization",
+                messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}],
+            ),
+        ]
+        _, dataset = _load_speed_bench_file(create_jsonl_file, rows, category="qa")
+
+        assert set(dataset) == {_qid("speed-qa-1")}
+
+    def test_placeholder_error_counts_within_the_requested_category(
+        self, create_jsonl_file
+    ):
+        rows = [
+            _make_speed_bench_row(
+                question_id=_qid("speed-sum-1"),
+                category="summarization",
+                messages=[{"role": "user", "content": SpeedBenchRow.TURNS_PLACEHOLDER}],
+            ),
+            _make_speed_bench_row(
+                question_id=_qid("speed-qa-1"),
+                category="qa",
+                messages=[{"role": "user", "content": "A real question."}],
+            ),
+        ]
+        filename = _write_speed_bench_file(create_jsonl_file, rows)
+        loader = SpeedBenchLoader(
+            filename=filename, run=_make_run(), category="summarization"
+        )
+
+        with pytest.raises(
+            DatasetLoaderError, match=r"1 of 1 SPEED-Bench rows in category"
+        ):
             loader.load_dataset()
 
 
@@ -438,3 +546,34 @@ class TestSpeedBenchLoaderMultiTurn:
         assert set(dataset) == {_qid("speed-coding-1")}
         assert len(turns) == 2
         assert [turn.text for turn in turns] == ["Code Q1", "Code Q2"]
+
+
+class TestSuggestedPublicDataset:
+    """The placeholder error is the main migration path off custom files.
+
+    A suggestion naming an unregistered loader turns one clear failure into
+    two, so every rendered name must exist in the registry.
+    """
+
+    @pytest.mark.parametrize(
+        ("loader_cls", "category", "expected"),
+        [
+            param(SpeedBenchQualitativeLoader, None, "speed_bench_qualitative", id="qualitative_no_category"),
+            param(SpeedBenchQualitativeLoader, "coding", "speed_bench_coding", id="qualitative_category"),
+            param(SpeedBenchThroughput1KLoader, None, "speed_bench_throughput_1k", id="throughput_no_category"),
+            param(SpeedBenchThroughput1KLoader, "low_entropy", "speed_bench_throughput_1k_low_entropy", id="throughput_category"),
+            param(SpeedBenchThroughput1KLoader, "not_a_category", "speed_bench_throughput_1k", id="unknown_category_falls_back_to_split"),
+        ],
+    )  # fmt: skip
+    def test_suggestion_is_a_registered_public_dataset(
+        self, loader_cls, category, expected
+    ):
+        from aiperf.plugin.enums import PublicDatasetType
+
+        loader = loader_cls.__new__(loader_cls)
+        loader.category = category
+
+        suggested = loader._suggested_public_dataset()
+
+        assert suggested == expected
+        assert suggested in {member.value for member in PublicDatasetType}
