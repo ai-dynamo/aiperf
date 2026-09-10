@@ -19,22 +19,25 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import json
 import os
 import sys
+import threading
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+
+import orjson
 
 _out_file = None
 _count = 0
 _model_id = "capture-model"
+_lock = threading.Lock()
 
 _MAX_BODY = 64 * 1024 * 1024  # 64 MiB
 
 
 def _sse_chunk(completion_id: str, content: str) -> bytes:
-    data = json.dumps(
+    data = orjson.dumps(
         {
             "id": completion_id,
             "object": "chat.completion.chunk",
@@ -43,12 +46,12 @@ def _sse_chunk(completion_id: str, content: str) -> bytes:
             ],
             "usage": None,
         }
-    )
+    ).decode()
     return f"data: {data}\n\n".encode()
 
 
 def _sse_done(completion_id: str, prompt_tokens: int) -> bytes:
-    data = json.dumps(
+    data = orjson.dumps(
         {
             "id": completion_id,
             "object": "chat.completion.chunk",
@@ -59,7 +62,7 @@ def _sse_done(completion_id: str, prompt_tokens: int) -> bytes:
                 "total_tokens": prompt_tokens + 4,
             },
         }
-    )
+    ).decode()
     return f"data: {data}\n\ndata: [DONE]\n\n".encode()
 
 
@@ -69,9 +72,9 @@ class CaptureHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlparse(self.path).path == "/v1/models":
-            resp = json.dumps(
+            resp = orjson.dumps(
                 {"object": "list", "data": [{"id": _model_id, "object": "model"}]}
-            ).encode()
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -111,8 +114,8 @@ class CaptureHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
 
         try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
+            payload = orjson.loads(body)
+        except orjson.JSONDecodeError:
             self.send_response(400)
             self.end_headers()
             return
@@ -132,14 +135,16 @@ class CaptureHandler(BaseHTTPRequestHandler):
 
         stream = payload.get("stream", False)
 
-        if _out_file is not None:
-            record = {**payload, "_seq": _count}
-            _out_file.write(json.dumps(record) + "\n")
-            _out_file.flush()
+        with _lock:
+            if _out_file is not None:
+                record = {**payload, "_seq": _count}
+                _out_file.write(orjson.dumps(record).decode() + "\n")
+                _out_file.flush()
 
-        _count += 1
-        if _count % 1000 == 0:
-            print(f"  captured {_count} requests", file=sys.stderr)
+            _count += 1
+            count = _count
+        if count % 1000 == 0:
+            print(f"  captured {count} requests", file=sys.stderr)
 
         content = " ".join(
             m.get("content", "") for m in messages if isinstance(m.get("content"), str)
@@ -156,7 +161,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
             self.wfile.write(_sse_chunk(completion_id, "ok"))
             self.wfile.write(_sse_done(completion_id, prompt_tokens))
         else:
-            resp = json.dumps(
+            resp = orjson.dumps(
                 {
                     "id": completion_id,
                     "object": "chat.completion",
@@ -173,7 +178,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
                         "total_tokens": prompt_tokens + 1,
                     },
                 }
-            ).encode()
+            )
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(resp)))
@@ -203,7 +208,7 @@ def main() -> None:
 
     global _out_file, _model_id
     _model_id = args.model
-    server = HTTPServer((args.host, args.port), CaptureHandler)
+    server = ThreadingHTTPServer((args.host, args.port), CaptureHandler)
     print(f"Capture server listening on {args.host}:{args.port}", file=sys.stderr)
     print(f"Writing to {args.out}", file=sys.stderr)
     fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

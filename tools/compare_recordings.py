@@ -10,7 +10,7 @@ read automatically when present to include vocab-distribution data.
 
 Usage::
 
-    python tools/compare_recordings.py \\
+    uv run python tools/compare_recordings.py \\
         --a  artifacts/run_a/recording.jsonl  --label-a "vLLM bench" \\
         --b  artifacts/run_b/recording.jsonl  --label-b "aiperf" \\
         --out comparison.html
@@ -21,11 +21,12 @@ from __future__ import annotations
 import argparse
 import collections
 import html
-import json
 import math
 import statistics
 import sys
 from pathlib import Path
+
+import orjson
 
 # ---------------------------------------------------------------------------
 # Parsing
@@ -38,7 +39,7 @@ def load_jsonl(path: Path) -> list[dict]:
         for line in f:
             line = line.strip()
             if line:
-                rows.append(json.loads(line))
+                rows.append(orjson.loads(line))
     return rows
 
 
@@ -50,7 +51,7 @@ def load_summary(path: Path) -> dict | None:
         path.with_suffix("").with_suffix(".summary.json"),
     ):
         if candidate.exists():
-            return json.loads(candidate.read_text())
+            return orjson.loads(candidate.read_bytes())
     return None
 
 
@@ -174,10 +175,10 @@ def _js_hist(
     return f"""
 <script>
 (function(){{
-  const bins={json.dumps(bins)};
-  const aV={json.dumps(a_pct)};
-  const bV={json.dumps(b_pct)};
-  const svg=document.getElementById({json.dumps(svg_id)});
+  const bins={orjson.dumps(bins).decode()};
+  const aV={orjson.dumps(a_pct).decode()};
+  const bV={orjson.dumps(b_pct).decode()};
+  const svg=document.getElementById({orjson.dumps(svg_id).decode()});
   const W=860,H=280,pad={{l:52,r:16,t:16,b:48}};
   const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b,n=bins.length,bW=cw/n;
   const maxY=Math.max(...aV,...bV)*1.12||1;
@@ -205,9 +206,9 @@ def _js_hist(
   const yl=el('text',{{transform:`rotate(-90) translate(${{-(H/2)}},13)`,'text-anchor':'middle','font-size':10,fill:'#555'}});
   yl.textContent='% of requests';svg.appendChild(yl);
   const xl=el('text',{{x:W/2,y:H-3,'text-anchor':'middle','font-size':10,fill:'#555'}});
-  xl.textContent={json.dumps(x_label)};svg.appendChild(xl);
+  xl.textContent={orjson.dumps(x_label).decode()};svg.appendChild(xl);
   // legend
-  [[{json.dumps(label_a)},'rgba(37,99,235,0.7)'],[{json.dumps(label_b)},'rgba(220,38,38,0.45)']].forEach(([lbl,c],i)=>{{
+  [[{orjson.dumps(label_a).decode()},'rgba(37,99,235,0.7)'],[{orjson.dumps(label_b).decode()},'rgba(220,38,38,0.45)']].forEach(([lbl,c],i)=>{{
     svg.appendChild(el('rect',{{x:pad.l+i*180,y:4,width:12,height:10,fill:c}}));
     const t=el('text',{{x:pad.l+i*180+16,y:13,'font-size':10,fill:'#333'}});
     t.textContent=lbl;svg.appendChild(t);
