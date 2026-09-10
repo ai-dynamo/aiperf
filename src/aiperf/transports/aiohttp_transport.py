@@ -467,6 +467,9 @@ class AioHttpTransport(BaseTransport):
         "content_type": <str>}``. Keeping bytes base64-encoded in the payload
         lets it stay JSON-serialisable upstream; decoding happens here.
 
+        List values become repeated fields using the supplied key verbatim
+        (e.g., ``timestamp_granularities[]`` for transcription timestamps).
+
         ``default_to_multipart=True`` forces multipart/form-data even when the
         payload happens to be text-only (e.g., image_edit with a `url` field
         instead of an inline image), so the wire format always matches the
@@ -491,8 +494,10 @@ class AioHttpTransport(BaseTransport):
                     or "application/octet-stream",
                 )
                 continue
-            str_value = str(value).lower() if isinstance(value, bool) else str(value)
-            form_data.add_field(key, str_value)
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                str_value = str(item).lower() if isinstance(item, bool) else str(item)
+                form_data.add_field(key, str_value)
         return form_data
 
     async def _submit_video_job(

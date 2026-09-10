@@ -181,3 +181,16 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
+
+## Multipart Transcription Parameters
+
+For servers exposing `/v1/audio/transcriptions`, select
+`--endpoint-type audio_transcription`. Array-valued multipart parameters are
+sent as repeated fields with the exact supplied name. For example, to request
+word and segment timestamps from a Whisper-compatible server, add:
+
+```bash
+--extra-inputs '{"response_format":"verbose_json","timestamp_granularities[]":["word","segment"]}'
+```
+
+Use the field name expected by your server, including `[]` when required.
