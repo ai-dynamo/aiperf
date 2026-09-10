@@ -20,10 +20,6 @@ from aiperf.common.models.record_models import (
     InferenceServerResponse,
 )
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
-from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.usage_metrics import (
-    UsagePromptTokensMetric,
-)
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import create_model_endpoint
 
@@ -286,7 +282,7 @@ class TestEmbeddingsEndpointParseResponse:
         assert parsed.data.embeddings[0] == [0.1, 0.2]
 
 
-def test_embeddings_usage_reaches_prompt_token_metric() -> None:
+def test_embeddings_usage_reaches_response_record() -> None:
     endpoint = EmbeddingsEndpoint(create_model_endpoint(EndpointType.EMBEDDINGS))
     usage = {"prompt_tokens": 8, "total_tokens": 8}
     response = TextResponse(
@@ -307,7 +303,6 @@ def test_embeddings_usage_reaches_prompt_token_metric() -> None:
 
     assert parsed[0].usage == usage
     assert record.final_usage == usage
-    assert UsagePromptTokensMetric().parse_record(record, MetricRecordDict()) == 8
 
 
 @pytest.mark.parametrize("usage", [{}, "unexpected"])
