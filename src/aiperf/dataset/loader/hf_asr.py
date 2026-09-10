@@ -7,6 +7,8 @@ import base64
 import io
 from typing import TYPE_CHECKING, Any, TypedDict
 
+import aiofiles
+
 from aiperf.common.models import Audio, Conversation, Text, Turn
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 
@@ -120,6 +122,15 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             if not isinstance(audio_value, dict):
                 skipped += 1
                 continue
+
+            if not audio_value.get("bytes") and audio_value.get("path"):
+                try:
+                    async with aiofiles.open(audio_value["path"], "rb") as audio_file:
+                        audio_value = {**audio_value, "bytes": await audio_file.read()}
+                except OSError as exc:
+                    self.debug(lambda exc=exc: f"Failed to read audio file: {exc}")
+                    skipped += 1
+                    continue
 
             duration = self._duration_seconds(audio_value)
             if duration is not None and duration > _MAX_DURATION_SECONDS:
