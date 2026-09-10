@@ -441,6 +441,21 @@ class ReplayBarrierCoordinator:
         rejected = issued is False or issued is ChildDispatchResult.REJECTED
         if rejected and pending.on_refused is not None:
             await pending.on_refused()
+        elif issued is ChildDispatchResult.DEFERRED:
+            # Unreachable today: the barrier only activates during PROFILING,
+            # and the sole DEFER-producing admission callback (cache-pressure
+            # warmup) only runs during WARMUP while the barrier is inactive
+            # (submit() short-circuits to issue() directly). If a future
+            # change activates the barrier during a DEFER-capable phase, this
+            # turn would silently vanish from state.pending with no requeue
+            # and no on_refused cleanup - DEFERRED must be re-queued here,
+            # not treated as terminal like REJECTED/False.
+            _logger.error(
+                "Barrier-released replay dispatch deferred for %r; deferral "
+                "after barrier release is unsupported and this turn will not "
+                "be retried",
+                pending.turn,
+            )
 
 
 class ReplayIssueGate:

@@ -272,6 +272,26 @@ class TestBasicCreditIssuance:
         mock_progress.increment_sent.assert_not_called()
         mock_router.send_credit.assert_not_called()
 
+    async def test_turn_admission_defer_degrades_to_false_on_blocking_path(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """DEFER on the blocking issue_credit() path must degrade to False,
+        not raise or hang - the caller (e.g. AgenticReplayStrategy) is
+        responsible for tracking its own retry state before returning DEFER."""
+        credit_issuer.set_turn_admission(lambda _turn: TurnAdmission.DEFER)
+
+        result = await credit_issuer.issue_credit(make_turn())
+
+        assert result is False
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
     async def test_child_turn_admission_refusal_releases_prefill_slot(
         self, credit_issuer, mock_concurrency, mock_progress, mock_router
     ):

@@ -160,11 +160,20 @@ class PhaseRunner(TaskManagerMixin):
                 baseline_counts = getattr(
                     conversation_source, "warmup_credit_counts_by_lane", ()
                 )
-                request_cap = (
-                    sum(baseline_counts) + requests_per_lane * lane_count
-                    if len(baseline_counts) == lane_count
-                    else requests_per_lane * lane_count
-                )
+                if len(baseline_counts) == lane_count:
+                    request_cap = sum(baseline_counts) + requests_per_lane * lane_count
+                else:
+                    # baseline_counts should always align 1:1 with trajectories;
+                    # a mismatch means primer counts are unknown, so this falls
+                    # back to the pre-dataset placeholder estimate (no primer
+                    # add-on), which can under-provision and cut warmup short.
+                    self.warning(
+                        f"warmup_credit_counts_by_lane length ({len(baseline_counts)}) "
+                        f"!= lane count ({lane_count}); falling back to an "
+                        "unprimed total_expected_requests estimate for cache-"
+                        "pressure warmup, which may under-provision the phase."
+                    )
+                    request_cap = requests_per_lane * lane_count
                 self._config = config.model_copy(
                     update={"total_expected_requests": request_cap}
                 )

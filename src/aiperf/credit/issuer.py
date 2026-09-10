@@ -363,6 +363,16 @@ class CreditIssuer:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return False
 
+        # DEFER and REJECT both release slots and return False here - this path
+        # gives the caller no way to distinguish "retry me later" from
+        # "terminal refusal". That's safe only because the sole admission
+        # callback wired today (AgenticReplayStrategy._admit_cache_warmup_turn)
+        # records its own retry state (_quota_handoff_turns) before returning
+        # DEFER, and replays it later via _pending_handoff_turns_by_root. A
+        # future admission callback that relies on this method to signal
+        # DEFER for it would have its deferred turns silently dropped with no
+        # requeue and no cleanup - contrast with dispatch_child_turn(), which
+        # does surface ChildDispatchResult.DEFERRED distinctly.
         if self._turn_admission_result(turn) is not TurnAdmission.ADMIT:
             self._concurrency_manager.release_prefill_slot(self._phase_key)
             if needs_session_slot:
