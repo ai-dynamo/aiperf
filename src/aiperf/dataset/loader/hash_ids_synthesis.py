@@ -24,7 +24,7 @@ import array
 import hashlib
 import os
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 
@@ -70,58 +70,83 @@ def intern_token_sequence(
     return seq_index
 
 
-def pieces_from_hash_cache(
-    hash_ids: list[int], tokens: list[int], cache: object
-) -> list[list[int]] | None:
-    """Split ``tokens`` into cached hash blocks plus an optional unhashed tail."""
-    if not isinstance(cache, dict):
-        return None
-    pieces: list[list[int]] = []
-    offset = 0
-    for hid in hash_ids:
-        block = cache.get(hid)
-        if not isinstance(block, list) or not block:
-            return None
-        end = offset + len(block)
-        if tokens[offset:end] != block:
-            return None
-        pieces.append(block)
-        offset = end
-    if offset < len(tokens):
-        pieces.append(tokens[offset:])
-    elif offset != len(tokens):
-        return None
-    return pieces
+@dataclass(slots=True)
+class OverlapIntern:
+    """Intern overlap decode jobs by hash_id / left token, not full-list hashes."""
+
+    sequences: list[list[int]] = field(default_factory=list)
+    first: dict[int, int] = field(default_factory=dict)
+    cont: dict[tuple[int, int], int] = field(default_factory=dict)
+    ctx: dict[int, int] = field(default_factory=dict)
+    tail: dict[bytes, list[int]] = field(default_factory=lambda: defaultdict(list))
+    full: dict[bytes, list[int]] = field(default_factory=lambda: defaultdict(list))
+
+    def intern_full(self, tokens: list[int]) -> int:
+        return intern_token_sequence(tokens, self.sequences, self.full)
+
+    def intern_first(self, hash_id: int, tokens: list[int]) -> int:
+        idx = self.first.get(hash_id)
+        if idx is not None:
+            return idx
+        idx = len(self.sequences)
+        self.sequences.append(tokens)
+        self.first[hash_id] = idx
+        return idx
+
+    def intern_ctx(self, left: int) -> int:
+        idx = self.ctx.get(left)
+        if idx is not None:
+            return idx
+        idx = len(self.sequences)
+        self.sequences.append([left])
+        self.ctx[left] = idx
+        return idx
+
+    def intern_cont(self, left: int, hash_id: int, tokens: list[int]) -> int:
+        key = (left, hash_id)
+        idx = self.cont.get(key)
+        if idx is not None:
+            return idx
+        idx = len(self.sequences)
+        self.sequences.append([left, *tokens])
+        self.cont[key] = idx
+        return idx
+
+    def intern_tail(self, left: int, tokens: list[int]) -> int:
+        seq = [left, *tokens]
+        packed = _sequence_fingerprint(seq)
+        for candidate in self.tail[packed]:
+            if self.sequences[candidate] == seq:
+                return candidate
+        idx = len(self.sequences)
+        self.sequences.append(seq)
+        self.tail[packed].append(idx)
+        return idx
 
 
 def overlap_decode_recipe(
     pieces: list[list[int]],
-    unique_sequences: list[list[int]],
-    fingerprint_buckets: dict[bytes, list[int]],
+    piece_keys: list[int | None],
+    intern: OverlapIntern,
 ) -> list[tuple[int, int | None]]:
     """Map pieces to decode jobs: first piece as-is, later pieces with 1-token context."""
     recipe: list[tuple[int, int | None]] = []
     left: int | None = None
-    for piece in pieces:
+    for piece, key in zip(pieces, piece_keys, strict=True):
         if not piece:
             continue
         if left is None:
-            recipe.append(
-                (
-                    intern_token_sequence(piece, unique_sequences, fingerprint_buckets),
-                    None,
-                )
-            )
+            if key is None:
+                recipe.append((intern.intern_full(piece), None))
+            else:
+                recipe.append((intern.intern_first(key, piece), None))
         else:
-            ctx = [left]
-            recipe.append(
-                (
-                    intern_token_sequence(
-                        ctx + piece, unique_sequences, fingerprint_buckets
-                    ),
-                    intern_token_sequence(ctx, unique_sequences, fingerprint_buckets),
-                )
-            )
+            ctx_index = intern.intern_ctx(left)
+            if key is None:
+                seq_index = intern.intern_tail(left, piece)
+            else:
+                seq_index = intern.intern_cont(left, key, piece)
+            recipe.append((seq_index, ctx_index))
         left = piece[-1]
     return recipe
 
@@ -169,10 +194,14 @@ class HashIdsPromptSynthesisMixin:
     ) -> dict[str, str]:
         pending: list[tuple[str, list[tuple[int, int | None]]]] = []
         result: dict[str, str] = {}
-        unique_sequences: list[list[int]] = []
-        fingerprint_buckets: dict[bytes, list[int]] = defaultdict(list)
-
+        intern = OverlapIntern()
         pg = self.prompt_generator
+        build_pieces = getattr(pg, "_build_token_pieces", None)
+        use_pieces = (
+            type(getattr(pg, "_cache", None)) is dict
+            and callable(build_pieces)
+            and type(build_pieces).__name__ == "method"
+        )
 
         for req in requests:
             if not req.hash_ids:
@@ -180,21 +209,22 @@ class HashIdsPromptSynthesisMixin:
                     mean=req.input_length, stddev=0, hash_ids=[]
                 )
                 continue
-            tokens = pg._build_token_sequence(
-                req.input_length, req.hash_ids, self._block_size
-            )
-            pieces = pieces_from_hash_cache(req.hash_ids, tokens, pg._cache)
-            if pieces is None:
-                pieces = [tokens]
-            pending.append(
-                (
-                    req.key,
-                    overlap_decode_recipe(
-                        pieces, unique_sequences, fingerprint_buckets
-                    ),
+            if use_pieces:
+                pieces = pg._build_token_pieces(
+                    req.input_length, req.hash_ids, self._block_size
                 )
-            )
+                keys: list[int | None] = list(req.hash_ids)
+                if len(pieces) > len(keys):
+                    keys.append(None)
+                recipe = overlap_decode_recipe(pieces, keys, intern)
+            else:
+                tokens = pg._build_token_sequence(
+                    req.input_length, req.hash_ids, self._block_size
+                )
+                recipe = [(intern.intern_full(tokens), None)]
+            pending.append((req.key, recipe))
 
+        unique_sequences = intern.sequences
         if unique_sequences:
             decoded_list = parallel_decode(
                 unique_sequences,

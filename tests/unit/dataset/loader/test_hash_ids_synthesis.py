@@ -121,14 +121,14 @@ def test_mixin_oracle_decodes_full_sequence_for_exact_partial_and_prefix_tail(
 
     pg._cache.clear()
     assembled: dict[tuple[tuple[int, ...], int], list[int]] = {}
-    orig_build = pg._build_token_sequence
+    orig_build = pg._build_token_pieces
 
-    def capturing_build(n, hids, bs):
-        tokens = orig_build(n, hids, bs)
-        assembled[(tuple(hids), n)] = list(tokens)
-        return tokens
+    def capturing_build(self, n, hids, bs):
+        pieces = orig_build(n, hids, bs)
+        assembled[(tuple(hids), n)] = [t for piece in pieces for t in piece]
+        return pieces
 
-    pg._build_token_sequence = capturing_build
+    pg._build_token_pieces = capturing_build.__get__(pg, type(pg))
 
     def decode_full_sequences(seqs, *args, **kwargs):
         return [

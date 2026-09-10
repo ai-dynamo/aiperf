@@ -26,7 +26,6 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import sys
-from collections import defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from multiprocessing import shared_memory
@@ -39,6 +38,7 @@ from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset._mp_context import get_loader_mp_context
 from aiperf.dataset.loader.hash_ids_synthesis import (
+    OverlapIntern,
     overlap_decode_recipe,
     stitch_overlap_decoded,
 )
@@ -197,8 +197,7 @@ def _process_batch(
     decode = _worker_state.tokenizer.decode
     sample_tokens = _worker_state.sample_tokens
     block_cache = _worker_state.block_cache
-    unique_sequences: list[list[int]] = []
-    fingerprint_buckets: dict[bytes, list[int]] = defaultdict(list)
+    intern = OverlapIntern()
     decoded_texts: list[str] = []
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
@@ -247,10 +246,11 @@ def _process_batch(
                     corpus=corpus,
                     hash_rng=hash_rng,
                 )
-                recipe = overlap_decode_recipe(
-                    pieces, unique_sequences, fingerprint_buckets
-                )
-                _fill_decoded_texts(decode, unique_sequences, decoded_texts)
+                keys: list[int | None] = list(trace["hash_ids"])
+                if len(pieces) > len(keys):
+                    keys.append(None)
+                recipe = overlap_decode_recipe(pieces, keys, intern)
+                _fill_decoded_texts(decode, intern.sequences, decoded_texts)
                 prompt = stitch_overlap_decoded(decoded_texts, recipe)
             else:
                 prompt = ""
