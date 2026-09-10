@@ -4,7 +4,9 @@
 import base64
 import io
 from pathlib import Path
+from unittest.mock import patch
 
+import aiofiles
 import numpy as np
 import pytest
 import soundfile as sf
@@ -201,12 +203,28 @@ async def test_path_backed_hf_audio_is_loaded(
 async def test_path_backed_long_and_missing_audio_are_skipped(
     loader: HFASRDatasetLoader, tmp_path: Path
 ) -> None:
-    """Path-backed rows obey the duration limit and tolerate missing files."""
     long_path = tmp_path / "long.wav"
     long_path.write_bytes(_make_audio_bytes(_MAX_DURATION_SECONDS + 1))
     rows = [
         {"audio": {"bytes": None, "path": str(long_path)}},
         {"audio": {"bytes": None, "path": str(tmp_path / "missing.wav")}},
+        _make_audio_row(1.0),
+    ]
+    with patch(
+        "aiperf.dataset.loader.hf_asr.aiofiles.open", wraps=aiofiles.open
+    ) as open_audio:
+        conversations = await loader.convert_to_conversations({"dataset": rows})
+    assert str(long_path) not in [call.args[0] for call in open_audio.call_args_list]
+    assert len(conversations) == 1
+    assert conversations[0].turns[0].audio_duration_seconds == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_invalid_audio_path_does_not_abort_conversion(
+    loader: HFASRDatasetLoader,
+) -> None:
+    rows = [
+        {"audio": {"bytes": None, "path": "invalid\x00.wav"}},
         _make_audio_row(1.0),
     ]
     conversations = await loader.convert_to_conversations({"dataset": rows})

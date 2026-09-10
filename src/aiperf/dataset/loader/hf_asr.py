@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -81,14 +82,15 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             return []
 
     def _duration_seconds(self, audio_value: _HFAudioBytesRow) -> float | None:
-        """Estimate clip duration in seconds from raw bytes via soundfile."""
+        """Estimate clip duration from embedded bytes or a file header."""
         raw_bytes = audio_value.get("bytes")
-        if not raw_bytes:
+        source = io.BytesIO(raw_bytes) if raw_bytes else audio_value.get("path")
+        if not source:
             return None
         try:
             import soundfile as sf
 
-            info = sf.info(io.BytesIO(raw_bytes))
+            info = sf.info(source)
             return info.duration
         except (ImportError, OSError, ValueError, RuntimeError) as e:
             self.debug(
@@ -123,19 +125,19 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
                 skipped += 1
                 continue
 
+            duration = await asyncio.to_thread(self._duration_seconds, audio_value)
+            if duration is not None and duration > _MAX_DURATION_SECONDS:
+                skipped += 1
+                continue
+
             if not audio_value.get("bytes") and audio_value.get("path"):
                 try:
                     async with aiofiles.open(audio_value["path"], "rb") as audio_file:
                         audio_value = {**audio_value, "bytes": await audio_file.read()}
-                except OSError as exc:
+                except (OSError, ValueError) as exc:
                     self.debug(lambda exc=exc: f"Failed to read audio file: {exc}")
                     skipped += 1
                     continue
-
-            duration = self._duration_seconds(audio_value)
-            if duration is not None and duration > _MAX_DURATION_SECONDS:
-                skipped += 1
-                continue
 
             audios = self._audio_from_bytes(audio_value)
             if not audios:
