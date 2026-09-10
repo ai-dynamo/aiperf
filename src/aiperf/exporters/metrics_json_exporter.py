@@ -78,6 +78,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
             input_config=self._cfg,
             run_info=RunInfo.from_run(self._run),
             was_cancelled=self._results.was_cancelled,
+            runtime_submission_invalid_reasons=list(
+                getattr(self._results, "runtime_submission_invalid_reasons", [])
+            ),
             is_complete=self._results.is_complete,
             incomplete_reason=self._results.incomplete_reason,
             error_summary=self._results.error_summary,

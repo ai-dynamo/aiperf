@@ -348,6 +348,16 @@ class JsonExportData(AIPerfBaseModel):
     input_config: BenchmarkConfig | None = None
     run_info: RunInfo | None = None
     was_cancelled: bool | None = None
+    runtime_submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Runtime reason tags that invalidate this run's scenario "
+        "submission (e.g. context-overflow rate exceeded), sourced from "
+        "ProfileResults.runtime_submission_invalid_reasons. Surfaced at the "
+        "top level (distinct from ``metadata.submission_invalid_reasons``, "
+        "which already merges these in) so multi-run aggregation can read "
+        "them back out of each run's export file without re-deriving the "
+        "merged verdict.",
+    )
     is_complete: bool | None = Field(
         default=None,
         description=(

@@ -53,9 +53,15 @@ class LocalSubprocessExecutor(RunExecutor):
             if result.returncode != 0:
                 return self._failure_from_subprocess(result, run.label, artifacts_path)
 
-            summary_metrics, was_cancelled = self._extract_summary_metrics(run)
+            summary_metrics, was_cancelled, runtime_invalid_reasons = (
+                self._extract_summary_metrics(run)
+            )
             return self._build_result_from_metrics(
-                summary_metrics, run.label, artifacts_path, was_cancelled
+                summary_metrics,
+                run.label,
+                artifacts_path,
+                was_cancelled=was_cancelled,
+                runtime_invalid_reasons=runtime_invalid_reasons,
             )
         except Exception as e:
             logger.exception(f"Error executing run {run.label}")
@@ -179,9 +185,12 @@ class LocalSubprocessExecutor(RunExecutor):
         summary_metrics: dict[str, JsonMetricResult],
         label: str,
         artifacts_path: Path,
+        *,
         was_cancelled: bool = False,
+        runtime_invalid_reasons: list[str] | None = None,
     ) -> RunResult:
         """Classify success/failure from extracted summary metrics."""
+        runtime_invalid_reasons = runtime_invalid_reasons or []
         if not summary_metrics:
             error_msg = (
                 "No metrics found in artifacts - run may have failed to complete"
@@ -193,6 +202,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 error=error_msg,
                 artifacts_path=artifacts_path,
                 was_cancelled=was_cancelled,
+                runtime_submission_invalid_reasons=runtime_invalid_reasons,
             )
 
         request_count_metric = summary_metrics.get("request_count")
@@ -210,6 +220,7 @@ class LocalSubprocessExecutor(RunExecutor):
                 error=error_msg,
                 artifacts_path=artifacts_path,
                 was_cancelled=was_cancelled,
+                runtime_submission_invalid_reasons=runtime_invalid_reasons,
             )
 
         return RunResult(
@@ -218,12 +229,13 @@ class LocalSubprocessExecutor(RunExecutor):
             summary_metrics=summary_metrics,
             artifacts_path=artifacts_path,
             was_cancelled=was_cancelled,
+            runtime_submission_invalid_reasons=runtime_invalid_reasons,
         )
 
     def _extract_summary_metrics(
         self, run: BenchmarkRun
-    ) -> tuple[dict[str, JsonMetricResult], bool]:
-        """Extract run-level summary metrics + the ``was_cancelled`` flag.
+    ) -> tuple[dict[str, JsonMetricResult], bool, list[str]]:
+        """Extract run-level summary metrics, ``was_cancelled``, and runtime-invalid reasons.
 
         Reads the summary JSON file (or its ``.zst`` variant) at the path
         computed by :attr:`ArtifactsConfig.profile_export_json_file`, which
@@ -235,7 +247,7 @@ class LocalSubprocessExecutor(RunExecutor):
         submissions must treat such runs as invalid, so the top-level flag is
         surfaced alongside the metrics from the same parse.
 
-        Returns ``({}, False)`` if the file is missing or unparsable.
+        Returns ``({}, False, [])`` if the file is missing or unparsable.
         """
         from aiperf.common.models.export_models import JsonMetricResult
 
@@ -248,7 +260,7 @@ class LocalSubprocessExecutor(RunExecutor):
             json_file = zst_file
         elif not json_file.exists():
             logger.warning(f"Profile export file not found: {json_file}")
-            return {}, False
+            return {}, False, []
 
         try:
             raw = json_file.read_bytes()
@@ -263,8 +275,15 @@ class LocalSubprocessExecutor(RunExecutor):
             for field_name, field_value in data.items():
                 if isinstance(field_value, dict) and "unit" in field_value:
                     metrics[field_name] = JsonMetricResult(**field_value)
-            return metrics, bool(data.get("was_cancelled", False))
+            runtime_invalid_reasons = list(
+                data.get("runtime_submission_invalid_reasons", []) or []
+            )
+            return (
+                metrics,
+                bool(data.get("was_cancelled", False)),
+                runtime_invalid_reasons,
+            )
 
         except (OSError, ValueError, orjson.JSONDecodeError) as e:
             logger.warning(f"Error extracting metrics from {json_file}: {e}")
-            return {}, False
+            return {}, False, []

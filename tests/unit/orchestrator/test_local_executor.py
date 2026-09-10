@@ -93,7 +93,9 @@ def test_extract_summary_metrics_honors_artifacts_prefix(tmp_path):
     (tmp_path / "my_run.json").write_bytes(orjson.dumps(metrics_payload))
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert "request_count" in metrics
     assert metrics["request_count"].avg == 100.0
@@ -116,7 +118,9 @@ def test_extract_summary_metrics_default_prefix(tmp_path):
     )
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert metrics["request_count"].avg == 5.0
     assert was_cancelled is False
@@ -145,7 +149,9 @@ def test_extract_summary_metrics_carries_was_cancelled(tmp_path):
     )
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert metrics["request_count"].avg == 3.0
     assert was_cancelled is True
@@ -164,7 +170,9 @@ def test_extract_summary_metrics_unparsable_file_returns_empty(tmp_path):
     (tmp_path / "profile_export_aiperf.json").write_bytes(b"{not valid json")
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert metrics == {}
     assert was_cancelled is False
