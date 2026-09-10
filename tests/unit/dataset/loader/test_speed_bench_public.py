@@ -536,8 +536,12 @@ class TestDeterminism:
 
     Benchmark results are only comparable if the prompts are identical, so
     conversion is order-preserving and does not sample: the same cached config
-    yields the same conversations regardless of seed. Resolution itself is
-    likewise deterministic -- it is byte-identical to upstream's prepare step.
+    yields the same conversations regardless of seed. Resolution is deterministic
+    in the same sense -- same rows, same order, same prompt text as upstream's
+    prepare step. The cache file is not guaranteed byte-stable: ``datasets``
+    serializes the nested message structs with different key ordering depending
+    on whether it recomputes or reuses an Arrow cache, so compare resolved
+    content, never the file's checksum.
     """
 
     @staticmethod

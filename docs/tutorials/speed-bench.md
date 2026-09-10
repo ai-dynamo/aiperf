@@ -90,7 +90,7 @@ be accepted once on a team's behalf. In CI, use a service account onboarded
 once by a human and store its token as a secret.
 
 **Budget disk and time for the first run.** Resolving a config downloads its
-source datasets in full -- on the order of 10 GB or more, into the HuggingFace
+source datasets in full -- around 40 GB for `qualitative` -- into the HuggingFace
 cache (`~/.cache/huggingface/hub`), not into AIPerf's cache. What AIPerf writes
 is only the extracted prompt text, which is far smaller: roughly 2 MB for
 `qualitative`, up to ~200 MB for `throughput_32k`. A small resolved file after a
