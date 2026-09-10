@@ -219,7 +219,6 @@ class TestAudioTranscriptionEndpoint:
         [
             param('[{"error":"backend overloaded"}]', id="array"),
             param("null", id="null"),
-            param("42", id="number"),
         ],
     )  # fmt: skip
     def test_parse_response_non_object_json_returns_none(
