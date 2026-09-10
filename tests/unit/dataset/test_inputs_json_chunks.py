@@ -139,6 +139,27 @@ class TestIterInputsJsonChunks:
         assert 0 < len(chunks[-1]) <= chunk_bytes
         assert b"".join(chunks) == _single_dump(inputs)
 
+    def test_iter_inputs_json_chunks_bounds_chunks_for_oversized_payload(self) -> None:
+        chunk_bytes = 1024
+        inputs = InputsFile(data=[_session("big", 1, "y" * (64 * chunk_bytes))])
+
+        chunks = list(iter_inputs_json_chunks(inputs, chunk_bytes=chunk_bytes))
+
+        assert len(chunks) > 64
+        assert all(len(chunk) == chunk_bytes for chunk in chunks[:-1])
+        assert 0 < len(chunks[-1]) <= chunk_bytes
+        assert b"".join(chunks) == _single_dump(inputs)
+
+    @pytest.mark.parametrize("chunk_bytes", [1, 5, 16])
+    def test_iter_inputs_json_chunks_bounds_chunks_for_empty_document(
+        self, chunk_bytes: int
+    ) -> None:
+        chunks = list(iter_inputs_json_chunks(InputsFile(), chunk_bytes=chunk_bytes))
+
+        assert all(len(chunk) == chunk_bytes for chunk in chunks[:-1])
+        assert 0 < len(chunks[-1]) <= chunk_bytes
+        assert b"".join(chunks) == _single_dump(InputsFile())
+
     @pytest.mark.parametrize("chunk_bytes", [0, -1])
     def test_iter_inputs_json_chunks_rejects_non_positive_chunk_bytes(
         self, chunk_bytes: int

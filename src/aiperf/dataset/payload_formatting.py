@@ -116,6 +116,17 @@ def _iter_exact_slices(document: bytes, chunk_bytes: int) -> Iterator[bytes]:
         yield document[start : start + chunk_bytes]
 
 
+def _iter_document_pieces(inputs: InputsFile) -> Iterator[bytes]:
+    """Yield the non-empty document as pieces whose concatenation is the full dump."""
+    yield _INPUTS_JSON_HEAD
+    for index, session in enumerate(inputs.data):
+        if index:
+            yield b","
+        yield _SESSION_INDENT
+        yield from _iter_session_pieces(session)
+    yield _INPUTS_JSON_TAIL
+
+
 def iter_inputs_json_chunks(
     inputs: InputsFile, chunk_bytes: int = INPUTS_JSON_WRITE_CHUNK_BYTES
 ) -> Iterator[bytes]:
@@ -141,22 +152,24 @@ def iter_inputs_json_chunks(
         yield from _iter_exact_slices(document, chunk_bytes)
         return
     if not inputs.data:
-        yield _INPUTS_JSON_EMPTY
+        yield from _iter_exact_slices(_INPUTS_JSON_EMPTY, chunk_bytes)
         return
 
-    buffer = bytearray(_INPUTS_JSON_HEAD)
-    for index, session in enumerate(inputs.data):
-        if index:
-            buffer += b","
-        buffer += _SESSION_INDENT
-        for piece in _iter_session_pieces(session):
+    # The buffer holds strictly less than chunk_bytes between pieces. A piece
+    # that reaches the threshold tops the buffer up to one exact chunk and has
+    # its remainder sliced directly, so an oversized payload never passes
+    # through the buffer and the held bytes stay under one chunk.
+    buffer = bytearray()
+    for piece in _iter_document_pieces(inputs):
+        if len(buffer) + len(piece) < chunk_bytes:
             buffer += piece
-            while len(buffer) >= chunk_bytes:
-                yield bytes(buffer[:chunk_bytes])
-                del buffer[:chunk_bytes]
-    buffer += _INPUTS_JSON_TAIL
-    while len(buffer) >= chunk_bytes:
-        yield bytes(buffer[:chunk_bytes])
-        del buffer[:chunk_bytes]
+            continue
+        offset = chunk_bytes - len(buffer)
+        buffer += piece[:offset]
+        yield bytes(buffer)
+        while len(piece) - offset >= chunk_bytes:
+            yield piece[offset : offset + chunk_bytes]
+            offset += chunk_bytes
+        buffer = bytearray(piece[offset:])
     if buffer:
         yield bytes(buffer)
