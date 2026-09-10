@@ -647,7 +647,11 @@ class TestSweepChildNaming:
     ) -> None:
         """Concurrency-based phase produces 'Concurrency=N' name."""
         cfg = _make_mlflow_cfg(
-            tmp_path,
+            # Sweep-shaped artifact dir: _derive_sweep_child_name() gates on the
+            # dir containing 'concurrency_'/'search_iter' (not the profiling config
+            # alone), so the segment must be explicit rather than relying on
+            # pytest's tmp_path happening to embed the test name.
+            tmp_path / "concurrency_64",
             profiling={"type": "concurrency", "requests": 100, "concurrency": 64},
         )
         exporter = self._make_exporter(cfg, sample_results)
@@ -658,7 +662,7 @@ class TestSweepChildNaming:
     ) -> None:
         """Concurrency=1 still produces a valid name."""
         cfg = _make_mlflow_cfg(
-            tmp_path,
+            tmp_path / "concurrency_1",
             profiling={"type": "concurrency", "requests": 100, "concurrency": 1},
         )
         exporter = self._make_exporter(cfg, sample_results)
@@ -669,7 +673,8 @@ class TestSweepChildNaming:
     ) -> None:
         """Poisson rate phase produces 'RequestRate=N' name."""
         cfg = _make_mlflow_cfg(
-            tmp_path, profiling={"type": "poisson", "requests": 100, "rate": 50.0}
+            tmp_path / "rate_50.0",
+            profiling={"type": "poisson", "requests": 100, "rate": 50.0},
         )
         exporter = self._make_exporter(cfg, sample_results)
         name = exporter._derive_sweep_child_name()
@@ -681,7 +686,7 @@ class TestSweepChildNaming:
     ) -> None:
         """A rate phase with concurrency as a cap names by rate, not the cap."""
         cfg = _make_mlflow_cfg(
-            tmp_path,
+            tmp_path / "rate_25.0",
             profiling={
                 "type": "poisson",
                 "requests": 100,
@@ -714,7 +719,7 @@ class TestSweepChildNaming:
     ) -> None:
         """When parent_run_id is absent, the exporter's _run_name is the configured name."""
         cfg = _make_mlflow_cfg(
-            tmp_path,
+            tmp_path / "concurrency_16",
             run_name="top-level-job",
             profiling={"type": "concurrency", "requests": 100, "concurrency": 16},
         )
