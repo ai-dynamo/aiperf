@@ -2456,7 +2456,7 @@ class CLIConfig(BaseConfig):
             "After the normal snapshot warmup drains, AIPerf continues the live "
             "trajectories without recorded idle delays and with one-token outputs, "
             "then drains and resumes profiling from the resulting trajectory state "
-            "using each live stream's residual next-turn delay. Mutually exclusive "
+            "using each live stream's full next-turn delay. Mutually exclusive "
             "with --warmup-requests-per-lane.",
         ),
         CLIParameter(

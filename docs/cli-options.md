@@ -1319,7 +1319,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 
 #### `--agentic-cache-warmup-duration` `<float>`
 
-Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's full next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
 <br/>_Constraints: > 0_
 
 #### `--warmup-requests-per-lane` `<int>`
@@ -2916,7 +2916,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 
 #### `--agentic-cache-warmup-duration` `<float>`
 
-Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's full next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
 <br/>_Constraints: > 0_
 
 #### `--warmup-requests-per-lane` `<int>`
@@ -4508,7 +4508,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 
 #### `--agentic-cache-warmup-duration` `<float>`
 
-Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's full next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
 <br/>_Constraints: > 0_
 
 #### `--warmup-requests-per-lane` `<int>`
@@ -6607,7 +6607,7 @@ The maximum duration in seconds for the warmup phase. If not set, it will use th
 
 #### `--agentic-cache-warmup-duration` `<float>`
 
-Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's residual next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
+Additional agentic replay warmup duration in seconds. After the normal snapshot warmup drains, AIPerf continues the live trajectories without recorded idle delays and with one-token outputs, then drains and resumes profiling from the resulting trajectory state using each live stream's full next-turn delay. Mutually exclusive with --warmup-requests-per-lane.
 <br/>_Constraints: > 0_
 
 #### `--warmup-requests-per-lane` `<int>`

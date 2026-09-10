@@ -948,8 +948,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         ):
             await self.branch_orchestrator.on_child_stopped(turn.x_correlation_id)
 
-    async def finalize_phase(self) -> None:
-        """Persist the drained accelerated-warmup DAG for profiling."""
+    def cleanup_on_abort(self) -> None:
+        """Idempotent watchdog/observer teardown for the phase's abnormal-exit path.
+
+        Cancels the idle watchdog and clears the scheduler's drain observer --
+        the same first step ``finalize_phase`` takes on the normal-completion
+        path -- without the accelerated-warmup DAG persistence that follows it,
+        which is unsafe to run against a partially-completed phase.
+        """
         if self._system_idle_gap_cap_seconds is not None:
             self._cancel_system_idle_watchdog()
             self.scheduler.set_drain_observer(None)
@@ -959,6 +965,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 f"jumps={self._system_idle_jump_count}, "
                 f"skipped={self._system_idle_seconds_skipped:.3f}s"
             )
+
+    async def finalize_phase(self) -> None:
+        """Persist the drained accelerated-warmup DAG for profiling."""
+        self.cleanup_on_abort()
         if not self._accelerated_warmup_started:
             return
         states_by_lane = self._build_handoff_states()

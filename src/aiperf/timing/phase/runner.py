@@ -557,7 +557,7 @@ class PhaseRunner(TaskManagerMixin):
             await self._publish_phase_failure_lifecycle()
             raise e
         finally:
-            self._detach_orchestrator_and_cleanup()
+            self._detach_orchestrator_and_cleanup(strategy)
 
     def _build_strategy(self) -> TimingStrategyProtocol:
         """Construct the timing strategy class for this phase."""
@@ -601,7 +601,9 @@ class PhaseRunner(TaskManagerMixin):
                 phase_index=self._config.phase_index,
             )
 
-    def _detach_orchestrator_and_cleanup(self) -> None:
+    def _detach_orchestrator_and_cleanup(
+        self, strategy: TimingStrategyProtocol
+    ) -> None:
         """Final-pass orchestrator teardown for the phase.
 
         Detaches from the shared callback handler so a subsequent phase /
@@ -609,8 +611,14 @@ class PhaseRunner(TaskManagerMixin):
         Final stats are already snapshotted via ``_snapshot_branch_stats``
         before ``publish_phase_complete`` runs. Also sweeps any still-open
         session-tree slots (AGENTIC_REPLAY) so they don't leak into the next
-        phase.
+        phase. Also runs the strategy's abort-safe watchdog/observer cleanup
+        (idempotent no-op if ``finalize_phase`` already ran it on the normal
+        completion path) so an exception raised mid-phase doesn't leave a
+        dangling idle-watchdog timer or scheduler drain observer armed.
         """
+        cleanup_on_abort = getattr(strategy, "cleanup_on_abort", None)
+        if cleanup_on_abort is not None:
+            cleanup_on_abort()
         if self._branch_orchestrator is not None:
             self._callback_handler.set_branch_orchestrator(
                 None,

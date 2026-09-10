@@ -16,10 +16,31 @@ from aiperf.metrics.types.ttft_metric import TTFTMetric
 
 _logger = AIPerfLogger(__name__)
 
-_mismatch_warned: bool = False
+
+class _MismatchWarningTracker:
+    """Warns at most once per metric tag for a first-chunk/OSL count mismatch."""
+
+    def __init__(self) -> None:
+        self._warned: set[str] = set()
+
+    def warn_once(self, metric_tag: str, first_chunk_tokens: float, osl: float) -> None:
+        if metric_tag in self._warned:
+            return
+        self._warned.add(metric_tag)
+        _logger.warning(
+            lambda: f"{metric_tag}: server-reported first content chunk "
+            f"token count ({first_chunk_tokens}) is inconsistent with output "
+            f"sequence length ({osl}); falling back to (OSL - 1). Check "
+            f"--per-chunk-usage server support."
+        )
 
 
-def _decode_token_count(record: ParsedResponseRecord, osl: float) -> float:
+_mismatch_warnings = _MismatchWarningTracker()
+
+
+def _decode_token_count(
+    record: ParsedResponseRecord, osl: float, metric_tag: str
+) -> float:
     """Return the decode-token divisor for an ITL-family metric.
 
     Subtracts the first content chunk's real output-token count (the chunk
@@ -29,7 +50,6 @@ def _decode_token_count(record: ParsedResponseRecord, osl: float) -> float:
     None (or a non-positive/lagging value) means "not reported", so fall
     back to assuming one token in the first chunk -- the legacy `osl - 1`.
     """
-    global _mismatch_warned
     first_chunk_tokens = (
         record.token_counts.first_content_chunk_tokens
         if record.token_counts is not None
@@ -43,17 +63,10 @@ def _decode_token_count(record: ParsedResponseRecord, osl: float) -> float:
     decode_tokens = osl - first_chunk_tokens  # type: ignore
     # A server-reported count that is non-positive or >= OSL is inconsistent
     # (e.g. per-chunk usage lagging a chunk, or the whole response in one
-    # chunk). Degrade to `osl - 1` and warn once rather than silently
-    # degrading a value the server actually reported.
+    # chunk). Degrade to `osl - 1` and warn once per metric type rather than
+    # silently degrading a value the server actually reported.
     if first_chunk_tokens <= 0 or decode_tokens < 1:
-        if not _mismatch_warned:
-            _mismatch_warned = True
-            _logger.warning(
-                lambda: f"Inter-token latency: server-reported first content chunk "
-                f"token count ({first_chunk_tokens}) is inconsistent with output "
-                f"sequence length ({osl}); falling back to (OSL - 1). Check "
-                f"--per-chunk-usage server support."
-            )
+        _mismatch_warnings.warn_once(metric_tag, first_chunk_tokens, osl)  # type: ignore
         return osl - 1  # type: ignore
     return decode_tokens
 
@@ -103,7 +116,7 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
         if osl < 2:  # type: ignore
             raise NoMetricValue(f"Output sequence length must be at least 2, got {osl}")
 
-        decode_tokens = _decode_token_count(record, osl)  # type: ignore
+        decode_tokens = _decode_token_count(record, osl, self.tag)  # type: ignore
 
         ttft = record_metrics.get_or_raise(TTFTMetric)
         request_latency = record_metrics.get_or_raise(RequestLatencyMetric)
@@ -138,6 +151,6 @@ class FullResponseInterTokenLatencyMetric(BaseRecordMetric[float]):
         if osl < 2:  # type: ignore
             raise NoMetricValue(f"Output sequence length must be at least 2, got {osl}")
 
-        decode_tokens = _decode_token_count(record, osl)  # type: ignore
+        decode_tokens = _decode_token_count(record, osl, self.tag)  # type: ignore
         full_decode_duration = record_metrics.get_or_raise(FullDecodeDurationMetric)
         return full_decode_duration / decode_tokens  # type: ignore

@@ -377,6 +377,19 @@ class CreditIssuer:
         # Slots acquired - proceed with credit issuance
         return await self._issue_credit_internal(turn)
 
+    def _release_slots_on_reject(
+        self, needs_session_slot: bool, release_prefill: bool
+    ) -> None:
+        """Release slots acquired so far after a non-blocking issuance is rejected.
+
+        Tree is not registered yet (deferred until both slots succeed), so
+        phase teardown release_all cannot double-release these slots.
+        """
+        if release_prefill:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+        if needs_session_slot:
+            self._concurrency_manager.release_session_slot(self._phase_key)
+
     async def try_issue_credit(self, turn: TurnToSend) -> bool | None:
         """Try to issue credit without blocking on concurrency slots.
 
@@ -420,18 +433,14 @@ class CreditIssuer:
             self._phase_key, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry.
-            # Tree is not registered yet (deferred until both slots succeed), so
-            # phase teardown release_all cannot double-release this slot.
-            if needs_session_slot:
-                self._concurrency_manager.release_session_slot(self._phase_key)
+            self._release_slots_on_reject(needs_session_slot, release_prefill=False)
             return None  # No slot - credit not issued
 
-        if self._turn_admission_result(turn) is not TurnAdmission.ADMIT:
-            self._concurrency_manager.release_prefill_slot(self._phase_key)
-            if needs_session_slot:
-                self._concurrency_manager.release_session_slot(self._phase_key)
-            return False
+        admission = self._turn_admission_result(turn)
+        if admission is not TurnAdmission.ADMIT:
+            self._release_slots_on_reject(needs_session_slot, release_prefill=True)
+            # DEFER means not ready yet - retry later, not a stop condition.
+            return None if admission is TurnAdmission.DEFER else False
 
         if needs_session_slot:
             self._open_session_tree(turn)

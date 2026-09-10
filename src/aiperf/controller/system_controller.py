@@ -1389,13 +1389,13 @@ class SystemController(
             # to finalize). Announcing those as exported would publish a partial
             # result set as if it were whole, so they set ``_export_failed``,
             # which withholds ResultsExportedMessage on every run type.
-            fatal_errors = [
+            flagged_fatal_errors = [
                 error
                 for error in message.results.errors
                 if isinstance(error.details, dict)
                 and error.details.get(ERROR_FATAL_DETAIL_KEY)
             ]
-            if fatal_errors:
+            if flagged_fatal_errors:
                 self._export_failed = True
 
             # Under Kubernetes these entries also reach ``print_exit_errors``
@@ -1414,7 +1414,7 @@ class SystemController(
                     or error.details.get(ERROR_FATAL_DETAIL_KEY, True)
                 ]
                 if self._is_kubernetes()
-                else fatal_errors
+                else flagged_fatal_errors
             )
             self._exit_errors.extend(
                 ExitErrorInfo(
