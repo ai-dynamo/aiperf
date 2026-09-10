@@ -248,9 +248,7 @@ def test_parallel_convert_prefix_tail_matches_cold_and_warm_cache(
     }
     trace_id = "warm_cache_tail_trace"
 
-    cold = _drive_worker_inproc(
-        pg, [("s1", [prefix_tail])], trace_id, block_size
-    )
+    cold = _drive_worker_inproc(pg, [("s1", [prefix_tail])], trace_id, block_size)
     warm = _drive_worker_inproc(
         pg, [("s1", [exact_block, prefix_tail])], trace_id, block_size
     )
