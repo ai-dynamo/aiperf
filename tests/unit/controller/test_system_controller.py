@@ -231,6 +231,29 @@ class TestSystemController:
             "records-1",
         )
 
+    @pytest.mark.asyncio
+    async def test_handle_profile_cancel_relay_unrecognized_reason_still_relays(
+        self, system_controller: SystemController
+    ) -> None:
+        """An unrecognized ``reason`` must not prevent the peer fan-out.
+
+        ``ProfileCancelReason(reason)`` raises ValueError for any value outside
+        the enum; the handler must treat this the same as a malformed payload
+        (log and relay) rather than letting the exception escape and turn the
+        abort into a CommandErr back to the originator.
+        """
+        system_controller.execute_async = MagicMock()
+        payload = orjson.dumps(
+            {"origin_service_id": "records-1", "reason": "totally_bogus_reason"}
+        )
+
+        await system_controller._handle_profile_cancel_relay(
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL, payload=payload)
+        )
+
+        assert len(system_controller._exit_errors) == 0
+        system_controller.execute_async.assert_called_once()
+
 
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""

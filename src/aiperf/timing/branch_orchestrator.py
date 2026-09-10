@@ -1170,6 +1170,9 @@ class BranchOrchestrator:
         #     ``dispatch_pre_session_branches``).
         #   * REJECTED (including legacy False/None) -> stop-condition
         #     refusal; not an error.
+        # Both call sites gate on `isinstance(result, BaseException) or
+        # ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED`
+        # before calling this method, so `result` is always one of the two.
         if isinstance(result, BaseException):
             logger.error(
                 "dispatch_first_turn failed for child %s",
@@ -1177,15 +1180,8 @@ class BranchOrchestrator:
                 exc_info=result,
             )
             self.stats.children_errored += 1
-        elif ChildDispatchResult.normalize(result) is ChildDispatchResult.REJECTED:
-            self.stats.children_truncated += 1
         else:
-            logger.warning(
-                "dispatch_first_turn returned unexpected value %r for child %s",
-                result,
-                child_corr,
-            )
-            self.stats.children_errored += 1
+            self.stats.children_truncated += 1
         self.stats.children_spawned -= 1
 
     async def _finalize_failed_dispatches(

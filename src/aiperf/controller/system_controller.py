@@ -1266,7 +1266,7 @@ class SystemController(
                             service_id=origin_service_id or None,
                         )
                     )
-            except (orjson.JSONDecodeError, AttributeError) as e:
+            except (orjson.JSONDecodeError, AttributeError, ValueError) as e:
                 self.warning(
                     f"Ignoring unreadable {CommandType.PROFILE_CANCEL} payload; "
                     f"relaying to every handler: {e!r}"

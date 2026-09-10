@@ -259,6 +259,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._system_idle_seconds_skipped = 0.0
         self._system_idle_started_at: float | None = None
         self._system_idle_watchdog: asyncio.TimerHandle | None = None
+        self._system_idle_summary_logged = False
 
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
         # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
@@ -954,17 +955,22 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         Cancels the idle watchdog and clears the scheduler's drain observer --
         the same first step ``finalize_phase`` takes on the normal-completion
         path -- without the accelerated-warmup DAG persistence that follows it,
-        which is unsafe to run against a partially-completed phase.
+        which is unsafe to run against a partially-completed phase. Called from
+        both ``finalize_phase`` and the runner's unconditional cleanup, so the
+        summary log is gated separately to avoid a duplicate line on every
+        normal completion.
         """
         if self._system_idle_gap_cap_seconds is not None:
             self._cancel_system_idle_watchdog()
             self.scheduler.set_drain_observer(None)
-            self.info(
-                "Global system-idle cap summary: "
-                f"limit={self._system_idle_gap_cap_seconds:g}s, "
-                f"jumps={self._system_idle_jump_count}, "
-                f"skipped={self._system_idle_seconds_skipped:.3f}s"
-            )
+            if not self._system_idle_summary_logged:
+                self._system_idle_summary_logged = True
+                self.info(
+                    "Global system-idle cap summary: "
+                    f"limit={self._system_idle_gap_cap_seconds:g}s, "
+                    f"jumps={self._system_idle_jump_count}, "
+                    f"skipped={self._system_idle_seconds_skipped:.3f}s"
+                )
 
     async def finalize_phase(self) -> None:
         """Persist the drained accelerated-warmup DAG for profiling."""

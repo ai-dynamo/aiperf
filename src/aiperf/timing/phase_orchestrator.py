@@ -24,7 +24,7 @@ from aiperf.common.control_hooks import (
     stop_server_profiler,
 )
 from aiperf.common.control_plane_http import ControlPlaneHttpError
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase, ProfileCancelReason
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
@@ -283,7 +283,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._callback_handler = CreditCallbackHandler(
             self._concurrency_manager,
             session_tree_registry=self._session_tree_registry,
-            on_warmup_abort=self._phase_publisher.request_profile_cancel,
+            on_warmup_abort=lambda: self._phase_publisher.request_profile_cancel(
+                ProfileCancelReason.WARMUP_FAILURE
+            ),
         )
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(

@@ -143,7 +143,7 @@ class CreditIssuer:
 
     def _turn_admission_result(self, turn: TurnToSend) -> TurnAdmission:
         """Run the optional final admission check."""
-        callback = getattr(self, "_turn_admission", None)
+        callback = self._turn_admission
         if callback is None:
             return TurnAdmission.ADMIT
         return TurnAdmission.normalize(callback(turn))
