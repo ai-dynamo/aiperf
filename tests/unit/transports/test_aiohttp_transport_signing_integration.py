@@ -253,3 +253,115 @@ class TestSignedRequestsDoNotFollowRedirects:
 
         kwargs = transport.aiohttp_client.post_request.call_args.kwargs
         assert "allow_redirects" not in kwargs
+
+
+class TestPollingPathRefusesToSendUnsigned:
+    """``_send_video_request_with_polling`` returns before the signing call site,
+    so a signed polling request would go out with no Authorization header at all
+    -- ``base_endpoint`` suppresses the Bearer header whenever a signer is
+    configured, so there is no fallback credential either.
+
+    ``EndpointConfig`` rejects polling-endpoint + signer up front, which is why
+    this is unreachable in practice. It is guarded here as well because the
+    invariant lives one file away from the code that depends on it: if that
+    validator is ever relaxed, this must fail loudly rather than quietly emit
+    unsigned requests.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_signed_polling_request_raises_instead_of_sending(
+        self, static_aws_credentials: None
+    ) -> None:
+        from unittest.mock import patch
+
+        transport = await _signed_transport()
+
+        with patch(
+            "aiperf.transports.aiohttp_transport.plugins.get_endpoint_metadata"
+        ) as meta:
+            meta.return_value.requires_polling = True
+
+            with pytest.raises(RuntimeError, match="signing"):
+                await transport.send_request(
+                    create_request_info(transport.model_endpoint), _PAYLOAD
+                )
+
+        transport.aiohttp_client.post_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_unsigned_polling_request_is_untouched(self) -> None:
+        """The guard keys on the signer, so video generation without
+        --auth-type keeps working exactly as before."""
+        transport = AioHttpTransport(model_endpoint=create_model_endpoint_info())
+        await transport.initialize()
+
+        assert transport.request_signer is None
+
+
+class TestRedirectRefusalIsExplained:
+    """Refusing the redirect is only half the job: a bare "302 Found" tells the
+    user nothing about why aiperf did not follow it, and that is exactly the
+    situation someone will eventually land in."""
+
+    @pytest.mark.asyncio
+    async def test_a_3xx_on_a_signed_request_explains_the_refusal(
+        self, static_aws_credentials: None
+    ) -> None:
+        from aiperf.common.models import ErrorDetails
+
+        transport = await _signed_transport()
+        transport.aiohttp_client.post_request = AsyncMock(
+            return_value=RequestRecord(
+                status=302,
+                error=ErrorDetails(code=302, type="Found", message=""),
+            )
+        )
+
+        record = await transport.send_request(
+            create_request_info(transport.model_endpoint), _PAYLOAD
+        )
+
+        assert record.error is not None
+        assert "redirect" in record.error.message.lower()
+        assert "signed" in record.error.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_a_non_redirect_error_is_left_alone(
+        self, static_aws_credentials: None
+    ) -> None:
+        from aiperf.common.models import ErrorDetails
+
+        transport = await _signed_transport()
+        transport.aiohttp_client.post_request = AsyncMock(
+            return_value=RequestRecord(
+                status=403,
+                error=ErrorDetails(code=403, type="Forbidden", message="denied"),
+            )
+        )
+
+        record = await transport.send_request(
+            create_request_info(transport.model_endpoint), _PAYLOAD
+        )
+
+        assert record.error.message == "denied"
+
+    @pytest.mark.asyncio
+    async def test_an_unsigned_3xx_is_left_alone(self) -> None:
+        """Unsigned requests still follow redirects, so a 3xx reaching the
+        caller there means something else and must not be re-explained."""
+        from aiperf.common.models import ErrorDetails
+
+        transport = AioHttpTransport(model_endpoint=create_model_endpoint_info())
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(
+            return_value=RequestRecord(
+                status=302,
+                error=ErrorDetails(code=302, type="Found", message="moved"),
+            )
+        )
+
+        record = await transport.send_request(
+            create_request_info(transport.model_endpoint), _PAYLOAD
+        )
+
+        assert record.error.message == "moved"
