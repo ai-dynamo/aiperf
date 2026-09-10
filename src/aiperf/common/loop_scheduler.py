@@ -356,25 +356,29 @@ class LoopScheduler:
         # event loop's ready queue with ``call_soon``.  A second cap may run
         # before that callback gets a turn.  Such an asyncio.Handle has no
         # ``when()`` and already represents the minimum possible delay, so
-        # there is nothing left to advance.
+        # it is excluded from the shift computation rather than aborting
+        # the whole batch -- the other pending timers still need capping.
         # Use the timer protocol rather than ``isinstance(TimerHandle)``:
         # uvloop supplies its own compatible timer-handle implementation.
-        if any(
-            not callable(getattr(handle, "when", None))
-            for handle, _ in self._handles.values()
-        ):
+        timed = [
+            (handle_id, handle, coro)
+            for handle_id, (handle, coro) in self._handles.items()
+            if callable(getattr(handle, "when", None))
+        ]
+        if not timed:
             return 0.0
-        earliest = min(handle.when() for handle, _ in self._handles.values())
+        earliest = min(handle.when() for _, handle, _ in timed)
         shift_sec = earliest - now - max_delay_sec
         if shift_sec <= 0:
             return 0.0
 
         items = [
             (handle, coro, self._handle_groups.get(handle_id))
-            for handle_id, (handle, coro) in self._handles.items()
+            for handle_id, handle, coro in timed
         ]
-        self._handles.clear()
-        self._handle_groups.clear()
+        for handle_id, _, _ in timed:
+            self._handles.pop(handle_id, None)
+            self._handle_groups.pop(handle_id, None)
         for handle, coro, group_id in items:
             target = max(now, handle.when() - shift_sec)
             handle.cancel()
@@ -412,16 +416,21 @@ class LoopScheduler:
             return 0.0
 
         now = self._loop.time()
-        if any(
-            not callable(getattr(handle, "when", None)) for _, handle, _ in selected
-        ):
+        # Exclude handles mid-transition (no ``when()``, see cap_pending_delay)
+        # from the shift computation rather than aborting the whole group.
+        timed = [
+            (handle_id, handle, coro)
+            for handle_id, handle, coro in selected
+            if callable(getattr(handle, "when", None))
+        ]
+        if not timed:
             return 0.0
-        earliest = min(handle.when() for _, handle, _ in selected)
+        earliest = min(handle.when() for _, handle, _ in timed)
         shift_sec = earliest - now - max_delay_sec
         if shift_sec <= 0:
             return 0.0
 
-        for handle_id, handle, coro in selected:
+        for handle_id, handle, coro in timed:
             self._handles.pop(handle_id, None)
             self._handle_groups.pop(handle_id, None)
             target = max(now, handle.when() - shift_sec)

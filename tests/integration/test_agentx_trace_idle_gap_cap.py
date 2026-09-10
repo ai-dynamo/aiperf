@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.enums import CreditPhase
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer, AIPerfResults
 
 
@@ -61,10 +62,22 @@ def varied_weka_traces(tmp_path: Path) -> Path:
 
 
 def _tree_idle_gaps_seconds(result: AIPerfResults) -> list[float]:
-    """Return periods with no request active in each profiling trajectory tree."""
+    """Return periods with no request active in each profiling trajectory tree.
+
+    Scoped to ``CreditPhase.PROFILING`` records only: ``--trace-idle-gap-cap-seconds``
+    arms its watchdog when the profiling phase opens for a tree (see
+    ``docs/tutorials/agentx-mvp.md`` "Profiling Phase"), so it cannot bound the
+    warmup-to-profiling handoff itself. A tree that warmed up keeps its last
+    warmup record in ``profile_export.jsonl``, and the wall-clock gap between
+    that record and the tree's first profiling record reflects real
+    warmup-drain/profiling-setup handoff latency, not an idle interval the cap
+    is responsible for.
+    """
     assert result.jsonl is not None
     by_root = defaultdict(list)
     for record in result.jsonl:
+        if record.metadata.benchmark_phase != CreditPhase.PROFILING:
+            continue
         root_id = record.metadata.root_correlation_id
         assert root_id is not None
         by_root[root_id].append(record.metadata)

@@ -1406,7 +1406,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         offsets: list[float] = []
         for trajectory in self.conversation_source.trajectories:
             if trajectory.snapshot is None:
-                return 0.0
+                continue
             offsets.extend(
                 state.next_dispatch_offset_ms
                 for state in trajectory.snapshot.states
