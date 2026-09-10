@@ -181,11 +181,7 @@ def _process_batch(
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
         cached = block_cache.get(hash_id)
-        if cached is None:
-            hash_rng.reseed_for_hash_id(hash_id)
-            cached = sample_tokens(corpus, size, hash_rng, sep_token)
-            block_cache[hash_id] = cached
-        elif len(cached) != size:
+        if cached is not None and len(cached) != size:
             # A hash_id identifies a fixed block of content, so it can only ever
             # have one size. The same id at two sizes means a corrupt trace or a
             # block_size that disagrees with the recorded blocks.
@@ -195,6 +191,15 @@ def _process_batch(
                 f"single fixed block size; inconsistent sizes indicate a corrupt "
                 f"trace or a --isl-block-size that disagrees with the recorded blocks."
             )
+        # Always reseed + sample so hash_rng ends in the same post-block state
+        # as a cache miss. Prefix-only tails call sample_tokens on this RNG;
+        # skipping the draw on a hit would make the tail depend on earlier
+        # worker work.
+        hash_rng.reseed_for_hash_id(hash_id)
+        sampled = sample_tokens(corpus, size, hash_rng, sep_token)
+        if cached is None:
+            block_cache[hash_id] = sampled
+            return sampled
         return cached
 
     results = []
