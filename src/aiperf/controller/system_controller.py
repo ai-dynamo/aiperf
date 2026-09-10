@@ -2279,18 +2279,7 @@ class SystemController(
         # point all result domains and the RAW artifact barrier are complete,
         # but the API and event bus remain live for the export notification.
         try:
-            # "Degraded but has results" and "no results at all" are different
-            # outcomes and must not share a gate. Any recorded error used to
-            # skip the export entirely, so a single aggregation diagnostic or a
-            # reaped producer threw away profile_export.csv/.json, the console
-            # summary, auto-plot, the Kubernetes ready marker and
-            # ResultsExportedMessage for a run that had complete records in
-            # hand. Export whenever there is something to export; the errors are
-            # still printed below and still drive the non-zero exit code.
-            if self._has_exportable_results() or not self._exit_errors:
-                await self._print_post_benchmark_info_and_metrics()
-            if self._exit_errors:
-                self._print_exit_errors_and_log_file()
+            await self._report_post_shutdown_results_and_errors()
 
             if Environment.DEV.MODE:
                 print_developer_mode_warning()
@@ -2327,6 +2316,23 @@ class SystemController(
         exportable record set.
         """
         return bool(self._profile_results and self._profile_results.results.records)
+
+    async def _report_post_shutdown_results_and_errors(self) -> None:
+        """Print benchmark results and/or exit errors before final shutdown.
+
+        "Degraded but has results" and "no results at all" are different
+        outcomes and must not share a gate. Any recorded error used to skip
+        the export entirely, so a single aggregation diagnostic or a reaped
+        producer threw away profile_export.csv/.json, the console summary,
+        auto-plot, the Kubernetes ready marker and ResultsExportedMessage for
+        a run that had complete records in hand. Export whenever there is
+        something to export; the errors are still printed below and still
+        drive the non-zero exit code.
+        """
+        if self._has_exportable_results() or not self._exit_errors:
+            await self._print_post_benchmark_info_and_metrics()
+        if self._exit_errors:
+            self._print_exit_errors_and_log_file()
 
     def _print_degraded_producers(self, console: Console) -> None:
         """Name the producers whose results are missing from this export.
