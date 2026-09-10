@@ -1464,7 +1464,10 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+        }
         assert (
             manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
             == 10
@@ -1517,7 +1520,10 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+        }
 
     @pytest.mark.asyncio
     async def test_failed_request_threshold_read_from_owning_phase(self) -> None:

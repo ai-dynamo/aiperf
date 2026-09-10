@@ -34,6 +34,7 @@ from aiperf.common.enums import (
     ExportLevel,
     LifecycleState,
     MessageType,
+    ProfileCancelReason,
     ServiceRegistrationStatus,
     SystemState,
 )
@@ -1247,6 +1248,19 @@ class SystemController(
             try:
                 payload = orjson.loads(message.payload)
                 origin_service_id = payload.get("origin_service_id", "")
+                reason = payload.get("reason")
+                if reason is not None and ProfileCancelReason(reason).is_abort:
+                    self._exit_errors.append(
+                        ExitErrorInfo(
+                            error_details=ErrorDetails(
+                                message=f"Run aborted by '{origin_service_id}': "
+                                f"{reason}.",
+                                type="ProfileCancelAbort",
+                            ),
+                            operation="profile_cancel_abort",
+                            service_id=origin_service_id or None,
+                        )
+                    )
             except (orjson.JSONDecodeError, AttributeError) as e:
                 self.warning(
                     f"Ignoring unreadable {CommandType.PROFILE_CANCEL} payload; "

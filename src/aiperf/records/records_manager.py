@@ -35,6 +35,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ProfileCancelReason,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -950,7 +951,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"(grace floor {grace_floor}, phase_index {phase_index}). "
             "Requesting PROFILE_CANCEL to terminate the run."
         )
-        payload = orjson.dumps({"origin_service_id": self.service_id})
+        payload = orjson.dumps(
+            {
+                "origin_service_id": self.service_id,
+                "reason": ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+            }
+        )
         try:
             await self.send_command_to_controller(
                 CommandType.PROFILE_CANCEL, payload=payload

@@ -4,10 +4,11 @@ import asyncio
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 from msgspec.structs import replace
 
-from aiperf.common.control_structs import CommandErr, CommandUnhandled
+from aiperf.common.control_structs import Command, CommandErr, CommandUnhandled
 from aiperf.common.enums import (
     CommandType,
     LifecycleState,
@@ -152,6 +153,48 @@ class TestSystemController:
         system_controller._send_control_command_to_all.assert_awaited_once_with(
             CommandType.START_REALTIME_TELEMETRY, ["records_manager_1"]
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("reason", "expect_error"),
+        [
+            ("failed_request_threshold", True),
+            ("warmup_failure", True),
+            ("user", False),
+            (None, False),
+        ],
+    )
+    async def test_handle_profile_cancel_relay_records_exit_error_on_abort_reason(
+        self,
+        system_controller: SystemController,
+        reason: str | None,
+        expect_error: bool,
+    ) -> None:
+        """A service-originated PROFILE_CANCEL with an abort reason must fail
+        the run's exit code; a user-initiated cancel must not."""
+        system_controller.execute_async = MagicMock()
+        payload_dict = {"origin_service_id": "records-1"}
+        if reason is not None:
+            payload_dict["reason"] = reason
+        payload = orjson.dumps(payload_dict)
+
+        await system_controller._handle_profile_cancel_relay(
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL, payload=payload)
+        )
+
+        if expect_error:
+            assert_exit_error(
+                system_controller,
+                ErrorDetails(
+                    message=f"Run aborted by 'records-1': {reason}.",
+                    type="ProfileCancelAbort",
+                ),
+                "profile_cancel_abort",
+                "records-1",
+            )
+        else:
+            assert len(system_controller._exit_errors) == 0
+        system_controller.execute_async.assert_called_once()
 
 
 class TestSystemControllerExitScenarios:
