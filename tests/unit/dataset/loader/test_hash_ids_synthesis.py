@@ -177,9 +177,7 @@ def test_mixin_oracle_decodes_full_sequence_for_exact_partial_and_prefix_tail(
         result = loader.synthesize_prompts_from_hash_ids(requests)
 
     expected = {
-        key: pg.tokenizer.decode(
-            assembled[(tuple(hids), n)], skip_special_tokens=False
-        )
+        key: pg.tokenizer.decode(assembled[(tuple(hids), n)], skip_special_tokens=False)
         for key, hids, n in cases
     }
     joined_blocks = {
@@ -196,9 +194,7 @@ def test_mixin_oracle_decodes_full_sequence_for_exact_partial_and_prefix_tail(
     assert expected["prefix_tail"] != joined_blocks["prefix_tail"]
     assert result == expected
     passed = [tuple(seq) for seq in mock_decode.call_args.args[0]]
-    assert set(passed) == {
-        tuple(assembled[(tuple(hids), n)]) for _, hids, n in cases
-    }
+    assert set(passed) == {tuple(assembled[(tuple(hids), n)]) for _, hids, n in cases}
 
 
 def test_mixin_falls_back_to_generator_for_empty_hash_ids():

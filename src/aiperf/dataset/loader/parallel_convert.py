@@ -122,6 +122,46 @@ def _init_worker(args: _WorkerInitArgs) -> None:
     )
 
 
+def _assemble_hash_id_tokens(
+    *,
+    hash_ids: list[int],
+    input_length: int,
+    block_size: int,
+    get_block_tokens: Callable[[int, int], list[int]],
+    sample_tokens: Callable[..., list[int]],
+    corpus: np.ndarray,
+    hash_rng: HashIdRandomGenerator,
+) -> list[int]:
+    """Build the full token sequence for one hash_ids trace (exact / partial / prefix-tail)."""
+    m = len(hash_ids)
+    total_hashed = m * block_size
+    final_block_size = input_length - (m - 1) * block_size
+
+    if total_hashed > input_length and (
+        final_block_size <= 0 or final_block_size > block_size
+    ):
+        raise ConfigurationError(
+            f"Input length: {input_length}, Hash IDs: {hash_ids}, "
+            f"Block size: {block_size} are not compatible. The final "
+            f"hash block size: {final_block_size} must be greater than "
+            f"0 and less than or equal to {block_size}."
+        )
+
+    tokens: list[int] = []
+    if total_hashed > input_length:
+        for i, hid in enumerate(hash_ids):
+            size = final_block_size if i == m - 1 else block_size
+            tokens.extend(get_block_tokens(hid, size))
+        return tokens
+
+    for hid in hash_ids:
+        tokens.extend(get_block_tokens(hid, block_size))
+    tail = input_length - len(tokens)
+    if tail > 0:
+        tokens.extend(sample_tokens(corpus, tail, hash_rng, None))
+    return tokens
+
+
 def _process_batch(
     batch: list[tuple[str, list[dict]]],
 ) -> list[tuple[str, list[tuple]]]:
@@ -171,33 +211,15 @@ def _process_batch(
                 # overshoot input_length the implied final partial block goes
                 # non-positive, which serial rejects -- raise the same error
                 # here instead of silently emitting a short/empty block.
-                hash_ids = trace["hash_ids"]
-                input_length = trace["input_length"]
-                m = len(hash_ids)
-                total_hashed = m * block_size
-                final_block_size = input_length - (m - 1) * block_size
-
-                if total_hashed > input_length and (
-                    final_block_size <= 0 or final_block_size > block_size
-                ):
-                    raise ConfigurationError(
-                        f"Input length: {input_length}, Hash IDs: {hash_ids}, "
-                        f"Block size: {block_size} are not compatible. The final "
-                        f"hash block size: {final_block_size} must be greater than "
-                        f"0 and less than or equal to {block_size}."
-                    )
-
-                tokens: list[int] = []
-                if total_hashed > input_length:
-                    for i, hid in enumerate(hash_ids):
-                        size = final_block_size if i == m - 1 else block_size
-                        tokens.extend(get_block_tokens(hid, size))
-                else:
-                    for hid in hash_ids:
-                        tokens.extend(get_block_tokens(hid, block_size))
-                    tail = input_length - len(tokens)
-                    if tail > 0:
-                        tokens.extend(sample_tokens(corpus, tail, hash_rng, None))
+                tokens = _assemble_hash_id_tokens(
+                    hash_ids=trace["hash_ids"],
+                    input_length=trace["input_length"],
+                    block_size=block_size,
+                    get_block_tokens=get_block_tokens,
+                    sample_tokens=sample_tokens,
+                    corpus=corpus,
+                    hash_rng=hash_rng,
+                )
                 prompt = decode(tokens, skip_special_tokens=False)
             else:
                 prompt = ""
