@@ -68,10 +68,11 @@ benchmark:
 
     - name: profiling
       type: concurrency
-      # All 880 qualitative prompts (80 per category x 11 categories), each
-      # issued once so every category cell reflects per-prompt acceptance
-      # rather than random oversampling.
-      requests: 880
+      # Stop on sessions, not requests: the split holds 880 conversations but
+      # multi-turn rows expand into ~1,140 requests, so a request-count of 880
+      # would stop partway through the file and silently drop whole categories.
+      # Sessions run each conversation exactly once regardless of its turn count.
+      sessions: 880
       concurrency: 16
 
   # Acceptance rides the responses, so the Prometheus scrape adds nothing here.
