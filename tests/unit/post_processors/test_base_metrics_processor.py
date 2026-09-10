@@ -421,7 +421,6 @@ class TestFixedScheduleOnlyGating:
 def test_embeddings_usage_metric_applicability(
     mock_run, endpoint_type: EndpointType
 ) -> None:
-    """Embedding metrics include prompt usage but exclude generated-token metrics."""
     mock_run.cfg.endpoint.type = endpoint_type
     mock_run.cfg.endpoint.streaming = False
     processor = BaseMetricsProcessor(mock_run)
