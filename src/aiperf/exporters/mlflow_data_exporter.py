@@ -367,43 +367,51 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         return f"aiperf-{int(time.time())}"
 
     def _derive_sweep_child_name(self) -> str | None:
-        """Derive a human-readable name from the swept dimension for this probe.
+        """Derive a child run name from the AUTHORITATIVE swept dimension(s).
 
-        In a sweep or search, each per-probe child run should be named by
-        its swept parameter value (e.g., "Concurrency=4") rather than
-        repeating the caller-supplied --mlflow-run-name for every child.
-        Returns None when the run is not part of a sweep/search (caller
-        falls back to --mlflow-run-name or the default).
+        In a sweep or search, each per-probe child run should be named by its
+        swept parameter value(s) (e.g. ``"Concurrency=4"``) rather than repeating
+        the caller-supplied ``--mlflow-run-name`` for every child.
 
-        Detection uses the artifact directory pattern set by the orchestrator:
-        - ``search_iter_NNNN/`` → adaptive search (concurrency is swept)
-        - ``concurrency_N/`` → magic-list concurrency sweep
-        - ``rate_N/`` or ``request_rate_N/`` → rate sweep (future)
-        - None of the above → not a sweep, preserve configured name.
+        The swept coordinate is carried directly on the ``BenchmarkRun`` as
+        ``variation.values`` — a ``{dotted_path: value}`` map the orchestrator and
+        every search planner populate (a magic-list sweep sets e.g.
+        ``{"phases.profiling.concurrency": 10}``; a search sets
+        ``{<SearchSpaceDimension.path>: value}``). We read that map directly rather
+        than reverse-engineering the artifact directory string, which is a lossy
+        inversion of data already in hand:
 
-        This avoids incorrectly renaming ordinary nested runs that happen
-        to have a parent_run_id and a fixed concurrency.
+        - multi-dimension variations (``concurrency`` x ``ISL``) share the
+          ``concurrency_`` substring and would collapse to one name — the exact
+          collision this rename exists to remove;
+        - ``prefill_concurrency_N/`` contains ``concurrency_`` and would be
+          mislabelled with the (fixed) total concurrency;
+        - ``search_iter_NNNN/`` is emitted for EVERY search dimension (not just
+          concurrency), and an unanchored ``rate_`` match also hits ancestor
+          directories like ``moderate_load/``.
+
+        Returns None when the run carries no sweep/search variation values (a
+        single run, or a ``base`` variation whose ``values`` is empty), so the
+        caller falls back to ``--mlflow-run-name`` or the default.
         """
-        artifact_path = str(self._artifact_directory)
+        run = self._exporter_config.run
+        variation = getattr(run, "variation", None) if run is not None else None
+        values = getattr(variation, "values", None) if variation is not None else None
+        if not values:
+            return None
+        # ``{LastSegmentTitleCase}={value}`` per swept dimension, joined so a
+        # multi-dimension variation stays unique (no collision) and an unknown
+        # future dimension names itself correctly with no code change.
+        return ", ".join(
+            f"{self._prettify_dimension(key)}={value}" for key, value in values.items()
+        )
 
-        # Concurrency sweeps: adaptive search or magic-list
-        if "search_iter" in artifact_path or "concurrency_" in artifact_path:
-            profiling_phases = self._cfg.get_profiling_phases()
-            if profiling_phases:
-                phase = profiling_phases[0]
-                if getattr(phase, "concurrency", None) is not None:
-                    return f"Concurrency={phase.concurrency}"
-
-        # Rate sweeps (future pattern — not currently produced by the
-        # orchestrator, but ready when it is)
-        if "rate_" in artifact_path or "request_rate_" in artifact_path:
-            profiling_phases = self._cfg.get_profiling_phases()
-            if profiling_phases:
-                rate = get_phase_rate(profiling_phases[0])
-                if rate is not None:
-                    return f"RequestRate={rate}"
-
-        return None
+    @staticmethod
+    def _prettify_dimension(dotted_key: str) -> str:
+        """Last dotted segment, TitleCased: ``phases.profiling.concurrency`` ->
+        ``Concurrency``; ``...request_rate`` -> ``RequestRate``."""
+        last = dotted_key.rsplit(".", 1)[-1]
+        return "".join(word.capitalize() for word in last.split("_")) or last
 
     # Statistic fields on JsonMetricResult / MetricResult that are pushed to
     # MLflow. The exporter skips fields that are None, so listing a superset is

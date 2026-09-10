@@ -21,8 +21,10 @@ from aiperf.common.models import MetricResult, ProfileResults
 from aiperf.config import (
     ArtifactsConfig,
     BenchmarkConfig,
+    BenchmarkRun,
     EndpointConfig,
     MLflowConfig,
+    SweepVariation,
 )
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
@@ -71,6 +73,7 @@ def _install_fake_mlflow_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
         "run_names": [],
         "run_ids": [],
         "log_batch_calls": [],
+        "update_run_calls": [],
         "artifacts": [],
         "artifact_contents": {},
         # run_id -> pre-existing run_name (simulates a live-streaming run that
@@ -113,6 +116,13 @@ def _install_fake_mlflow_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, A
                     "tags": tags,
                 }
             )
+
+        def update_run(self, run_id: str, name: str | None = None) -> None:
+            # Records the child-run rename so a test can assert it fired (the real
+            # MLflowClient.update_run is what renames a reused live run to its
+            # swept-dimension name). Without this method the rename branch would
+            # AttributeError and be swallowed by the exporter's broad except.
+            state["update_run_calls"].append({"run_id": run_id, "name": name})
 
     class FakeRunContext:
         def __init__(self, run_id: str, run_name: str | None) -> None:
@@ -476,6 +486,65 @@ class TestMLflowDataExporter:
         )
         assert uploaded_metadata == written_metadata
 
+    @pytest.mark.asyncio
+    async def test_reused_child_run_is_renamed_to_swept_dimension(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+    ) -> None:
+        """Review (ajcasagrande): exercise the LIVE rename, not just the deriver.
+
+        A reused live-streaming run that sits under a sweep/search parent must be
+        renamed to its swept-dimension name via MLflowClient.update_run, and that
+        name must land in mlflow_export.json. The old tests only called the deriver
+        and never proved the rename fired.
+        """
+        _write_artifact(tmp_path / "profile_export_aiperf.json")
+        live_run_id = "live-run-child-99"
+        benchmark_id = "bench-child-99"
+        metadata = {
+            "tracking_uri": "http://mlflow:5000",
+            "experiment": "aiperf-tests",
+            "run_id": live_run_id,
+            "run_name": "shared-sweep-name",  # same for every probe -> ambiguous
+            "benchmark_id": benchmark_id,
+            "parent_run_id": "parent-run-1",  # this is what makes it a child
+            "live_streaming": True,
+        }
+        (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(metadata))
+
+        state = _install_fake_mlflow_modules(monkeypatch)
+
+        cfg = _make_mlflow_cfg(tmp_path)
+        run = BenchmarkRun(
+            benchmark_id=benchmark_id,
+            cfg=cfg,
+            artifact_dir=cfg.artifacts.dir,
+            variation=SweepVariation(
+                index=3, label="v", values={"phases.profiling.concurrency": 32}
+            ),
+        )
+        config = ExporterConfig(
+            results=sample_results,
+            cfg=cfg,
+            telemetry_results=None,
+            run=run,
+        )
+        exporter = MLflowDataExporter(config)
+        await asyncio.to_thread(exporter._export_sync)
+
+        # The live child run was renamed to its swept dimension value.
+        assert state["update_run_calls"] == [
+            {"run_id": live_run_id, "name": "Concurrency=32"}
+        ]
+        written_metadata = orjson.loads(
+            (tmp_path / "mlflow_export.json").read_text(encoding="utf-8")
+        )
+        assert written_metadata["run_id"] == live_run_id
+        assert written_metadata["reused_live_run"] is True
+        assert written_metadata["run_name"] == "Concurrency=32"
+
     def test_upload_artifacts_to_run_supports_plot_only_upload(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -645,85 +714,91 @@ class TestSweepChildNaming:
     def test_concurrency_sweep_names_child(
         self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:
-        """Concurrency-based phase produces 'Concurrency=N' name."""
-        cfg = _make_mlflow_cfg(
-            # Sweep-shaped artifact dir: _derive_sweep_child_name() gates on the
-            # dir containing 'concurrency_'/'search_iter' (not the profiling config
-            # alone), so the segment must be explicit rather than relying on
-            # pytest's tmp_path happening to embed the test name.
-            tmp_path / "concurrency_64",
-            profiling={"type": "concurrency", "requests": 100, "concurrency": 64},
+        """Concurrency sweep -> 'Concurrency=N' from variation.values."""
+        cfg = _make_mlflow_cfg(tmp_path)
+        exporter = self._make_exporter(
+            cfg, sample_results,
+            variation_values={"phases.profiling.concurrency": 64},
         )
-        exporter = self._make_exporter(cfg, sample_results)
         assert exporter._derive_sweep_child_name() == "Concurrency=64"
 
     def test_concurrency_1_edge_case(
         self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:
         """Concurrency=1 still produces a valid name."""
-        cfg = _make_mlflow_cfg(
-            tmp_path / "concurrency_1",
-            profiling={"type": "concurrency", "requests": 100, "concurrency": 1},
+        cfg = _make_mlflow_cfg(tmp_path)
+        exporter = self._make_exporter(
+            cfg, sample_results,
+            variation_values={"phases.profiling.concurrency": 1},
         )
-        exporter = self._make_exporter(cfg, sample_results)
         assert exporter._derive_sweep_child_name() == "Concurrency=1"
 
-    def test_poisson_rate_phase_names_by_rate(
+    def test_rate_sweep_names_by_rate(
         self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:
-        """Poisson rate phase produces 'RequestRate=N' name."""
-        cfg = _make_mlflow_cfg(
-            tmp_path / "rate_50.0",
-            profiling={"type": "poisson", "requests": 100, "rate": 50.0},
+        """Rate sweep -> 'RequestRate=N' from the swept key (rate is a live sweep
+        field, not a future pattern)."""
+        cfg = _make_mlflow_cfg(tmp_path)
+        exporter = self._make_exporter(
+            cfg, sample_results,
+            variation_values={"phases.profiling.request_rate": 50.0},
         )
-        exporter = self._make_exporter(cfg, sample_results)
-        name = exporter._derive_sweep_child_name()
-        assert name is not None
-        assert name.startswith("RequestRate=")
+        assert exporter._derive_sweep_child_name() == "RequestRate=50.0"
 
-    def test_rate_phase_with_concurrency_cap_prefers_rate(
+    def test_multi_dimension_sweep_does_not_collapse(
         self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:
-        """A rate phase with concurrency as a cap names by rate, not the cap."""
-        cfg = _make_mlflow_cfg(
-            tmp_path / "rate_25.0",
-            profiling={
-                "type": "poisson",
-                "requests": 100,
-                "rate": 25.0,
-                "concurrency": 128,
-            },
-        )
-        exporter = self._make_exporter(cfg, sample_results)
-        name = exporter._derive_sweep_child_name()
-        assert name is not None
-        assert "RequestRate=" in name
-        assert name != "Concurrency=128"
+        """Review (ajcasagrande): a concurrency x ISL sweep must NOT collapse to a
+        single name. Naming from variation.values keeps each child distinct; the
+        old path-substring approach returned 'Concurrency=10' for both."""
+        cfg = _make_mlflow_cfg(tmp_path)
+        name_a = self._make_exporter(
+            cfg, sample_results,
+            variation_values={"phases.profiling.concurrency": 10, "input.prompt.mean": 1024},
+        )._derive_sweep_child_name()
+        name_b = self._make_exporter(
+            cfg, sample_results,
+            variation_values={"phases.profiling.concurrency": 10, "input.prompt.mean": 2048},
+        )._derive_sweep_child_name()
+        assert name_a == "Concurrency=10, Mean=1024"
+        assert name_b == "Concurrency=10, Mean=2048"
+        assert name_a != name_b  # the collision this rename exists to remove
 
-    def test_no_profiling_phases_returns_none(
-        self,
-        tmp_path: Path,
-        sample_results: ProfileResults,
-        monkeypatch: pytest.MonkeyPatch,
+    def test_prefill_concurrency_named_by_its_own_dimension(
+        self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:
-        """Empty profiling phases → None (falls back to default naming)."""
-        cfg = _make_mlflow_cfg(
-            tmp_path, profiling={"type": "concurrency", "requests": 1, "concurrency": 1}
+        """Review (ajcasagrande): a prefill_concurrency sweep must be named by
+        prefill_concurrency, not the fixed total concurrency. The old
+        'concurrency_' substring match mislabelled it."""
+        cfg = _make_mlflow_cfg(tmp_path)
+        exporter = self._make_exporter(
+            cfg, sample_results,
+            variation_values={"phases.prefill.prefill_concurrency": 4},
         )
-        exporter = self._make_exporter(cfg, sample_results)
-        monkeypatch.setattr(exporter._cfg, "get_profiling_phases", lambda: [])
-        assert exporter._derive_sweep_child_name() is None
+        assert exporter._derive_sweep_child_name() == "PrefillConcurrency=4"
+
+    def test_no_variation_returns_none(
+        self, tmp_path: Path, sample_results: ProfileResults
+    ) -> None:
+        """No sweep/search variation values (single run, or a 'base' variation with
+        empty values) -> None, so the caller falls back to --mlflow-run-name."""
+        cfg = _make_mlflow_cfg(tmp_path)
+        assert self._make_exporter(cfg, sample_results)._derive_sweep_child_name() is None
+        assert (
+            self._make_exporter(cfg, sample_results, variation_values={})
+            ._derive_sweep_child_name()
+            is None
+        )
 
     def test_root_run_no_parent_preserves_configured_name(
         self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:
         """When parent_run_id is absent, the exporter's _run_name is the configured name."""
-        cfg = _make_mlflow_cfg(
-            tmp_path / "concurrency_16",
-            run_name="top-level-job",
-            profiling={"type": "concurrency", "requests": 100, "concurrency": 16},
+        cfg = _make_mlflow_cfg(tmp_path, run_name="top-level-job")
+        exporter = self._make_exporter(
+            cfg, sample_results,
+            variation_values={"phases.profiling.concurrency": 16},
         )
-        exporter = self._make_exporter(cfg, sample_results)
         # Sweep name is derivable...
         assert exporter._derive_sweep_child_name() == "Concurrency=16"
         # ...but _run_name is what gets used for root runs (no parent)
@@ -731,12 +806,30 @@ class TestSweepChildNaming:
 
     @staticmethod
     def _make_exporter(
-        cfg: BenchmarkConfig, results: ProfileResults
+        cfg: BenchmarkConfig,
+        results: ProfileResults,
+        *,
+        variation_values: dict[str, Any] | None = None,
     ) -> MLflowDataExporter:
-        """Create an exporter instance for name-derivation tests."""
+        """Create an exporter for name-derivation tests.
+
+        `variation_values` is the authoritative swept {dotted_path: value} map the
+        real orchestrator/planners put on BenchmarkRun.variation — the exporter now
+        derives the child name from it, not from the artifact path. None -> no
+        variation (a single run / non-sweep), so the deriver returns None.
+        """
+        run = None
+        if variation_values is not None:
+            run = BenchmarkRun(
+                benchmark_id="bench-test",
+                cfg=cfg,
+                artifact_dir=cfg.artifacts.dir,
+                variation=SweepVariation(index=0, label="v", values=variation_values),
+            )
         exporter_cfg = ExporterConfig(
             cfg=cfg,
             results=results,
             telemetry_results=None,
+            run=run,
         )
         return MLflowDataExporter(exporter_config=exporter_cfg)
