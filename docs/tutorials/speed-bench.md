@@ -281,8 +281,12 @@ Only `records` can split a single run, because only the per-request trace knows 
 
 `records`, `summary`, and the **counter** branch of `server` (vLLM's `vllm:spec_decode_*` totals) all compute the same two token-weighted quantities, so those columns are directly comparable:
 
-- `accept_length` - `1 + accepted_draft_tokens / verify_steps`, summed across the category.
-- `accept_rate` - `accepted_draft_tokens / proposed_draft_tokens`, summed across the category.
+- `accept_length` - `1 + sum(accepted_draft_tokens) / sum(verify_steps)` over the category.
+- `accept_rate` - `sum(accepted_draft_tokens) / sum(proposed_draft_tokens)` over the category.
+
+Numerator and denominator are summed separately across the category's requests, then
+divided once. Averaging each request's own ratio would weight a 3-step request equally
+with a 300-step one and give a different number.
 
 > [!WARNING]
 > **Gauge-based engines are not token-weighted.** SGLang exposes acceptance as a gauge
@@ -411,12 +415,12 @@ aiperf speed-bench-report "$ART" --metric accept_length --format both
 The report produces one matrix column per dataset:
 
 ```text
-                         Acceptance Length Report
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┓
-┃ Model                      ┃ gsm8k ┃ math500 ┃ mtbench ┃ humaneval ┃ mbpp ┃ Overall ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━┩
-│ meta/llama-3.1-8b-instruct │  2.40 │    2.31 │    1.95 │      2.62 │ 2.55 │    2.37 │
-└────────────────────────────┴───────┴─────────┴─────────┴───────────┴──────┴─────────┘
+                                   Acceptance Length Report
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┓
+┃ Model                            ┃ gsm8k ┃ math500 ┃ mtbench ┃ humaneval ┃ mbpp ┃ Overall ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━┩
+│ meta-llama/Llama-3.1-8B-Instruct │  2.40 │    2.31 │    1.95 │      2.62 │ 2.55 │    2.37 │
+└──────────────────────────────────┴───────┴─────────┴─────────┴───────────┴──────┴─────────┘
 ```
 
 The `accept_rate` and `throughput` metrics work identically.
@@ -442,7 +446,7 @@ AIPerf auto-discovers the Prometheus endpoint at `{url}/metrics`. If your server
 
 ```bash
 CATEGORIES="coding humanities math multilingual qa rag reasoning roleplay stem summarization writing"
-MODEL="meta/llama-3.1-8b-instruct"
+MODEL="meta-llama/Llama-3.1-8B-Instruct"
 
 for cat in $CATEGORIES; do
   echo "=== Running category: $cat ==="
@@ -483,7 +487,7 @@ aiperf profile --config speed_bench_sweep.yaml
 for tier in low_entropy mixed high_entropy; do
   echo "=== Running throughput_1k tier: $tier ==="
   aiperf profile \
-      --model meta/llama-3.1-8b-instruct \
+      --model meta-llama/Llama-3.1-8B-Instruct \
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \

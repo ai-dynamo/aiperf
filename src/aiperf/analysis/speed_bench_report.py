@@ -52,6 +52,9 @@ from typing import Literal
 import orjson
 
 MetricType = Literal["accept_length", "accept_rate", "throughput"]
+AcceptanceMetric = Literal["accept_length", "accept_rate"]
+"""The subset of ``MetricType`` derived from acceptance counters; throughput is a
+whole-run rate and never routes through the per-request path."""
 MetricSource = Literal["auto", "records", "summary", "server"]
 OutputFormat = Literal["csv", "table", "both"]
 
@@ -106,7 +109,7 @@ SERVER_METRICS_JSON = "server_metrics_export.json"
 # Run-level metric tags in the summary export that already carry the
 # token-weighted per-request acceptance, used when the run was exported at
 # --export-level summary (no per-request JSONL to read).
-SUMMARY_ACCEPT_METRICS: dict[MetricType, str] = {
+SUMMARY_ACCEPT_METRICS: dict[AcceptanceMetric, str] = {
     "accept_length": "spec_decode_token_weighted_acceptance_length",
     "accept_rate": "spec_decode_overall_draft_acceptance_rate",
 }
@@ -288,7 +291,9 @@ def extract_throughput(profile: dict) -> float | None:
     return None
 
 
-def extract_summary_acceptance(profile: dict, metric_type: MetricType) -> float | None:
+def extract_summary_acceptance(
+    profile: dict, metric_type: AcceptanceMetric
+) -> float | None:
     """Extract run-level per-request acceptance from the summary export.
 
     Reads the token-weighted scalars AIPerf derives from the per-request
@@ -296,14 +301,13 @@ def extract_summary_acceptance(profile: dict, metric_type: MetricType) -> float 
     run. Acceptance rate is stored as a percentage and returned as a 0..1
     fraction to match the server-scrape path.
     """
-    tag = SUMMARY_ACCEPT_METRICS.get(metric_type)
-    if tag is None:
-        return None
-    entry = profile.get(tag)
+    entry = profile.get(SUMMARY_ACCEPT_METRICS[metric_type])
     if not isinstance(entry, dict):
         return None
     value = entry.get("avg")
-    if value is None:
+    # A hand-edited or third-party export can carry a string or bool here, which
+    # would reach the "%.2f" formatting path and abort the whole report.
+    if type(value) not in (int, float):
         return None
     return value / 100.0 if metric_type == "accept_rate" else value
 
@@ -338,17 +342,23 @@ class AcceptanceTotals:
                 "acceptance counters must be integers, got "
                 f"{accepted!r}, {drafted!r}, {steps!r}"
             )
+        # Negative counts yield a negative acceptance length, and accepting more
+        # drafts than were proposed yields a rate above 1.0 -- both are wrong
+        # numbers rather than missing ones, so reject the record outright.
+        if min(accepted, drafted, steps) < 0 or accepted > drafted:
+            raise ValueError(
+                "acceptance counters must satisfy 0 <= accepted <= drafted, got "
+                f"accepted={accepted}, drafted={drafted}, steps={steps}"
+            )
         self.accepted += accepted
         self.drafted += drafted
         self.steps += steps
 
-    def value(self, metric_type: MetricType) -> float | None:
+    def value(self, metric_type: AcceptanceMetric) -> float | None:
         """Token-weighted acceptance length or rate; None when undefined."""
-        if metric_type == "accept_length":
-            return 1.0 + self.accepted / self.steps if self.steps else None
         if metric_type == "accept_rate":
             return self.accepted / self.drafted if self.drafted else None
-        return None
+        return 1.0 + self.accepted / self.steps if self.steps else None
 
 
 def iter_records(run_dir: Path) -> Iterator[dict]:
@@ -377,7 +387,7 @@ def iter_records(run_dir: Path) -> Iterator[dict]:
 
 def acceptance_from_records(
     run_dir: Path,
-    metric_type: MetricType,
+    metric_type: AcceptanceMetric,
     fallback_category: str | None,
 ) -> dict[str, float]:
     """Build a {category: value} mapping from one run's per-request records.
@@ -388,14 +398,20 @@ def acceptance_from_records(
     ``spec_al_*`` public datasets, for instance) fall back to the run's own
     dataset-derived category and produce a single entry.
 
-    Warmup records are excluded: they are written to the same JSONL but are
-    excluded from every other reported number.
+    Warmup records and error records are excluded: both are written to the same
+    JSONL but neither contributes to any other reported number.
     """
     totals: dict[str, AcceptanceTotals] = {}
     skipped = 0
     for record in iter_records(run_dir):
         spec = record.get("spec_decode_acceptance")
         if not isinstance(spec, dict):
+            continue
+        # Error records are exported with whatever partial acceptance data they
+        # carried, but MetricsAccumulator excludes them from the spec-decode
+        # totals (metrics/accumulator.py). Skipping them here keeps `records`
+        # agreeing with `summary` on any run that had failures.
+        if record.get("error") is not None:
             continue
         metadata = record.get("metadata")
         if not isinstance(metadata, dict):
@@ -407,7 +423,7 @@ def acceptance_from_records(
             continue
         try:
             totals.setdefault(category, AcceptanceTotals()).add(spec)
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, ValueError):
             skipped += 1
             continue
 
@@ -447,14 +463,19 @@ def build_report(
             continue
 
         run_category = extract_category(profile)
+        if not run_category:
+            print(
+                f"Warning: cannot determine category from {run_dir}, skipping",
+                file=sys.stderr,
+            )
+            continue
 
-        values: dict[str, float | None] = {}
+        values: dict[str, float | None]
         if metric_type == "throughput":
             # Throughput is a rate over the whole run, so it cannot be split
             # per category inside a mixed run -- every category shares the same
             # window and the same server. One column per run, always.
-            if run_category:
-                values = {run_category: extract_throughput(profile)}
+            values = {run_category: extract_throughput(profile)}
         elif metric_type in ("accept_length", "accept_rate"):
             values = _acceptance_values(
                 run_dir,
@@ -465,15 +486,7 @@ def build_report(
             )
         else:
             print(f"Unknown metric type: {metric_type}", file=sys.stderr)
-            if run_category:
-                values = {run_category: None}
-
-        if not values:
-            print(
-                f"Warning: cannot determine category from {run_dir}, skipping",
-                file=sys.stderr,
-            )
-            continue
+            values = {run_category: None}
 
         model_data = results.setdefault(extract_model(profile), {})
 
@@ -486,27 +499,28 @@ def _acceptance_values(
     run_dir: Path,
     profile: dict,
     *,
-    metric_type: MetricType,
+    metric_type: AcceptanceMetric,
     source: MetricSource,
-    run_category: str | None,
+    run_category: str,
 ) -> dict[str, float | None]:
     """Resolve one run's acceptance columns from the highest-fidelity source.
 
     ``auto`` walks per-request records, then the run-level per-request metrics,
-    then the server scrape, taking the first that yields anything. A run whose
-    category is known but has no acceptance data anywhere still contributes an
-    empty cell, so the matrix shows which runs are missing numbers instead of
-    dropping them.
+    then the server scrape, taking the first that yields anything.
     """
     values: dict[str, float | None] = {}
     resolved = "none"
+    # build_report gates on a recognized dataset selector before calling this:
+    # find_run_dirs accepts any directory holding a profile export, so without
+    # that an unrelated run sharing the parent directory would contribute its
+    # own source_kind values (weka_main, ...) as SPEED-Bench categories.
     if source in ("auto", "records"):
         values = dict(acceptance_from_records(run_dir, metric_type, run_category))
         if values:
             resolved = "records"
     if not values and source in ("auto", "summary"):
         summarized = extract_summary_acceptance(profile, metric_type)
-        if summarized is not None and run_category:
+        if summarized is not None:
             values = {run_category: summarized}
             resolved = "summary"
     if not values and source in ("auto", "server"):
@@ -520,19 +534,18 @@ def _acceptance_values(
     # comparable value-for-value with token-weighted ones.
     if source == "auto":
         print(f"{run_dir}: acceptance from {resolved}", file=sys.stderr)
-    if not values and run_category:
-        values = {run_category: None}
-    return values
+    # A run whose category is known but has no acceptance data anywhere still
+    # contributes an empty cell, so the matrix shows which runs are missing
+    # numbers instead of dropping them.
+    return values or {run_category: None}
 
 
 def _acceptance_from_server(
     run_dir: Path,
-    metric_type: MetricType,
-    run_category: str | None,
+    metric_type: AcceptanceMetric,
+    run_category: str,
 ) -> dict[str, float | None]:
     """Read whole-run acceptance from the scraped server metrics export."""
-    if not run_category:
-        return {}
     server_metrics = load_server_metrics(run_dir)
     if server_metrics is None:
         print(f"Warning: no {SERVER_METRICS_JSON} in {run_dir}", file=sys.stderr)
@@ -583,6 +596,32 @@ def write_csv(
     print(f"CSV written to {output}")
 
 
+def _min_table_width(
+    results: dict[str, dict[str, float | None]], columns: list[str]
+) -> int:
+    """Width the matrix needs before Rich starts truncating cells to an ellipsis.
+
+    The one-run flow produces a column per SPEED-Bench category, so the
+    qualitative matrix is 13 columns wide. Rich falls back to an 80-column
+    console whenever stdout is not a tty -- piping to a file, or the common
+    ``docker run`` without ``-t`` -- and then shrinks every cell to "..." rather
+    than overflowing. Sizing the console up front keeps the table readable and
+    lets the terminal soft-wrap instead.
+
+    Each column costs its widest cell plus two padding spaces and a border, and
+    the table adds one closing border.
+    """
+    widths = [max((len(model) for model in results), default=len("Model"))]
+    for name in (*columns, "Overall"):
+        cells = [
+            f"{value:.2f}" if value is not None else "-"
+            for data in results.values()
+            for value in [data.get(name)]
+        ]
+        widths.append(max([len(name), *(len(cell) for cell in cells)]))
+    return sum(width + 3 for width in widths) + 1
+
+
 def print_table(
     results: dict[str, dict[str, float | None]],
     columns: list[str],
@@ -620,7 +659,13 @@ def print_table(
             row.append(f"{overall:.2f}" if overall is not None else "-")
             table.add_row(*row)
 
-        Console().print(table)
+        # Widen only when the detected console cannot hold the matrix, so a real
+        # terminal keeps its own width and an oversized table is not forced on it.
+        console = Console()
+        required = _min_table_width(results, columns)
+        if console.width < required:
+            console = Console(width=required)
+        console.print(table)
 
     except ImportError:
         header = ["Model", *columns, "Overall"]

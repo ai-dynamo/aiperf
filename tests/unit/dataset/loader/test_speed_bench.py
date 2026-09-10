@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.dataset.loader.models import MultiTurn
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.speed_bench import SpeedBenchLoader, SpeedBenchRow
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from tests.unit.conftest import make_run_from_cli
@@ -239,13 +239,6 @@ class TestSpeedBenchLoader:
 
 
 class TestSpeedBenchLoaderCategoryTagging:
-    """Every turn carries its row's category on ``Turn.source_kind``.
-
-    The worker copies ``source_kind`` onto the request and the record processor
-    writes it to ``MetricRecordMetadata.source_kind``, so this is what lets one
-    run over an aggregate split be split per category afterwards.
-    """
-
     def test_turns_carry_their_row_category_as_source_kind(self, create_jsonl_file):
         loader, dataset = _load_speed_bench_file(
             create_jsonl_file,
@@ -309,21 +302,26 @@ class TestSpeedBenchLoaderCategoryTagging:
         assert len(conversations) == 1
         assert conversations[0].turns[0].source_kind == "math"
 
-    def test_entropy_tier_is_tagged_like_a_qualitative_category(
+    def test_conversation_with_no_recorded_category_is_left_untagged(
         self, create_jsonl_file
     ):
-        loader, dataset = _load_speed_bench_file(
-            create_jsonl_file,
-            [
-                _make_speed_bench_row(
-                    question_id=_qid("speed-tp-1"), category="high_entropy"
-                )
-            ],
+        # convert_to_conversations is only meaningful for sessions load_dataset
+        # saw; an unmapped one must pass through rather than raise.
+        loader, _ = _load_speed_bench_file(
+            create_jsonl_file, [_make_speed_bench_row(category="coding")]
         )
+        unmapped = {
+            "never-loaded": [
+                MultiTurn(
+                    session_id="never-loaded",
+                    turns=[SingleTurn(text="hi", role="user")],
+                )
+            ]
+        }
 
-        conversation = loader.convert_to_conversations(dataset)[0]
+        conversations = loader.convert_to_conversations(unmapped)
 
-        assert conversation.turns[0].source_kind == "high_entropy"
+        assert conversations[0].turns[0].source_kind is None
 
 
 class TestSpeedBenchLoaderCategoryFiltering:
