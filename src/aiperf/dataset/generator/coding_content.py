@@ -725,6 +725,7 @@ class CodingContentGenerator(BaseGenerator):
         self._bpe_stable_terminator_tokens: list[int] = []
 
         self._prefix_prompts: list[str] = []
+        self._prefix_prompt_tokens: list[list[int]] = []
         self._shared_system_prompt: str | None = None
         self._user_context_prompts: list[str] = []
 
@@ -748,23 +749,45 @@ class CodingContentGenerator(BaseGenerator):
         if shared_system_length is not None:
             self._generate_shared_system_prompt()
 
+    def preseed(self, n: int, generator: object) -> None:
+        """No-op — CodingContentGenerator draws on demand, no preseed needed."""
+
+    def initialize_prefix_pool(self) -> None:
+        """No-op — the coding prefix pool is built during construction.
+
+        Present so callers can invoke it uniformly across generators; only
+        PromptGenerator needs the post-preseed ordering.
+        """
+
     def generate(
         self,
         mean: int | None = None,
         stddev: int | None = None,
         hash_ids: list[int] | None = None,
         block_size: int | None = None,
+        *,
+        with_prefix: bool = False,
+        exact_length: bool = False,
     ) -> str:
         if hash_ids:
             if mean is None:
                 raise ValueError("mean must be provided when hash_ids is set.")
             bs = block_size or self.config.block_size
             return self._generate_cached_prompt(mean, hash_ids, bs)
-        num_tokens = self.calculate_num_tokens(mean, stddev)
-        return self.generate_prompt(num_tokens)
+        # An active sequence distribution already produced an exact length;
+        # resampling would floor a legitimately-sampled 0 up to 1.
+        num_tokens = (
+            int(mean or 0) if exact_length else self.calculate_num_tokens(mean, stddev)
+        )
+        prefix_tokens = self.get_random_prefix_prompt_tokens() if with_prefix else None
+        return self.generate_prompt(num_tokens, prefix_tokens=prefix_tokens)
 
-    def generate_prompt(self, num_tokens: int) -> str:
+    def generate_prompt(
+        self, num_tokens: int, prefix_tokens: list[int] | None = None
+    ) -> str:
         tokens = self._sample_tokens(num_tokens, self._tool_pool)
+        if prefix_tokens:
+            tokens = list(prefix_tokens) + list(tokens)
         return self.tokenizer.decode(tokens)
 
     def calculate_num_tokens(
@@ -780,19 +803,38 @@ class CodingContentGenerator(BaseGenerator):
             return
         length = self.prefix_prompts.length or 0
         pool_size = self.prefix_prompts.pool_size or 0
-        self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
+        self._prefix_prompt_tokens = [
+            list(self._sample_tokens(length, self._tool_pool)) for _ in range(pool_size)
+        ]
+        self._prefix_prompts = [
+            self.tokenizer.decode(tokens) for tokens in self._prefix_prompt_tokens
+        ]
         self.debug(
-            lambda: f"Initialized coding prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            lambda: (
+                f"Initialized coding prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            )
         )
 
-    def get_random_prefix_prompt(self) -> str:
-        """Fetch a random prefix prompt from the coding corpus pool."""
-        if not self._prefix_prompts:
+    def _random_prefix_index(self) -> int:
+        """Pick a pool slot, raising when the pool was never initialized."""
+        if not self._prefix_prompt_tokens:
             raise InvalidStateError(
                 "Attempted to sample a prefix prompt but the prefix prompts pool is empty. "
                 "Please ensure that the prefix prompts pool is initialized."
             )
-        return self._prefix_rng.choice(self._prefix_prompts)
+        return self._prefix_rng.choice(range(len(self._prefix_prompt_tokens)))
+
+    def get_random_prefix_prompt(self) -> str:
+        """Fetch a random prefix prompt from the coding corpus pool."""
+        return self._prefix_prompts[self._random_prefix_index()]
+
+    def get_random_prefix_prompt_tokens(self) -> list[int]:
+        """Fetch the token IDs of a random prefix prompt from the coding pool.
+
+        Concatenating token IDs rather than strings avoids the BPE seam cost
+        described in :meth:`PromptGenerator.get_random_prefix_prompt_tokens`.
+        """
+        return self._prefix_prompt_tokens[self._random_prefix_index()]
 
     def _generate_shared_system_prompt(self) -> None:
         """Generate the shared system prompt once from the coding corpus."""
@@ -832,8 +874,10 @@ class CodingContentGenerator(BaseGenerator):
         while session_index >= len(self._user_context_prompts):
             self._user_context_prompts.append(self.generate_prompt(length))
             self.debug(
-                lambda: f"Generated coding user context prompt "
-                f"#{len(self._user_context_prompts) - 1}"
+                lambda: (
+                    f"Generated coding user context prompt "
+                    f"#{len(self._user_context_prompts) - 1}"
+                )
             )
         return self._user_context_prompts[session_index]
 
@@ -864,8 +908,10 @@ class CodingContentGenerator(BaseGenerator):
         text = "\n\n".join(blocks)
         self._tool_pool = self.tokenizer.encode(text)
         self.debug(
-            lambda: f"Built tool pool with {len(self._tool_pool)} tokens "
-            f"from {len(blocks)} blocks"
+            lambda: (
+                f"Built tool pool with {len(self._tool_pool)} tokens "
+                f"from {len(blocks)} blocks"
+            )
         )
 
     def _sample_tokens(self, num_tokens: int, pool: list[int]) -> list[int]:

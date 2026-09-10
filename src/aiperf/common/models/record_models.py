@@ -414,6 +414,11 @@ class PhaseProfileResults(AIPerfBaseModel):
         default_factory=list,
         description="Non-fatal server metrics warnings for phase artifact export.",
     )
+    branch_stats: BranchStats | None = Field(
+        default=None,
+        description="DAG branch orchestration counters scoped to this concrete "
+        "phase. None when the phase did not use a branch orchestrator.",
+    )
 
 
 class ProfileResults(AIPerfBaseModel):
@@ -450,6 +455,19 @@ class ProfileResults(AIPerfBaseModel):
     was_cancelled: bool = Field(
         default=False,
         description="Whether the profile run was cancelled early",
+    )
+    is_complete: bool = Field(
+        default=True,
+        description="Whether every expected record was aggregated into these "
+        "results. False when the run was finalized without them -- e.g. the "
+        "record-stall watchdog gave up waiting, or result finalization failed "
+        "outright. Metrics in an incomplete result are computed over a subset "
+        "of the run and must not be compared against complete runs.",
+    )
+    incomplete_reason: str | None = Field(
+        default=None,
+        description="Human-readable explanation of why the results are "
+        "incomplete. None when ``is_complete`` is True.",
     )
     successful_request_count: int = Field(
         default=0,
@@ -1032,6 +1050,11 @@ class RequestInfo(RecordContext):
         description="Index of the URL to use when multiple --url values are configured. "
         "None means use the default (first) URL. Used for round-robin load balancing.",
     )
+    previous_response_id: str | None = Field(
+        default=None,
+        description="Response ID from the previous turn (e.g. 'resp_<hash>') "
+        "used for stateful chaining in the Responses API.",
+    )
 
 
 class RequestRecord(AIPerfBaseModel):
@@ -1079,8 +1102,8 @@ class RequestRecord(AIPerfBaseModel):
         description="The HTTP status code of the response.",
     )
     # TODO: Maybe we could improve this with subclassing the responses to allow for more specific types.
-    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how we handle
-    #       the CommandMessage and CommandResponse classes for an example.
+    #       This would allow us to remove the SerializeAsAny and use a more specific type. Look at how
+    #       AutoRoutedModel handles nested discriminators for an example.
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
@@ -1112,6 +1135,49 @@ class RequestRecord(AIPerfBaseModel):
         ge=0,
         description="The time in nanoseconds (perf_counter_ns) when the request was actually cancelled, if applicable.",
     )
+    clock_offset_ns: int | None = Field(
+        default=None,
+        description="Estimated offset between this worker's wall clock and the "
+        "controller's, in nanoseconds, at the moment the record was emitted. "
+        "Sign convention is worker-minus-controller, so a worker clock running "
+        "ahead of the controller is positive and the correction SUBTRACTS: "
+        "``controller_time = worker_time - clock_offset_ns``. This is "
+        "``ClockOffsetTracker.correction_ns``: the min-filtered one-way sample "
+        "(``received - issued``, i.e. skew PLUS transit) less the pre-flight "
+        "one-way transit estimate, falling back to the raw sample when no "
+        "baseline RTT could be measured. None outside "
+        "Kubernetes mode, where both clocks are the same clock and no "
+        "correction is meaningful. Signed, so no bounds apply. Measured in the "
+        "tracker's anchored clock domain (a wall-clock anchor advanced by "
+        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
+        "so an NTP step mid-run leaves the correction carrying that step as "
+        "residual error - bounded by the step size, typically sub-millisecond.",
+    )
+
+    @property
+    def controller_timestamp_ns(self) -> int:
+        """``timestamp_ns`` mapped into the controller's clock frame.
+
+        The one conversion from worker time to controller time:
+        ``controller_time = worker_time - clock_offset_ns``. Returns
+        ``timestamp_ns`` unchanged when no offset was measured (every
+        non-Kubernetes run, and a Kubernetes worker before its clock-offset
+        tracker calibrates), so callers need no mode check.
+
+        Use this wherever a wall-clock timestamp is compared or exported
+        against anything produced outside this worker's pod - credit issue
+        times, replay schedule zero, or another pod's records. The raw
+        ``timestamp_ns`` stays untouched as the provenance record.
+
+        Example:
+            >>> record = RequestRecord(timestamp_ns=1_000_000_500, clock_offset_ns=500)
+            >>> record.controller_timestamp_ns
+            1000000000
+        """
+        if self.clock_offset_ns is None:
+            return self.timestamp_ns
+        return self.timestamp_ns - self.clock_offset_ns
+
     trace_data: SerializeAsAny[BaseTraceData] | None = Field(
         default=None,
         description="Comprehensive trace data captured via a trace config. "
@@ -1395,6 +1461,29 @@ def find_last_non_empty_usage(responses: list[ParsedResponse]) -> Usage | None:
     return None
 
 
+def first_content_chunk_completion_tokens(
+    responses: list[ParsedResponse],
+) -> int | None:
+    """Return the cumulative ``completion_tokens`` reported on the first content
+    chunk (the chunk whose arrival defines TTFT).
+
+    Requires per-chunk (``continuous_usage_stats``) usage: it walks forward to the
+    first response carrying content (``data`` is not None) and reads its usage's
+    ``completion_tokens``. This is deliberately the raw completion count
+    (reasoning included), matching ``OutputSequenceLengthMetric`` -- OSL is
+    ``output + reasoning`` = ``completion_tokens`` -- so inter-token latency
+    subtracts operands in the same unit. Because per-chunk usage is cumulative,
+    that value is the number of tokens delivered through the first content chunk.
+    Returns ``None`` when no content chunk carries usage (e.g. the server only
+    reports the final total), so callers fall back to assuming one token in the
+    first chunk.
+    """
+    for response in responses:
+        if response.data and response.usage:
+            return response.usage.completion_tokens
+    return None
+
+
 @dataclass(slots=True)
 class ParsedResponse:
     """Parsed response from a inference client."""
@@ -1435,8 +1524,8 @@ class ParsedResponse:
     """Additional metadata from the response useful for analysis (rate limits, content filters, etc.)."""
 
     spec_decode_stats: dict[str, Any] | None = None
-    """Raw per-choice speculative-decoding payload captured from the wire (e.g.
-    vLLM's ``choices[].speculative_decoding_stats``), or None when absent. Left
+    """Raw speculative-decoding payload captured from the response root (e.g.
+    vLLM's ``metrics.speculative_decoding``), or None when absent. Left
     uninterpreted here; a ``SpecDecodeAdapterProtocol`` converts it into the
     engine-neutral ``SpecDecodeAcceptanceRecord`` at record-assembly time."""
 
@@ -1459,6 +1548,16 @@ class TokenCounts:
 
     reasoning: int | None = None
     """The number of reasoning tokens. None if token count could not be calculated or the model does not support reasoning."""
+
+    first_content_chunk_tokens: int | None = None
+    """The number of tokens delivered in the first content chunk -- the chunk whose
+    arrival defines TTFT -- taken from the server's per-chunk usage (cumulative
+    ``completion_tokens`` at that chunk). Inter-token latency subtracts this from the
+    decode-token count rather than assuming exactly one token arrived first, which
+    corrects the TPS/user inflation a server produces when it bundles multiple tokens
+    into the first streamed chunk (e.g. TRT-LLM ``stream-interval``). ``None`` unless
+    ``--per-chunk-usage`` is set and the server reports per-chunk usage; inter-token
+    latency then falls back to assuming one token in the first chunk."""
 
 
 @dataclass(slots=True)
@@ -1527,8 +1626,17 @@ class ParsedResponseRecord:
 
     @cached_property
     def timestamp_ns(self) -> int:
-        """Get the wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns)."""
-        return self.request.timestamp_ns
+        """Wall-clock request timestamp in the CONTROLLER's frame, in nanoseconds.
+
+        Clock-offset corrected (see ``RequestRecord.controller_timestamp_ns``),
+        because every consumer of this value compares it across pods or against
+        controller-produced times: benchmark start/end are folded to the min and
+        max over all workers, and replay lag is measured against the timing
+        manager's schedule zero. Identical to the raw ``request.timestamp_ns``
+        outside Kubernetes mode. DO NOT USE FOR LATENCY CALCULATIONS
+        (perf-counter deltas own that).
+        """
+        return self.request.controller_timestamp_ns
 
     # TODO: How do we differentiate the end of the request vs the time of the last response?
     #       Which one should we use for the latency metrics?

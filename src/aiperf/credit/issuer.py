@@ -14,16 +14,19 @@ Key responsibilities:
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.replay_dependencies import ReplayIssueGate
+from aiperf.timing.strategies.cache_bust import (
+    WARMUP_ISOLATION_MARKER,
+    WARMUP_ISOLATION_TARGETS,
+)
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
@@ -79,6 +82,7 @@ class CreditIssuer:
         session_tree_registry: SessionTreeRegistry | None = None,
         session_tree_registry_enabled: bool | None = None,
         replay_barrier: ReplayBarrierCoordinator | None = None,
+        cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
     ) -> None:
         """Initialize credit issuer.
 
@@ -123,6 +127,7 @@ class CreditIssuer:
             )
             else None
         )
+        self._cache_bust_target = cache_bust_target
         self._issuing_stopped = False
         self._max_tokens_override: int | None = None
         self.replay_gate = ReplayIssueGate(replay_barrier)
@@ -418,9 +423,7 @@ class CreditIssuer:
         cancel_after_ns = self._cancellation_policy.next_cancellation_delay_ns(
             turn, self._phase
         )
-        issued_at_ns = self._lifecycle.started_at_ns + (
-            time.perf_counter_ns() - self._lifecycle.started_at_perf_ns
-        )
+        issued_at_ns = self._lifecycle.now_ns()
 
         # Get URL index from strategy (for multi-URL load balancing).
         # Only advance the round-robin when a session starts (turn 0 or a
@@ -432,6 +435,14 @@ class CreditIssuer:
             if self._url_selection_strategy and is_session_start
             else None
         )
+
+        cache_bust_marker = turn.cache_bust_marker
+        cache_bust_target_for_credit = turn.cache_bust_target
+        if self._cache_bust_target in WARMUP_ISOLATION_TARGETS:
+            cache_bust_target_for_credit = self._cache_bust_target
+            cache_bust_marker = (
+                WARMUP_ISOLATION_MARKER if self._phase == CreditPhase.WARMUP else None
+            )
 
         credit = Credit(
             id=credit_index,
@@ -454,8 +465,8 @@ class CreditIssuer:
             has_forks=turn.has_forks,
             no_request=turn.no_request,
             branch_mode=turn.branch_mode,
-            cache_bust_marker=turn.cache_bust_marker,
-            cache_bust_target=turn.cache_bust_target,
+            cache_bust_marker=cache_bust_marker,
+            cache_bust_target=cache_bust_target_for_credit,
             max_tokens_override=turn.max_tokens_override,
         )
 

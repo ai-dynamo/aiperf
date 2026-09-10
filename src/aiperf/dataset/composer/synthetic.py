@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn, Video
+from aiperf.common.models.sequence_distribution import RangeRatioDistribution
 from aiperf.common.session_id_generator import SessionIDGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import SyntheticDataset
@@ -98,6 +100,28 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
                 "setting the mean to a positive value."
             )
 
+        # RNG-aligned preseed: pre-generate ISLs, OSLs, and offsets upfront so
+        # the draw order matches the target tool's benchmark implementation.
+        # Each RangeRatioDistribution subclass owns its own RNG algorithm:
+        # - RangeRatioDistribution (VLLM): numpy.random.default_rng (PCG64)
+        # - SGLangRangeRatioDistribution (SGLANG): numpy.random (MT19937)
+        # The preseed() call stores _preseed_rng for PromptGenerator to continue
+        # from the same stream for offset draws. No style branching needed here.
+        if (
+            self.prompt_generator is not None
+            and getattr(self.prompt_generator, "_corpus", None) == PromptCorpus.RANDOM
+            and isinstance(self._seq_distribution, RangeRatioDistribution)
+        ):
+            self._seq_distribution.preseed(self._num_entries, run.random_seed)
+            self.prompt_generator.preseed(
+                self._num_entries, self._seq_distribution._preseed_rng
+            )
+
+        # Must follow preseed: the RANDOM corpus draws its prefixes from the shared
+        # stream at vLLM's position (after the offset draws). No-op without a pool.
+        if self.prompt_generator is not None:
+            self.prompt_generator.initialize_prefix_pool()
+
     def create_dataset(self) -> list[Conversation]:
         """Create a synthetic conversation dataset from the given configuration.
 
@@ -145,7 +169,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_image:
             turn.images.append(self._generate_image_payloads())
         if self.include_audio:
-            turn.audios.append(self._generate_audio_payloads())
+            audio, audio_duration_seconds = self._generate_audio_payloads()
+            turn.audios.append(audio)
+            # Hoist the sampled duration so ASR metrics (RTFx) work for
+            # synthetic audio, mirroring ASR dataset loaders (see hf_asr).
+            turn.audio_duration_seconds = audio_duration_seconds
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
@@ -192,31 +220,44 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         turn_id = id(turn)
         isl, _ = self._get_turn_sequence_lengths(turn_id)
 
+        # The prefix is prepended inside the generator at the token level so that
+        # prefix + body tokenizes to exactly prefix_len + isl (AIP-1118).
+        with_prefix = is_first and self.prefix_prompt_enabled
+
         # ISL budget compensation. See ``base.first_turn_isl_adjustment`` and
-        # ``base.subsequent_turn_isl_adjustment`` for the model. Floored at 1 so
-        # prompt generation stays valid for very small ISLs (a one-token prompt
-        # rather than a crash or empty content).
+        # ``base.subsequent_turn_isl_adjustment`` for the model.
         adjustment = (
             self.first_turn_isl_adjustment
             if is_first
             else self.subsequent_turn_isl_adjustment
         )
+        # A range-ratio window can legitimately bottom out at 0 (bounds (0, N)),
+        # and the degenerate-config guard deliberately accepts that when a
+        # prefix covers the request -- vLLM does too, emitting prefix-only. So
+        # only floor at 1 when there is no prefix to carry it; flooring
+        # unconditionally emitted one more token than the reference.
+        floor = 0 if with_prefix else 1
         if adjustment > 0:
-            isl = max(1, isl - adjustment)
+            isl = max(floor, isl - adjustment)
+        isl = max(floor, isl)
+
+        # An active sequence distribution has already produced an exact length;
+        # resampling it through calculate_num_tokens would floor a sampled 0 to 1.
+        exact_length = self._seq_distribution is not None
 
         # Preserve original variance unless sequence distribution is active
         stddev = 0 if self._seq_distribution is not None else self._isl_stddev
 
         for _ in range(self._prompt_batch_size):
             # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(mean=isl, stddev=stddev)
-
-            # Add prefix prompt if this is the first turn and prefix is enabled
-            if is_first and self.prefix_prompt_enabled:
-                prefix = self.prompt_generator.get_random_prefix_prompt()
-                content = f"{prefix} {content}"
-
-            text.contents.append(content)
+            text.contents.append(
+                self.prompt_generator.generate(
+                    mean=isl,
+                    stddev=stddev,
+                    with_prefix=with_prefix,
+                    exact_length=exact_length,
+                )
+            )
 
         return text
 
@@ -233,18 +274,24 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             image.contents.append(data)
         return image
 
-    def _generate_audio_payloads(self) -> Audio:
+    def _generate_audio_payloads(self) -> tuple[Audio, float]:
         """
         Generate synthetic audios if the audio length is specified.
 
         Returns:
-            Audio: An audio payload object.
+            A tuple of the audio payload and the duration (seconds) of the FIRST
+            content -- the one ASR endpoints actually dispatch (``turn.audios[0]
+            .contents[0]``) -- so ``Turn.audio_duration_seconds`` matches the
+            audio sent and RTFx is accurate.
         """
         audio = Audio(name="input_audio")
-        for _ in range(self._audio_batch_size):
+        first_duration = 0.0
+        for i in range(self._audio_batch_size):
             data = self.audio_generator.generate()
             audio.contents.append(data)
-        return audio
+            if i == 0:
+                first_duration = self.audio_generator.last_audio_duration_seconds
+        return audio, first_duration
 
     def _generate_video_payloads(self) -> Video:
         """

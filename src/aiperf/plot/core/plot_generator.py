@@ -712,6 +712,24 @@ class PlotGenerator:
 
         # Apply NVIDIA branding layout
         layout = self._get_base_layout(title, x_label, y_label)
+        layout["margin"]["b"] = max(layout["margin"].get("b", 0), 120)
+        pareto_note = {
+            "x": 0.5,
+            "y": 0,
+            "xref": "paper",
+            "yref": "paper",
+            "yshift": -65,
+            "text": "Lines connect Pareto frontier points only; other points remain markers.",
+            "showarrow": False,
+            "font": {
+                "size": 11,
+                "family": PLOT_FONT_FAMILY,
+                "color": self.colors["secondary"],
+            },
+            "xanchor": "center",
+            "yanchor": "top",
+        }
+        layout["annotations"] = list(layout.get("annotations", [])) + [pareto_note]
         fig.update_layout(layout)
 
         return fig

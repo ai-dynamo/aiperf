@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.models import Audio, Image, Text, Video
+from aiperf.config import BenchmarkRun
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import RandomPool
 from aiperf.dataset.loader.random_pool import RandomPoolDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType
@@ -659,8 +661,11 @@ class TestRandomPoolBatchSize:
             assert len(turn.videos) == 1
             assert turn.videos[0].contents[0] in video_urls
 
-    def test_batch_mode_named_image_objects_flattened(self, default_cfg):
-        """Images specified as named Image objects should have their contents added to the pool."""
+    def test_batch_mode_named_image_objects_rejected(self, default_cfg):
+        """Batching (batch_size != 1) against a pool with named Image objects must be
+        rejected: _build_flat_pool/_convert_to_conversations_batched would discard
+        the authored name (and any uuids) by rebuilding as Image(name="", ...).
+        """
         config = self._make_config(batch_size_image=2)
         data = {
             "f.jsonl": [
@@ -680,15 +685,14 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
-        expected = {"https://example.com/a.png", "https://example.com/b.png"}
-        for conv in conversations:
-            for img_content in conv.turns[0].images[0].contents:
-                assert img_content in expected
-
-    def test_batch_mode_named_text_objects_flattened(self, default_cfg):
-        """Texts specified as named Text objects should have their contents added to the pool."""
+    def test_batch_mode_named_text_objects_rejected(self, default_cfg):
+        """Batching against a pool with named Text objects must be rejected: it
+        would discard the authored name (e.g. 'query'), breaking name-sensitive
+        endpoints like rankings.
+        """
         config = self._make_config(batch_size_text=2)
         data = {
             "f.jsonl": [
@@ -700,15 +704,11 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
-        expected = {"alpha", "beta", "gamma"}
-        for conv in conversations:
-            for txt_content in conv.turns[0].texts[0].contents:
-                assert txt_content in expected
-
-    def test_batch_mode_named_audio_objects_flattened(self, default_cfg):
-        """Audios specified as named Audio objects should have their contents added to the pool."""
+    def test_batch_mode_named_audio_objects_rejected(self, default_cfg):
+        """Batching against a pool with named Audio objects must be rejected."""
         config = self._make_config(batch_size_image=2)
         data = {
             "f.jsonl": [
@@ -733,20 +733,11 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
-        expected = {
-            "https://example.com/a1.wav",
-            "https://example.com/a2.wav",
-            "https://example.com/a3.wav",
-        }
-        for conv in conversations:
-            turn = conv.turns[0]
-            assert len(turn.audios) == 1
-            assert turn.audios[0].contents[0] in expected
-
-    def test_batch_mode_named_video_objects_flattened(self, default_cfg):
-        """Videos specified as named Video objects should have their contents added to the pool."""
+    def test_batch_mode_named_video_objects_rejected(self, default_cfg):
+        """Batching against a pool with named Video objects must be rejected."""
         config = self._make_config(batch_size_image=2)
         data = {
             "f.jsonl": [
@@ -771,17 +762,8 @@ class TestRandomPoolBatchSize:
         loader = RandomPoolDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
         )
-        conversations = loader.convert_to_conversations(data)
-
-        expected = {
-            "https://example.com/v1.mp4",
-            "https://example.com/v2.mp4",
-            "https://example.com/v3.mp4",
-        }
-        for conv in conversations:
-            turn = conv.turns[0]
-            assert len(turn.videos) == 1
-            assert turn.videos[0].contents[0] in expected
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
 
     def test_batch_mode_plain_string_videos_flattened(self, default_cfg):
         """Videos specified as plain strings should be included in the flat pool."""
@@ -847,9 +829,13 @@ class TestRandomPoolBatchSize:
 
     # Removed: test_batch_size_text_zero_disables_texts and
     # test_image_one_text_zero_disables_texts_via_legacy_path. v2 PromptConfig
-    # rejects batch_size=0 (ge=1); the "disable text via batch_size_text=0"
-    # path is unreachable from a valid v2 config so the assertion has no path
-    # to exercise. Image/audio/video batch_size=0 paths remain covered.
+    # (SyntheticDataset.prompts) rejects batch_size=0 (ge=1); the "disable text
+    # via batch_size_text=0" path is unreachable from a valid v2 config so the
+    # assertion has no path to exercise. Image/audio/video batch_size=0 paths
+    # are covered here for the SyntheticDataset branch. FileDataset.prompt_batch_size
+    # allows 0 (image/audio/video-only random_pool workloads); that zero-value
+    # coverage, including text=0 disabling text output end-to-end, lives in
+    # TestRandomPoolBatchSizeWithFileDataset.
 
     def test_num_conversations_none_defaults_to_100(self, default_cfg):
         """When num_conversations=None is passed, the loader should default to 100."""
@@ -1039,3 +1025,452 @@ class TestRandomPoolBatchSize:
         )
         assert loader.batch_size_audio == 2
         assert loader.batch_size_video == 3
+
+
+class TestRandomPoolNamedPoolBatchingGuard:
+    """Batching (any batch size != 1) must be rejected outright for directory
+    input, since it flattens every named pool into one anonymous pool per
+    modality -- discarding the field names (e.g. 'query'/'passage') that
+    directory mode exists to preserve. See _reject_batching_with_named_pools.
+    """
+
+    def _named_pool_data(self):
+        return {
+            "queries.jsonl": [
+                RandomPool(texts=[Text(name="query", contents=["Who are you?"])])
+            ],
+            "passages.jsonl": [
+                RandomPool(texts=[Text(name="passage", contents=["I am a cat."])])
+            ],
+        }
+
+    def test_batching_with_multi_file_data_raises(self, default_cfg):
+        """Any batch size != 1 must raise when data spans more than one named pool."""
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_dir", run=make_run_from_cli(config), num_conversations=2
+        )
+        with pytest.raises(ValueError, match="named pools"):
+            loader.convert_to_conversations(self._named_pool_data())
+
+    def test_batching_with_single_file_data_does_not_raise(self, default_cfg):
+        """A single-file (single named pool) input must still batch normally."""
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(config), num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(text="query1"),
+                RandomPool(text="query2"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns[0].texts[0].contents) == 2
+
+    def test_default_batch_sizes_with_multi_file_data_does_not_raise(self, default_cfg):
+        """All batch sizes at their default of 1 must not trigger the named-pool guard."""
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_dir",
+            run=make_run_from_cli(default_cfg),
+            num_conversations=2,
+        )
+        conversations = loader.convert_to_conversations(self._named_pool_data())
+        assert len(conversations) == 2
+        for conv in conversations:
+            names = {text.name for text in conv.turns[0].texts}
+            assert names == {"query", "passage"}
+
+    def test_batching_with_single_file_named_text_objects_raises(self, default_cfg):
+        """A single file whose entries embed named Text objects must still be
+        rejected: file count alone (len(data) == 1) doesn't catch this, but
+        batching would flatten the embedded names away exactly as directory
+        mode's file-level names would be.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            filename="pool.jsonl", run=make_run_from_cli(config), num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(texts=[Text(name="query", contents=["q1"])]),
+                RandomPool(texts=[Text(name="passage", contents=["p1"])]),
+            ]
+        }
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
+
+    def test_batching_with_single_file_image_uuids_raises(self, default_cfg):
+        """A single file whose entries embed Image objects with authored uuids
+        (vLLM cache-reuse IDs) must be rejected: batching rebuilds images as
+        Image(name="", contents=...) with no uuids field at all, silently
+        dropping the cache-reuse behavior instead of erroring loudly.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_image=2)
+        loader = RandomPoolDatasetLoader(
+            filename="pool.jsonl", run=make_run_from_cli(config), num_conversations=1
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(
+                    images=[
+                        Image(
+                            name="img",
+                            contents=["https://example.com/a.png"],
+                            uuids=["uuid-a"],
+                        )
+                    ]
+                ),
+            ]
+        }
+        with pytest.raises(ValueError, match="named"):
+            loader.convert_to_conversations(data)
+
+    def test_multi_pool_rejection_message_does_not_claim_files(self, default_cfg):
+        """The rejection message must not call inline-records pool keys 'files' --
+        the same guard fires for inline YAML `records: {queries: [...], passages:
+        [...]}`, which has no directory and no files on disk at all.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            filename="dummy_inline", run=make_run_from_cli(config), num_conversations=2
+        )
+        data = {
+            "queries": [RandomPool(text="What is your refund policy?")],
+            "passages": [RandomPool(text="Refunds take 5 business days.")],
+        }
+        with pytest.raises(ValueError, match="named pools") as exc_info:
+            loader.convert_to_conversations(data)
+        message = str(exc_info.value)
+        assert "directory of" not in message
+        assert "unnamed pool file" not in message
+
+    def test_batching_with_single_file_plain_strings_does_not_raise(self, default_cfg):
+        """A single file with plain-string (unnamed) entries must still batch
+        normally -- the metadata guard must not over-reject content with no
+        name or uuids to lose.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_image=2)
+        loader = RandomPoolDatasetLoader(
+            filename="pool.jsonl", run=make_run_from_cli(config), num_conversations=1
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(images=["https://example.com/a.png"]),
+                RandomPool(images=["https://example.com/b.png"]),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations[0].turns[0].images[0].contents) == 2
+
+    def test_batching_with_inline_records_single_pool_does_not_raise(self, default_cfg):
+        """Batch sizes must apply to a single-pool inline `records:` list (not a
+        file at all), not just single-file input.
+
+        Regression test for a doc claim ("batch sizes only apply to single-file
+        random_pool input") that was false: the guard gates on pool count and
+        per-entry metadata, not on file-ness, so a flat inline records: list
+        (list-form, one unnamed pool) batches exactly like a single file.
+        """
+        config = TestRandomPoolBatchSize()._make_config(batch_size_text=2)
+        loader = RandomPoolDatasetLoader(
+            inline_records=[{"text": "alpha"}, {"text": "beta"}],
+            run=make_run_from_cli(config),
+            num_conversations=1,
+        )
+        data = loader.load_dataset()
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations[0].turns[0].texts[0].contents) == 2
+
+
+class TestRandomPoolBatchSizeWithFileDataset:
+    """Batch sizes must work when the dataset is a FileDataset (--input-file path)."""
+
+    def _make_file_run(
+        self,
+        tmp_path: Path,
+        *,
+        prompt_batch_size: int | None = None,
+        image_batch_size: int | None = None,
+        audio_batch_size: int | None = None,
+        video_batch_size: int | None = None,
+    ) -> tuple[BenchmarkRun, str]:
+        pool = tmp_path / "pool.jsonl"
+        pool.touch()
+        kwargs = {}
+        if prompt_batch_size is not None:
+            kwargs["prompt_batch_size"] = prompt_batch_size
+        if image_batch_size is not None:
+            kwargs["image_batch_size"] = image_batch_size
+        if audio_batch_size is not None:
+            kwargs["audio_batch_size"] = audio_batch_size
+        if video_batch_size is not None:
+            kwargs["video_batch_size"] = video_batch_size
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(pool),
+            custom_dataset_type="random_pool",
+            **kwargs,
+        )
+        return make_run_from_cli(cli), str(pool)
+
+    def test_text_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
+        """prompt_batch_size from FileDataset produces multi-text conversations."""
+        run, pool_path = self._make_file_run(tmp_path, prompt_batch_size=4)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 4
+
+        data = {
+            "pool.jsonl": [
+                RandomPool(text="q1"),
+                RandomPool(text="q2"),
+                RandomPool(text="q3"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns) == 1
+            assert len(conv.turns[0].texts) == 1
+            assert len(conv.turns[0].texts[0].contents) == 4
+
+    def test_image_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
+        """image_batch_size from FileDataset produces multi-image conversations."""
+        run, pool_path = self._make_file_run(tmp_path, image_batch_size=3)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_image == 3
+
+        data = {
+            "pool.jsonl": [
+                RandomPool(image="https://example.com/img1.png"),
+                RandomPool(image="https://example.com/img2.png"),
+                RandomPool(image="https://example.com/img3.png"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        assert len(conversations) == 2
+        for conv in conversations:
+            assert len(conv.turns[0].images[0].contents) == 3
+
+    def test_default_batch_size_1_when_not_set(self, tmp_path: Path) -> None:
+        """When no batch-size is set, FileDataset path defaults to 1 (existing behavior)."""
+        run, pool_path = self._make_file_run(tmp_path)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 1
+        assert loader.batch_size_image == 1
+        assert loader.batch_size_audio == 1
+        assert loader.batch_size_video == 1
+
+    def test_audio_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
+        """audio_batch_size from FileDataset is stored correctly."""
+        run, pool_path = self._make_file_run(tmp_path, audio_batch_size=5)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_audio == 5
+
+    def test_video_batch_size_via_file_dataset(self, tmp_path: Path) -> None:
+        """video_batch_size from FileDataset is stored correctly."""
+        run, pool_path = self._make_file_run(tmp_path, video_batch_size=7)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_video == 7
+
+    def test_all_four_modality_batch_sizes_distinct(self, tmp_path: Path) -> None:
+        """All four batch-size fields are read independently; a field-order swap fails."""
+        run, pool_path = self._make_file_run(
+            tmp_path,
+            prompt_batch_size=2,
+            image_batch_size=3,
+            audio_batch_size=5,
+            video_batch_size=7,
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 2
+        assert loader.batch_size_image == 3
+        assert loader.batch_size_audio == 5
+        assert loader.batch_size_video == 7
+
+    def test_image_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """image_batch_size=0 through --input-file must not collapse to 1."""
+        run, pool_path = self._make_file_run(tmp_path, image_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_image == 0
+
+    def test_audio_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """audio_batch_size=0 through --input-file must not collapse to 1."""
+        run, pool_path = self._make_file_run(tmp_path, audio_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_audio == 0
+
+    def test_video_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """video_batch_size=0 through --input-file must not collapse to 1."""
+        run, pool_path = self._make_file_run(tmp_path, video_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_video == 0
+
+    def test_prompt_batch_size_zero_via_file_dataset(self, tmp_path: Path) -> None:
+        """prompt_batch_size=0 through --input-file must be accepted, not raise.
+
+        FileDataset.prompt_batch_size uses ge=0 (not ge=1) so image/audio/video-only
+        random_pool workloads can disable text via --prompt-batch-size 0, matching
+        the loader's `if text_pool and self.batch_size_text > 0` guard.
+        """
+        run, pool_path = self._make_file_run(
+            tmp_path, prompt_batch_size=0, image_batch_size=2
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        assert loader.batch_size_text == 0
+
+    def test_prompt_batch_size_zero_disables_text_end_to_end(
+        self, tmp_path: Path
+    ) -> None:
+        """prompt_batch_size=0 must suppress text output even when text is in the pool."""
+        run, pool_path = self._make_file_run(
+            tmp_path, prompt_batch_size=0, image_batch_size=1
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(image="https://example.com/img1.png", text="query1"),
+                RandomPool(image="https://example.com/img2.png", text="query2"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert turn.texts == []
+            assert len(turn.images) == 1
+
+    def test_prompt_batch_size_zero_on_text_only_pool_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """prompt_batch_size=0 against a text-only pool must raise: every modality
+        is suppressed or absent, so every turn would be empty and every request
+        would fail downstream with empty content.
+
+        A warning is not enough -- this loader runs inside the DatasetManager
+        subprocess, so its logger output only reaches the log file and never the
+        console the user is watching.
+        """
+        run, pool_path = self._make_file_run(tmp_path, prompt_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {"pool.jsonl": [RandomPool(text="query1"), RandomPool(text="query2")]}
+        with pytest.raises(ValueError, match="turns with no content"):
+            loader.convert_to_conversations(data)
+
+    def test_prompt_batch_size_zero_with_images_present_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """prompt_batch_size=0 must not raise when another modality still produces
+        content -- this is the legitimate image/audio/video-only workload case.
+        """
+        run, pool_path = self._make_file_run(
+            tmp_path, prompt_batch_size=0, image_batch_size=1
+        )
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {
+            "pool.jsonl": [
+                RandomPool(image="https://example.com/img1.png", text="query1"),
+            ]
+        }
+        conversations = loader.convert_to_conversations(data)
+
+        for conv in conversations:
+            turn = conv.turns[0]
+            assert turn.texts == []
+            assert len(turn.images) == 1
+
+    def test_zero_batch_size_for_absent_modality_does_not_select_batched_path(
+        self, tmp_path: Path
+    ) -> None:
+        """`--image-batch-size 0` means "disable image inputs entirely". Against a
+        text-only named-pool directory it must be a no-op, not a trip into the
+        flattened path and its named-pool rejection.
+        """
+        run, pool_path = self._make_file_run(tmp_path, image_batch_size=0)
+        loader = RandomPoolDatasetLoader(
+            filename=pool_path, run=run, num_conversations=2
+        )
+        data = {
+            "queries.jsonl": [RandomPool(texts=[Text(name="query", contents=["q1"])])],
+            "passages.jsonl": [
+                RandomPool(texts=[Text(name="passage", contents=["p1"])])
+            ],
+        }
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 2
+        for conv in conversations:
+            names = sorted(t.name for t in conv.turns[0].texts)
+            assert names == ["passage", "query"]
+            assert conv.turns[0].images == []
+
+
+def _extract_heredoc_lines(doc: str, heredoc_target: str) -> list[str]:
+    """Return the body lines of a `cat > <heredoc_target> << 'EOF' ... EOF` block."""
+    marker = f"cat > {heredoc_target} << 'EOF'\n"
+    body = doc.split(marker, 1)[1].split("\nEOF", 1)[0]
+    return [line for line in body.splitlines() if line.strip()]
+
+
+def test_custom_dataset_docs_multimodal_example_pool_has_images() -> None:
+    """The "Multimodal batch sizes" tutorial example must use a pool that actually
+    contains images -- otherwise `--image-batch-size 2` silently samples nothing.
+
+    Regression test for a doc bug where the example reused the text-only
+    `pool.jsonl` from the "Basic Single-File Sampling" section above it.
+    """
+    doc = Path("docs/tutorials/custom-dataset.md").read_text()
+    lines = _extract_heredoc_lines(doc, "multimodal_pool.jsonl")
+    assert lines, "expected a multimodal_pool.jsonl heredoc in the tutorial"
+
+    records = [RandomPool.model_validate_json(line) for line in lines]
+    assert all(record.image is not None for record in records), (
+        "every entry in the multimodal random_pool example must carry an image "
+        "field, or --image-batch-size in the example command samples nothing"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pool_path = Path(tmp_dir) / "multimodal_pool.jsonl"
+        pool_path.write_text("\n".join(lines) + "\n")
+        cli = CLIConfig(
+            model_names=["test-model"],
+            input_file=str(pool_path),
+            custom_dataset_type="random_pool",
+            image_batch_size=2,
+        )
+        run = make_run_from_cli(cli)
+        loader = RandomPoolDatasetLoader(
+            filename=str(pool_path), run=run, num_conversations=3
+        )
+        conversations = loader.convert_to_conversations(
+            {"multimodal_pool.jsonl": records}
+        )
+        for conv in conversations:
+            assert len(conv.turns[0].images[0].contents) == 2

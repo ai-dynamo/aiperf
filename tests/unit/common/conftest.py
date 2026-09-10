@@ -10,9 +10,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
+from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.base_service import BaseService
 from aiperf.common.tokenizer_display import TokenizerDisplayEntry
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.plugin.enums import ServiceType
 from aiperf.timing.manager import TimingManager
 from aiperf.workers.worker import Worker
 from tests.harness import mock_plugin
@@ -237,3 +239,26 @@ def mock_gc() -> MockGC:
             disable=mock_disable,
             call_order=call_order,
         )
+
+
+class ControlChannelTestService(BaseComponentService):
+    """Minimal concrete component service for control-channel tests.
+
+    ``_registered_name`` short-circuits ``BaseService.get_service_type``'s plugin
+    reverse-lookup, so the class needs no registry entry of its own.
+    """
+
+    _registered_name = ServiceType.WORKER
+
+
+@pytest.fixture
+def component_service(benchmark_run) -> ControlChannelTestService:
+    """A component service wired to ``FakeCommunication``, never started.
+
+    Nothing here drives the lifecycle: the tests call the registration and
+    control-command entry points directly.
+    """
+    return ControlChannelTestService(
+        run=benchmark_run,
+        service_id="control-channel-test-service",
+    )

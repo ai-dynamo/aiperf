@@ -25,6 +25,7 @@ from aiperf.common.models.record_models import (
     TokenCounts,
     ToolCallResponseData,
     find_last_non_empty_usage,
+    first_content_chunk_completion_tokens,
 )
 from aiperf.common.scenario import is_context_overflow_response
 from aiperf.common.tokenizer import Tokenizer
@@ -49,6 +50,10 @@ class InferenceResultParser(CommunicationMixin):
         )
         self.tokenizers: dict[str, Tokenizer] = {}
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
+        # Pod-local tokenizer bundles advertised by the WorkerGroupManager.
+        # Populated in Kubernetes; empty elsewhere, where the configured name
+        # is loaded directly.
+        self._tokenizer_bundles: dict[str, str] = {}
         self.model_endpoint: ModelEndpointInfo = ModelEndpointInfo.from_run(run)
         EndpointClass = plugins.get_class(
             PluginType.ENDPOINT, self.model_endpoint.endpoint.type
@@ -92,7 +97,10 @@ class InferenceResultParser(CommunicationMixin):
             for model in self.model_endpoint.models.models:
                 self.tokenizers[model.name] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model.name),
+                    self._tokenizer_source(
+                        model.name,
+                        tokenizer_config.get_tokenizer_name_for_model(model.name),
+                    ),
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,
@@ -108,6 +116,26 @@ class InferenceResultParser(CommunicationMixin):
         }
         self.info(f"Initialized tokenizers: {tokenizer_info} in {duration:.2f} seconds")
 
+    def _tokenizer_source(self, model: str, configured_name: str) -> str:
+        """Prefer a bundle the WorkerGroupManager already downloaded for this pod.
+
+        Every record processor in a pod would otherwise fetch the same
+        tokenizer from the hub independently -- N duplicate downloads, and a
+        hard failure where the WGM's copy is the only obtainable one
+        (air-gapped clusters, gated repos).
+
+        The WGM keys bundles by *tokenizer* name (``_unique_tokenizer_names``:
+        explicit ``cfg.tokenizer.name`` when set, otherwise the model names),
+        so the resolved name is the primary key. Model name is tried second
+        because alias resolution can make ``configured_name`` differ from the
+        model name the WGM used when no explicit tokenizer was configured.
+        """
+        return (
+            self._tokenizer_bundles.get(configured_name)
+            or self._tokenizer_bundles.get(model)
+            or configured_name
+        )
+
     async def get_tokenizer(self, model: str) -> Tokenizer:
         """Get the tokenizer for a given model or create it if it doesn't exist."""
         async with self.tokenizer_lock:
@@ -115,7 +143,9 @@ class InferenceResultParser(CommunicationMixin):
                 tokenizer_config = self.run.cfg.tokenizer
                 self.tokenizers[model] = await asyncio.to_thread(
                     Tokenizer.from_pretrained,
-                    tokenizer_config.get_tokenizer_name_for_model(model),
+                    self._tokenizer_source(
+                        model, tokenizer_config.get_tokenizer_name_for_model(model)
+                    ),
                     trust_remote_code=tokenizer_config.trust_remote_code,
                     revision=tokenizer_config.revision,
                     resolve_alias=tokenizer_config.should_resolve_alias,
@@ -339,8 +369,9 @@ class InferenceResultParser(CommunicationMixin):
         ``n > 1`` streaming request, where each sequence's stats ride its own
         finish chunk): the per-request record can't attribute request-level
         ``completion_tokens`` to a single sequence, so a mixed record is worse
-        than none. ``n > 1`` non-streaming is suppressed upstream in
-        ``BaseEndpoint.extract_spec_decode_stats``.
+        than none. ``n > 1`` non-streaming needs no client-side guard: vLLM
+        populates ``metrics.speculative_decoding`` only for single-sequence
+        requests and leaves it null otherwise.
 
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as
@@ -515,10 +546,21 @@ class InferenceResultParser(CommunicationMixin):
                 usage.completion_tokens, reasoning_token_count
             )
 
+        # Only read the first content chunk's count when the user opted into
+        # per-chunk usage. Otherwise a server that volunteers usage on a
+        # content-bearing chunk would change (or delete) inter-token latency with
+        # no flag set -- the opt-in contract the docs describe must be enforced
+        # here, not just at payload-injection time.
+        first_chunk_tokens = (
+            first_content_chunk_completion_tokens(responses)
+            if self.run.cfg.endpoint.per_chunk_usage
+            else None
+        )
         token_counts = TokenCounts(
             input=input_token_count,
             reasoning=reasoning_token_count,
             output=output_token_count,
+            first_content_chunk_tokens=first_chunk_tokens,
         )
 
         # Warn if server provided no usage information

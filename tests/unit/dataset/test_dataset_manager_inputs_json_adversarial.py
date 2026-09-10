@@ -331,6 +331,23 @@ class TestPreformatPayloadsAdversarial:
 
 class TestSkipInputsJsonAdversarial:
     @pytest.mark.asyncio
+    async def test_skip_inputs_json_generation_for_baseten_trace(
+        self, tmp_path: Path
+    ) -> None:
+        mgr = _full_manager(tmp_path, CustomDatasetType.BASETEN_TRACE)
+        mgr._configure_dataset = AsyncMock()
+        mgr._configure_tokenizer = AsyncMock()
+        mgr._configure_dataset_client_and_free_memory = AsyncMock()
+        mgr._detected_dataset_type = CustomDatasetType.BASETEN_TRACE
+        mgr._try_cache_lookup = Mock(return_value=None)
+
+        with patch.object(
+            mgr, "_generate_inputs_json_file", new_callable=AsyncMock
+        ) as mock_gen:
+            await mgr._profile_configure_command(Mock())
+            mock_gen.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_skip_inputs_json_generation_for_raw_payload_dataset_type(
         self, tmp_path: Path
     ) -> None:

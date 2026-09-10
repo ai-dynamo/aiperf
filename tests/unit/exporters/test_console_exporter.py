@@ -3,7 +3,6 @@
 
 import pytest
 from pytest import param
-from rich.console import Console
 
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import MetricConsoleGroup
@@ -27,6 +26,7 @@ from aiperf.metrics.types.output_token_count import OutputTokenCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from aiperf.plugin.enums import EndpointType
+from tests.harness import fixed_console
 from tests.unit.exporters.conftest import make_exporter_config
 
 
@@ -105,7 +105,7 @@ class TestConsoleExporter:
     @pytest.mark.asyncio
     async def test_export_prints_expected_table(self, mock_exporter_config, capsys):
         exporter = ConsoleMetricsExporter(mock_exporter_config)
-        await exporter.export(Console(width=115))
+        await exporter.export(fixed_console(115))
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | LLM Metrics" in output
         assert "Time to First Token (ms)" in output or "Time to First Token" in output
@@ -144,7 +144,7 @@ class TestConsoleExporter:
             cli_config=mock_endpoint_config,
             telemetry_results=None,
         )
-        await ConsoleMetricsExporter(config).export(Console(width=115))
+        await ConsoleMetricsExporter(config).export(fixed_console(115))
         assert "--enable-prompt-tokens-details" in capsys.readouterr().out
 
     @pytest.mark.asyncio
@@ -182,7 +182,7 @@ class TestConsoleExporter:
             cli_config=mock_endpoint_config,
             telemetry_results=None,
         )
-        await ConsoleMetricsExporter(config).export(Console(width=115))
+        await ConsoleMetricsExporter(config).export(fixed_console(115))
         assert "--enable-prompt-tokens-details" not in capsys.readouterr().out
 
     @pytest.mark.parametrize(

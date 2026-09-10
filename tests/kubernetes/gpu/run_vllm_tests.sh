@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Run vLLM GPU Kubernetes integration tests with full debug output.
+#
+# Usage:
+#   ./tests/kubernetes/gpu/run_vllm_tests.sh
+#   GPU_TEST_VLLM_ENDPOINT=http://vllm:8000/v1 ./tests/kubernetes/gpu/run_vllm_tests.sh
+#   GPU_TEST_CONTEXT=my-cluster ./tests/kubernetes/gpu/run_vllm_tests.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+cd "$PROJECT_ROOT"
+
+exec uv run pytest tests/kubernetes/gpu/vllm/ \
+    -v \
+    -s \
+    -m vllm \
+    -o "addopts=--strict-markers" \
+    --tb=long \
+    "$@"

@@ -32,21 +32,40 @@ Examples:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Protocol,
+    Self,
+    runtime_checkable,
+)
 
 import numpy as np
 import orjson
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from aiperf.common import random_generator as rng
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import RandomCorpusStyle
 from aiperf.common.utils import load_json_str
+from aiperf.config.base import BaseConfig
 
 if TYPE_CHECKING:
     from aiperf.common.random_generator import RandomGenerator
 
 logger = AIPerfLogger(__name__)
+
+
+@runtime_checkable
+class SequenceLengthSampler(Protocol):
+    """Anything that yields an (ISL, OSL) pair per call."""
+
+    def sample(self) -> tuple[int, int]: ...
 
 
 def _validate_probability_sum(pairs: list[SequenceLengthPair]) -> None:
@@ -517,3 +536,574 @@ def create_balanced_distribution(
     seq_pairs = [SequenceLengthPair(isl, osl, prob_per_pair) for isl, osl in pairs]
 
     return SequenceLengthDistribution(seq_pairs)
+
+
+def _parse_vllm_ratio_string(value: str) -> tuple[float, float]:
+    """Parse a vLLM-style CLI ratio string.
+
+    Accepts a plain float string (``"0.3"``) applied to both dimensions, or a
+    JSON object (``'{"input": 0.3, "output": 0.5}'``) for independent values.
+    """
+    value = value.strip()
+    if not value:
+        raise ValueError("--random-range-ratio value cannot be empty")
+    try:
+        ratio = float(value)
+        return ratio, ratio
+    except ValueError:
+        pass
+    try:
+        data = orjson.loads(value)
+    except orjson.JSONDecodeError as e:
+        raise ValueError(
+            f"--random-range-ratio must be a float or a JSON object with "
+            f"'input' and 'output' keys, got: {value!r} ({e})"
+        ) from e
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"--random-range-ratio must be a float or a JSON object with "
+            f"'input' and 'output' keys, got: {value!r}"
+        )
+    missing = {"input", "output"} - data.keys()
+    if missing:
+        raise ValueError(
+            f"--random-range-ratio JSON object missing keys: {sorted(missing)}"
+        )
+    extra = data.keys() - {"input", "output"}
+    if extra:
+        raise ValueError(
+            f"--random-range-ratio JSON object has unexpected keys: {sorted(extra)}"
+        )
+    return float(data["input"]), float(data["output"])
+
+
+def _parse_sglang_ratio_string(value: str) -> tuple[float, float]:
+    """Parse an SGLang-style CLI ratio string.
+
+    Accepts only a plain float string (``"0.3"``); independent input/output
+    values via a JSON dict are rejected because SGLang applies a single ratio
+    to both dimensions.
+    """
+    value = value.strip()
+    if not value:
+        raise ValueError("--random-range-ratio value cannot be empty")
+    try:
+        ratio = float(value)
+        return ratio, ratio
+    except ValueError:
+        pass
+    try:
+        data = orjson.loads(value)
+        if isinstance(data, dict):
+            raise ValueError(
+                "SGLang corpus style applies a single ratio to both ISL and OSL. "
+                "Independent input/output values are not supported; "
+                "provide a plain float instead (e.g. 0.3)."
+            )
+    except orjson.JSONDecodeError:
+        pass
+    raise ValueError(
+        f"--random-range-ratio must be a plain float for SGLang corpus style, got: {value!r}"
+    )
+
+
+def _coerce_ratio_input(v: Any, parser: Any) -> tuple[float, float]:
+    """Coerce ``range_ratio`` field input to a ``(isl_ratio, osl_ratio)`` tuple.
+
+    Handles float/int (symmetric), string (via ``parser``), and 2-element
+    list/tuple.
+
+    Raises ``ValueError`` on anything else rather than returning the input
+    unchanged. Both callers destructure the result immediately
+    (``ir, or_ = _coerce_ratio_input(...)``), so a pass-through never reached
+    Pydantic's type check -- it surfaced as a bare
+    ``TypeError: cannot unpack non-iterable NoneType object``, which names
+    neither the field nor the accepted forms.
+    """
+    # bool is an int subclass, so `range_ratio: true` would otherwise coerce to
+    # 1.0 -- accepted by SGLang (whose range is [0, 1]) as "pin at the mean".
+    # Rejected explicitly: a YAML bool here is a typo, not a ratio.
+    if isinstance(v, bool):
+        raise ValueError(f"range_ratio must be a number, got bool: {v!r}")
+    if isinstance(v, (int, float)):
+        return float(v), float(v)
+    if isinstance(v, str):
+        return parser(v)
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        return float(v[0]), float(v[1])
+    raise ValueError(
+        f"range_ratio must be a float, a string, or a 2-element sequence, "
+        f"got {type(v).__name__}: {v!r}"
+    )
+
+
+class VLLMRatioConfig(BaseConfig):
+    """Config for vLLM-style range-ratio sampling.
+
+    ``range_ratio`` accepts:
+
+    - a plain float (``0.3``) — applied to both ISL and OSL
+    - a CLI string (``"0.3"`` or ``'{"input": 0.3, "output": 0.5}'``)
+    - a 2-tuple ``(isl_ratio, osl_ratio)``
+
+    Ratios must be in ``[0.0, 1.0)``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    isl_mean: Annotated[int, Field(ge=1, description="Mean input sequence length.")]
+    osl_mean: Annotated[int, Field(ge=1, description="Mean output sequence length.")]
+    isl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed ISL mean.",
+        ),
+    ] = 0.0
+    osl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed OSL mean.",
+        ),
+    ] = 0.0
+    num_special_tokens: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Special tokens subtracted from isl_mean before bounds.",
+        ),
+    ] = 0
+    range_ratio: Annotated[
+        tuple[float, float],
+        Field(
+            description="(isl_ratio, osl_ratio); symmetric window [floor(mean*(1-r)), ceil(mean*(1+r))]."
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _no_stddev(self) -> Self:
+        if self.isl_stddev != 0.0:
+            raise ValueError(
+                "--isl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls ISL variance."
+            )
+        if self.osl_stddev != 0.0:
+            raise ValueError(
+                "--osl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls OSL variance."
+            )
+        return self
+
+    @field_validator("range_ratio", mode="before")
+    @classmethod
+    def _coerce_and_validate(cls, v: Any) -> tuple[float, float]:
+        ir, or_ = _coerce_ratio_input(v, _parse_vllm_ratio_string)
+        if not math.isfinite(ir) or not (0.0 <= ir < 1.0):
+            raise ValueError(f"ISL range_ratio must be in [0.0, 1.0), got {ir}")
+        if not math.isfinite(or_) or not (0.0 <= or_ < 1.0):
+            raise ValueError(f"OSL range_ratio must be in [0.0, 1.0), got {or_}")
+        return ir, or_
+
+    def compute_input_bounds(self) -> tuple[int, int]:
+        adjusted = max(0, self.isl_mean - self.num_special_tokens)
+        r = self.range_ratio[0]
+        return max(0, math.floor(adjusted * (1 - r))), math.ceil(adjusted * (1 + r))
+
+    def compute_output_bounds(self) -> tuple[int, int]:
+        r = self.range_ratio[1]
+        return (
+            max(1, math.floor(self.osl_mean * (1 - r))),
+            max(1, math.ceil(self.osl_mean * (1 + r))),
+        )
+
+
+class SGLangRatioConfig(BaseConfig):
+    """Config for SGLang-style range-ratio sampling.
+
+    ``range_ratio`` accepts:
+
+    - a plain float (``0.3``) — applied to both ISL and OSL
+    - a plain-float CLI string (``"0.3"``); JSON dict form is rejected
+    - a 2-tuple ``(r, r)`` where both elements must be equal
+
+    Ratios must be in ``[0.0, 1.0]``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    isl_mean: Annotated[int, Field(ge=1, description="Mean input sequence length.")]
+    osl_mean: Annotated[int, Field(ge=1, description="Mean output sequence length.")]
+    isl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed ISL mean.",
+        ),
+    ] = 0.0
+    osl_stddev: Annotated[
+        float,
+        Field(
+            default=0.0,
+            ge=0.0,
+            description="Must be 0; asserts caller resolved a fixed OSL mean.",
+        ),
+    ] = 0.0
+    num_special_tokens: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Server-added special tokens, subtracted per-request "
+            "AFTER sampling (not from isl_mean, which would rescale the window's "
+            "lower bound). Mirrors SGLang's post-sampling input_lens[i] shift.",
+        ),
+    ] = 0
+    range_ratio: Annotated[
+        tuple[float, float],
+        Field(
+            description="(isl_ratio, osl_ratio); lower-bounded window [max(1, int(mean*r)), mean]."
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _no_stddev(self) -> Self:
+        if self.isl_stddev != 0.0:
+            raise ValueError(
+                "--isl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls ISL variance."
+            )
+        if self.osl_stddev != 0.0:
+            raise ValueError(
+                "--osl-stddev cannot be combined with --random-range-ratio; "
+                "the ratio window already controls OSL variance."
+            )
+        return self
+
+    @field_validator("range_ratio", mode="before")
+    @classmethod
+    def _coerce_and_validate(cls, v: Any) -> tuple[float, float]:
+        ir, or_ = _coerce_ratio_input(v, _parse_sglang_ratio_string)
+        if not math.isfinite(ir) or not (0.0 <= ir <= 1.0):
+            raise ValueError(f"range_ratio must be in [0.0, 1.0], got {ir}")
+        if ir != or_:
+            raise ValueError(
+                f"SGLang corpus style requires equal ISL and OSL ratios, got ({ir}, {or_})"
+            )
+        return ir, or_
+
+    def compute_input_bounds(self) -> tuple[int, int]:
+        r = self.range_ratio[0]
+        return max(1, int(self.isl_mean * r)), self.isl_mean
+
+    def compute_output_bounds(self) -> tuple[int, int]:
+        r = self.range_ratio[1]
+        return max(1, int(self.osl_mean * r)), self.osl_mean
+
+
+class RangeRatioDistribution:
+    """Uniform ISL/OSL sampling in a ratio-defined integer window around configured means.
+
+    Instantiate via the registry for mode-driven dispatch::
+
+        DistClass = _CLASS_FOR_MODE[mode]
+        config = DistClass.get_config_class()(isl_mean=512, osl_mean=128, range_ratio="0.3")
+        dist = DistClass(config)
+
+    Two concrete styles:
+
+    - :class:`RangeRatioDistribution` (VLLM): symmetric window
+      ``[floor(mean*(1-r)), ceil(mean*(1+r))]``, ``r ∈ [0.0, 1.0)``.
+    - :class:`SGLangRangeRatioDistribution` (SGLANG): lower-bounded window
+      ``[max(1, int(mean*r)), mean]``, ``r ∈ [0.0, 1.0]``.
+    """
+
+    _style: ClassVar[RandomCorpusStyle] = RandomCorpusStyle.VLLM
+
+    @classmethod
+    def get_config_class(cls) -> type[VLLMRatioConfig]:
+        return VLLMRatioConfig
+
+    def __init__(self, config: VLLMRatioConfig) -> None:
+        self._rng = rng.derive("models.range_ratio.distribution")
+        self._isl_mean = config.isl_mean
+        self._osl_mean = config.osl_mean
+        self._config = config
+        self._warned_cache_exhausted = False
+
+        self._input_low, self._input_high = config.compute_input_bounds()
+        self._output_low, self._output_high = config.compute_output_bounds()
+
+    def preseed(self, n: int, seed: int | None) -> None:
+        """Pre-generate all ISL then all OSL values using vLLM's PCG64 draw order.
+
+        Creates ``numpy.random.default_rng(seed)`` internally so the RNG
+        algorithm and seeding are encapsulated here rather than in the caller.
+        Stores the generator after ISL/OSL draws as ``_preseed_rng`` so that
+        :meth:`PromptGenerator.preseed` can continue drawing offsets from the
+        same stream without the caller needing to manage generator state.
+
+        Prefix prompts do not participate: they are additive and prepended to the
+        body after generation, so the cached ISLs describe the body alone.
+
+        Subclasses override this method to use a different RNG algorithm
+        (e.g. :class:`SGLangRangeRatioDistribution` uses MT19937 to match
+        SGLang's ``benchmark_serving.py``).
+        """
+        g = np.random.default_rng(seed)
+        self._isl_cache = g.integers(
+            self._input_low, self._input_high + 1, size=n
+        ).tolist()
+        self._osl_cache = g.integers(
+            self._output_low, self._output_high + 1, size=n
+        ).tolist()
+        self._cache_idx = 0
+        self._preseed_rng: object = g
+
+    def sample(self) -> tuple[int, int]:
+        """Sample a single (ISL, OSL) pair with independent uniform integers.
+
+        Reads the preseed cache when one is active, falling back to live draws
+        once it is exhausted. The cache is sized by conversation count but read
+        once per turn, so any multi-turn run outruns it; degrading keeps the run
+        alive instead of raising ``IndexError`` from the dataset composer.
+        Alignment with the reference implementation is already lost past that
+        point -- vLLM has no notion of turns -- so there is nothing left to
+        preserve by failing hard.
+        """
+        cache = getattr(self, "_isl_cache", None)
+        if cache is not None and self._cache_idx < len(cache):
+            idx = self._cache_idx
+            self._cache_idx = idx + 1
+            return self._isl_cache[idx], self._osl_cache[idx]
+        if cache is not None and not self._warned_cache_exhausted:
+            self._warned_cache_exhausted = True
+            logger.warning(
+                f"Preseeded ISL/OSL cache exhausted after {len(cache)} draws "
+                "(sized by conversation count, consumed once per turn). "
+                "Falling back to live sampling; prompts past this point no "
+                f"longer match {type(self)._style} for the same seed."
+            )
+        isl = self.adjust_sampled_isl(
+            int(self._rng.integers(self._input_low, self._input_high + 1))
+        )
+        osl = int(self._rng.integers(self._output_low, self._output_high + 1))
+        return isl, osl
+
+    def adjust_sampled_isl(self, isl: int) -> int:
+        """Per-request ISL adjustment applied AFTER a length is drawn.
+
+        No-op for VLLM style, which folds ``num_special_tokens`` into the window
+        bounds instead (see :meth:`VLLMRatioConfig.compute_input_bounds`).
+        Overridden by :class:`SGLangRangeRatioDistribution`, whose upstream
+        shifts drawn lengths rather than rescaling the window.
+
+        Preseeded values are stored already-adjusted, so :meth:`sample` applies
+        this only on the live-draw path -- applying it to both would subtract
+        twice.
+        """
+        return isl
+
+    @property
+    def input_bounds(self) -> tuple[int, int]:
+        """Inclusive [low, high] integer bounds for ISL sampling."""
+        return self._input_low, self._input_high
+
+    @property
+    def output_bounds(self) -> tuple[int, int]:
+        """Inclusive [low, high] integer bounds for OSL sampling."""
+        return self._output_low, self._output_high
+
+    @property
+    def mode(self) -> RandomCorpusStyle:
+        return type(self)._style
+
+    def __repr__(self) -> str:
+        return (
+            f"RangeRatioDistribution(mode={type(self)._style}, isl_mean={self._isl_mean}, "
+            f"osl_mean={self._osl_mean}, range_ratio={self._config.range_ratio})"
+        )
+
+
+_MT19937_SEED_LIMIT = 2**32
+
+
+class _FoldedSeedWarnings:
+    """Tracks which folded seeds have been reported.
+
+    Keyed by seed rather than a single flag so a sweep re-seeding per variation
+    flags each aliasing seed, instead of only the first one it happens to hit.
+    """
+
+    _seen: ClassVar[set[int]] = set()
+
+    @classmethod
+    def claim(cls, seed: int) -> bool:
+        """Return True the first time ``seed`` is seen, False afterwards."""
+        if seed in cls._seen:
+            return False
+        cls._seen.add(seed)
+        return True
+
+    @classmethod
+    def reset(cls) -> None:
+        """Clear reported seeds. For tests."""
+        cls._seen.clear()
+
+
+def _warn_if_seed_is_folded(seed: int) -> None:
+    """Warn when a seed is too wide for MT19937 and must be folded.
+
+    numpy's legacy seeder caps at ``2**32 - 1``, so wider seeds are XOR-folded
+    (see :func:`~aiperf.common.random_generator.fold_seed_to_uint32`). The fold
+    is deterministic and reproducible, but not injective: for
+    ``seed = hi * 2**32 + lo`` it reduces to ``hi ^ lo``, so ``--random-seed 5``
+    and ``--random-seed 4294967300`` drive the same SGLANG stream. Two seeds the
+    user believes are independent are not.
+
+    Only this style is affected. ``derive()`` hashes the full seed, and the
+    VLLM/PCG64 path takes it verbatim, so those stay distinct for the same pair.
+    Warned rather than rejected because the seed is perfectly valid everywhere
+    else; the aliasing is a property of MT19937's seeding API, not of the value.
+    """
+    if seed < _MT19937_SEED_LIMIT or not _FoldedSeedWarnings.claim(seed):
+        return
+    logger.warning(
+        f"--random-seed {seed} exceeds MT19937's {_MT19937_SEED_LIMIT - 1} limit "
+        f"and was folded to {rng.fold_seed_to_uint32(seed)} for "
+        f"--random-corpus-style sglang. Draws stay reproducible for this seed, "
+        "but other seeds fold to the same value and produce an identical SGLang "
+        "workload. Use a seed below 2**32 if you need seeds to be distinguishable. "
+        "Other RNG streams (including --random-corpus-style vllm) use the full seed."
+    )
+
+
+class _LegacyRNG:
+    """Thin wrapper over a legacy ``numpy.random.RandomState`` (MT19937)
+    exposing the same ``.integers()`` interface as ``numpy.random.Generator``
+    (PCG64).
+
+    Used by :class:`SGLangRangeRatioDistribution` so that preseed callers
+    (including :meth:`PromptGenerator.preseed`) can treat both RNG backends
+    identically without branching on algorithm.
+
+    Holds its own ``RandomState`` rather than driving module-level
+    ``numpy.random``: ``RandomState(s)`` yields draws identical to
+    ``numpy.random.seed(s)`` followed by module-level calls, so SGLang MT19937
+    parity is preserved, but the stream is private. That keeps a second
+    distribution (or any future global ``numpy.random`` user) from perturbing
+    an in-flight preseed stream, which matters because the same instance is
+    handed to :meth:`PromptGenerator.preseed` and then read again for BPE
+    top-up draws long after ``preseed`` returns.
+    """
+
+    def __init__(self, seed: int | None = None) -> None:
+        """Create a private MT19937 stream.
+
+        Args:
+            seed: Seed in ``[0, 2**32 - 1]``, or None to draw from OS entropy.
+                Callers with a wider seed must fold it first (see
+                :func:`~aiperf.common.random_generator.fold_seed_to_uint32`).
+        """
+        self._state = np.random.RandomState(seed)
+
+    def integers(
+        self,
+        low: int,
+        high: int | None = None,
+        size: int | None = None,
+    ) -> np.ndarray:
+        if high is None:
+            return self._state.randint(0, low, size=size)
+        return self._state.randint(low, high, size=size)
+
+
+class SGLangRangeRatioDistribution(RangeRatioDistribution):
+    """RangeRatioDistribution with SGLang-compatible MT19937 preseed.
+
+    The sampling window derives from the raw configured ``isl_mean``. Both
+    overheads are then subtracted per-request *after* sampling, matching
+    SGLang, which shifts drawn lengths rather than rescaling the window:
+
+    - **Special tokens** — :meth:`adjust_sampled_isl` on this class, mirroring
+      ``input_lens[i] = max(1, input_lens[i] - num_special_tokens)``.
+    - **Chat-template wrapping** — the composer's
+      ``first_turn_isl_adjustment`` / ``subsequent_turn_isl_adjustment``,
+      which carry the template and cache-bust terms only.
+
+    Those are two separate mechanisms; neither covers the other. Subtracting
+    from the mean beforehand would rescale the lower bound too
+    (``int((mean-c)*r)`` instead of ``int(mean*r)``), producing a different
+    distribution rather than a shifted one.
+
+    Overrides :meth:`preseed` to use MT19937 (via a private
+    ``numpy.random.RandomState``) instead of ``numpy.random.default_rng``
+    (PCG64), matching the draw order in SGLang's ``benchmark_serving.py``::
+
+        input_lens  = np.random.randint(lower, upper + 1, size=n)
+        output_lens = np.random.randint(lower, upper + 1, size=n)
+        offsets     = np.random.randint(0, vocab_size, size=n)
+
+    When ``seed`` is provided, the MT19937 stream is seeded before the draws
+    so that aiperf runs are reproducible even though SGLang itself never seeds
+    before sampling. The seed is folded through
+    :func:`~aiperf.common.random_generator.fold_seed_to_uint32` first, since
+    the legacy seeder rejects the 64-bit seeds that adaptive sweeps and
+    ``multi_run.vary_seed_per_trial`` produce.
+    """
+
+    _style: ClassVar[RandomCorpusStyle] = RandomCorpusStyle.SGLANG
+
+    @classmethod
+    def get_config_class(cls) -> type[SGLangRatioConfig]:
+        return SGLangRatioConfig
+
+    def __init__(self, config: SGLangRatioConfig) -> None:
+        super().__init__(config)
+
+    def adjust_sampled_isl(self, isl: int) -> int:
+        """Subtract server-added special tokens from a drawn length.
+
+        Mirrors ``sample_random_requests`` (``benchmark/datasets/random.py``),
+        which shifts each drawn length after sampling::
+
+            if return_text:   # default, and what aiperf sends
+                num_special_tokens = int(tokenizer.num_special_tokens_to_add())
+                input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+        Applied here rather than to ``isl_mean`` because subtracting before
+        :meth:`SGLangRatioConfig.compute_input_bounds` would rescale the lower
+        bound too -- ``int((mean-c)*r)`` instead of ``int(mean*r)`` -- producing
+        a different distribution rather than a shifted one.
+        """
+        return max(1, isl - self._config.num_special_tokens)
+
+    def preseed(self, n: int, seed: int | None) -> None:
+        # numpy's legacy MT19937 seeder caps at 2**32-1, but run seeds are
+        # 64-bit on the adaptive-sweep and vary_seed_per_trial paths (and
+        # --random-seed is only bounded ge=0), so fold before seeding.
+        # The PCG64 parent path takes 64-bit seeds directly and needs no fold.
+        if seed is not None:
+            _warn_if_seed_is_folded(seed)
+        g = _LegacyRNG(rng.fold_seed_to_uint32(seed) if seed is not None else None)
+        self._isl_cache = [
+            self.adjust_sampled_isl(isl)
+            for isl in g.integers(
+                self._input_low, self._input_high + 1, size=n
+            ).tolist()
+        ]
+        self._osl_cache = g.integers(
+            self._output_low, self._output_high + 1, size=n
+        ).tolist()
+        self._cache_idx = 0
+        self._preseed_rng: object = g
+
+
+_CLASS_FOR_MODE: dict[RandomCorpusStyle, type[RangeRatioDistribution]] = {
+    RandomCorpusStyle.VLLM: RangeRatioDistribution,
+    RandomCorpusStyle.SGLANG: SGLangRangeRatioDistribution,
+}

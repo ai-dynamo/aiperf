@@ -176,6 +176,20 @@ Adaptive scale supports these SLA metric families in this release:
 | Error rate | `error_rate`, `request_error_rate` | `avg`, `min`, `max` |
 | Cancellation rate | `cancellation_rate`, `request_cancellation_rate` | `avg`, `min`, `max` |
 
+Thresholds use each metric's own unit, and the three rate metrics above do not
+share one:
+
+| Metric family | Threshold unit | `le: 1` means |
+| --- | --- | --- |
+| Error rate | percentage points in `[0, 100]`, matching the exported `request_error_rate` metric; denominator is successes + errors, so cancellations are excluded | 1% |
+| Success rate | fraction in `[0, 1]`; denominator is all window requests | 100% |
+| Cancellation rate | fraction in `[0, 1]`; denominator is all window requests | 100% |
+
+Error rate changed to percentage points so that adaptive scale and the exported
+`request_error_rate` metric agree; before that, `error_rate: {avg: {le: 0.05}}`
+meant 5% and now means 0.05%. Existing configs written against the old fraction
+scale must be multiplied by 100.
+
 Quality goodput and goodput ratio require at least one request-quality filter, such as `request_latency`, `time_to_first_token`, or `inter_token_latency`, so the controller can decide which successful requests count as quality-passing.
 
 ## YAML-only configuration
@@ -215,7 +229,7 @@ benchmark:
         sustain_duration: 5m
       sla:
         request_latency: {p95: {le: 500}}
-        error_rate: {avg: {le: 0.05}}
+        error_rate: {avg: {le: 5}}   # percentage points: 5%
 ```
 
 Each adaptive phase runs its own controller and writes its own phase-scoped event and summary files. Use `adaptive_scale_manifest.json` to discover all adaptive phases in the run and locate their artifacts. For general `name` / `kind` rules and repeated warmup or profiling windows, see [Multi-Phase Workflows](multi-phase-workflows.md).

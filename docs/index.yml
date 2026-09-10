@@ -106,6 +106,8 @@ navigation:
       path: tutorials/agentic-code-generator.md
     - page: Replay Weka Agentic Coding Traces
       path: tutorials/weka-trace.md
+    - page: Replay TraceLab Agentic Coding Traces
+      path: tutorials/tracelab-trace.md
     - page: InferenceX AgentX MVP Benchmark
       path: tutorials/agentx-mvp.md
   - section: Load Patterns & Scheduling
@@ -203,8 +205,59 @@ navigation:
     path: tutorials/baseten-trace.md
   - page: Conversation DAG Benchmarks
     path: benchmark-modes/dag.md
-  - page: "SemiAnalysis AgentX: How the Benchmark Works (FAQ)"
-    path: benchmark-modes/semianalysis-agentx-faq.md
+
+- section: Kubernetes
+  collapsed: true
+  contents:
+  - page: Getting Started on Kubernetes
+    path: kubernetes/getting-started.md
+  - page: Deploy from Source Checkout
+    path: kubernetes/source-checkout-deploy.md
+  - page: End-to-End Workflow
+    path: kubernetes/workflow.md
+  - page: Config Init and Manifest Generation
+    path: kubernetes/init-and-generate.md
+  - page: Kubernetes Configuration Reference
+    path: kubernetes/configuration.md
+  - page: Production Deployment
+    path: kubernetes/production.md
+  - page: RBAC and Security
+    path: kubernetes/rbac-security.md
+  - page: Monitoring and Observability
+    path: kubernetes/monitoring.md
+  - page: Config Validation
+    path: kubernetes/validate.md
+  - page: CRD Validation Rules
+    path: kubernetes/crd-validation.md
+  - page: Preflight Checks
+    path: kubernetes/preflight.md
+  - page: Debug Command
+    path: kubernetes/debug-command.md
+  - page: Attach to a Running Benchmark
+    path: kubernetes/attach.md
+  - page: Logs
+    path: kubernetes/logs.md
+  - page: Results Server API Reference
+    path: kubernetes/results-api.md
+  - page: Web Dashboard
+    path: kubernetes/dashboard-ui.md
+  - page: Controller Pod Sidecars
+    path: kubernetes/sidecars.md
+  - page: Memory Estimator
+    path: kubernetes/memory-estimator.md
+  - page: Kueue Integration
+    path: kubernetes/kueue.md
+  - page: GPU Telemetry on Kubernetes
+    path: kubernetes/gpu-telemetry.md
+  - page: Direct Mode (no operator)
+    path: kubernetes/direct-mode.md
+  - page: Adaptive Search on Kubernetes
+    path: kubernetes/adaptive-search.md
+  - page: User-Defined Output Files
+    path: kubernetes/user-files.md
+  - page: AI-Assisted Debugging Guide
+    path: kubernetes/ai-debugging-guide.md
+
 
 - section: Accuracy
   collapsed: true
@@ -231,6 +284,8 @@ navigation:
     path: reference/isl-tokenization.md
   - page: Prompt Corpus Selection
     path: reference/prompt-corpus.md
+  - page: Validating ISL/OSL Distributions with the Mock Server
+    path: reference/validating-isl-distribution.md
   - page: ISL Budget Compensation Derivation
     path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode
@@ -247,6 +302,8 @@ navigation:
     path: reference/json-export-schema.md
   - page: HTTP API Endpoints
     path: reference/api-endpoints.md
+  - page: Cache-Bust Targets
+    path: reference/cache-bust.md
   - page: YAML Config Roadmap
     path: reference/yaml-config-roadmap.md
   - page: Mocking a ROCm Environment
@@ -299,6 +356,8 @@ navigation:
     path: dev/sweep-orchestrator.md
   - page: YAML Config Future Goals
     path: dev/yaml-config-future-goals.md
+  - page: Kubernetes Flow
+    path: dev/kubernetes-flow.md
 
 - section: Troubleshooting
   collapsed: true

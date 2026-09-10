@@ -152,10 +152,19 @@ def _hoist_synthetic_prompt_fields(config: dict[str, Any]) -> None:
     prompts = config.setdefault("prompts", {})
     if not isinstance(prompts, dict):
         return
-    if "isl" in config:
-        prompts.setdefault("isl", config.pop("isl"))
-    if "osl" in config:
-        prompts.setdefault("osl", config.pop("osl"))
+    for key in ("isl", "osl"):
+        if key not in config:
+            continue
+        shorthand = config.pop(key)
+        existing = prompts.get(key)
+        if key not in prompts:
+            prompts[key] = shorthand
+        elif isinstance(existing, dict) and isinstance(shorthand, dict):
+            # An override (e.g. --isl) may already have written prompts.isl.
+            # Keep its keys, but inherit the sub-fields it did not specify
+            # rather than silently dropping the shorthand's stddev.
+            for sub_key, sub_value in shorthand.items():
+                existing.setdefault(sub_key, sub_value)
 
 
 def _normalize_single_dataset_listed(

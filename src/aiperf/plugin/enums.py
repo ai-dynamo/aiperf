@@ -27,7 +27,7 @@ else:
 
 APIRouterTypeStr: TypeAlias = str
 APIRouterType = plugins.create_enum(PluginType.API_ROUTER, "APIRouterType", module=__name__)
-"""Dynamic enum for api router. Example: APIRouterType.CORE, APIRouterType.PROGRESS, APIRouterType.WORKERS"""
+"""Dynamic enum for api router. Example: APIRouterType.CORE, APIRouterType.RESULTS, APIRouterType.WORKERS"""
 
 TimingModeStr: TypeAlias = str
 TimingMode = plugins.create_enum(PluginType.TIMING_STRATEGY, "TimingMode", module=__name__)
@@ -67,7 +67,7 @@ PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "Publi
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
-"""Dynamic enum for endpoint. Example: EndpointType.CHAT, EndpointType.IMAGE_RETRIEVAL, EndpointType.VIDEO_GENERATION"""
+"""Dynamic enum for endpoint. Example: EndpointType.AUDIO_TRANSCRIPTION, EndpointType.IMAGE_GENERATION, EndpointType.VIDEO_GENERATION"""
 
 TransportTypeStr: TypeAlias = str
 TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", module=__name__)
@@ -123,11 +123,11 @@ URLSelectionStrategy = plugins.create_enum(PluginType.URL_SELECTION_STRATEGY, "U
 
 ServiceTypeStr: TypeAlias = str
 ServiceType = plugins.create_enum(PluginType.SERVICE, "ServiceType", module=__name__)
-"""Dynamic enum for service. Example: ServiceType.API, ServiceType.RECORDS_MANAGER, ServiceType.WORKER_MANAGER"""
+"""Dynamic enum for service. Example: ServiceType.API, ServiceType.SERVER_METRICS_MANAGER, ServiceType.WORKER_MANAGER"""
 
 ServiceRunTypeStr: TypeAlias = str
 ServiceRunType = plugins.create_enum(PluginType.SERVICE_MANAGER, "ServiceRunType", module=__name__)
-"""Dynamic enum for service manager. Example: ServiceRunType.MULTIPROCESSING"""
+"""Dynamic enum for service manager. Example: ServiceRunType.KUBERNETES, ServiceRunType.MULTIPROCESSING"""
 
 CommunicationBackendStr: TypeAlias = str
 CommunicationBackend = plugins.create_enum(PluginType.COMMUNICATION, "CommunicationBackend", module=__name__)

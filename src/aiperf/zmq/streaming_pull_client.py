@@ -95,7 +95,7 @@ class ZMQStreamingPullClient(BaseZMQClient):
     @on_stop
     async def _clear_receiver(self) -> None:
         if self._fd_reader is not None:
-            self._fd_reader.stop()
+            await self._fd_reader.stop()
             self._fd_reader = None
         self._receiver_handler = None
 

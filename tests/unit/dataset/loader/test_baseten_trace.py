@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -9,11 +10,15 @@ import pytest
 pytest.importorskip("pyarrow")
 
 import pyarrow as pa
+import pyarrow.ipc as ipc
 import pyarrow.parquet as pq
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
+from aiperf.common.environment import Environment
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.dataset.loader import baseten_trace as baseten_trace_module
 from aiperf.dataset.loader.baseten_trace import (
     BasetenTrace,
     BasetenTraceDatasetLoader,
@@ -26,6 +31,16 @@ from tests.unit.conftest import make_run_from_cli
 def _write_parquet(path: Path, rows: list[dict]) -> Path:
     table = pa.Table.from_pylist(rows)
     pq.write_table(table, path)
+    return path
+
+
+def _write_arrow(path: Path, rows: list[dict], batch_size: int = 2) -> Path:
+    table = pa.Table.from_pylist(rows)
+    with (
+        pa.OSFile(str(path), "wb") as sink,
+        ipc.new_file(sink, table.schema) as writer,
+    ):
+        writer.write_table(table, max_chunksize=batch_size)
     return path
 
 
@@ -81,8 +96,13 @@ class TestBasetenTraceDatasetLoader:
         assert BasetenTraceDatasetLoader.can_load(filename=path) is True
 
     def test_load_dataset_normalizes_timestamps_and_groups_sessions(
-        self, tmp_path: Path
-    ):
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -132,7 +152,6 @@ class TestBasetenTraceDatasetLoader:
         assert list(dataset.keys()) == ["42", "99"]
         assert [trace.timestamp for trace in dataset["42"]] == [0, 150]
         assert dataset["42"][0].text_input == "first prompt"
-        assert dataset["42"][0].request_canceled == 1
         # No "prompt" override: the completions endpoint emits single-prompt
         # payloads as bare strings itself.
         assert dataset["42"][0].request_body == {
@@ -140,6 +159,130 @@ class TestBasetenTraceDatasetLoader:
             "hash_ids": [1, 2],
             "block_size": 64,
         }
+
+    @pytest.mark.parametrize("suffix", [".arrow", ".ipc"])
+    def test_arrow_ipc_load_matches_parquet(self, tmp_path: Path, suffix: str) -> None:
+        rows = [
+            {
+                "timestamp_start_unix_ms": timestamp,
+                "prompt": f"prompt-{index}",
+                "input_tokens": index + 1,
+                "output_tokens": index,
+                "total_hashes": [index, index + 1],
+                "poor_man_session_id": index // 2,
+                "block_size": 64,
+            }
+            for index, timestamp in enumerate(range(100, 500, 10), start=1)
+        ]
+        parquet_path = _write_parquet(tmp_path / "trace.parquet", rows)
+        arrow_path = _write_arrow(tmp_path / f"trace{suffix}", rows, batch_size=3)
+
+        def load(path: Path) -> dict[str, list[dict]]:
+            loader = BasetenTraceDatasetLoader(
+                filename=str(path),
+                run=_make_run(
+                    path,
+                    replay_speedup=2.0,
+                    trace_session_sample_ratio=0.1,
+                    random_seed=7,
+                ),
+                prompt_generator=_mock_prompt_generator(),
+            )
+            return {
+                session_id: [trace.model_dump() for trace in traces]
+                for session_id, traces in loader.load_dataset().items()
+            }
+
+        assert BasetenTraceDatasetLoader.can_load(filename=arrow_path) is True
+        assert load(arrow_path) == load(parquet_path)
+
+    def test_count_arrow_ipc_records_and_sessions(self, tmp_path: Path) -> None:
+        path = _write_arrow(
+            tmp_path / "trace.arrow",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": str(index),
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "poor_man_session_id": session_id,
+                }
+                for index, session_id in enumerate((1, 1, 2, None))
+            ],
+        )
+
+        assert count_baseten_parquet_records_and_sessions(str(path)) == (4, 3)
+
+    def test_arrow_ipc_opens_once_per_scan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = _write_arrow(
+            tmp_path / "trace.arrow",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": str(index),
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                }
+                for index in range(12)
+            ],
+            batch_size=2,
+        )
+        run = _make_run(path)
+        original_open = baseten_trace_module._open_arrow_ipc
+        open_calls = 0
+
+        def counting_open(file_path: str | Path) -> Any:
+            nonlocal open_calls
+            open_calls += 1
+            return original_open(file_path)
+
+        monkeypatch.setattr(baseten_trace_module, "_open_arrow_ipc", counting_open)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        loader.load_dataset()
+
+        assert open_calls == 3
+
+    def test_parquet_opens_once_per_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": str(index),
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                }
+                for index in range(12)
+            ],
+        )
+        run = _make_run(path)
+        parquet_file_class = pq.ParquetFile
+        open_calls = 0
+
+        def counting_open(*args: Any, **kwargs: Any) -> Any:
+            nonlocal open_calls
+            open_calls += 1
+            return parquet_file_class(*args, **kwargs)
+
+        monkeypatch.setattr(baseten_trace_module.pq, "ParquetFile", counting_open)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=run,
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        loader.load_dataset()
+
+        assert open_calls == 1
 
     def test_convert_to_conversations_uses_literal_prompts(self, tmp_path: Path):
         path = _write_parquet(
@@ -428,9 +571,14 @@ class TestBasetenTraceDatasetLoader:
         assert first == second
         assert first, "mid-ratio sampling should keep at least one session"
 
-    def test_trace_session_sampling_skips_when_no_effective_session_key(
-        self, tmp_path: Path
-    ):
+    def test_trace_session_sampling_uses_provided_session_id_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -456,19 +604,34 @@ class TestBasetenTraceDatasetLoader:
             prompt_generator=_mock_prompt_generator(),
         )
 
+        parquet_file_class = pq.ParquetFile
+
+        class NoReadParquetFile:
+            def __init__(self, *args, **kwargs) -> None:
+                self._parquet_file = parquet_file_class(*args, **kwargs)
+
+            def __getattr__(self, name: str):
+                if name == "read":
+                    raise AssertionError("sampled metadata must use bounded batches")
+                return getattr(self._parquet_file, name)
+
+        monkeypatch.setattr(baseten_trace_module.pq, "ParquetFile", NoReadParquetFile)
+
         dataset = loader.load_dataset()
 
-        assert len(dataset) == 2
+        assert list(dataset) == ["unique-1"]
         assert sorted(
             trace.text_input for traces in dataset.values() for trace in traces
-        ) == [
-            "row-1",
-            "row-2",
-        ]
+        ) == ["row-1"]
 
-    def test_trace_session_sampling_falls_back_to_poor_man_session_id(
-        self, tmp_path: Path
-    ):
+    def test_trace_session_sampling_uses_configured_poor_man_session_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -518,20 +681,21 @@ class TestBasetenTraceDatasetLoader:
         kept_session = next(iter(dataset.values()))
         assert len(kept_session) == 2
 
-    def test_sampling_and_grouping_use_same_session_key(self, tmp_path: Path):
-        # Sampling filters rows by the session key scored on the FULL file;
-        # grouping must reuse that key. Re-scoring the filtered subset can flip
-        # to the other column, shredding the sessions sampling kept whole and
-        # grouping row-sampled null-key rows into multi-turn conversations with
-        # silently dropped middle turns.
-        #
+    def test_sampling_and_grouping_use_same_session_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            "poor_man_session_id",
+        )
+
+        # Sampling and grouping must reuse the configured key; switching after
+        # filtering would shred sessions and regroup null-key rows.
         # Fixture shape is pinned to the sampling RNG (root seed 42 from the
         # autouse fixture): 7 poor_man sessions draw the first 7 uniforms (pairB
         # dropped, pairA kept, singletons eat the rest), then the 3 null-poor_man
-        # "s0" rows draw the next 3 (t0 kept, t1 dropped, t2 kept). Full-file
-        # scores: poor_man (4, 2) > provided (2·"s0"... 3 rows -> (3, 1)), so
-        # sampling keys on poor_man; the filtered subset scores (2, 1) vs (2, 1),
-        # which re-scoring would flip to provided_session_id.
+        # "s0" rows draw the next 3 (t0 kept, t1 dropped, t2 kept).
         def row(ts: int, prompt: str, poor: int | None, provided: str | None = None):
             return {
                 "timestamp_start_unix_ms": ts,
@@ -573,7 +737,25 @@ class TestBasetenTraceDatasetLoader:
             if any(prompt.startswith("s0-") for prompt in prompts):
                 assert len(prompts) == 1
 
-    def test_resolver_session_count_uses_same_key_as_loader(self, tmp_path: Path):
+    @pytest.mark.parametrize(
+        ("session_column", "expected_sessions"),
+        [
+            param("provided_session_id", 4, id="provided"),
+            param("poor_man_session_id", 2, id="poor-man"),
+        ],
+    )  # fmt: skip
+    def test_resolver_session_count_uses_same_key_as_loader(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        session_column: str,
+        expected_sessions: int,
+    ) -> None:
+        monkeypatch.setattr(
+            Environment.DATASET,
+            "BASETEN_SESSION_COLUMN",
+            session_column,
+        )
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
@@ -612,7 +794,10 @@ class TestBasetenTraceDatasetLoader:
             ],
         )
 
-        assert count_baseten_parquet_records_and_sessions(str(path)) == (4, 2)
+        assert count_baseten_parquet_records_and_sessions(str(path)) == (
+            4,
+            expected_sessions,
+        )
 
     def test_fixed_schedule_offsets_filter_relative_window_on_unix_timestamps(
         self, tmp_path: Path
@@ -819,33 +1004,186 @@ class TestBasetenTraceDatasetLoader:
         assert turns["canceled row"].max_tokens == 1
         assert turns["normal row"].max_tokens == 7
 
-    def test_load_dataset_populates_dataset_version_from_version_column(
-        self, tmp_path: Path
-    ):
-        # The parquet column is named __version__; the pydantic alias must
-        # populate dataset_version instead of stranding it in model_extra.
+    @pytest.mark.parametrize(
+        ("run_kwargs", "expected_columns"),
+        [
+            param(
+                {},
+                {
+                    "block_size",
+                    "cached_tokens_reference",
+                    "duration_e2e_ms",
+                    "duration_ttft_ms",
+                    "input_tokens",
+                    "output_tokens",
+                    "poor_man_session_id",
+                    "prompt",
+                    "timestamp_start_unix_ms",
+                    "total_hashes",
+                },
+                id="default",
+            ),
+            param(
+                {"omit_kv_hints": True},
+                {
+                    "cached_tokens_reference",
+                    "duration_e2e_ms",
+                    "duration_ttft_ms",
+                    "input_tokens",
+                    "output_tokens",
+                    "poor_man_session_id",
+                    "prompt",
+                    "timestamp_start_unix_ms",
+                },
+                id="omit-kv-hints",
+            ),
+            param(
+                {"open_loop_replay": False},
+                {
+                    "block_size",
+                    "cached_tokens_reference",
+                    "duration_e2e_ms",
+                    "duration_ttft_ms",
+                    "input_tokens",
+                    "output_tokens",
+                    "poor_man_session_id",
+                    "prompt",
+                    "timestamp_start_unix_ms",
+                    "total_hashes",
+                },
+                id="closed-loop",
+            ),
+        ],
+    )  # fmt: skip
+    def test_load_dataset_validates_sample_and_skips_unused_columns(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        run_kwargs: dict[str, bool],
+        expected_columns: set[str],
+    ) -> None:
         path = _write_parquet(
             tmp_path / "trace.parquet",
             [
                 {
-                    "timestamp_start_unix_ms": 100,
-                    "prompt": "versioned",
+                    "timestamp_start_unix_ms": index,
+                    "prompt": f"prompt-{index}",
                     "input_tokens": 5,
                     "output_tokens": 1,
-                    "__version__": "0.0.11",
+                    "output_text": "unused completion",
+                    "model_name": "unused model",
+                    "request_canceled": 1,
+                    "__version__": "unused version",
+                    "poor_man_session_id": 1,
+                    "total_hashes": [1, 2],
+                    "block_size": 64,
+                    "duration_e2e_ms": 10,
+                    "duration_ttft_ms": 4,
+                    "cached_tokens_reference": 2,
                 }
+                for index in range(12)
             ],
         )
+        original_validate = BasetenTrace.model_validate
+        original_iter_batches = pq.ParquetFile.iter_batches
+        validation_calls = 0
+        requested_columns: list[set[str]] = []
+
+        def count_validation_calls(row: dict) -> BasetenTrace:
+            nonlocal validation_calls
+            validation_calls += 1
+            return original_validate(row)
+
+        def capture_columns(parquet_file, *args, **kwargs):
+            requested_columns.append(set(kwargs["columns"]))
+            return original_iter_batches(parquet_file, *args, **kwargs)
+
+        monkeypatch.setattr(BasetenTrace, "model_validate", count_validation_calls)
+        monkeypatch.setattr(pq.ParquetFile, "iter_batches", capture_columns)
         loader = BasetenTraceDatasetLoader(
             filename=str(path),
-            run=_make_run(),
+            run=_make_run(path, **run_kwargs),
             prompt_generator=_mock_prompt_generator(),
         )
 
         dataset = loader.load_dataset()
+        traces = [trace for session in dataset.values() for trace in session]
 
-        trace = next(iter(dataset.values()))[0]
-        assert trace.dataset_version == "0.0.11"
+        assert validation_calls == 10
+        assert len(traces) == 12
+        assert requested_columns == [expected_columns]
+        assert all(not hasattr(trace, "output_text") for trace in traces)
+        assert all(not hasattr(trace, "model_name") for trace in traces)
+        assert all(not hasattr(trace, "request_canceled") for trace in traces)
+        assert all(not hasattr(trace, "dataset_version") for trace in traces)
+        # Recorded outcomes must survive load for later fidelity comparison,
+        # regardless of replay mode.
+        assert all(trace.duration_e2e_ms == 10 for trace in traces)
+        assert all(trace.duration_ttft_ms == 4 for trace in traces)
+        assert all(trace.cached_tokens_reference == 2 for trace in traces)
+
+    @pytest.mark.parametrize(
+        ("field", "invalid_value"),
+        [
+            param("timestamp_start_unix_ms", -1, id="negative-timestamp"),
+            param("input_tokens", None, id="null-input-tokens"),
+            param("output_tokens", -1, id="negative-output-tokens"),
+            param("prompt", None, id="null-prompt"),
+        ],
+    )  # fmt: skip
+    def test_load_dataset_validates_malformed_required_field_after_sample(
+        self,
+        tmp_path: Path,
+        field: str,
+        invalid_value: object,
+    ) -> None:
+        rows = [
+            {
+                "timestamp_start_unix_ms": index,
+                "prompt": f"prompt-{index}",
+                "input_tokens": 5,
+                "output_tokens": 1,
+            }
+            for index in range(11)
+        ]
+        rows[-1][field] = invalid_value
+        path = _write_parquet(tmp_path / "trace.parquet", rows)
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        with pytest.raises(ValidationError, match=field):
+            loader.load_dataset()
+
+    def test_load_dataset_normalizes_null_hashes_after_validation_sample(
+        self, tmp_path: Path
+    ) -> None:
+        path = _write_parquet(
+            tmp_path / "trace.parquet",
+            [
+                {
+                    "timestamp_start_unix_ms": index,
+                    "prompt": f"prompt-{index}",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "total_hashes": [1] if index < 10 else None,
+                }
+                for index in range(11)
+            ],
+        )
+        loader = BasetenTraceDatasetLoader(
+            filename=str(path),
+            run=_make_run(path),
+            prompt_generator=_mock_prompt_generator(),
+        )
+
+        traces = [
+            trace for session in loader.load_dataset().values() for trace in session
+        ]
+
+        assert traces[-1].total_hashes == []
 
     def test_request_body_uses_capped_output_length(self, tmp_path: Path):
         path = _write_parquet(
@@ -972,14 +1310,10 @@ class TestBasetenTraceModel:
             output_tokens=20,
             total_hashes=None,
             provided_session_id=42,
-            request_canceled=1,
-            org_id=7,
         )
 
         assert trace.total_hashes == []
         assert trace.provided_session_id == 42
-        assert trace.request_canceled == 1
-        assert trace.org_id == 7
 
 
 class TestSynthesisHooks:
@@ -1017,7 +1351,6 @@ class TestSynthesisHooks:
                 poor_man_session_id=7,
                 total_hashes=[1, 2],
                 block_size=64,
-                __version__="0.0.11",
             )
         ]
         synth_dicts = [
@@ -1035,9 +1368,6 @@ class TestSynthesisHooks:
         assert result[0].prompt == "original"
         assert result[0].poor_man_session_id == 7
         assert result[0].total_hashes == [1, 2]
-        # The model_dump()/model_validate round-trip must not strand aliased
-        # fields in model_extra.
-        assert result[0].dataset_version == "0.0.11"
 
     def test_reconstruct_traces_uses_last_original_for_extra_synth_rows(
         self, tmp_path: Path

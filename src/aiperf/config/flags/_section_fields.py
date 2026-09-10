@@ -36,6 +36,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "transport",
         "endpoint_type",
         "url_selection_strategy",
+        "per_chunk_usage",
         "urls",
         "use_legacy_max_tokens",
         "use_server_token_count",
@@ -89,6 +90,8 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "prompt_prefix_length",
         "prompt_prefix_shared_system_length",
         "prompt_prefix_user_context_length",
+        "prompt_random_corpus_style",
+        "prompt_random_range_ratio",
         "prompt_sequence_distribution",
         # ----- image modality -----
         "image_width_mean",

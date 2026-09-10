@@ -109,6 +109,16 @@ class BenchmarkHelpersMixin:
             return None
         return getattr(prompts, "corpus", None)
 
+    def get_system_prompt(self) -> str | None:
+        """Resolve the active dataset's verbatim system prompt text, if any.
+
+        Reads ``SystemPromptMixin.resolved_system_prompt``, which every dataset
+        variant carries and which already collapsed the
+        ``system_prompt`` / ``system_prompt_file`` distinction during
+        validation. Returns ``None`` when the user configured neither.
+        """
+        return getattr(self.get_default_dataset(), "resolved_system_prompt", None)
+
     # ==========================================================================
     # CONVENIENCE PROPERTIES
     # ==========================================================================

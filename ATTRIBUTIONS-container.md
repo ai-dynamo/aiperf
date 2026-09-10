@@ -17,7 +17,7 @@ This document provides attribution information for third-party software componen
 - **Website**: https://ffmpeg.org/
 - **License**: LGPL v2.1+
 - **Usage**: Video and audio processing library (included in runtime container)
-- **Build Configuration**: Built without GPL components (`--disable-gpl --disable-nonfree --enable-libvorbis --enable-libvpx`)
+- **Build Configuration**: Built without GPL or non-free components, with an explicit codec allowlist (`--disable-gpl --disable-nonfree --disable-everything --enable-libvorbis --enable-libvpx --enable-libopus`)
 
 **License Text:**
 
@@ -46,6 +46,7 @@ The FFmpeg source code used to build this container is available at:
 - FFmpeg is dynamically linked and can be replaced by users
 - No FFmpeg source code modifications were made
 - Build configuration excludes GPL-licensed components
+- The codec set is restricted to VP8/VP9 video and Vorbis/Opus audio; other codecs are not built into the distributed binary
 - Apache 2.0 licensed code in this project remains separate from LGPL components
 
 ### libvpx
@@ -221,6 +222,67 @@ The libogg source code is available at:
 - libogg is dynamically linked with FFmpeg (via libvorbis)
 - BSD license is compatible with Apache 2.0
 
+### libopus
+
+**Component Information:**
+- **Software**: libopus (Opus Interactive Audio Codec)
+- **Version**: 1.3.1 (from Debian Bookworm)
+- **Source**: Debian Bookworm
+- **Website**: https://opus-codec.org/
+- **License**: BSD 3-Clause
+- **Usage**: Opus audio codec library (included in runtime container, used by FFmpeg for MP4 audio encoding)
+
+**License Text:**
+
+> Copyright 2001-2011 Xiph.Org, Skype Limited, Octasic,
+> Jean-Marc Valin, Timothy B. Terriberry,
+> CSIRO, Gregory Maxwell, Mark Borgerding,
+> Erik de Castro Lopo
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions
+> are met:
+>
+> - Redistributions of source code must retain the above copyright
+> notice, this list of conditions and the following disclaimer.
+>
+> - Redistributions in binary form must reproduce the above copyright
+> notice, this list of conditions and the following disclaimer in the
+> documentation and/or other materials provided with the distribution.
+>
+> - Neither the name of Internet Society, IETF or IETF Trust, nor the
+> names of specific contributors, may be used to endorse or promote
+> products derived from this software without specific prior written
+> permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+> ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+> LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+> A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+> OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+> SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+> LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+> DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+> THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+> (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+> OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+>
+> Full license text: https://gitlab.xiph.org/xiph/opus/-/blob/v1.3.1/COPYING
+
+**Source Code Availability:**
+
+The libopus source code is available at:
+- Debian package: https://packages.debian.org/bookworm/libopus-dev
+- Debian source package: `apt-get source libopus` from Debian Bookworm repositories
+- Upstream Xiph.org source: https://gitlab.xiph.org/xiph/opus
+
+**Compliance Notes:**
+
+- libopus binary is copied from Debian Bookworm base image
+- No modifications were made to libopus source code
+- libopus is dynamically linked with FFmpeg
+- BSD license is compatible with Apache 2.0
+
 ### Bash
 
 **Component Information:**
@@ -288,6 +350,12 @@ BSD 3-Clause is compatible with Apache 2.0:
 - Attribution requirements are satisfied through this document
 - No conflict with Apache 2.0 terms
 
+### libopus (BSD 3-Clause)
+BSD 3-Clause is compatible with Apache 2.0:
+- BSD is a permissive license that allows redistribution with minimal restrictions
+- Attribution requirements are satisfied through this document
+- No conflict with Apache 2.0 terms
+
 ### Bash (GPL v3+)
 GPL is compatible with Apache 2.0 when:
 - Bash runs as a separate executable and is not linked with Apache 2.0 code
@@ -296,4 +364,4 @@ GPL is compatible with Apache 2.0 when:
 - Proper attribution is provided (as above)
 
 ---
-*Last updated: March 30, 2026*
+*Last updated: July 30, 2026*

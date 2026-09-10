@@ -20,6 +20,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_LINUX, IS_MACOS, IS_WINDOWS
 from aiperf.common.enums import LifecycleState
 from aiperf.common.environment import Environment
+from aiperf.common.event_loop import configure_event_loop_policy_for_platform
 from aiperf.plugin.enums import ServiceType
 
 _logger = AIPerfLogger(__name__)
@@ -98,7 +99,7 @@ def bootstrap_and_run_service(
 
     # Ignore SIGINT and SIGTERM in child processes. SIGINT is ignored so only
     # the parent handles Ctrl+C. SIGTERM is ignored because graceful shutdown is
-    # handled via the message bus (ShutdownCommand); after that path's delivery
+    # handled via the SHUTDOWN control command; after that path's delivery
     # grace, MultiProcessServiceManager goes straight to Process.kill()
     # (SIGKILL) rather than Process.terminate()+join — terminate would be a
     # no-op here and only burn the join timeout. Ignoring SIGTERM prevents
@@ -195,7 +196,11 @@ def bootstrap_and_run_service(
 
         _exit_if_service_failed(service)
 
-    _configure_event_loop_policy_for_platform()
+    # Also applied at every other real process entrypoint (aiperf.cli,
+    # aiperf.sweep_controller.main, aiperf.orchestrator.subprocess_runner) --
+    # see aiperf.common.event_loop for why this can't be centralized here
+    # alone.
+    configure_event_loop_policy_for_platform()
     _request_high_resolution_timer_on_windows()
 
     with contextlib.suppress(asyncio.CancelledError):
@@ -254,23 +259,6 @@ def _install_parent_death_signal(controller_pid: int | None = None) -> None:
     # so exit now rather than orphan.
     if os.getppid() != expected_ppid:
         os._exit(1)
-
-
-def _configure_event_loop_policy_for_platform() -> None:
-    """On Windows, switch to ``WindowsSelectorEventLoopPolicy`` before the
-    event loop is created.
-
-    pyzmq's async sockets call ``loop.add_reader()`` / ``loop.add_writer()``,
-    which the default ``ProactorEventLoop`` on Windows does not implement.
-    The selector policy must be set before ``asyncio.run()``/``uvloop.run()``
-    constructs the loop.
-
-    uvloop is already auto-disabled on Windows via ``environment.py``, so on
-    Windows this only matters for the asyncio path. On non-Windows platforms
-    this is a no-op — the default policy is already correct.
-    """
-    if IS_WINDOWS:
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 def _request_high_resolution_timer_on_windows() -> None:

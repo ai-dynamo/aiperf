@@ -200,10 +200,19 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task: asyncio.Task | None = None
         self._progress_task: asyncio.Task | None = None
         self._return_wait_task: asyncio.Task | None = None
+        self._router_phase_started = False
         self._was_cancelled = False
         self._rampers: list[RateControllerProtocol] = []
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
+
+    def _resolve_cache_bust_target(self) -> CacheBustTarget:
+        """Return the active cache-bust target, or NONE when no run is attached."""
+        return (
+            self._run.cfg.get_cache_bust_target()
+            if self._run is not None
+            else CacheBustTarget.NONE
+        )
 
     def _build_credit_issuer(
         self, url_selection_strategy: URLSelectionStrategyProtocol | None
@@ -230,6 +239,7 @@ class PhaseRunner(TaskManagerMixin):
                 or self._cache_warmup_enabled
             ),
             replay_barrier=self._replay_barrier,
+            cache_bust_target=self._resolve_cache_bust_target(),
         )
 
     def _maybe_construct_branch_orchestrator(
@@ -261,11 +271,7 @@ class PhaseRunner(TaskManagerMixin):
             return
         sticky_router = getattr(self._credit_router, "sticky_router", None)
         benchmark_id = self._run.benchmark_id if self._run is not None else "unknown"
-        cache_bust_target = (
-            self._run.cfg.get_cache_bust_target()
-            if self._run is not None
-            else CacheBustTarget.NONE
-        )
+        cache_bust_target = self._resolve_cache_bust_target()
         self._branch_orchestrator = BranchOrchestrator(
             conversation_source=conversation_source,
             credit_issuer=self._credit_issuer,
@@ -437,6 +443,7 @@ class PhaseRunner(TaskManagerMixin):
         """
         if self._progress_task:
             self._progress_task.cancel()
+        self._release_router_phase_state()
 
         # Retrieve the detached task's own exception so it is not left as an
         # unretrieved-task-exception, and treat it as a phase failure.
@@ -451,8 +458,10 @@ class PhaseRunner(TaskManagerMixin):
         fatal = self._progress.fatal_error or task_exc
         if fatal is not None:
             self.error(
-                lambda: "fatal request-free control-node failure in seamless "
-                f"phase {self._config.phase}: {fatal!r}"
+                lambda: (
+                    "fatal request-free control-node failure in seamless "
+                    f"phase {self._config.phase}: {fatal!r}"
+                )
             )
             if self._on_phase_error is not None:
                 self._on_phase_error(fatal)
@@ -487,6 +496,7 @@ class PhaseRunner(TaskManagerMixin):
     async def run(
         self,
         is_final_phase: bool,
+        seamless_to_next: bool = False,
     ) -> CreditPhaseStats:
         """Execute phase with full lifecycle management.
 
@@ -497,6 +507,8 @@ class PhaseRunner(TaskManagerMixin):
         Args:
             is_final_phase: True if this is the last phase. Non-final seamless phases
                 spawn background return-wait task; final phases wait synchronously.
+            seamless_to_next: True when the next phase should start before this
+                phase's in-flight requests finish returning.
 
         Returns:
             CreditPhaseStats snapshot of final phase state.
@@ -504,7 +516,9 @@ class PhaseRunner(TaskManagerMixin):
         strategy = self._build_strategy()
         try:
             self._register_strategy_with_callback_handler(strategy)
-            return await self._run_strategy(strategy, is_final_phase)
+            return await self._run_strategy(
+                strategy, is_final_phase, seamless_to_next=seamless_to_next
+            )
         except Exception as e:
             await self._publish_phase_failure_lifecycle()
             raise e
@@ -547,7 +561,11 @@ class PhaseRunner(TaskManagerMixin):
             strategy=strategy,
         )
         if self._branch_orchestrator is not None:
-            self._callback_handler.set_branch_orchestrator(self._branch_orchestrator)
+            self._callback_handler.set_branch_orchestrator(
+                self._branch_orchestrator,
+                phase=self._config.phase,
+                phase_index=self._config.phase_index,
+            )
 
     def _detach_orchestrator_and_cleanup(self) -> None:
         """Final-pass orchestrator teardown for the phase.
@@ -560,9 +578,22 @@ class PhaseRunner(TaskManagerMixin):
         phase.
         """
         if self._branch_orchestrator is not None:
-            self._callback_handler.set_branch_orchestrator(None)
+            self._callback_handler.set_branch_orchestrator(
+                None,
+                phase=self._config.phase,
+                phase_index=self._config.phase_index,
+            )
             self._branch_orchestrator.cleanup()
         self._release_tree_slots()
+        if self._return_wait_task is None or self._return_wait_task.done():
+            self._release_router_phase_state()
+
+    def _release_router_phase_state(self) -> None:
+        """Release router state only after this phase's returns have drained."""
+        if not self._router_phase_started:
+            return
+        self._credit_router.end_phase(self._config.phase, self._config.phase_index)
+        self._router_phase_started = False
 
     def _release_tree_slots(self) -> None:
         """Release any still-open session-tree slots at phase teardown.
@@ -577,15 +608,20 @@ class PhaseRunner(TaskManagerMixin):
             return
         released = self._session_tree_registry.release_all(self._phase_key)
         self.info(
-            lambda: f"Session-tree slots for phase {self._config.phase}: "
-            f"peak_open={self._session_tree_registry.peak_open} "
-            f"(target concurrency {self._config.concurrency}); "
-            f"released {released} still-open at teardown; "
-            f"late_events={self._session_tree_registry.late_events}"
+            lambda: (
+                f"Session-tree slots for phase {self._config.phase}: "
+                f"peak_open={self._session_tree_registry.peak_open} "
+                f"(target concurrency {self._config.concurrency}); "
+                f"released {released} still-open at teardown; "
+                f"late_events={self._session_tree_registry.late_events}"
+            )
         )
 
     async def _run_strategy(
-        self, strategy: TimingStrategyProtocol, is_final_phase: bool
+        self,
+        strategy: TimingStrategyProtocol,
+        is_final_phase: bool,
+        seamless_to_next: bool = False,
     ) -> CreditPhaseStats:
         """Drive the strategy through its execute → sending-complete →
         returning-complete pipeline. The exception path (publishing partial
@@ -602,6 +638,9 @@ class PhaseRunner(TaskManagerMixin):
         )
 
         await strategy.setup_phase()
+
+        self._credit_router.begin_phase(self._config.phase, self._config.phase_index)
+        self._router_phase_started = True
 
         # Gate credit issuance on worker readiness: on fast startup the first
         # credit can otherwise be issued before any worker registers, which
@@ -660,7 +699,7 @@ class PhaseRunner(TaskManagerMixin):
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
-        if self._config.seamless and not is_final_phase:
+        if seamless_to_next and not is_final_phase:
             self._return_wait_task = self.execute_async(
                 self._wait_for_returning_complete(strategy, phase_id=phase_id)
             )
@@ -689,7 +728,7 @@ class PhaseRunner(TaskManagerMixin):
             await self._credit_issuer.replay_gate.cancel(notify_refused=False)
 
         # Strategy-specific phase teardown BACKSTOP. Skipped when the live
-        # warmup early-abort already broadcast ProfileCancelCommand (see
+        # warmup early-abort already requested PROFILE_CANCEL (see
         # _should_fire_warmup_backstop), to avoid a double-fire.
         if self._should_fire_warmup_backstop(strategy):
             self._report_warmup_failures(strategy)
@@ -712,7 +751,7 @@ class PhaseRunner(TaskManagerMixin):
 
         In production this is a backstop, not the primary path: when the live
         warmup early-abort is wired (``callback_handler.on_warmup_abort`` is not
-        None), the FIRST terminal failure already broadcast ProfileCancelCommand
+        None), the FIRST terminal failure already requested PROFILE_CANCEL
         and cancelled this runner, so raising here too is unnecessary and would
         double-fire. We therefore fire only when the live path is NOT wired (and
         the runner was not otherwise cancelled). Gating on ``on_warmup_abort is
@@ -1048,6 +1087,7 @@ class PhaseRunner(TaskManagerMixin):
             self.error(
                 f"Error waiting for phase {self._config.phase} to send all credits: {e!r}"
             )
+            raise
         finally:
             if not self._lifecycle.is_sending_complete:
                 self._lifecycle.mark_sending_complete(timeout_triggered=timed_out)
@@ -1218,7 +1258,10 @@ class PhaseRunner(TaskManagerMixin):
             timeout: The timeout in seconds.
                 If None, the event will be waited for indefinitely.
                 If timeout is <= 0, returns immediately with timeout.
-            task_to_cancel: The optional task to cancel when the timeout occurs.
+            task_to_cancel: The optional task to cancel when the timeout occurs. When
+                timeout is None, this task is also raced against the event: if it
+                finishes first with an exception, that exception is raised instead
+                of waiting forever (see ``_wait_for_event_or_task_exception``).
             set_event_on_timeout: If True, the event will also be set when the timeout occurs.
 
         Returns:
@@ -1226,7 +1269,12 @@ class PhaseRunner(TaskManagerMixin):
         """
         if timeout is None:
             self.debug(lambda: f"Waiting for event '{name}' indefinitely")
-            await event.wait()
+            if task_to_cancel is None:
+                await event.wait()
+            else:
+                await self._wait_for_event_or_task_exception(
+                    event, task_to_cancel, name
+                )
             return False
 
         def _on_timeout() -> bool:
@@ -1253,6 +1301,36 @@ class PhaseRunner(TaskManagerMixin):
         except Exception as e:
             self.error(f"Error waiting for event '{name}' with timeout: {e!r}")
             raise
+
+    async def _wait_for_event_or_task_exception(
+        self, event: asyncio.Event, task: asyncio.Task, name: str
+    ) -> None:
+        """Wait for ``event``, but fail fast if ``task`` finishes first with an
+        exception, instead of waiting on it forever.
+
+        An indefinite wait (timeout=None, request-count phases) has no bound to
+        fall back on, and ``execute_async`` runs ``task`` fire-and-forget: its
+        done-callback only discards it from the task set, so an exception it
+        raises is otherwise never retrieved and the wait hangs forever (#1041).
+        """
+        event_task = asyncio.ensure_future(event.wait())
+        try:
+            await asyncio.wait({event_task, task}, return_when=asyncio.FIRST_COMPLETED)
+            # A failure wins over a same-tick event completion; FIRST_COMPLETED
+            # only guarantees one of the two is done, so task.done() is checked
+            # explicitly rather than assumed from event_task's state.
+            if (
+                task.done()
+                and not task.cancelled()
+                and (exc := task.exception()) is not None
+            ):
+                raise exc
+            if event_task.done():
+                return
+            await event_task
+        finally:
+            if not event_task.done():
+                event_task.cancel()
 
     async def _progress_report_loop(self) -> None:
         """Publish phase progress stats at regular intervals.

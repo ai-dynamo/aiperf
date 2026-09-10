@@ -238,7 +238,16 @@ class EnergyEfficiencyAnalyzer:
             out.append(_result(vendor_metrics["total_power"], power[0]))
         if source is EnergySource.UNAVAILABLE or total_energy_j <= 0:
             if source is EnergySource.UNAVAILABLE:
-                _logger.warning(
+                # Only warn when the user explicitly configured GPU telemetry.
+                # Default DCGM probing (no --gpu-telemetry flag) auto-connects to
+                # localhost:9400/9401; if those are reachable but have no power/energy
+                # fields the warning is noise, not actionable.
+                explicitly_configured = self.run is not None and (
+                    bool(self.run.cfg.gpu_telemetry.urls)
+                    or str(self.run.cfg.gpu_telemetry.collector) != "dcgm"
+                )
+                log = _logger.warning if explicitly_configured else _logger.debug
+                log(
                     lambda p=platform: (
                         f"EnergyEfficiencyAnalyzer: no power or energy data available "
                         f"for platform '{p}' — GPU power efficiency metrics will not be "

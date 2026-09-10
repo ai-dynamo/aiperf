@@ -3,7 +3,7 @@
 from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 # ============================================================================
 # Base Models (for request parsing only)
@@ -53,11 +53,24 @@ class BaseCompletionRequest(BaseModel):
     max_tokens: int | None = None
     ignore_eos: bool = False
     min_tokens: int | None = None
+    mock_first_chunk_tokens: int = Field(
+        default=1,
+        description="Test knob: bundle the first N output tokens into the first "
+        "streamed chunk to emulate a server (e.g. TRT-LLM stream-interval) whose "
+        "first content chunk carries more than one token. Defaults to 1.",
+    )
 
     @property
     def include_usage(self) -> bool:
         """Check if usage statistics should be included in streaming response."""
         return bool(self.stream_options and self.stream_options.get("include_usage"))
+
+    @property
+    def continuous_usage_stats(self) -> bool:
+        """Check if per-chunk (cumulative) usage should be reported on every chunk."""
+        return bool(
+            self.stream_options and self.stream_options.get("continuous_usage_stats")
+        )
 
 
 class ChatCompletionRequest(BaseCompletionRequest):
@@ -260,6 +273,75 @@ class AnthropicMessagesRequest(BaseCompletionRequest):
         return self.max_tokens
 
 
+class ResponsesRequest(BaseModel):
+    """Request model for OpenAI's /v1/responses endpoint.
+
+    The Responses API takes its prompt under `input` (which may be a string,
+    a list of strings, or a list of content-block dicts) and caps generation
+    via `max_output_tokens` rather than the chat API's `max_completion_tokens`.
+    Modeled here so the recorder can capture the real payload instead of the
+    synthetic ChatCompletionRequest the latency simulator drives off of.
+    """
+
+    model: str = Field(description="Model identifier.")
+    input: str | list[Any] = Field(
+        default="",
+        description="Prompt input — string, list of strings, or list of content-block dicts.",
+    )
+    max_output_tokens: int | None = Field(
+        default=None,
+        description="Maximum number of output tokens to generate (the Responses-API name for the OSL cap).",
+    )
+    stream: bool = Field(default=False, description="Whether to stream the response.")
+    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="Reasoning effort level for models that support extended thinking.",
+    )
+
+    # Mirrors BaseCompletionRequest so recorder/simulator share field semantics
+    # when the client supplies them via extras.
+    min_tokens: int | None = Field(
+        default=None, description="Minimum number of tokens to generate."
+    )
+    ignore_eos: bool = Field(
+        default=False,
+        description="Whether to ignore the EOS token and continue generating up to max_output_tokens.",
+    )
+
+    @property
+    def prompt_text(self) -> str:
+        """Flatten `input` (str | list[str|dict]) into a single string.
+
+        Matches the previous `_extract_responses_prompt` helper that lived in
+        the handler; moved here so the recorder and tokenizer dispatch sites
+        share one source of truth.
+        """
+        return _flatten_responses_input(self.input)
+
+
+def _flatten_responses_input(input_value: Any) -> str:
+    """Walk the Responses-API `input` shape and concatenate into text."""
+    if isinstance(input_value, str):
+        return input_value
+    if isinstance(input_value, list):
+        parts: list[str] = []
+        for item in input_value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                content = item.get("content", "")
+                if isinstance(content, str):
+                    parts.append(content)
+                elif isinstance(content, list):
+                    parts.extend(
+                        str(part.get("text", ""))
+                        for part in content
+                        if isinstance(part, dict)
+                    )
+        return "\n".join(part for part in parts if part)
+    return str(input_value)
+
+
 # ============================================================================
 # Request Type Union
 # ============================================================================
@@ -276,4 +358,5 @@ RequestT = (
     | ImageRetrievalRequest
     | SolidoRAGRequest
     | AnthropicMessagesRequest
+    | ResponsesRequest
 )

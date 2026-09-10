@@ -13,6 +13,8 @@ address for fast, isolated testing without network or IPC overhead.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import sys
 import time
 from collections import defaultdict
@@ -156,28 +158,126 @@ class FakeStreamingRouterClient(FakeCommunicationClient):
         super().__init__(
             address, identity, bus, additional_bind_address=additional_bind_address
         )
-        self.handler: Callable[[str, Any], Awaitable[None]] | None = None
+        self.handler: Callable[[str, Any], Awaitable[Any]] | None = None
+        # Mirrors ZMQStreamingRouterClient._pending_requests: request_to()
+        # registers a future keyed by the request's cid, and a message arriving
+        # from a dealer with that cid resolves it instead of reaching the handler.
+        self._pending_requests: dict[str, asyncio.Future[Any]] = {}
 
     def register_receiver(
-        self, handler: Callable[[str, Any], Coroutine[Any, Any, None]]
+        self, handler: Callable[[str, Any], Coroutine[Any, Any, Any]]
     ) -> None:
         if self.handler is not None:
             raise ValueError("Receiver handler already registered")
         self.handler = handler
 
+    @on_stop
+    async def _cancel_pending_requests(self) -> None:
+        """Cancel awaiters on stop, mirroring ZMQStreamingRouterClient._clear_receiver.
+
+        The socket is going away, so no reply can ever arrive; leaving the
+        futures pending would hang their callers until the process dies.
+        """
+        for future in self._pending_requests.values():
+            if not future.done():
+                future.cancel()
+        self._pending_requests.clear()
+
     async def send_to(self, identity: str, message: Any) -> None:
-        """Send to dealer - dynamically looks up dealer by identity."""
+        """Send to the dealer bound to (this address, identity).
+
+        The dealer handler's return value is deliberately discarded:
+        ZMQStreamingDealerClient._dispatch_dealer fires the handler through
+        execute_async and never reads what it returns, so a fake that honored a
+        returned struct would accept a handler shape real ZMQ drops. Services
+        reply with an explicit ``await dealer.send(...)``.
+        """
         self.capture_sent_payload(message, receiver_identity=identity)
         for comm in self.bus.communications:
-            if dealer_client := comm.dealer_clients.get(identity):
+            if dealer_client := comm.dealer_clients.get((self.address, identity)):
+                dealer_client.capture_received_payload(
+                    message, sender_identity=self.identity
+                )
+                # A reply carrying a pending rid/cid resolves that waiter
+                # instead of going to the streaming handler -- the same split
+                # ZMQStreamingDealerClient._dispatch_dealer makes.
+                if dealer_client.resolve_pending(message):
+                    return
                 if dealer_client.handler:
-                    dealer_client.capture_received_payload(
-                        message, sender_identity=self.identity
-                    )
-                    await dealer_client.handler(message)
+                    # Real ZMQ fires dealer handlers through execute_async (a
+                    # new background Task), so the handler's CancelledError
+                    # never reaches the router caller. _on_shutdown_command
+                    # deliberately raises CancelledError after stop() to
+                    # prevent the dispatcher from sending a duplicate ack;
+                    # without this guard that propagates back to the
+                    # controller and aborts _broadcast_control_command before
+                    # it can deliver SHUTDOWN to remaining services, leaving
+                    # stopped_event unset and hanging the test.
+                    # Note: this suppress is broader than the one raise it
+                    # targets -- it also swallows a genuine cancellation of the
+                    # router task (test teardown, timeout). Acceptable in a
+                    # test harness.
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await dealer_client.handler(message)
                 else:
                     self.warning(f"No handler registered for dealer client {identity}")
                 return
+
+    def _try_resolve_pending_request(self, message: Any) -> bool:
+        """Resolve a pending ``request_to`` future when ``message.cid`` matches.
+
+        Mirrors ZMQStreamingRouterClient._try_resolve_pending_request, including
+        its choice of ``cid`` as the sole correlation key: the sending identity
+        is not checked, because a dealer that reconnects between request and
+        reply can present a different routing key.
+        """
+        cid = getattr(message, "cid", None)
+        if not cid or cid not in self._pending_requests:
+            return False
+        future = self._pending_requests.pop(cid)
+        if not future.done():
+            future.set_result(message)
+        return True
+
+    async def _receive_from_dealer(self, identity: str, message: Any) -> None:
+        """Inbound dealer->router path: resolve a pending request, else dispatch.
+
+        Mirrors ZMQStreamingRouterClient._dispatch_router plus _dispatch_message:
+        a reply belongs to its awaiting caller rather than the general receiver,
+        and a handler that returns a Struct has it sent straight back to the
+        originating DEALER. Without that reply leg, registration acks never
+        reach the registering service.
+        """
+        self.capture_received_payload(message, sender_identity=identity)
+        if self._try_resolve_pending_request(message):
+            return
+        if self.handler is None:
+            self.warning(f"No handler registered for router client {self.identity}")
+            return
+        response = await self.handler(identity, message)
+        if response is not None:
+            await self.send_to(identity, response)
+
+    async def request_to(self, identity: str, message: Any, timeout: float) -> Any:
+        """Send to one dealer and await the reply correlated by ``cid``.
+
+        Mirrors ZMQStreamingRouterClient.request_to: the reply is whatever the
+        dealer later sends back on its own socket and which arrives through
+        ``_receive_from_dealer``, NOT the dealer handler's return value.
+        """
+        cid = getattr(message, "cid", None)
+        if not cid:
+            raise ValueError(
+                f"request_to() requires a struct with a 'cid'; "
+                f"{type(message).__name__} has none."
+            )
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._pending_requests[cid] = future
+        try:
+            await self.send_to(identity, message)
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._pending_requests.pop(cid, None)
 
 
 class FakeStreamingDealerClient(FakeCommunicationClient):
@@ -188,6 +288,7 @@ class FakeStreamingDealerClient(FakeCommunicationClient):
     def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
         super().__init__(address, identity, bus)
         self.handler: Callable[[Any], Awaitable[None]] | None = None
+        self._pending_requests: dict[str, asyncio.Future[Any]] = {}
 
     def register_receiver(
         self, handler: Callable[[Any], Coroutine[Any, Any, None]]
@@ -197,15 +298,68 @@ class FakeStreamingDealerClient(FakeCommunicationClient):
         self.handler = handler
 
     async def send(self, message: Any) -> None:
-        """Send to router - dynamically looks up routers at this address."""
+        """Send to router - dynamically looks up routers at this address.
+
+        Routed through the router's ``_receive_from_dealer`` so a message
+        carrying a pending ``request_to`` cid resolves that future instead of
+        reaching the router's streaming handler, and so a handler that returns
+        a Struct gets that reply sent back here.
+        """
         self.capture_sent_payload(message)
         for comm in self.bus.communications:
             for router_client in comm.router_clients.get(self.address, []):
-                if router_client.handler:
-                    router_client.capture_received_payload(
-                        message, sender_identity=self.identity
-                    )
-                    await router_client.handler(self.identity, message)
+                await router_client._receive_from_dealer(self.identity, message)
+
+    @on_stop
+    async def _cancel_pending_requests(self) -> None:
+        """Cancel awaiters on stop, mirroring ZMQStreamingDealerClient._clear_receiver."""
+        for future in self._pending_requests.values():
+            if not future.done():
+                future.cancel()
+        self._pending_requests.clear()
+
+    def resolve_pending(self, message: Any) -> bool:
+        """Resolve a waiting ``request()`` if this message is its reply."""
+        key = getattr(message, "rid", None) or getattr(message, "cid", None)
+        if key is None:
+            return False
+        future = self._pending_requests.pop(key, None)
+        if future is None or future.done():
+            return False
+        future.set_result(message)
+        return True
+
+    async def request(self, message: Any, timeout: float = 30.0) -> Any:
+        """Send to the router and await the reply correlated by ``rid``/``cid``.
+
+        Mirrors ``ZMQStreamingDealerClient.request``: the reply is whatever the
+        router later sends back to this identity, NOT the router handler's
+        return value -- peer handshakes ack asynchronously through ``send_to``.
+        Treating the return value as the reply made every handshake raise
+        instantly, and the caller's retry loop then spun tens of millions of
+        times before its deadline.
+        """
+        key = getattr(message, "rid", None) or getattr(message, "cid", None)
+        if key is None:
+            raise ValueError(
+                f"request() requires a struct with an 'rid' or 'cid'; "
+                f"{type(message).__name__} has neither."
+            )
+        if not any(
+            comm.router_clients.get(self.address) for comm in self.bus.communications
+        ):
+            # No ROUTER is bound here at all -- in-process topologies have no
+            # WorkerGroupManager. Real ZMQ cannot tell this apart from a slow
+            # peer and surfaces a timeout, but the fake can, and reporting it
+            # as ConnectionError lets callers skip a doomed retry deadline.
+            raise ConnectionError(f"No ROUTER bound at {self.address}")
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._pending_requests[key] = future
+        try:
+            await self.send(message)
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._pending_requests.pop(key, None)
 
 
 class FakeStreamingPullClient(FakeCommunicationClient):
@@ -294,7 +448,7 @@ class FakeSubClient(FakeCommunicationClient):
 
     def __init__(self, address: str, identity: str, bus: FakeCommunicationBus) -> None:
         super().__init__(address, identity, bus)
-        # Keyed by topic string (e.g., "MessageType.COMMAND" or "MessageType.COMMAND.service-id")
+        # Keyed by topic string (e.g., "MessageType.HEARTBEAT" or "MessageType.RECORDS.service-id")
         self.subscriptions: dict[str, list[Callable]] = {}
 
     async def subscribe(
@@ -490,9 +644,10 @@ class FakeCommunication(BaseCommunication):
         self.router_clients: dict[str, list[FakeStreamingRouterClient]] = defaultdict(
             list
         )
-        self.dealer_clients: dict[str, FakeStreamingDealerClient] = defaultdict(
-            list
-        )  # by identity
+        # Keyed by (address, identity): a service holds a credit DEALER and a
+        # control DEALER under the same service id, and a bare-identity key
+        # silently cross-wires the two channels.
+        self.dealer_clients: dict[tuple[str, str], FakeStreamingDealerClient] = {}
         self.pub_clients: dict[str, list[FakePubClient]] = defaultdict(list)
         self.sub_clients: list[FakeSubClient] = []
         self.push_clients: dict[str, list[FakePushClient]] = defaultdict(list)
@@ -562,6 +717,7 @@ class FakeCommunication(BaseCommunication):
         bind: bool = False,
         socket_ops: dict | None = None,  # noqa: ARG002
         max_pull_concurrency: int | None = None,  # noqa: ARG002
+        attach_lifecycle: bool = True,  # noqa: ARG002
         **kwargs,
     ) -> FakeCommunicationClient:
         """Create fake client and auto-wire to counterparts."""
@@ -586,7 +742,7 @@ class FakeCommunication(BaseCommunication):
 
             case CommClientType.STREAMING_DEALER:
                 client = FakeStreamingDealerClient(addr, identity, self.bus)
-                self.dealer_clients[identity] = client
+                self.dealer_clients[(addr, identity)] = client
 
             case CommClientType.STREAMING_PUSH:
                 client = FakeStreamingPushClient(addr, identity, self.bus)
@@ -629,7 +785,8 @@ class FakeCommunication(BaseCommunication):
 
         self.clients_cache[cache_key] = client
         # Note: Don't call attach_child_lifecycle - fake clients can be created
-        # after the fake is started, and don't need lifecycle management
+        # after the fake is started, and don't need lifecycle management. This is
+        # why attach_lifecycle is accepted for signature parity but never read.
         return client
 
     def clients_by_type(

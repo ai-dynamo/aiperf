@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Test calling from_json directly on non-base and leaf classes."""
+"""Test calling from_json directly on non-base and leaf classes.
 
-from aiperf.common.enums import CommandType
-from aiperf.common.messages import Message
-from aiperf.common.messages.command_messages import (
-    CommandMessage,
-    SpawnWorkersCommand,
+The hierarchy under test used to be the pub/sub command messages; it is defined
+locally now that those are gone, because the behavior being pinned belongs to
+``AutoRoutedModel``, not to any particular message.
+"""
+
+from tests.unit.common.models.test_auto_routed_messages import (
+    Envelope,
+    RequestEnvelope,
+    SpawnRequest,
 )
 
 
@@ -14,77 +18,73 @@ class TestDirectClassCalls:
     """Test behavior of from_json when called on different class levels."""
 
     def test_from_json_on_intermediate_class(self):
-        """Calling from_json on CommandMessage (non-base, has discriminator)."""
+        """Calling from_json on RequestEnvelope (non-base, has discriminator)."""
         data = {
-            "message_type": "command",
-            "command": "spawn_workers",
-            "service_id": "controller",
+            "kind": "request",
+            "action": "spawn",
             "num_workers": 5,
         }
 
-        # Call from_json on CommandMessage directly (not Message)
-        msg = CommandMessage.from_json(data)
+        # Call from_json on RequestEnvelope directly (not Envelope)
+        msg = RequestEnvelope.from_json(data)
 
-        # CommandMessage has discriminator_field = "command"
-        # So it WILL route to SpawnWorkersCommand
-        assert isinstance(msg, SpawnWorkersCommand)
-        assert msg.command == CommandType.SPAWN_WORKERS
+        # RequestEnvelope has discriminator_field = "action"
+        # So it WILL route to SpawnRequest
+        assert isinstance(msg, SpawnRequest)
+        assert msg.action == "spawn"
         assert msg.num_workers == 5
 
     def test_from_json_on_leaf_class(self):
-        """Calling from_json on SpawnWorkersCommand (leaf, no discriminator)."""
+        """Calling from_json on SpawnRequest (leaf, no discriminator)."""
         data = {
-            "message_type": "command",
-            "command": "spawn_workers",
-            "service_id": "controller",
+            "kind": "request",
+            "action": "spawn",
             "num_workers": 10,
         }
 
         # Call from_json on leaf class directly
-        msg = SpawnWorkersCommand.from_json(data)
+        msg = SpawnRequest.from_json(data)
 
-        # SpawnWorkersCommand does NOT set discriminator_field
-        # So it skips routing and validates directly as SpawnWorkersCommand
-        assert isinstance(msg, SpawnWorkersCommand)
+        # SpawnRequest does NOT set discriminator_field
+        # So it skips routing and validates directly as SpawnRequest
+        assert isinstance(msg, SpawnRequest)
         assert msg.num_workers == 10
 
     def test_leaf_class_skips_validation_of_parent_discriminator(self):
         """Leaf class doesn't validate parent's discriminator value."""
         # This data has wrong message_type and command values
-        # But SpawnWorkersCommand.from_json() will accept it!
+        # But SpawnRequest.from_json() will accept it!
         data = {
-            "message_type": "WRONG_TYPE",  # Wrong value
-            "command": "WRONG_COMMAND",  # Wrong value
-            "service_id": "controller",
+            "kind": "WRONG_KIND",  # Wrong value
+            "action": "WRONG_ACTION",  # Wrong value
             "num_workers": 15,
         }
 
         # Leaf class skips routing, so it doesn't check discriminator values
-        msg = SpawnWorkersCommand.from_json(data)
+        msg = SpawnRequest.from_json(data)
 
         # It just validates the data against the model fields
-        assert isinstance(msg, SpawnWorkersCommand)
-        assert msg.message_type == "WRONG_TYPE"  # Accepted as-is!
-        assert msg.command == "WRONG_COMMAND"  # Accepted as-is!
+        assert isinstance(msg, SpawnRequest)
+        assert msg.kind == "WRONG_KIND"  # Accepted as-is!
+        assert msg.action == "WRONG_ACTION"  # Accepted as-is!
         assert msg.num_workers == 15
 
     def test_comparison_base_vs_intermediate_vs_leaf(self):
         """Compare behavior when calling from_json on different levels."""
         data = {
-            "message_type": "command",
-            "command": "spawn_workers",
-            "service_id": "controller",
+            "kind": "request",
+            "action": "spawn",
             "num_workers": 20,
         }
 
         # All three produce the same result for valid data
-        msg1 = Message.from_json(data)  # Routes: message_type -> command
-        msg2 = CommandMessage.from_json(data)  # Routes: command
-        msg3 = SpawnWorkersCommand.from_json(data)  # No routing, direct validation
+        msg1 = Envelope.from_json(data)  # Routes: kind -> action
+        msg2 = RequestEnvelope.from_json(data)  # Routes: action
+        msg3 = SpawnRequest.from_json(data)  # No routing, direct validation
 
-        assert isinstance(msg1, SpawnWorkersCommand)
-        assert isinstance(msg2, SpawnWorkersCommand)
-        assert isinstance(msg3, SpawnWorkersCommand)
+        assert isinstance(msg1, SpawnRequest)
+        assert isinstance(msg2, SpawnRequest)
+        assert isinstance(msg3, SpawnRequest)
         assert msg1.num_workers == msg2.num_workers == msg3.num_workers == 20
 
     def test_model_with_no_discriminator_in_chain(self):
@@ -118,8 +118,8 @@ class TestDirectClassCalls:
         data = {
             "field1": "hello",
             "field2": 99,
-            "message_type": "not_checked",  # Not validated as a discriminator
-            "command": "also_not_checked",  # Not validated as a discriminator
+            "kind": "not_checked",  # Not validated as a discriminator
+            "action": "also_not_checked",  # Not validated as a discriminator
         }
 
         model = FlexibleModel.from_json(data)
@@ -127,5 +127,5 @@ class TestDirectClassCalls:
         assert model.field1 == "hello"
         assert model.field2 == 99
         # Extra fields preserved due to extra="allow" in AIPerfBaseModel
-        assert model.message_type == "not_checked"
-        assert model.command == "also_not_checked"
+        assert model.kind == "not_checked"
+        assert model.action == "also_not_checked"

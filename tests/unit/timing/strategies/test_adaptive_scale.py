@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from pathlib import Path
@@ -1199,7 +1200,7 @@ async def test_all_error_rate_sla_window_evaluates_without_successes(tmp_path) -
         metric_tag="error_rate",
         stat="avg",
         op="le",
-        threshold=1.0,
+        threshold=100.0,
     )
     strategy = _strategy(tmp_path, adaptive_sla_filters=[error_sla])
     strategy._window_errors = 2
@@ -1215,7 +1216,7 @@ async def test_all_error_rate_sla_window_evaluates_without_successes(tmp_path) -
     window = next(event for event in events if event["event"] == "adaptive_window")
     assert window["reason"] == "SLA window evaluated"
     assert window["sla_passed"] is True
-    assert window["sla_values"] == {"error_rate:avg:le:1": 1.0}
+    assert window["sla_values"] == {"error_rate:avg:le:100": 100.0}
     assert events[-1]["event"] == "adaptive_decision"
 
 
@@ -1505,6 +1506,28 @@ async def test_pre_sustain_credit_results_do_not_poison_sustain_window(
     stats = await strategy._take_window()
 
     assert stats.samples == [10_000_000]
+
+
+def test_enter_sustain_reads_the_boundary_from_the_phase_clock_frame(
+    tmp_path,
+) -> None:
+    """CR-14: the sustain boundary must share the CreditIssuer's clock frame.
+
+    ``_is_pre_sustain_credit`` compares ``credit.issued_at_ns`` (stamped from
+    ``lifecycle.now_ns()``) against ``_sustain_started_at_ns`` directly, so a
+    raw ``time.time_ns()`` read here would misfile credits across the boundary
+    by whatever the wall clock slewed since the phase started.
+    """
+    strategy = _strategy(tmp_path)
+    strategy._last_good_concurrency = 4
+    strategy._lifecycle.now_ns = MagicMock(return_value=777_000_000_000)
+
+    strategy._enter_sustain(
+        None, MagicMock(samples=[], errors=0, throughput=0.0), "boundary"
+    )
+
+    strategy._lifecycle.now_ns.assert_called_once_with()
+    assert strategy._sustain_started_at_ns == 777_000_000_000
 
 
 def test_enter_sustain_requires_last_good_boundary(tmp_path) -> None:
@@ -1859,7 +1882,7 @@ def test_sla_evaluator_rate_metric_aliases_and_failures() -> None:
     assert evaluator.value(
         SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=1),
         stats,
-    ) == pytest.approx(0.25)
+    ) == pytest.approx(100.0 / 3.0)
     assert evaluator.value(
         SLAFilter(
             metric_tag="request_cancellation_rate", stat="max", op="le", threshold=1
@@ -1908,11 +1931,38 @@ def test_sla_evaluator_supports_ttft_error_and_cancellation_rate() -> None:
     assert evaluator.value(
         SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=0.5),
         stats,
-    ) == pytest.approx(0.25)
+    ) == pytest.approx(100.0 / 3.0)
     assert evaluator.value(
         SLAFilter(metric_tag="cancellation_rate", stat="avg", op="le", threshold=0.5),
         stats,
     ) == pytest.approx(0.25)
+
+
+def test_error_rate_sla_matches_exported_metric_unit_and_denominator() -> None:
+    """request_error_rate must be percentage points over completed requests.
+
+    The exported metric is ``100 * errors / (request_count + errors)``; the
+    adaptive-scale evaluator previously returned ``errors / total`` (a 0-1
+    ratio whose denominator also included cancelled requests), so
+    ``request_error_rate:avg:le:1`` allowed a 100% error rate instead of 1%.
+    """
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+    from aiperf.timing.strategies.adaptive_scale_types import WindowStats
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+    stats = WindowStats(
+        samples=[100_000_000, 200_000_000],
+        errors=1,
+        cancelled=1,
+        elapsed_sec=2.0,
+    )
+
+    sla = SLAFilter(metric_tag="request_error_rate", stat="avg", op="le", threshold=1)
+    value = evaluator.value(sla, stats)
+
+    # 100 * 1 / (2 successes + 1 error); the cancellation is excluded.
+    assert value == pytest.approx(100.0 / 3.0)
+    assert not evaluator.passes([sla], {evaluator.key(sla): value})
 
 
 def test_missing_ttft_sample_fails_lower_is_better_sla() -> None:
@@ -2025,3 +2075,52 @@ def test_build_backend_rejects_invalid_bounds_and_unknown_variable(tmp_path) -> 
             concurrency_manager=MagicMock(),
             config=config,
         )
+
+
+def test_error_rate_sla_threshold_out_of_percentage_range_is_rejected() -> None:
+    """error_rate thresholds are percentage points, so [0, 100] is the domain."""
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+
+    for threshold in (-1.0, 101.0):
+        with pytest.raises(ValueError, match="percentage points"):
+            evaluator.validate_single_filter(
+                SLAFilter(
+                    metric_tag="error_rate",
+                    stat="avg",
+                    op="le",
+                    threshold=threshold,
+                )
+            )
+
+    for threshold in (0.0, 100.0):
+        evaluator.validate_single_filter(
+            SLAFilter(
+                metric_tag="request_error_rate",
+                stat="avg",
+                op="le",
+                threshold=threshold,
+            )
+        )
+
+
+def test_error_rate_sla_fraction_style_threshold_warns(caplog) -> None:
+    """A pre-change fraction threshold such as 0.05 is accepted but flagged."""
+    from aiperf.timing.strategies.adaptive_scale_sla import AdaptiveScaleSLAEvaluator
+
+    evaluator = AdaptiveScaleSLAEvaluator()
+
+    with caplog.at_level(logging.WARNING):
+        evaluator.validate_single_filter(
+            SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=0.05)
+        )
+
+    assert "percentage points" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        evaluator.validate_single_filter(
+            SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=5.0)
+        )
+    assert caplog.text == ""

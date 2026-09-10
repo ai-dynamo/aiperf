@@ -1,0 +1,14 @@
+{
+  "name": "aiperf-vendored-ui-deps",
+  "private": true,
+  "description": "Dependabot bookkeeping only. The dashboards under src/aiperf/api/static*/ and src/aiperf/operator/ui/ have no build step -- each file below is hand-vendored (fetched, hash-pinned, and rewritten to a relative import) by tools/vendor_ui_deps.py, not installed via npm. This manifest exists so Dependabot can open version-bump PRs against that script; there is no node_modules, no bundler, and nothing here is ever `npm install`ed. When Dependabot bumps a version here, update the matching MANIFEST entry's `version`/`url`/`sha256` in tools/vendor_ui_deps.py and run `tools/vendor_ui_deps.py --update <name>` to re-fetch and re-pin the actual vendored file.",
+  "dependencies": {
+    "preact": "10.25.4",
+    "@preact/signals-core": "1.9.0",
+    "@preact/signals": "2.2.0",
+    "htm": "3.1.1",
+    "js-yaml": "4.1.1",
+    "chart.js": "4.5.1",
+    "prismjs": "1.30.0"
+  }
+}

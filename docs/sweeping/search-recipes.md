@@ -6,12 +6,11 @@
 
 Search Recipes are named, plugin-registered presets that bundle a search space, an optimization objective (or grid), termination conditions, optional SLA constraints, and an optional post-process step into a single CLI selector. They lift the user-facing surface from "write `--search-space` / `--search-metric` / `--search-direction` / `--search-max-iterations` and pick the right combination" to `--search-recipe <name>`.
 
-> **Kubernetes execution — *coming soon*.** Every recipe in this catalog
-> is designed to run unmodified under `aiperf kube sweep` once the K8s
-> integration branch lands on `main`. The recipe selector, post-process
-> hooks, and output artifacts are execution-mode-independent; the
-> cluster path swaps in the in-cluster `sweep-controller` pod + child
-> `AIPerfJob` CRs for the local subprocess executor.
+> **Kubernetes execution.** Recipes also run under `aiperf kube sweep
+> -f <config.yaml> --search-recipe <name>`. Unlike `aiperf profile`,
+> `kube sweep` requires a base config file. The CLI expands the recipe
+> into the `AIPerfSweep` spec; the in-cluster `sweep-controller` creates
+> child `AIPerfJob` CRs and publishes the recipe's aggregate artifacts.
 
 ```bash
 aiperf profile --model my-model --url http://infer.example.com --streaming \

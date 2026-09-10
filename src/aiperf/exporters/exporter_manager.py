@@ -3,6 +3,8 @@
 
 import asyncio
 import io
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,7 +18,7 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin
-from aiperf.common.models import ProfileResults
+from aiperf.common.models import PhaseProfileResults, ProfileResults
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
@@ -28,6 +30,23 @@ from aiperf.plugin.enums import DataExporterType, PluginType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+@dataclass(frozen=True, slots=True)
+class ExporterFailure:
+    """A data-export failure and whether it affects local artifacts."""
+
+    exporter: str
+    """Exporter class or export-stage name."""
+
+    error: BaseException
+    """Exception raised by the exporter."""
+
+    is_deferred: bool
+    """Whether the failure came from a deferred remote uploader."""
+
+    is_exit_failure: bool = True
+    """Whether the failure must make the benchmark process exit unsuccessfully."""
 
 
 class ExporterManager(AIPerfLoggerMixin):
@@ -59,15 +78,26 @@ class ExporterManager(AIPerfLoggerMixin):
 
     def _task_done_callback(self, task: asyncio.Task) -> None:
         self.debug(lambda: f"Task done: {task}")
-        if task.exception():
-            self.error(f"Error exporting records: {task.exception()}")
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            self.error(f"Error exporting records: {error}")
         else:
             self.debug(f"Exported records: {task.result()}")
-        self._tasks.discard(task)
 
-    async def export_data(self) -> None:
+    async def export_data(self) -> list[ExporterFailure]:
+        """Run every exporter and return structured per-exporter failures.
+
+        Local exporters run before deferred remote uploaders. This distinction
+        lets the controller withhold Kubernetes readiness only when the files
+        it serves may be incomplete.
+        """
         self.info("Exporting all records")
+        local_exporters: list[DataExporterProtocol] = []
         deferred_exporters: list[DataExporterProtocol] = []
+        failures: list[ExporterFailure] = []
 
         for exporter_entry, ExporterClass in plugins.iter_all(PluginType.DATA_EXPORTER):
             if exporter_entry.name == DataExporterType.SERVER_METRICS_PARQUET:
@@ -85,113 +115,284 @@ class ExporterManager(AIPerfLoggerMixin):
                 )
                 continue
             except Exception as e:
-                self.error(f"Error creating data exporter: {e!r}")
+                is_deferred = bool(getattr(ExporterClass, "is_deferred", False))
+                failures.append(
+                    ExporterFailure(
+                        exporter=str(exporter_entry.name),
+                        error=e,
+                        is_deferred=is_deferred,
+                        is_exit_failure=not is_deferred,
+                    )
+                )
+                self.error(f"Error creating data exporter {exporter_entry.name}: {e!r}")
                 continue
 
             # Deferred exporters run after all local exporters finish
             # so their artifacts (JSON, CSV, etc.) are available for upload.
             if getattr(exporter, "is_deferred", False):
                 deferred_exporters.append(exporter)
-                continue
+            else:
+                local_exporters.append(exporter)
 
-            self.debug(f"Creating task for exporter: {exporter_entry.name}")
-            task = asyncio.create_task(exporter.export())
-            self._tasks.add(task)
-            task.add_done_callback(self._task_done_callback)
-
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks.clear()
-
+        failures.extend(
+            await self._run_data_exporters(
+                local_exporters,
+                is_deferred=False,
+            )
+        )
         try:
-            await self._export_phase_metric_artifacts()
-        except (OSError, ValueError) as exc:
+            failures.extend(await self._export_phase_metric_artifacts())
+        except Exception as exc:  # noqa: BLE001 - surfaced as a local export failure
+            failures.append(
+                ExporterFailure(
+                    exporter="PhaseMetricArtifacts",
+                    error=exc,
+                    is_deferred=False,
+                    is_exit_failure=False,
+                )
+            )
             self.warning(f"Failed to export phase metric artifacts: {exc}")
 
-        for exporter in deferred_exporters:
-            self.debug(f"Running deferred exporter: {exporter.__class__.__name__}")
+        failures.extend(
+            await self._run_data_exporters(
+                deferred_exporters,
+                is_deferred=True,
+            )
+        )
+        if failures:
+            self.error(
+                f"{len(failures)} data exporter(s) failed: "
+                + ", ".join(
+                    f"{failure.exporter} ({failure.error!r})" for failure in failures
+                )
+            )
+        self.debug("Exporting all records completed")
+        return failures
+
+    async def _run_data_exporters(
+        self,
+        exporters: list[DataExporterProtocol],
+        *,
+        is_deferred: bool,
+    ) -> list[ExporterFailure]:
+        """Run an exporter stage and retain each task's identity and failure."""
+        batch: list[tuple[str, asyncio.Task]] = []
+        for exporter in exporters:
+            name = exporter.__class__.__name__
+            self.debug(f"Creating task for exporter: {name}")
             task = asyncio.create_task(exporter.export())
             self._tasks.add(task)
             task.add_done_callback(self._task_done_callback)
+            batch.append((name, task))
 
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*(task for _, task in batch), return_exceptions=True)
         self._tasks.clear()
-        self.debug("Exporting all records completed")
 
-    async def _export_phase_metric_artifacts(self) -> None:
+        failures: list[ExporterFailure] = []
+        for name, task in batch:
+            if task.cancelled():
+                # A cancelled export (shutdown race) leaves its artifact absent or
+                # truncated. Reporting it as a failure keeps the controller from
+                # announcing a clean completion over a partial artifact set.
+                failures.append(
+                    ExporterFailure(
+                        exporter=name,
+                        error=asyncio.CancelledError(
+                            f"Exporter {name} was cancelled before it finished exporting"
+                        ),
+                        is_deferred=is_deferred,
+                        is_exit_failure=not is_deferred,
+                    )
+                )
+                continue
+            error = task.exception()
+            if error is not None:
+                failures.append(
+                    ExporterFailure(
+                        exporter=name,
+                        error=error,
+                        is_deferred=is_deferred,
+                        is_exit_failure=not is_deferred,
+                    )
+                )
+        return failures
+
+    async def _export_phase_metric_artifacts(self) -> list[ExporterFailure]:
+        """Export per-phase artifacts, then always index them in the manifest.
+
+        Each phase is isolated: a phase whose exporter raises must not prevent
+        the remaining phases from writing, and must not suppress the manifest,
+        which is the only index the operator's completion handler can use to
+        recover exact per-phase counts from the artifact directory. Failures
+        are returned per phase rather than raised, so the caller's summary
+        names the phase that failed instead of one opaque aggregate.
+        """
         phase_records = getattr(self._results, "phase_records", None) or []
         if not phase_records:
-            return
+            return []
         manifest_entries: list[dict[str, Any]] = []
+        failures: list[ExporterFailure] = []
         for phase_result in phase_records:
-            phase_dir = self._run.cfg.artifacts.dir / "phases" / phase_result.phase_name
-            await asyncio.to_thread(phase_dir.mkdir, parents=True, exist_ok=True)
-            completed = (
-                phase_result.successful_request_count + phase_result.error_request_count
-            )
-            phase_profile = ProfileResults(
-                records=phase_result.records,
-                completed=completed,
-                start_ns=phase_result.start_ns or self._results.start_ns,
-                end_ns=phase_result.end_ns or self._results.end_ns,
-                was_cancelled=phase_result.was_cancelled,
-                successful_request_count=phase_result.successful_request_count,
-                error_request_count=phase_result.error_request_count,
-                error_summary=phase_result.error_summary,
-            )
-            entry: dict[str, Any] = {
-                "phase_index": phase_result.phase_index,
-                "profiling_index": phase_result.profiling_index,
-                "phase_name": phase_result.phase_name,
-                "phase_kind": phase_result.phase_kind,
-                "start_ns": phase_result.start_ns,
-                "end_ns": phase_result.end_ns,
-                "was_cancelled": phase_result.was_cancelled,
-                "successful_request_count": phase_result.successful_request_count,
-                "error_request_count": phase_result.error_request_count,
-                "total_request_count": completed,
-                "error_summary": [
-                    item.model_dump(mode="json") for item in phase_result.error_summary
-                ],
-            }
-            await self._write_phase_export(
-                exporter_cls=MetricsJsonExporter,
-                phase_profile=phase_profile,
-                file_path=phase_dir
-                / self._run.cfg.artifacts.profile_export_json_file.name,
-                manifest_entry=entry,
-                manifest_key="metrics_json",
-            )
-            await self._write_phase_export(
-                exporter_cls=MetricsCsvExporter,
-                phase_profile=phase_profile,
-                file_path=phase_dir
-                / self._run.cfg.artifacts.profile_export_csv_file.name,
-                manifest_entry=entry,
-                manifest_key="metrics_csv",
-            )
-            await self._write_phase_observability_export(
-                phase_result=phase_result,
-                phase_dir=phase_dir,
-                manifest_entry=entry,
-                attr="telemetry_results",
-                warnings_attr="telemetry_warnings",
-                file_name="gpu_telemetry.json",
-                manifest_key="gpu_telemetry_json",
-            )
-            await self._write_phase_observability_export(
-                phase_result=phase_result,
-                phase_dir=phase_dir,
-                manifest_entry=entry,
-                attr="server_metrics_results",
-                warnings_attr="server_metrics_warnings",
-                file_name="server_metrics.json",
-                manifest_key="server_metrics_json",
-            )
+            entry = self._phase_manifest_entry(phase_result)
+            try:
+                failures.extend(
+                    await self._export_one_phase(
+                        phase_result=phase_result, manifest_entry=entry
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - recorded as a per-phase failure
+                self.error(
+                    f"Failed to export artifacts for phase "
+                    f"{phase_result.phase_name!r}: {exc!r}"
+                )
+                failures.append(
+                    ExporterFailure(
+                        exporter=f"PhaseMetricArtifacts:{phase_result.phase_name}",
+                        error=exc,
+                        is_deferred=False,
+                        is_exit_failure=False,
+                    )
+                )
+            # Even a partially written phase belongs in the manifest: its counts
+            # are authoritative regardless of which artifact files landed.
             manifest_entries.append(entry)
         try:
             await asyncio.to_thread(self._write_phase_manifest, manifest_entries)
-        except (OSError, ValueError) as exc:
-            self.warning(f"Failed to write phase artifact manifest: {exc}")
+        except Exception as exc:  # noqa: BLE001 - recorded as a local export failure
+            self.error(f"Failed to write phase artifact manifest: {exc!r}")
+            failures.append(
+                ExporterFailure(
+                    exporter="PhaseMetricArtifacts",
+                    error=exc,
+                    is_deferred=False,
+                    is_exit_failure=False,
+                )
+            )
+        return failures
+
+    def _phase_manifest_entry(
+        self, phase_result: PhaseProfileResults
+    ) -> dict[str, Any]:
+        """Build the manifest entry describing one phase's counts and timing."""
+        return {
+            "phase_index": phase_result.phase_index,
+            "profiling_index": phase_result.profiling_index,
+            "phase_name": phase_result.phase_name,
+            "phase_kind": phase_result.phase_kind,
+            "start_ns": phase_result.start_ns,
+            "end_ns": phase_result.end_ns,
+            "was_cancelled": phase_result.was_cancelled,
+            "successful_request_count": phase_result.successful_request_count,
+            "error_request_count": phase_result.error_request_count,
+            "total_request_count": (
+                phase_result.successful_request_count + phase_result.error_request_count
+            ),
+            "error_summary": [
+                item.model_dump(mode="json") for item in phase_result.error_summary
+            ],
+        }
+
+    async def _export_one_phase(
+        self,
+        *,
+        phase_result: PhaseProfileResults,
+        manifest_entry: dict[str, Any],
+    ) -> list[ExporterFailure]:
+        """Write every artifact for one phase, recording paths in the entry.
+
+        Each of the four artifacts (metrics JSON/CSV, GPU telemetry, server
+        metrics) is independent: a failure writing one must not prevent the
+        other three from being written. Failures are collected and returned
+        rather than raised so the caller can still index the phase in the
+        manifest and report every failed artifact by name.
+        """
+        phase_dir = self._run.cfg.artifacts.dir / "phases" / phase_result.phase_name
+        await asyncio.to_thread(phase_dir.mkdir, parents=True, exist_ok=True)
+        phase_profile = ProfileResults(
+            records=phase_result.records,
+            completed=manifest_entry["total_request_count"],
+            start_ns=phase_result.start_ns or self._results.start_ns,
+            end_ns=phase_result.end_ns or self._results.end_ns,
+            was_cancelled=phase_result.was_cancelled,
+            is_complete=self._results.is_complete,
+            incomplete_reason=self._results.incomplete_reason,
+            successful_request_count=phase_result.successful_request_count,
+            error_request_count=phase_result.error_request_count,
+            error_summary=phase_result.error_summary,
+            branch_stats=phase_result.branch_stats,
+        )
+        # Factories, not coroutine objects: the loop below awaits these one at
+        # a time, and a BaseException (notably CancelledError, which the
+        # per-artifact ``except Exception`` deliberately does not swallow)
+        # unwinds out of this function. Pre-building all four coroutines meant
+        # the ones not yet reached were discarded unawaited -- abandoned work
+        # plus a "coroutine was never awaited" RuntimeWarning. Building each
+        # one only when it is about to be awaited makes that unreachable.
+        artifact_writers: tuple[tuple[str, Callable[[], Awaitable[None]]], ...] = (
+            (
+                "metrics_json",
+                lambda: self._write_phase_export(
+                    exporter_cls=MetricsJsonExporter,
+                    phase_profile=phase_profile,
+                    file_path=phase_dir
+                    / self._run.cfg.artifacts.profile_export_json_file.name,
+                    manifest_entry=manifest_entry,
+                    manifest_key="metrics_json",
+                ),
+            ),
+            (
+                "metrics_csv",
+                lambda: self._write_phase_export(
+                    exporter_cls=MetricsCsvExporter,
+                    phase_profile=phase_profile,
+                    file_path=phase_dir
+                    / self._run.cfg.artifacts.profile_export_csv_file.name,
+                    manifest_entry=manifest_entry,
+                    manifest_key="metrics_csv",
+                ),
+            ),
+            (
+                "gpu_telemetry_json",
+                lambda: self._write_phase_observability_export(
+                    phase_result=phase_result,
+                    phase_dir=phase_dir,
+                    manifest_entry=manifest_entry,
+                    attr="telemetry_results",
+                    warnings_attr="telemetry_warnings",
+                    file_name="gpu_telemetry.json",
+                    manifest_key="gpu_telemetry_json",
+                ),
+            ),
+            (
+                "server_metrics_json",
+                lambda: self._write_phase_observability_export(
+                    phase_result=phase_result,
+                    phase_dir=phase_dir,
+                    manifest_entry=manifest_entry,
+                    attr="server_metrics_results",
+                    warnings_attr="server_metrics_warnings",
+                    file_name="server_metrics.json",
+                    manifest_key="server_metrics_json",
+                ),
+            ),
+        )
+        failures: list[ExporterFailure] = []
+        for manifest_key, make_artifact_coro in artifact_writers:
+            try:
+                await make_artifact_coro()
+            except Exception as exc:  # noqa: BLE001 - recorded as a per-artifact failure
+                failures.append(
+                    ExporterFailure(
+                        exporter=(
+                            f"PhaseMetricArtifacts:{phase_result.phase_name}:"
+                            f"{manifest_key}"
+                        ),
+                        error=exc,
+                        is_deferred=False,
+                        is_exit_failure=False,
+                    )
+                )
+        return failures
 
     async def _write_phase_observability_export(
         self,
@@ -235,7 +436,7 @@ class ExporterManager(AIPerfLoggerMixin):
             self.error(
                 f"Failed to write phase observability export {file_path}: {exc!r}"
             )
-            return
+            raise
         manifest_entry[manifest_key] = file_path.relative_to(
             self._run.cfg.artifacts.dir
         ).as_posix()
@@ -265,13 +466,13 @@ class ExporterManager(AIPerfLoggerMixin):
                 f"Error creating phase exporter {exporter_cls.__name__} "
                 f"for {manifest_entry.get('phase_name')}: {exc!r}"
             )
-            return
+            raise
         try:
             content = exporter._generate_content()
             await asyncio.to_thread(file_path.write_text, content, encoding="utf-8")
         except Exception as exc:
             self.error(f"Failed to write phase export {file_path}: {exc!r}")
-            return
+            raise
         manifest_entry[manifest_key] = file_path.relative_to(
             self._run.cfg.artifacts.dir
         ).as_posix()
@@ -396,6 +597,7 @@ class ExporterManager(AIPerfLoggerMixin):
 
     async def _run_console_exporters(self, console: Console) -> None:
         """Run every registered console exporter, rendering into `console`."""
+        self._render_incomplete_results_warning(console)
         for exporter_entry, ExporterClass in plugins.iter_all(
             PluginType.CONSOLE_EXPORTER
         ):
@@ -419,6 +621,25 @@ class ExporterManager(AIPerfLoggerMixin):
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+    def _render_incomplete_results_warning(self, console: Console) -> None:
+        """Warn the user when these results are known to be incomplete.
+
+        ``ProfileResults.is_complete`` is otherwise invisible in the console
+        output, so a run degraded by the record-stall watchdog would render an
+        ordinary metrics table and read as a clean (much slower) benchmark.
+        """
+        if self._results.is_complete:
+            return
+        reason = self._results.incomplete_reason or "reason not recorded"
+        console.print("\n")
+        console.print(
+            "[bold red]NVIDIA AIPerf | INCOMPLETE RESULTS[/bold red]\n"
+            f"[yellow]{reason}[/yellow]\n"
+            "[yellow]These metrics were computed over a subset of the run and "
+            "must not be compared against complete runs.[/yellow]"
+        )
+        console.file.flush()
 
     async def _write_console_txt(self, recording_console: Console) -> None:
         """Write the recorded console output to a plain-text file."""

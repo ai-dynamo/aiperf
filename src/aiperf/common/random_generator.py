@@ -57,6 +57,7 @@ from aiperf.common.exceptions import InvalidStateError
 __all__ = [
     "RandomGenerator",
     "derive",
+    "fold_seed_to_uint32",
     "init",
     "reset",
 ]
@@ -424,6 +425,28 @@ class _RNGManager:
 _manager: _RNGManager | None = None
 
 
+def fold_seed_to_uint32(seed: int) -> int:
+    """Fold a seed of any width into numpy's legacy 32-bit seeding range.
+
+    ``numpy.random.seed`` (MT19937 global state) rejects anything outside
+    ``[0, 2**32 - 1]``, but AIPerf seeds are 64-bit: ``derive_variation_seed``
+    returns ``int.from_bytes(sha256(...)[:8])`` for adaptive-sweep variations
+    and for ``multi_run.vary_seed_per_trial``, and ``--random-seed`` itself is
+    only bounded ``ge=0``. XOR-folding the high half into the low half keeps
+    every input bit contributing to the result while landing in range.
+
+    Seeds already below ``2**32`` are returned unchanged, so folding never
+    perturbs an existing reproducible run.
+
+    Args:
+        seed: Non-negative seed of any width.
+
+    Returns:
+        Equivalent seed in ``[0, 2**32 - 1]``, suitable for ``numpy.random.seed``.
+    """
+    return (seed ^ (seed >> 32)) & 0xFFFFFFFF
+
+
 def init(seed: int | None) -> None:
     """Initialize global RNG manager. Called once at startup (bootstrap.py).
 
@@ -450,9 +473,7 @@ def init(seed: int | None) -> None:
     # This protects against third-party code or future changes that might use global state
     if seed is not None:
         random.seed(seed)
-        # Normalize seed to numpy's 32-bit range by folding high and low bits
-        np_seed = (seed ^ (seed >> 32)) & 0xFFFFFFFF
-        np.random.seed(np_seed)
+        np.random.seed(fold_seed_to_uint32(seed))
 
     _manager = _RNGManager(seed)
 
@@ -509,6 +530,11 @@ def reset() -> None:
     _manager = None
 
 
+# Largest value representable by a signed 64-bit integer. This is the ceiling the
+# Kubernetes apiserver enforces for an OpenAPI `type: integer` field, not a tunable.
+_INT64_MAX = (1 << 63) - 1
+
+
 def derive_variation_seed(
     root_seed: int | None,
     variation_label: str,
@@ -521,8 +547,18 @@ def derive_variation_seed(
     # parameter point yields the same seed → comparable measurements.
     # Used only on the adaptive overflow path; grid/zip/scenario keep the
     # additive `base + idx` derivation in `_apply_sweep_seed_derivation`.
+    #
+    # The result is masked into the signed-64-bit range. Eight hash bytes give an
+    # unsigned 64-bit value, and roughly half of those exceed 2**63-1. Under the
+    # Kubernetes executor this seed is written to `AIPerfJob.spec.randomSeed`,
+    # which the CRD declares `type: integer` — an int64. The apiserver decodes an
+    # out-of-range literal as a float and rejects the child with HTTP 422
+    # ("must be of type integer: \"number\""), which crash-loops the
+    # sweep-controller and kills the whole adaptive run on the first unlucky
+    # variation. Masking keeps the value deterministic per label and still gives
+    # 63 bits of seed entropy.
     if root_seed is None:
         return None
     seed_string = f"{root_seed}:variation:{variation_label}"
     hash_bytes = hashlib.sha256(seed_string.encode("utf-8")).digest()
-    return int.from_bytes(hash_bytes[:8], byteorder="big")
+    return int.from_bytes(hash_bytes[:8], byteorder="big") & _INT64_MAX

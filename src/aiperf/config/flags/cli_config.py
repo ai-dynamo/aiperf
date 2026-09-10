@@ -31,7 +31,7 @@ and ``docs/dev/patterns.md`` § "Adding a New CLI Flag" for the recipe.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
@@ -49,6 +49,7 @@ from aiperf.common.enums import (
     ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     PromptCorpus,
+    RandomCorpusStyle,
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
@@ -89,7 +90,7 @@ from aiperf.plugin.enums import (
 )
 
 # Default server-metrics export formats for CLIConfig, kept self-contained here
-# because aiperf.config.defaults does not carry the equivalent constant.
+# because no config module carries the equivalent constant.
 _DEFAULT_SERVER_METRICS_FORMATS: list[ServerMetricsFormat] = [
     ServerMetricsFormat.JSON,
     ServerMetricsFormat.CSV,
@@ -379,6 +380,26 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
 
+    per_chunk_usage: Annotated[
+        bool,
+        Field(
+            description=(
+                "Request per-chunk token usage on streaming responses by setting "
+                "stream_options.continuous_usage_stats, so the server reports "
+                "cumulative usage on every chunk instead of only the final one. "
+                "This lets inter-token latency subtract the first content chunk's "
+                "real token count (fixing TPS/user inflation when a server bundles "
+                "multiple tokens into the first streamed chunk). Requires a server "
+                "that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict "
+                "OpenAI rejects it. Requires --use-server-token-count."
+            ),
+        ),
+        CLIParameter(
+            name=("--per-chunk-usage",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.PER_CHUNK_USAGE
+
     connection_reuse_strategy: Annotated[
         ConnectionReuseStrategy,
         Field(
@@ -640,6 +661,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
+            "`tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), "
             "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
@@ -766,8 +788,11 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             description=(
-                "Path to a YAML configuration file. "
-                "CLI flags override values from the config file."
+                "Path to a YAML configuration file. CLI flags override "
+                "values from the config file. A flag that cannot be applied "
+                "on top of a config file is rejected by name rather than "
+                "ignored, so a run never silently differs from what was "
+                "asked for."
             ),
         ),
         CLIParameter(
@@ -1174,10 +1199,19 @@ class CLIConfig(BaseConfig):
         CacheBustTarget,
         Field(
             description=(
-                "Where (and how) to inject a per-conversation cache-bust marker. "
-                "Prefix variants prepend at token 0 (most aggressive); "
-                "suffix variants append after existing content. "
-                "'none' disables the feature (default)."
+                "Where (and how) to inject a cache-bust marker. Two families: "
+                "(1) RID targets (system_prefix, system_suffix, first_turn_prefix, "
+                "first_turn_suffix) — inject a per-trajectory unique SHA-256 digest "
+                "marker that is identical across warmup and profiling, so warmup KV-cache "
+                "work transfers to profiling while preventing cross-trajectory cache sharing. "
+                "Prefix variants prepend at token 0; suffix variants append after existing "
+                "content. "
+                "(2) Warmup-isolation targets (warmup_isolation_system, "
+                "warmup_isolation_first_turn) — inject a constant '[warmup]' marker only "
+                "during the WARMUP phase; profiling sees no marker (fully cold start or "
+                "system-pre-warmed). Incompatible with agentic_replay timing mode. "
+                "'none' disables the feature (default). "
+                "See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples."
             ),
         ),
         CLIParameter(
@@ -1189,6 +1223,46 @@ class CLIConfig(BaseConfig):
     ##############################################################################
     # Prefix Prompt
     ##############################################################################
+    system_prompt: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Verbatim system prompt text, identical across every conversation.\n"
+                "Sent as a system-role message ahead of all turns. Works with both\n"
+                "synthetic and file/public datasets; when the dataset already carries\n"
+                "its own system message, this text is prepended to it.\n"
+                "Tokens are additive: `--isl` continues to size the generated user prompt only.\n"
+                "Mutually exclusive with `--system-prompt-file`, "
+                "`--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
+    system_prompt_file: Annotated[
+        Path | None,
+        Field(
+            default=None,
+            description=(
+                "Path to a UTF-8 text file holding the verbatim system prompt.\n"
+                "Preferred over `--system-prompt` for real production prompts, which are\n"
+                "long enough that shell quoting mangles them. Read once at startup, so a\n"
+                "missing or unreadable file fails immediately rather than mid-run.\n"
+                "Mutually exclusive with `--system-prompt`, "
+                "`--shared-system-prompt-length`, and "
+                "`--num-prefix-prompts`/`--prefix-prompt-length`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt-file",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
     prompt_prefix_pool_size: Annotated[
         int,
         Field(
@@ -1345,6 +1419,54 @@ class CLIConfig(BaseConfig):
             group=Groups.ISL,
         ),
     ] = None
+
+    prompt_random_range_ratio: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
+            "The window is computed from `--random-corpus-style` (defaults to `vllm`): "
+            "vllm style → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); "
+            "sglang style → `[max(1, int(mean*r)), mean]` (lower-bounded). "
+            "Accepts a single float applied to both ISL and OSL. The JSON object form "
+            '`{"input": 0.3, "output": 0.5}` for independent values is accepted only under '
+            "vllm style; sglang style applies one ratio to both and requires a plain float. "
+            "Requires both `--isl` and `--osl` to be set explicitly — there is no default "
+            "mean for either. "
+            "Mutually exclusive with `--seq-dist`. "
+            "Under vllm style with a tokenizer configured, the ISL mean is automatically reduced by "
+            "`tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total "
+            "server-side input tokens, matching `vllm bench serve` semantics; sglang style "
+            "applies no such adjustment.",
+        ),
+        CLIParameter(
+            name=("--random-range-ratio",),
+            group=Groups.ISL,
+        ),
+    ] = None
+
+    prompt_random_corpus_style: Annotated[
+        RandomCorpusStyle,
+        Field(
+            default=RandomCorpusStyle.VLLM,
+            description="Benchmark style for RANDOM corpus generation. "
+            "Controls range ratio formula, token pool composition, and other "
+            "per-tool behaviors. "
+            "`vllm` (default) mirrors `vllm bench serve`: symmetric range window, "
+            "non-special token pool (special tokens excluded). "
+            "`sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: "
+            "lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). "
+            "Applies in two independent places: token-pool selection whenever "
+            "`--prompt-corpus random` is set (including with no `--random-range-ratio`, "
+            "where the pool is the only thing the style selects), and the range-window "
+            "formula, special-token accounting and RNG algorithm whenever "
+            "`--random-range-ratio` is set — the latter regardless of corpus.",
+        ),
+        CLIParameter(
+            name=("--random-corpus-style",),
+            group=Groups.ISL,
+        ),
+    ] = RandomCorpusStyle.VLLM
 
     ##############################################################################
     # Output Sequence Length (OSL)
@@ -1707,9 +1829,11 @@ class CLIConfig(BaseConfig):
     video_format: Annotated[
         VideoFormat,
         Field(
-            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). "
+            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (widely compatible container, VP9 by default). "
             "Format choice affects compatibility, file size, and encoding options. "
-            "Use `webm` for open-source workflows, `mp4` for maximum compatibility.",
+            "`mp4` is the more portable container, but note that the default VP9 "
+            "video and Opus audio are less widely supported by players than "
+            "H.264/AAC would be.",
         ),
         CLIParameter(
             name=("--video-format",),
@@ -1722,11 +1846,12 @@ class CLIConfig(BaseConfig):
         Field(
             description=(
                 "The video codec to use for encoding. Common options: "
-                "libvpx-vp9 (CPU, BSD-licensed, default for WebM), "
-                "libx264 (CPU, GPL-licensed, widely compatible), "
-                "libx265 (CPU, GPL-licensed, smaller files), "
-                "h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). "
-                "Any FFmpeg-supported codec can be used."
+                "libvpx-vp9 (CPU, BSD-licensed, default), "
+                "libvpx (CPU, BSD-licensed, VP8). "
+                "Any codec the local FFmpeg supports can be used, but the AIPerf "
+                "container ships a minimal FFmpeg build limited to VP8/VP9 video "
+                "with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc "
+                "require an FFmpeg build that includes them."
             ),
         ),
         CLIParameter(
@@ -1771,8 +1896,12 @@ class CLIConfig(BaseConfig):
         Field(
             description="Audio codec for the embedded audio track. "
             "If not specified, auto-selects based on video format: "
-            "aac for MP4, libvorbis for WebM. "
-            "Options: aac, libvorbis, libopus.",
+            "libopus for MP4, libvorbis for WebM. "
+            "Options: libvorbis, libopus, aac. The AIPerf container ships only "
+            "libvorbis and libopus; aac requires an FFmpeg build that "
+            "includes an AAC encoder. "
+            "libopus always encodes at 48 kHz, so any "
+            "--video-audio-sample-rate is resampled during muxing.",
         ),
         CLIParameter(
             name=("--video-audio-codec",),
@@ -2158,7 +2287,7 @@ class CLIConfig(BaseConfig):
             "count toward the ratio. A grace floor of max(concurrency, 10) records "
             "must accumulate before the check is armed, so a single early failure "
             "cannot kill the run. When the threshold is exceeded a "
-            "ProfileCancelCommand is broadcast: in-flight requests drain via the "
+            "PROFILE_CANCEL is broadcast: in-flight requests drain via the "
             "normal cancel path, partial results are still aggregated, and the run "
             "exits non-zero. Pairs with the AGENTIC_REPLAY context-overflow drop "
             "in record_processor_service so the rate measures real failures only.",
@@ -2565,12 +2694,13 @@ class CLIConfig(BaseConfig):
         Field(
             description="Base filename for ALL exported files. With prefix='foo' every "
             "output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, "
-            "`foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and "
-            "`foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
+            "`foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, "
+            "and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
             "historical per-file names are used: `profile_export_aiperf.{csv,json}` "
             "for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` "
-            "for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. "
-            "Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) "
+            "for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and "
+            "`server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, "
+            "`_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) "
             "are stripped from the supplied value.",
         ),
         CLIParameter(
@@ -2588,7 +2718,9 @@ class CLIConfig(BaseConfig):
             description="Controls which output files are generated. "
             "`summary`: Only aggregate metrics files (`.csv`, `.json`). "
             "`records`: Includes per-request metrics (`.jsonl`). "
-            "`raw`: Includes raw request/response data (`_raw.jsonl`).",
+            "`raw`: Includes raw request/response data (`_raw.jsonl`) and, unless "
+            "`--no-export-outputs-json` is passed, the generated text "
+            "(`_outputs.json`).",
         ),
         CLIParameter(
             name=("--export-level", "--profile-export-level"),
@@ -2647,14 +2779,19 @@ class CLIConfig(BaseConfig):
         bool,
         Field(
             description=(
-                "Export generated response text to outputs.json after the run. "
-                "When enabled, the raw generated-text payload for each request is "
-                "written to an outputs.json file in the artifact directory."
+                "Export generated response text after the run. When enabled, the "
+                "raw generated-text payload for each request is written to "
+                "`outputs.json` in the artifact directory, or to "
+                "`<prefix>_outputs.json` when `--profile-export-prefix` is set "
+                "(prefix `foo` gives `foo_outputs.json`). Implied by "
+                "`--export-level raw`; pass `--no-export-outputs-json` to opt out "
+                "of the extra file while keeping raw export."
             ),
         ),
         CLIParameter(
             name=("--export-outputs-json",),
             group=Groups.OUTPUT,
+            negative="--no-export-outputs-json",
         ),
     ] = False
 
@@ -4221,3 +4358,10 @@ class CLIConfig(BaseConfig):
     _gpu_telemetry_metrics_file: Path | None = None
 
     _server_metrics_urls: list[str] = []
+
+
+# The local worker-process limit does not apply to distributed Kubernetes
+# execution; KubeOptions.total_workers owns that surface instead.
+KubeCLIConfig: TypeAlias = Annotated[
+    CLIConfig, Parameter(parse=r"^(?!workers_max$).*$")
+]

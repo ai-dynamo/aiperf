@@ -18,11 +18,11 @@ _logger = AIPerfLogger(__name__)
 
 ENGINE = "vllm"
 
-# Keys that identify a payload as vLLM's ``speculative_decoding_stats`` shape.
+# Keys that identify a payload as vLLM's ``speculative_decoding`` shape.
 # ``can_adapt`` checks for these so that, once other engines populate the same
 # raw slot, this adapter claims only its own payloads (auto-detection) rather
 # than greedily matching on mere presence. Both are always emitted by vLLM,
-# including the zero-step case (``acceptance_histogram`` is ``{}`` but present).
+# including the zero-step case (``acceptance_histogram`` is all-zero but present).
 _VLLM_SIGNATURE_KEYS = ("acceptance_histogram", "num_spec_steps")
 
 
@@ -37,9 +37,9 @@ def _find_spec_decode_payload(
 ) -> dict[str, Any] | None:
     """Return the last non-empty ``spec_decode_stats`` payload across responses.
 
-    vLLM attaches the payload to a single choice: the finish-reason chunk in
-    streaming, or the sole choice non-streaming. Walking from the end mirrors
-    ``find_last_non_empty_usage`` and tolerates either layout.
+    vLLM attaches the payload once per request at the response root: on the body
+    non-streaming, or on the trailing usage chunk streaming. Walking from the end
+    mirrors ``find_last_non_empty_usage`` and tolerates either layout.
     """
     for response in reversed(responses):
         stats = response.spec_decode_stats
@@ -49,12 +49,15 @@ def _find_spec_decode_payload(
 
 
 class VLLMSpecDecodeAdapter:
-    """Fills the acceptance record from vLLM's ``speculative_decoding_stats``.
+    """Fills the acceptance record from vLLM's ``metrics.speculative_decoding``.
 
-    Reads the per-choice ``speculative_decoding_stats`` object emitted by vLLM
-    when the server runs with ``--per-request-spec-decode-stats``. Present on
-    chat and completions, streaming and non-streaming. The object's histogram
-    keys are JSON strings, so they are int-cast into the neutral record.
+    Reads the response-root ``metrics.speculative_decoding`` object emitted by
+    vLLM when the server runs with ``--per-request-spec-decode-metrics``
+    (``summary`` or ``detailed``). Present on chat and completions, streaming and
+    non-streaming. Its ``acceptance_histogram`` is a dense ``list[int]`` (index j
+    holds the number of steps that accepted exactly j draft tokens), inflated
+    into the neutral record's sparse ``{j: count}`` map with zero-count buckets
+    dropped.
 
     The field names and shape track vLLM PR
     https://github.com/vllm-project/vllm/pull/48915; its per-request
@@ -74,8 +77,41 @@ class VLLMSpecDecodeAdapter:
             return None
 
         try:
+            # vLLM sends a dense ``list[int]`` (index j -> step count); inflate
+            # into the neutral record's sparse map, dropping zero-count buckets.
+            # Validate the shape AND every element before filtering: a str/dict
+            # is iterable (enumerate would build a bucket per character/key),
+            # and filtering on truthiness first would silently drop a falsey
+            # malformed entry (None/False/0.0) while keeping a truthy one that
+            # coerces to zero ("0"), which would violate the record's
+            # zero-buckets-omitted invariant. ``type(...) is int`` rather than
+            # isinstance so bools -- an int subclass -- are rejected too.
+            raw_histogram = payload["acceptance_histogram"]
+            if not isinstance(raw_histogram, list) or not all(
+                type(count) is int for count in raw_histogram
+            ):
+                raise TypeError(
+                    "acceptance_histogram must be a list of ints, got "
+                    f"{raw_histogram!r}"
+                )
+            # Length is num_spec_tokens + 1 (one bucket per accepted count from
+            # 0..k). Enforcing it rejects a payload whose bucket indices exceed
+            # the draft budget -- j > k is physically impossible, yet satisfies
+            # the record's arithmetic validators, so it would otherwise be
+            # reported as a real acceptance length. Doubles as a tripwire if the
+            # still-unmerged upstream PR changes the histogram shape.
+            # Optional on the record, so only enforce when the server sent it.
+            num_spec_tokens = payload.get("num_spec_tokens")
+            if (
+                num_spec_tokens is not None
+                and len(raw_histogram) != num_spec_tokens + 1
+            ):
+                raise ValueError(
+                    f"acceptance_histogram has {len(raw_histogram)} buckets, "
+                    f"expected num_spec_tokens + 1 = {num_spec_tokens + 1}"
+                )
             histogram = {
-                int(j): count for j, count in payload["acceptance_histogram"].items()
+                j: count for j, count in enumerate(raw_histogram) if count != 0
             }
             usage = find_last_non_empty_usage(responses)
             return SpecDecodeAcceptanceRecord(

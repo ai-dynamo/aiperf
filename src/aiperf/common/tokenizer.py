@@ -38,6 +38,32 @@ TIKTOKEN_ENCODING_NAMES = frozenset(
 )
 
 
+def _tiktoken_internal(encoding: "tiktoken.Encoding", attr: str) -> object:
+    """Read a private ``tiktoken.Encoding`` attribute, or fail with a clear error.
+
+    tiktoken exposes no public API for enumerating its token IDs, and its ID
+    space is sparse -- gaps between mergeable ranks and special tokens are not
+    decodable -- so ``range(n_vocab)`` is not a usable substitute. These
+    privates are the only source of a correct token pool.
+
+    Deliberately raises instead of degrading. Unlike
+    :meth:`Tokenizer.num_prompt_special_tokens`, where falling back to 0 is
+    conservative in a known direction, there is no safe default here: a wrong
+    token pool silently produces prompts drawn from invalid IDs, which either
+    raise ``KeyError`` deep inside a decode or corrupt the benchmark's ISL
+    accounting. Failing at setup with the attribute name beats either.
+    """
+    value = getattr(encoding, attr, None)
+    if value is None:
+        raise TokenizerError(
+            f"tiktoken.Encoding has no {attr!r}, which AIPerf needs to enumerate "
+            "token IDs for --prompt-corpus random. This usually means the "
+            "installed tiktoken renamed or removed the attribute. Pin a "
+            "compatible tiktoken, or use a HuggingFace tokenizer instead."
+        )
+    return value
+
+
 class _TiktokenAdapter:
     """Adapts tiktoken.Encoding to the interface expected by Tokenizer._tokenizer."""
 
@@ -737,6 +763,26 @@ class Tokenizer:
         self._require_init()
         return self._tokenizer.decode(token_ids, **{**self._decode_args, **kwargs})
 
+    def decode_batch(self, token_id_lists: list[list[int]], **kwargs) -> list[str]:
+        """Decode many token ID sequences with a single batched call.
+
+        Avoids paying the per-call kwarg-merge and dispatch overhead of
+        `decode()` once per sequence, which matters when decoding a corpus of
+        individual tokens (e.g. mock-server startup).
+
+        Args:
+            token_id_lists: A list of token ID sequences to decode.
+
+        Returns:
+            One decoded string per input sequence, in order.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return self._tokenizer._encoding.decode_batch(token_id_lists)
+        return self._tokenizer.batch_decode(
+            token_id_lists, **{**self._decode_args, **kwargs}
+        )
+
     def encode_lengths_batch(
         self, texts: list[str], chunk_size: int = 4096
     ) -> list[int]:
@@ -799,6 +845,83 @@ class Tokenizer:
         if self.eos_token_id is not None:
             return self.eos_token_id
         return None
+
+    @property
+    def vocab_size(self) -> int:
+        """Total vocabulary size of the underlying tokenizer."""
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return self._tokenizer._encoding.n_vocab
+        return self._tokenizer.vocab_size
+
+    @property
+    def all_special_ids(self) -> set[int]:
+        """Set of special token IDs that should be excluded from random sampling."""
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            return set(
+                _tiktoken_internal(self._tokenizer._encoding, "_special_token_values")
+            )
+        return set(self._tokenizer.all_special_ids)
+
+    @property
+    def valid_token_ids(self) -> list[int]:
+        """Sorted list of all decodable, non-special token IDs.
+
+        Tiktoken encodings have sparse ID spaces (gaps between mergeable ranks
+        and special tokens), so range(vocab_size) includes invalid IDs that
+        raise KeyError on decode. This property returns only IDs that are both
+        decodable and non-special.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            enc = self._tokenizer._encoding
+            special = _tiktoken_internal(enc, "_special_token_values")
+            ranks = _tiktoken_internal(enc, "_mergeable_ranks")
+            return sorted(id_ for id_ in ranks.values() if id_ not in special)
+        special = self.all_special_ids
+        return [i for i in range(self._tokenizer.vocab_size) if i not in special]
+
+    @property
+    def all_token_ids(self) -> list[int]:
+        """Sorted list of all decodable token IDs, including special tokens.
+
+        For tiktoken encodings gap IDs are excluded because they cannot be
+        decoded. Use valid_token_ids to additionally exclude special tokens.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            enc = self._tokenizer._encoding
+            ranks = _tiktoken_internal(enc, "_mergeable_ranks")
+            special = _tiktoken_internal(enc, "_special_token_values")
+            return sorted(set(ranks.values()) | set(special))
+        return list(range(self._tokenizer.vocab_size))
+
+    def num_prompt_special_tokens(self) -> int:
+        """Number of special tokens the server adds to each prompt.
+
+        Mirrors vllm's ``tokenizer.num_special_tokens_to_add(pair=False)``,
+        which returns the count from ``build_inputs_with_special_tokens([])``:
+        e.g. 1 for Llama/Mistral (BOS), 0 for GPT-2 (no auto-BOS despite
+        having ``bos_token_id``), 2 for BERT (CLS+SEP), 1 for T5 (EOS).
+        Used to adjust the ISL mean in RangeRatioDistribution so that
+        ``--isl`` represents the total server-side token count rather than
+        the aiperf-side content count.
+
+        Falls back to 0 for tokenizers that don't expose
+        ``num_special_tokens_to_add`` (tiktoken adapter, some custom
+        tokenizers) — conservative rather than wrong-directionally-confident,
+        since ``bos_token_id`` being defined does not mean the tokenizer
+        prepends it (e.g. GPT-2).
+        """
+        self._require_init()
+        method = getattr(self._tokenizer, "num_special_tokens_to_add", None)
+        if callable(method):
+            try:
+                return int(method(pair=False))
+            except (TypeError, NotImplementedError):
+                pass
+        return 0
 
     def __repr__(self) -> str:
         """

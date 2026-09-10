@@ -160,7 +160,7 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 | Category | Enum | Description |
 |----------|------|-------------|
 | `service` | `ServiceType` | Core AIPerf services |
-| `service_manager` | `ServiceRunType` | Service orchestration. The built-in `multiprocessing` service-manager plugin is registered; Kubernetes execution is referenced by future-facing code paths but is not a registered service-manager plugin in this checkout. |
+| `service_manager` | `ServiceRunType` | Service orchestration for local multiprocessing and distributed Kubernetes deployments. Built-in `multiprocessing` and `kubernetes` service-manager plugins are registered. |
 
 ### Visualization and Telemetry Categories
 
@@ -381,6 +381,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 
 | Name | Class | Description |
 |------|-------|-------------|
+| `audio_transcription` | `AudioTranscriptionEndpoint` | OpenAI Audio Transcription (Whisper-style) API; multipart upload of audio to `/v1/audio/transcriptions`, returns a plain-text transcript. Pairs with ASR datasets (e.g. `librispeech`). |
 | `chat` | `ChatEndpoint` | OpenAI Chat Completions API |
 | `chat_embeddings` | `ChatEmbeddingsEndpoint` | vLLM multimodal embeddings via chat API |
 | `completions` | `CompletionsEndpoint` | OpenAI Completions API |

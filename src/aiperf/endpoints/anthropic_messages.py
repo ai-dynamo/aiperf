@@ -497,11 +497,20 @@ class MessagesEndpoint(BaseEndpoint):
         if model_endpoint.endpoint.streaming:
             payload["stream"] = True
 
-        # raw_system (Turn-level list-of-blocks) wins over the
-        # conversation-level system_message string. Lets callers attach
-        # cache_control / Anthropic-specific extensions per-block.
+        # raw_system (Turn-level list-of-blocks) carries per-block
+        # cache_control / Anthropic-specific extensions, so it is preserved
+        # verbatim. A conversation-level system_message is prepended as a
+        # leading text block rather than dropped -- Anthropic's `system` is
+        # already a block list, so this needs no merging of adjacent text and
+        # keeps a verbatim --system-prompt at token 0.
         if raw_system is not None:
-            payload["system"] = raw_system
+            if request_info.system_message:
+                payload["system"] = [
+                    {"type": "text", "text": request_info.system_message},
+                    *raw_system,
+                ]
+            else:
+                payload["system"] = raw_system
         elif request_info.system_message:
             payload["system"] = request_info.system_message
 
@@ -777,9 +786,11 @@ class MessagesEndpoint(BaseEndpoint):
             case EventType.ERROR:
                 error_detail = json_obj.get("error", {})
                 self.warning(
-                    lambda: f"Anthropic streaming error: "
-                    f"type={error_detail.get('type')}, "
-                    f"message={error_detail.get('message')}"
+                    lambda: (
+                        f"Anthropic streaming error: "
+                        f"type={error_detail.get('type')}, "
+                        f"message={error_detail.get('message')}"
+                    )
                 )
                 return None
 

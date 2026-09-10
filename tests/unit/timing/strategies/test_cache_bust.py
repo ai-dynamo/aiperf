@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import re
+from unittest.mock import MagicMock
 
 import pytest
 
 from aiperf.common.enums import CacheBustTarget
 from aiperf.timing.strategies.cache_bust import (
+    WARMUP_ISOLATION_MARKER,
     build_cache_bust_marker,
     estimate_marker_token_cost,
 )
@@ -177,6 +179,41 @@ def test_estimate_marker_token_cost_averages_across_samples():
     tok = CountingTokenizer()
     estimate_marker_token_cost(CacheBustTarget.SYSTEM_PREFIX, tok, samples=4)
     assert tok.calls == 4
+
+
+def test_build_cache_bust_marker_warmup_isolation_system_returns_constant():
+    result = build_cache_bust_marker(
+        "bid", 0, 0, "trace", target=CacheBustTarget.WARMUP_ISOLATION_SYSTEM
+    )
+    assert result == WARMUP_ISOLATION_MARKER
+
+
+def test_build_cache_bust_marker_warmup_isolation_first_turn_returns_constant():
+    result = build_cache_bust_marker(
+        "bid", 0, 0, "trace", target=CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN
+    )
+    assert result == WARMUP_ISOLATION_MARKER
+
+
+def test_build_cache_bust_marker_warmup_isolation_is_constant_not_per_trajectory():
+    """Same inputs with different trajectory indices must produce the same marker."""
+    a = build_cache_bust_marker(
+        "bid", 0, 0, "trace_a", target=CacheBustTarget.WARMUP_ISOLATION_SYSTEM
+    )
+    b = build_cache_bust_marker(
+        "bid", 1, 5, "trace_b", target=CacheBustTarget.WARMUP_ISOLATION_SYSTEM
+    )
+    assert a == b
+
+
+def test_estimate_marker_token_cost_warmup_isolation_returns_zero():
+    tok = MagicMock()
+    assert estimate_marker_token_cost(CacheBustTarget.WARMUP_ISOLATION_SYSTEM, tok) == 0
+    assert (
+        estimate_marker_token_cost(CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN, tok)
+        == 0
+    )
+    tok.encode.assert_not_called()
 
 
 def test_estimate_marker_token_cost_rounds_to_int():

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from aiperf.common import random_generator as rng
+from aiperf.common.enums import PromptCorpus, RandomCorpusStyle
 from aiperf.common.exceptions import (
     ConfigurationError,
     InvalidStateError,
@@ -80,14 +81,23 @@ class PromptGenerator(BaseGenerator):
         prompts: PromptConfig | None,
         prefix_prompts: PrefixPromptConfig | None,
         tokenizer: Tokenizer,
+        corpus: PromptCorpus = PromptCorpus.SONNET,
+        corpus_style: RandomCorpusStyle = RandomCorpusStyle.VLLM,
         **kwargs,
     ):
         self.prompts = prompts
         self.prefix_prompts = prefix_prompts
         self.tokenizer = tokenizer
+        self._corpus = corpus
+        self._corpus_style = corpus_style
         self._tokenized_corpus = None
         self._corpus_size = 0
+        self._allowed_tokens: list[int] = []
+        self._random_request_index: int = 0
         self._prefix_prompts: list[str] = []
+        self._topup_tokens: list[int] = []
+        self._warned_offsets_exhausted = False
+        self._prefix_prompt_tokens: list[list[int]] = []
 
         # Conversation context prompts
         self._shared_system_prompt: str | None = None
@@ -117,6 +127,9 @@ class PromptGenerator(BaseGenerator):
         if self._tokenized_corpus is None:
             self._initialize_corpus()
 
+        if self._corpus == PromptCorpus.RANDOM:
+            self._build_allowed_tokens()
+
         # Probe the tokenizer for a BPE-stable terminator we can append to
         # every reconstructed segment so aiperf's join-with-" " ISL formula
         # equals the sum of per-segment token counts (eliminates segment-join
@@ -125,12 +138,11 @@ class PromptGenerator(BaseGenerator):
             self._determine_bpe_stable_terminator()
         )
 
-        # Initialize prefix prompts pool if the pool size > 0
-        pool_size = (
-            self.prefix_prompts.pool_size if self.prefix_prompts is not None else None
-        ) or 0
-        if pool_size > 0:
-            self._create_prefix_prompt_pool()
+        # The prefix prompt pool is NOT built here. vLLM's RandomDataset draws its
+        # prefix from the shared generator immediately after get_sampling_params has
+        # drawn ISLs, OSLs and offsets, so the pool has to observe that same stream
+        # position — which only exists after preseed(). Callers invoke
+        # initialize_prefix_pool() once the generator is seeded.
 
         # Initialize shared context prompts if configured
         shared_system_length = (
@@ -142,8 +154,105 @@ class PromptGenerator(BaseGenerator):
             self._generate_shared_system_prompt()
         # Note: User context prompts are generated on-demand in generate_user_context_prompt()
 
+    def _build_allowed_tokens(self) -> None:
+        """Build the list of token IDs for random vocab sampling.
+
+        Token pool composition is controlled by corpus_style:
+        - VLLM: exclude special tokens via valid_token_ids, matching vLLM's
+          ``all_special_ids`` exclusion in RandomDataset.
+        - SGLANG: use all_token_ids (full vocab range without special-token
+          filtering), matching SGLang's ``% vocab_size`` arithmetic which uses
+          the raw vocab_size as modulus and does not exclude special tokens.
+        """
+        if self._corpus_style == RandomCorpusStyle.VLLM:
+            self._allowed_tokens = self.tokenizer.valid_token_ids
+        else:
+            self._allowed_tokens = self.tokenizer.all_token_ids
+
+        # Separate, wider pool for BPE top-up draws. vLLM's
+        # gen_prompt_decode_to_target_len tops up from the full
+        # [0, vocab_size) range without excluding special tokens, so the
+        # narrower VLLM-style _allowed_tokens would be the wrong pool here.
+        #
+        # Byte parity: for HF tokenizers all_token_ids IS list(range(vocab_size)),
+        # so indexing into it is bit-for-bit identical to drawing raw
+        # [0, vocab_size) -- same bound, same value. For tiktoken the two differ
+        # (cl100k_base: 100261 decodable vs vocab_size 100277) and the raw draw
+        # could return a gap ID that raises KeyError on decode.
+        self._topup_tokens = self.tokenizer.all_token_ids
+        self.debug(
+            lambda: (
+                f"Built random vocab corpus with {len(self._allowed_tokens)} allowed tokens "
+                f"({len(self._topup_tokens)} in the top-up pool)"
+            )
+        )
+
+    def _sample_topup_tokens(self, num_tokens: int) -> list[int]:
+        """Sample tokens for BPE top-up without consuming the preseed offset cache.
+
+        Top-up draws happen inside the retry loop of generate_prompt when
+        re-encoding produces fewer tokens than the target. They must not
+        advance _random_request_index (which would shift the arithmetic-sequence
+        index for all subsequent requests) and must not consume preseed cache
+        entries (one cache entry per request, not per retry).
+
+        When preseed is active, draws from the same generator stream used for
+        ISL/OSL/offset draws (matching vLLM's gen_prompt_decode_to_target_len
+        which uses its single shared rng for top-up). Falls back to
+        _corpus_rng when preseed is not in use.
+        """
+        if self._corpus == PromptCorpus.RANDOM:
+            # vLLM bench passes rng=self._rng (the shared seeded generator) to
+            # gen_prompt_decode_to_target_len, drawing top-up tokens from the
+            # same stream as ISL/OSL/offsets over the full vocab.
+            #
+            # Indexed into _topup_tokens rather than emitted as raw draws so
+            # sparse-vocabulary tokenizers cannot yield an undecodable ID. This
+            # is a no-op for HF tokenizers, where the pool is exactly
+            # range(vocab_size) -- same bound, same values, byte-identical
+            # prompts. See _build_allowed_tokens.
+            pool = self._topup_tokens or self._allowed_tokens
+            generator = getattr(self, "_preseed_rng", None) or self._corpus_rng
+            return [
+                pool[int(i)]
+                for i in generator.integers(0, len(pool), size=num_tokens)  # type: ignore[union-attr]
+            ]
+        return self._sample_tokens(num_tokens)
+
+    def preseed(self, n: int, generator: object) -> None:
+        """Pre-generate all offsets for the RANDOM corpus using vLLM's draw order.
+
+        Must be called after :meth:`_build_allowed_tokens`. ``generator`` should
+        be the same numpy Generator passed to
+        :meth:`RangeRatioDistribution.preseed`, advanced past its ISL/OSL draws,
+        so that offsets are drawn from the correct position in the shared stream.
+
+        The generator is retained as ``_preseed_rng`` so that BPE top-up draws
+        in :meth:`_sample_topup_tokens` continue from the same stream, matching
+        vLLM's ``gen_prompt_decode_to_target_len`` which uses its single shared
+        rng for both the initial sequence and any top-up tokens.
+
+        """
+        # vLLM bench draws offsets from [0, tokenizer.vocab_size), not from
+        # [0, len(allowed_tokens)). Using vocab_size as the draw bound matches
+        # vLLM bench's get_sampling_params and produces the same offset values
+        # for the same seed, giving identical prompts.
+        vocab_size = (
+            self.tokenizer.vocab_size
+            if self.tokenizer is not None
+            else len(self._allowed_tokens)
+        )
+        self._offset_cache: list[int] = generator.integers(
+            0, vocab_size, size=n
+        ).tolist()  # type: ignore[union-attr]
+        self._offset_idx: int = 0
+        self._preseed_rng = generator
+
     def _initialize_corpus(self) -> None:
         """Load and tokenize the corpus once, storing it for reuse.
+
+        No-op when corpus is RANDOM — token IDs are drawn directly from the
+        vocabulary without loading a text file.
 
         Uses character-based chunking for reproducibility across different machines.
         The chunk size is fixed (not CPU-dependent) to ensure the same tokenization
@@ -156,6 +265,9 @@ class PromptGenerator(BaseGenerator):
             Thread count doesn't affect reproducibility since chunks have deterministic
             boundaries based on character count.
         """
+        if self._corpus == PromptCorpus.RANDOM:
+            return
+
         corpus_path = Path(__file__).parent / DEFAULT_CORPUS_FILE
 
         with open(corpus_path, encoding="utf-8") as f:
@@ -204,8 +316,10 @@ class PromptGenerator(BaseGenerator):
         ]
         self._corpus_size = len(self._tokenized_corpus)
         self.debug(
-            lambda: f"Initialized corpus with {self._corpus_size} tokens "
-            f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            lambda: (
+                f"Initialized corpus with {self._corpus_size} tokens "
+                f"from {len(chunks)} chunks using {num_threads} thread(s)"
+            )
         )
 
     def _determine_bpe_stable_terminator(self) -> list[int]:
@@ -253,26 +367,72 @@ class PromptGenerator(BaseGenerator):
         self.debug("No BPE-stable terminator found; segment-join drift will be unfixed")
         return []
 
-    def _create_prefix_prompt_pool(self) -> None:
-        """Generate a pool of prefix prompts to sample from."""
-        if self._tokenized_corpus is None:
-            raise NotInitializedError("Tokenized corpus is not initialized.")
+    def initialize_prefix_pool(self) -> None:
+        """Build the pool of prefix prompts, as token IDs and decoded text.
 
+        Must be called after :meth:`preseed` for the RANDOM corpus so the prefix
+        draws land at vLLM's stream position (after ISLs, OSLs and offsets). A
+        no-op when no pool is configured, so callers can invoke it unconditionally.
+        """
         if self.prefix_prompts is None:
             return
 
         length = self.prefix_prompts.length or 0
         pool_size = self.prefix_prompts.pool_size or 0
-        self._prefix_prompts = [self.generate_prompt(length) for _ in range(pool_size)]
+        if pool_size <= 0:
+            return
+
+        if self._tokenized_corpus is None and self._corpus != PromptCorpus.RANDOM:
+            raise NotInitializedError("Tokenized corpus is not initialized.")
+
+        if length <= 0:
+            self._prefix_prompt_tokens = [[] for _ in range(pool_size)]
+            self._prefix_prompts = [""] * pool_size
+            return
+
+        self._prefix_prompt_tokens = [
+            self._create_prefix_tokens(length) for _ in range(pool_size)
+        ]
+        self._prefix_prompts = [
+            self.tokenizer.decode(tokens) for tokens in self._prefix_prompt_tokens
+        ]
         self.debug(
-            lambda: f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            lambda: (
+                f"Initialized prefix prompts pool with {len(self._prefix_prompts)} prompts"
+            )
         )
+
+    def _create_prefix_tokens(self, length: int) -> list[int]:
+        """Draw and length-correct a single prefix, returning its token IDs.
+
+        Mirrors vLLM's ``RandomDataset.get_prefix``: the draw is bounded by
+        ``len(allowed_tokens)`` (NOT vocab_size, which bounds the offset draws)
+        and comes from the shared preseed stream. Deliberately avoids
+        :meth:`_sample_tokens` for the RANDOM corpus — that would advance
+        ``_random_request_index`` and shift every subsequent request body away
+        from vLLM's ``index=i`` sequence.
+        """
+        if self._corpus == PromptCorpus.RANDOM:
+            generator = getattr(self, "_preseed_rng", None) or self._corpus_rng
+            n = len(self._allowed_tokens)
+            tokens = [
+                self._allowed_tokens[int(i)]
+                for i in generator.integers(0, n, size=length)
+            ]
+        else:
+            tokens = self._sample_tokens(length)
+
+        text = self._decode_to_exact_len(tokens, length)
+        return self.tokenizer.encode(text, add_special_tokens=False)
 
     def generate(
         self,
         mean: int | None = None,
         stddev: int | None = None,
         hash_ids: list[int] | None = None,
+        *,
+        with_prefix: bool = False,
+        exact_length: bool = False,
     ) -> str:
         """Generate a synthetic prompt with the configuration parameters.
         Serves as a wrapper around other internal methods to provide a unified interface.
@@ -281,6 +441,14 @@ class PromptGenerator(BaseGenerator):
             mean: The mean of the normal distribution.
             stddev: The standard deviation of the normal distribution.
             hash_ids: A list of hash indices used for token reuse.
+            with_prefix: Prepend a pooled prefix prompt at the token level. Ignored
+                when hash_ids is set, since that path composes its own blocks.
+            exact_length: Treat ``mean`` as an already-decided length and use it
+                verbatim instead of resampling. Set by callers driving a
+                sequence distribution, which has already produced an exact
+                value; routing that through ``calculate_num_tokens`` would floor
+                a legitimately-sampled 0 up to 1 and emit one more token than
+                the reference implementation.
 
         Returns:
             A synthetic prompt as a string.
@@ -293,8 +461,11 @@ class PromptGenerator(BaseGenerator):
             ) or InputTokensDefaults.BLOCK_SIZE
             return self._generate_cached_prompt(mean, hash_ids, block_size)
 
-        num_tokens = self.calculate_num_tokens(mean, stddev)
-        return self.generate_prompt(num_tokens)
+        num_tokens = (
+            int(mean or 0) if exact_length else self.calculate_num_tokens(mean, stddev)
+        )
+        prefix_tokens = self.get_random_prefix_prompt_tokens() if with_prefix else None
+        return self.generate_prompt(num_tokens, prefix_tokens=prefix_tokens)
 
     def calculate_num_tokens(
         self,
@@ -310,16 +481,71 @@ class PromptGenerator(BaseGenerator):
 
         return self._length_rng.sample_positive_normal_integer(mean, stddev)
 
-    def generate_prompt(self, num_tokens: int) -> str:
-        """Generate a prompt containing exactly `num_tokens` number of tokens.
+    def _decode_to_exact_len(
+        self, tokens: list[int], target: int, *, _max_retries: int = 10
+    ) -> str:
+        """Decode `tokens` to text whose re-encoded length is exactly `target`.
+
+        Decodes, re-encodes to verify the round-trip token count, and trims or
+        tops up until the count matches, up to `_max_retries` times. Matches
+        vLLM bench's ``gen_prompt_decode_to_target_len`` contract.
 
         Args:
-            num_tokens: Number of tokens required in the prompt.
+            tokens: Initial token sequence to decode.
+            target: Required token count of the re-encoded result.
+            _max_retries: Maximum adjustment iterations before accepting mismatch.
+
+        Returns:
+            The decoded prompt text.
+        """
+        for _ in range(_max_retries):
+            text = self.tokenizer.decode(tokens)
+            # Re-assign tokens from the re-encoded result, matching vLLM bench's
+            # gen_prompt_decode_to_target_len which reassigns token_sequence after
+            # encode before trimming or extending. Trimming the re-encoded sequence
+            # (not the original) is what produces identical prompts for the same seed.
+            tokens = self.tokenizer.encode(text, add_special_tokens=False)
+            if len(tokens) == target:
+                return text
+            if len(tokens) > target:
+                tokens = tokens[:target]
+            else:
+                tokens = tokens + self._sample_topup_tokens(target - len(tokens))
+        return self.tokenizer.decode(tokens)
+
+    def generate_prompt(
+        self,
+        num_tokens: int,
+        *,
+        _max_retries: int = 10,
+        prefix_tokens: list[int] | None = None,
+    ) -> str:
+        """Generate a prompt whose re-encoded length matches `num_tokens`.
+
+        When `prefix_tokens` is supplied it is concatenated at the TOKEN-ID level
+        and the combined sequence is corrected once to ``len(prefix_tokens) +
+        num_tokens``, matching vLLM's ``generate_token_sequence``. Joining the
+        decoded segments as strings instead would let BPE charge for the seam,
+        which cost ~0.84 extra tokens per request (AIP-1118).
+
+        Args:
+            num_tokens: Target number of body tokens in the final prompt.
+            _max_retries: Maximum adjustment iterations before accepting mismatch.
+            prefix_tokens: Prefix token IDs to prepend, or None for no prefix.
 
         Returns:
             A synthetic prompt as a string.
         """
-        return self.tokenizer.decode(self._sample_tokens(num_tokens))
+        if num_tokens < 0 or (num_tokens == 0 and not prefix_tokens):
+            raise ValueError(
+                f"num_tokens must be > 0 without a prefix, got {num_tokens}"
+            )
+        tokens = self._sample_tokens(num_tokens)
+        target = num_tokens
+        if prefix_tokens:
+            tokens = list(prefix_tokens) + tokens
+            target += len(prefix_tokens)
+        return self._decode_to_exact_len(tokens, target, _max_retries=_max_retries)
 
     def _generate_cached_prompt(
         self,
@@ -453,8 +679,14 @@ class PromptGenerator(BaseGenerator):
         return final_prompt
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
-        """Generate a list of token IDs containing exactly `num_tokens` number of tokens
-        using the preloaded tokenized corpus.
+        """Generate a list of token IDs containing exactly `num_tokens` number of tokens.
+
+        For SONNET corpus: samples a contiguous window from the preloaded Shakespeare
+        corpus starting at a random offset (wraps at end).
+
+        For RANDOM corpus: samples a contiguous window from the sorted allowed-token
+        list using (offset + request_index + j) % n, matching vLLM bench's
+        RandomDataset strategy including the per-request index shift.
 
         Args:
             num_tokens: Number of tokens required in the prompt.
@@ -463,8 +695,38 @@ class PromptGenerator(BaseGenerator):
             A list of token IDs.
 
         Raises:
-            NotInitializedError: If the tokenized corpus is not initialized
+            NotInitializedError: If the relevant corpus is not initialized.
         """
+        if self._corpus == PromptCorpus.RANDOM:
+            if not self._allowed_tokens:
+                raise NotInitializedError("Random vocab corpus is not initialized.")
+            n = len(self._allowed_tokens)
+            offset_cache = getattr(self, "_offset_cache", None)
+            if offset_cache is not None and self._offset_idx < len(offset_cache):
+                offset = offset_cache[self._offset_idx]
+                self._offset_idx += 1
+            else:
+                # The cache holds one offset per conversation but is read once
+                # per generate_prompt call, so multi-turn, --prompt-batch-size
+                # > 1, prefix pools and user-context prompts all outrun it.
+                # Degrade to a live draw rather than raising IndexError out of
+                # the dataset composer; reference alignment is already lost.
+                if offset_cache is not None and not self._warned_offsets_exhausted:
+                    self._warned_offsets_exhausted = True
+                    self.warning(
+                        f"Preseeded offset cache exhausted after "
+                        f"{len(offset_cache)} draws (sized by conversation "
+                        "count, consumed once per prompt). Falling back to "
+                        "live sampling; prompts past this point no longer "
+                        "match the reference implementation for the same seed."
+                    )
+                offset = int(self._corpus_rng.integers(0, n))
+            idx = self._random_request_index
+            self._random_request_index += 1
+            return [
+                self._allowed_tokens[(offset + idx + j) % n] for j in range(num_tokens)
+            ]
+
         if not self._tokenized_corpus:
             raise NotInitializedError("Tokenized corpus is not initialized.")
         if num_tokens > self._corpus_size:
@@ -483,6 +745,15 @@ class PromptGenerator(BaseGenerator):
         self.trace(lambda: f"Sampled {len(prompt_tokens)} tokens from corpus")
         return prompt_tokens
 
+    def _random_prefix_index(self) -> int:
+        """Pick a pool slot, raising when the pool was never initialized."""
+        if not self._prefix_prompt_tokens:
+            raise InvalidStateError(
+                "Attempted to sample a prefix prompt but the prefix prompts pool is empty. "
+                "Please ensure that initialize_prefix_pool() has been called."
+            )
+        return self._prefix_rng.choice(range(len(self._prefix_prompt_tokens)))
+
     def get_random_prefix_prompt(self) -> str:
         """
         Fetch a random prefix prompt from the pool.
@@ -493,12 +764,23 @@ class PromptGenerator(BaseGenerator):
         Raises:
             InvalidStateError: If the prefix prompts pool is empty.
         """
-        if not self._prefix_prompts:
-            raise InvalidStateError(
-                "Attempted to sample a prefix prompt but the prefix prompts pool is empty. "
-                "Please ensure that the prefix prompts pool is initialized."
-            )
-        return self._prefix_rng.choice(self._prefix_prompts)
+        return self._prefix_prompts[self._random_prefix_index()]
+
+    def get_random_prefix_prompt_tokens(self) -> list[int]:
+        """
+        Fetch the token IDs of a random prefix prompt from the pool.
+
+        Preferred over :meth:`get_random_prefix_prompt` when the prefix is about
+        to be joined to a body: concatenating token IDs avoids the BPE seam cost
+        that string concatenation incurs.
+
+        Returns:
+            The token IDs of a random prefix prompt.
+
+        Raises:
+            InvalidStateError: If the prefix prompts pool is empty.
+        """
+        return self._prefix_prompt_tokens[self._random_prefix_index()]
 
     def _generate_shared_system_prompt(self) -> None:
         """Generate the shared system prompt.
@@ -506,7 +788,7 @@ class PromptGenerator(BaseGenerator):
         This prompt is generated once and is identical across all sessions.
         It appears as a system message in turn 0 of every conversation.
         """
-        if self._tokenized_corpus is None:
+        if self._tokenized_corpus is None and self._corpus != PromptCorpus.RANDOM:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         length = (
@@ -552,7 +834,7 @@ class PromptGenerator(BaseGenerator):
             NotInitializedError: If tokenized corpus is not initialized.
             InvalidStateError: If user context prompt length is not configured.
         """
-        if self._tokenized_corpus is None:
+        if self._tokenized_corpus is None and self._corpus != PromptCorpus.RANDOM:
             raise NotInitializedError("Tokenized corpus is not initialized.")
 
         length = (
@@ -571,8 +853,10 @@ class PromptGenerator(BaseGenerator):
             new_prompt = self.generate_prompt(length)
             self._user_context_prompts.append(new_prompt)
             self.debug(
-                lambda: f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
-                f"for session {len(self._user_context_prompts) - 1}"
+                lambda: (
+                    f"Generated user context prompt #{len(self._user_context_prompts) - 1} "
+                    f"for session {len(self._user_context_prompts) - 1}"
+                )
             )
 
         return self._user_context_prompts[session_index]

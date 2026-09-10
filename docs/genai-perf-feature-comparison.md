@@ -313,7 +313,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **Video Width/Height** | `--video-width --video-height` | ❌ | ✅ | Resolution in pixels (both or neither) |
 | **Video Synth Type** | `--video-synth-type`<br/>`{moving_shapes,grid_clock,noise}` | ❌ | ✅ | Synthetic content generator |
 | **Video Format** | `--video-format`<br/>`{webm,mp4}` | ❌ | ✅ | Container format |
-| **Video Codec** | `--video-codec` | ❌ | ✅ | Any FFmpeg-supported codec (libvpx-vp9, libx264, h264_nvenc, ...) |
+| **Video Codec** | `--video-codec` | ❌ | ✅ | Any codec the local FFmpeg supports (libvpx-vp9 default; the AIPerf container ships VP8/VP9 only) |
 | **Embedded Audio Track** | `--video-audio-num-channels --video-audio-sample-rate --video-audio-codec --video-audio-depth` | ❌ | ✅ | Optional audio mux for video clips |
 | **Download Video Content** | `--download-video-content` | ❌ | ✅ | Include video download time in request latency |
 

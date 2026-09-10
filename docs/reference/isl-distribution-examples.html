@@ -1,0 +1,124 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ISL Distribution Validation Examples</title>
+<style>
+body{font-family:sans-serif;margin:32px;background:#f9f9f9;color:#222}
+h1{font-size:18px;margin-bottom:4px}
+h2{font-size:14px;margin-top:28px;margin-bottom:6px;color:#444;border-bottom:1px solid #ddd;padding-bottom:4px}
+.subtitle{color:#666;font-size:12px;margin-bottom:24px}
+.chart-box{background:white;border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin-bottom:20px}
+.chart-title{font-size:13px;font-weight:600;margin-bottom:3px}
+.chart-sub{font-size:11px;color:#888;margin-bottom:12px}
+.stats{font-size:11px;color:#555;margin-top:8px}
+.match{color:#059669;font-weight:600}
+</style>
+</head>
+<body>
+<h1>ISL Distribution Validation Examples</h1>
+<div class="subtitle">
+  Companion to <code>docs/reference/validating-isl-distribution.md</code>.
+  All runs: ISL=128, OSL=128, range_ratio=0.3, corpus=random, style=vllm, seed=0, n=20,000.
+  Mock server applies chat template; ISL is template-inclusive.
+</div>
+
+<h2>GPT-2 tokenizer — aiperf vs vLLM Docker</h2>
+<div class="chart-box">
+  <div class="chart-title">GPT-2 ISL distribution (2-token bins)</div>
+  <div class="chart-sub">
+    Blue = aiperf &nbsp;|&nbsp; Red = vLLM Docker &nbsp;|&nbsp;
+    Overlapping bars appear purple — both distributions are identical.
+    GPT-2 has no native chat template; ChatML fallback adds +27 tokens.
+  </div>
+  <svg id="hist-gpt2" width="860" height="260" style="display:block"></svg>
+  <div class="stats">
+    aiperf: mean=154.9, std=22.86, min=116, max=194 &nbsp;|&nbsp;
+    vLLM Docker: mean=154.9, std=22.86, min=116, max=194 &nbsp;|&nbsp;
+    <span class="match">delta = 0.0</span>
+  </div>
+</div>
+
+<h2>Llama 3.1 8B Instruct tokenizer — aiperf vs vLLM Docker</h2>
+<div class="chart-box">
+  <div class="chart-title">Llama 3.1 ISL distribution (2-token bins)</div>
+  <div class="chart-sub">
+    Blue = aiperf &nbsp;|&nbsp; Red = vLLM Docker &nbsp;|&nbsp;
+    Distributions match after mock server multimodal content normalisation fix.
+    Native Llama chat template adds ~39 tokens (BOS + system message + role headers).
+  </div>
+  <svg id="hist-llama" width="860" height="260" style="display:block"></svg>
+  <div class="stats">
+    aiperf: mean=162.3, std=22.87, min=123, max=203 &nbsp;|&nbsp;
+    vLLM Docker: mean=162.3, std=22.87, min=123, max=203 &nbsp;|&nbsp;
+    <span class="match">delta = 0.0</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  const ns='http://www.w3.org/2000/svg';
+  function el(t,a){const e=document.createElementNS(ns,t);Object.entries(a||{}).forEach(([k,v])=>e.setAttribute(k,v));return e;}
+
+  function drawHist(svgId, bins, aV, vV, xLabel){
+    const svg=document.getElementById(svgId);
+    const W=860,H=260,pad={l:48,r:16,t:14,b:44};
+    const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b,n=bins.length,bW=cw/n;
+    const maxY=Math.max(...aV,...vV)*1.12||1;
+
+    for(let i=0;i<=4;i++){
+      const y=pad.t+(i/4)*ch;
+      svg.appendChild(el('line',{x1:pad.l,x2:W-pad.r,y1:y,y2:y,stroke:'#eee','stroke-width':1}));
+      const t=el('text',{x:pad.l-4,y:y+4,'text-anchor':'end','font-size':9,fill:'#999'});
+      t.textContent=((4-i)/4*maxY).toFixed(1)+'%';svg.appendChild(t);
+    }
+
+    for(let i=0;i<n;i++){
+      const x=pad.l+i*bW;
+      [[vV,'rgba(220,38,38,0.45)'],[aV,'rgba(37,99,235,0.7)']].forEach(([v,c])=>{
+        const h=(v[i]/maxY)*ch;
+        svg.appendChild(el('rect',{x,y:pad.t+ch-h,width:bW-0.5,height:h,fill:c}));
+      });
+    }
+
+    const step=Math.max(1,Math.round(n/10));
+    for(let i=0;i<n;i+=step){
+      const x=pad.l+i*bW+bW/2;
+      const t=el('text',{x,y:H-pad.b+13,'text-anchor':'middle','font-size':9,fill:'#555'});
+      t.textContent=bins[i];svg.appendChild(t);
+    }
+
+    const yl=el('text',{transform:`rotate(-90) translate(${-(H/2)},12)`,'text-anchor':'middle','font-size':10,fill:'#555'});
+    yl.textContent='% of requests';svg.appendChild(yl);
+    const xl=el('text',{x:W/2,y:H-2,'text-anchor':'middle','font-size':10,fill:'#555'});
+    xl.textContent=xLabel;svg.appendChild(xl);
+
+    // legend
+    [[' aiperf','rgba(37,99,235,0.7)'],[' vLLM Docker','rgba(220,38,38,0.45)']].forEach(([lbl,c],i)=>{
+      svg.appendChild(el('rect',{x:pad.l+i*140,y:2,width:12,height:9,fill:c}));
+      const t=el('text',{x:pad.l+i*140+14,y:10,'font-size':9,fill:'#333'});
+      t.textContent=lbl;svg.appendChild(t);
+    });
+  }
+
+  drawHist('hist-gpt2',
+    [110,112,114,116,118,120,122,124,126,128,130,132,134,136,138,140,142,144,146,148,150,152,154,156,158,160,162,164,166,168,170,172,174,176,178,180,182,184,186,188,190,192,194,196,198],
+    [0.0,0.0,0.0,2.625,2.725,2.45,2.565,2.425,2.59,2.605,2.61,2.395,2.61,2.355,2.535,2.52,2.445,2.545,2.485,2.53,2.64,2.495,2.405,2.54,2.55,2.665,2.585,2.29,2.64,2.69,2.515,2.52,2.405,2.575,2.41,2.635,2.675,2.345,2.505,2.54,2.335,2.64,1.385,0.0,0.0],
+    [0.0,0.0,0.0,2.625,2.72,2.455,2.565,2.425,2.59,2.61,2.605,2.395,2.61,2.355,2.535,2.525,2.44,2.545,2.485,2.53,2.64,2.495,2.405,2.54,2.55,2.665,2.585,2.285,2.645,2.69,2.515,2.52,2.41,2.565,2.41,2.635,2.68,2.345,2.51,2.535,2.335,2.64,1.385,0.0,0.0],
+    'ISL (tokens, template-inclusive)'
+  );
+
+  drawHist('hist-llama',
+    [118,120,122,124,126,128,130,132,134,136,138,140,142,144,146,148,150,152,154,156,158,160,162,164,166,168,170,172,174,176,178,180,182,184,186,188,190,192,194,196,198,200,202,204,206,208],
+    [0.0,0.0,0.94,2.585,2.645,2.525,2.495,2.505,2.56,2.63,2.485,2.38,2.62,2.4,2.58,2.56,2.46,2.435,2.48,2.645,2.595,2.46,2.365,2.585,2.605,2.65,2.38,2.52,2.605,2.705,2.61,2.365,2.375,2.5,2.535,2.715,2.585,2.35,2.535,2.375,2.535,2.605,0.515,0.0,0.0,0.0],
+    [0.0,0.0,0.94,2.58,2.65,2.535,2.485,2.51,2.555,2.625,2.49,2.38,2.605,2.42,2.575,2.565,2.45,2.445,2.485,2.625,2.605,2.46,2.36,2.595,2.605,2.645,2.385,2.515,2.615,2.695,2.61,2.375,2.365,2.505,2.53,2.715,2.575,2.365,2.535,2.36,2.555,2.595,0.515,0.0,0.0,0.0],
+    'ISL (tokens, template-inclusive)'
+  );
+})();
+</script>
+</body>
+</html>

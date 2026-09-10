@@ -12,7 +12,10 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 from aiperf.dataset.agentic_code_gen.reporting.templates import render_template
-from aiperf.dataset.agentic_code_gen.reporting.trace import ParsedTurn
+from aiperf.dataset.agentic_code_gen.reporting.trace import (
+    ParsedTurn,
+    reconstruct_cumulative_context,
+)
 from aiperf.plot.constants import NVIDIA_GREEN
 
 _HISTOGRAM_PLOTS: list[tuple[str, str]] = [
@@ -121,7 +124,7 @@ def _context_growth_figure(
         fig.add_trace(
             go.Scatter(
                 x=list(range(len(turns))),
-                y=[t.input_length for t in turns],
+                y=reconstruct_cumulative_context(turns),
                 mode="lines",
                 name=sid[:8],
             )

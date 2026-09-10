@@ -189,11 +189,13 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
             max_context_length=max_ctx,
         )
         if not kept_pairs:
-            raise DatasetLoaderError(
-                f"No eligible traces in {self.hf_dataset_name} after "
-                f"filter-then-cap (scanned {stats.scanned}, "
-                f"--max-context-length={max_ctx}, "
-                f"--num-dataset-entries={num_entries})."
+            from aiperf.dataset.loader.selection import raise_on_empty_selection
+
+            raise_on_empty_selection(
+                stats,
+                source=self.hf_dataset_name,
+                num_dataset_entries=num_entries,
+                max_context_length=max_ctx,
             )
 
         out = {}

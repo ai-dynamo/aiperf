@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 
 from aiperf.api.routers.workers import WorkersRouter
 from aiperf.common.enums import WorkerStatus
-from aiperf.common.models import WorkerStats
+from aiperf.common.models import WorkerGroupStats, WorkerStats
 
 
 @pytest.fixture
@@ -29,13 +29,14 @@ def workers_client(workers_router: WorkersRouter) -> TestClient:
 
 
 class TestWorkersEndpoint:
-    """Test the /api/workers endpoint."""
+    """Test the /api/workers endpoint (group-keyed payload)."""
 
     def test_workers_empty(self, workers_client: TestClient) -> None:
         response = workers_client.get("/api/workers")
         assert response.status_code == 200
-        data = response.json()
-        assert data["workers"] == {}
+        # Both views are always emitted: "workers" is the stable flat contract,
+        # "worker_groups" adds the Kubernetes group topology.
+        assert response.json() == {"workers": {}, "worker_groups": {}}
 
     @pytest.mark.parametrize(
         "statuses,expected_active",
@@ -50,23 +51,70 @@ class TestWorkersEndpoint:
             param([WorkerStatus.HIGH_LOAD, WorkerStatus.HEALTHY], 2, id="high-load-and-healthy"),
         ],
     )  # fmt: skip
-    def test_workers_active_count(
+    def test_single_group_active_count(
         self,
         workers_client: TestClient,
         workers_router: WorkersRouter,
         statuses: list[WorkerStatus],
         expected_active: int,
     ) -> None:
-        workers_router._worker_tracker._workers_stats = {
-            f"worker-{i}": WorkerStats(worker_id=f"worker-{i}", status=status)
+        children = {
+            f"w-{i}": WorkerStats(worker_id=f"w-{i}", status=status)
             for i, status in enumerate(statuses)
+        }
+        group_status = (
+            WorkerStatus.HIGH_LOAD
+            if WorkerStatus.HIGH_LOAD in statuses
+            else (
+                WorkerStatus.HEALTHY
+                if WorkerStatus.HEALTHY in statuses
+                else WorkerStatus.IDLE
+            )
+        )
+        workers_router._worker_tracker._groups = {
+            "wgm-0": WorkerGroupStats(
+                group_id="wgm-0", status=group_status, workers=children
+            )
         }
         response = workers_client.get("/api/workers")
         data = response.json()
-        assert len(data["workers"]) == len(statuses)
+        groups = data["worker_groups"]
+        assert set(groups.keys()) == {"wgm-0"}
         active = sum(
             1
-            for w in data["workers"].values()
+            for w in groups["wgm-0"]["workers"].values()
             if w["status"] in (WorkerStatus.HEALTHY, WorkerStatus.HIGH_LOAD)
         )
         assert active == expected_active
+        # "workers" is the stable flat contract: verify it stays in sync with
+        # the group topology rather than only exercising "worker_groups".
+        assert set(data["workers"].keys()) == set(children.keys())
+        for worker_id, worker in children.items():
+            assert data["workers"][worker_id]["status"] == worker.status
+
+    def test_multiple_groups_render_separately(
+        self, workers_client: TestClient, workers_router: WorkersRouter
+    ) -> None:
+        workers_router._worker_tracker._groups = {
+            "wgm-0": WorkerGroupStats(
+                group_id="wgm-0",
+                status=WorkerStatus.HEALTHY,
+                workers={
+                    "w-0": WorkerStats(worker_id="w-0", status=WorkerStatus.HEALTHY)
+                },
+            ),
+            "wgm-1": WorkerGroupStats(
+                group_id="wgm-1",
+                status=WorkerStatus.HIGH_LOAD,
+                workers={
+                    "w-1": WorkerStats(worker_id="w-1", status=WorkerStatus.HIGH_LOAD)
+                },
+            ),
+        }
+        data = workers_client.get("/api/workers").json()
+        assert set(data["worker_groups"].keys()) == {"wgm-0", "wgm-1"}
+        assert data["worker_groups"]["wgm-1"]["status"] == WorkerStatus.HIGH_LOAD
+        # "workers" must flatten across every group, not just the last one.
+        assert set(data["workers"].keys()) == {"w-0", "w-1"}
+        assert data["workers"]["w-0"]["status"] == WorkerStatus.HEALTHY
+        assert data["workers"]["w-1"]["status"] == WorkerStatus.HIGH_LOAD

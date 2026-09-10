@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
-    ProfileConfigureCommand,
-    ProfileStartCommand,
     TelemetryRecordsMessage,
     TelemetryStatusMessage,
 )
@@ -194,6 +194,11 @@ class TestCallbackFunctions:
         manager._user_explicitly_configured_telemetry = False
         manager._telemetry_disabled = False
         manager._collection_interval = 0.333
+        manager._records_push_lock = asyncio.Lock()
+        manager._telemetry_records_closed = False
+        manager._completion_marker_sent = False
+        manager._telemetry_sequence = 0
+        manager.debug = MagicMock()
         return manager
 
     @pytest.mark.asyncio
@@ -218,6 +223,7 @@ class TestCallbackFunctions:
         assert call_args.telemetry_source_url == "http://localhost:9400/metrics"
         assert call_args.records == sample_telemetry_records
         assert call_args.error is None
+        assert call_args.sequence == 1
 
     @pytest.mark.asyncio
     async def test_on_telemetry_records_empty(self):
@@ -277,6 +283,92 @@ class TestCallbackFunctions:
         assert call_args.telemetry_source_url == "http://localhost:9400/metrics"
         assert call_args.records == []
         assert call_args.error == error_details
+        assert call_args.sequence == 1
+
+    @pytest.mark.asyncio
+    async def test_completion_marker_follows_accepted_records_and_closes_admission(
+        self, sample_telemetry_records
+    ) -> None:
+        manager = self._create_test_manager()
+        manager.records_push_client = AsyncMock()
+
+        await manager._on_telemetry_records(sample_telemetry_records, "collector")
+        await manager._on_telemetry_error(
+            ErrorDetails(message="collector warning"), "collector"
+        )
+        await manager._send_collection_complete_marker()
+        await manager._on_telemetry_records(sample_telemetry_records, "collector")
+        await manager._send_collection_complete_marker()
+
+        messages = [
+            call.args[0] for call in manager.records_push_client.push.await_args_list
+        ]
+        assert [message.sequence for message in messages] == [1, 2, 2]
+        assert [message.collection_complete for message in messages] == [
+            False,
+            False,
+            True,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_completion_marker_waits_for_inflight_record_push(
+        self, sample_telemetry_records
+    ) -> None:
+        manager = self._create_test_manager()
+        record_push_started = asyncio.Event()
+        release_record_push = asyncio.Event()
+        pushed_messages: list[TelemetryRecordsMessage] = []
+
+        async def push(message: TelemetryRecordsMessage) -> None:
+            pushed_messages.append(message)
+            if not message.collection_complete:
+                record_push_started.set()
+                await release_record_push.wait()
+
+        manager.records_push_client = MagicMock(push=AsyncMock(side_effect=push))
+
+        record_task = asyncio.create_task(
+            manager._on_telemetry_records(sample_telemetry_records, "collector")
+        )
+        await record_push_started.wait()
+        marker_task = asyncio.create_task(manager._send_collection_complete_marker())
+        await asyncio.sleep(0)
+
+        assert len(pushed_messages) == 1
+        release_record_push.set()
+        await asyncio.gather(record_task, marker_task)
+        assert [message.collection_complete for message in pushed_messages] == [
+            False,
+            True,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_completion_marker_push_failure_leaves_admission_open(
+        self, sample_telemetry_records
+    ) -> None:
+        """A failed completion-marker push must not latch admission closed.
+
+        Otherwise later records/errors would be silently dropped by the
+        ``_telemetry_records_closed`` guard even though the completion
+        marker itself was never delivered.
+        """
+        manager = self._create_test_manager()
+        manager.warning = MagicMock()
+        mock_push_client = AsyncMock()
+        mock_push_client.push.side_effect = Exception("Push failed")
+        manager.records_push_client = mock_push_client
+
+        await manager._send_collection_complete_marker()
+
+        assert manager._telemetry_records_closed is False
+        assert manager._completion_marker_sent is False
+        manager.warning.assert_called_once()
+
+        # A subsequent record must still be accepted, not silently dropped.
+        mock_push_client.push.side_effect = None
+        mock_push_client.push.reset_mock()
+        await manager._on_telemetry_records(sample_telemetry_records, "collector")
+        mock_push_client.push.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_telemetry_error_exception_handling(self):
@@ -406,9 +498,7 @@ class TestStatusMessaging:
             mock_collector.start.side_effect = Exception("Failed to start")
             manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
-            start_msg = ProfileStartCommand(
-                command_id="test", service_id="system_controller"
-            )
+            start_msg = Command(cid="c-1", cmd=CommandType.PROFILE_START)
             await manager._on_start_profiling(start_msg)
 
             # Should have published disabled status
@@ -502,6 +592,7 @@ class TestCollectorManagement:
         with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             manager = self._create_test_manager()
             manager.stop = AsyncMock()
+            manager._send_collection_complete_marker = AsyncMock()
 
             await manager._delayed_shutdown()
 
@@ -510,6 +601,7 @@ class TestCollectorManagement:
 
             # Verify stop was called
             manager.stop.assert_called_once()
+            manager._send_collection_complete_marker.assert_awaited_once()
 
 
 class TestEdgeCases:
@@ -626,7 +718,7 @@ class TestBothDefaultEndpoints:
         assert manager._user_explicitly_configured_telemetry is False
 
 
-class TestProfileConfigureCommand:
+class TestProfileConfigure:
     """Test profile configure command doesn't shutdown prematurely."""
 
     def _create_test_manager(self):
@@ -657,9 +749,7 @@ class TestProfileConfigureCommand:
         with patch.object(
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status
@@ -693,9 +783,7 @@ class TestProfileConfigureCommand:
                 new_callable=AsyncMock,
             ),
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent enabled status
@@ -715,7 +803,7 @@ class TestProfileConfigureCommand:
             assert endpoint in call_args.endpoints_reachable
 
 
-class TestProfileStartCommand:
+class TestProfileStart:
     """Test profile start command acknowledgment and behavior."""
 
     def _create_test_manager(self):
@@ -728,6 +816,11 @@ class TestProfileStartCommand:
         manager._user_explicitly_configured_telemetry = False
         manager._telemetry_disabled = False
         manager._collection_interval = 0.333
+        manager.records_push_client = AsyncMock()
+        manager._records_push_lock = asyncio.Lock()
+        manager._telemetry_records_closed = False
+        manager._completion_marker_sent = False
+        manager._telemetry_sequence = 0
         manager.tasks = set()
         manager.error = MagicMock()
         manager.warning = MagicMock()
@@ -748,9 +841,7 @@ class TestProfileStartCommand:
             manager.publish = AsyncMock()
             manager._collectors = {}  # No collectors
 
-            start_msg = ProfileStartCommand(
-                command_id="test", service_id="system_controller"
-            )
+            start_msg = Command(cid="c-1", cmd=CommandType.PROFILE_START)
             await manager._on_start_profiling(start_msg)
 
             # Verify shutdown was scheduled
@@ -767,9 +858,7 @@ class TestProfileStartCommand:
         mock_collector = AsyncMock(spec=DCGMTelemetryCollector)
         manager._collectors["http://localhost:9400/metrics"] = mock_collector
 
-        start_msg = ProfileStartCommand(
-            command_id="test", service_id="system_controller"
-        )
+        start_msg = Command(cid="c-1", cmd=CommandType.PROFILE_START)
         await manager._on_start_profiling(start_msg)
 
         # Verify start() was called without re-checking reachability or re-initializing
@@ -844,9 +933,7 @@ class TestSmartDefaultVisibility:
         with patch.object(
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should report custom URLs only (no reachable defaults to add)
@@ -898,9 +985,7 @@ class TestSmartDefaultVisibility:
         with patch.object(
             DCGMTelemetryCollector, "is_url_reachable", return_value=False
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should report empty list (no user endpoints, defaults hidden)
@@ -948,9 +1033,7 @@ class TestPynvmlCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent enabled status
@@ -985,9 +1068,7 @@ class TestPynvmlCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status
@@ -1017,9 +1098,7 @@ class TestPynvmlCollectorIntegration:
                 "pynvml package not installed. Install with: pip install nvidia-ml-py"
             ),
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status with RuntimeError message
@@ -1045,9 +1124,7 @@ class TestPynvmlCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             side_effect=ValueError("Unexpected initialization error"),
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         # Should have sent disabled status with general error message
@@ -1127,9 +1204,7 @@ class TestGenericLocalCollectorIntegration:
                     return_value=MockCollectorClass,
                 ):
                     await manager._profile_configure_command(
-                        ProfileConfigureCommand(
-                            command_id="test", service_id="system_controller", config={}
-                        )
+                        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                     )
 
                 mock_collector.initialize.assert_awaited_once()
@@ -1173,9 +1248,7 @@ class TestGenericLocalCollectorIntegration:
                     return_value=MockCollectorClass,
                 ):
                     await manager._profile_configure_command(
-                        ProfileConfigureCommand(
-                            command_id="test", service_id="system_controller", config={}
-                        )
+                        Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
                     )
 
                 manager.publish.assert_called_once()
@@ -1227,9 +1300,7 @@ class TestAmdsmiCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         manager.publish.assert_called_once()
@@ -1276,9 +1347,7 @@ class TestAmdsmiCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             await manager._profile_configure_command(configure_msg)
 
         manager.publish.assert_called_once()
@@ -1314,9 +1383,7 @@ class TestAmdsmiCollectorIntegration:
             "aiperf.plugin.plugins.get_class",
             return_value=MockCollectorClass,
         ):
-            configure_msg = ProfileConfigureCommand(
-                command_id="test", service_id="system_controller", config={}
-            )
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             # Must NOT propagate CancelledError out of configure.
             await manager._profile_configure_command(configure_msg)
 
@@ -1345,9 +1412,7 @@ class TestAmdsmiCollectorIntegration:
             return_value=MockCollectorClass,
         ):
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
         call_args = manager.publish.call_args[0][0]
@@ -1369,9 +1434,7 @@ class TestAmdsmiCollectorIntegration:
             ),
         ):
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
         call_args = manager.publish.call_args[0][0]
@@ -1389,9 +1452,7 @@ class TestAmdsmiCollectorIntegration:
             side_effect=ValueError("Unexpected initialization error"),
         ):
             await manager._profile_configure_command(
-                ProfileConfigureCommand(
-                    command_id="test", service_id="system_controller", config={}
-                )
+                Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
             )
 
         call_args = manager.publish.call_args[0][0]

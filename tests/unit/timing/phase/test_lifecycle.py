@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import time
+
 import pytest
 
 from aiperf.common.enums import CreditPhase
@@ -80,3 +82,44 @@ class TestPhaseLifecycle:
         assert without is not None and with_grace is not None
         # Grace period is exactly 10s, use wider tolerance for CI variance
         assert with_grace > without and with_grace - without >= 9.8
+
+
+class TestPhaseClockFrame:
+    """``now_ns`` is the one wall-clock frame every controller timestamp shares.
+
+    Credits carry ``issued_at_ns`` from this frame, so anything compared against
+    a credit timestamp has to read it here. A raw ``time.time_ns()`` read
+    diverges from the frame by the slew accumulated since the phase started.
+    """
+
+    def test_now_ns_advances_from_the_phase_anchor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lc = PhaseLifecycle(cfg())
+        lc.start()
+        lc.started_at_ns = 1_000_000_000
+        lc.started_at_perf_ns = 500
+        monkeypatch.setattr(time, "perf_counter_ns", lambda: 500 + 42_000)
+
+        assert lc.now_ns() == 1_000_000_000 + 42_000
+
+    def test_now_ns_ignores_a_wall_clock_step(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An NTP step mid-phase must not move the frame credits are stamped in."""
+        lc = PhaseLifecycle(cfg())
+        lc.start()
+        lc.started_at_ns = 1_000_000_000
+        lc.started_at_perf_ns = 0
+        monkeypatch.setattr(time, "perf_counter_ns", lambda: 1_000)
+        monkeypatch.setattr(time, "time_ns", lambda: 9_999_999_999_999)
+
+        assert lc.now_ns() == 1_000_001_000
+
+    def test_now_ns_falls_back_to_the_wall_clock_before_start(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lc = PhaseLifecycle(cfg())
+        monkeypatch.setattr(time, "time_ns", lambda: 4_242)
+
+        assert lc.now_ns() == 4_242

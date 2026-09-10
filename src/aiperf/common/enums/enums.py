@@ -89,24 +89,23 @@ class CommAddress(CaseInsensitiveStrEnum):
 
 
 class CommandType(CaseInsensitiveStrEnum):
+    FINALIZE_ARTIFACTS = "finalize_artifacts"
+    """Flush and durably publish artifacts before service communication stops."""
+    GET_POD_STATES = "get_pod_states"
+    """Return the SystemController's authoritative worker-pod state snapshot."""
     REALTIME_METRICS = "realtime_metrics"
-    PROCESS_RECORDS = "process_records"
     PROFILE_CANCEL = "profile_cancel"
     PROFILE_COMPLETE = "profile_complete"
     PROFILE_CONFIGURE = "profile_configure"
     PROFILE_START = "profile_start"
-    REGISTER_SERVICE = "register_service"
     SHUTDOWN = "shutdown"
-    SHUTDOWN_WORKERS = "shutdown_workers"
     SPAWN_WORKERS = "spawn_workers"
     START_REALTIME_TELEMETRY = "start_realtime_telemetry"
-
-
-class CommandResponseStatus(CaseInsensitiveStrEnum):
-    ACKNOWLEDGED = "acknowledged"
-    FAILURE = "failure"
-    SUCCESS = "success"
-    UNHANDLED = "unhandled"  # The command was received but not handled by any hook
+    ABORT = "abort"
+    """Signal sibling pod peers (workers/record-processors) to exit the process
+    with a non-zero status so kubelet restarts them. Used by WorkerGroupManager
+    when its own lifecycle failed -- a clean SHUTDOWN would let siblings exit 0
+    and leave the pod permanently half-dead at 1/13 Ready."""
 
 
 class ConversationBranchMode(CaseInsensitiveStrEnum):
@@ -133,8 +132,8 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
 
     Disambiguation note: this SPAWN is the DAG-branch mode (a child
     *conversation* that runs alongside its parent). It is unrelated to
-    ``SpawnWorkersCommand`` (the controller->worker-manager command that
-    spawns *worker processes*). One is dataset/orchestration semantics;
+    ``CommandType.SPAWN_WORKERS`` (the controller->worker-manager command
+    that spawns *worker processes*). One is dataset/orchestration semantics;
     the other is process lifecycle.
     """
 
@@ -243,6 +242,8 @@ class CacheBustTarget(CaseInsensitiveStrEnum):
     SYSTEM_SUFFIX = "system_suffix"
     FIRST_TURN_PREFIX = "first_turn_prefix"
     FIRST_TURN_SUFFIX = "first_turn_suffix"
+    WARMUP_ISOLATION_SYSTEM = "warmup_isolation_system"
+    WARMUP_ISOLATION_FIRST_TURN = "warmup_isolation_first_turn"
 
 
 class PromptCorpus(CaseInsensitiveStrEnum):
@@ -253,6 +254,10 @@ class PromptCorpus(CaseInsensitiveStrEnum):
 
     CODING = "coding"
     """Realistic coding content: code, bash output, JSON, error tracebacks, git diffs."""
+
+    RANDOM = "random"
+    """Random tokens drawn from the full tokenizer vocabulary minus special tokens.
+    Matches vLLM bench's RandomDataset token-generation strategy."""
 
 
 class MemoryMapFormat(CaseInsensitiveStrEnum):
@@ -417,11 +422,10 @@ class MessageType(CaseInsensitiveStrEnum):
     """
 
     ALL_RECORDS_RECEIVED = "all_records_received"
-    COMMAND = "command"
-    COMMAND_RESPONSE = "command_response"
     CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
+    BENCHMARK_COMPLETE = "benchmark_complete"
     CONVERSATION_TURN_REQUEST = "conversation_turn_request"
     CONVERSATION_TURN_RESPONSE = "conversation_turn_response"
     CREDIT_PHASE_COMPLETE = "credit_phase_complete"
@@ -430,7 +434,10 @@ class MessageType(CaseInsensitiveStrEnum):
     CREDIT_PHASE_START = "credit_phase_start"
     CREDIT_PHASES_CONFIGURED = "credit_phases_configured"
     CREDITS_COMPLETE = "credits_complete"
+    DATASET_CONFIG_STATUS_REQUEST = "dataset_config_status_request"
+    DATASET_CONFIG_STATUS_RESPONSE = "dataset_config_status_response"
     DATASET_CONFIGURED_NOTIFICATION = "dataset_configured_notification"
+    DATASET_DOWNLOADED_NOTIFICATION = "dataset_downloaded_notification"
     DATASET_CONFIGURATION_FAILED = "dataset_configuration_failed"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
@@ -445,16 +452,19 @@ class MessageType(CaseInsensitiveStrEnum):
     PROCESS_ALL_RESULTS = "process_all_results"
     PROFILE_RESULTS = "profile_results"
     REALTIME_METRICS = "realtime_metrics"
+    REALTIME_SERVER_METRICS = "realtime_server_metrics"
     REALTIME_TELEMETRY_METRICS = "realtime_telemetry_metrics"
-    REGISTRATION = "registration"
+    RESULTS_EXPORTED = "results_exported"
     SERVICE_ERROR = "service_error"
-    STATUS = "status"
+    SYSTEM_STATE_CHANGED = "system_state_changed"
     TELEMETRY_RECORDS = "telemetry_records"
     TELEMETRY_STATUS = "telemetry_status"
-    SERVER_METRICS_RECORD = "server_metrics_record"
     SERVER_METRICS_STATUS = "server_metrics_status"
     NETWORK_LATENCY_RECORD = "network_latency_record"
+    WORKER_GROUP_STATS = "worker_group_stats"
     WORKER_HEALTH = "worker_health"
+    WORKER_POD_STATE = "worker_pod_state"
+    WORKER_STARTUP_STATE = "worker_startup_state"
     WORKER_STATUS_SUMMARY = "worker_status_summary"
 
 
@@ -620,6 +630,32 @@ class SystemState(CaseInsensitiveStrEnum):
     SHUTDOWN = "shutdown"
     """The system is shutting down. This is the final state."""
 
+    @property
+    def rank(self) -> int:
+        """Position in the forward-only lifecycle, for monotonicity checks.
+
+        Consumers (``AIPerfJob.status.subPhase``, dashboards) treat this as a
+        forward-only sequence, so a late message from a cancelled component
+        must not walk it backwards.
+        """
+        return _SYSTEM_STATE_ORDER[self]
+
+
+_SYSTEM_STATE_ORDER: dict[SystemState, int] = {
+    state: index
+    for index, state in enumerate(
+        (
+            SystemState.INITIALIZING,
+            SystemState.CONFIGURING,
+            SystemState.READY,
+            SystemState.PROFILING,
+            SystemState.PROCESSING,
+            SystemState.STOPPING,
+            SystemState.SHUTDOWN,
+        )
+    )
+}
+
 
 class RequestContentType(CaseInsensitiveStrEnum):
     """Content type for HTTP request body serialization."""
@@ -661,13 +697,15 @@ class VideoAudioCodec(CaseInsensitiveStrEnum):
     """Audio codecs for embedding audio in synthetic video files."""
 
     AAC = "aac"
-    """AAC codec. Default for MP4 containers."""
+    """AAC codec. Not built into the AIPerf container's FFmpeg; selecting it
+    requires an FFmpeg build that includes an AAC encoder."""
 
     LIBVORBIS = "libvorbis"
     """Vorbis codec. Default for WebM containers."""
 
     LIBOPUS = "libopus"
-    """Opus codec. Alternative for WebM containers."""
+    """Opus codec. Default for MP4 containers. Always encodes at 48 kHz
+    regardless of the requested sample rate."""
 
 
 class VideoSynthType(CaseInsensitiveStrEnum):
@@ -770,3 +808,72 @@ class ExportFormat(CaseInsensitiveStrEnum):
     JSON = "json"
     JSONL = "jsonl"
     CSV = "csv"
+
+
+class RandomCorpusStyle(CaseInsensitiveStrEnum):
+    """Benchmark style for RANDOM corpus generation.
+
+    Controls the full set of behaviors that vary between tools. Each style
+    is a bundle of decisions that together reproduce the statistical
+    distribution of a specific benchmarking tool:
+
+    .. list-table::
+       :header-rows: 1
+       :widths: 30 35 35
+
+       * - Concern
+         - VLLM
+         - SGLANG
+       * - Token pool
+         - ``valid_token_ids`` (special tokens excluded via ``all_special_ids``)
+         - ``all_token_ids`` (full ``range(vocab_size)``, no exclusion)
+       * - BOS / special-token adjustment
+         - ``max(0, mean - num_special_tokens)``, applied to the mean before
+           the window bounds are computed
+         - ``max(1, drawn - num_special_tokens)``, applied per-request after
+           sampling so the window keeps its raw-mean shape
+       * - ISL/OSL range formula
+         - Symmetric: ``[floor(mean*(1-r)), ceil(mean*(1+r))]``
+         - Lower-bounded: ``[max(1, int(mean*r)), mean]``
+       * - RNG algorithm (preseed)
+         - PCG64 via ``numpy.random.default_rng(seed)``
+         - MT19937 via a private ``numpy.random.RandomState(seed)``
+       * - RNG draw order (with preseed)
+         - All ISLs → all OSLs → all offsets
+         - All ISLs → all OSLs → all offsets (same order, different algorithm)
+       * - Top-up RNG
+         - Continues from the same ``default_rng`` stream (``_preseed_rng``)
+         - Continues from the same ``RandomState`` stream (``_preseed_rng``)
+
+    Both styles are preseeded whenever the corpus is
+    :attr:`PromptCorpus.RANDOM` — the composer gates on
+    ``isinstance(dist, RangeRatioDistribution)``, which the SGLANG subclass
+    satisfies. ``_corpus_rng`` is the fallback for the non-preseeded paths
+    (non-RANDOM corpora, and draws past cache exhaustion), not a per-style
+    difference.
+
+    .. note::
+       The two styles subtract special tokens at different points on purpose,
+       each following its own upstream. VLLM folds the count into the bounds;
+       SGLANG shifts each drawn length, mirroring ``sample_random_requests``
+       under ``return_text`` (the default, and what aiperf sends)::
+
+           input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+       Both land the same wire ISL on the configured value; only the resulting
+       window shape differs.
+    """
+
+    VLLM = "vllm"
+    """vllm bench serve semantics: symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``.
+    r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1).
+    Special tokens excluded from the sampling pool. BOS subtracted from ISL mean."""
+
+    SGLANG = "sglang"
+    """sglang ``benchmark.serving`` semantics under ``--dataset-name random-ids``:
+    lower-bounded window ``[max(1, int(mean*r)), mean]``.
+    r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range
+    used for token sampling (no special-token exclusion). No BOS adjustment.
+
+    The default ``--dataset-name random`` is a different algorithm upstream
+    (repeat/truncate ShareGPT token ids) and is not what this style mirrors."""

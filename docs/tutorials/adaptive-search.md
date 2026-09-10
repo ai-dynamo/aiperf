@@ -9,14 +9,12 @@ This tutorial walks through using AIPerf's adaptive Bayesian-Optimization (BO) o
 
 For the full flag reference, search-space grammar, output schema, and the noise-handling theory, see [`docs/sweeping/bayesian-optimization.md`](../sweeping/bayesian-optimization.md). This page is the narrative companion: one scenario, one command, and how to read what comes back.
 
-> **Kubernetes execution — *coming soon*.** This walkthrough uses
-> `aiperf profile` (the local CLI). Cluster execution via `aiperf kube
-> sweep` + the `AIPerfSweep` CRD is designed and implemented on the
-> upcoming K8s integration branch but not yet on `main` — once shipped,
-> the same `--search-*` flags and YAML schema run unmodified, with the
-> in-cluster `sweep-controller` pod replacing the local subprocess
-> executor. The artifacts (`search_history.json`, `sweep_aggregate/...`)
-> are byte-for-byte identical between execution modes.
+> **Kubernetes execution.** Run this search on a cluster with `aiperf kube
+> sweep -f <config.yaml>` and the same `--search-*` flags. Unlike
+> `aiperf profile`, `kube sweep` requires a base config file. The in-cluster
+> `sweep-controller` runs the adaptive planner, creates child `AIPerfJob`
+> CRs for each proposed point and trial, and publishes `search_history.json`
+> and aggregate artifacts through the sweep results API.
 
 ## The scenario
 

@@ -147,6 +147,9 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             if Environment.HTTP.X_SESSION_ID_FROM_CORRELATION_ID:
                 _remove_headers_case_insensitive(headers, ("X-Session-ID",))
                 headers["X-Session-ID"] = request_info.x_correlation_id
+            if Environment.HTTP.X_SESSION_AFFINITY_FROM_CORRELATION_ID:
+                _remove_headers_case_insensitive(headers, ("X-Session-Affinity",))
+                headers["X-Session-Affinity"] = request_info.x_correlation_id
             # Additive SGLang Model Gateway routing key: co-locate a session's
             # requests on one worker via the stable correlation ID.
             if Environment.HTTP.X_SMG_ROUTING_KEY_FROM_CORRELATION_ID:
