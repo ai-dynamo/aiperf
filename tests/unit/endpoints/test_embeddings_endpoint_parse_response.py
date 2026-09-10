@@ -23,7 +23,6 @@ from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.usage_metrics import (
     UsagePromptTokensMetric,
-    UsageTotalTokensMetric,
 )
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import create_model_endpoint
@@ -287,7 +286,7 @@ class TestEmbeddingsEndpointParseResponse:
         assert parsed.data.embeddings[0] == [0.1, 0.2]
 
 
-def test_embeddings_usage_reaches_token_metrics() -> None:
+def test_embeddings_usage_reaches_prompt_token_metric() -> None:
     endpoint = EmbeddingsEndpoint(create_model_endpoint(EndpointType.EMBEDDINGS))
     usage = {"prompt_tokens": 8, "total_tokens": 8}
     response = TextResponse(
@@ -308,5 +307,26 @@ def test_embeddings_usage_reaches_token_metrics() -> None:
 
     assert parsed[0].usage == usage
     assert record.final_usage == usage
-    for metric_class in (UsagePromptTokensMetric, UsageTotalTokensMetric):
-        assert metric_class().parse_record(record, MetricRecordDict()) == 8
+    assert UsagePromptTokensMetric().parse_record(record, MetricRecordDict()) == 8
+
+
+@pytest.mark.parametrize("usage", [None, {}, "unexpected", 7, [1, 2]])
+def test_embeddings_unusable_usage_preserves_result(usage: object) -> None:
+    """Optional malformed telemetry must not discard a valid embedding."""
+    endpoint = EmbeddingsEndpoint(create_model_endpoint(EndpointType.EMBEDDINGS))
+    response = TextResponse(
+        perf_ns=2,
+        content_type="application/json",
+        text=orjson.dumps(
+            {
+                "data": [{"object": "embedding", "embedding": [0.1, 0.2]}],
+                "usage": usage,
+            }
+        ).decode(),
+    )
+
+    parsed = endpoint.parse_response(response)
+
+    assert parsed is not None
+    assert parsed.data.embeddings == [[0.1, 0.2]]
+    assert parsed.usage is None
