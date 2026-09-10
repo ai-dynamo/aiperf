@@ -345,7 +345,7 @@ aiperf profile \
 #### How It Works
 
 1. A Gaussian noise audio signal is generated matching the video duration
-2. The audio is encoded as 16-bit PCM WAV
+2. The audio is encoded as PCM WAV at the configured `--video-audio-depth` (16-bit by default)
 3. FFmpeg muxes the video and audio streams together using `-shortest` to ensure duration alignment
 4. The audio codec converts the WAV data to the target format (Vorbis or Opus)
 5. The resulting video+audio file is base64-encoded for API requests
