@@ -955,6 +955,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             {
                 "origin_service_id": self.service_id,
                 "reason": ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                "reason_detail": (
+                    f"{error_records}/{total} profiling requests failed "
+                    f"({rate:.1%}), exceeding the --failed-request-threshold "
+                    f"limit of {threshold:.1%}. Check inference server logs."
+                ),
             }
         )
         try:

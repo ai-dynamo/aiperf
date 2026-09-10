@@ -1467,6 +1467,11 @@ class TestRecordsManagerTimingDispatch:
         ) == {
             "origin_service_id": "records-manager",
             "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 20.0%. Check inference "
+                "server logs."
+            ),
         }
         assert (
             manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
@@ -1523,6 +1528,11 @@ class TestRecordsManagerTimingDispatch:
         ) == {
             "origin_service_id": "records-manager",
             "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 50.0%. Check inference "
+                "server logs."
+            ),
         }
 
     @pytest.mark.asyncio

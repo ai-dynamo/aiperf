@@ -196,6 +196,34 @@ class TestSystemController:
             assert len(system_controller._exit_errors) == 0
         system_controller.execute_async.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_handle_profile_cancel_relay_prefers_reason_detail(
+        self, system_controller: SystemController
+    ) -> None:
+        """An operator-facing reason_detail must replace the generic message."""
+        system_controller.execute_async = MagicMock()
+        payload = orjson.dumps(
+            {
+                "origin_service_id": "records-1",
+                "reason": "failed_request_threshold",
+                "reason_detail": "10/10 profiling requests failed (100.0%).",
+            }
+        )
+
+        await system_controller._handle_profile_cancel_relay(
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL, payload=payload)
+        )
+
+        assert_exit_error(
+            system_controller,
+            ErrorDetails(
+                message="10/10 profiling requests failed (100.0%).",
+                type="ProfileCancelAbort",
+            ),
+            "profile_cancel_abort",
+            "records-1",
+        )
+
 
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""

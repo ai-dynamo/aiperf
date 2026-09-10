@@ -1250,11 +1250,16 @@ class SystemController(
                 origin_service_id = payload.get("origin_service_id", "")
                 reason = payload.get("reason")
                 if reason is not None and ProfileCancelReason(reason).is_abort:
+                    reason_detail = payload.get("reason_detail")
+                    message_text = (
+                        reason_detail
+                        if reason_detail is not None
+                        else f"Run aborted by '{origin_service_id}': {reason}."
+                    )
                     self._exit_errors.append(
                         ExitErrorInfo(
                             error_details=ErrorDetails(
-                                message=f"Run aborted by '{origin_service_id}': "
-                                f"{reason}.",
+                                message=message_text,
                                 type="ProfileCancelAbort",
                             ),
                             operation="profile_cancel_abort",
