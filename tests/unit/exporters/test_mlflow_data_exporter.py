@@ -717,7 +717,8 @@ class TestSweepChildNaming:
         """Concurrency sweep -> 'Concurrency=N' from variation.values."""
         cfg = _make_mlflow_cfg(tmp_path)
         exporter = self._make_exporter(
-            cfg, sample_results,
+            cfg,
+            sample_results,
             variation_values={"phases.profiling.concurrency": 64},
         )
         assert exporter._derive_sweep_child_name() == "Concurrency=64"
@@ -728,7 +729,8 @@ class TestSweepChildNaming:
         """Concurrency=1 still produces a valid name."""
         cfg = _make_mlflow_cfg(tmp_path)
         exporter = self._make_exporter(
-            cfg, sample_results,
+            cfg,
+            sample_results,
             variation_values={"phases.profiling.concurrency": 1},
         )
         assert exporter._derive_sweep_child_name() == "Concurrency=1"
@@ -740,7 +742,8 @@ class TestSweepChildNaming:
         field, not a future pattern)."""
         cfg = _make_mlflow_cfg(tmp_path)
         exporter = self._make_exporter(
-            cfg, sample_results,
+            cfg,
+            sample_results,
             variation_values={"phases.profiling.request_rate": 50.0},
         )
         assert exporter._derive_sweep_child_name() == "RequestRate=50.0"
@@ -753,12 +756,20 @@ class TestSweepChildNaming:
         old path-substring approach returned 'Concurrency=10' for both."""
         cfg = _make_mlflow_cfg(tmp_path)
         name_a = self._make_exporter(
-            cfg, sample_results,
-            variation_values={"phases.profiling.concurrency": 10, "input.prompt.mean": 1024},
+            cfg,
+            sample_results,
+            variation_values={
+                "phases.profiling.concurrency": 10,
+                "input.prompt.mean": 1024,
+            },
         )._derive_sweep_child_name()
         name_b = self._make_exporter(
-            cfg, sample_results,
-            variation_values={"phases.profiling.concurrency": 10, "input.prompt.mean": 2048},
+            cfg,
+            sample_results,
+            variation_values={
+                "phases.profiling.concurrency": 10,
+                "input.prompt.mean": 2048,
+            },
         )._derive_sweep_child_name()
         assert name_a == "Concurrency=10, Mean=1024"
         assert name_b == "Concurrency=10, Mean=2048"
@@ -772,7 +783,8 @@ class TestSweepChildNaming:
         'concurrency_' substring match mislabelled it."""
         cfg = _make_mlflow_cfg(tmp_path)
         exporter = self._make_exporter(
-            cfg, sample_results,
+            cfg,
+            sample_results,
             variation_values={"phases.prefill.prefill_concurrency": 4},
         )
         assert exporter._derive_sweep_child_name() == "PrefillConcurrency=4"
@@ -783,10 +795,13 @@ class TestSweepChildNaming:
         """No sweep/search variation values (single run, or a 'base' variation with
         empty values) -> None, so the caller falls back to --mlflow-run-name."""
         cfg = _make_mlflow_cfg(tmp_path)
-        assert self._make_exporter(cfg, sample_results)._derive_sweep_child_name() is None
         assert (
-            self._make_exporter(cfg, sample_results, variation_values={})
-            ._derive_sweep_child_name()
+            self._make_exporter(cfg, sample_results)._derive_sweep_child_name() is None
+        )
+        assert (
+            self._make_exporter(
+                cfg, sample_results, variation_values={}
+            )._derive_sweep_child_name()
             is None
         )
 
@@ -796,7 +811,8 @@ class TestSweepChildNaming:
         """When parent_run_id is absent, the exporter's _run_name is the configured name."""
         cfg = _make_mlflow_cfg(tmp_path, run_name="top-level-job")
         exporter = self._make_exporter(
-            cfg, sample_results,
+            cfg,
+            sample_results,
             variation_values={"phases.profiling.concurrency": 16},
         )
         # Sweep name is derivable...
