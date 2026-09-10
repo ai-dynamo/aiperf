@@ -224,41 +224,25 @@ def test_parallel_convert_prefix_tail_matches_cold_and_warm_cache(
 ):
     """Unhashed tail must not change when the final hash_id is already cached.
 
-    ``get_block_tokens`` used to skip ``reseed_for_hash_id`` on a hit, so
-    ``sample_tokens`` for the tail saw leftover worker RNG. Cold vs warm
-    cache must produce the same prompt for identical ``hash_ids`` +
-    ``input_length``.
+    A same-hash exact block before prefix_tail leaves RNG in the same
+    post-block state as a cold miss, so it would not catch a skip-reseed
+    bug. Two prefix_tail rows in one batch does: the second hit happens
+    after the first tail has already advanced ``hash_rng``.
     """
     pg = real_prompt_generator
     block_size = 4
-    hid = 101
     prefix_tail = {
-        "hash_ids": [hid],
+        "hash_ids": [101],
         "input_length": 6,
         "output_length": 4,
         "timestamp": 2.0,
         "delay": None,
     }
-    exact_block = {
-        "hash_ids": [hid],
-        "input_length": 4,
-        "output_length": 4,
-        "timestamp": 1.0,
-        "delay": None,
-    }
-    trace_id = "warm_cache_tail_trace"
-
-    cold = _drive_worker_inproc(pg, [("s1", [prefix_tail])], trace_id, block_size)
-    warm = _drive_worker_inproc(
-        pg, [("s1", [exact_block, prefix_tail])], trace_id, block_size
-    )
     duplicate = _drive_worker_inproc(
-        pg, [("s1", [prefix_tail, dict(prefix_tail)])], trace_id, block_size
+        pg,
+        [("s1", [prefix_tail, dict(prefix_tail)])],
+        "warm_cache_tail_trace",
+        block_size,
     )
-
-    cold_prompt = cold[0][1][0][2]
-    warm_prompt = warm[0][1][1][2]
     first_dup, second_dup = duplicate[0][1][0][2], duplicate[0][1][1][2]
-
-    assert cold_prompt == warm_prompt
-    assert first_dup == second_dup == cold_prompt
+    assert first_dup == second_dup

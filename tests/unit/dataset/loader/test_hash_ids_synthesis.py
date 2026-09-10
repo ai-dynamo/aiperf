@@ -83,39 +83,6 @@ def test_mixin_decodes_identical_full_sequences_once():
     assert result["c"] == result["a"]
 
 
-def test_mixin_decodes_prefix_only_as_one_full_sequence():
-    """Prefix-only tails stay on the assembled sequence; they are not decoded separately."""
-    pg = MagicMock()
-    pg._build_token_sequence.return_value = [10, 11, 99, 100]
-
-    class _Loader(HashIdsPromptSynthesisMixin):
-        pass
-
-    loader = _Loader()
-    loader.prompt_generator = pg
-    loader._tokenizer_name = "test-tok"
-    loader._trust_remote_code = False
-    loader._tokenizer_revision = None
-    loader._block_size = 2
-
-    requests = [
-        HashIdsPromptRequest(key="a", hash_ids=[1], input_length=4),
-        HashIdsPromptRequest(key="b", hash_ids=[1], input_length=4),
-    ]
-
-    def fake_decode(seqs, *args, **kwargs):
-        return [f"p{i}" for i, _ in enumerate(seqs)]
-
-    with patch(
-        "aiperf.dataset.loader.hash_ids_synthesis.parallel_decode",
-        side_effect=fake_decode,
-    ) as mock_decode:
-        result = loader.synthesize_prompts_from_hash_ids(requests)
-
-    assert mock_decode.call_args.args[0] == [[10, 11, 99, 100]]
-    assert result["a"] == result["b"] == "p0"
-
-
 def test_mixin_oracle_decodes_full_sequence_for_exact_partial_and_prefix_tail(
     mock_tokenizer_cls,
 ):

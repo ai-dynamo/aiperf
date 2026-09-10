@@ -17,8 +17,10 @@ Identical assembled sequences share one decode call.
 
 from __future__ import annotations
 
+import array
 import hashlib
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 
 from aiperf.dataset.generator.parallel_decode import parallel_decode
@@ -43,6 +45,12 @@ def _unique_sequence_decode_workers() -> int:
     return min(os.cpu_count() or 4, 64)
 
 
+def _sequence_fingerprint(tokens: list[int]) -> bytes:
+    """Compact identity for an assembled token list (not a full tuple copy)."""
+    packed = array.array("q", tokens)
+    return hashlib.blake2b(packed, digest_size=16).digest()
+
+
 class HashIdsPromptSynthesisMixin:
     """Provide :meth:`synthesize_prompts_from_hash_ids` to any loader.
 
@@ -64,9 +72,10 @@ class HashIdsPromptSynthesisMixin:
     def synthesize_prompts_from_hash_ids(
         self, requests: list[HashIdsPromptRequest]
     ) -> dict[str, str]:
-        pending: list[tuple[str, tuple[int, ...]]] = []
+        pending: list[tuple[str, int]] = []
         result: dict[str, str] = {}
-        unique_sequences: dict[tuple[int, ...], list[int]] = {}
+        unique_sequences: list[list[int]] = []
+        fingerprint_buckets: dict[bytes, list[int]] = defaultdict(list)
 
         pg = self.prompt_generator
 
@@ -79,22 +88,31 @@ class HashIdsPromptSynthesisMixin:
             tokens = pg._build_token_sequence(
                 req.input_length, req.hash_ids, self._block_size
             )
-            seq_key = tuple(tokens)
-            unique_sequences.setdefault(seq_key, tokens)
-            pending.append((req.key, seq_key))
+            fingerprint = _sequence_fingerprint(tokens)
+            seq_index = None
+            for candidate in fingerprint_buckets[fingerprint]:
+                if unique_sequences[candidate] == tokens:
+                    seq_index = candidate
+                    break
+            if seq_index is None:
+                seq_index = len(unique_sequences)
+                unique_sequences.append(tokens)
+                fingerprint_buckets[fingerprint].append(seq_index)
+            pending.append((req.key, seq_index))
 
         if unique_sequences:
-            seq_order = list(unique_sequences)
             decoded_list = parallel_decode(
-                [unique_sequences[k] for k in seq_order],
+                unique_sequences,
                 self._tokenizer_name,
                 trust_remote_code=self._trust_remote_code,
                 revision=self._tokenizer_revision or "main",
                 max_workers=_unique_sequence_decode_workers(),
             )
-            decoded = dict(zip(seq_order, decoded_list, strict=True))
-            for key, seq_key in pending:
-                result[key] = decoded[seq_key]
+            decoded_by_index = dict(
+                zip(range(len(unique_sequences)), decoded_list, strict=True)
+            )
+            for key, seq_index in pending:
+                result[key] = decoded_by_index[seq_index]
 
         return result
 
