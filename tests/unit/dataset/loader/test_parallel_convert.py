@@ -82,7 +82,7 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
     pg._hash_id_corpus_rng.set_trace_id(trace_id)
     pg._cache.clear()
 
-    # Mixed layout: one exact-tile (8/4) and one last-partial (6 = 4 + 2).
+    # Mixed layout: exact-tile (8/4) and last-partial (6 = 4 + 2).
     traces = [
         {
             "hash_ids": [11, 22],
@@ -101,14 +101,25 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
     ]
 
     in_process_prompts: list[str] = []
+    joined_block_prompts: list[str] = []
     for tr in traces:
-        pg._build_token_sequence(tr["input_length"], tr["hash_ids"], block_size)
+        tokens = pg._build_token_sequence(
+            tr["input_length"], tr["hash_ids"], block_size
+        )
         in_process_prompts.append(
+            pg.tokenizer.decode(tokens, skip_special_tokens=False)
+        )
+        joined_block_prompts.append(
             "".join(
                 pg.tokenizer.decode(pg._cache[hid], skip_special_tokens=False)
                 for hid in tr["hash_ids"]
             )
         )
+
+    assert in_process_prompts[0] != joined_block_prompts[0], (
+        "oracle is degenerate: decode(full sequence) accidentally equals "
+        "joined per-block strings"
+    )
 
     # Reset PG state so the worker sees a fresh trace_id scope.
     pg._cache.clear()

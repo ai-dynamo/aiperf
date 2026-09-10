@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
+from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
+from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.hash_ids_synthesis import (
     HashIdsPromptRequest,
     HashIdsPromptSynthesisMixin,
@@ -10,10 +12,9 @@ from aiperf.dataset.loader.hash_ids_synthesis import (
 
 
 def test_mixin_decodes_via_parallel_decode_for_hash_id_requests():
-    """Without a real ``_cache`` map, the mixin decodes the full token sequence."""
+    """Non-empty hash_ids requests build a token sequence then decode that full sequence."""
     pg = MagicMock()
     pg.tokenizer.resolved_name = "test-tok"
-    pg._cache = MagicMock()  # not a dict -> full-sequence fallback
     pg._build_token_sequence.return_value = [10, 20, 30]
 
     class _Loader(HashIdsPromptSynthesisMixin):
@@ -39,14 +40,14 @@ def test_mixin_decodes_via_parallel_decode_for_hash_id_requests():
     pg._build_token_sequence.assert_called_once_with(10, [1, 2], 64)
 
 
-def test_mixin_decodes_unique_hash_blocks_once():
-    """Shared hash_ids across requests decode each unique block a single time."""
+def test_mixin_decodes_identical_full_sequences_once():
+    """Duplicate assembled token sequences share a single ``parallel_decode`` call."""
     pg = MagicMock()
     pg.tokenizer.resolved_name = "test-tok"
-    pg._cache = {1: [10, 11], 2: [20], 3: [30, 31]}
-    pg._build_token_sequence.side_effect = lambda n, hids, bs: sum(
-        (pg._cache[h] for h in hids), []
-    )
+    pg._build_token_sequence.side_effect = lambda n, hids, bs: {
+        (1, 2): [10, 11, 20],
+        (1, 3): [10, 11, 30, 31],
+    }[tuple(hids)]
 
     class _Loader(HashIdsPromptSynthesisMixin):
         pass
@@ -75,17 +76,16 @@ def test_mixin_decodes_unique_hash_blocks_once():
 
     assert mock_decode.call_count == 1
     decoded_seqs = mock_decode.call_args.args[0]
-    assert len(decoded_seqs) == 3
-    assert {tuple(s) for s in decoded_seqs} == {(10, 11), (20,), (30, 31)}
-    assert result["a"] == "10|11" + "20"
-    assert result["b"] == "10|11" + "30|31"
+    assert len(decoded_seqs) == 2
+    assert {tuple(s) for s in decoded_seqs} == {(10, 11, 20), (10, 11, 30, 31)}
+    assert result["a"] == "10|11|20"
+    assert result["b"] == "10|11|30|31"
     assert result["c"] == result["a"]
 
 
-def test_mixin_decodes_prefix_only_tail_as_separate_piece():
-    """Unhashed tails (prefix-only layout) are decoded once per unique tail."""
+def test_mixin_decodes_prefix_only_as_one_full_sequence():
+    """Prefix-only tails stay on the assembled sequence; they are not decoded separately."""
     pg = MagicMock()
-    pg._cache = {1: [10, 11]}
     pg._build_token_sequence.return_value = [10, 11, 99, 100]
 
     class _Loader(HashIdsPromptSynthesisMixin):
@@ -112,9 +112,93 @@ def test_mixin_decodes_prefix_only_tail_as_separate_piece():
     ) as mock_decode:
         result = loader.synthesize_prompts_from_hash_ids(requests)
 
-    assert len(mock_decode.call_args.args[0]) == 2
-    assert result["a"] == result["b"]
-    assert result["a"] == "p0p1"
+    assert mock_decode.call_args.args[0] == [[10, 11, 99, 100]]
+    assert result["a"] == result["b"] == "p0"
+
+
+def test_mixin_oracle_decodes_full_sequence_for_exact_partial_and_prefix_tail(
+    mock_tokenizer_cls,
+):
+    """Replay prompts equal ``decode(assembled_tokens)``, not joined per-block strings.
+
+    The mock tokenizer inserts spaces between ids, so ``decode(a)+decode(b)``
+    differs from ``decode(a+b)`` at block boundaries. That is the segment-join
+    drift the production path must not ship.
+    """
+    tokenizer = mock_tokenizer_cls.from_pretrained("gpt2")
+    corpus = " ".join([f"word{i}" for i in range(1024)]) + "\n"
+    with patch("builtins.open", mock_open(read_data=corpus)):
+        pg = PromptGenerator(
+            prompts=PromptConfig(block_size=4),
+            prefix_prompts=PrefixPromptConfig(pool_size=None, length=None),
+            tokenizer=tokenizer,
+        )
+
+    class _Loader(HashIdsPromptSynthesisMixin):
+        pass
+
+    loader = _Loader()
+    loader.prompt_generator = pg
+    loader._tokenizer_name = "gpt2"
+    loader._trust_remote_code = False
+    loader._tokenizer_revision = "main"
+    loader._block_size = 4
+
+    cases = [
+        ("exact", [11, 22], 8),
+        ("partial", [33, 44], 6),
+        ("prefix_tail", [55], 6),
+    ]
+    requests = [
+        HashIdsPromptRequest(key=key, hash_ids=hids, input_length=n)
+        for key, hids, n in cases
+    ]
+
+    pg._cache.clear()
+    assembled: dict[tuple[tuple[int, ...], int], list[int]] = {}
+    orig_build = pg._build_token_sequence
+
+    def capturing_build(n, hids, bs):
+        tokens = orig_build(n, hids, bs)
+        assembled[(tuple(hids), n)] = list(tokens)
+        return tokens
+
+    pg._build_token_sequence = capturing_build
+
+    def decode_full_sequences(seqs, *args, **kwargs):
+        return [
+            pg.tokenizer.decode(list(seq), skip_special_tokens=False) for seq in seqs
+        ]
+
+    with patch(
+        "aiperf.dataset.loader.hash_ids_synthesis.parallel_decode",
+        side_effect=decode_full_sequences,
+    ) as mock_decode:
+        result = loader.synthesize_prompts_from_hash_ids(requests)
+
+    expected = {
+        key: pg.tokenizer.decode(
+            assembled[(tuple(hids), n)], skip_special_tokens=False
+        )
+        for key, hids, n in cases
+    }
+    joined_blocks = {
+        key: "".join(
+            pg.tokenizer.decode(pg._cache[hid], skip_special_tokens=False)
+            for hid in hids
+        )
+        for key, hids, n in cases
+    }
+
+    assert expected["exact"] != joined_blocks["exact"], (
+        "oracle is degenerate: mock decode(full) accidentally equals joined blocks"
+    )
+    assert expected["prefix_tail"] != joined_blocks["prefix_tail"]
+    assert result == expected
+    passed = [tuple(seq) for seq in mock_decode.call_args.args[0]]
+    assert set(passed) == {
+        tuple(assembled[(tuple(hids), n)]) for _, hids, n in cases
+    }
 
 
 def test_mixin_falls_back_to_generator_for_empty_hash_ids():
