@@ -86,16 +86,25 @@ class AudioTranscriptionEndpoint(BaseEndpoint):
     def parse_response(
         self, response: InferenceServerResponse
     ) -> ParsedResponse | None:
-        # Text-format transcripts may themselves be valid JSON, including objects.
-        is_text_response = isinstance(response, TextResponse) and (
-            response.content_type or ""
-        ).lower().startswith("text/")
+        # Honor text/* even for JSON-looking transcripts; sniffing would lose words.
+        content_type = (
+            (response.content_type or "").split(";", 1)[0].strip().lower()
+            if isinstance(response, TextResponse)
+            else ""
+        )
+        is_text_response = content_type.startswith("text/")
         json_obj = None if is_text_response else response.get_json()
         if isinstance(json_obj, dict):
             # response_format json / verbose_json: transcript is the "text" field.
             # An empty JSON object must not fall through to the raw transcript.
             text = json_obj.get("text")
             usage = json_obj.get("usage")
+        elif not is_text_response and (
+            json_obj is not None
+            or content_type == "application/json"
+            or content_type.endswith("+json")
+        ):
+            return None
         else:
             # response_format text / srt / vtt: the whole body IS the transcript
             # (not JSON), so fall back to the raw text rather than dropping it.

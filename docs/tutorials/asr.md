@@ -13,7 +13,11 @@ speech datasets from HuggingFace. Each dataset entry sends real speech audio alo
 For Whisper-compatible `/v1/audio/transcriptions` servers, use
 `--endpoint-type audio_transcription`. JSON responses provide the transcript in
 `text`; text responses preserve the entire body, including transcripts such as
-`42` that also happen to be valid JSON.
+`42` that also happen to be valid JSON. Request text output with
+`--extra-inputs response_format:text`. Responses labeled `text/*` are treated as
+literal transcripts, even when the body resembles a JSON object. They carry no
+server-reported `usage`; output token counts are derived from the tokenizer.
+JSON responses must contain an object with a `text` field.
 
 Five ASR datasets are built in:
 
