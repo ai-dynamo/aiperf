@@ -493,11 +493,11 @@ class TestMLflowDataExporter:
         tmp_path: Path,
         sample_results: ProfileResults,
     ) -> None:
-        """Review (ajcasagrande): exercise the LIVE rename, not just the deriver.
+        """Review (ajcasagrande): exercise the LIVE rename, not just the name derivation.
 
         A reused live-streaming run that sits under a sweep/search parent must be
         renamed to its swept-dimension name via MLflowClient.update_run, and that
-        name must land in mlflow_export.json. The old tests only called the deriver
+        name must land in mlflow_export.json. The old tests only called the derivation helper
         and never proved the rename fired.
         """
         _write_artifact(tmp_path / "profile_export_aiperf.json")
@@ -832,7 +832,7 @@ class TestSweepChildNaming:
         `variation_values` is the authoritative swept {dotted_path: value} map the
         real orchestrator/planners put on BenchmarkRun.variation — the exporter now
         derives the child name from it, not from the artifact path. None -> no
-        variation (a single run / non-sweep), so the deriver returns None.
+        variation (a single run / non-sweep), so the derivation returns None.
         """
         run = None
         if variation_values is not None:
