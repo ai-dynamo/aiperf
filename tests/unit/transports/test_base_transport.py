@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import pytest
 
@@ -415,20 +415,34 @@ class TestBaseTransport:
         assert "key=overridden" in url
         assert "key=original" not in url
 
+    @pytest.mark.parametrize(
+        "endpoint_params, expected",
+        [
+            pytest.param({}, "tag=first&mode=strict&tag=&tag=last", id="retain-order"),
+            pytest.param(
+                {"tag": "replacement"}, "mode=strict&tag=replacement", id="override"
+            ),
+            pytest.param(
+                {"other": "value"},
+                "tag=first&mode=strict&tag=&tag=last&other=value",
+                id="merge",
+            ),
+            pytest.param({"tag": ["a", "b"]}, "mode=strict&tag=a&tag=b", id="list"),
+            pytest.param({"tag": ("a", "b")}, "mode=strict&tag=a&tag=b", id="tuple"),
+        ],
+    )
     def test_build_url_preserves_repeated_query_values(
-        self, request_info: RequestInfo
+        self, request_info: RequestInfo, endpoint_params: dict, expected: str
     ) -> None:
+        """Preserve query pair order and replace all values of overridden keys."""
         request_info.model_endpoint.endpoint.base_urls = [
-            "http://localhost:8000/v1/chat/completions?tag=first&tag=&tag=last"
+            "http://localhost:8000/v1/chat/completions?tag=first&mode=strict&tag=&tag=last"
         ]
         request_info.model_endpoint.endpoint.custom_endpoint = None
-        request_info.endpoint_params = {}
+        request_info.endpoint_params = endpoint_params
         transport = FakeTransport(model_endpoint=request_info.model_endpoint)
 
-        query = parse_qs(
-            urlparse(transport.build_url(request_info)).query, keep_blank_values=True
-        )
-        assert query["tag"] == ["first", "", "last"]
+        assert urlparse(transport.build_url(request_info)).query == expected
 
     def test_build_url_empty_param_value(self, transport, request_info):
         """Test build_url handles empty parameter values."""
