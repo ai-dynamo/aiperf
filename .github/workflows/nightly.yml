@@ -379,6 +379,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      # A bare `uv sync` re-locks silently; fail fast on a stale lockfile instead.
+      - name: Check uv.lock is up to date
+        run: uv lock --check
       - name: Validate dependency resolution against required-environments
         run: uv sync --active --no-install-project
 
@@ -478,6 +481,10 @@ jobs:
           print(f"Embedded commit SHA in METADATA + _build_info.py: {sha}")
           print(f"Repository URL: {url}")
           PYEOF
+
+      # Catch a bad version patch here, not ten minutes into the Docker build.
+      - name: Verify uv.lock matches the patched pyproject.toml
+        run: uv lock --check
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
