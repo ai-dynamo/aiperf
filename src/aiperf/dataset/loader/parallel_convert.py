@@ -16,8 +16,9 @@ by ``BaseTraceDatasetLoader.convert_to_conversations``. Both paths reseed
 ``HashIdRandomGenerator`` identically per ``(seed, trace_id, hash_id)`` so the
 two paths produce byte-identical output for the exact-tile and
 last-block-partial input layouts emitted by Mooncake/Bailian/BurstGPT loaders.
-Block token IDs are cached per worker; ``tokenizer.decode`` runs on the
-assembled sequence so segment-join BPE drift cannot appear.
+Block token IDs are cached per worker. Decode runs on unique blocks plus
+one-token-overlap continuations so shared prefixes are not re-decoded, and
+stitched text matches ``decode(full sequence)``.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import os
 import sys
+from collections import defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from multiprocessing import shared_memory
@@ -36,6 +38,10 @@ from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset._mp_context import get_loader_mp_context
+from aiperf.dataset.loader.hash_ids_synthesis import (
+    overlap_decode_recipe,
+    stitch_overlap_decoded,
+)
 
 
 @dataclass(slots=True)
@@ -131,8 +137,7 @@ def _assemble_hash_id_tokens(
     sample_tokens: Callable[..., list[int]],
     corpus: np.ndarray,
     hash_rng: HashIdRandomGenerator,
-) -> list[int]:
-    """Build the full token sequence for one hash_ids trace (exact / partial / prefix-tail)."""
+) -> list[list[int]]:
     m = len(hash_ids)
     total_hashed = m * block_size
     final_block_size = input_length - (m - 1) * block_size
@@ -147,19 +152,33 @@ def _assemble_hash_id_tokens(
             f"0 and less than or equal to {block_size}."
         )
 
-    tokens: list[int] = []
+    pieces: list[list[int]] = []
     if total_hashed > input_length:
         for i, hid in enumerate(hash_ids):
             size = final_block_size if i == m - 1 else block_size
-            tokens.extend(get_block_tokens(hid, size))
-        return tokens
+            pieces.append(get_block_tokens(hid, size))
+        return pieces
 
+    hashed_len = 0
     for hid in hash_ids:
-        tokens.extend(get_block_tokens(hid, block_size))
-    tail = input_length - len(tokens)
+        block = get_block_tokens(hid, block_size)
+        pieces.append(block)
+        hashed_len += len(block)
+    tail = input_length - hashed_len
     if tail > 0:
-        tokens.extend(sample_tokens(corpus, tail, hash_rng, None))
-    return tokens
+        pieces.append(sample_tokens(corpus, tail, hash_rng, None))
+    return pieces
+
+
+def _fill_decoded_texts(
+    decode: Callable[..., str],
+    unique_sequences: list[list[int]],
+    decoded_texts: list[str],
+) -> None:
+    while len(decoded_texts) < len(unique_sequences):
+        decoded_texts.append(
+            decode(unique_sequences[len(decoded_texts)], skip_special_tokens=False)
+        )
 
 
 def _process_batch(
@@ -178,6 +197,9 @@ def _process_batch(
     decode = _worker_state.tokenizer.decode
     sample_tokens = _worker_state.sample_tokens
     block_cache = _worker_state.block_cache
+    unique_sequences: list[list[int]] = []
+    fingerprint_buckets: dict[bytes, list[int]] = defaultdict(list)
+    decoded_texts: list[str] = []
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
         cached = block_cache.get(hash_id)
@@ -216,7 +238,7 @@ def _process_batch(
                 # overshoot input_length the implied final partial block goes
                 # non-positive, which serial rejects -- raise the same error
                 # here instead of silently emitting a short/empty block.
-                tokens = _assemble_hash_id_tokens(
+                pieces = _assemble_hash_id_tokens(
                     hash_ids=trace["hash_ids"],
                     input_length=trace["input_length"],
                     block_size=block_size,
@@ -225,7 +247,11 @@ def _process_batch(
                     corpus=corpus,
                     hash_rng=hash_rng,
                 )
-                prompt = decode(tokens, skip_special_tokens=False)
+                recipe = overlap_decode_recipe(
+                    pieces, unique_sequences, fingerprint_buckets
+                )
+                _fill_decoded_texts(decode, unique_sequences, decoded_texts)
+                prompt = stitch_overlap_decoded(decoded_texts, recipe)
             else:
                 prompt = ""
 

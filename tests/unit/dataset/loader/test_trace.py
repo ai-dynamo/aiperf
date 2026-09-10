@@ -1178,7 +1178,6 @@ class TestMooncakeTraceReproducibility:
 
         This tests the strict=True behavior in zip() that guards against silent data loss.
         """
-        # Mock parallel_decode to return FEWER results than unique sequences.
         mock_parallel_decode.return_value = ["decoded prompt 1"]  # Only 1, expecting 3
         mock_prompt_generator._cache = None
         mock_prompt_generator._build_token_sequence.side_effect = [
