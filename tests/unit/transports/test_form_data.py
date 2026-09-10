@@ -117,7 +117,6 @@ class TestBuildFormData:
     def test_list_fields_emit_repeated_parts(
         self, values: list[str | bool | int], expected: list[str]
     ) -> None:
-        """Multipart array parameters must reach the server as repeated fields."""
         form = AioHttpTransport._build_form_data(
             {"timestamp_granularities[]": values, "model": "whisper-1"}
         )
