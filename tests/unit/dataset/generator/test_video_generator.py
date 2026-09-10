@@ -637,7 +637,8 @@ class TestVideoAudioBitDepth:
 
         actual_rms = np.sqrt(np.mean(actual**2))
         reference_rms = np.sqrt(np.mean(reference**2))
-        assert actual_rms == pytest.approx(reference_rms, rel=0.02)
+        assert actual_rms == pytest.approx(reference_rms, rel=1e-3)
+        assert actual_rms == pytest.approx(0.3, rel=0.1)
 
     def test_video_audio_8bit_is_unsigned(self):
         """8-bit video audio values are in unsigned range (0-255 centered at 128).

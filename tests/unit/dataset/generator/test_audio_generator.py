@@ -270,7 +270,7 @@ class TestAudioBitDepth:
     def test_bit_depth_preserves_signal_amplitude(
         self, audio_format: AudioFormat
     ) -> None:
-        """24-bit encoding preserves amplitude relative to the int32 reference."""
+        """The 24-bit setting preserves signal level for WAV and MP3 output."""
         reference, _ = decode_audio(
             AudioGenerator(
                 make_config(mean=0.1, stddev=0, depths=[32], audio_format=audio_format)
@@ -286,7 +286,8 @@ class TestAudioBitDepth:
         # may quantize it, but must not change its overall signal level.
         actual_rms = np.sqrt(np.mean(actual**2))
         reference_rms = np.sqrt(np.mean(reference**2))
-        assert actual_rms == pytest.approx(reference_rms, rel=0.02)
+        assert actual_rms == pytest.approx(reference_rms, rel=1e-3)
+        assert actual_rms == pytest.approx(0.3, rel=0.1)
 
     @pytest.mark.parametrize("bit_depth", [8, 16, 24, 32])
     def test_mp3_ignores_bit_depth_uses_lossy_encoding(self, bit_depth):
