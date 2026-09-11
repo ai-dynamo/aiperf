@@ -102,6 +102,12 @@ aws = [
   "botocore>=1.34.0",
 ]
 test = [
+  # test_sigv4_signer.py self-skips via pytest.importorskip("botocore"), and the
+  # Windows-on-ARM job installs "--extra test --no-dev". Without botocore here
+  # that job skips all 18 signer tests and still reports green. botocore is a
+  # pure-Python (py3-none-any) wheel, so unlike the deps `dev` pulls it installs
+  # there fine.
+  "aiperf[aws]",
   "httpx>=0.27.0",
   # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
   # build and no sdist, so it can't install on Windows-on-ARM. Cap it there to
