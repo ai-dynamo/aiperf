@@ -10,6 +10,7 @@
 #   4. Stage    — [automated-release approval] ECR → NGC staging; S3 → Artifactory
 #   5. Trigger  — trigger GitLab nightly pipeline (fire-and-forget)
 #   6. Summary  — always runs
+#   7. Alert    — always runs; posts a Slack alert only when a job failed
 #
 # No git tag is created by this workflow. NIGHTLY_TAG is a display label only.
 #
@@ -1184,19 +1185,40 @@ jobs:
             echo "| trigger-gitlab-nightly-pipeline | ${{ needs.trigger-gitlab-nightly-pipeline.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Notify on failure
-        if: ${{ failure() }}
-        env:
-          NIGHTLY_TAG:   ${{ needs.prepare-nightly.outputs.nightly_tag }}
-          RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SLACK_WEBHOOK: ${{ secrets.NIGHTLY_SLACK_WEBHOOK }}
-        run: |
-          if [ -z "${SLACK_WEBHOOK}" ]; then
-            echo "::warning::NIGHTLY_SLACK_WEBHOOK is not configured — skipping failure notification"
-            exit 0
-          fi
-          curl -fsSL \
-            --request POST \
-            --header "Content-Type: application/json" \
-            --data "{\"text\":\"Nightly pipeline failed: ${NIGHTLY_TAG}\n${RUN_URL}\"}" \
-            "${SLACK_WEBHOOK}"
+  # ============================================================================
+  # PHASE 7: ALERT
+  # Slack alert listing failed jobs; silent on green. suggest-shard-weights is
+  # advisory (continue-on-error) so it is excluded.
+  # ============================================================================
+  notify-slack:
+    name: Notify Slack
+    needs:
+      - prepare-nightly
+      - pre-commit
+      - unit-tests
+      - integration-tests
+      - test-docs-end-to-end
+      - resolve-check
+      - build-container
+      - create-multiarch-manifest-ecr
+      - stage-nightly-container
+      - stage-nightly-wheel
+      - trigger-gitlab-nightly-pipeline
+      - suggest-shard-weights
+      - pipeline-summary
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+      actions: read   # the notifier lists this run's jobs via the Actions API
+    uses: ./.github/workflows/notify-slack.yml
+    with:
+      pipeline_name: AIPerf Nightly
+      commit: ${{ needs.prepare-nightly.outputs.resolved_sha || github.sha }}
+      version: ${{ needs.prepare-nightly.outputs.wheel_version || 'unresolved' }}
+      ignored_jobs: |
+        Suggest Shard Weights
+      mention: ${{ vars.NIGHTLY_SLACK_MENTION }}
+    secrets:
+      # Legacy NIGHTLY_SLACK_WEBHOOK kept as fallback for an existing webhook.
+      SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL: ${{ secrets.SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL || secrets.NIGHTLY_SLACK_WEBHOOK }}
+      SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL: ${{ secrets.SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL }}
