@@ -464,15 +464,27 @@ Signed-off-by: <your name> <your email>"
 
 ---
 
-### Task 5: Rename the signing-scope flag and make it derivable
+### Task 5: Make the signing scope derivable
 
 **Files:**
-- Modify: `src/aiperf/config/flags/cli_config.py`, `src/aiperf/config/flags/_section_fields.py`, `src/aiperf/config/flags/_converter_endpoint.py`, `src/aiperf/config/endpoint.py`, `src/aiperf/common/models/model_endpoint_info.py`, `src/aiperf/auth/sigv4_signer.py`, `docs/tutorials/aws-sigv4-auth.md`
-- Test: `tests/unit/auth/test_sigv4_signer.py`
+- Modify: `src/aiperf/config/endpoint.py`, `src/aiperf/auth/sigv4_signer.py`, `src/aiperf/config/flags/cli_config.py` (description only)
+- Test: `tests/unit/auth/test_sigv4_signer.py`, `tests/unit/config/test_endpoint_sigv4_validation.py`
 
 **Interfaces:**
 - Consumes: nothing
-- Produces: `--aws-signing-service` (optional override); transports may declare `botocore_service_id: ClassVar[str]` and the signer resolves the signing name from botocore's service model. AIP-1177's transport declares `"sagemaker-runtime"`.
+- Produces: transports may declare `botocore_service_id: ClassVar[str]`; the signer
+  resolves the signing name from botocore's service model when `--aws-service` is
+  unset. AIP-1177's transport declares `"sagemaker-runtime"`.
+
+**The rename was dropped.** An earlier draft renamed `--aws-service` to
+`--aws-signing-service`. That was justified when the proof of concept dispatched on the
+flag's *value* (`aws_service == "sagemaker"` selected the SageMaker code path), so the
+one flag meant both "credential scope" and "which adapter". That dispatch no longer
+exists: SageMaker is selected by `--sagemaker-endpoint-name` via `TransportType`, and
+nothing in `src/` reads the flag's value except the signer. With the conflation gone the
+rename buys only cosmetic precision, while touching six threading hops and every doc on
+a PR where `--aws-service` has already been reviewed 25 times. The derivation below is
+the part that carries the value, and it does not depend on the name.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -502,16 +514,14 @@ def test_explicit_signing_service_overrides_derivation() -> None:
 
 Expected: FAIL — `_transport_botocore_service_id` does not exist.
 
-- [ ] **Step 3: Rename across the six threading hops**
+- [ ] **Step 3: Document what the value actually is**
 
-```bash
-grep -rln -- "aws_service\|--aws-service" src/ tests/ docs/
-```
-
-Replace `--aws-service` with `--aws-signing-service` and `aws_service` with
-`aws_signing_service` in every hit. Update the field description to say it is the
-signing name, not the API id, and that it is optional when the transport supplies a
-service id.
+The flag keeps its name but its description must stop implying it is the API id.
+In `src/aiperf/config/flags/cli_config.py` and `src/aiperf/config/endpoint.py`, say
+that the value is the SigV4 *signing name* -- the credential scope -- which is not
+always the API identifier: the `sagemaker-runtime` API signs as `sagemaker`, and
+`bedrock-runtime` as `bedrock`. Note that it is optional when the selected transport
+declares a botocore service id.
 
 - [ ] **Step 4: Add derivation to the signer**
 
@@ -562,13 +572,13 @@ In `_reresolve_credentials`, immediately before `session.get_credentials()`:
 
 - [ ] **Step 5: Make the flag optional when a service id is available**
 
-In the sigv4 validator in `config/endpoint.py`, require `--aws-signing-service` only
-when nothing else supplies the scope:
+In the sigv4 validator in `config/endpoint.py`, require `--aws-service` only when
+nothing else supplies the scope:
 
 ```python
                     (
-                        "--aws-signing-service",
-                        self.aws_signing_service
+                        "--aws-service",
+                        self.aws_service
                         or _transport_botocore_service_id(self.transport),
                     ),
 ```
@@ -589,13 +599,14 @@ Expected: all pass. `test_every_cli_config_field_is_classified` must still pass.
 
 ```bash
 git add -A
-git commit -S -m "feat(auth): rename --aws-service to --aws-signing-service and derive it
+git commit -S -m "feat(auth): derive the SigV4 signing name from the transport
 
-The value is the SigV4 signing name (credential scope), not the API id:
-sagemaker-runtime signs as 'sagemaker'. Transports declare a
-botocore_service_id and the signer resolves the name from botocore's
-service model, so the flag becomes an override. Nothing has shipped, so
-the rename is free now and impossible later.
+Transports declare a botocore_service_id; the signer resolves the signing
+name from botocore's own service model, so --aws-service becomes an
+override rather than a requirement. The signing name is the credential
+scope and is not always the API id -- sagemaker-runtime signs as
+'sagemaker' -- so reading it from the model also makes bedrock-runtime
+correct without further work.
 
 Signed-off-by: <your name> <your email>"
 ```

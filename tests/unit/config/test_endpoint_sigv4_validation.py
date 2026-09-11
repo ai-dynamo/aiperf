@@ -207,3 +207,44 @@ class TestLoopbackIsExemptFromTheTlsRule:
         """The rule protects credentials; it is not a blanket TLS mandate."""
         cfg = EndpointConfig(urls=["http://anywhere.example.com"])
         assert cfg.auth_type is None
+
+
+class TestServiceFlagOptionalWhenTransportSuppliesIt:
+    """``--aws-service`` stays required when nothing else can supply the
+    credential scope, and becomes optional when the selected transport declares
+    which AWS API it speaks. This is what reduces the SageMaker case to one
+    flag rather than two."""
+
+    def test_still_required_for_a_transport_that_declares_nothing(self) -> None:
+        with pytest.raises(ValueError, match="--aws-service"):
+            EndpointConfig(
+                urls=["https://x.example.com"],
+                auth_type="sigv4",
+                aws_region="us-east-1",
+            )
+
+    def test_not_required_when_the_transport_declares_a_service_id(self) -> None:
+        from aiperf.transports.aiohttp_transport import AioHttpTransport
+        from tests.harness import mock_plugin
+
+        class _AwsishTransport(AioHttpTransport):
+            botocore_service_id = "sagemaker-runtime"
+
+        with mock_plugin("transport", "awsish2", _AwsishTransport):
+            cfg = EndpointConfig.model_construct(
+                urls=["https://x.example.com"],
+                auth_type="sigv4",
+                aws_region="us-east-1",
+                aws_service=None,
+                transport="awsish2",
+            )
+            cfg._validate_sigv4_auth()
+
+    def test_an_explicit_flag_still_wins(self) -> None:
+        cfg = EndpointConfig(
+            urls=["https://x.example.com"],
+            auth_type="sigv4",
+            aws_region="us-east-1",
+            aws_service="execute-api",
+        )
+        assert cfg.aws_service == "execute-api"
