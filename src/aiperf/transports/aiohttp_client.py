@@ -164,6 +164,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                     # return accepted/created responses without being rejected.
                     if response.status < 200 or response.status >= 300:
                         error_text = await response.text()
+                        record.end_perf_ns = time.perf_counter_ns()
                         record.error = ErrorDetails(
                             code=response.status,
                             type=response.reason,
