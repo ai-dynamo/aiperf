@@ -44,6 +44,9 @@ Default for:
 - ShareGPT
 - Mooncake traces with `hash_ids`
 
+Opt-in for:
+- Mooncake traces with `messages` arrays marked `"message_mode": "delta"` (see [Trace Replay](../benchmark-modes/trace-replay.md#replaying-message-deltas-with-live-responses)). The first entry carries the initial history (system prompt + first user message); each later entry carries only the new messages for that turn, and AIPerf threads the live assistant responses (text and tool_calls) into the history between them.
+
 ### `deltas_with_responses`
 
 Delta-compressed prompts. Each dataset turn only contains the *new* messages since the previous turn. AIPerf accumulates these deltas to reconstruct the full conversation. The live inference response is only used for measurement and discarded -- the pre-canned assistant responses in the dataset are used instead.
@@ -91,7 +94,7 @@ Request 3: sends Turn 3 as-is
 Each turn is sent exactly as it appears in the dataset.
 
 Default for:
-- Mooncake traces with pre-built `messages` arrays
+- Mooncake traces with pre-built `messages` arrays (the default `"message_mode": "history"`)
 
 ### `message_array_without_responses`
 

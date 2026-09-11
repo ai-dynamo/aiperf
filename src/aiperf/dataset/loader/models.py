@@ -265,6 +265,7 @@ class MooncakeTrace(AIPerfBaseModel):
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}, "timestamp": 1000}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+    - Delta messages: {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "Hi"}]}
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
@@ -289,6 +290,15 @@ class MooncakeTrace(AIPerfBaseModel):
         description="Complete pre-built API request payload sent verbatim "
         "to the transport. Bypasses all endpoint formatting. Cannot be "
         "combined with other input modes.",
+    )
+    message_mode: Literal["history", "delta"] = Field(
+        default="history",
+        description="How 'messages' relates to prior turns in the session. "
+        "'history' (default, backward compatible): each entry carries the complete "
+        "conversation so far and is replayed verbatim (message_array_with_responses). "
+        "'delta': each entry carries only the NEW messages for that turn; AIPerf "
+        "accumulates prior turns and threads live assistant responses (text and "
+        "tool_calls) into the history (deltas_without_responses). Only valid with 'messages'.",
     )
 
     # Optional fields
@@ -347,7 +357,7 @@ class MooncakeTrace(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def validate_messages(self) -> "MooncakeTrace":
-        """Validate the messages and tools field structure."""
+        """Validate messages/tools structure and message_mode combinations."""
         if self.tools is not None:
             if self.messages is None:
                 raise ValueError("'tools' is only allowed when 'messages' is provided")
@@ -355,6 +365,17 @@ class MooncakeTrace(AIPerfBaseModel):
                 raise ValueError("'tools' must be a non-empty list")
         if self.messages is not None:
             validate_chat_messages(self.messages)
+        if self.message_mode == "delta":
+            if self.messages is None:
+                raise ValueError(
+                    "message_mode='delta' is only supported with 'messages'; "
+                    "'payload', 'text_input', and 'input_length' (synthesized) entries cannot be delta turns"
+                )
+            if self.extra is not None and "messages" in self.extra:
+                raise ValueError(
+                    "message_mode='delta': 'extra' must not contain a 'messages' key; "
+                    "it would overwrite the assembled conversation history at dispatch time"
+                )
         return self
 
 

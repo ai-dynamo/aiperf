@@ -138,7 +138,29 @@ Each entry's `messages` field contains the full conversation history up to that 
 {"session_id": "sess-1", "messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}, {"role": "user", "content": "How are you?"}], "output_length": 30, "timestamp": 2000}
 ```
 
-The `messages` field is mutually exclusive with `input_length` and `text_input`. When set, the messages array is sent directly to the API payload, bypassing prompt synthesis entirely. The model's actual response is not carried forward between turns -- each turn uses its pre-defined messages.
+The `messages` field is mutually exclusive with `input_length` and `text_input`. When set, the messages array is sent directly to the API payload, bypassing prompt synthesis entirely. By default (`"message_mode": "history"`), the model's actual response is not carried forward between turns -- each turn uses its pre-defined messages.
+
+### Replaying Message Deltas with Live Responses
+
+Set `"message_mode": "delta"` on every `messages` entry in a session to opt in to incremental replay ([`deltas_without_responses` context mode](../reference/conversation-context-mode.md)). The first entry carries the initial history (e.g. system prompt + first user message); each later entry carries only the NEW messages for that turn. Between turns, AIPerf captures the live assistant response -- text and streamed `tool_calls` (reassembled `id`/`function.name`/`function.arguments` deltas) -- and threads it into the history, so each request's context grows with what the model actually generated instead of a recorded transcript:
+
+```json
+{"session_id": "sess-1", "message_mode": "delta", "messages": [{"role": "system", "content": "You are helpful."}, {"role": "user", "content": "Hello"}], "output_length": 512, "timestamp": 0}
+{"session_id": "sess-1", "message_mode": "delta", "messages": [{"role": "user", "content": "How are you?"}], "output_length": 512, "delay": 2000}
+```
+
+Request 2 is then `[system, user "Hello", assistant <live reply to request 1>, user "How are you?"]`.
+
+Behavior and constraints:
+
+- **Opt-in only.** Omitting `message_mode` (or setting `"history"`) keeps the existing verbatim replay. A session mixing `"delta"` and `"history"` entries -- including entries that omit `message_mode` and silently default to `"history"` -- is rejected at load time. Sessions in the same file are independent: one session can be delta while another is history.
+- **`messages` only.** `"message_mode": "delta"` is rejected for `payload`, `text_input`, and synthesized (`input_length`) entries.
+- **Timing is unchanged.** `timestamp`/`delay` values are preserved with millisecond scheduling accuracy, exactly as in history mode.
+- **No offset cropping.** `--fixed-schedule-start-offset` / `--fixed-schedule-end-offset` drop individual rows before sessions are assembled, which would silently remove the initial history or preceding turns that later delta rows depend on. If the trace file contains any `"message_mode": "delta"` entry, configuring either offset fails at load time -- before any delta-session row can be dropped. History-mode and synthesized traces keep the existing offset filtering. To replay a subset, construct a trace file containing only the complete delta sessions you want instead of cropping with offsets.
+- **`output_length` is a ceiling, not a forced length.** It maps to the request's max-completion-tokens cap (e.g. keep your usual 8192 ceiling); the model stops naturally at EOS. Because the live replies are threaded into later requests, the actual context length grows with whatever the model generated -- it will diverge from the recorded transcript's token counts.
+- **Tool calls use the live IDs.** Assistant `tool_calls` in the accumulated history carry the IDs the server actually generated during the run. A `role: "tool"` delta must reference a `tool_call_id` the live model emitted for the conversation to remain coherent; AIPerf performs no remapping from recorded IDs to live IDs, so recorded tool-result deltas can diverge from what the live model called. AIPerf never executes tools -- tool-result content comes only from your dataset deltas.
+- **`extra` cannot override the assembled history.** A per-entry `extra` containing a `messages` key, or an endpoint-global `--extra-inputs messages:...`, is rejected for delta sessions because the shallow merge would silently replace the accumulated conversation.
+- **Sticky transport is not KV affinity.** Multi-turn sessions reuse a sticky connection/correlation ID so all turns hit the same backend, but that does not guarantee the server keeps the session's KV cache on the same GPU -- prefix-cache hit rates depend on the serving stack.
 
 ### Tool Definitions
 
@@ -148,7 +170,7 @@ When replaying conversations that involve tool use (function calling), include t
 {"messages": [{"role": "user", "content": "What's the weather?"}], "tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}}}}], "output_length": 50, "timestamp": 0}
 ```
 
-The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter.
+The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter. In delta sessions, later turns inherit the most recent `tools` declaration (typically the first turn's); a turn that redeclares `tools` replaces them for that turn onward.
 
 ## Per-Request Extra Inputs
 
