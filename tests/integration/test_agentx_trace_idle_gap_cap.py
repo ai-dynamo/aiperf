@@ -152,4 +152,15 @@ async def test_agentx_trace_idle_gap_cap_controls_replay_timing(
     if cap_seconds is None:
         assert max(gaps) > 1.0
     else:
-        assert max(gaps) <= cap_seconds + 0.35
+        # 0.15s is the established runtime-latency allowance for this
+        # measurement (see ``test_runtime_idle_cap_handles_independent_stream_clock_drift``
+        # in ``test_weka_flat_split_e2e.py``): the watchdog arms when the credit
+        # return reaches the timing manager, so the observed gap carries one
+        # return hop plus one dispatch hop on top of the cap. It must also stay
+        # below the 0.15s spacing between consecutive parametrized caps, or a
+        # run that ignored the configured value and applied some other fixed
+        # cap would satisfy every case.
+        assert max(gaps) <= cap_seconds + 0.15, (
+            f"tree idle gap reached {max(gaps):.3f}s despite a "
+            f"{cap_seconds:.3f}s trace cap"
+        )
