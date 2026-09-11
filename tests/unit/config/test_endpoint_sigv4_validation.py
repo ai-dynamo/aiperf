@@ -68,9 +68,10 @@ def test_invalid_sigv4_config_rejected(kwargs: dict, expected_message: str) -> N
 
 
 def test_sigv4_with_plain_http_url_rejected() -> None:
-    with pytest.raises(ValueError, match="requires https:// URLs"):
+    """Remote cleartext still exposes the signature and any session token."""
+    with pytest.raises(ValueError, match="https"):
         EndpointConfig(
-            urls=["http://localhost:8000"],
+            urls=["http://runtime.sagemaker.us-east-1.amazonaws.com"],
             auth_type="sigv4",
             aws_region="us-east-1",
             aws_service="sagemaker",
@@ -92,7 +93,7 @@ def test_sigv4_requires_http_transport_gate() -> None:
         aws_service="sagemaker",
         transport="grpc",
     )
-    with pytest.raises(ValueError, match="requires HTTP transport"):
+    with pytest.raises(ValueError, match="transport that signs"):
         cfg._validate_sigv4_auth()
 
 
@@ -111,3 +112,98 @@ def test_valid_sigv4_config_accepted() -> None:
 def test_config_without_auth_or_aws_fields_accepted() -> None:
     config = EndpointConfig(urls=["http://localhost:8000"])
     assert config.auth_type is None
+
+
+class TestTransportGateIsAboutSigningNotIdentity:
+    """The gate protects against a transport that resolves AWS credentials and
+    then signs nothing. That is a question about capability, not about being
+    the ``http`` plugin specifically: signing lives on
+    ``AioHttpTransport._sign_if_needed``, which subclasses inherit.
+
+    Comparing against ``TransportType.HTTP`` excluded every future signing
+    transport by construction -- notably the SageMaker transport (AIP-1177),
+    which subclasses ``AioHttpTransport`` and does sign.
+    """
+
+    def test_a_transport_deriving_from_the_http_transport_is_accepted(self) -> None:
+        from aiperf.transports.aiohttp_transport import AioHttpTransport
+        from tests.harness import mock_plugin
+
+        class _SigningTransport(AioHttpTransport):
+            pass
+
+        with mock_plugin("transport", "signing-thing", _SigningTransport):
+            cfg = EndpointConfig.model_construct(
+                urls=["https://x.example.com"],
+                auth_type="sigv4",
+                aws_region="us-east-1",
+                aws_service="execute-api",
+                transport="signing-thing",
+            )
+            cfg._validate_sigv4_auth()
+
+    def test_a_transport_that_cannot_sign_is_still_rejected(self) -> None:
+        """The original protection stands."""
+        from tests.harness import mock_plugin
+
+        class _NonSigningTransport:
+            pass
+
+        with mock_plugin("transport", "silent-thing", _NonSigningTransport):
+            cfg = EndpointConfig.model_construct(
+                urls=["https://x.example.com"],
+                auth_type="sigv4",
+                aws_region="us-east-1",
+                aws_service="execute-api",
+                transport="silent-thing",
+            )
+            with pytest.raises(ValueError, match="transport that signs"):
+                cfg._validate_sigv4_auth()
+
+
+class TestLoopbackIsExemptFromTheTlsRule:
+    """Signing puts the signature and any ``x-amz-security-token`` into the
+    headers, so remote cleartext is a credential disclosure. Headers that never
+    leave the machine are not, and the documented mock-server workflow -- which
+    is the end-to-end gate for AIP-1177 -- signs against ``http://localhost``.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("http://localhost:8765", id="localhost"),
+            param("http://127.0.0.1:8765", id="ipv4-loopback"),
+            param("http://[::1]:8765", id="ipv6-loopback"),
+        ],
+    )  # fmt: skip
+    def test_loopback_over_http_is_allowed(self, url: str) -> None:
+        cfg = EndpointConfig(
+            urls=[url],
+            auth_type="sigv4",
+            aws_region="us-east-1",
+            aws_service="execute-api",
+        )
+        assert cfg.urls == [url]
+
+    def test_https_is_always_allowed(self) -> None:
+        cfg = EndpointConfig(
+            urls=["https://runtime.sagemaker.us-east-1.amazonaws.com"],
+            auth_type="sigv4",
+            aws_region="us-east-1",
+            aws_service="execute-api",
+        )
+        assert cfg.urls[0].startswith("https://")
+
+    def test_one_remote_cleartext_url_among_several_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="https"):
+            EndpointConfig(
+                urls=["https://good.example.com", "http://bad.example.com"],
+                auth_type="sigv4",
+                aws_region="us-east-1",
+                aws_service="execute-api",
+            )
+
+    def test_unsigned_endpoints_may_still_use_remote_http(self) -> None:
+        """The rule protects credentials; it is not a blanket TLS mandate."""
+        cfg = EndpointConfig(urls=["http://anywhere.example.com"])
+        assert cfg.auth_type is None
