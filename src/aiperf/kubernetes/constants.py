@@ -182,6 +182,13 @@ every namespace it claims. Shared vocabulary between the operator (which
 writes and renews it) and ``aiperf kube list`` (which reads it to fill the
 OWNER column), hence its home in this dependency-free module."""
 
+# Every ``patch_namespaced_*`` call MUST pass one of these as ``_content_type``
+# rather than relying on the kubernetes_asyncio default. Pair
+# JSON_PATCH_CONTENT_TYPE with a list of RFC 6902 operations and
+# MERGE_PATCH_CONTENT_TYPE with a dict.
+JSON_PATCH_CONTENT_TYPE = "application/json-patch+json"
+MERGE_PATCH_CONTENT_TYPE = "application/merge-patch+json"
+
 # JobSet CRD install command surfaced by preflight when the CRD is missing.
 # Uses GitHub's `releases/latest/download/` redirect rather than a pinned tag,
 # matching docs/kubernetes/getting-started.md. Full install instructions live

@@ -41,6 +41,10 @@ from aiperf.controller.system_controller_models import (
     AggregateWorkerStatus,
     build_aggregate_worker_status,
 )
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    MERGE_PATCH_CONTENT_TYPE,
+)
 from aiperf.kubernetes.crd_models import build_phase_progress
 from aiperf.kubernetes.phase import as_phase
 
@@ -510,7 +514,7 @@ async def _patch_jobset_annotations(
             namespace=namespace,
             name=jobset_name,
             body=patch_body,
-            _content_type="application/json-patch+json",
+            _content_type=JSON_PATCH_CONTENT_TYPE,
         )
 
 
@@ -556,7 +560,7 @@ async def _patch_aiperfjob_annotations(
             namespace=namespace,
             name=job_id,
             body=patch_body,
-            _content_type="application/json-patch+json",
+            _content_type=JSON_PATCH_CONTENT_TYPE,
         )
 
 
@@ -619,7 +623,7 @@ async def _push_aiperfjob_status(
             namespace=namespace,
             name=job_id,
             body=heartbeat_patch,
-            _content_type="application/json-patch+json",
+            _content_type=JSON_PATCH_CONTENT_TYPE,
         )
 
         phases_data, current_phase = _build_phases_payload(phases)
@@ -826,7 +830,7 @@ async def _write_status_patch(
         await custom_api.patch_namespaced_custom_object_status(
             **ref,
             body={"status": status_patch},
-            _content_type="application/merge-patch+json",
+            _content_type=MERGE_PATCH_CONTENT_TYPE,
         )
         return
 
@@ -858,7 +862,7 @@ async def _write_status_patch(
         await custom_api.patch_namespaced_custom_object_status(
             **ref,
             body=patch_ops,
-            _content_type="application/json-patch+json",
+            _content_type=JSON_PATCH_CONTENT_TYPE,
         )
     except ApiException as exc:
         if _is_json_patch_test_failure(exc):
