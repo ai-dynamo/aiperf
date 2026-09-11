@@ -8,9 +8,12 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
+
+from aiperf.common.constants import IS_WINDOWS
 
 UI_DIR = Path(__file__).resolve().parents[2] / "src" / "aiperf" / "operator" / "ui"
 
@@ -84,20 +87,35 @@ globalThis.document = globalThis.document ?? {
 # fast (rather than hanging the whole suite) if a script never settles.
 NODE_TIMEOUT_S = 30
 
+# Outer @pytest.mark.timeout() for tests with a short, functional run_node()
+# timeout: must exceed that inner timeout by enough Windows startup headroom.
+NODE_TEST_TIMEOUT_S = 45 if IS_WINDOWS else 15
+
 
 def run_node(script: str, timeout: float = NODE_TIMEOUT_S) -> str:
-    result = subprocess.run(
-        ["node", "--input-type=module", "-e", script],
-        check=False,
-        capture_output=True,
-        text=True,
-        # lib/format.js formats with the viewer's locale (`toLocaleString`
-        # without an explicit locale), and node takes that from the ambient
-        # LC_ALL/LANG. Pin it so a developer's shell locale cannot change
-        # which separators the assertions see.
-        env={**os.environ, "LC_ALL": "en_US.UTF-8", "LANG": "en_US.UTF-8"},
-        timeout=timeout,
-    )
+    # A script this large can exceed Windows's ~32K CreateProcess command-line
+    # limit if passed via `-e` (POSIX execve's ARG_MAX is far larger, so this
+    # never showed up there). Write it to a real .mjs file instead.
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".mjs", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(script)
+        script_path = f.name
+    try:
+        result = subprocess.run(
+            ["node", script_path],
+            check=False,
+            capture_output=True,
+            text=True,
+            # lib/format.js formats with the viewer's locale (`toLocaleString`
+            # without an explicit locale), and node takes that from the ambient
+            # LC_ALL/LANG. Pin it so a developer's shell locale cannot change
+            # which separators the assertions see.
+            env={**os.environ, "LC_ALL": "en_US.UTF-8", "LANG": "en_US.UTF-8"},
+            timeout=timeout,
+        )
+    finally:
+        os.unlink(script_path)
     if result.returncode != 0:
         raise AssertionError(result.stderr or result.stdout)
     return result.stdout.strip()
