@@ -103,6 +103,40 @@ class TemplateConfig(BaseConfig):
     ]
 
 
+def _transport_signs(transport: TransportType) -> bool:
+    """Whether the named transport applies the configured request signer.
+
+    Signing lives on ``AioHttpTransport._sign_if_needed``; anything deriving from
+    it inherits the call site. Resolved through the plugin registry rather than an
+    enum comparison so that adding a signing transport requires no edit here.
+    """
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+    from aiperf.transports.aiohttp_transport import AioHttpTransport
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return False
+    return isinstance(transport_cls, type) and issubclass(
+        transport_cls, AioHttpTransport
+    )
+
+
+def _is_cleartext_remote(url: str) -> bool:
+    """Whether ``url`` would send request headers unencrypted off-box.
+
+    Loopback is deliberately exempt: the documented mock-server workflow signs
+    against ``http://localhost``, and headers that never leave the machine are not
+    disclosed by the absence of TLS.
+    """
+    parsed = urlparse(url if "://" in url else f"http://{url}")
+    if parsed.scheme != "http":
+        return False
+    host = (parsed.hostname or "").lower()
+    return not (host in {"localhost", "::1"} or host.startswith("127."))
+
+
 class EndpointConfig(BaseConfig):
     """
     Endpoint configuration for connecting to inference servers.
@@ -762,14 +796,17 @@ class EndpointConfig(BaseConfig):
                 f"non-empty value."
             )
 
-        # Transport None means auto-detect HTTP from URL — allowed. Only the
-        # HTTP transport (aiohttp_transport.py) calls _sign_if_needed; any other
-        # transport would resolve AWS credentials and sign nothing, silently
-        # producing unauthenticated requests.
-        if self.transport is not None and self.transport != TransportType.HTTP:
+        # Transport None means auto-detect HTTP from URL — allowed. Otherwise the
+        # transport must actually sign: one lacking the _sign_if_needed call site
+        # would resolve AWS credentials and sign nothing, silently producing
+        # unauthenticated requests. Tested by capability rather than identity with
+        # TransportType.HTTP, which would exclude every transport deriving from the
+        # HTTP one -- they inherit the call site and do sign.
+        if self.transport is not None and not _transport_signs(self.transport):
             raise ValueError(
-                "--auth-type sigv4 requires HTTP transport; unsupported transport "
-                f"{self.transport!r}"
+                f"--auth-type {self.auth_type} requires a transport that signs "
+                f"requests; {self.transport!r} does not. Signing is implemented by "
+                "the HTTP transport and anything deriving from it."
             )
 
         if self.request_content_type == RequestContentType.MULTIPART_FORM_DATA:
@@ -782,13 +819,15 @@ class EndpointConfig(BaseConfig):
 
         # SigV4 signing adds AWS credentials (Authorization header and optional
         # X-Amz-Security-Token) to outbound requests. Sending those over plain
-        # HTTP would expose them to interception, so require https for every
-        # configured URL.
-        for url in self.urls:
-            scheme = urlparse(url).scheme.lower()
-            if scheme != "https":
-                raise ValueError(
-                    f"--auth-type sigv4 requires https:// URLs; URL {url!r} uses "
-                    f"scheme {scheme!r}."
-                )
+        # HTTP would expose them to interception, so require https -- except for
+        # loopback, where the headers never leave the machine and where the
+        # documented mock-server workflow runs.
+        insecure = [url for url in self.urls if _is_cleartext_remote(url)]
+        if insecure:
+            raise ValueError(
+                f"--auth-type {self.auth_type} puts the signature and any session "
+                "token into the request headers; sending those over plain HTTP "
+                f"would disclose them: {', '.join(insecure)}. Use https:// URLs, "
+                "or drop --auth-type."
+            )
         return self
