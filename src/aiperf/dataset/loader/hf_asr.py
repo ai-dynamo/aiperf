@@ -82,7 +82,6 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
             return []
 
     def _duration_seconds(self, audio_value: _HFAudioBytesRow) -> float | None:
-        """Estimate clip duration from embedded bytes or a file header."""
         raw_bytes = audio_value.get("bytes")
         source = io.BytesIO(raw_bytes) if raw_bytes else audio_value.get("path")
         if not source:
