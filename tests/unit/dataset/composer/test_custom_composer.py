@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -30,6 +31,57 @@ class TestInitialization:
 
         assert composer is not None
         assert isinstance(composer, CustomDatasetComposer)
+
+
+@pytest.mark.parametrize("basis", ["auto", "absolute", "relative"])
+@pytest.mark.parametrize("explicit_format", [False, True])
+def test_weka_basis_rejected_after_single_turn_resolution(
+    tmp_path: Path, basis: str, explicit_format: bool
+) -> None:
+    path = tmp_path / "single.jsonl"
+    path.touch()
+    kwargs = (
+        {"custom_dataset_type": CustomDatasetType.SINGLE_TURN}
+        if explicit_format
+        else {}
+    )
+    cli = CLIConfig(
+        model_names=["test-model"],
+        input_file=str(path),
+        weka_nested_timestamp_basis=basis,
+        **kwargs,
+    )
+    composer = CustomDatasetComposer(run=make_run(cli), tokenizer=None)
+    with (
+        patch.object(
+            composer, "_infer_dataset_type", return_value=CustomDatasetType.SINGLE_TURN
+        ),
+        patch.object(composer, "_create_loader_instance") as create_loader,
+        pytest.raises(ValueError, match="weka-nested-timestamp-basis.*single_turn"),
+    ):
+        composer.create_dataset()
+    create_loader.assert_not_called()
+
+
+def test_weka_basis_allowed_after_automatic_weka_resolution(tmp_path: Path) -> None:
+    path = tmp_path / "weka.json"
+    path.touch()
+    cli = CLIConfig(
+        model_names=["test-model"],
+        input_file=str(path),
+        weka_nested_timestamp_basis="relative",
+    )
+    composer = CustomDatasetComposer(run=make_run(cli), tokenizer=None)
+    composer.loader = Mock()
+    composer.loader.convert_to_conversations.return_value = []
+    with (
+        patch.object(
+            composer, "_infer_dataset_type", return_value=CustomDatasetType.WEKA_TRACE
+        ),
+        patch.object(composer, "_create_loader_instance") as create_loader,
+    ):
+        assert composer.create_dataset() == []
+    create_loader.assert_called_once_with(CustomDatasetType.WEKA_TRACE)
 
 
 MOCK_SINGLE_TURN_CONTENT = """{"text": "Write a haiku.", "output_length": 50}

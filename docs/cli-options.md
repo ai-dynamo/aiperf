@@ -665,6 +665,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
+
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
@@ -2257,6 +2262,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
+
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
@@ -3843,6 +3853,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--hf-weka-dataset` `<str>`
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
+
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
 
 #### `--dataset-filter` `<list>`
 
@@ -5937,6 +5952,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--hf-weka-dataset` `<str>`
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
+
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
 
 #### `--dataset-filter` `<list>`
 

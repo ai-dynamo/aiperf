@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, PrivateAttr
 
 from aiperf.common.models import AIPerfBaseModel
 
@@ -24,7 +24,8 @@ class WekaNormalRequest(AIPerfBaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     t: float = Field(
-        description="Request timestamp in seconds from conversation start."
+        description="Request timestamp in seconds. Top-level requests use root-trace "
+        "time; nested requests use the corpus-selected Weka timestamp basis."
     )
     type: Literal["n"] = Field(description="Discriminator: normal API call.")
     model: str = Field(description="Model identifier for this request.")
@@ -61,7 +62,8 @@ class WekaStreamingRequest(AIPerfBaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     t: float = Field(
-        description="Request timestamp in seconds from conversation start."
+        description="Request timestamp in seconds. Top-level requests use root-trace "
+        "time; nested requests use the corpus-selected Weka timestamp basis."
     )
     type: Literal["s"] = Field(description="Discriminator: streaming API call.")
     model: str = Field(description="Model identifier for this request.")
@@ -143,6 +145,8 @@ class WekaTrace(AIPerfBaseModel):
     """A single Weka trace file."""
 
     model_config = ConfigDict(extra="forbid")
+
+    _weka_timestamp_resolution: Any = PrivateAttr(default=None)
 
     id: str = Field(description="Trace identifier (session ID).")
     models: list[str] = Field(description="Models used in the trace.")

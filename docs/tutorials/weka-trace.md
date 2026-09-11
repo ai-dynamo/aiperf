@@ -18,6 +18,33 @@ Each trace file is a single JSON object describing one coding conversation:
 - `requests` is an ordered list of normal API calls (`type: "n"`), streaming API calls (`type: "s"`), and subagent markers (`type: "subagent"`).
 - Each normal/streaming request carries `hash_ids` (KV-cache block identifiers) used to simulate cache reuse during replay.
 - Subagent markers point at nested sub-conversations — AIPerf replays them as separate concurrent child sessions that the parent waits on before resuming.
+- Weka producers use two nested timestamp conventions. Raw
+  `kv-cache-tester` traces store subagent request `t` values relative to the
+  subagent marker, while SemiAnalysis-published AgentX traces store them as
+  absolute root-trace timestamps. AIPerf resolves one convention for the whole
+  input corpus and canonicalizes every nested request to root-absolute time
+  before reconstruction.
+
+The default `--weka-nested-timestamp-basis auto` scans every trace before any
+conversation is emitted. If any nested request has `t` more than one
+microsecond before its marker, AIPerf interprets every nested timestamp in the
+corpus as `relative`; otherwise it interprets the corpus as `absolute`. This is
+a compatibility heuristic, not proof of the producer format: a sufficiently
+delayed relative request can look absolute, mixed producer conventions are not
+always detectable from timestamp values alone, and one malformed absolute
+request before its marker makes the heuristic select relative for the whole
+corpus. Use
+`--weka-nested-timestamp-basis absolute` or `relative` when the producer is
+known. AIPerf logs one INFO summary naming the resolved basis, the heuristic or
+configured decision, and the number of traces, subagents, and inner requests
+validated. In explicit `absolute` mode, an inner request more than one
+microsecond before its marker is rejected; smaller floating-point jitter is
+clamped to the marker so replay never starts a child before spawn.
+
+Canonicalization metadata is attached only to in-memory trace objects so
+copied or reordered containers are not shifted a second time. Serializing and
+reparsing those objects creates a new raw Weka input boundary and runs the
+configured or automatic interpretation again.
 
 AIPerf maps the format directly onto its DAG datastructure:
 
@@ -37,6 +64,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --input-file artifacts/kv-cache-tester/traces/ \
+    --weka-nested-timestamp-basis auto \
     --fixed-schedule
 ```
 
@@ -74,7 +102,7 @@ If you don't already have the trace corpus on disk, SemiAnalysis-published Huggi
 - [`semianalysisai/cc-traces-weka-061526`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-061526) — pinned historical full-context corpus (alias `semianalysis_cc_traces_weka_061526`): 233 v7 traces with full subagent fan-out.
 - [`semianalysisai/cc-traces-weka-061526-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-061526-256k) — 232-trace historical 256k-capped sibling (alias `semianalysis_cc_traces_weka_061526_256k`).
 - [`semianalysisai/cc-traces-weka-062126`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126) — pinned current full-context corpus (alias `semianalysis_cc_traces_weka_062126`): 393 v7 traces with full subagent fan-out (parent + child SPAWN/JOIN topology). This is the canonical AgentX MVP corpus.
-- [`semianalysisai/cc-traces-weka-062126-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126-256k) — 393-trace 256k-capped sibling (alias `semianalysis_cc_traces_weka_062126_256k`). Requests over the cap are filtered while surviving relative timestamps and subagent overlap are preserved.
+- [`semianalysisai/cc-traces-weka-062126-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126-256k) — 393-trace 256k-capped sibling (alias `semianalysis_cc_traces_weka_062126_256k`). Requests over the cap are filtered while surviving recorded timing and subagent overlap are preserved.
 
 ```bash
 aiperf profile \

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -13,6 +14,7 @@ import pytest
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.weka_trace import (
     WekaTraceLoader,
+    _canonicalize_weka_nested_timestamps,
     _expand_subagent_to_child_plans,
     _IdleGapTimeWarp,
     _sa_end_seconds,
@@ -47,8 +49,8 @@ def _stub_pg(loader) -> None:
     loader.prompt_generator._tokenized_corpus = list(range(10000, 11000))
     loader.prompt_generator._corpus_size = 1000
     stub_hash_id_corpus_rng(loader.prompt_generator)
-    loader.prompt_generator.tokenizer.decode.side_effect = (
-        lambda toks: f"<dec:{len(toks)}>"
+    loader.prompt_generator.tokenizer.decode.side_effect = lambda toks: (
+        f"<dec:{len(toks)}>"
     )
     loader._tokenizer_name = "t"
     loader._trust_remote_code = False
@@ -343,24 +345,318 @@ def test_nested_chain_equal_t_disjoint_requests_split_deterministically():
     assert [r.hash_ids[0] for r in plans[1].requests] == [2]
 
 
-def test_nested_chain_detection_uses_root_trace_timeline():
-    """Mixed relative/absolute inner timestamps chain on the normalized root-trace timeline, not raw ``t``, forking where the raw timeline would have merged."""
-    entry = _make_subagent_entry(
-        t=100.0,
-        requests=[
-            _inner_request(t=10.0, api_time=50.0, hash_ids=[1]).model_dump(
-                by_alias=True
-            ),
-            _inner_request(t=150.0, api_time=1.0, hash_ids=[1, 2]).model_dump(
-                by_alias=True
-            ),
-        ],
+def test_public_loader_absolute_rejects_request_before_marker_with_source(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(100.0, "a"), _normal(200.0, [1, 2])],
+        trace_id="bad_absolute",
     )
-    plans = _expand_subagent_to_child_plans("tr", 0, 0, entry, 64)
-    assert [p.session_id for p in plans] == ["tr::sa:a", "tr::sa:a:fa:000"]
-    # Normalized coordinates carried on the plan requests themselves.
-    assert plans[0].requests[0].t == pytest.approx(110.0)
-    assert plans[1].requests[0].t == pytest.approx(150.0)
+    trace["requests"][1]["requests"][0]["t"] = 10.0
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="absolute"))
+    with pytest.raises(
+        DatasetLoaderError,
+        match=(
+            r"Trace 'bad_absolute' in .*bad\.json, subagent 'a': inner "
+            r"request\[0\] timestamp 10\.0 precedes its marker timestamp 100\.0"
+        ),
+    ):
+        loader.convert_to_conversations(loader.load_dataset())
+
+
+def test_absolute_timestamp_within_epsilon_clamps_to_marker(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace")
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(100.0, "a"), _normal(200.0, [1, 2])],
+        trace_id="jitter",
+    )
+    trace["requests"][1]["requests"][0]["t"] = 99.9999995
+    path = tmp_path / "jitter.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="absolute"))
+
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+    child = next(c for c in conversations if c.session_id == "jitter::sa:a")
+    assert child.turns[0].timestamp == pytest.approx(100_000.0)
+    assert "basis 'absolute' (basis was explicitly configured)" in caplog.text
+    assert "clamped 1 sub-microsecond pre-marker timestamp" in caplog.text
+
+
+@pytest.mark.parametrize("basis", ["auto", "relative"])
+def test_relative_nested_timestamps_canonicalize_for_whole_corpus(
+    tmp_path, caplog, basis
+):
+    caplog.set_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace")
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(100.0, "a"), _normal(200.0, [1, 2])],
+        trace_id="raw_weka",
+    )
+    trace["requests"][1]["requests"] = [
+        _normal(0.0, [8], model="claude-haiku-4-5-20251001"),
+        _normal(5.0, [8, 9], model="claude-haiku-4-5-20251001"),
+    ]
+    path = tmp_path / "raw.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis=basis))
+
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+    child = next(c for c in conversations if c.session_id == "raw_weka::sa:a")
+    assert [turn.timestamp for turn in child.turns] == pytest.approx(
+        [100_000.0, 105_000.0]
+    )
+    expected_decision = (
+        "auto heuristic found 2 nested request(s)"
+        if basis == "auto"
+        else "basis was explicitly configured"
+    )
+    assert f"basis 'relative' ({expected_decision}" in caplog.text
+    if basis == "auto":
+        assert "heuristic is not proof of the producer format" in caplog.text
+
+
+def test_preflighted_relative_corpus_survives_copied_and_reordered_containers(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(100.0, "a"), _normal(200.0, [1, 2])],
+        trace_id="repeat",
+    )
+    trace["requests"][1]["requests"][0]["t"] = 0.0
+    path = tmp_path / "repeat.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="relative"))
+    normalized, _ = loader.preflight_nested_timestamps(loader.load_dataset())
+    copied = {
+        trace_id: list(reversed(traces)) for trace_id, traces in normalized.items()
+    }
+    deep_copied = {
+        trace_id: [trace.model_copy(deep=True) for trace in traces]
+        for trace_id, traces in reversed(list(normalized.items()))
+    }
+    copied_again, repeated_resolution = loader.preflight_nested_timestamps(copied)
+
+    first = loader.convert_to_conversations(normalized)
+    second = loader.convert_to_conversations(copied)
+    third = loader.convert_to_conversations(deep_copied)
+    first_child = next(c for c in first if c.session_id == "repeat::sa:a")
+    second_child = next(c for c in second if c.session_id == "repeat::sa:a")
+    third_child = next(c for c in third if c.session_id == "repeat::sa:a")
+    assert repeated_resolution.basis == "relative"
+    assert copied_again["repeat"][0].requests[1].requests[0].t == 100.0
+    assert second_child.turns[0].timestamp == first_child.turns[0].timestamp
+    assert third_child.turns[0].timestamp == first_child.turns[0].timestamp
+
+
+def test_auto_uses_any_early_child_as_corpus_wide_relative_heuristic(tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace")
+    absolute = _base_trace(
+        [_normal(0.0, [1]), _subagent(10.0, "abs")], trace_id="absolute"
+    )
+    relative = _base_trace(
+        [_normal(0.0, [1]), _subagent(10.0, "rel")], trace_id="relative"
+    )
+    relative["requests"][1]["requests"][0]["t"] = 0.0
+    (tmp_path / "a.json").write_text(json.dumps(absolute))
+    (tmp_path / "r.json").write_text(json.dumps(relative))
+    loader = _make_loader(tmp_path, _mk_user_config(weka_nested_timestamp_basis="auto"))
+
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+    absolute_child = next(
+        c for c in conversations if c.session_id == "absolute::sa:abs"
+    )
+    relative_child = next(
+        c for c in conversations if c.session_id == "relative::sa:rel"
+    )
+    assert absolute_child.turns[0].timestamp == pytest.approx(20_000.0)
+    assert relative_child.turns[0].timestamp == pytest.approx(10_000.0)
+    assert "selected relative for the whole corpus" in caplog.text
+    assert "heuristic is not proof" in caplog.text
+    assert "cannot reliably detect mixed producer conventions" in caplog.text
+
+
+def test_auto_without_early_child_selects_absolute_for_ambiguous_values(
+    tmp_path, caplog
+):
+    caplog.set_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace")
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(10.0, "ambiguous")], trace_id="ambiguous"
+    )
+    trace["requests"][1]["requests"][0]["t"] = 20.0
+    path = tmp_path / "ambiguous.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="auto"))
+
+    conversations = loader.convert_to_conversations(loader.load_dataset())
+    child = next(c for c in conversations if c.session_id == "ambiguous::sa:ambiguous")
+    assert child.turns[0].timestamp == pytest.approx(20_000.0)
+    assert "selected absolute for the whole corpus" in caplog.text
+
+
+def test_auto_preserves_delayed_absolute_children(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(10.0, "absolute")], trace_id="absolute"
+    )
+    trace["requests"][1]["requests"] = [
+        _normal(10.2, [8], model="claude-haiku-4-5-20251001"),
+        _normal(11.0, [8, 9], model="claude-haiku-4-5-20251001"),
+    ]
+    path = tmp_path / "absolute.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="auto"))
+
+    normalized, resolution = loader.preflight_nested_timestamps(loader.load_dataset())
+    nested = normalized["absolute"][0].requests[1].requests
+    assert resolution.basis == "absolute"
+    assert [request.t for request in nested] == [10.2, 11.0]
+
+
+def test_auto_inspects_later_children_not_only_first_anchor(tmp_path):
+    trace = _base_trace([_normal(0.0, [1]), _subagent(10.0, "tail")], trace_id="tail")
+    trace["requests"][1]["requests"] = [
+        _normal(10.0, [8], model="claude-haiku-4-5-20251001"),
+        _normal(5.0, [8, 9], model="claude-haiku-4-5-20251001"),
+    ]
+    path = tmp_path / "tail.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="auto"))
+
+    normalized, resolution = loader.preflight_nested_timestamps(loader.load_dataset())
+    nested = normalized["tail"][0].requests[1].requests
+    assert resolution.basis == "relative"
+    assert [request.t for request in nested] == [20.0, 15.0]
+
+
+def test_auto_delayed_relative_start_uses_early_child_evidence(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(100.0, "delayed")], trace_id="delayed"
+    )
+    trace["requests"][1]["requests"][0]["t"] = 50.0
+    path = tmp_path / "delayed.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="auto"))
+
+    normalized, resolution = loader.preflight_nested_timestamps(loader.load_dataset())
+    assert resolution.basis == "relative"
+    assert normalized["delayed"][0].requests[1].requests[0].t == 150.0
+
+
+def test_explicit_relative_overrides_coincidental_absolute_looking_anchor(
+    tmp_path, caplog
+):
+    caplog.set_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace")
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(10.0, "coincidental")],
+        trace_id="coincidental",
+    )
+    path = tmp_path / "coincidental.json"
+    path.write_text(json.dumps(trace))
+    auto_loader = _make_loader(
+        path, _mk_user_config(weka_nested_timestamp_basis="auto")
+    )
+    relative_loader = _make_loader(
+        path, _mk_user_config(weka_nested_timestamp_basis="relative")
+    )
+
+    auto_data, auto_resolution = auto_loader.preflight_nested_timestamps(
+        auto_loader.load_dataset()
+    )
+    relative_conversations = relative_loader.convert_to_conversations(
+        relative_loader.load_dataset()
+    )
+    relative_child = next(
+        c
+        for c in relative_conversations
+        if c.session_id == "coincidental::sa:coincidental"
+    )
+    assert auto_resolution.basis == "absolute"
+    assert auto_data["coincidental"][0].requests[1].requests[0].t == 10.0
+    assert relative_child.turns[0].timestamp == pytest.approx(20_000.0)
+    assert "conflict with absolute-looking anchor evidence" in caplog.text
+
+
+def test_auto_zero_marker_is_equivalent_and_no_subagent_is_not_applicable(
+    tmp_path, caplog
+):
+    caplog.set_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace")
+    zero = _base_trace([_normal(0.0, [1]), _subagent(0.0, "zero")], trace_id="zero")
+    zero_path = tmp_path / "zero.json"
+    zero_path.write_text(json.dumps(zero))
+    zero_loader = _make_loader(
+        zero_path, _mk_user_config(weka_nested_timestamp_basis="auto")
+    )
+    zero_loader.convert_to_conversations(zero_loader.load_dataset())
+    assert "relative and absolute interpretations are equivalent" in caplog.text
+
+    caplog.clear()
+    plain = _base_trace([_normal(0.0, [1])], trace_id="plain")
+    plain_path = tmp_path / "plain.json"
+    plain_path.write_text(json.dumps(plain))
+    plain_loader = _make_loader(
+        plain_path, _mk_user_config(weka_nested_timestamp_basis="auto")
+    )
+    plain_loader.convert_to_conversations(plain_loader.load_dataset())
+    assert "timestamp basis is not applicable" in caplog.text
+
+
+def test_constructor_rejects_invalid_timestamp_basis(tmp_path):
+    path = tmp_path / "trace.json"
+    path.write_text(json.dumps(_base_trace([_normal(0.0, [1])], trace_id="trace")))
+    with pytest.raises(ValueError, match="nested_timestamp_basis must be"):
+        WekaTraceLoader(
+            filename=str(path),
+            run=_mk_user_config(),
+            nested_timestamp_basis="sometimes",
+        )
+    with pytest.raises(ValueError, match="configured_basis must be"):
+        _canonicalize_weka_nested_timestamps(
+            {}, configured_basis="sometimes", source_by_trace={}
+        )
+
+
+def test_preflight_rejects_mixed_raw_and_canonical_objects(tmp_path):
+    first = _base_trace([_normal(0.0, [1])], trace_id="first")
+    second = _base_trace([_normal(0.0, [2])], trace_id="second")
+    first_path = tmp_path / "first.json"
+    second_path = tmp_path / "second.json"
+    first_path.write_text(json.dumps(first))
+    second_path.write_text(json.dumps(second))
+    loader = _make_loader(
+        first_path, _mk_user_config(weka_nested_timestamp_basis="auto")
+    )
+    canonical, _ = loader.preflight_nested_timestamps(loader.load_dataset())
+    raw_second = WekaTraceLoader(
+        filename=str(second_path), run=_mk_user_config()
+    ).load_dataset()
+    mixed = {**canonical, **raw_second}
+
+    with pytest.raises(DatasetLoaderError, match="mixes raw and already-canonicalized"):
+        loader.preflight_nested_timestamps(mixed)
+
+
+@pytest.mark.parametrize("invalid", ["NaN", "Infinity", -1.0, 1e308])
+def test_corpus_preflight_rejects_invalid_nested_timestamp(tmp_path, invalid):
+    trace = _base_trace([_normal(0.0, [1]), _subagent(10.0, "bad")], trace_id="invalid")
+    trace["requests"][1]["requests"][0]["t"] = invalid
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="absolute"))
+
+    with pytest.raises(DatasetLoaderError, match=r"must be finite, non-negative"):
+        loader.convert_to_conversations(loader.load_dataset())
+
+
+def test_relative_canonical_timestamp_rejects_millisecond_overflow(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(1e305, "overflow")], trace_id="overflow"
+    )
+    trace["requests"][1]["requests"][0]["t"] = 1e305
+    path = tmp_path / "overflow.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="relative"))
+
+    with pytest.raises(
+        DatasetLoaderError,
+        match=r"canonical inner request\[0\].*representable in milliseconds",
+    ):
+        loader.convert_to_conversations(loader.load_dataset())
 
 
 def test_spawned_chain_inherits_declared_prefix_only_when_proven():
@@ -420,8 +716,7 @@ def test_split_chains_disabled_emits_one_sequential_child():
     assert [r.hash_ids for r in plans[0].requests] == [[1], [50]]
 
 
-def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
-    """Child Turn timestamps live in root-trace coordinates, shifting relative inner ``t`` by ``entry.t`` at emission while delays stay the recorded gaps."""
+def test_absolute_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
     sa = {
         "t": 10.0,
         "type": "subagent",
@@ -431,11 +726,11 @@ def test_relative_inner_timestamps_emit_root_timeline_child_turns(tmp_path):
         "total_tokens": 10,
         "tool_use_count": 1,
         "status": "completed",
-        # Relative inner timestamps: 0.0 and 5.0 seconds after the spawn
-        # marker at t=10 -> root-trace 10.0 and 15.0.
         "requests": [
-            _inner_request(t=0.0, api_time=1.0, hash_ids=[8]).model_dump(by_alias=True),
-            _inner_request(t=5.0, api_time=1.0, hash_ids=[8, 9]).model_dump(
+            _inner_request(t=10.0, api_time=1.0, hash_ids=[8]).model_dump(
+                by_alias=True
+            ),
+            _inner_request(t=15.0, api_time=1.0, hash_ids=[8, 9]).model_dump(
                 by_alias=True
             ),
         ],

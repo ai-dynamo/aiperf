@@ -718,14 +718,7 @@ class TestNestedTrace:
         entry = next(r for r in blob["requests"] if r["type"] == "subagent")
         assert min(r["t"] for r in entry["requests"]) >= entry["t"]
 
-    def test_guard_clamps_an_inner_request_that_precedes_its_marker(self):
-        """Drive the guard directly: containment cannot produce this input.
-
-        Downstream reads an inner t below the marker as subagent-relative and
-        rewrites it, which would scatter one request far into the future. The
-        guard is only reachable by handing ``build_subagent_entry`` a spawn that
-        starts after its child, which the join never does.
-        """
+    def test_guard_rejects_an_inner_request_that_precedes_its_marker(self):
         from aiperf.dataset.loader._tracelab_convert import Spawn, build_subagent_entry
 
         child = child_session(start=0.0, n=3)
@@ -738,12 +731,10 @@ class TestNestedTrace:
             duration_ms=100000,
             kind="claude",
         )
-        entry = build_subagent_entry(
-            late, child_rows=child, block_size=64, minter=HashIdMinter(), t0=t0
-        )
-        assert entry["t"] == pytest.approx(100.0)
-        assert all(r["t"] >= entry["t"] for r in entry["requests"])
-        assert entry["requests"][0]["t"] == pytest.approx(100.0)
+        with pytest.raises(ValueError, match=r"precedes its spawn marker"):
+            build_subagent_entry(
+                late, child_rows=child, block_size=64, minter=HashIdMinter(), t0=t0
+            )
 
     def test_child_first_request_has_no_think_time(self):
         entry = next(r for r in self._nested()["requests"] if r["type"] == "subagent")
