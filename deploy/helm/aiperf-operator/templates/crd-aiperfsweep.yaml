@@ -566,12 +566,12 @@ spec:
                         type: string
                         description: 'Base filename override applied to ALL profile and server-metrics exports. With prefix=''foo''
                           every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`,
-                          `foo_gpu_telemetry.jsonl`, `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default),
-                          historical per-file names are used: `profile_export_aiperf.csv/json`, `profile_export.jsonl`, `profile_export_raw.jsonl`,
-                          `gpu_telemetry_export.jsonl`, `server_metrics_export.{jsonl,json,csv,parquet}`. Known suffixes (`_raw.jsonl`,
-                          `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`, `_server_metrics.{jsonl,json,csv,parquet}`, `.csv`/`.json`/`.jsonl`/`.parquet`)
-                          are stripped from the supplied value so `--profile-export-prefix foo_raw.jsonl` still yields a clean
-                          `foo` base.'
+                          `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, `foo_server_metrics.{jsonl,json,csv,parquet}`. When
+                          unset (the default), historical per-file names are used: `profile_export_aiperf.csv/json`, `profile_export.jsonl`,
+                          `profile_export_raw.jsonl`, `outputs.json`, `gpu_telemetry_export.jsonl`, `server_metrics_export.{jsonl,json,csv,parquet}`.
+                          Known suffixes (`_raw.jsonl`, `_outputs.json`, `_timeslices.{csv,json}`, `_gpu_telemetry.jsonl`,
+                          `_server_metrics.{jsonl,json,csv,parquet}`, `.csv`/`.json`/`.jsonl`/`.parquet`) are stripped from
+                          the supplied value so `--profile-export-prefix foo_raw.jsonl` still yields a clean `foo` base.'
                       summary:
                         x-kubernetes-preserve-unknown-fields: true
                         description: Summary export formats. Only 'json' is wired up to this field; the CSV summary is emitted
@@ -632,9 +632,9 @@ spec:
                       autoPlot:
                         type: boolean
                         description: Auto-invoke `aiperf plot` against the artifact directory after the benchmark completes.
-                          Resolved by the CLI converter from the tri-state CLI flag and the active search recipe's auto_plot_default;
-                          by the time it lands here it is a plain bool.
-                        default: false
+                          Unset (the default) means a `plot:` section implies True; set False to suppress plots even with
+                          one, True to force them. `AIPerfConfig` resolves this to a concrete bool, so any config that came
+                          through the loader carries a plain bool.
                       plotRequired:
                         type: boolean
                         description: 'Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only
@@ -642,8 +642,9 @@ spec:
                         default: false
                       exportOutputsJson:
                         type: boolean
-                        description: Export generated response text to outputs.json after the run.
-                        default: false
+                        description: Export generated response text after the run, to `outputs.json` or `<prefix>_outputs.json`
+                          when `prefix` is set. Unset (the default) means the `raw` export level implies it; set False to
+                          opt out at raw, True to force it at any level. Always a concrete bool once validation has run.
                   slos:
                     type: object
                     additionalProperties:

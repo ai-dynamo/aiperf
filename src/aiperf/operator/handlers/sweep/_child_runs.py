@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn
 import orjson
 
 from aiperf.common.endpoint_credentials import redact_sweep_public_data
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    MERGE_PATCH_CONTENT_TYPE,
+)
 from aiperf.operator.environment import OperatorEnvironment
 
 if TYPE_CHECKING:
@@ -356,7 +360,7 @@ async def _append_run_entry_patch(
             namespace=namespace,
             name=sweep_name,
             body=body,
-            _content_type="application/json-patch+json",
+            _content_type=JSON_PATCH_CONTENT_TYPE,
         )
     except ApiException as e:
         if e.status == 404:
@@ -404,7 +408,7 @@ async def _initialize_runs_if_absent(
             namespace=namespace,
             name=sweep_name,
             body=body,
-            _content_type="application/json-patch+json",
+            _content_type=JSON_PATCH_CONTENT_TYPE,
         )
     except ApiException as e:
         if e.status == 404:
@@ -515,13 +519,13 @@ async def _stamp_runs_truncated(
     content_type: str
     if expected_uid is None:
         body = {"status": {"runsTruncated": value}}
-        content_type = "application/merge-patch+json"
+        content_type = MERGE_PATCH_CONTENT_TYPE
     else:
         body = [
             {"op": "test", "path": "/metadata/uid", "value": expected_uid},
             {"op": "add", "path": "/status/runsTruncated", "value": value},
         ]
-        content_type = "application/json-patch+json"
+        content_type = JSON_PATCH_CONTENT_TYPE
     try:
         await custom_objects.patch_namespaced_custom_object_status(
             group="aiperf.nvidia.com",

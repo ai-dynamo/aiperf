@@ -28,6 +28,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from tests.harness.k8s import decode_patch_like_apiserver
+
 
 class FakeApiserver:
     """In-memory fake apiserver shared across one test scenario."""
@@ -68,8 +70,10 @@ class FakeApiserver:
         plural: str,
         name: str,
         body: dict[str, Any] | list[dict[str, Any]],
+        _content_type: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
+        decode_patch_like_apiserver(body, _content_type)
         key = (namespace, plural, name)
         self.patches.append((key, copy.deepcopy(body)))
         if key in self.patch_404:
@@ -107,6 +111,9 @@ class FakeApiserver:
         custom = MagicMock()
         custom.get_namespaced_custom_object = AsyncMock(side_effect=self._get)
         custom.patch_namespaced_custom_object = AsyncMock(side_effect=self._patch)
+        custom.patch_namespaced_custom_object_status = AsyncMock(
+            side_effect=self._patch
+        )
         k8s_client_binding_sites = [
             "aiperf.kubernetes.client.k8s_client",
             "aiperf.operator.client_cache.k8s_client",

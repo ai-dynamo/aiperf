@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from pytest import param
 
@@ -160,14 +161,37 @@ def test_compute_effective_latency_all_errors_returns_none() -> None:
 
 def test_compute_effective_latency_honors_export_context_mask() -> None:
     """The error filter composes with the caller's window/phase mask."""
-    import numpy as np
-
     store = _mixed_store(n_success=3, n_error=1)
     # Select the last two successes and the failure; the failure must still drop.
     mask = np.array([False, True, True, True], dtype=np.bool_)
     result = compute_effective_latency(store, mask=mask)
     assert result is not None
     assert result.count == 2
+
+
+def test_compute_effective_latency_tolerates_mask_shorter_than_count() -> None:
+    """Concurrent ingestion can grow ``store.count`` past the mask snapshot.
+
+    The export path snapshots the mask, then summarizes off-thread; a record
+    landing in between must be ignored rather than raising a numpy broadcast
+    error that takes out the whole per-record metrics summary.
+    """
+    store = _mixed_store(n_success=3, n_error=1)  # count == 4
+    mask = np.array([False, True, True], dtype=np.bool_)  # snapshotted at 3
+    result = compute_effective_latency(store, mask=mask)
+    assert result is not None
+    assert result.count == 2
+
+
+def test_compute_adjusted_effective_latency_tolerates_mask_shorter_than_count() -> None:
+    """Both the success and the error side of the adjusted view honor the mask cap."""
+    store = _mixed_store(n_success=2, n_error=2)  # count == 4
+    mask = np.array([True, True, True], dtype=np.bool_)  # 2 successes + 1 error
+    result = compute_adjusted_effective_latency(store, mask=mask)
+    assert result is not None
+    assert result.count == 3
+    assert result.max == float("inf")
+    assert is_finite_value(result.p50)
 
 
 def test_compute_adjusted_effective_latency_inflates_with_infinity() -> None:

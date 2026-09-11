@@ -1091,20 +1091,33 @@ class AIPerfConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _plot_implies_auto_plot(self) -> Self:
-        """When ``plot:`` is set and the user didn't explicitly set
-        ``artifacts.auto_plot``, flip it to True. Explicit ``auto_plot: false``
-        wins; we just log an info-level breadcrumb so the silence doesn't
-        surprise users.
+        """Resolve the tri-state ``artifacts.auto_plot`` to a concrete bool.
+
+        ``None`` means the user did not decide, so a ``plot:`` section implies
+        True. An explicit False wins; we log an info-level breadcrumb so the
+        silence doesn't surprise users.
+
+        Tri-state rather than ``model_fields_set``: the Kubernetes apiserver
+        materializes CRD ``default:`` values on write, so a defaulted-to-False
+        field is indistinguishable from a user-authored one and would silently
+        suppress plots for every AIPerfJob carrying a ``plot:`` section.
         """
-        if self.plot is None:
-            return self
-        if "auto_plot" in self.benchmark.artifacts.model_fields_set:
-            if self.benchmark.artifacts.auto_plot is False:
+        artifacts = self.benchmark.artifacts
+        authored = "auto_plot" in artifacts.model_fields_set
+        if self.plot is not None:
+            if artifacts.auto_plot is None:
+                artifacts.auto_plot = True
+            elif artifacts.auto_plot is False:
                 _logger.info(
                     "plot section present but artifacts.auto_plot=false "
                     "explicitly; plots will not auto-render. Use ``aiperf plot "
                     "<artifact_dir>`` after the run to generate them."
                 )
-            return self
-        self.benchmark.artifacts.auto_plot = True
+        if artifacts.auto_plot is None:
+            artifacts.auto_plot = False
+        if not authored:
+            # Resolving is not authoring: keep the field out of
+            # ``model_fields_set`` so ``exclude_unset`` dumps (the Kubernetes
+            # ConfigMap payload) do not invent a value the user never wrote.
+            artifacts.model_fields_set.discard("auto_plot")
         return self

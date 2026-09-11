@@ -19,6 +19,7 @@ from pytest import param
 
 from aiperf.cli_commands.kube.cancel import cancel
 from aiperf.kubernetes.console import LastBenchmarkInfo
+from tests.harness.k8s import strict_patch_mock
 
 
 @asynccontextmanager
@@ -29,7 +30,7 @@ async def _fake_client(**_: Any):
 def _custom(get_side_effect: Any) -> MagicMock:
     return MagicMock(
         get_namespaced_custom_object=AsyncMock(side_effect=get_side_effect),
-        patch_namespaced_custom_object=AsyncMock(),
+        patch_namespaced_custom_object=strict_patch_mock(),
     )
 
 
@@ -63,6 +64,7 @@ class TestKubeCancel:
         custom.patch_namespaced_custom_object.assert_awaited_once()
         kwargs = custom.patch_namespaced_custom_object.await_args.kwargs
         assert kwargs["body"] == {"spec": {"cancel": True}}
+        assert kwargs["_content_type"] == "application/merge-patch+json"
         assert kwargs["plural"] == "aiperfjobs"
         assert kwargs["name"] == "job-1"
         assert kwargs["namespace"] == "bench"
