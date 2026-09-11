@@ -430,6 +430,10 @@ jobs:
         with:
           version: ${{ needs.prepare-nightly.outputs.wheel_version }}
 
+      # Catch a bad version patch here, not ten minutes into the Docker build.
+      - name: Verify uv.lock matches the patched pyproject.toml
+        run: uv lock --check
+
       # Embed the commit SHA two ways for redundant discoverability:
       #   1. [project.urls] Repository = <commit URL> in pyproject.toml →
       #      lands in the wheel METADATA as `Project-URL: Repository, ...`.
@@ -481,10 +485,6 @@ jobs:
           print(f"Embedded commit SHA in METADATA + _build_info.py: {sha}")
           print(f"Repository URL: {url}")
           PYEOF
-
-      # Catch a bad version patch here, not ten minutes into the Docker build.
-      - name: Verify uv.lock matches the patched pyproject.toml
-        run: uv lock --check
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

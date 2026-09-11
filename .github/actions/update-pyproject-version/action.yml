@@ -5,7 +5,8 @@ name: Update pyproject.toml version
 description: >
   Writes a PEP 440 version to pyproject.toml and to the root package entry in
   uv.lock via tools/patch_version.py, so `uv sync --locked` stays satisfied.
-  Requires a checked-out repository.
+  Requires a checked-out repository; pins Python 3.13 so the tomllib
+  verification in the script always runs.
 
 inputs:
   version:
@@ -17,6 +18,9 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
     - name: Patch pyproject.toml and uv.lock version
       shell: bash
       env:

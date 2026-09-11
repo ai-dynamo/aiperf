@@ -83,9 +83,10 @@ to stay in sync.
      docs/server-metrics/server-metrics-json-schema.md
    ```
    This must return no matches. Then confirm `NEW_VERSION` is present in each,
-   and confirm the lockfile agrees:
+   and confirm the lockfile agrees and moved only by the root version line:
    ```bash
    uv lock --check
+   git diff --stat uv.lock   # expect a 1-line change; investigate anything larger
    ```
 
 7. **Run pre-commit on the staged files:**
