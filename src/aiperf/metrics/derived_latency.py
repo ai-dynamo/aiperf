@@ -171,6 +171,58 @@ def compute_credit_to_start_latency(
     )
 
 
+def _effective_samples(
+    store: ColumnStore, mask: NDArray[np.bool_] | None
+) -> tuple[NDArray[np.float64], int] | None:
+    """Success-side effective-latency samples in ms, plus the errored-record count.
+
+    ``effective_latency`` and ``adj_effective_latency`` share this population:
+    the base metric reports it as-is and the adjusted metric appends one
+    ``+inf`` per error. Computing it once per export keeps both views drawn
+    from the same record window and avoids a second full-column pass.
+
+    Returns ``None`` when the window is empty or no record carries
+    ``credit_issued_ns`` (e.g. fixed-schedule workloads that bypass the
+    credit issuer).
+    """
+    n = _record_window(store, mask)
+    if n == 0:
+        return None
+    issued_col = store.metadata_numeric("credit_issued_ns")
+    if issued_col.size == 0:
+        return None
+    success = _success_mask(store, mask, n)
+    clean = _delta_ms(store.end_ns[:n][success], issued_col[:n][success])
+    error_count = int(_error_mask(store, mask, issued_col, n).sum())
+    return clean, error_count
+
+
+def _effective_latency_result(clean: NDArray[np.float64]) -> MetricResult | None:
+    if clean.size == 0:
+        return None
+    return _array_to_metric_result(
+        tag=_EFFECTIVE_LATENCY_TAG,
+        header=_EFFECTIVE_LATENCY_HEADER,
+        unit=_EFFECTIVE_LATENCY_UNIT,
+        values_ms=clean,
+    )
+
+
+def _adjusted_effective_latency_result(
+    clean: NDArray[np.float64], error_count: int
+) -> MetricResult | None:
+    if error_count == 0 or clean.size == 0:
+        return None
+    return _inflated_metric_result(
+        tag=_EFFECTIVE_LATENCY_TAG,
+        header=_EFFECTIVE_LATENCY_HEADER,
+        unit=_EFFECTIVE_LATENCY_UNIT,
+        clean_sorted=np.sort(clean),
+        error_count=error_count,
+        console_group=MetricConsoleGroup.EFFECTIVE,
+    )
+
+
 def compute_effective_latency(
     store: ColumnStore, mask: NDArray[np.bool_] | None = None
 ) -> MetricResult | None:
@@ -189,22 +241,8 @@ def compute_effective_latency(
     success distribution at full weight. ``adj_effective_latency`` carries
     the failure-aware view — see :func:`compute_adjusted_effective_latency`.
     """
-    n = _record_window(store, mask)
-    if n == 0:
-        return None
-    issued_col = store.metadata_numeric("credit_issued_ns")
-    if issued_col.size == 0:
-        return None
-    success = _success_mask(store, mask, n)
-    values_ms = _delta_ms(store.end_ns[:n][success], issued_col[:n][success])
-    if values_ms.size == 0:
-        return None
-    return _array_to_metric_result(
-        tag=_EFFECTIVE_LATENCY_TAG,
-        header=_EFFECTIVE_LATENCY_HEADER,
-        unit=_EFFECTIVE_LATENCY_UNIT,
-        values_ms=values_ms,
-    )
+    samples = _effective_samples(store, mask)
+    return None if samples is None else _effective_latency_result(samples[0])
 
 
 def compute_adjusted_effective_latency(
@@ -223,27 +261,8 @@ def compute_adjusted_effective_latency(
     successes (no distribution to inflate) — matching the no-op that
     :func:`inject_adjusted_latency_metrics` applies at ``error_count == 0``.
     """
-    n = _record_window(store, mask)
-    if n == 0:
-        return None
-    issued_col = store.metadata_numeric("credit_issued_ns")
-    if issued_col.size == 0:
-        return None
-    error_count = int(_error_mask(store, mask, issued_col, n).sum())
-    if error_count == 0:
-        return None
-    success = _success_mask(store, mask, n)
-    clean = _delta_ms(store.end_ns[:n][success], issued_col[:n][success])
-    if clean.size == 0:
-        return None
-    return _inflated_metric_result(
-        tag=_EFFECTIVE_LATENCY_TAG,
-        header=_EFFECTIVE_LATENCY_HEADER,
-        unit=_EFFECTIVE_LATENCY_UNIT,
-        clean_sorted=np.sort(clean),
-        error_count=error_count,
-        console_group=MetricConsoleGroup.EFFECTIVE,
-    )
+    samples = _effective_samples(store, mask)
+    return None if samples is None else _adjusted_effective_latency_result(*samples)
 
 
 def inject_derived_latency_metrics(
@@ -253,13 +272,25 @@ def inject_derived_latency_metrics(
 ) -> None:
     """Inject ``credit_to_start_latency``, ``effective_latency`` and
     ``adj_effective_latency`` into ``results`` if their prerequisite columns
-    are populated. Pure side-effect."""
+    are populated. Pure side-effect.
+
+    The two effective-latency views are built from one
+    :func:`_effective_samples` pass rather than through their public
+    ``compute_*`` wrappers, so a multi-million-record export walks the
+    columns once.
+    """
+    credit = compute_credit_to_start_latency(store, mask)
+    if credit is not None:
+        results["credit_to_start_latency"] = credit
+    samples = _effective_samples(store, mask)
+    if samples is None:
+        return
+    clean, error_count = samples
     for tag, result in (
-        ("credit_to_start_latency", compute_credit_to_start_latency(store, mask)),
-        (_EFFECTIVE_LATENCY_TAG, compute_effective_latency(store, mask)),
+        (_EFFECTIVE_LATENCY_TAG, _effective_latency_result(clean)),
         (
             f"adj_{_EFFECTIVE_LATENCY_TAG}",
-            compute_adjusted_effective_latency(store, mask),
+            _adjusted_effective_latency_result(clean, error_count),
         ),
     ):
         if result is not None:
