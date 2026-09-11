@@ -51,7 +51,19 @@ class LocalSubprocessExecutor(RunExecutor):
             result = self._run_benchmark_subprocess(config_file, run)
 
             if result.returncode != 0:
-                return self._failure_from_subprocess(result, run.label, artifacts_path)
+                # A run whose records failed validation still exports its
+                # profile JSON (with runtime_submission_invalid_reasons) before
+                # the controller exits non-zero, so the reason tags must be read
+                # back here or the failed RunResult - and every aggregate that
+                # unions over it - silently drops them. Returns [] when the
+                # subprocess died before writing anything.
+                _, _, runtime_invalid_reasons = self._extract_summary_metrics(run)
+                return self._failure_from_subprocess(
+                    result,
+                    run.label,
+                    artifacts_path,
+                    runtime_invalid_reasons=runtime_invalid_reasons,
+                )
 
             summary_metrics, was_cancelled, runtime_invalid_reasons = (
                 self._extract_summary_metrics(run)
@@ -167,6 +179,8 @@ class LocalSubprocessExecutor(RunExecutor):
         result: subprocess.CompletedProcess[str],
         label: str,
         artifacts_path: Path,
+        *,
+        runtime_invalid_reasons: list[str] | None = None,
     ) -> RunResult:
         """Build a failed RunResult from a non-zero subprocess exit."""
         error_msg = f"Benchmark failed with exit code {result.returncode}"
@@ -178,6 +192,7 @@ class LocalSubprocessExecutor(RunExecutor):
             success=False,
             error=error_msg,
             artifacts_path=artifacts_path,
+            runtime_submission_invalid_reasons=runtime_invalid_reasons or [],
         )
 
     @staticmethod

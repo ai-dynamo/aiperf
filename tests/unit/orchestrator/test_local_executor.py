@@ -243,6 +243,67 @@ def test_build_result_from_metrics_zero_requests_not_cancelled(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_nonzero_exit_carries_runtime_invalid_reasons(tmp_path):
+    """REGRESSION-LOCK: a run whose records fail profile-metric-coverage
+    validation writes its export (with ``runtime_submission_invalid_reasons``)
+    and then exits non-zero. The failure path must read those reason tags back
+    onto the RunResult, otherwise the aggregate export silently omits them.
+    """
+    import orjson
+
+    cfg = _benchmark_config()
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="validation-failed",
+    )
+    (tmp_path / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "runtime_submission_invalid_reasons": [
+                    "insufficient_profile_metric_coverage"
+                ],
+                "request_count": {"unit": "requests", "avg": 100.0},
+            }
+        )
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = "validation failed"
+        result = await executor.execute(run)
+
+    assert result.success is False
+    assert result.runtime_submission_invalid_reasons == [
+        "insufficient_profile_metric_coverage"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_nonzero_exit_without_export_has_no_reasons(tmp_path):
+    """A subprocess that died before writing any export must still produce a
+    clean failed RunResult with no reason tags — never a crash."""
+    cfg = _benchmark_config()
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="crashed-early",
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = "boom"
+        result = await executor.execute(run)
+
+    assert result.success is False
+    assert result.runtime_submission_invalid_reasons == []
+
+
+@pytest.mark.asyncio
 async def test_run_config_never_contains_plaintext_api_key(tmp_path):
     """run_config.json must never contain the plaintext api_key.
 
