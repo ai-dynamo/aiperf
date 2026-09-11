@@ -2576,7 +2576,9 @@ async def test_global_idle_cap_shifts_real_delayed_continuation_to_ten_seconds()
 
 
 @pytest.mark.asyncio
-async def test_global_idle_watchdog_bounds_persistent_control_plane_work():
+async def test_global_idle_watchdog_bounds_persistent_control_plane_work(
+    time_traveler_no_patch_sleep,
+):
     """A scheduler coroutine cannot mask an otherwise idle server past the cap."""
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     scheduler = LoopScheduler()
@@ -2609,9 +2611,9 @@ async def test_global_idle_watchdog_bounds_persistent_control_plane_work():
     strategy.enforce_system_idle_cap(in_flight_requests=0)
     await asyncio.wait_for(replay_fired.wait(), timeout=0.2)
 
-    assert time.monotonic() - started_at == pytest.approx(0.05, abs=0.03)
+    assert time.monotonic() - started_at == pytest.approx(0.05, abs=0.005)
     assert strategy._system_idle_jump_count == 1
-    assert strategy._system_idle_seconds_skipped == pytest.approx(0.95, abs=0.04)
+    assert strategy._system_idle_seconds_skipped == pytest.approx(0.95, abs=0.005)
 
     control_release.set()
     await asyncio.sleep(0)
