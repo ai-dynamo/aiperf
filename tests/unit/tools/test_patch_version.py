@@ -4,11 +4,13 @@
 
 import shutil
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from pytest import param
 
+import tools.patch_version as patch_version_module
 from tools.patch_version import PatchError, main, patch_version
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -136,6 +138,18 @@ def test_patch_version_invalid_version_raises_before_writing(
     assert lock.read_text() == _LOCK
 
 
+def test_patch_version_normalizes_project_name_for_lock_lookup(tmp_path: Path) -> None:
+    """uv writes the PEP 503 name into uv.lock even when pyproject spells it differently."""
+    pyproject = tmp_path / "pyproject.toml"
+    lock = tmp_path / "uv.lock"
+    pyproject.write_text(_PYPROJECT.replace('name = "aiperf"', 'name = "AI_Perf.Tool"'))
+    lock.write_text(_LOCK.replace('name = "aiperf"', 'name = "ai-perf-tool"'))
+
+    assert patch_version(_NEW, pyproject, lock) == "AI_Perf.Tool"
+
+    assert f'name = "ai-perf-tool"\nversion = "{_NEW}"' in lock.read_text()
+
+
 def test_patch_version_missing_lock_raises_with_remedy(tree: tuple[Path, Path]) -> None:
     pyproject, lock = tree
     lock.unlink()
@@ -204,8 +218,14 @@ def test_patch_version_against_repository_files_changes_exactly_two_lines(
     lock = shutil.copy(_REPO_ROOT / "uv.lock", tmp_path / "uv.lock")
     original_pyproject = (_REPO_ROOT / "pyproject.toml").read_text().splitlines()
     original_lock = (_REPO_ROOT / "uv.lock").read_text().splitlines()
+    current = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text())["project"][
+        "version"
+    ]
+    # The nightly runs this suite on an already-patched tree, so derive a target
+    # that can never equal the current version (dev numbers are dates).
+    target = f"{current.split('.dev')[0].split('+')[0]}.dev99999999"
 
-    assert patch_version(_NEW, Path(pyproject), Path(lock)) == "aiperf"
+    assert patch_version(target, Path(pyproject), Path(lock)) == "aiperf"
 
     changed_pyproject = [
         (a, b)
@@ -219,9 +239,9 @@ def test_patch_version_against_repository_files_changes_exactly_two_lines(
         for a, b in zip(original_lock, Path(lock).read_text().splitlines(), strict=True)
         if a != b
     ]
-    assert changed_pyproject == [('version = "0.13.0"', f'version = "{_NEW}"')]
-    assert changed_lock == [('version = "0.13.0"', f'version = "{_NEW}"')]
-    assert tomllib.loads(Path(pyproject).read_text())["project"]["version"] == _NEW
+    assert changed_pyproject == [(f'version = "{current}"', f'version = "{target}"')]
+    assert changed_lock == [(f'version = "{current}"', f'version = "{target}"')]
+    assert tomllib.loads(Path(pyproject).read_text())["project"]["version"] == target
 
 
 def test_main_success_prints_both_files_and_returns_zero(
@@ -237,14 +257,17 @@ def test_main_success_prints_both_files_and_returns_zero(
 
 
 @pytest.mark.parametrize(
-    "break_tree",
+    ("break_tree", "message"),
     [
-        param(lambda pyproject, lock: lock.unlink(), id="missing-lock"),
-        param(lambda pyproject, lock: (lock.unlink(), lock.mkdir()), id="lock-is-a-directory"),
+        param(lambda pyproject, lock: lock.unlink(), "not found", id="missing-lock"),
+        param(lambda pyproject, lock: (lock.unlink(), lock.mkdir()), "not a regular file", id="lock-is-a-directory"),
     ],
 )  # fmt: skip
 def test_main_failure_emits_github_error_annotation(
-    tree: tuple[Path, Path], capsys: pytest.CaptureFixture[str], break_tree
+    tree: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+    break_tree: Callable[[Path, Path], object],
+    message: str,
 ) -> None:
     pyproject, lock = tree
     break_tree(pyproject, lock)
@@ -252,5 +275,30 @@ def test_main_failure_emits_github_error_annotation(
     rc = main([_NEW, "--pyproject", str(pyproject), "--lock", str(lock)])
 
     assert rc == 1
+    assert message in capsys.readouterr().err
+    assert pyproject.read_text() == _PYPROJECT
+
+
+def test_main_write_failure_reports_error_and_leaves_both_files_untouched(
+    tree: tuple[Path, Path],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OSError while staging the lock must not leave pyproject.toml already patched."""
+    pyproject, lock = tree
+    real_stage = patch_version_module._stage
+
+    def failing_stage(path: Path, text: str) -> Path:
+        if path == lock:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_stage(path, text)
+
+    monkeypatch.setattr(patch_version_module, "_stage", failing_stage)
+
+    rc = main([_NEW, "--pyproject", str(pyproject), "--lock", str(lock)])
+
+    assert rc == 1
     assert capsys.readouterr().err.startswith("::error::")
     assert pyproject.read_text() == _PYPROJECT
+    assert lock.read_text() == _LOCK
+    assert not (pyproject.parent / "pyproject.toml.tmp").exists()

@@ -2,7 +2,7 @@
 name: bump-version
 description: Bump the AIPerf package version (e.g. 0.10.0 -> 0.11.0) across pyproject.toml, the mock server, and the version strings shown in docs, then open a PR to main
 disable-model-invocation: true
-allowed-tools: Bash(git fetch *), Bash(git checkout *), Bash(git branch *), Bash(git status *), Bash(git add *), Bash(git commit *), Bash(git push *), Bash(git log *), Bash(grep *), Bash(uv lock *), Bash(pre-commit run *), Bash(gh pr create *), Read, Edit, AskUserQuestion
+allowed-tools: Bash(git fetch *), Bash(git checkout *), Bash(git branch *), Bash(git status *), Bash(git add *), Bash(git commit *), Bash(git push *), Bash(git log *), Bash(git diff *), Bash(grep *), Bash(uv lock *), Bash(pre-commit run *), Bash(gh pr create *), Read, Edit, AskUserQuestion
 ---
 
 # Bump AIPerf Version
@@ -83,11 +83,15 @@ to stay in sync.
      docs/server-metrics/server-metrics-json-schema.md
    ```
    This must return no matches. Then confirm `NEW_VERSION` is present in each,
-   and confirm the lockfile agrees and moved only by the root version line:
+   and confirm the lockfile agrees:
    ```bash
    uv lock --check
-   git diff --stat uv.lock   # expect a 1-line change; investigate anything larger
+   git diff uv.lock
    ```
+   Expect the root `aiperf` `version =` line to change. `uv lock` may also
+   refresh metadata of already-locked packages (for example add an `sdist =`
+   line published after the lock was generated); that is fine to commit.
+   Investigate if any other package's `version =` line changes.
 
 7. **Run pre-commit on the staged files:**
    ```bash

@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Update pyproject.toml version
+name: Update pyproject.toml and uv.lock version
 description: >
   Writes a PEP 440 version to pyproject.toml and to the root package entry in
   uv.lock via tools/patch_version.py, so `uv sync --locked` stays satisfied.
-  Requires a checked-out repository; pins Python 3.13 so the tomllib
-  verification in the script always runs.
+  Requires a checked-out repository and uv on PATH (astral-sh/setup-uv); the
+  script runs under a uv-provisioned Python 3.13 so its tomllib verification
+  always runs, on any runner OS.
 
 inputs:
   version:
@@ -18,11 +19,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.13'
     - name: Patch pyproject.toml and uv.lock version
       shell: bash
       env:
         TARGET_VERSION: ${{ inputs.version }}
-      run: python3 tools/patch_version.py "${TARGET_VERSION}"
+      run: uv run --no-project --python 3.13 python tools/patch_version.py "${TARGET_VERSION}"
