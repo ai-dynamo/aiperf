@@ -321,7 +321,7 @@ full_decode_duration_ns = request.end_perf_ns - first_content_response.perf_ns
 - This is a client-observed full-response duration, not server kernel execution time.
 - It includes terminal serialization, transport, and client-processing overhead.
 - It requires an explicit request-end timestamp and at least one non-empty content response.
-- Existing profile exports can reconstruct it as `(request_end_ns - request_start_ns) - time_to_first_token_ns`.
+- It cannot be reconstructed from existing profile exports. The exported `request_end_ns` is stamped at the last streamed response chunk, whereas this metric anchors on the request's own completion timestamp, so `(request_end_ns - request_start_ns) - time_to_first_token_ns` omits exactly the post-final-chunk tail that Full Decode Duration is meant to capture.
 
 ---
 
