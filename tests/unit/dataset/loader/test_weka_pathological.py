@@ -192,6 +192,27 @@ def test_think_time_only_negative_think_time_not_negative_delay(tmp_path):
     assert convs[0].turns[1].delay >= 0.0
 
 
+def test_think_time_only_negative_think_time_child_not_negative_delay(tmp_path):
+    """A negative ``think_time`` on a subagent inner request must not become a negative child ``Turn.delay`` (TurnMetadata.delay_ms is ``ge=0``)."""
+    sa = _subagent(10.0, "a1", duration_ms=20_000)
+    sa["requests"] = [
+        _normal(10.0, [8], model="claude-haiku-4-5-20251001", think_time=0.0),
+        _normal(20.0, [8, 9], model="claude-haiku-4-5-20251001", think_time=-3.0),
+    ]
+    trace = _base_trace(
+        [_normal(0.0, [1]), sa, _normal(40.0, [1, 2])],
+        trace_id="neg_tt_child",
+    )
+    path = tmp_path / "t.json"
+    path.write_text(json.dumps(trace))
+    uc = _mk_user_config(use_think_time_only=True)
+    loader = _make_loader(path, uc)
+
+    convs = loader.convert_to_conversations(loader.load_dataset())
+    child = next(c for c in convs if c.session_id == "neg_tt_child::sa:a1")
+    assert child.turns[1].delay >= 0.0
+
+
 # PASSING CHARACTERIZATIONS (surprising but intended / not invariant-breaking)
 
 

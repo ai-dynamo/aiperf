@@ -1971,6 +1971,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     )
                 if child_delay_ms is not None:
                     child_delay_ms = self._delay_cap_tracker.clamp(child_delay_ms)
+                    # Floor at 0, mirroring the parent loop: a negative delay
+                    # violates TurnMetadata.delay_ms's ge=0 contract and would
+                    # tell the load generator to dispatch a request in the past.
+                    # Clamp maps non-finite delays to None — skip the floor.
+                    if child_delay_ms is not None:
+                        child_delay_ms = max(child_delay_ms, 0.0)
                 child_delta = child_recon.turn_delta()
                 theoretical_hit_blocks, theoretical_total_blocks = child_metric_values[
                     (cp.session_id, k)
@@ -2129,6 +2135,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
             )
         if delay_ms is not None:
             delay_ms = self._delay_cap_tracker.clamp(delay_ms)
+            # Floor at 0, mirroring the parent loop: a negative delay violates
+            # TurnMetadata.delay_ms's ge=0 contract and would tell the load
+            # generator to dispatch a request in the past.
+            # Clamp maps non-finite delays to None — skip the floor.
+            if delay_ms is not None:
+                delay_ms = max(delay_ms, 0.0)
         return t_ms, delay_ms
 
     def _build_parallel_reconstruction_tasks(

@@ -443,8 +443,7 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
             # the load generator to dispatch a request in the past. Omitting it
             # here made the parallel parent path emit a negative Turn.delay where
             # the serial path emits 0.0, breaking the module's byte-identical
-            # serial/parallel contract. (Child / flat-chain paths intentionally
-            # do not floor in either path, so they stay in parity untouched.)
+            # serial/parallel contract.
             # Clamp maps non-finite delays to None — skip the floor.
             if delay_ms is not None:
                 delay_ms = max(delay_ms, 0.0)
@@ -670,6 +669,11 @@ def _process_task(task: _WekaTraceTask) -> _WekaProcessTaskResult:
                 )
             if child_delay_ms is not None:
                 child_delay_ms = delay_tracker.clamp(child_delay_ms)
+                # Floor at 0, mirroring the parent loop and the serial child
+                # branch in weka_trace._reconstruct_serial.
+                # Clamp maps non-finite delays to None — skip the floor.
+                if child_delay_ms is not None:
+                    child_delay_ms = max(child_delay_ms, 0.0)
 
             child_delta = child_recon.turn_delta()
             theoretical_hit_blocks = creq["theoretical_hit_blocks"]
