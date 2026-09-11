@@ -545,6 +545,72 @@ class TestMLflowDataExporter:
         assert written_metadata["reused_live_run"] is True
         assert written_metadata["run_name"] == "Concurrency=32"
 
+    @pytest.mark.asyncio
+    async def test_reused_child_rename_failure_is_non_fatal(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+    ) -> None:
+        """Review (debermudez): a failing update_run must not fail the export.
+
+        The rename is best-effort. If MLflowClient.update_run raises, the export
+        still completes and keeps the name MLflow already had on the run (no
+        rename applied), rather than crashing.
+        """
+        _write_artifact(tmp_path / "profile_export_aiperf.json")
+        live_run_id = "live-run-child-77"
+        benchmark_id = "bench-child-77"
+        metadata = {
+            "tracking_uri": "http://mlflow:5000",
+            "experiment": "aiperf-tests",
+            "run_id": live_run_id,
+            "run_name": "shared-sweep-name",
+            "benchmark_id": benchmark_id,
+            "parent_run_id": "parent-run-1",
+            "live_streaming": True,
+        }
+        (tmp_path / "mlflow_export.json").write_bytes(orjson.dumps(metadata))
+
+        state = _install_fake_mlflow_modules(monkeypatch)
+        # MLflow had already auto-named the live run; this is the name that must
+        # survive when the rename fails.
+        state["live_run_names"][live_run_id] = "pre-rename-name"
+
+        def _raise(self: Any, run_id: str, name: str | None = None) -> None:
+            raise RuntimeError("mlflow update_run boom")
+
+        monkeypatch.setattr(
+            sys.modules["mlflow.tracking"].MlflowClient, "update_run", _raise
+        )
+
+        cfg = _make_mlflow_cfg(tmp_path)
+        run = BenchmarkRun(
+            benchmark_id=benchmark_id,
+            cfg=cfg,
+            artifact_dir=cfg.artifacts.dir,
+            variation=SweepVariation(
+                index=3, label="v", values={"phases.profiling.concurrency": 32}
+            ),
+        )
+        config = ExporterConfig(
+            results=sample_results,
+            cfg=cfg,
+            telemetry_results=None,
+            run=run,
+        )
+        exporter = MLflowDataExporter(config)
+        # Must not raise despite update_run blowing up.
+        await asyncio.to_thread(exporter._export_sync)
+
+        written_metadata = orjson.loads(
+            (tmp_path / "mlflow_export.json").read_text(encoding="utf-8")
+        )
+        assert written_metadata["run_id"] == live_run_id
+        assert written_metadata["reused_live_run"] is True
+        # Rename did not apply: the pre-existing MLflow name is retained.
+        assert written_metadata["run_name"] == "pre-rename-name"
+
     def test_upload_artifacts_to_run_supports_plot_only_upload(
         self,
         monkeypatch: pytest.MonkeyPatch,
