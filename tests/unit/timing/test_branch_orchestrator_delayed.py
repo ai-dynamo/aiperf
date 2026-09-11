@@ -242,10 +242,11 @@ async def test_join_deadline_uses_shared_scheduler_idle_cap() -> None:
 @pytest.mark.asyncio
 async def test_phase_stop_drains_join_whose_child_already_finished() -> None:
     """Cancelling a future deadline cannot strand a satisfied active join."""
-    orch, issuer, _ = _timed_join_orchestrator()
+    orch, issuer, scheduler = _timed_join_orchestrator()
     issuer.dispatch_join_turn.return_value = False
 
     assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    scheduler.schedule_later.call_args.args[1].close()
     await orch.on_child_leaf_reached("corr-child")
     assert orch.has_pending_branch_work()
 
@@ -259,10 +260,11 @@ async def test_phase_stop_drains_join_whose_child_already_finished() -> None:
 @pytest.mark.asyncio
 async def test_phase_stop_then_child_completion_drains_join() -> None:
     """A child returning after phase stop still closes the gated parent."""
-    orch, issuer, _ = _timed_join_orchestrator()
+    orch, issuer, scheduler = _timed_join_orchestrator()
     issuer.dispatch_join_turn.return_value = False
 
     assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    scheduler.schedule_later.call_args.args[1].close()
     await orch.expire_replay_deadlines()
     issuer.dispatch_join_turn.assert_not_awaited()
 
