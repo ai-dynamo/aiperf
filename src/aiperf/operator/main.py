@@ -41,7 +41,10 @@ import orjson
 from kopf._cogs.structs.credentials import ConnectionInfo
 
 from aiperf.kubernetes.client import APISERVER_TLS_SERVER_NAME_OVERRIDE_ENV
-from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    Annotations,
+)
 from aiperf.kubernetes.cr_refs import (
     AIPERF_GROUP,
     AIPERF_PLURAL,
@@ -721,7 +724,7 @@ async def _publish_durable_sweep_aggregate_ref(
                     },
                 ],
                 field_manager="aiperf-operator",
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
     except ApiException as exc:
         if exc.status == 404:
