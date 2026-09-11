@@ -293,7 +293,7 @@ class JsonExportData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.4"
+    SCHEMA_VERSION: ClassVar[str] = "1.5"
 
     schema_version: str | None = Field(
         default=None,
