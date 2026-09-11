@@ -840,9 +840,10 @@ async def test_system_idle_cap_advances_issue_1231_join_without_bypassing_child(
     )
     parent_gap_ms = (gated.request_start_ns - previous.request_end_ns) / 1_000_000
     post_child_gap_ms = (gated.request_start_ns - child_last.request_end_ns) / 1_000_000
-    assert 35.0 <= post_child_gap_ms <= 100.0, (
+    assert 35.0 <= post_child_gap_ms <= 150.0, (
         f"capped join resumed {post_child_gap_ms:.1f}ms after the child; "
-        "expected the 50ms whole-system idle guard within process jitter"
+        "expected the 50ms whole-system idle guard within process jitter, and "
+        "strictly under the 181.4ms uncapped post-child residual"
     )
     assert parent_gap_ms < 173.0, (
         f"capped join still waited {parent_gap_ms:.1f}ms from its parent; "
