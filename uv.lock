@@ -329,6 +329,7 @@ otel = [
     { name = "opentelemetry-sdk" },
 ]
 test = [
+    { name = "botocore" },
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "jsonschema" },
@@ -356,6 +357,7 @@ requires-dist = [
     { name = "aiofiles", specifier = "~=24.1.0" },
     { name = "aiohttp", specifier = ">=3.14.3,<4" },
     { name = "aiosqlite", specifier = ">=0.19.0" },
+    { name = "aiperf", extras = ["aws"], marker = "extra == 'test'" },
     { name = "aiperf", extras = ["aws", "mlflow", "otel", "test", "wandb"], marker = "extra == 'dev'" },
     { name = "aiperf", extras = ["botorch"], marker = "extra == 'optuna'" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
