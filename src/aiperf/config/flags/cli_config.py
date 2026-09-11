@@ -365,7 +365,7 @@ class CLIConfig(BaseConfig):
     aws_profile: Annotated[
         str | None,
         Field(
-            description="Named AWS credentials profile. Unset uses boto3's default credential chain "
+            description="Named AWS credentials profile. Unset uses botocore's default credential chain "
             "(environment variables, EC2/ECS instance role, `~/.aws/credentials` default profile).",
         ),
         CLIParameter(
@@ -390,8 +390,12 @@ class CLIConfig(BaseConfig):
     aws_service: Annotated[
         str | None,
         Field(
-            description="AWS service name for SigV4 request signing (e.g. `execute-api`, `sagemaker`, "
-            "`bedrock-runtime`). Required when `--auth-type sigv4`.",
+            description="SigV4 signing name -- the credential scope the signature is bound to "
+            "(e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, "
+            "which is not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and "
+            "`bedrock-runtime` signs as `bedrock`. Required when `--auth-type sigv4`, unless the "
+            "selected transport declares which AWS API it speaks -- then the scope is resolved "
+            "from botocore's own service model and this flag is only an override.",
         ),
         CLIParameter(
             name=("--aws-service",),

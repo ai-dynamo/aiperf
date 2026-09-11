@@ -462,3 +462,50 @@ class TestSigV4RequestSignerPeriodicReresolution:
                 await signer.stop()
 
         assert call_count >= 3
+
+
+class TestSigningNameDerivedFromTransport:
+    """``--aws-service`` names the SigV4 *credential scope*, which is not always
+    the API identifier: the ``sagemaker-runtime`` API signs as ``sagemaker`` and
+    ``bedrock-runtime`` as ``bedrock``.
+
+    A transport that knows which AWS API it speaks can therefore supply the
+    scope itself, via a ``botocore_service_id`` class attribute, leaving the flag
+    as an override. Resolving the name from botocore's own service model rather
+    than mapping it here is what makes the next AWS service correct for free.
+    """
+
+    def test_botocore_maps_runtime_apis_to_their_signing_names(self) -> None:
+        """The premise the derivation rests on. If this ever changed, deriving
+        would silently sign with the wrong scope and every request would 403."""
+        import botocore.session
+
+        session = botocore.session.Session()
+        assert (
+            session.get_service_model("sagemaker-runtime").signing_name == "sagemaker"
+        )
+        assert session.get_service_model("bedrock-runtime").signing_name == "bedrock"
+
+    def test_no_transport_yields_no_service_id(self) -> None:
+        from aiperf.auth.sigv4_signer import _transport_botocore_service_id
+
+        assert _transport_botocore_service_id(None) is None
+
+    def test_a_transport_without_the_attribute_yields_none(self) -> None:
+        """The built-in http transport speaks no particular AWS API, so it
+        supplies no scope and the flag stays required for it."""
+        from aiperf.auth.sigv4_signer import _transport_botocore_service_id
+        from aiperf.plugin.enums import TransportType
+
+        assert _transport_botocore_service_id(TransportType.HTTP) is None
+
+    def test_a_transport_declaring_a_service_id_supplies_it(self) -> None:
+        from aiperf.auth.sigv4_signer import _transport_botocore_service_id
+        from aiperf.transports.aiohttp_transport import AioHttpTransport
+        from tests.harness import mock_plugin
+
+        class _AwsishTransport(AioHttpTransport):
+            botocore_service_id = "sagemaker-runtime"
+
+        with mock_plugin("transport", "awsish", _AwsishTransport):
+            assert _transport_botocore_service_id("awsish") == "sagemaker-runtime"

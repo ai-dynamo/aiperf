@@ -17,6 +17,25 @@ if TYPE_CHECKING:
     from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 
 
+def _transport_botocore_service_id(transport) -> str | None:
+    """Return the botocore service id the active transport speaks, if any.
+
+    Read off the transport class so that adding an AWS transport needs no change
+    here. Returns None for transports that are not tied to one AWS API -- the
+    built-in HTTP transport included, since it may front any service.
+    """
+    if transport is None:
+        return None
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return None
+    return getattr(transport_cls, "botocore_service_id", None)
+
+
 class SigV4RequestSigner(AIPerfLifecycleMixin):
     """AWS SigV4 request signer using botocore.
 
@@ -63,6 +82,9 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         super().__init__(**kwargs)
         self.region: str | None = model_endpoint.endpoint.aws_region
         self.service: str | None = model_endpoint.endpoint.aws_service
+        self.botocore_service_id: str | None = _transport_botocore_service_id(
+            model_endpoint.transport
+        )
         self.profile: str | None = model_endpoint.endpoint.aws_profile
         self._credentials = None
 
@@ -106,6 +128,20 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         # credentials). We keep that object - not a frozen snapshot - so
         # that sign() can call get_frozen_credentials() on every request,
         # which triggers botocore's built-in expiry-based refresh check.
+        if not self.service and self.botocore_service_id:
+            # The signing name is the credential scope and is not always the API
+            # id: sagemaker-runtime signs as 'sagemaker', bedrock-runtime as
+            # 'bedrock'. Only the service model knows that, so read it rather than
+            # mapping it here -- which is also what makes the next AWS service
+            # correct without a change. Falls back to the id, right wherever the
+            # two coincide.
+            try:
+                self.service = session.get_service_model(
+                    self.botocore_service_id
+                ).signing_name
+            except Exception:
+                self.service = self.botocore_service_id
+
         credentials = session.get_credentials()
         if credentials is None:
             raise ValueError(

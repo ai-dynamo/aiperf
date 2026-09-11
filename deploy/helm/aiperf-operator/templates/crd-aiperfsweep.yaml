@@ -370,7 +370,7 @@ spec:
                         description: AWS region for the request. Required when auth_type='sigv4'.
                       awsProfile:
                         type: string
-                        description: Named AWS credentials profile. Unset uses boto3's default credential chain.
+                        description: Named AWS credentials profile. Unset uses botocore's default credential chain.
                       authType:
                         type: string
                         enum:
@@ -380,8 +380,11 @@ spec:
                           when auth_type is set).
                       awsService:
                         type: string
-                        description: AWS service name for SigV4 request signing (e.g. 'execute-api', 'sagemaker', 'bedrock-runtime').
-                          Required when auth_type='sigv4'.
+                        description: 'SigV4 signing name -- the credential scope the signature is bound to (e.g. ''execute-api'',
+                          ''sagemaker'', ''bedrock''). This is not always the API id: the ''sagemaker-runtime'' API signs
+                          as ''sagemaker'' and ''bedrock-runtime'' as ''bedrock''. Required when auth_type=''sigv4'', unless
+                          the selected transport declares which AWS API it speaks, in which case the scope is resolved from
+                          botocore''s service model.'
                       connectionReuse:
                         type: string
                         description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:

@@ -103,6 +103,25 @@ class TemplateConfig(BaseConfig):
     ]
 
 
+def _transport_botocore_service_id(transport: TransportType | None) -> str | None:
+    """Return the botocore service id the given transport speaks, if any.
+
+    Duplicated from ``aiperf.auth.sigv4_signer`` on purpose: config validation
+    must work without the optional ``aiperf[aws]`` extra installed, and importing
+    the signer module pulls in botocore.
+    """
+    if transport is None:
+        return None
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return None
+    return getattr(transport_cls, "botocore_service_id", None)
+
+
 def _transport_signs(transport: TransportType) -> bool:
     """Whether the named transport applies the configured request signer.
 
@@ -267,7 +286,7 @@ class EndpointConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="Named AWS credentials profile. Unset uses boto3's default "
+            description="Named AWS credentials profile. Unset uses botocore's default "
             "credential chain.",
         ),
     ]
@@ -286,8 +305,12 @@ class EndpointConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="AWS service name for SigV4 request signing (e.g. 'execute-api', "
-            "'sagemaker', 'bedrock-runtime'). Required when auth_type='sigv4'.",
+            description="SigV4 signing name -- the credential scope the signature "
+            "is bound to (e.g. 'execute-api', 'sagemaker', 'bedrock'). This is not "
+            "always the API id: the 'sagemaker-runtime' API signs as 'sagemaker' and "
+            "'bedrock-runtime' as 'bedrock'. Required when auth_type='sigv4', unless "
+            "the selected transport declares which AWS API it speaks, in which case "
+            "the scope is resolved from botocore's service model.",
         ),
     ]
 
@@ -772,7 +795,10 @@ class EndpointConfig(BaseConfig):
         aws_flags = {
             "--aws-region": self.aws_region,
             "--aws-profile": self.aws_profile,
-            "--aws-service": self.aws_service,
+            # Optional when the selected transport declares which AWS API it
+            # speaks; the signer then resolves the scope from botocore's model.
+            "--aws-service": self.aws_service
+            or _transport_botocore_service_id(self.transport),
         }
         if self.auth_type != RequestSignerType.SIGV4:
             set_flags = sorted(
