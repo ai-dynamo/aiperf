@@ -199,6 +199,79 @@ class TestMooncakeTraceIntegration:
         assert result.has_all_outputs_except_inputs
         assert result.inputs is None, "trace datasets skip inputs.json"
 
+    async def test_mooncake_trace_with_per_row_headers(
+        self,
+        cli: AIPerfCLI,
+        mock_server_factory,
+        tmp_path: Path,
+    ):
+        """End-to-end wire fidelity for per-row trace headers.
+
+        Asserts that the `headers` dict on each trace row reaches the
+        inference server as actual HTTP headers, exercising the full
+        loader -> Turn -> endpoint merge -> aiohttp transport chain.
+        Catches regressions in any step that could drop or rewrite the
+        trace-supplied headers.
+
+        Uses a single-worker mock server because the header recorder is
+        per-process module state; multi-worker uvicorn would partition
+        recorded requests across worker pids and the test would see only a
+        subset.
+        """
+        traces = [
+            {"timestamp": 0, "text_input": "hello", "output_length": 10, "headers": {"x-session-token": "tok-A"}},
+            {"timestamp": 100, "text_input": "world", "output_length": 10, "headers": {"x-session-token": "tok-B", "baggage": "userId=alice,sessionId=tok-B"}},
+            {"timestamp": 200, "messages": [{"role": "user", "content": "hi"}], "output_length": 10, "headers": {"baggage": "userId=bob"}},
+        ]  # fmt: skip
+        trace_file = create_mooncake_trace_file(tmp_path, traces)
+        request_count = len(traces)
+
+        async with mock_server_factory(fast=True, workers=1) as server:
+            server.clear_recorded_headers()
+            result = await cli.run(
+                f"""
+                aiperf profile \
+                    --model {defaults.model} \
+                    --url {server.url} \
+                    --endpoint-type chat \
+                    --input-file {trace_file} \
+                    --custom-dataset-type mooncake_trace \
+                    --request-count {request_count} \
+                    --fixed-schedule \
+                    --workers-max {defaults.workers_max} \
+                    --ui {defaults.ui}
+                """
+            )
+
+            assert result.request_count == request_count
+            assert result.has_all_outputs_except_inputs
+
+            # On-wire assertion: every trace row's `headers` dict appears
+            # verbatim on the inbound request the mock server received.
+            # Headers are captured with lowercased names. Order is governed
+            # by the fixed schedule (sorted by timestamp), so we compare on
+            # sets to keep the test robust against arrival-order jitter.
+            recorded = server.recorded_headers()
+            assert len(recorded) == request_count, (
+                f"expected {request_count} recorded requests, got "
+                f"{len(recorded)}: {recorded!r}"
+            )
+            # Compare (x-session-token, baggage) tuples so the assertion fails
+            # if the two header values are mismatched across rows, rather than
+            # comparing the two value sets independently.
+            observed_pairs = {
+                (
+                    r["headers"].get("x-session-token"),
+                    r["headers"].get("baggage"),
+                )
+                for r in recorded
+            }
+            assert observed_pairs == {
+                ("tok-A", None),
+                ("tok-B", "userId=alice,sessionId=tok-B"),
+                (None, "userId=bob"),
+            }, f"header pairs mismatch: {observed_pairs}"
+
     async def test_mooncake_trace_text_input_with_synthesis_speedup(
         self,
         cli: AIPerfCLI,
