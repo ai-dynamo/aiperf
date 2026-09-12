@@ -379,6 +379,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      # A bare `uv sync` re-locks silently; fail fast on a stale lockfile instead.
+      - name: Check uv.lock is up to date
+        run: uv lock --check
       - name: Validate dependency resolution against required-environments
         run: uv sync --active --no-install-project
 
@@ -422,10 +425,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Patch version in pyproject.toml
+      - name: Patch version in pyproject.toml and uv.lock
         uses: ./.github/actions/update-pyproject-version
         with:
           version: ${{ needs.prepare-nightly.outputs.wheel_version }}
+
+      # Catch a bad version patch here, not ten minutes into the Docker build.
+      - name: Verify uv.lock matches the patched pyproject.toml
+        run: uv lock --check
 
       # Embed the commit SHA two ways for redundant discoverability:
       #   1. [project.urls] Repository = <commit URL> in pyproject.toml →
