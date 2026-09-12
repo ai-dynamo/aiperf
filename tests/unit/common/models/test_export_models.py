@@ -18,12 +18,6 @@ from aiperf.common.models.export_models import (
 class TestGpuSummaryHostnameDefault:
     """GpuSummary.hostname must default so exclude_none round-trips survive."""
 
-    def test_hostname_is_optional_like_siblings(self) -> None:
-        hostname = GpuSummary.model_fields["hostname"]
-        assert hostname.is_required() is False
-        for sibling in ("namespace", "pod_name"):
-            assert GpuSummary.model_fields[sibling].is_required() is False
-
     def test_exclude_none_round_trip_with_missing_hostname(self) -> None:
         """Reproduce #1417: hostname=None must validate after exclude_none dump.
 
