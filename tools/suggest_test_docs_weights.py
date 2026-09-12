@@ -40,15 +40,21 @@ Exits 0 even when suggestions are emitted; it's a report, not a gate.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import logging
 import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+from typing import IO
 
 # Reach the existing parser/data_types so we don't duplicate the bash-block
 # extraction logic. Both modules import each other by bare name, so we have
@@ -193,24 +199,153 @@ def fetch_test_docs_jobs(run_id: int) -> list[tuple[int, str]]:
     return out
 
 
-def fetch_job_log(job_id: int) -> str:
-    return _gh("api", f"/repos/{_repo_slug()}/actions/jobs/{job_id}/logs")
+HTTP_TIMEOUT_SECONDS = 30
 
 
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow the 302 to the log blob, but drop the GitHub bearer token.
+
+    ``urlopen`` replays the Authorization header on every hop, and the
+    pre-signed blob-storage URL holding the log rejects a GitHub token
+    with 401.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+        return new
+
+
+def _host_from_url(url: str) -> str | None:
+    """Host portion of a git remote or server URL, without scheme, user, or port."""
+    m = re.match(r"(?:[\w+.-]+://)?(?:[^@/]+@)?([^/:]+)", url.strip())
+    return m.group(1) if m else None
+
+
+def _gh_host() -> str:
+    """Host owning the target repo, enterprise-aware, ``github.com`` by default."""
+    host = os.environ.get("GH_HOST")
+    if host:
+        return host
+    for url in (os.environ.get("GITHUB_SERVER_URL"), _git_remote_url()):
+        host = _host_from_url(url) if url else None
+        if host:
+            return host
+    return "github.com"
+
+
+def _api_base(host: str) -> str:
+    base = os.environ.get("GITHUB_API_URL")
+    if base:
+        return base.rstrip("/")
+    return (
+        "https://api.github.com" if host == "github.com" else f"https://{host}/api/v3"
+    )
+
+
+def _gh_token(host: str) -> str:
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        return token.strip()
+    return _gh("auth", "token", "--hostname", host).strip()
+
+
+@dataclass(frozen=True)
+class GhContext:
+    """Per-run constants for the REST log fetch, resolved once before any request."""
+
+    api_base: str
+    repo_slug: str
+    token: str
+    opener: urllib.request.OpenerDirector
+
+
+def resolve_gh_context() -> GhContext:
+    host = _gh_host()
+    return GhContext(
+        api_base=_api_base(host),
+        repo_slug=_repo_slug(),
+        token=_gh_token(host),
+        opener=urllib.request.build_opener(_StripAuthOnRedirect),
+    )
+
+
+def _decode_log(raw: bytes, job_id: int) -> str:
+    text = raw.decode("utf-8", errors="replace")
+    if "\ufffd" in text:
+        log.warning(
+            "Job %d log contained undecodable bytes; substituted U+FFFD. "
+            "Test-run counts for this shard may be incomplete.",
+            job_id,
+        )
+    return text
+
+
+def fetch_job_log(job_id: int, ctx: GhContext) -> str:
+    """Fetch one job's raw text log over REST rather than ``gh api``.
+
+    Job logs contain ANSI escape sequences, which gh refuses to emit
+    without ``--allow-escape-sequences`` (gh 2.97+); going direct keeps
+    this working on whatever gh a contributor has installed.
+    """
+    url = f"{ctx.api_base}/repos/{ctx.repo_slug}/actions/jobs/{job_id}/logs"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {ctx.token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with ctx.opener.open(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
+            return _decode_log(resp.read(), job_id)
+    except urllib.error.HTTPError as e:
+        # The log endpoint 302s to blob storage; report whichever hop failed.
+        failed_url = e.geturl() or url
+        try:
+            with e:
+                detail = e.read().decode("utf-8", errors="replace").strip()
+        except OSError as read_err:
+            detail = f"<response body unreadable: {read_err}>"
+        raise RuntimeError(
+            f"GET {failed_url} failed for job {job_id}: "
+            f"HTTP {e.code} {e.reason}: {detail}"
+        ) from e
+    except (urllib.error.URLError, TimeoutError) as e:
+        raise RuntimeError(f"GET {url} failed for job {job_id}: {e}") from e
+
+
+@lru_cache(maxsize=1)
+def _git_remote_url() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"], text=True
+        ).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
+@lru_cache(maxsize=1)
 def _repo_slug() -> str:
     slug = os.environ.get("GITHUB_REPOSITORY")
     if slug:
         return slug
     # Best-effort: parse from git remote
-    try:
-        url = subprocess.check_output(
-            ["git", "config", "--get", "remote.origin.url"], text=True
-        ).strip()
+    url = _git_remote_url()
+    if url:
         m = re.search(r"[:/]([\w-]+/[\w-]+?)(?:\.git)?$", url)
         if m:
             return m.group(1)
-    except subprocess.CalledProcessError:
-        pass
     raise RuntimeError(
         "Cannot determine repo slug; set $GITHUB_REPOSITORY or run inside a git checkout."
     )
@@ -417,9 +552,25 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     runs: list[TestRun] = []
-    for job_id, job_name in jobs:
+    log.info("Fetching logs for %d shards...", len(jobs))
+    ctx = resolve_gh_context()
+
+    def _fetch(job: tuple[int, str]) -> str | None:
+        job_id, job_name = job
+        log.info("Fetching log for shard %s (job %d)...", job_name, job_id)
+        try:
+            return fetch_job_log(job_id, ctx)
+        except (RuntimeError, OSError) as e:
+            # Informational report: one unreachable shard must not discard the rest.
+            log.warning("Skipping shard %s (job %d): %s", job_name, job_id, e)
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+        logs = list(pool.map(_fetch, jobs))
+    for (job_id, job_name), log_text in zip(jobs, logs, strict=True):
+        if log_text is None:
+            continue
         log.info("Parsing log for shard %s (job %d)...", job_name, job_id)
-        log_text = fetch_job_log(job_id)
         runs.extend(parse_shard_log(log_text, job_id=job_id, job_name=job_name))
 
     log.info("Collected %d test-run records.", len(runs))
