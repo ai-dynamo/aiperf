@@ -188,6 +188,16 @@ aiperf profile \
 
 In the MLflow UI the parent run shows both child runs nested beneath it, making it straightforward to compare concurrency=4 vs concurrency=8 side by side.
 
+#### Child run names
+
+When a run has a parent (a sweep, a search, or the `--mlflow-parent-run-id` case above), AIPerf names each child after the dimension value that varied for it — e.g. `Concurrency=4` and `Concurrency=8` — so the children are distinguishable in the UI instead of all sharing the same `--mlflow-run-name`. The name is taken from the run's swept coordinate (`variation.values`), so:
+
+- a multi-dimension sweep names the child by every varied dimension, joined with commas (`Concurrency=10, Mean=1024`);
+- a `prefill_concurrency` sweep is named `PrefillConcurrency=N` (by the dimension that actually varied, not the fixed total concurrency);
+- any future sweep dimension names itself automatically with no code change.
+
+A top-level run with no parent keeps its configured `--mlflow-run-name` (or MLflow's auto-generated name). The two `aiperf profile` invocations above are separate top-level commands rather than a single sweep, so pass distinct `--mlflow-run-name` values if you want to override the auto-derived child names.
+
 ## Attach Plots
 
 After profiling, generate and upload plots to the same MLflow run:
