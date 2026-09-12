@@ -383,6 +383,15 @@ class AioHttpTransport(BaseTransport):
                         f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
                     )
 
+            # A redirect would replay the signed headers at the new origin.
+            # aiohttp drops Authorization when the origin changes, but has no such
+            # rule for custom headers, so X-Amz-Security-Token -- a bearer
+            # credential -- would follow. Nothing is lost by refusing: SigV4 signs
+            # the Host header, so a replayed signature is invalid there anyway.
+            redirect_kwargs: dict[str, Any] = (
+                {"allow_redirects": False} if self.request_signer else {}
+            )
+
             record = await self.aiohttp_client.post_request(
                 url,
                 body,
@@ -391,6 +400,7 @@ class AioHttpTransport(BaseTransport):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                **redirect_kwargs,
             )
             record.request_headers = redact_headers(headers)
 
