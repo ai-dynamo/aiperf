@@ -19,6 +19,10 @@ from aiperf.metrics.types.replay_sched_lag_metrics import (
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.metrics.types.usage_metrics import (
+    UsagePromptTokensMetric,
+    UsageTotalTokensMetric,
+)
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from tests.unit.post_processors.conftest import (
@@ -409,3 +413,19 @@ class TestFixedScheduleOnlyGating:
         applicable = set(MetricRegistry.tags_applicable_to(*processor.get_filters()))
 
         assert applicable >= self.REPLAY_SCHED_TAGS
+
+
+@pytest.mark.parametrize(
+    "endpoint_type", [EndpointType.EMBEDDINGS, EndpointType.NIM_EMBEDDINGS]
+)
+def test_embeddings_usage_metric_applicability(
+    mock_run, endpoint_type: EndpointType
+) -> None:
+    mock_run.cfg.endpoint.type = endpoint_type
+    mock_run.cfg.endpoint.streaming = False
+    processor = BaseMetricsProcessor(mock_run)
+
+    applicable = MetricRegistry.tags_applicable_to(*processor.get_filters())
+
+    assert UsagePromptTokensMetric.tag in applicable
+    assert UsageTotalTokensMetric.tag not in applicable

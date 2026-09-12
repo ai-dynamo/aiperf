@@ -4,9 +4,11 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import orjson
 import pytest
 
 from aiperf.common.enums import ModelSelectionStrategy
+from aiperf.common.models import ParsedResponseRecord, RequestRecord, TextResponse
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -19,6 +21,7 @@ from aiperf.common.models.record_models import (
 )
 from aiperf.endpoints.openai_embeddings import EmbeddingsEndpoint
 from aiperf.plugin.enums import EndpointType
+from tests.unit.endpoints.conftest import create_model_endpoint
 
 
 class TestEmbeddingsEndpointParseResponse:
@@ -58,6 +61,7 @@ class TestEmbeddingsEndpointParseResponse:
         parsed = endpoint.parse_response(mock_response)
 
         assert parsed is not None
+        assert parsed.usage is None
         assert parsed.perf_ns == 123456789
         assert isinstance(parsed.data, EmbeddingResponseData)
         assert len(parsed.data.embeddings) == 1
@@ -276,3 +280,48 @@ class TestEmbeddingsEndpointParseResponse:
 
         assert parsed is not None
         assert parsed.data.embeddings[0] == [0.1, 0.2]
+
+
+def test_embeddings_usage_reaches_response_record() -> None:
+    endpoint = EmbeddingsEndpoint(create_model_endpoint(EndpointType.EMBEDDINGS))
+    usage = {"prompt_tokens": 8, "total_tokens": 8}
+    response = TextResponse(
+        perf_ns=2,
+        content_type="application/json",
+        text=orjson.dumps(
+            {
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2]}],
+                "usage": usage,
+            }
+        ).decode(),
+    )
+    request = RequestRecord(
+        responses=[response], status=200, start_perf_ns=1, end_perf_ns=3
+    )
+    parsed = endpoint.extract_response_data(request)
+    record = ParsedResponseRecord(request=request, responses=parsed)
+
+    assert parsed[0].usage == usage
+    assert record.final_usage == usage
+
+
+@pytest.mark.parametrize("usage", [{}, "unexpected"])
+def test_embeddings_unusable_usage_preserves_result(usage: object) -> None:
+    """Optional malformed telemetry must not discard a valid embedding."""
+    endpoint = EmbeddingsEndpoint(create_model_endpoint(EndpointType.EMBEDDINGS))
+    response = TextResponse(
+        perf_ns=2,
+        content_type="application/json",
+        text=orjson.dumps(
+            {
+                "data": [{"object": "embedding", "embedding": [0.1, 0.2]}],
+                "usage": usage,
+            }
+        ).decode(),
+    )
+
+    parsed = endpoint.parse_response(response)
+
+    assert parsed is not None
+    assert parsed.data.embeddings == [[0.1, 0.2]]
+    assert parsed.usage is None
