@@ -1,0 +1,38 @@
+[package]
+name = "tachometer-scraper"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Prometheus metrics scraper for Tachometer artifacts"
+repository = "https://github.com/ai-dynamo/aiperf"
+
+[lib]
+name = "tachometer_scraper"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tachometer-scraper"
+path = "src/main.rs"
+
+[dependencies]
+tachometer-writer = { path = "../tachometer-writer" }
+tokio.workspace = true
+reqwest.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+object_store.workspace = true
+url.workspace = true
+log.workspace = true
+env_logger.workspace = true
+serde = { workspace = true }
+toml = "0.8"
+bytes.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+flate2 = "1.0"
+tempfile = "3.8"
+parquet = { workspace = true }
+arrow = { workspace = true }

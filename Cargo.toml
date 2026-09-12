@@ -1,0 +1,44 @@
+[package]
+name = "tachometer-pyo3"
+version = "0.11.0"
+edition = "2021"
+authors = ["NVIDIA Corporation"]
+license = "Apache-2.0"
+description = "PyO3 bindings for the vendored Tachometer scraper"
+repository = "https://github.com/ai-dynamo/aiperf"
+
+[lib]
+name = "aiperf_tachometer"
+crate-type = ["cdylib"]
+
+[workspace]
+members = ["rust/tachometer-writer", "rust/tachometer-scraper"]
+resolver = "2"
+
+[workspace.package]
+version = "0.11.0"
+edition = "2021"
+authors = ["NVIDIA Corporation"]
+license = "Apache-2.0"
+
+[workspace.dependencies]
+arrow = "57.0"
+parquet = "57.0"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+chrono = { version = "0.4.40", default-features = false, features = ["clock", "serde"] }
+reqwest = { version = "0.12", features = ["json"] }
+bytes = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+url = "2.5"
+object_store = { version = "0.12", features = ["aws", "fs"] }
+log = "0.4"
+env_logger = "0.11"
+futures = "0.3"
+
+[dependencies]
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+tachometer-scraper = { path = "rust/tachometer-scraper" }
