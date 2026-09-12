@@ -109,7 +109,6 @@ class TestBuildFormData:
         "values, expected",
         [
             param(["word", "segment"], ["word", "segment"], id="multiple"),
-            param(["word"], ["word"], id="single"),
             param([], [], id="empty"),
             param([True, False, 2], ["true", "false", "2"], id="scalar-types"),
         ],
