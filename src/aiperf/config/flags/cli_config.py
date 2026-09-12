@@ -83,6 +83,7 @@ from aiperf.plugin.enums import (
     EndpointType,
     GPUTelemetryCollectorType,
     PublicDatasetType,
+    RequestSignerType,
     SearchPlannerType,
     TransportType,
     UIType,
@@ -340,11 +341,116 @@ class CLIConfig(BaseConfig):
         TransportType | None,
         Field(
             description="Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme "
-            "(`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, "
-            "TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.",
+            "(`http`/`https` -> `TransportType.HTTP`). `http` uses aiohttp with connection pooling, TCP optimization, and "
+            "Server-Sent Events (SSE) for streaming. `sagemaker` invokes AWS SageMaker Runtime and is normally derived from "
+            "`--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.",
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            description="AWS region for SigV4-signed requests (e.g. `us-east-1`). Required when "
+            "`--auth-type sigv4`.",
+        ),
+        CLIParameter(
+            name=("--aws-region",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            description="Named AWS credentials profile. Unset uses botocore's default credential chain "
+            "(environment variables, EC2/ECS instance role, `~/.aws/credentials` default profile).",
+        ),
+        CLIParameter(
+            name=("--aws-profile",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            description="Request signing method for authentication. When set, the selected `request_signer` "
+            "plugin signs every HTTP request. Replaces Bearer token auth (`--api-key` is ignored when "
+            "`--auth-type` is set).",
+        ),
+        CLIParameter(
+            name=("--auth-type",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_signing_service: Annotated[
+        str | None,
+        Field(
+            description="AWS SigV4 signing name -- the credential scope the signature is bound to "
+            "(e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, which is "
+            "not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and `bedrock-runtime` "
+            "signs as `bedrock`. Required when `--auth-type sigv4`.",
+        ),
+        CLIParameter(
+            name=("--aws-signing-service",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_endpoint_name: Annotated[
+        str | None,
+        Field(
+            description="Name of the SageMaker endpoint to invoke. Usually the only AWS flag "
+            "needed besides `--aws-region`: it selects the SageMaker transport, turns on SigV4 "
+            "signing, and derives the runtime URL. Note that the endpoint type's usual path "
+            "(e.g. `/v1/chat/completions`) is NOT used -- SageMaker routes on the request body, "
+            "so every endpoint type is invoked through `/endpoints/{name}/invocations`.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-endpoint-name",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_target_model: Annotated[
+        str | None,
+        Field(
+            description="SageMaker `TargetModel` value, for multi-model endpoints. Defaults to "
+            "the request's model name. Not sent on streaming requests -- the streaming operation "
+            "does not accept it.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-target-model",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_inference_component_name: Annotated[
+        str | None,
+        Field(
+            description="SageMaker `InferenceComponentName` to target, for endpoints hosting "
+            "multiple inference components.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-inference-component-name",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_target_variant: Annotated[
+        str | None,
+        Field(
+            description="SageMaker production variant to pin every request to, bypassing the "
+            "endpoint's traffic split. Use to benchmark one variant of an A/B deployment in "
+            "isolation.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-target-variant",),
             group=Groups.ENDPOINT,
         ),
     ] = None

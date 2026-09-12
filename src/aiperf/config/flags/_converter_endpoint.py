@@ -74,6 +74,10 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "request_content_type": "request_content_type",
     "session_header": "session_header",
     "uuid_and_strip": "uuid_and_strip",
+    "auth_type": "auth_type",
+    "aws_region": "aws_region",
+    "aws_profile": "aws_profile",
+    "aws_signing_service": "aws_signing_service",
 }
 
 
@@ -118,6 +122,29 @@ def _maybe_build_server_profiler(cli: CLIConfig) -> dict[str, Any] | None:
     return out
 
 
+_SAGEMAKER_FIELD_MAP = {
+    "sagemaker_endpoint_name": "endpoint_name",
+    "sagemaker_target_model": "target_model",
+    "sagemaker_inference_component_name": "inference_component_name",
+    "sagemaker_target_variant": "target_variant",
+}
+
+
+def _maybe_build_sagemaker(cli: CLIConfig) -> dict[str, Any] | None:
+    """Collect the flat ``--sagemaker-*`` flags into the nested config section.
+
+    The flags stay flat on the CLI (``--sagemaker-endpoint-name``) while the
+    config model groups them, the same split ``reset_kv_cache`` uses.
+    """
+    ep_set = cli.model_fields_set & ENDPOINT_FIELDS
+    out = {
+        key: getattr(cli, field)
+        for field, key in _SAGEMAKER_FIELD_MAP.items()
+        if field in ep_set
+    }
+    return out or None
+
+
 def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
     """Build the AIPerfConfig ``endpoint`` section from a CLIConfig.
 
@@ -148,6 +175,9 @@ def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
     profiler = _maybe_build_server_profiler(cli)
     if profiler is not None:
         endpoint["server_profiler"] = profiler
+    sagemaker = _maybe_build_sagemaker(cli)
+    if sagemaker is not None:
+        endpoint["sagemaker"] = sagemaker
 
     return endpoint
 

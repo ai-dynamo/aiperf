@@ -314,6 +314,22 @@ class AioHttpTransport(BaseTransport):
             request_info.model_endpoint.endpoint.type
         )
         if endpoint_metadata.requires_polling:
+            # The polling path submits and polls the job through calls that never
+            # reach the signing site below, and base_endpoint suppresses the
+            # Bearer header whenever a signer is configured -- so a signed
+            # polling request would go out with no credential at all and 403 with
+            # nothing pointing at signing. EndpointConfig rejects this pairing at
+            # startup; this asserts the same invariant next to the code that
+            # depends on it, so relaxing the validator cannot silently reintroduce
+            # unsigned requests.
+            if self.request_signer is not None:
+                raise RuntimeError(
+                    f"endpoint type {request_info.model_endpoint.endpoint.type} "
+                    "polls an async job over a path that does not apply request "
+                    "signing, so its requests would be sent with no credential. "
+                    "This combination is rejected by EndpointConfig; reaching it "
+                    "here means that validation was bypassed."
+                )
             return await self._send_video_request_with_polling(request_info, payload)
 
         try:
@@ -331,6 +347,19 @@ class AioHttpTransport(BaseTransport):
                 body = self._build_form_data(payload)
             else:
                 body = orjson.dumps(payload)
+
+            # Sign only after ``body`` is final, so the pre-encoded-bytes fast
+            # path is signed too: SigV4 hashes the exact bytes on the wire, and
+            # a body that was signed before re-encoding (or not signed at all)
+            # is rejected with 403. Multipart bodies are streamed by aiohttp and
+            # never materialize as bytes here, so they cannot be hashed;
+            # EndpointConfig rejects multipart + an active signer up front
+            # rather than silently sending them unsigned.
+            if not isinstance(body, aiohttp.FormData):
+                signed = await self._sign_if_needed("POST", url, headers, body)
+                url = signed.url if signed.url is not None else url
+                headers = signed.headers
+                body = signed.body if signed.body is not None else body
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -367,6 +396,15 @@ class AioHttpTransport(BaseTransport):
                         f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
                     )
 
+            # A redirect would replay the signed headers at the new origin.
+            # aiohttp drops Authorization when the origin changes but has no such
+            # rule for custom headers, so X-Amz-Security-Token -- a bearer
+            # credential -- would follow. Nothing is lost by refusing: SigV4 signs
+            # the Host header, so a replayed signature is invalid anyway.
+            redirect_kwargs: dict[str, Any] = (
+                {"allow_redirects": False} if self.request_signer else {}
+            )
+
             record = await self.aiohttp_client.post_request(
                 url,
                 body,
@@ -375,8 +413,27 @@ class AioHttpTransport(BaseTransport):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                **redirect_kwargs,
             )
             record.request_headers = redact_headers(headers)
+
+            # Signed requests are sent with allow_redirects=False, so a 3xx
+            # reaches the caller instead of being followed. "302 Found" alone
+            # does not say why, and the reason is deliberate rather than a
+            # server fault, so spell it out where the user will see it.
+            if (
+                self.request_signer is not None
+                and record.error is not None
+                and record.status is not None
+                and 300 <= record.status < 400
+            ):
+                record.error.message = (
+                    f"{record.error.message} "
+                    "(aiperf does not follow redirects on signed requests: the "
+                    "SigV4 signature covers the Host header, so it would be "
+                    "invalid at the redirect target, and credential headers such "
+                    "as x-amz-security-token would be replayed there.)"
+                ).strip()
 
             # Release lease for sticky-user-sessions strategy if it's the final turn of the conversation,
             # or the request was cancelled (connection is now dirty/closed), or there was an error.

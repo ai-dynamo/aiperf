@@ -513,6 +513,31 @@ transport:
     metadata:
       transport_type: http
       url_schemes: [http, https]
+  sagemaker:
+    class: aiperf.transports.aws.sagemaker:SageMakerTransport
+    description: |
+      AWS SageMaker Runtime InvokeEndpoint / InvokeEndpointWithResponseStream.
+      Subclasses the HTTP transport, overriding only the URL path and headers;
+      SigV4 signing and eventstream response decoding are inherited.
+      url_schemes is empty on purpose so URL-scheme auto-detection can never
+      select it over the built-in http transport - it is chosen explicitly via
+      --transport sagemaker, or derived from --sagemaker-endpoint-name.
+    metadata:
+      transport_type: sagemaker
+      url_schemes: []
+
+# =============================================================================
+# Request Signers
+# =============================================================================
+# Request signers add authentication signatures to outbound requests.
+# Called at the transport layer after headers, URL, and body are finalized.
+# =============================================================================
+request_signer:
+  sigv4:
+    class: aiperf.auth.sigv4_signer:SigV4RequestSigner
+    description: |
+      AWS SigV4 request signing for SageMaker, Bedrock, API Gateway,
+      and any SigV4-protected endpoint. Uses botocore credential chain.
 
 # =============================================================================
 # Dataset Composers

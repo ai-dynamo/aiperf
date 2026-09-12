@@ -35,8 +35,10 @@ from aiperf.config.control_hooks import (
     require_relative_path,
 )
 from aiperf.config.loader.parsing import normalize_http_urls
+from aiperf.config.sagemaker import SageMakerConfig
 from aiperf.plugin.enums import (
     EndpointType,
+    RequestSignerType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -100,6 +102,40 @@ class TemplateConfig(BaseConfig):
             "Use dot notation for nested fields: 'choices.0.message.content'.",
         ),
     ]
+
+
+def _is_cleartext_remote(url: str) -> bool:
+    """Whether ``url`` would send request headers unencrypted off-box.
+
+    Loopback is deliberately not treated as cleartext-remote: the documented
+    mock-server workflow signs against ``http://localhost``, and headers that
+    never leave the machine are not disclosed by the absence of TLS.
+    """
+    parsed = urlparse(url if "://" in url else f"http://{url}")
+    if parsed.scheme != "http":
+        return False
+    host = (parsed.hostname or "").lower()
+    return not (host in {"localhost", "::1"} or host.startswith("127."))
+
+
+def _transport_botocore_service_id(transport: TransportType | None) -> str | None:
+    """Return the botocore service id the given transport signs as, if any.
+
+    Read off the transport class rather than mapped here, so adding a second
+    AWS transport (Bedrock) needs no change in this module. Returns None for
+    transports that are not AWS-specific, which is every transport today except
+    SageMaker.
+    """
+    if transport is None:
+        return None
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return None
+    return getattr(transport_cls, "botocore_service_id", None)
 
 
 class EndpointConfig(BaseConfig):
@@ -214,9 +250,55 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Transport plugin name. Auto-detected from the URL scheme when unset.",
+        ),
+    ]
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS region for the request. Required when auth_type='sigv4'.",
+        ),
+    ]
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Named AWS credentials profile. Unset uses botocore's default "
+            "credential chain.",
+        ),
+    ]
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            default=None,
+            description="Request signing method for authentication. When set, the selected "
+            "request_signer plugin signs every HTTP request sent by the HTTP transport. "
+            "Replaces Bearer token auth (api_key is ignored when auth_type is set).",
+        ),
+    ]
+
+    aws_signing_service: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS SigV4 signing name -- the credential scope the signature "
+            "is bound to (e.g. 'execute-api', 'sagemaker', 'bedrock'). This is the "
+            "service's signing name, which is not always its API id: the "
+            "'sagemaker-runtime' API signs as 'sagemaker', and 'bedrock-runtime' signs "
+            "as 'bedrock'. Required when auth_type='sigv4'.",
+        ),
+    ]
+
+    sagemaker: Annotated[
+        SageMakerConfig,
+        Field(
+            default_factory=SageMakerConfig,
+            description="SageMaker Runtime routing options. Setting "
+            "sagemaker.endpoint_name selects the SageMaker transport.",
         ),
     ]
 
@@ -445,6 +527,28 @@ class EndpointConfig(BaseConfig):
             if "urls" not in data:
                 data["urls"] = [url] if isinstance(url, str) else url
 
+        # Derive the SageMaker runtime base URL. This has to happen before
+        # field validation because `urls` is required, so an after-validator
+        # would never run -- the user would get "urls: Field required" instead
+        # of anything about SageMaker.
+        sagemaker = data.get("sagemaker") or {}
+        endpoint_name = (
+            sagemaker.get("endpoint_name")
+            if isinstance(sagemaker, dict)
+            else getattr(sagemaker, "endpoint_name", None)
+        )
+        if endpoint_name and not data.get("urls"):
+            region = data.get("aws_region")
+            if not region:
+                raise ValueError(
+                    "SageMaker endpoints require --aws-region: it selects both the "
+                    "runtime hostname and the SigV4 credential scope, and there is "
+                    "no safe default to guess."
+                )
+            from aiperf.transports.aws.regions import dns_suffix
+
+            data["urls"] = [f"https://runtime.sagemaker.{region}.{dns_suffix(region)}"]
+
         # Auto-detect template type
         if "template" in data and data["template"] is not None and "type" not in data:
             data["type"] = EndpointType.TEMPLATE
@@ -481,6 +585,48 @@ class EndpointConfig(BaseConfig):
         underscore flag for the scenario resolver's defensive ``getattr``.
         """
         self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
+
+    @model_validator(mode="after")
+    def _derive_sagemaker_settings(self) -> Self:
+        """Fill in everything ``--sagemaker-endpoint-name`` implies.
+
+        Defined above ``_validate_endpoint_boundaries`` because that validator
+        inspects ``urls``, and the derived URL has to exist by then
+        (``mode="after"`` validators run in definition order).
+
+        Only ever fills unset values: anything the user set explicitly wins, so
+        an explicit ``--url`` still points at a VPC/PrivateLink endpoint or a
+        custom domain.
+        """
+        if self.sagemaker.endpoint_name and self.transport is None:
+            self.transport = TransportType.SAGEMAKER
+
+        if self.transport != TransportType.SAGEMAKER:
+            return self
+
+        if self.auth_type is None:
+            self.auth_type = RequestSignerType.SIGV4
+
+        if not self.aws_region:
+            raise ValueError(
+                "SageMaker endpoints require --aws-region: it selects both the "
+                "runtime hostname and the SigV4 credential scope, and there is no "
+                "safe default to guess."
+            )
+
+        # Without a name there is nothing to put in /endpoints/{name}/invocations,
+        # and the request would go out against an empty path segment and fail
+        # remotely with nothing pointing back at the cause. An explicit --endpoint
+        # path is the exception: get_url() uses it verbatim and never builds the
+        # SageMaker route at all.
+        if self.path is None and not self.sagemaker.endpoint_name:
+            raise ValueError(
+                "The SageMaker transport requires --sagemaker-endpoint-name "
+                "(or an explicit --endpoint path to use instead); without it the "
+                "request path would be /endpoints//invocations."
+            )
+
         return self
 
     @model_validator(mode="after")
@@ -689,4 +835,92 @@ class EndpointConfig(BaseConfig):
                 "HTTP transport; unsupported transport "
                 f"{self.transport!r}"
             )
+        # Both hooks reach the server out of band via ``auth_headers_for_endpoint``,
+        # which never applies the request signer, so their requests would go out
+        # unsigned. Checked alongside the transport condition rather than in a
+        # parallel validator so the two cannot drift apart.
+        if self.auth_type is not None:
+            raise ValueError(
+                "endpoint.reset_kv_cache and endpoint.server_profiler issue "
+                "out-of-band requests that request signing does not cover, so "
+                f"they would be rejected under auth_type={self.auth_type}. "
+                "Unset them, or drop --auth-type."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_request_signer_support(self) -> Self:
+        """Reject signer setups whose requests would never reach the signer.
+
+        Defined after ``_validate_request_content_type`` so ``request_content_type``
+        already reflects multipart auto-selection (``mode="after"`` validators run
+        in definition order).
+        """
+        if self.auth_type is None:
+            return self
+
+        if self.auth_type == RequestSignerType.SIGV4:
+            missing = [
+                flag
+                for flag, value in (
+                    ("--aws-region", self.aws_region),
+                    # Only required when nothing else can supply the scope. A
+                    # transport that declares a botocore service id derives it
+                    # from AWS's own service model instead.
+                    (
+                        "--aws-signing-service",
+                        self.aws_signing_service
+                        or _transport_botocore_service_id(self.transport),
+                    ),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    f"--auth-type sigv4 requires {' and '.join(missing)}. "
+                    "The signing name is the credential scope, not the API id: "
+                    "SageMaker Runtime signs as 'sagemaker', Bedrock Runtime as "
+                    "'bedrock', and API Gateway as 'execute-api'."
+                )
+
+        from aiperf.plugin import plugins
+
+        metadata = plugins.get_endpoint_metadata(self.type)
+        if getattr(metadata, "requires_polling", False):
+            raise ValueError(
+                f"endpoint type {self.type} submits and polls an async job over a "
+                "code path that bypasses request signing, so those requests would "
+                f"be sent unsigned under auth_type={self.auth_type}. Signing the "
+                "polling path is not supported."
+            )
+
+        # aiohttp streams multipart bodies, so they never materialize as the exact
+        # bytes SigV4 has to hash.
+        if self.request_content_type == RequestContentType.MULTIPART_FORM_DATA:
+            raise ValueError(
+                f"auth_type={self.auth_type} cannot sign multipart/form-data "
+                f"request bodies, which endpoint type {self.type} requires. "
+                "Use a JSON endpoint type, or drop --auth-type."
+            )
+
+        # Signing puts credential material on the wire: the signature itself and,
+        # for temporary credentials, the x-amz-security-token bearer token. Over
+        # cleartext that is a credential disclosure, not merely unencrypted
+        # traffic. Loopback is exempt so the in-repo mock server stays usable.
+        insecure = [url for url in self.urls if _is_cleartext_remote(url)]
+        if insecure:
+            raise ValueError(
+                f"auth_type={self.auth_type} signs every request, which puts the "
+                "signature and any session token into the request headers. "
+                "Sending those over plain HTTP would disclose them: "
+                f"{', '.join(insecure)}. Use https, or drop --auth-type."
+            )
+
+        if self.wait_for_model_timeout > 0:
+            raise ValueError(
+                "--wait-for-model-timeout issues an out-of-band readiness probe "
+                "that request signing does not cover, so it would be rejected "
+                f"under auth_type={self.auth_type}. Drop --wait-for-model-timeout."
+            )
+
         return self

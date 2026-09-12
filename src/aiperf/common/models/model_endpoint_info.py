@@ -20,7 +20,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
-from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -159,6 +159,43 @@ class EndpointInfo(AIPerfBaseModel):
         description="Enable AIPerf-managed stripping of repeated image content. "
         "Dataset-authored UUIDs pass through independently of this setting.",
     )
+    auth_type: RequestSignerType | None = Field(
+        default=None,
+        description="Request signing scheme applied to every inference request. "
+        "None disables signing.",
+    )
+    aws_region: str | None = Field(
+        default=None,
+        description="AWS region used as the SigV4 credential scope.",
+    )
+    aws_profile: str | None = Field(
+        default=None,
+        description="Named AWS credentials profile to resolve credentials from. "
+        "None uses the default botocore resolution chain.",
+    )
+    sagemaker_endpoint_name: str | None = Field(
+        default=None,
+        description="Name of the SageMaker endpoint to invoke. Forms the "
+        "/endpoints/{name}/invocations request path.",
+    )
+    sagemaker_target_model: str | None = Field(
+        default=None,
+        description="SageMaker TargetModel for multi-model endpoints. Not sent on "
+        "streaming requests; defaults to the request's model name.",
+    )
+    sagemaker_inference_component_name: str | None = Field(
+        default=None,
+        description="SageMaker InferenceComponentName to target.",
+    )
+    sagemaker_target_variant: str | None = Field(
+        default=None,
+        description="SageMaker production variant to pin every request to.",
+    )
+    aws_signing_service: str | None = Field(
+        default=None,
+        description="AWS SigV4 signing name (credential scope). Required when "
+        "auth_type is sigv4 and no transport supplies a botocore service id.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -227,6 +264,14 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 uuid_and_strip=getattr(
                     ep, "uuid_and_strip", EndpointDefaults.UUID_AND_STRIP
                 ),
+                auth_type=ep.auth_type,
+                aws_region=ep.aws_region,
+                aws_profile=ep.aws_profile,
+                aws_signing_service=ep.aws_signing_service,
+                sagemaker_endpoint_name=ep.sagemaker.endpoint_name,
+                sagemaker_target_model=ep.sagemaker.target_model,
+                sagemaker_inference_component_name=ep.sagemaker.inference_component_name,
+                sagemaker_target_variant=ep.sagemaker.target_variant,
             ),
             transport=ep.transport,
         )
