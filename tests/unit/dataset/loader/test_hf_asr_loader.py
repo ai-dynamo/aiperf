@@ -3,10 +3,15 @@
 
 import base64
 import io
+from pathlib import Path
+from unittest.mock import patch
 
+import aiofiles
 import numpy as np
 import pytest
 import soundfile as sf
+from datasets import Audio as HFAudio
+from datasets import Dataset
 
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
@@ -171,3 +176,70 @@ class TestHFASRConvertToConversations:
         data = {"dataset": [_make_audio_row(1.0)]}
         conversations = await loader.convert_to_conversations(data)
         assert len(conversations[0].turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_path_backed_hf_audio_is_loaded(
+    loader: HFASRDatasetLoader, tmp_path: Path
+) -> None:
+    """HF keeps cached/local audio as paths when decoding is disabled."""
+    audio_path = tmp_path / "clip.wav"
+    audio_path.write_bytes(_make_audio_bytes(0.5))
+    dataset = Dataset.from_dict({"audio": [str(audio_path)]}).cast_column(
+        "audio", HFAudio(decode=False)
+    )
+    assert dataset[0]["audio"]["bytes"] is None
+    conversations = await loader.convert_to_conversations({"dataset": dataset})
+    assert len(conversations) == 1
+    turn = conversations[0].turns[0]
+    assert turn.audio_duration_seconds == pytest.approx(0.5)
+    encoded = turn.audios[0].contents[0].split(",", 1)[1]
+    samples, rate = sf.read(io.BytesIO(base64.b64decode(encoded)))
+    assert rate == 16000
+    assert len(samples) == 8000
+
+
+@pytest.mark.asyncio
+async def test_path_backed_long_and_missing_audio_are_skipped(
+    loader: HFASRDatasetLoader, tmp_path: Path
+) -> None:
+    long_path = tmp_path / "long.wav"
+    long_path.write_bytes(_make_audio_bytes(_MAX_DURATION_SECONDS + 1))
+    rows = [
+        {"audio": {"bytes": None, "path": str(long_path)}},
+        {"audio": {"bytes": None, "path": str(tmp_path / "missing.wav")}},
+        _make_audio_row(1.0),
+    ]
+    with patch(
+        "aiperf.dataset.loader.hf_asr.aiofiles.open", wraps=aiofiles.open
+    ) as open_audio:
+        conversations = await loader.convert_to_conversations({"dataset": rows})
+    assert str(long_path) not in [call.args[0] for call in open_audio.call_args_list]
+    assert len(conversations) == 1
+    assert conversations[0].turns[0].audio_duration_seconds == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_invalid_audio_path_does_not_abort_conversion(
+    loader: HFASRDatasetLoader,
+) -> None:
+    rows = [
+        {"audio": {"bytes": None, "path": "invalid\x00.wav"}},
+        _make_audio_row(1.0),
+    ]
+    conversations = await loader.convert_to_conversations({"dataset": rows})
+    assert len(conversations) == 1
+    assert conversations[0].turns[0].audio_duration_seconds == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_embedded_audio_bytes_take_precedence_over_path(
+    loader: HFASRDatasetLoader, tmp_path: Path
+) -> None:
+    """A metadata path must not replace an embedded recording."""
+    audio_path = tmp_path / "different.wav"
+    audio_path.write_bytes(_make_audio_bytes(2.0))
+    row = {"audio": {"bytes": _make_audio_bytes(0.5), "path": str(audio_path)}}
+    conversations = await loader.convert_to_conversations({"dataset": [row]})
+    assert len(conversations) == 1
+    assert conversations[0].turns[0].audio_duration_seconds == pytest.approx(0.5)
