@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import BailianTrace
 
@@ -23,6 +24,11 @@ class BailianTraceDatasetLoader(BaseTraceDatasetLoader[BailianTrace]):
 
     Timestamps are **seconds since request arrival** and are converted to
     **milliseconds** internally.
+
+    Every row is a self-contained request: a follow-up's `input_length` and
+    `hash_ids` describe the whole request the service received, history
+    included, so sessions replay in `MESSAGE_ARRAY_WITH_RESPONSES` mode and
+    each turn is sent as its own generated prompt.
 
     The 16-token SipHash block size is declared in `plugins.yaml` metadata
     and applied automatically—no need to pass `--isl-block-size`.
@@ -65,6 +71,19 @@ class BailianTraceDatasetLoader(BaseTraceDatasetLoader[BailianTrace]):
 
     def _group_traces(self, items: list[BailianTrace]) -> dict[str, list[BailianTrace]]:
         return self._group_into_sessions(items)
+
+    def _infer_context_mode(
+        self, traces: list[BailianTrace]
+    ) -> ConversationContextMode | None:
+        """Bailian rows already carry their full context.
+
+        A follow-up's `input_length` is the history the service retained plus
+        the new text, and its `hash_ids` cover that whole span.
+        Accumulating prior turns and live responses in front of it (the
+        `DELTAS_WITHOUT_RESPONSES` default) would send roughly twice the
+        recorded tokens at turn 2 and more at each later turn.
+        """
+        return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
 
     def _group_into_sessions(
         self, items: list[BailianTrace]

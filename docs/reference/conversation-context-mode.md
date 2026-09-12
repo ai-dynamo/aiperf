@@ -92,6 +92,7 @@ Each turn is sent exactly as it appears in the dataset.
 
 Default for:
 - Mooncake traces with pre-built `messages` arrays
+- Bailian traces: a follow-up row's `input_length` and `hash_ids` already cover the history the service retained plus the new text, so each row is sent as its own generated prompt
 
 ### `message_array_without_responses`
 

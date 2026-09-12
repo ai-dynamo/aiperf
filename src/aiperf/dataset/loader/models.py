@@ -375,7 +375,11 @@ class BailianTrace(AIPerfBaseModel):
 
     Examples:
     - Root request:  ``{"chat_id": 159, "parent_chat_id": -1, "timestamp": 61.114, "input_length": 521, "output_length": 132, "type": "text", "turn": 1, "hash_ids": [1089, 1090, 1091]}``
-    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 400, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090]}``
+    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 676, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090, 1091, 1092]}``
+
+    The ``hash_ids`` lists above are abbreviated. A real row carries one id per
+    16-token block, so 521 and 676 input tokens give 33 and 43 ids respectively,
+    and a follow-up's list starts with all of its parent's full blocks.
 
     Note:
     The ``type`` field in Bailian JSONL is the request type (text/search/image/file),
