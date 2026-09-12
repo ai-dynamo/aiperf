@@ -114,6 +114,7 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         # agentic phase fields, via _apply_agentic_replay_fields
         "agentic_cache_warmup_duration",
         "agentic_warmup_grace_period",
+        "warmup_requests_per_lane",
         # publishing targets, via build_mlflow / build_otel /
         # build_network_latency -- the builders the CLI-only converter has
         # always used, now called by build_cli_overrides too

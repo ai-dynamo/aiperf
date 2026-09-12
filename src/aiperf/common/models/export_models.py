@@ -293,7 +293,7 @@ class JsonExportData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.4"
+    SCHEMA_VERSION: ClassVar[str] = "1.5"
 
     schema_version: str | None = Field(
         default=None,
@@ -315,6 +315,18 @@ class JsonExportData(AIPerfBaseModel):
     inter_token_latency: JsonMetricResult | None = None
     output_token_throughput: JsonMetricResult | None = None
     output_token_throughput_per_user: JsonMetricResult | None = None
+    full_decode_duration: JsonMetricResult | None = Field(
+        default=None,
+        description="Client-observed duration from first parsed content through full request completion.",
+    )
+    full_response_inter_token_latency: JsonMetricResult | None = Field(
+        default=None,
+        description="Average token interval from first parsed content through full request completion.",
+    )
+    full_response_output_token_throughput_per_user: JsonMetricResult | None = Field(
+        default=None,
+        description="Per-request output token rate over the full decode duration.",
+    )
     output_sequence_length: JsonMetricResult | None = None
     input_sequence_length: JsonMetricResult | None = None
     goodput: JsonMetricResult | None = None
@@ -336,6 +348,16 @@ class JsonExportData(AIPerfBaseModel):
     input_config: BenchmarkConfig | None = None
     run_info: RunInfo | None = None
     was_cancelled: bool | None = None
+    runtime_submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Runtime reason tags that invalidate this run's scenario "
+        "submission (e.g. context-overflow rate exceeded), sourced from "
+        "ProfileResults.runtime_submission_invalid_reasons. Surfaced at the "
+        "top level (distinct from ``metadata.submission_invalid_reasons``, "
+        "which already merges these in) so multi-run aggregation can read "
+        "them back out of each run's export file without re-deriving the "
+        "merged verdict.",
+    )
     is_complete: bool | None = Field(
         default=None,
         description=(

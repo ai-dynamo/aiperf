@@ -78,6 +78,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
             input_config=self._cfg,
             run_info=RunInfo.from_run(self._run),
             was_cancelled=self._results.was_cancelled,
+            runtime_submission_invalid_reasons=list(
+                getattr(self._results, "runtime_submission_invalid_reasons", [])
+            ),
             is_complete=self._results.is_complete,
             incomplete_reason=self._results.incomplete_reason,
             error_summary=self._results.error_summary,
@@ -93,6 +96,14 @@ class MetricsJsonExporter(MetricsBaseExporter):
         dataset = public_dataset_provenance(self._cfg)
         if dataset is not None:
             run_metadata["dataset"] = dataset
+        metric_duration_coverage = getattr(
+            self._results, "metric_duration_coverage", []
+        )
+        if metric_duration_coverage:
+            run_metadata["metric_duration_coverage"] = [
+                coverage.model_dump(mode="json")
+                for coverage in metric_duration_coverage
+            ]
 
         # ProfileResults.context_overflow_count is the AGENTIC_REPLAY skip-path
         # side channel only (not in error_request_count / ContextOverflowCountMetric).
@@ -178,6 +189,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
                 total_responses=total_responses,
                 context_overflow_count=context_overflow_count,
                 was_cancelled=bool(self._results.was_cancelled),
+                runtime_invalid_reasons=list(
+                    getattr(self._results, "runtime_submission_invalid_reasons", [])
+                ),
             )
             run_metadata.update(
                 _build_run_metadata_dict(

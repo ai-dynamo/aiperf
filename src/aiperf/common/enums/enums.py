@@ -108,6 +108,19 @@ class CommandType(CaseInsensitiveStrEnum):
     and leave the pod permanently half-dead at 1/13 Ready."""
 
 
+class ProfileCancelReason(CaseInsensitiveStrEnum):
+    """Why a PROFILE_CANCEL command was issued; controls run exit semantics."""
+
+    USER = "user"
+    WARMUP_FAILURE = "warmup_failure"
+    FAILED_REQUEST_THRESHOLD = "failed_request_threshold"
+
+    @property
+    def is_abort(self) -> bool:
+        """Return whether the cancellation represents a benchmark failure."""
+        return self is not ProfileCancelReason.USER
+
+
 class ConversationBranchMode(CaseInsensitiveStrEnum):
     """Mode discriminator for ``ConversationBranchInfo``.
 

@@ -13,7 +13,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_hooks import prepare_endpoint_control_hooks
 from aiperf.common.control_structs import Command
 from aiperf.common.endpoint_auth import auth_headers_for_endpoint
-from aiperf.common.enums import CommandType, MessageType
+from aiperf.common.enums import CommandType, MessageType, ProfileCancelReason
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import InvalidStateError
@@ -316,7 +316,9 @@ class TimingManager(BaseComponentService):
                 )
             )
 
-    async def _request_profile_cancel(self) -> None:
+    async def _request_profile_cancel(
+        self, reason: ProfileCancelReason | None = None
+    ) -> None:
         """Ask the controller to relay PROFILE_CANCEL to the peer services.
 
         The ROUTER is the only path between two non-controller services, so a
@@ -327,11 +329,19 @@ class TimingManager(BaseComponentService):
 
         Best effort: every caller is already on a terminal abort path and must
         continue to its own teardown even if the control channel is gone.
+
+        Args:
+            reason: Why the run is being aborted, surfaced by the controller's
+                relay as an exit error. ``None`` for callers with no dedicated
+                ``ProfileCancelReason`` member yet (e.g. worker-loss aborts).
         """
+        payload: dict[str, str] = {"origin_service_id": self.service_id}
+        if reason is not None:
+            payload["reason"] = reason
         try:
             await self.send_command_to_controller(
                 CommandType.PROFILE_CANCEL,
-                payload=orjson.dumps({"origin_service_id": self.service_id}),
+                payload=orjson.dumps(payload),
             )
         except Exception as e:  # noqa: BLE001 - abort path must not be blocked by transport failure
             self.warning(f"Failed to request PROFILE_CANCEL from controller: {e!r}")

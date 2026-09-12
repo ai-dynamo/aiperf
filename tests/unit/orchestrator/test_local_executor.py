@@ -93,7 +93,9 @@ def test_extract_summary_metrics_honors_artifacts_prefix(tmp_path):
     (tmp_path / "my_run.json").write_bytes(orjson.dumps(metrics_payload))
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert "request_count" in metrics
     assert metrics["request_count"].avg == 100.0
@@ -116,7 +118,9 @@ def test_extract_summary_metrics_default_prefix(tmp_path):
     )
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert metrics["request_count"].avg == 5.0
     assert was_cancelled is False
@@ -145,7 +149,9 @@ def test_extract_summary_metrics_carries_was_cancelled(tmp_path):
     )
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert metrics["request_count"].avg == 3.0
     assert was_cancelled is True
@@ -164,7 +170,9 @@ def test_extract_summary_metrics_unparsable_file_returns_empty(tmp_path):
     (tmp_path / "profile_export_aiperf.json").write_bytes(b"{not valid json")
 
     executor = LocalSubprocessExecutor(base_dir=tmp_path)
-    metrics, was_cancelled = executor._extract_summary_metrics(run)
+    metrics, was_cancelled, _runtime_invalid_reasons = (
+        executor._extract_summary_metrics(run)
+    )
 
     assert metrics == {}
     assert was_cancelled is False
@@ -232,6 +240,67 @@ def test_build_result_from_metrics_zero_requests_not_cancelled(tmp_path):
 
     assert result.success is False
     assert result.was_cancelled is False
+
+
+@pytest.mark.asyncio
+async def test_nonzero_exit_carries_runtime_invalid_reasons(tmp_path):
+    """REGRESSION-LOCK: a run whose records fail profile-metric-coverage
+    validation writes its export (with ``runtime_submission_invalid_reasons``)
+    and then exits non-zero. The failure path must read those reason tags back
+    onto the RunResult, otherwise the aggregate export silently omits them.
+    """
+    import orjson
+
+    cfg = _benchmark_config()
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="validation-failed",
+    )
+    (tmp_path / "profile_export_aiperf.json").write_bytes(
+        orjson.dumps(
+            {
+                "runtime_submission_invalid_reasons": [
+                    "insufficient_profile_metric_coverage"
+                ],
+                "request_count": {"unit": "requests", "avg": 100.0},
+            }
+        )
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = "validation failed"
+        result = await executor.execute(run)
+
+    assert result.success is False
+    assert result.runtime_submission_invalid_reasons == [
+        "insufficient_profile_metric_coverage"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_nonzero_exit_without_export_has_no_reasons(tmp_path):
+    """A subprocess that died before writing any export must still produce a
+    clean failed RunResult with no reason tags — never a crash."""
+    cfg = _benchmark_config()
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="crashed-early",
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = "boom"
+        result = await executor.execute(run)
+
+    assert result.success is False
+    assert result.runtime_submission_invalid_reasons == []
 
 
 @pytest.mark.asyncio

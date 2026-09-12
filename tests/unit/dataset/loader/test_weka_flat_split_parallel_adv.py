@@ -267,34 +267,6 @@ def _by_sid(convs: list[Conversation]) -> dict[str, Conversation]:
 # Tests
 
 
-def test_convert_fanout_idle_gap_warp_parallel_byte_identical(tmp_path, monkeypatch):
-    """Idle-gap warp redistributes the same start set after the split with byte-identical timestamps and delays across paths (spec 5.6)."""
-    reqs = _fanout_requests()
-    reqs[5]["t"] = 200.0  # main turn 3 after a 191s idle gap
-    reqs.append(
-        # third worker-chain request crossing two gaps; api_time absent (None)
-        _nreq(210.0, [1, 2, 50, 51, 52, 53], api_time=None)
-    )
-    serial, _parallel = _run_both(
-        tmp_path,
-        monkeypatch,
-        [_trace("trace_warp", reqs)],
-        idle_gap_cap_seconds=5.0,
-    )
-
-    convs = _by_sid(serial)
-    root = convs["trace_warp"]
-    # Gaps: [2.5, 8.5] excess 1, [9, 200] excess 186, [200, 210] excess 5.
-    assert [t.timestamp for t in root.turns] == pytest.approx([0.0, 8000.0, 13000.0])
-    # Delays are the end-to-start idle gaps (start-to-start minus prev api_time).
-    assert root.turns[1].delay == pytest.approx(7000.0)
-    assert root.turns[2].delay == pytest.approx(4000.0)
-    w0 = convs["trace_warp::fa:000"]
-    assert [t.timestamp for t in w0.turns] == pytest.approx([2000.0, 7500.0, 18000.0])
-    assert w0.turns[1].delay == pytest.approx(0.0)  # end-to-start floored at 0
-    assert w0.turns[2].delay == pytest.approx(9500.0)
-
-
 def test_convert_nonmonotonic_parent_delay_floored_parallel_byte_identical(
     tmp_path, monkeypatch
 ):

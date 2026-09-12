@@ -4,10 +4,11 @@ import asyncio
 import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 from msgspec.structs import replace
 
-from aiperf.common.control_structs import CommandErr, CommandUnhandled
+from aiperf.common.control_structs import Command, CommandErr, CommandUnhandled
 from aiperf.common.enums import (
     CommandType,
     LifecycleState,
@@ -16,8 +17,15 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.messages import ProcessRecordsResultMessage
 from aiperf.common.messages.service_messages import BaseServiceErrorMessage
-from aiperf.common.models import ErrorDetails, ExitErrorInfo
+from aiperf.common.models import (
+    ErrorDetails,
+    ExitErrorInfo,
+    MetricResult,
+    ProcessRecordsResult,
+    ProfileResults,
+)
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import AccuracyBenchmarkType, ServiceType
 from tests.unit.controller.conftest import MockTestException
@@ -153,9 +161,171 @@ class TestSystemController:
             CommandType.START_REALTIME_TELEMETRY, ["records_manager_1"]
         )
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("reason", "expect_error"),
+        [
+            ("failed_request_threshold", True),
+            ("warmup_failure", True),
+            ("user", False),
+            (None, False),
+        ],
+    )
+    async def test_handle_profile_cancel_relay_records_exit_error_on_abort_reason(
+        self,
+        system_controller: SystemController,
+        reason: str | None,
+        expect_error: bool,
+    ) -> None:
+        """A service-originated PROFILE_CANCEL with an abort reason must fail
+        the run's exit code; a user-initiated cancel must not."""
+        system_controller.execute_async = MagicMock()
+        payload_dict = {"origin_service_id": "records-1"}
+        if reason is not None:
+            payload_dict["reason"] = reason
+        payload = orjson.dumps(payload_dict)
+
+        await system_controller._handle_profile_cancel_relay(
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL, payload=payload)
+        )
+
+        if expect_error:
+            assert_exit_error(
+                system_controller,
+                ErrorDetails(
+                    message=f"Run aborted by 'records-1': {reason}.",
+                    type="ProfileCancelAbort",
+                ),
+                "profile_cancel_abort",
+                "records-1",
+            )
+        else:
+            assert len(system_controller._exit_errors) == 0
+        system_controller.execute_async.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_profile_cancel_relay_prefers_reason_detail(
+        self, system_controller: SystemController
+    ) -> None:
+        """An operator-facing reason_detail must replace the generic message."""
+        system_controller.execute_async = MagicMock()
+        payload = orjson.dumps(
+            {
+                "origin_service_id": "records-1",
+                "reason": "failed_request_threshold",
+                "reason_detail": "10/10 profiling requests failed (100.0%).",
+            }
+        )
+
+        await system_controller._handle_profile_cancel_relay(
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL, payload=payload)
+        )
+
+        assert_exit_error(
+            system_controller,
+            ErrorDetails(
+                message="10/10 profiling requests failed (100.0%).",
+                type="ProfileCancelAbort",
+            ),
+            "profile_cancel_abort",
+            "records-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_profile_cancel_relay_unrecognized_reason_still_relays(
+        self, system_controller: SystemController
+    ) -> None:
+        """An unrecognized ``reason`` must not prevent the peer fan-out.
+
+        ``ProfileCancelReason(reason)`` raises ValueError for any value outside
+        the enum; the handler must treat this the same as a malformed payload
+        (log and relay) rather than letting the exception escape and turn the
+        abort into a CommandErr back to the originator.
+        """
+        system_controller.execute_async = MagicMock()
+        payload = orjson.dumps(
+            {"origin_service_id": "records-1", "reason": "totally_bogus_reason"}
+        )
+
+        await system_controller._handle_profile_cancel_relay(
+            Command(cid="c-1", cmd=CommandType.PROFILE_CANCEL, payload=payload)
+        )
+
+        assert len(system_controller._exit_errors) == 0
+        system_controller.execute_async.assert_called_once()
+
 
 class TestSystemControllerExitScenarios:
     """Test exit scenarios for the SystemController."""
+
+    @pytest.mark.asyncio
+    async def test_fatal_profile_result_validation_records_exit_error(
+        self, system_controller: SystemController
+    ) -> None:
+        """A post-run coverage failure makes the final process exit non-zero."""
+        fatal_error = ErrorDetails(
+            type="ProfileMetricCoverageError",
+            message="Profiling metric coverage below the required 98.0%.",
+        )
+        message = ProcessRecordsResultMessage(
+            service_id="records_manager",
+            results=ProcessRecordsResult(
+                results=ProfileResults(
+                    records=[],
+                    completed=0,
+                    start_ns=1,
+                    end_ns=2,
+                ),
+                fatal_errors=[fatal_error],
+            ),
+        )
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+
+        await system_controller._on_process_records_result_message(message)
+
+        assert any(
+            item.error_details == fatal_error
+            and item.operation == "profile_results_validation"
+            for item in system_controller._exit_errors
+        )
+
+    @pytest.mark.asyncio
+    async def test_fatal_validation_exports_partial_results_before_error_report(
+        self, system_controller: SystemController
+    ) -> None:
+        """A fatal post-run verdict retains aggregate artifacts for diagnosis."""
+        system_controller._profile_results = ProcessRecordsResult(
+            results=ProfileResults(
+                records=[
+                    MetricResult(
+                        tag="request_count",
+                        header="Request Count",
+                        unit="requests",
+                        avg=1.0,
+                    )
+                ],
+                completed=1,
+                start_ns=1,
+                end_ns=2,
+            )
+        )
+        system_controller._exit_errors = [
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    type="ProfileMetricCoverageError",
+                    message="coverage failed",
+                ),
+                operation="profile_results_validation",
+                service_id="records_manager",
+            )
+        ]
+        system_controller._print_post_benchmark_info_and_metrics = AsyncMock()
+        system_controller._print_exit_errors_and_log_file = MagicMock()
+
+        await system_controller._report_post_shutdown_results_and_errors()
+
+        system_controller._print_post_benchmark_info_and_metrics.assert_awaited_once()
+        system_controller._print_exit_errors_and_log_file.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_configure_error_response(

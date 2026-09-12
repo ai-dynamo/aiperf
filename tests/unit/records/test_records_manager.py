@@ -1464,7 +1464,15 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 20.0%. Check inference "
+                "server logs."
+            ),
+        }
         assert (
             manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
             == 10
@@ -1517,7 +1525,15 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 50.0%. Check inference "
+                "server logs."
+            ),
+        }
 
     @pytest.mark.asyncio
     async def test_failed_request_threshold_read_from_owning_phase(self) -> None:
@@ -1649,6 +1665,7 @@ class TestRecordsManagerAnalyzerMetrics:
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
         manager.run.cfg.network_latency.enabled = False
+        manager.run.cfg.scenario = None
 
         request_records = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
