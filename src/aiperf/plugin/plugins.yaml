@@ -2763,12 +2763,12 @@ search_planner:
     description: |
       1D-optimized exponential-probe + bisection planner for SLA-saturation
       search. Mirrors perf_analyzer's `--binary-search`. O(log N) versus BO's
-      O(N) on 1D feasibility-only problems. Requires exactly one integer
-      search-space dimension and at least one SLA filter; rejects
-      multi-dimensional or empty-filter configs at construction. No
-      heavy dependencies.
+      O(N) on 1D feasibility-only problems. Requires exactly one search-space
+      dimension (int requires lo >= 1; real requires lo > 0) and at least one SLA
+      filter; rejects multi-dimensional or empty-filter configs at
+      construction. No heavy dependencies.
     metadata:
-      supports_continuous: false
+      supports_continuous: true
       supports_discrete: true
       supports_categorical: false
       requires_initial_samples: 0
@@ -2783,10 +2783,11 @@ search_planner:
       monotonic_sla under noise; opt-in Phase-3 replicates (via
       --sla-replicates) bound the boundary with a bootstrap CI. Cliff guard
       reports `boundary_type: cliff` for prefill-prioritizing servers where
-      the curve is genuinely discontinuous. Same dependency footprint as
-      monotonic_sla — only scipy (already required).
+      the curve is genuinely discontinuous. Accepts int or real search-space
+      dimensions (int requires lo >= 1; real requires lo > 0). Same dependency
+      footprint as monotonic_sla — only scipy (already required).
     metadata:
-      supports_continuous: false
+      supports_continuous: true
       supports_discrete: true
       supports_categorical: false
       requires_initial_samples: 0
