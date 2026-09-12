@@ -322,6 +322,7 @@ class EndToEndTestRunner:
                     self.stop_log_monitoring.set()
                     if self.log_monitoring_thread:
                         self.log_monitoring_thread.join(timeout=2)
+                    self._stop_non_aiperf_containers(server.name)
                     return False
                 else:
                     # Process completed successfully (some servers might do this)
@@ -363,6 +364,7 @@ class EndToEndTestRunner:
             logger.error("=" * 60)
             logger.error(f"Health check failed for server: {server.name}")
             logger.error(f"Return code: {health_process.returncode}")
+            self._stop_non_aiperf_containers(server.name)
             return False
 
         logger.info("=" * 60)
@@ -439,11 +441,18 @@ class EndToEndTestRunner:
                 logger.info("=" * 60)
                 logger.info(f"AIPerf test {i + 1} passed for {server.name}")
 
-        # Cleanup: Stop all containers EXCEPT the aiperf test container
-        logger.info(
-            f"Test completed for {server.name}. Stopping all containers except aiperf test container..."
-        )
-        # Stop all containers except the aiperf test container by filtering out its name
+        self._stop_non_aiperf_containers(server.name)
+        return all_aiperf_passed
+
+    def _stop_non_aiperf_containers(self, server_name: str) -> None:
+        """Stop every container except the long-running aiperf test container.
+
+        Idempotent and safe to call from any exit path of ``_test_server`` —
+        early setup failures, health-check failures, or normal completion.
+        Without this, a failed server's container leaks into the next
+        iteration and conflicts on shared resources like port 8000.
+        """
+        logger.info(f"Cleaning up server containers for {server_name}...")
         stop_cmd = f"docker ps --format '{{{{.Names}}}}' | grep -v '^{self.aiperf_container_id}$' | xargs -r docker stop 2>/dev/null || true"
         subprocess.run(
             stop_cmd,
@@ -457,8 +466,6 @@ class EndToEndTestRunner:
         logger.info(
             "All server containers stopped, aiperf container preserved for next test"
         )
-
-        return all_aiperf_passed
 
     def _cleanup(self):
         """Cleanup all containers (nuclear approach)"""
