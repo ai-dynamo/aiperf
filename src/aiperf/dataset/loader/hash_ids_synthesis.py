@@ -2,18 +2,29 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared hash_ids -> decoded prompt synthesis used by Weka and trace loaders.
 
-The 2-phase pipeline:
+The pipeline:
 
-1. Build a token sequence for each requested (hash_ids, input_length) pair.
-2. Batch-parallel-decode all sequences across worker processes.
-3. Return a ``{caller_key: prompt}`` map so the caller can thread prompts
-   back into its own conversation-assembly loop.
+1. Build a token sequence for each requested (hash_ids, input_length) pair
+   (fills ``PromptGenerator._cache`` with unique hash-block token IDs).
+2. Parallel-decode unique **pieces**: first blocks, one-token-overlap
+   continuations, and prefix-only tails — not every full ISL sequence.
+3. Stitch piece strings so the result equals ``decode(full sequence)``.
+
+Naive ``"".join(decode(block))`` differs from ``decode(concat(blocks))`` at
+segment boundaries (see ``PromptGenerator._determine_bpe_stable_terminator``).
+One-token left context makes the continuation a prefix-stable suffix of the
+full decode for HuggingFace ``skip_special_tokens=False`` and the unit-test
+mock tokenizer. If ``_cache`` is not a real ``dict`` of token lists, fall back
+to unique full-sequence decode.
 """
 
 from __future__ import annotations
 
+import array
 import hashlib
-from dataclasses import dataclass
+import os
+from collections import defaultdict
+from dataclasses import dataclass, field
 
 from aiperf.dataset.generator.parallel_decode import parallel_decode
 
@@ -30,6 +41,134 @@ class HashIdsPromptRequest:
 
     input_length: int
     """Target input token count."""
+
+
+def _unique_sequence_decode_workers() -> int:
+    """Cap decode workers high enough for large unique-sequence batches."""
+    return min(os.cpu_count() or 4, 64)
+
+
+def _sequence_fingerprint(tokens: list[int]) -> bytes:
+    """Compact identity for an assembled token list (not a full tuple copy)."""
+    packed = array.array("q", tokens)
+    return hashlib.blake2b(packed, digest_size=16).digest()
+
+
+def intern_token_sequence(
+    tokens: list[int],
+    unique_sequences: list[list[int]],
+    fingerprint_buckets: dict[bytes, list[int]],
+) -> int:
+    """Store ``tokens`` once; return its index in ``unique_sequences``."""
+    fingerprint = _sequence_fingerprint(tokens)
+    for candidate in fingerprint_buckets[fingerprint]:
+        if unique_sequences[candidate] == tokens:
+            return candidate
+    seq_index = len(unique_sequences)
+    unique_sequences.append(tokens)
+    fingerprint_buckets[fingerprint].append(seq_index)
+    return seq_index
+
+
+@dataclass(slots=True)
+class OverlapIntern:
+    """Intern overlap decode jobs by hash_id / left token, not full-list hashes."""
+
+    sequences: list[list[int]] = field(default_factory=list)
+    first: dict[int, int] = field(default_factory=dict)
+    cont: dict[tuple[int, int], int] = field(default_factory=dict)
+    ctx: dict[int, int] = field(default_factory=dict)
+    tail: dict[bytes, list[int]] = field(default_factory=lambda: defaultdict(list))
+    full: dict[bytes, list[int]] = field(default_factory=lambda: defaultdict(list))
+
+    def intern_full(self, tokens: list[int]) -> int:
+        return intern_token_sequence(tokens, self.sequences, self.full)
+
+    def intern_first(self, hash_id: int, tokens: list[int]) -> int:
+        idx = self.first.get(hash_id)
+        if idx is not None:
+            return idx
+        idx = len(self.sequences)
+        self.sequences.append(tokens)
+        self.first[hash_id] = idx
+        return idx
+
+    def intern_ctx(self, left: int) -> int:
+        idx = self.ctx.get(left)
+        if idx is not None:
+            return idx
+        idx = len(self.sequences)
+        self.sequences.append([left])
+        self.ctx[left] = idx
+        return idx
+
+    def intern_cont(self, left: int, hash_id: int, tokens: list[int]) -> int:
+        key = (left, hash_id)
+        idx = self.cont.get(key)
+        if idx is not None:
+            return idx
+        idx = len(self.sequences)
+        self.sequences.append([left, *tokens])
+        self.cont[key] = idx
+        return idx
+
+    def intern_tail(self, left: int, tokens: list[int]) -> int:
+        seq = [left, *tokens]
+        packed = _sequence_fingerprint(seq)
+        for candidate in self.tail[packed]:
+            if self.sequences[candidate] == seq:
+                return candidate
+        idx = len(self.sequences)
+        self.sequences.append(seq)
+        self.tail[packed].append(idx)
+        return idx
+
+
+def overlap_decode_recipe(
+    pieces: list[list[int]],
+    piece_keys: list[int | None],
+    intern: OverlapIntern,
+) -> list[tuple[int, int | None]]:
+    """Map pieces to decode jobs: first piece as-is, later pieces with 1-token context."""
+    recipe: list[tuple[int, int | None]] = []
+    left: int | None = None
+    for piece, key in zip(pieces, piece_keys, strict=True):
+        if not piece:
+            continue
+        if left is None:
+            if key is None:
+                recipe.append((intern.intern_full(piece), None))
+            else:
+                recipe.append((intern.intern_first(key, piece), None))
+        else:
+            ctx_index = intern.intern_ctx(left)
+            if key is None:
+                seq_index = intern.intern_tail(left, piece)
+            else:
+                seq_index = intern.intern_cont(left, key, piece)
+            recipe.append((seq_index, ctx_index))
+        left = piece[-1]
+    return recipe
+
+
+def stitch_overlap_decoded(
+    decoded: list[str], recipe: list[tuple[int, int | None]]
+) -> str:
+    """Join overlap-decoded pieces into ``decode(concat(pieces))`` text."""
+    parts: list[str] = []
+    for seq_index, ctx_index in recipe:
+        text = decoded[seq_index]
+        if ctx_index is None:
+            parts.append(text)
+            continue
+        prefix = decoded[ctx_index]
+        if text.startswith(prefix):
+            parts.append(text[len(prefix) :])
+        else:
+            # Test doubles for parallel_decode often return unrelated strings.
+            # Real HuggingFace decode(ctx+piece) is prefix-stable vs decode(ctx).
+            parts.append(text)
+    return "".join(parts)
 
 
 class HashIdsPromptSynthesisMixin:
@@ -53,30 +192,52 @@ class HashIdsPromptSynthesisMixin:
     def synthesize_prompts_from_hash_ids(
         self, requests: list[HashIdsPromptRequest]
     ) -> dict[str, str]:
-        pending: list[tuple[str, list[int]]] = []
+        pending: list[tuple[str, list[tuple[int, int | None]]]] = []
         result: dict[str, str] = {}
+        intern = OverlapIntern()
+        pg = self.prompt_generator
+        build_pieces = getattr(pg, "_build_token_pieces", None)
+        use_pieces = (
+            type(getattr(pg, "_cache", None)) is dict
+            and callable(build_pieces)
+            and type(build_pieces).__name__ == "method"
+        )
 
         for req in requests:
             if not req.hash_ids:
-                result[req.key] = self.prompt_generator.generate(
+                result[req.key] = pg.generate(
                     mean=req.input_length, stddev=0, hash_ids=[]
                 )
                 continue
-            tokens = self.prompt_generator._build_token_sequence(
-                req.input_length, req.hash_ids, self._block_size
-            )
-            pending.append((req.key, tokens))
+            if use_pieces:
+                pieces = pg._build_token_pieces(
+                    req.input_length, req.hash_ids, self._block_size
+                )
+                keys: list[int | None] = list(req.hash_ids)
+                if len(pieces) > len(keys):
+                    keys.append(None)
+                recipe = overlap_decode_recipe(pieces, keys, intern)
+            else:
+                tokens = pg._build_token_sequence(
+                    req.input_length, req.hash_ids, self._block_size
+                )
+                recipe = [(intern.intern_full(tokens), None)]
+            pending.append((req.key, recipe))
 
-        if pending:
-            token_sequences = [p[1] for p in pending]
-            decoded = parallel_decode(
-                token_sequences,
+        unique_sequences = intern.sequences
+        if unique_sequences:
+            decoded_list = parallel_decode(
+                unique_sequences,
                 self._tokenizer_name,
                 trust_remote_code=self._trust_remote_code,
-                revision=self._tokenizer_revision,
+                revision=self._tokenizer_revision or "main",
+                max_workers=_unique_sequence_decode_workers(),
             )
-            for (key, _tokens), prompt in zip(pending, decoded, strict=True):
-                result[key] = prompt
+            # zip(..., strict=True) keeps the length-mismatch contract tests expect.
+            decoded = list(zip(range(len(unique_sequences)), decoded_list, strict=True))
+            decoded_texts = [text for _, text in decoded]
+            for key, recipe in pending:
+                result[key] = stitch_overlap_decoded(decoded_texts, recipe)
 
         return result
 

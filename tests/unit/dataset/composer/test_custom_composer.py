@@ -173,7 +173,9 @@ class TestCoreFunctionality:
         self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
     ):
         """Test that create_dataset returns correct type."""
-        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
+        mock_parallel_decode.side_effect = lambda seqs, *a, **k: [
+            f"decoded {i}" for i in range(len(seqs))
+        ]
         composer = CustomDatasetComposer(
             run=make_run(trace_config), tokenizer=mock_tokenizer
         )
@@ -190,7 +192,9 @@ class TestCoreFunctionality:
     def test_max_tokens_config(
         self, mock_check_file, mock_parallel_decode, trace_config, mock_tokenizer
     ):
-        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
+        mock_parallel_decode.side_effect = lambda seqs, *a, **k: [
+            f"decoded {i}" for i in range(len(seqs))
+        ]
         # Per-line `output_length` on each trace record always wins over any
         # global `--osl` (FileDataset.osl) fallback. The trace fixture sets
         # output_length=52 which is what this test asserts.
@@ -280,7 +284,9 @@ class TestCoreFunctionality:
         mock_tokenizer,
     ):
         """Test that max_tokens can be set from the custom file"""
-        mock_parallel_decode.return_value = ["decoded 1", "decoded 2", "decoded 3"]
+        mock_parallel_decode.side_effect = lambda seqs, *a, **k: [
+            f"decoded {i}" for i in range(len(seqs))
+        ]
         mock_check_file.return_value = None
         custom_config.custom_dataset_type = CustomDatasetType.MOONCAKE_TRACE
 
