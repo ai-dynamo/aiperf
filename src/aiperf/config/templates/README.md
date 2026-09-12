@@ -58,6 +58,7 @@ aiperf profile --config benchmark.yaml
 | [multi_turn_conversation.yaml](multi_turn_conversation.yaml) | Multi-Turn Conversation | Simulate realistic chatbot workloads with multi-turn context accumulation |
 | [inline_dataset.yaml](inline_dataset.yaml) | Inline Dataset | Embed dataset records directly in the YAML config (no separate JSONL file required) |
 | [trace_replay.yaml](trace_replay.yaml) | Production Trace Replay | Replay production traffic from a trace file with exact request timestamps |
+| [speed_bench_per_request.yaml](speed_bench_per_request.yaml) | SPEED-Bench Per-Category Matrix in One Run | One run over all 11 qualitative SPEED-Bench categories, split per category from per-request spec-decode records |
 
 ### Sweep & Multi-Run
 

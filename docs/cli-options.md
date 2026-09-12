@@ -160,7 +160,7 @@ Run an AIPerf service in a single process.
 
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
-Assemble per-category SPEED-Bench aiperf results into a matrix report.
+Assemble SPEED-Bench aiperf results into a matrix report.
 
 ### [`synthesize`](#aiperf-synthesize)
 
@@ -7350,13 +7350,16 @@ HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes live
 
 ## `aiperf speed-bench-report`
 
-Assemble per-category SPEED-Bench aiperf results into a matrix report.
+Assemble SPEED-Bench aiperf results into a matrix report.
 
-Run ``aiperf profile`` once per SPEED-Bench category, then point this command at the output directories to produce a matrix matching the SPEED-Bench paper format.
+Point this command at one or more ``aiperf profile`` output directories. A single run over an aggregate SPEED-Bench split (``speed_bench_qualitative``) already carries every category, and each of its per-request records is stamped with the category it came from, so one run produces the whole matrix. Runs over a single category still work and contribute one column each.
 
 **Examples:**
 
 ```bash
+# One run over all categories: matrix comes from its per-request records
+aiperf speed-bench-report ./artifacts/speed_bench_qualitative/
+
 # Scan a parent directory for per-category run subdirectories
 aiperf speed-bench-report ./artifacts/
 
@@ -7366,8 +7369,11 @@ aiperf speed-bench-report ./artifacts/run_coding/ ./artifacts/run_math/
 # Acceptance rate matrix (accepted / draft tokens)
 aiperf speed-bench-report ./artifacts/ --metric accept_rate
 
-# Throughput matrix (output tokens/sec per category)
+# Throughput matrix (output tokens/sec per run)
 aiperf speed-bench-report ./artifacts/ --metric throughput
+
+# Force the Prometheus scrape, ignoring any per-request records
+aiperf speed-bench-report ./artifacts/ --source server
 ```
 
 ### `--paths`, `--empty-paths` `<list>` _(Required)_
@@ -7388,6 +7394,11 @@ Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
 
 Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
 <br/>_Default: `accept_length`_
+
+### `--source` `<str>`
+
+Where acceptance numbers come from - 'records' (per-request ``profile_export.jsonl``), 'summary' (the same per-request data reduced to run-level scalars in ``profile_export_aiperf.json``, the only source left at ``--export-level summary``), 'server' (Prometheus scrape in ``server_metrics_export.json``), or 'auto' to try them in that order. Only 'records' can split one run into per-category columns; only 'server' reads server-side data. Defaults to 'auto'.
+<br/>_Default: `auto`_
 
 <hr/>
 
