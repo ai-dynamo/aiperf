@@ -52,6 +52,11 @@ from aiperf.common.models.health_models import (
     ProcessHealth,
     ProcessHealthAggregates,
 )
+from aiperf.common.models.host_telemetry_models import (
+    HostPowerDomainMetadata,
+    HostTelemetryMetrics,
+    HostTelemetryRecord,
+)
 from aiperf.common.models.model_endpoint_info import (
     EndpointInfo,
     ModelEndpointInfo,
@@ -201,6 +206,9 @@ __all__ = [
     "GpuSummary",
     "GpuTelemetryData",
     "GpuTelemetrySnapshot",
+    "HostPowerDomainMetadata",
+    "HostTelemetryMetrics",
+    "HostTelemetryRecord",
     "HistogramMetricData",
     "HistogramSeries",
     "HistogramStats",
