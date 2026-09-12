@@ -138,3 +138,78 @@ class TestAioHttpTransportSendRequestSigning:
         assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
         assert headers["X-Amz-Date"] == "now"
         assert body == b"signed-body"
+
+
+class TestSignedRequestsDoNotFollowRedirects:
+    """aiohttp strips ``Authorization`` when a redirect crosses origins, but has
+    no equivalent rule for custom headers -- so ``X-Amz-Security-Token``, which
+    is a bearer credential, would be replayed to whatever the redirect points at,
+    possibly over cleartext.
+
+    Refusing costs nothing: SigV4 signs the ``Host`` header, so a signature
+    replayed at another origin is invalid there anyway. Following a redirect
+    could only ever leak the token and then fail.
+    """
+
+    async def _signed_transport(self) -> AioHttpTransport:
+        """Build a transport with a stubbed signer.
+
+        The signer plugin is patched at construction rather than replaced after
+        ``initialize()``: a real ``SigV4RequestSigner`` resolves AWS credentials
+        during init and fails outright where none are configured.
+        """
+        signer = AsyncMock()
+        signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ..."}
+        )
+        with patch(
+            "aiperf.transports.base_transports.plugins.get_class",
+            return_value=MagicMock(return_value=signer),
+        ):
+            transport = AioHttpTransport(
+                model_endpoint=create_model_endpoint_info(
+                    auth_type="sigv4", aws_region="us-east-1", aws_service="sagemaker"
+                )
+            )
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(return_value=RequestRecord())
+        return transport
+
+    @pytest.mark.asyncio
+    async def test_redirects_are_disabled_for_signed_requests(self) -> None:
+        transport = await self._signed_transport()
+
+        await transport.send_request(
+            create_request_info(transport.model_endpoint), {"messages": []}
+        )
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_redirects_are_disabled_on_the_cancellation_path_too(self) -> None:
+        """``post_request`` routes cancellable requests through a separate
+        helper that dropped ``**kwargs`` entirely, so a guard passed only at the
+        call site would silently not apply to them."""
+        transport = await self._signed_transport()
+        request_info = create_request_info(transport.model_endpoint)
+        request_info.cancel_after_ns = 10_000_000_000
+
+        await transport.send_request(request_info, {"messages": []})
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_unsigned_requests_still_follow_redirects(self) -> None:
+        """No credentials on the wire, so existing behaviour is untouched."""
+        transport = AioHttpTransport(model_endpoint=create_model_endpoint_info())
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(return_value=RequestRecord())
+
+        await transport.send_request(
+            create_request_info(transport.model_endpoint), {"messages": []}
+        )
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert "allow_redirects" not in kwargs
