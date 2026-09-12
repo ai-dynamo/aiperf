@@ -28,7 +28,7 @@ def validate_chat_messages(messages: list[dict[str, Any]]) -> None:
             )
 
 
-def _has_any_modality(row: Any) -> bool:
+def _has_modality_content(row: Any) -> bool:
     """True when ``row`` has any of the multimodal content fields populated."""
     return any(
         (
@@ -42,6 +42,15 @@ def _has_any_modality(row: Any) -> bool:
             row.videos,
         )
     )
+
+
+def _has_any_modality(row: Any) -> bool:
+    """True when ``row`` satisfies the at-least-one-input requirement.
+
+    A populated ``raw_messages`` array counts as an input on its own, so
+    rows carrying only pre-formatted messages pass the modality gate.
+    """
+    return _has_modality_content(row) or bool(getattr(row, "raw_messages", None))
 
 
 class SingleTurn(AIPerfBaseModel):
@@ -117,6 +126,20 @@ class SingleTurn(AIPerfBaseModel):
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
     )
+    raw_messages: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible messages array. When set, "
+        "these messages are spliced verbatim into the request payload, "
+        "bypassing normal turn-based message construction. Mutually exclusive "
+        "with the text/image/audio/video modality fields. In multi_turn "
+        "datasets each turn's raw_messages accumulate across the conversation "
+        "alongside model responses to preserve prefix-cache efficiency.",
+    )
+    raw_tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Pre-formatted OpenAI-compatible tool definitions. When set "
+        "alongside raw_messages, injected into the API payload as the tools field.",
+    )
 
     @model_validator(mode="after")
     def validate_mutually_exclusive_fields(self) -> "SingleTurn":
@@ -154,6 +177,28 @@ class SingleTurn(AIPerfBaseModel):
             )
         if any(uuid == "" for uuid in self.image_uuids):
             raise ValueError("image_uuids must not contain empty strings")
+        return self
+
+    @model_validator(mode="after")
+    def validate_raw_messages_fields(self) -> "SingleTurn":
+        """Validate raw_messages/raw_tools shape and mutual exclusivity.
+
+        raw_messages must be a non-empty list of role-bearing dicts, raw_tools
+        requires raw_messages, and raw_messages cannot combine with the
+        turn-based modality fields (which the endpoint would silently drop).
+        """
+        if self.raw_messages is not None:
+            if not self.raw_messages:
+                raise ValueError("raw_messages must be a non-empty list")
+            validate_chat_messages(self.raw_messages)
+            if _has_modality_content(self):
+                raise ValueError(
+                    "raw_messages cannot be combined with the text/image/audio/"
+                    "video modality fields; author the full message array in "
+                    "raw_messages instead"
+                )
+        if self.raw_tools is not None and self.raw_messages is None:
+            raise ValueError("raw_tools requires raw_messages to be set")
         return self
 
     @model_validator(mode="after")

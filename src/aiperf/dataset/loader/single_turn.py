@@ -141,6 +141,8 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                         role=single_turn.role,
                         max_tokens=single_turn.output_length,
                         extra_body=single_turn.extra,
+                        raw_messages=single_turn.raw_messages,
+                        raw_tools=single_turn.raw_tools,
                     )
                 )
             if uuid_and_strip:
