@@ -6,7 +6,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -191,17 +191,20 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         parsed = urlparse(base_url)
 
         # Parse existing query params from URL
-        existing_params = parse_qs(parsed.query, keep_blank_values=True)
-        # Flatten from lists to single values (take first)
-        params = {k: v[0] if v else "" for k, v in existing_params.items()}
+        params = parse_qsl(parsed.query, keep_blank_values=True)
 
         # Merge endpoint params (these override existing params)
         if request_info.endpoint_params:
-            params.update(request_info.endpoint_params)
+            params = [
+                (key, value)
+                for key, value in params
+                if key not in request_info.endpoint_params
+            ]
+            params.extend(request_info.endpoint_params.items())
 
         # Rebuild URL with merged params
         if params:
-            return urlunparse(parsed._replace(query=urlencode(params)))
+            return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
 
         return base_url
 
