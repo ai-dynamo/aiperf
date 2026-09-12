@@ -41,16 +41,20 @@ def test_endpoint_config_normalizes_schemeless_localhost() -> None:
 
 
 @pytest.mark.parametrize(
-    "url",
+    ("url", "endpoint_type"),
     [
-        param("http://localhost:18765", id="http-localhost-port"),
-        param("https://api.example.com/v1", id="https-with-path"),
-        param("http://10.0.0.1:8000", id="http-ip-port"),
+        param("http://localhost:18765", "chat", id="http-localhost-port"),
+        param("https://api.example.com/v1", "chat", id="https-with-path"),
+        param("http://10.0.0.1:8000", "chat", id="http-ip-port"),
     ],
-)
-def test_endpoint_config_accepts_valid_urls(url: str) -> None:
-    """Standard http(s) URLs with explicit host pass validation."""
-    cfg = EndpointConfig(urls=[url])
+)  # fmt: skip
+def test_endpoint_config_accepts_valid_urls(url: str, endpoint_type: str) -> None:
+    """Standard http(s) URLs with explicit host pass validation.
+
+    WebSocket (ws/wss) acceptance is covered by
+    ``test_websocket_transport_accepts_responses_type``.
+    """
+    cfg = EndpointConfig(urls=[url], type=endpoint_type)
     assert cfg.urls == [url]
 
 
@@ -64,3 +68,185 @@ def test_endpoint_config_rejects_http_with_empty_host() -> None:
     with pytest.raises(ValidationError) as exc_info:
         EndpointConfig(urls=["http://:18765"])
     assert "missing scheme or host" in str(exc_info.value)
+
+
+# --- WebSocket transport requires the Responses API contract -----------------
+
+
+@pytest.mark.parametrize(
+    ("url", "transport"),
+    [
+        param("ws://localhost:19000", None, id="ws-url-autodetect"),
+        param("http://localhost:8000", "websocket", id="explicit-transport-http-url"),
+    ],
+)  # fmt: skip
+def test_websocket_transport_rejects_non_responses_type(
+    url: str, transport: str | None
+) -> None:
+    """A ws/wss URL or --transport websocket requires endpoint type 'responses'."""
+    with pytest.raises(ValidationError, match="only supported for endpoint type"):
+        EndpointConfig(urls=[url], transport=transport)  # type defaults to chat
+
+
+@pytest.mark.parametrize(
+    ("url", "transport"),
+    [
+        param("ws://localhost:19000", None, id="ws-url-autodetect"),
+        param("wss://api.example.com/v1/responses", None, id="wss-url-autodetect"),
+        param("ws://localhost:19000", "websocket", id="explicit-transport"),
+    ],
+)  # fmt: skip
+def test_websocket_transport_accepts_responses_type(
+    url: str, transport: str | None
+) -> None:
+    """WebSocket paired with endpoint type 'responses' validates cleanly."""
+    cfg = EndpointConfig(
+        urls=[url],
+        type="responses",
+        transport=transport,
+        use_server_token_count=True,
+    )
+    assert cfg.urls == [url]
+
+
+# --- Transport must match the URL scheme -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "transport"),
+    [
+        param("ws://localhost:19000", "http", id="ws-url-http-transport"),
+        param("http://localhost:8000", "websocket", id="http-url-ws-transport"),
+    ],
+)  # fmt: skip
+def test_transport_scheme_mismatch_rejected(url: str, transport: str) -> None:
+    """An explicit --transport that contradicts the URL scheme must fail loudly."""
+    with pytest.raises(ValidationError, match="incompatible with the scheme"):
+        EndpointConfig(urls=[url], type="responses", transport=transport)
+
+
+def test_mixed_transport_schemes_rejected() -> None:
+    """URLs that imply conflicting transports with no explicit --transport fail."""
+    with pytest.raises(ValidationError, match="mix transport schemes"):
+        EndpointConfig(
+            urls=["ws://localhost:19000", "http://localhost:8000"],
+            type="responses",
+        )
+
+
+# --- Credential-bearing WebSocket connections require TLS (wss://) -----------
+
+
+def test_ws_with_api_key_rejected() -> None:
+    """An API key over unencrypted ws:// would leak the credential in cleartext."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://localhost:19000"],
+            type="responses",
+            api_key="secret",
+        )
+
+
+def test_ws_with_auth_header_rejected() -> None:
+    """Authentication headers over ws:// are cleartext-exposed."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://localhost:19000"],
+            type="responses",
+            headers={"Authorization": "Bearer token"},
+        )
+
+
+def test_wss_with_api_key_allowed() -> None:
+    """Credentials are fine over TLS-encrypted wss://."""
+    cfg = EndpointConfig(
+        urls=["wss://api.example.com/v1/responses"],
+        type="responses",
+        api_key="secret",
+        use_server_token_count=True,
+    )
+    assert cfg.api_key == "secret"
+
+
+def test_ws_with_non_sensitive_header_allowed() -> None:
+    """A benign (non-credential) header does not trip the TLS gate."""
+    cfg = EndpointConfig(
+        urls=["ws://localhost:19000"],
+        type="responses",
+        headers={"X-Trace-Id": "abc"},
+        use_server_token_count=True,
+    )
+    assert cfg.urls == ["ws://localhost:19000"]
+
+
+def test_ws_with_userinfo_credentials_rejected() -> None:
+    """Userinfo in a ws:// URL becomes a cleartext Basic auth header on upgrade."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://user:secret@localhost:19000"],
+            type="responses",
+            use_server_token_count=True,
+        )
+
+
+def test_ws_credential_rejection_message_redacts_the_secret() -> None:
+    """The safety-rejection message must not print the credential it protects."""
+    with pytest.raises(ValidationError) as exc_info:
+        EndpointConfig(
+            urls=["ws://user:supersecret@localhost:19000/v1/responses"],
+            type="responses",
+            use_server_token_count=True,
+        )
+    message = str(exc_info.value)
+    assert "supersecret" not in message
+    assert "unencrypted 'ws://'" in message
+
+
+def test_ws_with_sensitive_query_param_rejected() -> None:
+    """A sensitive query parameter in a ws:// URL is sent verbatim in cleartext."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://localhost:19000/v1/responses?api_key=secret"],
+            type="responses",
+            use_server_token_count=True,
+        )
+
+
+def test_ws_with_encoded_sensitive_query_param_rejected() -> None:
+    """A percent-encoded sensitive query key is decoded before matching, so it is
+    not a smuggling path around the ws:// TLS gate."""
+    with pytest.raises(ValidationError, match="unencrypted 'ws://'"):
+        EndpointConfig(
+            urls=["ws://localhost:19000/v1/responses?api%5Fkey=secret"],
+            type="responses",
+            use_server_token_count=True,
+        )
+
+
+def test_wss_with_url_credentials_allowed() -> None:
+    """URL-embedded credentials are fine over TLS-encrypted wss://."""
+    cfg = EndpointConfig(
+        urls=["wss://user:secret@api.example.com/v1/responses"],
+        type="responses",
+        use_server_token_count=True,
+    )
+    assert cfg.urls == ["wss://user:secret@api.example.com/v1/responses"]
+
+
+def test_ws_without_server_token_count_rejected() -> None:
+    """WebSocket chaining sends only the newest turn, so client-side ISL would
+    undercount; the transport requires --use-server-token-count."""
+    with pytest.raises(ValidationError, match="usage.prompt_tokens"):
+        EndpointConfig(urls=["ws://localhost:19000"], type="responses")
+
+
+def test_ws_with_wait_for_model_rejected() -> None:
+    """The readiness probe issues HTTP requests, which cannot target a ws:// URL,
+    so wait-for-model probing is rejected for the WebSocket transport."""
+    with pytest.raises(ValidationError, match="not supported on the WebSocket"):
+        EndpointConfig(
+            urls=["ws://localhost:19000"],
+            type="responses",
+            wait_for_model_timeout=30.0,
+            use_server_token_count=True,
+        )

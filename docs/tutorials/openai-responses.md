@@ -310,6 +310,110 @@ See the [Multi-Turn Conversations](multi-turn.md) tutorial for details on conver
 
 ---
 
+## WebSocket Mode
+
+The Responses API also supports [WebSocket mode](https://developers.openai.com/api/docs/guides/websocket-mode):
+instead of one HTTP request per turn, AIPerf keeps a persistent socket open and
+sends each turn as a `response.create` event, reading back the same `response.*`
+lifecycle events the HTTP SSE path streams. Select it by giving the endpoint a
+`ws://` or `wss://` URL — the WebSocket transport is auto-detected from the
+scheme:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type responses \
+    --endpoint /v1/responses \
+    --streaming \
+    --use-server-token-count \
+    --url ws://localhost:8000 \
+    --conversation-num 10 \
+    --conversation-turn-mean 3 \
+    --concurrency 4
+```
+
+Key behaviors:
+
+- **One dedicated socket per conversation.** Each conversation holds a socket for
+  its whole lifetime (a hard lease keyed on the conversation, like the HTTP
+  sticky-user-sessions strategy), opened on the first turn and closed on the
+  final turn. Every turn of a conversation therefore reuses the same connection,
+  so `previous_response_id` chaining stays inside the server's connection-local
+  cache even when turns from other conversations interleave.
+- **Open sockets track concurrently active conversations, not in-flight requests.**
+  `--concurrency` caps concurrent *sessions* (a session slot is held from a
+  conversation's first turn through its final turn), so at saturation the socket
+  count equals `--concurrency`. Under request-rate load, where session
+  concurrency is unbounded, the socket count instead tracks how many
+  conversations are active at once — the same way the HTTP sticky strategy
+  behaves.
+- **Chaining is automatic and does not require `store: true`.** The WebSocket
+  contract resolves `previous_response_id` from the connection's response cache,
+  so multi-turn conversations chain in the default `deltas_without_responses`
+  context mode without requesting server-side storage. As with HTTP chaining,
+  only the newest turn is put on the wire, so WebSocket runs **require**
+  [`--use-server-token-count`](#server-token-counts) (enforced at config
+  validation) so multi-turn ISL comes from the server's `usage.prompt_tokens`
+  instead of undercounting the newest-turn-only payload.
+- **A mid-conversation reconnect ends a chained turn.** Because non-stored
+  chaining lives only in the connection-local cache, if the peer drops a
+  conversation's socket between turns the cached `previous_response_id` is no
+  longer resolvable on the fresh socket. AIPerf fails that turn explicitly
+  (`ChainingContextLost`) rather than emitting a confusing
+  `previous_response_not_found` from the server. Add `--extra-inputs
+  '{"store": true}'` to persist responses server-side so a reconnect still
+  resolves the id.
+- **Forked conversations replay history when storage is not requested.** FORK
+  children (e.g. `dag_jsonl` branches) each get their own conversation identity,
+  so a child opens its *own* socket. Chaining onto the parent's
+  `previous_response_id` from that fresh socket only resolves if the server
+  persists response state *across connections*, which the WebSocket spec does not
+  guarantee without `store: true`. So, without requested storage, AIPerf drops the
+  inherited id and the child's first turn **replays its full inherited history**
+  (the parent's prompt plus captured responses) as a self-contained fresh
+  response; it then chains normally on its own socket from the second turn on. A
+  one-time notice records this. The tradeoff: replaying the client-side history
+  cannot reconstruct server-only outputs such as reasoning items — add
+  `--extra-inputs '{"store": true}'` (with a persisting backend) to keep the
+  server-side chain across the fork instead. SPAWN children already start from
+  fresh context, and linear multi-turn conversations reuse their one leased
+  socket, so both are unaffected.
+- **HTTP-only fields are stripped.** `stream`, `stream_options`, and `background`
+  are HTTP-transport concepts; the socket always streams events, so AIPerf drops
+  them from the `response.create` envelope automatically.
+- **Requests carry a `stream_id`** derived from the conversation so forked
+  conversations replaying against the same server remain addressable.
+- **WebSocket mode requires `--endpoint-type responses`.** The transport only
+  speaks the Responses API contract; a `ws://`/`wss://` URL (or `--transport
+  websocket`) with any other endpoint type is rejected at config validation.
+- **Credentials require `wss://`.** An API key or authentication header sent over
+  unencrypted `ws://` would travel in cleartext, so AIPerf rejects that
+  combination — use `wss://` for credential-bearing WebSocket runs.
+- **Redirected handshakes are refused.** If a `wss://` endpoint answers the upgrade
+  with an HTTP redirect, AIPerf refuses to reuse the resulting connection (it may
+  have re-sent credentials to an unvetted host over cleartext). Point `--url`
+  directly at the final `wss://` endpoint.
+- **Large terminal frames.** A `response.completed` frame carries the fully
+  assembled response, so very long generations or large tool-call/image payloads
+  can exceed aiohttp's default 4 MiB per-frame limit. AIPerf disables that cap by
+  default (matching the HTTP SSE path); set
+  `AIPERF_ENDPOINT_WEBSOCKET_MAX_MESSAGE_SIZE` to a positive byte count to bound
+  per-frame memory instead.
+- **`--wait-for-model-timeout` is not supported.** The readiness probe issues HTTP
+  GET/POST requests, which cannot target a `ws://`/`wss://` URL, so AIPerf rejects
+  the flag for WebSocket endpoints at config validation. Gate readiness against the
+  server's HTTP frontend before launching the WebSocket run instead.
+
+The endpoint layer is transport-agnostic: metrics, parsing, and multi-turn
+control behave identically to the HTTP path. You can therefore compare stateless
+HTTP, stateful HTTP (`store: true` chaining), and WebSocket runs against the same
+server by only changing the URL scheme and the chaining flags.
+
+> **Note:** WebSocket mode is specific to the Responses endpoint. Other endpoint
+> types continue to use the HTTP transport.
+
+---
+
 ## Server Token Counts
 
 Use server-reported token counts instead of client-side tokenization:

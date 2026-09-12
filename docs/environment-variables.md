@@ -172,6 +172,7 @@ Endpoint wire-format configuration. Controls how AIPerf serializes message conte
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_ENDPOINT_FORCE_CONTENT_PARTS` | `False` | — | When True, always emit the multi-part content array (e.g. [{"type": "text", "text": "..."}]) for synthetic turns, even when there is only a single text with no media. By default (False) single-text turns emit a plain string to stay compatible with servers that reject list-of-parts content for non-multimodal inputs (e.g. OpenAI Dynamo). Enable when the target server requires the structured content-parts shape unconditionally. |
+| `AIPERF_ENDPOINT_WEBSOCKET_MAX_MESSAGE_SIZE` | `0` | ≥ 0 | Maximum size in bytes of a single WebSocket frame the Responses transport will accept. Terminal 'response.completed' frames carry the fully assembled response, so long generations, large tool-call arguments, or image payloads can exceed aiohttp's 4 MiB default and fail after the model already finished. Default 0 disables the cap (matching the HTTP SSE path, which has no per-frame limit); set a positive byte count to bound per-frame memory. |
 
 ## GPU
 

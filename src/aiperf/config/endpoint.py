@@ -214,9 +214,10 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Transport plugin name. 'http' (aiohttp-based HTTP/1.1) and "
+            "'websocket' (OpenAI Responses WebSocket mode, ws/wss URLs) are shipped. "
+            "Auto-detected from the URL scheme when unset (http/https -> http, "
+            "ws/wss -> websocket); explicit setting overrides auto-detection.",
         ),
     ]
 
@@ -511,10 +512,10 @@ class EndpointConfig(BaseConfig):
                     f"URL {url!r} is missing scheme or host. "
                     f"Expected 'http://host:port' or 'https://host:port'."
                 )
-            if parsed.scheme.lower() not in ("http", "https"):
+            if parsed.scheme.lower() not in ("http", "https", "ws", "wss"):
                 raise ValueError(
                     f"URL {url!r} has unsupported scheme {parsed.scheme!r}. "
-                    f"Expected 'http' or 'https'."
+                    f"Expected 'http', 'https', 'ws', or 'wss'."
                 )
             # Validate the port if one is present. urlparse.port raises
             # ValueError on access for non-numeric or out-of-range ports
@@ -635,6 +636,28 @@ class EndpointConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def _validate_wait_for_model_unsupported_on_websocket(self) -> Self:
+        """Reject the readiness probe on the WebSocket transport.
+
+        ``wait_for_endpoint`` probes readiness with ``AioHttpClient`` HTTP
+        GET/POST calls against the configured URL, but aiohttp rejects a
+        ``ws://``/``wss://`` URL with NonHttpUrlClientError, so the probe would
+        never succeed and every WebSocket benchmark would fail at preflight.
+        Fail fast at config time instead of hanging until the probe deadline.
+        """
+        if (
+            self.wait_for_model_timeout > 0
+            and TransportType.WEBSOCKET in self._effective_transports()
+        ):
+            raise ValueError(
+                "--wait-for-model-timeout is not supported on the WebSocket "
+                "transport: the readiness probe issues HTTP requests, which "
+                "cannot target a ws:// or wss:// URL. Drop "
+                "--wait-for-model-timeout for WebSocket endpoints."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_request_content_type(self) -> Self:
         """Auto-select multipart for endpoints that declare requires_form_data."""
         from aiperf.plugin import plugins
@@ -678,15 +701,194 @@ class EndpointConfig(BaseConfig):
             )
         return self
 
+    def _effective_transports(self) -> set[TransportType]:
+        """Resolve the transport(s) this endpoint will actually use.
+
+        An explicit ``transport`` wins; otherwise it is auto-detected from each
+        URL scheme (``ws``/``wss`` -> websocket, everything else -> http),
+        mirroring ``InferenceClient.detect_transport_from_url``. Validators that
+        gate on transport must consult this rather than the raw ``transport``
+        field, which is ``None`` until the worker resolves it at request time.
+        """
+        if self.transport is not None:
+            return {self.transport}
+        resolved: set[TransportType] = set()
+        for url in self.urls:
+            scheme = urlparse(url).scheme.lower()
+            resolved.add(
+                TransportType.WEBSOCKET
+                if scheme in ("ws", "wss")
+                else TransportType.HTTP
+            )
+        return resolved
+
     @model_validator(mode="after")
     def _validate_control_hooks_require_http(self) -> Self:
         if self.reset_kv_cache is None and self.server_profiler is None:
             return self
-        # Transport None means auto-detect HTTP from URL — allowed.
-        if self.transport is not None and self.transport != TransportType.HTTP:
+        non_http = self._effective_transports() - {TransportType.HTTP}
+        if non_http:
+            shown = ", ".join(sorted(str(t) for t in non_http))
             raise ValueError(
                 "endpoint.reset_kv_cache and endpoint.server_profiler require "
-                "HTTP transport; unsupported transport "
-                f"{self.transport!r}"
+                f"HTTP transport; resolved transport {shown!r}"
             )
         return self
+
+    @model_validator(mode="after")
+    def _validate_websocket_requires_responses(self) -> Self:
+        """WebSocket transport only speaks the Responses API contract.
+
+        With ``transport`` unset, a ``ws``/``wss`` URL auto-selects the
+        WebSocket transport while ``type`` still defaults to ``chat``. The
+        WebSocket transport wraps the payload in a ``response.create`` envelope,
+        so a Chat Completions payload would violate the Responses WebSocket
+        contract. Require ``responses`` explicitly rather than silently sending
+        a malformed request.
+        """
+        if (
+            TransportType.WEBSOCKET in self._effective_transports()
+            and self.type != EndpointType.RESPONSES
+        ):
+            raise ValueError(
+                "WebSocket transport (ws/wss URL or --transport websocket) is "
+                f"only supported for endpoint type 'responses', not {str(self.type)!r}. "
+                "Pass --endpoint-type responses, or use an http/https URL."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_ws_credentials_require_tls(self) -> Self:
+        """Reject transmitting credentials over an unencrypted ``ws://`` socket.
+
+        ``aiohttp.ClientSession.ws_connect`` sends the configured API key and
+        authentication headers on the initial upgrade request; over ``ws://``
+        those travel in cleartext (CWE-319). Credentials also ride the URL
+        itself -- userinfo (``ws://user:secret@host``) becomes a cleartext
+        ``Authorization: Basic`` header on the upgrade, and a sensitive query
+        parameter (``ws://host?api_key=secret``) is sent verbatim. Require
+        ``wss://`` whenever any of these are present, or drop the credentials.
+        """
+        from aiperf.common.redact import redact_url, url_carries_credentials
+
+        has_config_credentials = self._has_credentials()
+        for url in self.urls:
+            if urlparse(url).scheme.lower() != "ws":
+                continue
+            if has_config_credentials or url_carries_credentials(url):
+                raise ValueError(
+                    f"URL {redact_url(url)!r} uses the unencrypted 'ws://' scheme but the "
+                    "endpoint carries credentials (api_key, authentication "
+                    "headers, or credentials embedded in the URL's userinfo or "
+                    "query string), which would be transmitted in cleartext. Use "
+                    "'wss://' for credential-bearing WebSocket connections, or "
+                    "remove the credentials."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_transport_url_schemes_consistent(self) -> Self:
+        """Reject URL schemes that do not match the transport that will serve them.
+
+        ``get_url`` only prepends a scheme to a *schemeless* URL; a URL that
+        already carries the wrong scheme for the selected transport is left
+        intact and produces a nonsense target (e.g. ``transport: websocket`` with
+        an ``https://`` URL would be joined as ``ws://https://...``). And with no
+        explicit ``transport``, ``InferenceClient`` auto-detects a single
+        transport from the first URL only, so a list mixing ``ws(s)`` and
+        ``http(s)`` URLs would silently route the rest through the wrong
+        transport. Reject both up front. Schemeless URLs are wildcards
+        (``get_url`` supplies the selected transport's scheme) and are skipped.
+        """
+        scheme_transport = {
+            "ws": TransportType.WEBSOCKET,
+            "wss": TransportType.WEBSOCKET,
+            "http": TransportType.HTTP,
+            "https": TransportType.HTTP,
+        }
+        schemed: list[tuple[str, TransportType]] = []
+        for url in self.urls:
+            mapped = scheme_transport.get(urlparse(url).scheme.lower())
+            if mapped is not None:
+                schemed.append((url, mapped))
+
+        if self.transport is not None:
+            mismatched = [url for url, mapped in schemed if mapped != self.transport]
+            if mismatched:
+                raise ValueError(
+                    f"--transport {str(self.transport)!r} is incompatible with the "
+                    f"scheme of URL(s) {mismatched!r}. Use ws/wss URLs with "
+                    "--transport websocket and http/https URLs with --transport "
+                    "http, or drop --transport to auto-detect from the URL scheme."
+                )
+            return self
+
+        implied = {mapped for _, mapped in schemed}
+        if len(implied) > 1:
+            shown = ", ".join(sorted(str(t) for t in implied))
+            raise ValueError(
+                f"Endpoint URLs mix transport schemes ({shown}); an endpoint "
+                "resolves a single transport from the first URL, so the others "
+                "would be routed through the wrong transport. Use one scheme "
+                "family (all ws/wss or all http/https) per endpoint, or set "
+                "--transport explicitly."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_websocket_chaining_requires_server_token_count(self) -> Self:
+        """Require server token counts on the WebSocket transport.
+
+        The WebSocket Responses path always chains via ``previous_response_id``
+        (its connection-local cache resolves the id without ``store``), so every
+        turn after the first sends only the newest turn on the wire. As with the
+        ``store: true`` HTTP path in
+        ``_validate_responses_store_requires_server_token_count``, client-side ISL
+        would then undercount the server-side prompt, so require
+        ``--use-server-token-count``. Defined last so structural/credential errors
+        surface before this metrics-config requirement.
+        """
+        if (
+            self.type == EndpointType.RESPONSES
+            and TransportType.WEBSOCKET in self._effective_transports()
+            and not self.use_server_token_count
+        ):
+            raise ValueError(
+                "WebSocket Responses transport chains via previous_response_id, "
+                "which sends only the newest turn on the wire; client-side Input "
+                "Sequence Length would undercount the server-side prompt. Add "
+                "--use-server-token-count so ISL comes from the server's "
+                "usage.prompt_tokens."
+            )
+        return self
+
+    def revalidate_after_credential_injection(self) -> None:
+        """Re-run the URL/credential safety validators after an in-place mutation.
+
+        ``BaseConfig`` sets no ``validate_assignment``, so the ``mode="after"``
+        validators do not re-run when credential rehydration overwrites
+        ``api_key`` / ``headers`` / ``urls`` post-construction. Any code that
+        mutates those fields must call this so an injected URL or a
+        Secret-injected credential cannot slip past the gates that construction
+        enforced: URL well-formedness (``_validate_endpoint_boundaries``), the
+        responses-type, credential-TLS, scheme-consistency, wait-for-model,
+        control-hook-HTTP, and server-token-count gates. Boundaries runs first so
+        a malformed injected URL surfaces a format error before the scheme-aware
+        gates interpret it. Kept next to the validators so a new gate is added in
+        exactly one place.
+        """
+        self._validate_endpoint_boundaries()
+        self._validate_websocket_requires_responses()
+        self._validate_wait_for_model_unsupported_on_websocket()
+        self._validate_ws_credentials_require_tls()
+        self._validate_transport_url_schemes_consistent()
+        self._validate_control_hooks_require_http()
+        self._validate_websocket_chaining_requires_server_token_count()
+
+    def _has_credentials(self) -> bool:
+        """Whether the endpoint carries transport credentials worth protecting."""
+        if self.api_key:
+            return True
+        from aiperf.common.redact import is_sensitive_header_name
+
+        return any(is_sensitive_header_name(name) for name in (self.headers or {}))

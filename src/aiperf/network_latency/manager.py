@@ -23,8 +23,10 @@ from aiperf.network_latency.probe import NetworkLatencyProbeCollector
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-# Default ports for schemes when a URL omits an explicit port.
-_DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443}
+# Default ports for schemes when a URL omits an explicit port. ws/wss share the
+# http/https defaults; without them a portless ``wss://host/...`` would probe the
+# wrong port and subtract a bogus RTT into the network_adjusted_* metrics.
+_DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 
 
 class NetworkLatencyManager(BaseComponentService):

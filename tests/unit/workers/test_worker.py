@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.enums import ConversationContextMode, CreditPhase
+from aiperf.common.enums import (
+    ConversationBranchMode,
+    ConversationContextMode,
+    CreditPhase,
+)
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -20,6 +24,7 @@ from aiperf.common.models import (
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.plugin.enums import TransportType
 from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import (
     Worker,
@@ -1172,3 +1177,116 @@ class TestNoRequestCredit:
         assert credit_return.error is None
         assert credit_return.first_token_sent is False
         assert credit_return.credit.id == 42
+
+
+@pytest.mark.asyncio
+class TestForkReplayDecision:
+    def _set_endpoint(self, worker, *, transport, extra: list) -> None:
+        worker.model_endpoint = MagicMock()
+        worker.model_endpoint.transport = transport
+        worker.model_endpoint.endpoint.extra = extra
+
+    def _parent_with_turns(
+        self, turns: list[Turn], *, turn_index: int | None = None
+    ) -> MagicMock:
+        """A parent session that has dispatched ``turns[: turn_index + 1]``.
+
+        ``turn_index`` defaults to the last turn (all planned turns dispatched);
+        pass a smaller value to model a background FORK whose parent has planned
+        more turns than it has sent.
+        """
+        parent = MagicMock()
+        parent.num_turns = len(turns)
+        parent.turn_index = len(turns) - 1 if turn_index is None else turn_index
+        parent.conversation.turns = turns
+        return parent
+
+    async def test_ws_with_endpoint_store_chains(self, mock_worker) -> None:
+        self._set_endpoint(
+            mock_worker, transport=TransportType.WEBSOCKET, extra=[("store", True)]
+        )
+        parent = self._parent_with_turns([Turn(extra_body=None), Turn(extra_body=None)])
+        assert mock_worker._fork_child_replays_context(parent) is False
+
+    async def test_ws_with_per_turn_store_chains(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
+        parent = self._parent_with_turns(
+            [Turn(extra_body={"store": True}), Turn(extra_body={"store": True})]
+        )
+        assert mock_worker._fork_child_replays_context(parent) is False
+
+    async def test_ws_per_turn_false_overrides_endpoint_store_and_replays(
+        self, mock_worker
+    ) -> None:
+        """A per-turn ``store: false`` beats an endpoint-wide ``store: true``."""
+        self._set_endpoint(
+            mock_worker, transport=TransportType.WEBSOCKET, extra=[("store", True)]
+        )
+        parent = self._parent_with_turns(
+            [Turn(extra_body=None), Turn(extra_body={"store": False})]
+        )
+        assert mock_worker._fork_child_replays_context(parent) is True
+
+    async def test_ws_with_partial_per_turn_store_replays(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
+        parent = self._parent_with_turns(
+            [Turn(extra_body={"store": True}), Turn(extra_body=None)]
+        )
+        assert mock_worker._fork_child_replays_context(parent) is True
+
+    async def test_ws_ignores_undispatched_future_turns(self, mock_worker) -> None:
+        """Only turns the parent has dispatched (``turns[: turn_index + 1]``) count.
+
+        A background FORK can seed a child before the parent has sent its later
+        turns; those planned-but-unsent turns must not veto a chain that every
+        dispatched turn persisted.
+        """
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
+        parent = self._parent_with_turns(
+            [
+                Turn(extra_body={"store": True}),
+                Turn(extra_body=None),
+                Turn(extra_body=None),
+            ],
+            turn_index=0,
+        )
+        assert mock_worker._fork_child_replays_context(parent) is False
+
+    async def test_ws_no_parent_replays(self, mock_worker) -> None:
+        """No parent session means no resolvable chain, so the child replays."""
+        self._set_endpoint(
+            mock_worker, transport=TransportType.WEBSOCKET, extra=[("store", True)]
+        )
+        assert mock_worker._fork_child_replays_context(parent=None) is True
+
+    async def test_seed_drops_chain_for_ws_without_store(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport=TransportType.WEBSOCKET, extra=[])
+        mock_worker.session_manager = MagicMock()
+        mock_worker.session_manager.get.return_value = self._parent_with_turns(
+            [Turn(extra_body=None)]
+        )
+        credit = MagicMock(
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+
+        mock_worker._seed_from_parent_if_fork_child(credit, "child")
+
+        mock_worker.session_manager.get.assert_called_once_with("parent")
+        mock_worker.session_manager.seed_from_parent.assert_called_once_with(
+            "child", "parent", inherit_response_chain=False
+        )
+
+    async def test_seed_keeps_chain_for_http(self, mock_worker) -> None:
+        self._set_endpoint(mock_worker, transport=TransportType.HTTP, extra=[])
+        mock_worker.session_manager = MagicMock()
+        credit = MagicMock(
+            parent_correlation_id="parent",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+
+        mock_worker._seed_from_parent_if_fork_child(credit, "child")
+
+        mock_worker.session_manager.seed_from_parent.assert_called_once_with(
+            "child", "parent", inherit_response_chain=True
+        )

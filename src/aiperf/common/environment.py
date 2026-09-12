@@ -706,6 +706,17 @@ class _EndpointSettings(BaseSettings):
         "inputs (e.g. OpenAI Dynamo). Enable when the target server requires "
         "the structured content-parts shape unconditionally.",
     )
+    WEBSOCKET_MAX_MESSAGE_SIZE: int = Field(
+        ge=0,
+        default=0,
+        description="Maximum size in bytes of a single WebSocket frame the "
+        "Responses transport will accept. Terminal 'response.completed' frames "
+        "carry the fully assembled response, so long generations, large "
+        "tool-call arguments, or image payloads can exceed aiohttp's 4 MiB "
+        "default and fail after the model already finished. Default 0 disables "
+        "the cap (matching the HTTP SSE path, which has no per-frame limit); "
+        "set a positive byte count to bound per-frame memory.",
+    )
 
 
 class _DagSettings(BaseSettings):

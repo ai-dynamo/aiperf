@@ -652,6 +652,16 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
                     "(e.g. '/v1/chat/completions', not 'v1/chat/completions')"
                 ),
             },
+            # URL-scheme auto-detection (ws:// without an explicit transport)
+            # can't be checked here because ``urls`` is a typeless
+            # preserve-unknown field; the Pydantic validator covers it.
+            {
+                "rule": (
+                    "!has(self.transport) || self.transport != 'websocket' || "
+                    "(has(self.type) && self.type == 'responses')"
+                ),
+                "message": ("transport='websocket' requires endpoint.type='responses'"),
+            },
         ),
     )
 

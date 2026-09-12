@@ -496,7 +496,11 @@ class UserSessionManager:
         session.fork_refcount += 1
 
     def seed_from_parent(
-        self, child_x_correlation_id: str, parent_x_correlation_id: str
+        self,
+        child_x_correlation_id: str,
+        parent_x_correlation_id: str,
+        *,
+        inherit_response_chain: bool = True,
     ) -> None:
         """Seed a freshly-created FORK child's ``turn_list`` with a copy of
         the parent's accumulated turn history.
@@ -508,11 +512,22 @@ class UserSessionManager:
         assistant responses) into the child so that the request-builder
         prepends the full parent context before the child's own messages.
 
-        The parent's ``previous_response_id`` is copied too so a FORK child
-        continues the server-side Responses chain instead of replaying
-        history: replay drops filtered outputs (e.g. reasoning items) that
-        only survive server-side, so a child that lost the chain would lack
-        equivalent parent context.
+        When ``inherit_response_chain`` is True the parent's
+        ``previous_response_id`` is copied too, so a FORK child continues the
+        server-side Responses chain instead of replaying history: chaining
+        preserves filtered outputs (e.g. reasoning items) that only survive
+        server-side, which a replay of the client-side ``turn_list`` cannot
+        reconstruct. This is the default and matches the HTTP path.
+
+        When ``inherit_response_chain`` is False the id is not copied (left
+        ``None``), so the child's first turn replays the full inherited
+        ``turn_list`` as a fresh response rather than chaining onto an id its
+        own socket never created. The WebSocket path uses this when server-side
+        storage was not requested: cross-connection resolution of an inherited
+        id is not guaranteed without ``store: true``, so a self-contained replay
+        is the portable choice (at the cost of the server-only reasoning items
+        noted above). The child chains normally on its own socket from its
+        second turn on.
 
         No-op (with a debug-friendly silent return) if either session is
         already evicted — the FORK-pin refcount usually keeps the parent
@@ -525,7 +540,8 @@ class UserSessionManager:
         if parent is None or child is None:
             return
         child.turn_list = list(parent.turn_list)
-        child.previous_response_id = parent.previous_response_id
+        if inherit_response_chain:
+            child.previous_response_id = parent.previous_response_id
 
     def release_fork_child(self, x_correlation_id: str) -> None:
         """Decrement the FORK-pin refcount on the session, floored at 0.

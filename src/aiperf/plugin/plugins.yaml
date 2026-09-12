@@ -514,6 +514,20 @@ transport:
       transport_type: http
       url_schemes: [http, https]
 
+  websocket:
+    class: aiperf.transports.websocket_transport:WebSocketTransport
+    description: |
+      WebSocket transport for the OpenAI Responses API (wss://.../v1/responses).
+      Holds a dedicated socket per conversation for its whole lifetime (a hard
+      lease, like the HTTP sticky-user-sessions strategy) and streams response.*
+      lifecycle events like the HTTP SSE path, so every turn reuses the same
+      connection and previous_response_id chaining stays in the server's
+      connection-local cache. Open sockets track concurrently active
+      conversations, which --concurrency caps. Auto-selected for ws/wss URLs.
+    metadata:
+      transport_type: websocket
+      url_schemes: [ws, wss]
+
 # =============================================================================
 # Dataset Composers
 # =============================================================================
