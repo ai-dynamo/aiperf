@@ -3,7 +3,7 @@
 
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, PrivateAttr, model_validator
 
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
@@ -265,7 +265,10 @@ class MooncakeTrace(AIPerfBaseModel):
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}, "timestamp": 1000}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+    - With planned output token replay: {"text_input": "Hello", "output_length": 3, "output_token_ids": [1, 2, 3]}
     """
+
+    _output_replay_key: str | None = PrivateAttr(default=None)
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
     input_length: int | None = Field(
@@ -294,6 +297,15 @@ class MooncakeTrace(AIPerfBaseModel):
     # Optional fields
     output_length: int | None = Field(
         None, description="The output sequence length of a request"
+    )
+    output_token_ids: list[int] | None = Field(
+        None,
+        description="Exact output token IDs for output token replay. "
+        "When provided, output_length must match the number of token IDs.",
+    )
+    request_id: str | None = Field(
+        None,
+        description="Optional stable request identifier used as the output replay key.",
     )
     hash_ids: list[int] | None = Field(None, description="The hash ids of a request")
     timestamp: int | float | None = Field(
@@ -336,6 +348,23 @@ class MooncakeTrace(AIPerfBaseModel):
                 "'hash_ids' is only allowed when 'input_length' is provided, not when 'text_input', 'messages', or 'payload' are provided"
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_output_token_ids(self) -> "MooncakeTrace":
+        """Validate planned output token replay fields."""
+        if self.output_token_ids is None:
+            return self
+        if any(token_id < 0 for token_id in self.output_token_ids):
+            raise ValueError("'output_token_ids' must contain non-negative token IDs")
+        if self.output_length is None:
+            raise ValueError(
+                "'output_length' is required when 'output_token_ids' is provided"
+            )
+        if self.output_length != len(self.output_token_ids):
+            raise ValueError(
+                "'output_length' must equal len('output_token_ids') when planned output tokens are provided"
+            )
         return self
 
     @model_validator(mode="after")
