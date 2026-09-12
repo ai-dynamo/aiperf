@@ -134,8 +134,10 @@ class SessionTreeRegistry:
             # outstanding count is authoritative). Should not happen with
             # correct wiring; log so a regression is visible.
             _logger.warning(
-                lambda: f"open_tree for already-open tree root_corr={root_corr!r}; "
-                "ignoring duplicate"
+                lambda: (
+                    f"open_tree for already-open tree root_corr={root_corr!r}; "
+                    "ignoring duplicate"
+                )
             )
             return
         state = _TreeState(phase=phase, root_pending=root_pending)

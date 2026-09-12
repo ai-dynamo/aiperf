@@ -231,9 +231,11 @@ class ClockOffsetTracker:
         """Decide whether a raw offset sample may enter the window."""
         if self._max_abs_ns and abs(sample) > self._max_abs_ns:
             self._logger.warning(
-                lambda: f"Discarding implausible clock-offset sample "
-                f"{sample / 1e6:.3f}ms (bound: "
-                f"{self._max_abs_ns / 1e6:.3f}ms)"
+                lambda: (
+                    f"Discarding implausible clock-offset sample "
+                    f"{sample / 1e6:.3f}ms (bound: "
+                    f"{self._max_abs_ns / 1e6:.3f}ms)"
+                )
             )
             return False
         if not self._is_low_outlier(sample):
@@ -247,9 +249,11 @@ class ClockOffsetTracker:
         # window so the filter re-seeds from the new level immediately instead
         # of rejecting reality for the rest of the run.
         self._logger.warning(
-            lambda: f"Clock offset stepped down past the outlier band for "
-            f"{self._consecutive_rejects} consecutive samples; re-seeding "
-            f"window at {sample / 1e6:.3f}ms"
+            lambda: (
+                f"Clock offset stepped down past the outlier band for "
+                f"{self._consecutive_rejects} consecutive samples; re-seeding "
+                f"window at {sample / 1e6:.3f}ms"
+            )
         )
         self._window.clear()
         self._consecutive_rejects = 0
@@ -382,8 +386,10 @@ class ClockOffsetTracker:
             self._pending_pong_sequence
         ):
             self._logger.debug(
-                lambda: f"Ignoring TimePong {pong.sequence}, "
-                f"awaiting {self._pending_pong_sequence}"
+                lambda: (
+                    f"Ignoring TimePong {pong.sequence}, "
+                    f"awaiting {self._pending_pong_sequence}"
+                )
             )
             return
         if self._pending_pong_future and not self._pending_pong_future.done():
@@ -453,8 +459,10 @@ class ClockOffsetTracker:
                     # probe that slow says more about queueing behind real credits
                     # or a GC pause than about the path, so it is not a sample.
                     self._logger.warning(
-                        lambda rtt=rtt: f"Discarding implausible RTT probe "
-                        f"{rtt / 1e6:.2f}ms (bound: {self._max_rtt_ns / 1e6:.2f}ms)"
+                        lambda rtt=rtt: (
+                            f"Discarding implausible RTT probe "
+                            f"{rtt / 1e6:.2f}ms (bound: {self._max_rtt_ns / 1e6:.2f}ms)"
+                        )
                     )
                     continue
                 rtts.append(rtt)
@@ -488,8 +496,10 @@ class ClockOffsetTracker:
             min_rtt > 2 * previous_baseline or 2 * min_rtt < previous_baseline
         ):
             self._logger.warning(
-                lambda: f"Baseline RTT changed materially: "
-                f"{previous_baseline / 1e6:.2f}ms -> {min_rtt / 1e6:.2f}ms"
+                lambda: (
+                    f"Baseline RTT changed materially: "
+                    f"{previous_baseline / 1e6:.2f}ms -> {min_rtt / 1e6:.2f}ms"
+                )
             )
 
     def _apply_baseline_rtt(self, rtts: list[int], probe_count: int) -> None:
@@ -505,7 +515,9 @@ class ClockOffsetTracker:
         self.baseline_rtt_ns = min_rtt
         self.estimated_one_way_ns = min_rtt // 2
         self._logger.info(
-            lambda: f"Baseline RTT: {min_rtt / 1e6:.2f}ms "
-            f"(from {len(rtts)}/{probe_count} probes, "
-            f"estimated one-way: {min_rtt / 2 / 1e6:.2f}ms)"
+            lambda: (
+                f"Baseline RTT: {min_rtt / 1e6:.2f}ms "
+                f"(from {len(rtts)}/{probe_count} probes, "
+                f"estimated one-way: {min_rtt / 2 / 1e6:.2f}ms)"
+            )
         )

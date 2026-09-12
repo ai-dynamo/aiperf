@@ -560,9 +560,11 @@ def harness(
 
     page.on(
         "console",
-        lambda msg: console_errors.append(f"[{msg.type}] {msg.text}")
-        if msg.type in ("error",)
-        else None,
+        lambda msg: (
+            console_errors.append(f"[{msg.type}] {msg.text}")
+            if msg.type in ("error",)
+            else None
+        ),
     )
     page.on(
         "pageerror",

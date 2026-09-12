@@ -34,7 +34,9 @@ class MetricsJsonExporter(MetricsBaseExporter):
         self._file_path = exporter_config.cfg.artifacts.profile_export_json_file
         self.trace_or_debug(
             lambda: f"Initializing MetricsJsonExporter with config: {exporter_config}",
-            lambda: f"Initializing MetricsJsonExporter with file path: {self._file_path}",
+            lambda: (
+                f"Initializing MetricsJsonExporter with file path: {self._file_path}"
+            ),
         )
 
     def get_export_info(self) -> FileExportInfo:
