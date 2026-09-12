@@ -325,12 +325,28 @@ class AioHttpTransport(BaseTransport):
             )
             # Pre-encoded bytes (PAYLOAD_BYTES fast path / raw payload replay)
             # are sent verbatim; dicts are encoded here.
+            body: bytes | aiohttp.FormData
             if isinstance(payload, bytes):
-                body: bytes | aiohttp.FormData = payload
+                body = payload
             elif use_form_data:
                 body = self._build_form_data(payload)
             else:
                 body = orjson.dumps(payload)
+
+            # Request signers (SigV4) sign a fixed byte payload; multipart
+            # form-data bodies aren't signed. EndpointConfig rejects
+            # auth_type + multipart at config time, so an unsigned FormData
+            # body means no signer is configured.
+            if not isinstance(body, aiohttp.FormData):
+                signed = await self._sign_if_needed("POST", url, headers, body)
+                url, headers, body = signed.url, signed.headers, signed.body
+            elif self.request_signer is not None:
+                raise RuntimeError(
+                    "FormData body with a configured request_signer: signers "
+                    "sign a fixed byte payload and can't sign multipart "
+                    "form-data. EndpointConfig should have rejected "
+                    "auth_type + multipart at config time."
+                )
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -367,6 +383,15 @@ class AioHttpTransport(BaseTransport):
                         f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
                     )
 
+            # A redirect would replay the signed headers at the new origin.
+            # aiohttp drops Authorization when the origin changes, but has no such
+            # rule for custom headers, so X-Amz-Security-Token -- a bearer
+            # credential -- would follow. Nothing is lost by refusing: SigV4 signs
+            # the Host header, so a replayed signature is invalid there anyway.
+            redirect_kwargs: dict[str, Any] = (
+                {"allow_redirects": False} if self.request_signer else {}
+            )
+
             record = await self.aiohttp_client.post_request(
                 url,
                 body,
@@ -375,6 +400,7 @@ class AioHttpTransport(BaseTransport):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                **redirect_kwargs,
             )
             record.request_headers = redact_headers(headers)
 
@@ -509,12 +535,24 @@ class AioHttpTransport(BaseTransport):
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
+        body: bytes | aiohttp.FormData
         if isinstance(payload, bytes):
-            body: bytes | aiohttp.FormData = payload
+            body = payload
         elif use_form_data:
             body = self._build_form_data(payload)
         else:
             body = orjson.dumps(payload)
+
+        if not isinstance(body, aiohttp.FormData):
+            signed = await self._sign_if_needed("POST", url, headers, body)
+            url, headers, body = signed.url, signed.headers, signed.body
+        elif self.request_signer is not None:
+            raise RuntimeError(
+                "FormData body with a configured request_signer: signers "
+                "sign a fixed byte payload and can't sign multipart "
+                "form-data. EndpointConfig should have rejected "
+                "auth_type + multipart at config time."
+            )
         record = await self.aiohttp_client.post_request(url, body, headers)
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
@@ -548,7 +586,8 @@ class AioHttpTransport(BaseTransport):
         poll_start = time.perf_counter_ns()
 
         while (time.perf_counter_ns() - poll_start) / 1e9 < timeout:
-            record = await self.aiohttp_client.get_request(poll_url, headers)
+            signed = await self._sign_if_needed("GET", poll_url, headers)
+            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
             result = self._parse_video_response(record, "poll")
             if isinstance(result, ErrorDetails):
                 return result
@@ -598,7 +637,8 @@ class AioHttpTransport(BaseTransport):
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         try:
-            record = await self.aiohttp_client.get_request(content_url, headers)
+            signed = await self._sign_if_needed("GET", content_url, headers)
+            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
             if record.error:
                 return ErrorDetails(
                     type="VideoDownloadError",

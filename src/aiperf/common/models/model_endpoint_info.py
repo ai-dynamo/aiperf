@@ -20,9 +20,10 @@ from aiperf.common.enums import (
 )
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
-from aiperf.plugin.enums import EndpointType, TransportType
+from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 if TYPE_CHECKING:
+    from aiperf.config.config import BenchmarkConfig
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
@@ -159,6 +160,22 @@ class EndpointInfo(AIPerfBaseModel):
         description="Enable AIPerf-managed stripping of repeated image content. "
         "Dataset-authored UUIDs pass through independently of this setting.",
     )
+    aws_region: str | None = Field(
+        default=None,
+        description="AWS region for SigV4 requests.",
+    )
+    aws_profile: str | None = Field(
+        default=None,
+        description="Named AWS credentials profile.",
+    )
+    auth_type: RequestSignerType | None = Field(
+        default=None,
+        description="Request signing method (e.g. sigv4).",
+    )
+    aws_service: str | None = Field(
+        default=None,
+        description="AWS service name for SigV4 request signing. Required when auth_type='sigv4'.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -198,7 +215,18 @@ class ModelEndpointInfo(AIPerfBaseModel):
     @classmethod
     def from_run(cls, run: BenchmarkRun) -> ModelEndpointInfo:
         """Create a ModelEndpointInfo from a BenchmarkRun."""
-        cfg = run.cfg
+        return cls.from_config(run.cfg)
+
+    @classmethod
+    def from_config(cls, cfg: BenchmarkConfig) -> ModelEndpointInfo:
+        """Create a ModelEndpointInfo from a resolved BenchmarkConfig.
+
+        Split out of ``from_run`` for callers that only reach the config
+        (pre-flight readiness, control-plane hooks) and still need an exact
+        signer input - ``auth_type``/``aws_*`` must match what the request
+        path uses or the control plane signs with different parameters than
+        the benchmark itself.
+        """
         ep = cfg.endpoint
         models_advanced = cfg.models
         return cls(
@@ -227,6 +255,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 uuid_and_strip=getattr(
                     ep, "uuid_and_strip", EndpointDefaults.UUID_AND_STRIP
                 ),
+                aws_region=getattr(ep, "aws_region", None),
+                aws_profile=getattr(ep, "aws_profile", None),
+                auth_type=getattr(ep, "auth_type", None),
+                aws_service=getattr(ep, "aws_service", None),
             ),
             transport=ep.transport,
         )

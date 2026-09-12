@@ -447,7 +447,7 @@ class MessagesEndpoint(BaseEndpoint):
         headers: dict[str, str] = {"content-type": "application/json"}
         if cfg.headers:
             headers.update(cfg.headers)
-        if cfg.api_key:
+        if cfg.api_key and not cfg.auth_type:
             headers["x-api-key"] = cfg.api_key
         headers.setdefault("anthropic-version", _ANTHROPIC_VERSION)
         return headers

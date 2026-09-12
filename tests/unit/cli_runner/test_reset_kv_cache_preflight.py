@@ -18,6 +18,7 @@ async def test_reset_invoked_when_enabled() -> None:
     run.cfg.endpoint.headers = {"X-Custom": "1"}
     run.cfg.endpoint.api_key = "sk-test"
     run.cfg.endpoint.type = "chat"
+    run.cfg.endpoint.auth_type = None
 
     with (
         patch(
@@ -74,9 +75,13 @@ async def test_reset_precedes_inference_on_shared_recorder() -> None:
     async with AsyncClient(transport=transport, base_url="http://test") as client:
 
         async def asgi_control_plane_post(
-            *, url: str, headers: dict[str, str], timeout_s: float
+            *,
+            url: str,
+            headers: dict[str, str],
+            timeout_s: float,
+            signer: object | None = None,
         ) -> None:
-            del timeout_s
+            del timeout_s, signer
             path = urlsplit(url).path or "/"
             resp = await client.post(path, headers=headers)
             if not (200 <= resp.status_code < 300):

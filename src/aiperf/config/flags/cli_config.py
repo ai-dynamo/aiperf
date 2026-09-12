@@ -83,6 +83,7 @@ from aiperf.plugin.enums import (
     EndpointType,
     GPUTelemetryCollectorType,
     PublicDatasetType,
+    RequestSignerType,
     SearchPlannerType,
     TransportType,
     UIType,
@@ -345,6 +346,59 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            description="AWS region for SigV4-signed requests (e.g. `us-east-1`). Required when "
+            "`--auth-type sigv4`.",
+        ),
+        CLIParameter(
+            name=("--aws-region",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            description="Named AWS credentials profile. Unset uses botocore's default credential chain "
+            "(environment variables, EC2/ECS instance role, `~/.aws/credentials` default profile).",
+        ),
+        CLIParameter(
+            name=("--aws-profile",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            description="Request signing method for authentication. When set, the selected `request_signer` "
+            "plugin signs every HTTP request. Replaces Bearer token auth (`--api-key` is ignored when "
+            "`--auth-type` is set).",
+        ),
+        CLIParameter(
+            name=("--auth-type",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_service: Annotated[
+        str | None,
+        Field(
+            description="SigV4 signing name -- the credential scope the signature is bound to "
+            "(e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, "
+            "which is not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and "
+            "`bedrock-runtime` signs as `bedrock`. Required when `--auth-type sigv4`, unless the "
+            "selected transport declares which AWS API it speaks -- then the scope is resolved "
+            "from botocore's own service model and this flag is only an override.",
+        ),
+        CLIParameter(
+            name=("--aws-service",),
             group=Groups.ENDPOINT,
         ),
     ] = None

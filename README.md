@@ -139,6 +139,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
+- [AWS SigV4 Authentication](docs/tutorials/aws-sigv4-auth.md) - Benchmark AWS endpoints (API Gateway, SageMaker, Bedrock) protected by IAM auth
 
 ### Load Control and Timing
 - [Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md) - Dual request control
