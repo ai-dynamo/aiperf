@@ -35,6 +35,14 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     {"session_id": "abc-123", "input_length": 300, "output_length": 40},
     {"session_id": "abc-123", "delay": 2, "input_length": 150, "output_length": 20}
     ```
+
+    Message-delta version (opt-in via message_mode; the first entry carries the
+    initial history, later entries carry only the new messages for that turn,
+    and live assistant responses are threaded into the history between them)
+    ```json
+    {"session_id": "abc-123", "message_mode": "delta", "messages": [{"role": "user", "content": "Hi"}]},
+    {"session_id": "abc-123", "message_mode": "delta", "delay": 2, "messages": [{"role": "user", "content": "More"}]}
+    ```
     """
 
     @classmethod
@@ -64,6 +72,36 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _parse_trace(self, record: dict) -> MooncakeTrace:
         return MooncakeTrace.model_validate(record)
 
+    def _preprocess_trace(self, trace: MooncakeTrace) -> None:
+        """Fail closed: timestamp-offset cropping is rejected for delta entries.
+
+        ``start_offset``/``end_offset`` drop individual timestamped rows in
+        :meth:`BaseTraceDatasetLoader.load_dataset` before sessions are
+        grouped, but each ``message_mode='delta'`` row depends on every
+        earlier row in its session (the initial history plus the live
+        assistant turns threaded between them), so cropping would silently
+        truncate the assembled conversation. This hook runs before
+        :meth:`BaseTraceDatasetLoader._filter_and_cap_trace`, so the load
+        aborts on the first delta row whenever either offset is configured --
+        even if offsets already dropped earlier (e.g. history-mode) rows in
+        the file, nothing partially filtered is ever returned. Both offsets
+        default to ``None``, so ordinary runs are unaffected; history-mode and
+        synthesized traces keep the existing offset filtering.
+        """
+        if trace.message_mode == "delta" and (
+            self._start_offset is not None or self._end_offset is not None
+        ):
+            raise ValueError(
+                f"mooncake trace: timestamp offset filtering (start_offset="
+                f"{self._start_offset}, end_offset={self._end_offset}) cannot "
+                f"be combined with message_mode='delta' entries. Offsets drop "
+                f"individual rows before sessions are assembled, which would "
+                f"silently remove the initial history or preceding turns that "
+                f"later delta rows depend on. Remove the offsets and construct "
+                f"a trace file containing only the complete delta sessions to "
+                f"replay."
+            )
+
     def _group_traces(
         self, items: list[MooncakeTrace]
     ) -> dict[str, list[MooncakeTrace]]:
@@ -80,12 +118,17 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _infer_context_mode(
         self, traces: list[MooncakeTrace]
     ) -> ConversationContextMode | None:
-        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces are self-contained.
+        """Auto-detect the context mode for self-contained sessions.
 
         Self-contained traces (pre-built `messages` or verbatim `payload`) bypass
-        endpoint formatting and need to be replayed verbatim. Mixed sessions that
-        combine self-contained traces with synthesized prompts, or mix `messages`
-        and `payload` modes, are rejected.
+        prompt synthesis. All-`messages` sessions resolve by ``message_mode``:
+        the default 'history' replays each entry verbatim
+        (MESSAGE_ARRAY_WITH_RESPONSES) while opt-in 'delta' accumulates entries
+        and threads live assistant responses into the history
+        (DELTAS_WITHOUT_RESPONSES). Mixed sessions that combine self-contained
+        traces with synthesized prompts, mix `messages` and `payload` modes, or
+        mix 'history' and 'delta' entries (including entries that omit
+        ``message_mode`` and default to 'history') are rejected.
         """
         msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
         payload_trace_count = sum(1 for trace in traces if trace.payload is not None)
@@ -99,13 +142,52 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 f"the offending sessions or convert all entries to a single "
                 f"self-contained mode."
             )
+
+        delta_count = sum(
+            1
+            for trace in traces
+            if trace.messages is not None and trace.message_mode == "delta"
+        )
+        if 0 < delta_count < msg_trace_count:
+            raise ValueError(
+                f"mooncake trace: mixed session contains {delta_count} "
+                f"message_mode='delta' trace(s) and "
+                f"{msg_trace_count - delta_count} message_mode='history' "
+                f"trace(s) (omitted message_mode defaults to 'history'); each "
+                f"session must use exactly one message_mode. Mark every "
+                f"`messages` entry in the session with message_mode='delta' or "
+                f"none of them."
+            )
+
         if self_contained_count == len(traces) and self_contained_count > 0:
+            if delta_count > 0:
+                self._validate_endpoint_extra_for_delta()
+                return ConversationContextMode.DELTAS_WITHOUT_RESPONSES
             return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         if self_contained_count > 0:
             raise ValueError(
                 "Mixed Mooncake sessions with both raw `messages`/`payload` and synthesized prompts are unsupported."
             )
         return None
+
+    def _validate_endpoint_extra_for_delta(self) -> None:
+        """Fail closed when an endpoint-global extra input would clobber history.
+
+        Endpoint-level ``extra`` entries (``--extra-inputs`` /
+        ``endpoint.extra``) are merged into every request body after the
+        formatter builds ``messages``, so an entry named 'messages' would
+        silently replace the assembled delta history in every request.
+        """
+        endpoint = getattr(self.run.cfg, "endpoint", None)
+        extra = getattr(endpoint, "extra", None) or {}
+        if "messages" in extra:
+            raise ValueError(
+                "mooncake trace: message_mode='delta' cannot be combined with "
+                "an endpoint-level extra input named 'messages' "
+                "(--extra-inputs messages:... or endpoint.extra.messages); it "
+                "would overwrite the assembled conversation history in every "
+                "request"
+            )
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
         if trace.messages is not None or trace.payload is not None:
