@@ -69,6 +69,14 @@ class TestEndpointType:
                 "/generate",
                 "LLM Metrics",
             ),
+            (
+                EndpointType.VLLM_GENERATE,
+                "vllm_generate",
+                False,
+                True,
+                "/inference/v1/generate",
+                "LLM Metrics",
+            ),
         ],
     )
     def test_endpoint_type_metadata(
@@ -106,6 +114,7 @@ class TestEndpointType:
             "hf_tei_rankings",
             "cohere_rankings",
             "huggingface_generate",
+            "vllm_generate",
         ],
     )
     def test_enum_string_comparison(self, tag_value):
