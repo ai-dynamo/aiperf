@@ -600,6 +600,9 @@ jobs:
       # advisory; this gate sits inside the publish path.
       - name: Run unit tests against installed nightly wheel (amd64 only)
         if: matrix.arch == 'amd64'
+        timeout-minutes: 45
+        env:
+          MALLOC_ARENA_MAX: "2"
         run: |
           set -euo pipefail
           NIGHTLY=$(find dist/ -maxdepth 1 -name "aiperf_nightly-*.whl" -type f | head -1)
@@ -627,8 +630,9 @@ jobs:
           # package is on sys.path via the venv; src/ is NOT on sys.path,
           # so `import aiperf` resolves to the installed wheel rather than
           # the source tree.
+          # -n auto on the many-core builder starved the runner of memory.
           .venv-wheel-tests/bin/pytest tests/unit \
-            -n auto \
+            -n 8 --dist=worksteal \
             -m 'not performance and not stress' \
             --tb=short
 
