@@ -58,4 +58,4 @@ For all other metrics: **no change**. Scalar record metrics still use the exact 
 - Aggregator class: [`src/aiperf/metrics/list_metric_aggregation.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/list_metric_aggregation.py) — `TDigestListMetricAggregator`.
 - Selection site: [`src/aiperf/metrics/column_store.py`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/metrics/column_store.py) — first-touch dispatch by `isinstance(value, list)` in `ColumnStore._resolve_tag_handler()`.
 - Compression knob: `Environment.METRICS.TDIGEST_COMPRESSION` (env: `AIPERF_METRICS_TDIGEST_COMPRESSION`, default 500).
-- Dependency: [`crick~=0.0.8`](https://pypi.org/project/crick/) (Cython/C-backed t-digest, BSD-3, dask-org maintained).
+- Dependency: [`crick~=0.0.8`](https://pypi.org/project/crick/) (Cython/C-backed t-digest, BSD-3, dask-org maintained). Optional, not installed by default: `pip install "aiperf[tdigest]"`. See the [README](https://github.com/ai-dynamo/aiperf/blob/main/README.md) for the aarch64 toolchain note.
