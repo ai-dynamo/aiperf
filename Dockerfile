@@ -22,6 +22,8 @@ RUN mkdir /opt/$APP_NAME \
 ENV VIRTUAL_ENV=/opt/$APP_NAME/venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
+FROM rust:1.90-slim-bookworm AS rust-toolchain
+
 #######################################
 ########## Local Development ##########
 #######################################
@@ -37,8 +39,25 @@ FROM base AS local-dev
 ARG USER_UID=1000
 ARG USER_GID=1000
 
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH="/usr/local/cargo/bin:${PATH}"
+RUN printf '%s\n' \
+      'export CARGO_HOME=/usr/local/cargo' \
+      'export RUSTUP_HOME=/usr/local/rustup' \
+      'export PATH="/usr/local/cargo/bin:${PATH}"' \
+      > /etc/profile.d/rust-toolchain.sh
+
 RUN apt-get update -y \
-    && apt-get install -y sudo gnupg2 gnupg1 \
+    && apt-get install -y \
+        build-essential \
+        gnupg1 \
+        gnupg2 \
+        libssl-dev \
+        pkg-config \
+        sudo \
     && echo "$USERNAME ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME \
     && mkdir -p /home/$USERNAME \
@@ -70,8 +89,25 @@ FROM base AS wheel-builder
 
 WORKDIR /workspace
 
-# Copy the entire application
-COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md ./src/ /workspace/
+# Maturin builds the vendored Rust extension as part of the wheel.
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH="/usr/local/cargo/bin:${PATH}"
+
+RUN apt-get update -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        libssl-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the application and vendored Rust workspace.
+COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md Cargo.toml Cargo.lock /workspace/
+COPY src/lib.rs /workspace/src/lib.rs
+COPY src/aiperf /workspace/src/aiperf
+COPY rust /workspace/rust
 
 # Build the wheel
 RUN uv build --wheel --out-dir /dist
