@@ -521,3 +521,47 @@ class TestInferenceClient:
         assert not pydantic_warnings, (
             f"Unexpected Pydantic serialization warnings for {base_url!r}: {pydantic_warnings}"
         )
+
+    def test_finalize_request_record_does_not_mutate_session_owned_turns(
+        self, inference_client
+    ):
+        """Per-turn extra_headers on the session-owned Turn must not be
+        mutated by the record enrichment pass.  The slim RecordContext
+        (downcast from RequestInfo) intentionally drops ``turns``, so
+        per-turn headers never cross ZMQ.
+        """
+        original_turn = Turn(
+            texts=[Text(contents=["hello"])],
+            role="user",
+            extra_headers={"Authorization": "Bearer secret", "x-app-id": "app-1"},
+        )
+        original_headers_before = dict(original_turn.extra_headers)
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[original_turn],
+            turn_index=0,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="rid",
+            x_correlation_id="cid",
+            conversation_id="conv",
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+
+        result = inference_client._finalize_request_record(
+            record=record, request_info=request_info
+        )
+
+        # Original session-owned Turn is untouched.
+        assert original_turn.extra_headers == original_headers_before
+        assert request_info.turns[0] is original_turn
+        # RecordContext (the downcast) does not carry turns, so per-turn
+        # headers never leak into the serialised ZMQ record.
+        assert not hasattr(
+            result.request_info, "turns"
+        ) or not result.request_info.model_fields.get("turns")

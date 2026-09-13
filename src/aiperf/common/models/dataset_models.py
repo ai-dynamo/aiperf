@@ -408,7 +408,13 @@ class Turn(AIPerfBaseModel):
     )
     extra_headers: dict[str, str] | None = Field(
         default=None,
-        description="Per-turn HTTP headers merged into the request at dispatch time.",
+        repr=False,
+        description="Per-turn HTTP headers merged into the request at dispatch time. "
+        "Merged after endpoint-config headers so per-turn values win on "
+        "case-insensitive (RFC 7230) key conflict. Set by trace dataset loaders "
+        "(e.g., MooncakeTrace) and session-routing loaders (e.g., Exgentic). "
+        "repr=False so secret headers (Authorization, API keys) never leak "
+        "into str()/repr TRACE logs before record redaction.",
     )
     prerequisites: list[TurnPrerequisite] = Field(
         default_factory=list,

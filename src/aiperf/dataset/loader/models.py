@@ -265,6 +265,7 @@ class MooncakeTrace(AIPerfBaseModel):
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}, "timestamp": 1000}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+    - With per-request headers: {"text_input": "Hello", "output_length": 4, "headers": {"x-session-token": "tok-A", "baggage": "userId=alice"}}
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
@@ -310,6 +311,13 @@ class MooncakeTrace(AIPerfBaseModel):
     extra: dict[str, Any] | None = Field(
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
+    )
+    headers: dict[str, str] | None = Field(
+        None,
+        description="Per-request HTTP headers to inject for this turn (e.g., "
+        "{'x-session-token': 'abc'} for routing affinity, or {'baggage': "
+        "'k1=v1,k2=v2'} for W3C context propagation). Merged into the outgoing "
+        "request after endpoint-config headers, so trace values win on key conflict.",
     )
 
     @model_validator(mode="after")
