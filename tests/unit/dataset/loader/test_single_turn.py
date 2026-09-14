@@ -170,6 +170,55 @@ class TestSingleTurn:
                 delay=delay,
             )
 
+    def test_create_with_raw_messages(self):
+        """Test creating SingleTurn with raw_messages satisfies modality check."""
+        raw_msgs = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi"},
+        ]
+        data = SingleTurn(raw_messages=raw_msgs)
+
+        assert data.raw_messages == raw_msgs
+        assert data.raw_tools is None
+        assert data.text is None
+
+    def test_create_with_raw_messages_and_raw_tools(self):
+        """Test creating SingleTurn with raw_messages and raw_tools."""
+        raw_msgs = [{"role": "user", "content": "Use a tool"}]
+        raw_tools = [
+            {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+        ]
+        data = SingleTurn(raw_messages=raw_msgs, raw_tools=raw_tools)
+
+        assert data.raw_messages == raw_msgs
+        assert data.raw_tools == raw_tools
+
+    def test_validation_raw_tools_without_raw_messages_raises_error(self):
+        """Test that raw_tools without raw_messages raises validation error."""
+        with pytest.raises(ValueError, match="raw_tools requires raw_messages"):
+            SingleTurn(
+                text="Hello",
+                raw_tools=[{"type": "function", "function": {"name": "f"}}],
+            )
+
+    def test_validation_empty_raw_messages_raises_error(self):
+        """Test that empty raw_messages list raises validation error."""
+        with pytest.raises(ValueError, match="raw_messages must be a non-empty list"):
+            SingleTurn(raw_messages=[])
+
+    def test_validation_raw_messages_missing_role_raises_error(self):
+        """Test that a raw_messages entry without a role key is rejected."""
+        with pytest.raises(ValueError, match="must have a 'role' key"):
+            SingleTurn(raw_messages=[{"content": "no role here"}])
+
+    def test_validation_raw_messages_with_modality_raises_error(self):
+        """Test that raw_messages cannot combine with turn-based modality fields."""
+        with pytest.raises(ValueError, match="raw_messages cannot be combined"):
+            SingleTurn(
+                text="dropped",
+                raw_messages=[{"role": "user", "content": "Hi"}],
+            )
+
 
 class TestSingleTurnDatasetLoader:
     """Basic functionality tests for SingleTurnDatasetLoader."""
@@ -545,6 +594,38 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert turn.texts[0].contents == ["What is AI?"]
         assert turn.texts[1].name == "context"
         assert turn.texts[1].contents == ["AI stands for artificial intelligence"]
+
+    def test_convert_passes_through_raw_messages(self, default_cfg):
+        """Test that raw_messages are passed through to Turn objects."""
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        raw_msgs = [{"role": "user", "content": "Hello"}]
+        data = {"session_1": [SingleTurn(raw_messages=raw_msgs)]}
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == raw_msgs
+        assert turn.raw_tools is None
+
+    def test_convert_passes_through_raw_messages_and_raw_tools(self, default_cfg):
+        """Test that raw_messages and raw_tools are both passed through."""
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        raw_msgs = [{"role": "user", "content": "Use a tool"}]
+        raw_tools = [
+            {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+        ]
+        data = {"session_1": [SingleTurn(raw_messages=raw_msgs, raw_tools=raw_tools)]}
+
+        conversations = loader.convert_to_conversations(data)
+
+        turn = conversations[0].turns[0]
+        assert turn.raw_messages == raw_msgs
+        assert turn.raw_tools == raw_tools
 
 
 class TestSingleTurnMediaEncoding:
