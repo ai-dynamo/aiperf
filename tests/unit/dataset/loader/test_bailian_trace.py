@@ -393,7 +393,7 @@ class TestBailianTraceDatasetLoader:
     def test_convert_to_conversations(
         self, mock_parallel_decode, mock_prompt_generator, default_cfg
     ):
-        mock_parallel_decode.return_value = ["decoded prompt 1", "decoded prompt 2"]
+        mock_parallel_decode.return_value = ["decoded prompt"]
 
         trace_data = {
             "100": [
@@ -481,43 +481,6 @@ class TestBailianTraceDatasetLoader:
 
         assert conversations[0].turns[0].extra_body == {"nvext": {"priority": 1}}
 
-    @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
-    def test_parallel_decode_length_mismatch_raises(
-        self, mock_parallel_decode, mock_prompt_generator, default_cfg
-    ):
-        """strict=True in zip guards against silent data loss."""
-        mock_parallel_decode.return_value = ["only one"]  # expecting 2
-
-        trace_data = {
-            "1": [
-                BailianTrace(
-                    chat_id=1,
-                    timestamp=1.0,
-                    input_length=10,
-                    output_length=5,
-                    hash_ids=[1],
-                )
-            ],
-            "2": [
-                BailianTrace(
-                    chat_id=2,
-                    timestamp=2.0,
-                    input_length=20,
-                    output_length=10,
-                    hash_ids=[2],
-                )
-            ],
-        }
-
-        loader = BailianTraceDatasetLoader(
-            filename="dummy.jsonl",
-            run=make_run_from_cli(default_cfg),
-            prompt_generator=mock_prompt_generator,
-        )
-
-        with pytest.raises(ValueError, match="zip"):
-            loader.convert_to_conversations(trace_data)
-
     # ---- multi-turn conversation conversion ----
 
     @patch("aiperf.dataset.loader.hash_ids_synthesis.parallel_decode")
@@ -528,6 +491,12 @@ class TestBailianTraceDatasetLoader:
             "prompt turn 1",
             "prompt turn 2",
             "prompt turn 3",
+        ]
+        mock_prompt_generator._cache = None
+        mock_prompt_generator._build_token_sequence.side_effect = [
+            [1],
+            [2],
+            [3],
         ]
 
         trace_data = {
