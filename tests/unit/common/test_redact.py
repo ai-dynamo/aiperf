@@ -20,6 +20,7 @@ from aiperf.common.redact import (
     redact_headers,
     redact_string,
     redact_url,
+    url_carries_credentials,
 )
 from aiperf.config.endpoint import EndpointConfig
 from aiperf.config.flags.cli_config import CLIConfig
@@ -629,6 +630,49 @@ class TestRedactString:
         assert "azure-key2" not in result
         assert "tok3" not in result
         assert "application/json" in result
+
+
+class TestUrlCarriesCredentials:
+    """Tests for url_carries_credentials(): the classifier the ws:// TLS gate uses."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("ws://user:secret@host:8000/v1/responses", id="userinfo-full"),
+            param("ws://user@host:8000/v1/responses", id="userinfo-username-only"),
+            param("ws://host:8000/v1/responses?api_key=secret", id="query-api-key"),
+            param("ws://host:8000/v1/responses?token=secret", id="query-token"),
+            param("ws://host:8000/v1/responses?api%5Fkey=secret", id="query-encoded"),
+            param("wss://user:secret@host/v1/responses", id="userinfo-over-tls"),
+        ],
+    )  # fmt: skip
+    def test_credential_bearing_urls_detected(self, url: str) -> None:
+        assert url_carries_credentials(url) is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("ws://host:8000/v1/responses", id="bare"),
+            param("ws://host:8000/v1/responses?model=gpt-4", id="benign-query"),
+            param("wss://api.example.com/v1/responses", id="tls-bare"),
+            # Double-encoded name: parse_qsl decodes once to the literal
+            # ``api%5Fkey`` (not ``api_key``), so this is not a credential -- and
+            # redact_url leaves it in the clear too. The classifier must agree.
+            param(
+                "ws://host:8000/v1/responses?api%255Fkey=secret",
+                id="query-double-encoded",
+            ),
+        ],
+    )  # fmt: skip
+    def test_credential_free_urls_pass(self, url: str) -> None:
+        assert url_carries_credentials(url) is False
+
+    def test_classifier_agrees_with_redactor_on_double_encoded_name(self) -> None:
+        """A double-encoded name url_carries_credentials rejects, redact_url must
+        also leave untouched -- the divergence the double-decode fix closes."""
+        url = "ws://host:8000/v1/responses?api%255Fkey=secret"
+        assert url_carries_credentials(url) is False
+        assert redact_url(url) == url
 
 
 # =============================================================================

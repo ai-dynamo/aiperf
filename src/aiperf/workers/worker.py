@@ -83,6 +83,7 @@ from aiperf.common.protocols import (
     StreamingPushClientProtocol,
 )
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
+from aiperf.common.utils import is_truthy_flag
 from aiperf.config.adaptive_scale_phase import (
     sla_filters_require_first_token_observation,
 )
@@ -103,7 +104,7 @@ from aiperf.dataset.memory_map_utils import (
 )
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.plugin.enums import PluginType, ServiceRunType, TransportType
 from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
@@ -744,6 +745,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.session_manager: UserSessionManager = UserSessionManager(
             max_sessions=Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
         )
+        self._warned_fork_replay: bool = False
 
         # Dataset client for direct data access (eliminates DatasetManager bottleneck)
         # Initialized when DatasetConfiguredNotification is received via factory
@@ -1929,8 +1931,83 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             or credit.branch_mode != ConversationBranchMode.FORK
         ):
             return
+        parent = self.session_manager.get(credit.parent_correlation_id)
+        inherit_response_chain = not self._fork_child_replays_context(parent)
         self.session_manager.seed_from_parent(
-            x_correlation_id, credit.parent_correlation_id
+            x_correlation_id,
+            credit.parent_correlation_id,
+            inherit_response_chain=inherit_response_chain,
+        )
+        if not inherit_response_chain:
+            self._warn_fork_replay_once()
+
+    def _fork_child_replays_context(self, parent: UserSession | None) -> bool:
+        """Whether FORK children should replay full history instead of chaining.
+
+        A FORK child gets its own ``x_correlation_id`` and, on the WebSocket
+        transport, its own socket. Chaining onto the parent's
+        ``previous_response_id`` from that fresh socket only resolves if the
+        server persisted the parent's response chain, which requires
+        ``store: true`` -- either endpoint-wide or on every dispatched parent
+        turn (per-turn ``extra_body``). Absent that, the child replays its
+        inherited ``turn_list`` as a self-contained fresh response instead.
+        The HTTP path (and any run that requested storage) keeps chaining.
+        """
+        if self.model_endpoint.transport != TransportType.WEBSOCKET:
+            return False
+        return not self._parent_chain_is_persisted(parent)
+
+    def _parent_chain_is_persisted(self, parent: UserSession | None) -> bool:
+        """Whether the parent's response chain survives cross-connection resolution.
+
+        A FORK child opening its own socket can only chain onto the parent's
+        ``previous_response_id`` when the full chain is server-persisted, so
+        every parent turn the child inherits must have been stored. ``store``
+        can arrive per-turn: ``ResponsesEndpoint.format_payload`` applies the
+        endpoint-wide ``extra`` first and the turn's ``extra_body`` last, so a
+        per-turn ``store: false`` overrides an endpoint-wide ``store: true`` and
+        wins on the wire. Resolving effective ``store`` the same way -- turn
+        override last -- keeps an endpoint-wide default from being mistaken for
+        proof of persistence.
+
+        Only the turns the parent has *dispatched* are inherited: the child
+        forks at ``parent.turn_index``, and ``num_turns`` counts turns merely
+        *planned* (a non-terminal background FORK can be dispatched before the
+        parent has sent its later turns), so slicing on ``num_turns`` would
+        judge persistence against not-yet-sent turns.
+        """
+        if parent is None or parent.turn_index < 0:
+            return False
+        endpoint_store = is_truthy_flag(
+            dict(self.model_endpoint.endpoint.extra or []).get("store")
+        )
+        dispatched_turns = parent.conversation.turns[: parent.turn_index + 1]
+        return bool(dispatched_turns) and all(
+            self._turn_store_persisted(turn, endpoint_store)
+            for turn in dispatched_turns
+        )
+
+    @staticmethod
+    def _turn_store_persisted(turn: Turn, endpoint_store: bool) -> bool:
+        """Effective ``store`` for one turn: its ``extra_body`` override wins over
+        the endpoint-wide default, matching ``ResponsesEndpoint.format_payload``
+        (endpoint ``extra`` applied first, per-turn ``extra_body`` last)."""
+        override = (turn.extra_body or {}).get("store")
+        if override is not None:
+            return is_truthy_flag(override)
+        return endpoint_store
+
+    def _warn_fork_replay_once(self) -> None:
+        if self._warned_fork_replay:
+            return
+        self._warned_fork_replay = True
+        self.notice(
+            "WebSocket FORK children replay their full inherited history as a "
+            "fresh response because server-side storage was not requested: an "
+            "inherited previous_response_id is not portably resolvable on the "
+            "child's own socket. Server-only outputs such as reasoning items are "
+            "not reconstructed by replay. Add --extra-inputs '{\"store\": true}' "
+            "with a persisting backend to keep the server-side chain."
         )
 
     def _handle_terminal_disposition(
