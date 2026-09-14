@@ -98,7 +98,23 @@ otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
+aws = [
+  # 1.34.0 covers everything used here: the public ``botocore.eventstream``
+  # frame decoder, ``SigV4Auth``, and ``get_service_model().signing_name``. The
+  # tests deliberately assert on the bytes handed to the signer rather than on a
+  # reproducible signature, so nothing forces this floor higher to freeze
+  # botocore's clock (``botocore.auth.get_current_datetime`` only exists from
+  # 1.40.2).
+  "botocore>=1.34.0",
+]
 test = [
+  # The AWS suite (SigV4 signing, eventstream decoding, the SageMaker transport)
+  # is ~1100 lines that self-skip via pytest.importorskip("botocore"). Without
+  # botocore here, the Windows-on-ARM job -- which installs
+  # "--extra test --no-dev" -- would skip all of it and still report green,
+  # making that job's tick meaningless for this code. botocore is a pure-Python
+  # (py3-none-any) wheel, so unlike the deps `dev` pulls it installs fine there.
+  "aiperf[aws]",
   "httpx>=0.27.0",
   # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
   # build and no sdist, so it can't install on Windows-on-ARM. Cap it there to
@@ -119,7 +135,7 @@ test = [
   "trustme>=1.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
 ]
 dev = [
-  "aiperf[mlflow,otel,test,wandb]",
+  "aiperf[aws,mlflow,otel,test,wandb]",
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",
