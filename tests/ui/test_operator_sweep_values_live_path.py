@@ -113,7 +113,7 @@ def _resolve_values(detail: dict[str, Any], archived_children: Any = None) -> An
     """
     script = f"""
       import {{ resolveSweepManifest, indexVariationValues }}
-        from '{_HELPERS.as_posix()}';
+        from {_HELPERS.as_uri()!r};
       const detail = {json.dumps(detail)};
       const archivedChildren = {json.dumps(archived_children)};
       const manifest = resolveSweepManifest({{ detail, archivedChildren }});
