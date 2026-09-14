@@ -374,7 +374,9 @@ class GPUBenchmarkDeployer(BenchmarkDeployer):
         import yaml
 
         logger.debug(
-            lambda image=image: f"[GPU] Patching imagePullPolicy to IfNotPresent for {image}"
+            lambda image=image: (
+                f"[GPU] Patching imagePullPolicy to IfNotPresent for {image}"
+            )
         )
         docs = list(yaml.safe_load_all(manifest))
         for doc in docs:

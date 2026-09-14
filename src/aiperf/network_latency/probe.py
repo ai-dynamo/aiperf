@@ -107,7 +107,9 @@ class NetworkLatencyProbeCollector(AIPerfLifecycleMixin):
                 self._resolved_family = family
                 self._resolved_host = sockaddr[0]
                 self.debug(
-                    lambda: f"Resolved {self._target_host}:{self._target_port} -> {self._resolved_host}"
+                    lambda: (
+                        f"Resolved {self._target_host}:{self._target_port} -> {self._resolved_host}"
+                    )
                 )
         except OSError as e:
             self.warning(
@@ -150,8 +152,10 @@ class NetworkLatencyProbeCollector(AIPerfLifecycleMixin):
                 await writer.wait_closed()
             except OSError as close_error:
                 self.debug(
-                    lambda err=close_error: f"Error closing probe connection to "
-                    f"{self._target_host}:{self._target_port}: {err!r}"
+                    lambda err=close_error: (
+                        f"Error closing probe connection to "
+                        f"{self._target_host}:{self._target_port}: {err!r}"
+                    )
                 )
         except OSError as e:
             error = ErrorDetails.from_exception(e)
