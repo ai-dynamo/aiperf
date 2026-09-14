@@ -214,3 +214,36 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
             f"EndpointConfig normalization is broken"
         )
     assert fake.urls[0] == "http://localhost:8000/v1/models"
+
+
+def test_wait_for_endpoint_deduplicates_v1_in_models_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: --url http://host/v1 must probe /v1/models, not /v1/v1/models."""
+    fake = _FakeMultiClient(
+        models_payload=orjson.dumps({"data": [{"id": "served-model"}]})
+    )
+
+    monkeypatch.setattr(
+        "aiperf.transports.aiohttp_client.AioHttpClient",
+        lambda *args, **kwargs: fake,
+    )
+
+    config = CLIConfig(model_names=["served-model"], urls=["http://localhost:8000/v1"])
+
+    asyncio.run(
+        readiness_probe.wait_for_endpoint(
+            urls=config.urls,
+            model_names=config.model_names,
+            mode="models",
+            endpoint_type="chat",
+            custom_endpoint=None,
+            timeout_s=2.0,
+            interval_s=0.1,
+            headers={},
+        )
+    )
+
+    assert fake.urls[0] == "http://localhost:8000/v1/models", (
+        f"Expected /v1/models but got {fake.urls[0]!r} -- /v1 was duplicated"
+    )
