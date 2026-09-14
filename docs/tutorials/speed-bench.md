@@ -59,23 +59,78 @@ Where `{ISL}` is one of: `1k`, `2k`, `8k`, `16k`, `32k`.
 
 ---
 
-## Prepare the Dataset
+## Running SPEED-Bench
 
-NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agreement](https://huggingface.co/datasets/nvidia/SPEED-Bench/blob/main/License.pdf). For each dataset a user elects to use, the user is responsible for checking if the dataset license is fit for the intended purpose. The prepare data script below automatically fetches data from all the source datasets.
-
-You should first download and prepare the dataset using the following one liner:
+Select any SPEED-Bench dataset with `--public-dataset`; AIPerf fetches and
+resolves it for you:
 
 ```bash
-SPEED_BENCH_DIR="./datasets/speed-bench"
-curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/nemo_skills/dataset/speed-bench/prepare.py | python3 - --output_dir $SPEED_BENCH_DIR
+aiperf profile --public-dataset speed_bench_coding --model <model> --url <url>
 ```
 
-This will download all splits into the working directory as JSONL files. Other supported options of the prepare script:
+### One-time setup
 
-* `--config`: select which config to prepare, can be one of the splits in the dataset (e.g., `qualitative`, `throughput_2k`) or `all` to prepare all of the configs.
-* `--output_dir`: select different output directory to download the dataset to.
+SPEED-Bench publishes a placeholder instead of prompt text for rows whose
+source datasets do not permit redistribution, so AIPerf refetches that text
+from the 14 original sources on first use.
+
+One source, [`cais/hle`](https://huggingface.co/datasets/cais/hle), is gated
+and appears in **every** SPEED-Bench config, so access is required:
+
+1. Open <https://huggingface.co/datasets/cais/hle> and accept the terms.
+   Approval is automatic — no reviewer, no waiting period.
+2. Run `hf auth login`.
+
+AIPerf checks this before downloading anything and fails in about a second with
+these instructions if access is missing.
+
+**Access is granted per user, not per organization.** Everyone running
+SPEED-Bench needs their own HuggingFace account and their own click; it cannot
+be accepted once on a team's behalf. In CI, use a service account onboarded
+once by a human and store its token as a secret.
+
+**Budget disk and time for the first run.** Resolving a config downloads its
+source datasets in full -- around 40 GB for `qualitative` -- into the HuggingFace
+cache (`~/.cache/huggingface/hub`), not into AIPerf's cache. What AIPerf writes
+is only the extracted prompt text, which is far smaller: roughly 2 MB for
+`qualitative`, up to ~200 MB for `throughput_32k`. A small resolved file after a
+large download is expected, not a sign of a truncated dataset -- AIPerf logs the
+row count and file size when it finishes so you can confirm. The result is
+cached under
+`.cache/aiperf/datasets/speed-bench/<config>.jsonl` and shared by every
+category of that config, so only the first run pays for it. Delete the file to
+refetch.
+
+That path is relative to the working directory you launch `aiperf` from, which
+every AIPerf public dataset shares. Running from a different directory resolves
+the config again from scratch, so run from a consistent directory -- or
+pre-stage the file as shown below -- if you want the cache to be reused.
+
+Resolution runs before AIPerf starts its services, so the download is not part
+of any measured run.
+
+NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agreement](https://huggingface.co/datasets/nvidia/SPEED-Bench/blob/main/License.pdf). For each dataset a user elects to use, the user is responsible for checking if the dataset license is fit for the intended purpose. Resolution automatically fetches data from all the source datasets.
 
 ---
+
+## Pre-staging the dataset (air-gapped or CI)
+
+Resolution writes a single JSONL per config under
+`.cache/aiperf/datasets/speed-bench/`. To avoid every machine resolving it --
+or to run on a host with no internet and no HuggingFace credentials -- resolve
+once somewhere connected and copy the file:
+
+```bash
+# on a connected machine, with cais/hle terms accepted
+aiperf profile --public-dataset speed_bench_qa --model <model> --url <url>
+
+# then copy the cache to the target machine
+scp .cache/aiperf/datasets/speed-bench/qualitative.jsonl \
+    target:/path/to/workdir/.cache/aiperf/datasets/speed-bench/
+```
+
+AIPerf uses a cached config as-is, so the target machine needs neither network
+access nor an accepted licence. One file covers every category of that config.
 
 ## Start a Server with Speculative Decoding
 
@@ -120,10 +175,8 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_coding \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
-    --osl 4096 \
-    --extra-inputs temperature:0 \
+    --public-dataset speed_bench_coding \
+    --extra-inputs temperature:0 max_tokens:4096 \
     --concurrency 16
 ```
 
@@ -147,11 +200,9 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_coding \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+    --public-dataset speed_bench_coding \
     --server-metrics http://localhost:8000/metrics \
-    --osl 4096 \
-    --extra-inputs temperature:0 \
+    --extra-inputs temperature:0 max_tokens:4096 \
     --concurrency 16 \
     --output-artifact-dir ./artifacts/speed_bench_coding
 ```
@@ -171,11 +222,9 @@ for cat in $CATEGORIES; do
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
-      --custom-dataset-type speed_bench_${cat} \
-      --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+      --public-dataset speed_bench_${cat} \
       --server-metrics http://localhost:8000/metrics \
-      --osl 4096 \
-      --extra-inputs temperature:0 \
+      --extra-inputs temperature:0 max_tokens:4096 \
       --concurrency 16 \
       --output-artifact-dir "./artifacts/speed_bench_${cat}"
 done
@@ -300,8 +349,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_qualitative \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+    --public-dataset speed_bench_qualitative \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 16
 ```
@@ -318,8 +366,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_throughput_1k \
-    --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
+    --public-dataset speed_bench_throughput_1k \
     --server-metrics http://localhost:8000/metrics \
     --concurrency 64 \
     --benchmark-duration 120
@@ -339,8 +386,7 @@ for tier in low_entropy mixed high_entropy; do
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
-      --custom-dataset-type "speed_bench_throughput_1k_${tier}" \
-      --input-file ${SPEED_BENCH_DIR}/throughput_1k.jsonl \
+      --public-dataset "speed_bench_throughput_1k_${tier}" \
       --server-metrics http://localhost:8000/metrics \
       --concurrency 64 \
       --benchmark-duration 60
@@ -359,8 +405,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
-    --custom-dataset-type speed_bench_qualitative \
-    --input-file ${SPEED_BENCH_DIR}/qualitative.jsonl \
+    --public-dataset speed_bench_qualitative \
     --no-server-metrics \
     --concurrency 16
 ```
