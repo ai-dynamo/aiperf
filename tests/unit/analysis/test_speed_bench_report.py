@@ -8,21 +8,28 @@ from pathlib import Path
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.analysis.speed_bench_report import (
     PROFILE_JSON,
+    PROFILE_JSONL,
+    QUALITATIVE_CATEGORIES,
     SERVER_METRICS_JSON,
     SpeedBenchReportError,
     _get_metric_stat,
+    _min_table_width,
+    acceptance_from_records,
     build_report,
     detect_columns,
     extract_accept_length,
     extract_accept_rate,
     extract_category,
     extract_model,
+    extract_summary_acceptance,
     extract_throughput,
     find_run_dirs,
     generate_report,
+    iter_records,
     load_profile,
     load_server_metrics,
     print_table,
@@ -66,11 +73,32 @@ def _public_profile(dataset: str, model: str | None = "test-model") -> dict:
     return {"input_config": input_config}
 
 
+def _record(
+    category: str | None,
+    accepted: int,
+    drafted: int,
+    steps: int,
+    phase: str = "profiling",
+) -> dict:
+    """Construct one ``profile_export.jsonl`` line carrying an acceptance record."""
+    return {
+        "metadata": {"benchmark_phase": phase, "source_kind": category},
+        "metrics": {},
+        "spec_decode_acceptance": {
+            "engine": "vllm",
+            "num_accepted_draft_tokens": accepted,
+            "num_draft_tokens": drafted,
+            "num_spec_steps": steps,
+        },
+    }
+
+
 def _write_run_dir(
     tmp_path: Path,
     name: str,
     profile: dict | None,
     server_metrics: dict | None = None,
+    records: list[dict] | None = None,
 ) -> Path:
     """Materialize a fake run directory on disk and return its path."""
     run_dir = tmp_path / name
@@ -79,6 +107,10 @@ def _write_run_dir(
         (run_dir / PROFILE_JSON).write_bytes(orjson.dumps(profile))
     if server_metrics is not None:
         (run_dir / SERVER_METRICS_JSON).write_bytes(orjson.dumps(server_metrics))
+    if records is not None:
+        (run_dir / PROFILE_JSONL).write_bytes(
+            b"\n".join(orjson.dumps(record) for record in records) + b"\n"
+        )
     return run_dir
 
 
@@ -461,6 +493,393 @@ class TestBuildReport:
         assert build_report([empty], metric_type="accept_length") == {}
 
 
+class TestAcceptanceFromRecords:
+    def test_groups_records_by_source_kind(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            _profile(dataset="speed_bench_qualitative", model="m1"),
+            records=[
+                _record("coding", accepted=30, drafted=50, steps=10),
+                _record("coding", accepted=10, drafted=50, steps=10),
+                _record("math", accepted=60, drafted=100, steps=20),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "qualitative")
+
+        assert values == {"coding": 3.0, "math": 4.0}
+
+    def test_accept_rate_is_token_weighted_across_the_category(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            _profile(dataset="speed_bench_qualitative", model="m1"),
+            records=[
+                _record("coding", accepted=30, drafted=50, steps=10),
+                _record("coding", accepted=10, drafted=150, steps=10),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_rate", "qualitative")
+
+        # Summed, not averaged per request: 40/200 = 0.2 (per-request mean is 0.33).
+        assert values == {"coding": 0.2}
+
+    def test_error_records_are_excluded(self, tmp_path: Path):
+        errored = _record("coding", accepted=90, drafted=100, steps=10)
+        errored["error"] = {"code": 500, "message": "boom"}
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[errored, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        # MetricsAccumulator drops error records from the spec-decode totals, so
+        # including them here would make `records` disagree with `summary`.
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_warmup_records_are_excluded(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[
+                _record("coding", accepted=90, drafted=100, steps=10, phase="warmup"),
+                _record("coding", accepted=10, drafted=50, steps=10),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "coding")
+
+        assert values == {"coding": 2.0}
+
+    def test_excluded_warmup_phase_kind_is_also_dropped(self, tmp_path: Path):
+        warmup = _record("coding", accepted=90, drafted=100, steps=10)
+        warmup["metadata"] = {
+            "benchmark_phase": "profiling",
+            "phase_kind": "warmup",
+            "source_kind": "coding",
+        }
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[warmup, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_non_int_counter_does_not_half_update_its_category(self, tmp_path: Path):
+        bad = _record("coding", accepted=999, drafted=50, steps=10)
+        bad["spec_decode_acceptance"]["num_draft_tokens"] = "x"
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[bad, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            param("num_accepted_draft_tokens", -5, id="negative-accepted"),
+            param("num_spec_steps", -1, id="negative-steps"),
+            param("num_accepted_draft_tokens", 999, id="accepted-exceeds-drafted"),
+        ],
+    )  # fmt: skip
+    def test_impossible_counter_values_are_rejected(
+        self, tmp_path: Path, field: str, value: int
+    ):
+        bad = _record("coding", accepted=10, drafted=50, steps=10)
+        bad["spec_decode_acceptance"][field] = value
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[bad, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_bool_counter_is_rejected(self, tmp_path: Path):
+        # bool is an int subclass; accepting it would let True count as 1.
+        bad = _record("coding", accepted=10, drafted=50, steps=10)
+        bad["spec_decode_acceptance"]["num_spec_steps"] = True
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[bad],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {}
+
+    def test_skipped_records_are_reported_not_silently_dropped(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ):
+        bad = _record("coding", accepted=999, drafted=50, steps=10)
+        bad["spec_decode_acceptance"]["num_draft_tokens"] = "x"
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[bad, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        acceptance_from_records(run_dir, "accept_length", "coding")
+
+        assert "skipped 1 malformed acceptance record(s)" in capsys.readouterr().err
+
+    def test_record_missing_a_counter_does_not_skew_its_category(self, tmp_path: Path):
+        # A half-folded record would inflate accepted without its steps.
+        partial = _record("coding", accepted=999, drafted=999, steps=0)
+        del partial["spec_decode_acceptance"]["num_spec_steps"]
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[partial, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_records_without_source_kind_fall_back_to_run_category(
+        self, tmp_path: Path
+    ):
+        # spec_al_* public datasets carry no per-row category.
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_gsm8k",
+            _public_profile(dataset="spec_al_gsm8k", model="m1"),
+            records=[_record(None, accepted=20, drafted=40, steps=10)],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "gsm8k")
+
+        assert values == {"gsm8k": 3.0}
+
+    def test_records_without_acceptance_are_ignored(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[
+                {"metadata": {"benchmark_phase": "profiling"}, "metrics": {}},
+                _record("coding", accepted=10, drafted=50, steps=10),
+            ],
+        )
+
+        values = acceptance_from_records(run_dir, "accept_length", "coding")
+
+        assert values == {"coding": 2.0}
+
+    def test_zero_step_category_is_omitted(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[_record("coding", accepted=0, drafted=0, steps=0)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {}
+
+    def test_unparseable_line_does_not_sink_the_run(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+        with open(run_dir / PROFILE_JSONL, "ab") as f:
+            f.write(b'{"metadata": {"benchm\n')
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_missing_jsonl_returns_empty(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path, "run_coding", _profile(dataset="speed_bench_coding", model="m1")
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {}
+
+
+class TestExtractSummaryAcceptance:
+    def test_accept_length_read_verbatim(self):
+        profile = {"spec_decode_token_weighted_acceptance_length": {"avg": 3.2}}
+        assert extract_summary_acceptance(profile, "accept_length") == 3.2
+
+    def test_accept_rate_converted_from_percent_to_fraction(self):
+        profile = {"spec_decode_overall_draft_acceptance_rate": {"avg": 46.0}}
+        assert extract_summary_acceptance(profile, "accept_rate") == 0.46
+
+    def test_missing_metric_returns_none(self):
+        assert extract_summary_acceptance({}, "accept_length") is None
+
+
+class TestBuildReportSources:
+    def test_single_run_over_aggregate_split_yields_the_full_matrix(
+        self, tmp_path: Path
+    ):
+        _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            _profile(dataset="speed_bench_qualitative", model="m1"),
+            records=[
+                _record("coding", accepted=20, drafted=40, steps=10),
+                _record("math", accepted=30, drafted=40, steps=10),
+                _record("writing", accepted=10, drafted=40, steps=10),
+            ],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 3.0, "math": 4.0, "writing": 2.0}}
+
+    def test_auto_announces_which_source_it_resolved(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+        _write_run_dir(
+            tmp_path,
+            "run_math",
+            _profile(dataset="speed_bench_math", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 3.0}),
+        )
+
+        build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        err = capsys.readouterr().err
+        assert "acceptance from records" in err
+        assert "acceptance from server" in err
+
+    def test_pinned_source_does_not_announce(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        build_report(
+            find_run_dirs([tmp_path]), metric_type="accept_length", source="records"
+        )
+
+        assert "acceptance from" not in capsys.readouterr().err
+
+    def test_records_take_precedence_over_the_server_scrape(self, tmp_path: Path):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 2.0}}
+
+    def test_source_server_ignores_available_records(self, tmp_path: Path):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(
+            find_run_dirs([tmp_path]), metric_type="accept_length", source="server"
+        )
+
+        assert report == {"m1": {"coding": 9.9}}
+
+    def test_source_records_does_not_fall_back_to_the_scrape(self, tmp_path: Path):
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+        )
+
+        report = build_report(
+            find_run_dirs([tmp_path]), metric_type="accept_length", source="records"
+        )
+
+        assert report == {"m1": {"coding": None}}
+
+    def test_source_summary_reads_only_the_run_level_scalars(self, tmp_path: Path):
+        profile = _profile(dataset="speed_bench_coding", model="m1")
+        profile["spec_decode_token_weighted_acceptance_length"] = {"avg": 3.5}
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            profile,
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(
+            find_run_dirs([tmp_path]), metric_type="accept_length", source="summary"
+        )
+
+        assert report == {"m1": {"coding": 3.5}}
+
+    def test_summary_metrics_used_when_no_records_exist(self, tmp_path: Path):
+        profile = _profile(dataset="speed_bench_coding", model="m1")
+        profile["spec_decode_token_weighted_acceptance_length"] = {"avg": 3.5}
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            profile,
+            server_metrics=_server_metric("sglang:spec_accept_length", {"avg": 9.9}),
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 3.5}}
+
+    def test_throughput_stays_one_column_per_run(self, tmp_path: Path):
+        profile = _profile(dataset="speed_bench_qualitative", model="m1")
+        profile["output_token_throughput"] = {"avg": 1234.0}
+        _write_run_dir(
+            tmp_path,
+            "run_qualitative",
+            profile,
+            records=[
+                _record("coding", accepted=20, drafted=40, steps=10),
+                _record("math", accepted=30, drafted=40, steps=10),
+            ],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="throughput")
+
+        assert report == {"m1": {"qualitative": 1234.0}}
+
+
 class TestPrintTable:
     def test_print_table_rich_branch_renders_model_and_overall(
         self, capsys: pytest.CaptureFixture[str]
@@ -576,3 +995,134 @@ class TestGenerateReport:
         out = capsys.readouterr().out
         assert "m1" in out
         assert "2.50" in out
+
+
+class TestReportEdgeCases:
+    @pytest.mark.parametrize(
+        "avg",
+        [
+            param("4.2", id="string"),
+            param(True, id="bool"),
+            param(None, id="none"),
+        ],
+    )  # fmt: skip
+    def test_summary_entry_with_non_numeric_avg_returns_none(self, avg):
+        # A non-number here would reach the "%.2f" formatting and abort the report.
+        profile = {"spec_decode_token_weighted_acceptance_length": {"avg": avg}}
+        assert extract_summary_acceptance(profile, "accept_length") is None
+
+    def test_iter_records_skips_blank_lines(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path, "run", _profile(dataset="speed_bench_coding"), records=[]
+        )
+        (run_dir / PROFILE_JSONL).write_bytes(
+            b"\n\n" + orjson.dumps({"metadata": {}}) + b"\n   \n"
+        )
+
+        assert len(list(iter_records(run_dir))) == 1
+
+    def test_iter_records_skips_non_dict_json(self, tmp_path: Path):
+        run_dir = _write_run_dir(
+            tmp_path, "run", _profile(dataset="speed_bench_coding"), records=[]
+        )
+        (run_dir / PROFILE_JSONL).write_bytes(
+            b'[1, 2]\n"a string"\n' + orjson.dumps({"metadata": {}}) + b"\n"
+        )
+
+        assert len(list(iter_records(run_dir))) == 1
+
+    def test_iter_records_warns_when_the_path_is_unreadable(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ):
+        # A directory in place of the file raises IsADirectoryError (an OSError)
+        # regardless of the running user, unlike a chmod-based fixture.
+        run_dir = _write_run_dir(
+            tmp_path, "run", _profile(dataset="speed_bench_coding")
+        )
+        (run_dir / PROFILE_JSONL).mkdir()
+
+        assert list(iter_records(run_dir)) == []
+        assert "failed to read" in capsys.readouterr().err
+
+    def test_record_with_non_dict_metadata_is_skipped(self, tmp_path: Path):
+        broken = _record("coding", accepted=10, drafted=50, steps=10)
+        broken["metadata"] = "not-a-dict"
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run",
+            _profile(dataset="speed_bench_coding"),
+            records=[broken, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_record_with_a_non_string_category_is_skipped(self, tmp_path: Path):
+        broken = _record("coding", accepted=999, drafted=999, steps=10)
+        broken["metadata"]["source_kind"] = 123
+        run_dir = _write_run_dir(
+            tmp_path,
+            "run",
+            _profile(dataset="speed_bench_coding"),
+            records=[broken, _record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        assert acceptance_from_records(run_dir, "accept_length", "coding") == {
+            "coding": 2.0
+        }
+
+    def test_throughput_run_without_a_recognizable_category_is_skipped(
+        self, tmp_path: Path
+    ):
+        profile = _profile(dataset="sharegpt", model="m1")
+        profile["output_token_throughput"] = {"avg": 10.0}
+        _write_run_dir(tmp_path, "run", profile)
+
+        assert build_report(find_run_dirs([tmp_path]), metric_type="throughput") == {}
+
+
+class TestWideMatrixRendering:
+    _QUALITATIVE = {
+        "meta-llama/Llama-3.1-8B-Instruct": dict.fromkeys(QUALITATIVE_CATEGORIES, 4.44)
+    }
+
+    def test_full_matrix_renders_every_column_at_width_80(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ):
+        monkeypatch.setenv("COLUMNS", "80")
+
+        print_table(self._QUALITATIVE, QUALITATIVE_CATEGORIES, "accept_length")
+
+        out = capsys.readouterr().out
+        for category in QUALITATIVE_CATEGORIES:
+            assert category in out, f"{category} was truncated away"
+        assert "…" not in out
+
+    def test_narrow_matrix_does_not_force_a_wide_console(self):
+        narrow = {"m": {"coding": 1.0}}
+        assert _min_table_width(narrow, ["coding"]) < 80
+
+
+class TestUnrelatedRunsDoNotPolluteTheMatrix:
+    def test_records_are_ignored_when_the_dataset_selector_is_unrecognized(
+        self, tmp_path: Path
+    ):
+        weka = _record("weka_main", accepted=40, drafted=50, steps=10)
+        _write_run_dir(
+            tmp_path,
+            "run_unrelated",
+            _profile(dataset="sharegpt", model="m1"),
+            records=[weka],
+        )
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            _profile(dataset="speed_bench_coding", model="m1"),
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 2.0}}
+        assert "weka_main" not in report["m1"]
