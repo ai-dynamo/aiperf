@@ -2,16 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import orjson
 from pydantic import ValidationError
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Turn
 from aiperf.dataset.loader.base_loader import LoaderProbeData
-from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
+from aiperf.dataset.loader.base_trace_loader import (
+    BaseTraceDatasetLoader,
+    _has_meaningful_synthesis,
+)
 from aiperf.dataset.loader.models import MooncakeTrace
+from aiperf.dataset.loader.output_replay import (
+    effective_replay_key,
+    merge_output_replay_annotation,
+)
 from aiperf.dataset.loader.speed_bench import is_speed_bench_row
 
 
@@ -63,6 +72,79 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
 
     def _parse_trace(self, record: dict) -> MooncakeTrace:
         return MooncakeTrace.model_validate(record)
+
+    def _iter_records_with_line_index(self) -> Iterator[tuple[int, dict[str, Any]]]:
+        if self.inline_records is not None:
+            if isinstance(self.inline_records, dict):
+                raise ValueError(
+                    "Mooncake trace inline records must be a list of records, not a dict of pools."
+                )
+            yield from enumerate(self.inline_records)
+            return
+
+        with open(self.filename, encoding="utf-8") as f:
+            for line_index, line in enumerate(f):
+                if line := line.strip():
+                    try:
+                        yield line_index, orjson.loads(line)
+                    except orjson.JSONDecodeError as e:
+                        raise ValueError(
+                            f"Invalid JSON in dataset file {self.filename} at line {line_index + 1}: {e}"
+                        ) from None
+
+    def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
+        self._skipped_traces = 0
+        self._skipped_max_isl = 0
+        self._capped_max_osl = 0
+        items: list[MooncakeTrace] = []
+        session_turns: dict[str, int] = {}
+
+        for line_index, record_dict in self._iter_records_with_line_index():
+            trace = self._parse_trace(record_dict)
+            turn_index = (
+                session_turns.get(trace.session_id, 0)
+                if trace.session_id is not None
+                else 0
+            )
+            if trace.output_token_ids is not None:
+                if (
+                    self._max_osl is not None
+                    and trace.output_length is not None
+                    and trace.output_length > self._max_osl
+                ):
+                    raise ValueError(
+                        "mooncake trace output_token_ids cannot be combined with max_osl capping"
+                    )
+                trace._output_replay_key = effective_replay_key(
+                    trace.request_id,
+                    trace.session_id,
+                    turn_index,
+                    line_index,
+                )
+            if trace.session_id is not None:
+                session_turns[trace.session_id] = turn_index + 1
+
+            self._preprocess_trace(trace)
+            if not self._filter_and_cap_trace(trace):
+                continue
+            items.append(trace)
+
+        data = self._group_traces(items)
+        self.debug(
+            lambda: (
+                f"Loaded {sum(len(v) for v in data.values()):,} traces "
+                f"across {len(data):,} sessions "
+                f"from {self.filename if self.filename else '<inline records>'}"
+            )
+        )
+
+        if _has_meaningful_synthesis(self._synthesis):
+            data = self._apply_synthesis(data)
+
+        data = self._cap_grouped_traces_max_osl(data)
+        self._log_filtering_summary()
+
+        return data
 
     def _group_traces(
         self, items: list[MooncakeTrace]
@@ -123,9 +205,14 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 timestamp=trace.timestamp,
                 delay=self._delay_cap_tracker.clamp(trace.delay),
                 max_tokens=trace.output_length,
-                raw_payload=trace.payload,
+                raw_payload=merge_output_replay_annotation(
+                    trace.payload, trace._output_replay_key
+                ),
                 extra_body=trace.extra,
             )
+        extra_body = merge_output_replay_annotation(
+            trace.extra, trace._output_replay_key
+        )
         if trace.messages is not None:
             return Turn(
                 timestamp=trace.timestamp,
@@ -133,11 +220,11 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 max_tokens=trace.output_length,
                 raw_messages=trace.messages,
                 raw_tools=trace.tools,
-                extra_body=trace.extra,
+                extra_body=extra_body,
             )
         turn = super()._build_turn(trace, prompt)
-        if trace.extra is not None:
-            turn.extra_body = trace.extra
+        if extra_body is not None:
+            turn.extra_body = extra_body
         return turn
 
     # ------------------------------------------------------------------
@@ -150,4 +237,7 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _reconstruct_traces(
         self, originals: list[MooncakeTrace], synth_dicts: list[dict[str, Any]]
     ) -> list[MooncakeTrace]:
-        return [MooncakeTrace.model_validate(t) for t in synth_dicts]
+        traces = [MooncakeTrace.model_validate(t) for t in synth_dicts]
+        for trace, original in zip(traces, originals, strict=False):
+            trace._output_replay_key = original._output_replay_key
+        return traces
