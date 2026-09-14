@@ -13,6 +13,10 @@ Usage::
 
 Then run your benchmark client against http://localhost:18000.
 Each JSONL line contains the full request payload with a ``_seq`` counter added.
+
+The recording holds raw prompt content, so the output file is created mode 0600.
+That guarantee is Unix-only: on Windows the mode bits are not enforced and the
+file inherits the directory ACL, so capture to a directory you already trust.
 """
 
 from __future__ import annotations
@@ -28,19 +32,23 @@ from urllib.parse import urlparse
 
 import orjson
 
+from aiperf.common.constants import IS_WINDOWS
+
 _out_file = None
 _count = 0
 _model_id = "capture-model"
 _lock = threading.Lock()
 
 _MAX_BODY = 64 * 1024 * 1024  # 64 MiB
+_READ_TIMEOUT = 30.0
 
 
-def _sse_chunk(completion_id: str, content: str) -> bytes:
+def _sse_chunk(completion_id: str, model: str, content: str) -> bytes:
     data = orjson.dumps(
         {
             "id": completion_id,
             "object": "chat.completion.chunk",
+            "model": model,
             "choices": [
                 {"index": 0, "delta": {"content": content}, "finish_reason": None}
             ],
@@ -50,11 +58,12 @@ def _sse_chunk(completion_id: str, content: str) -> bytes:
     return f"data: {data}\n\n".encode()
 
 
-def _sse_done(completion_id: str, prompt_tokens: int) -> bytes:
+def _sse_done(completion_id: str, model: str, prompt_tokens: int) -> bytes:
     data = orjson.dumps(
         {
             "id": completion_id,
             "object": "chat.completion.chunk",
+            "model": model,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             "usage": {
                 "prompt_tokens": prompt_tokens,
@@ -66,11 +75,34 @@ def _sse_done(completion_id: str, prompt_tokens: int) -> bytes:
     return f"data: {data}\n\ndata: [DONE]\n\n".encode()
 
 
+def _message_text(message: dict) -> str:
+    """Extract the text of one chat message, including multimodal part lists.
+
+    OpenAI allows ``content`` to be either a plain string or a list of typed
+    parts. Only the text parts carry tokens the synthetic ``prompt_tokens``
+    estimate can account for; image and audio parts are skipped.
+    """
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            part["text"]
+            for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    return ""
+
+
 class CaptureHandler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):  # silence access logs
+    # Bounds every socket read, so a client that under-delivers its declared
+    # Content-Length cannot hold a worker thread open indefinitely.
+    timeout = _READ_TIMEOUT
+
+    def log_message(self, fmt: str, *args: object) -> None:  # silence access logs
         pass
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         if urlparse(self.path).path == "/v1/models":
             resp = orjson.dumps(
                 {"object": "list", "data": [{"id": _model_id, "object": "model"}]}
@@ -83,7 +115,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         global _count
 
         if urlparse(self.path).path != "/v1/chat/completions":
@@ -146,9 +178,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
         if count % 1000 == 0:
             print(f"  captured {count} requests", file=sys.stderr)
 
-        content = " ".join(
-            m.get("content", "") for m in messages if isinstance(m.get("content"), str)
-        )
+        content = " ".join(_message_text(m) for m in messages)
         prompt_tokens = max(1, len(content) // 4)
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -158,13 +188,14 @@ class CaptureHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            self.wfile.write(_sse_chunk(completion_id, "ok"))
-            self.wfile.write(_sse_done(completion_id, prompt_tokens))
+            self.wfile.write(_sse_chunk(completion_id, _model_id, "ok"))
+            self.wfile.write(_sse_done(completion_id, _model_id, prompt_tokens))
         else:
             resp = orjson.dumps(
                 {
                     "id": completion_id,
                     "object": "chat.completion",
+                    "model": _model_id,
                     "choices": [
                         {
                             "index": 0,
@@ -212,7 +243,7 @@ def main() -> None:
     print(f"Capture server listening on {args.host}:{args.port}", file=sys.stderr)
     print(f"Writing to {args.out}", file=sys.stderr)
     fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    if sys.platform != "win32":
+    if not IS_WINDOWS:
         os.chmod(
             fd, 0o600
         )  # enforce on existing files; O_CREAT mode is ignored when file exists

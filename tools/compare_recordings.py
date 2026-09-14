@@ -163,6 +163,24 @@ td{padding:5px 10px;border-bottom:1px solid #eee}
 """
 
 
+def _js(value: object) -> str:
+    """Serialize a value as a JavaScript literal safe to embed in a ``<script>``.
+
+    JSON alone is not enough: a string containing ``</script>`` would close the
+    enclosing block. Escaping the three HTML-significant characters as unicode
+    escapes keeps the literal inert to the HTML parser while leaving the runtime
+    string value unchanged, so labels reach the chart verbatim rather than as
+    HTML entities.
+    """
+    return (
+        orjson.dumps(value)
+        .decode()
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
 def _js_hist(
     svg_id: str,
     bins: list[int],
@@ -175,10 +193,10 @@ def _js_hist(
     return f"""
 <script>
 (function(){{
-  const bins={orjson.dumps(bins).decode()};
-  const aV={orjson.dumps(a_pct).decode()};
-  const bV={orjson.dumps(b_pct).decode()};
-  const svg=document.getElementById({orjson.dumps(svg_id).decode()});
+  const bins={_js(bins)};
+  const aV={_js(a_pct)};
+  const bV={_js(b_pct)};
+  const svg=document.getElementById({_js(svg_id)});
   const W=860,H=280,pad={{l:52,r:16,t:16,b:48}};
   const cw=W-pad.l-pad.r,ch=H-pad.t-pad.b,n=bins.length,bW=cw/n;
   const maxY=Math.max(...aV,...bV)*1.12||1;
@@ -206,9 +224,8 @@ def _js_hist(
   const yl=el('text',{{transform:`rotate(-90) translate(${{-(H/2)}},13)`,'text-anchor':'middle','font-size':10,fill:'#555'}});
   yl.textContent='% of requests';svg.appendChild(yl);
   const xl=el('text',{{x:W/2,y:H-3,'text-anchor':'middle','font-size':10,fill:'#555'}});
-  xl.textContent={orjson.dumps(x_label).decode()};svg.appendChild(xl);
-  // legend
-  [[{orjson.dumps(label_a).decode()},'rgba(37,99,235,0.7)'],[{orjson.dumps(label_b).decode()},'rgba(220,38,38,0.45)']].forEach(([lbl,c],i)=>{{
+  xl.textContent={_js(x_label)};svg.appendChild(xl);
+  [[{_js(label_a)},'rgba(37,99,235,0.7)'],[{_js(label_b)},'rgba(220,38,38,0.45)']].forEach(([lbl,c],i)=>{{
     svg.appendChild(el('rect',{{x:pad.l+i*180,y:4,width:12,height:10,fill:c}}));
     const t=el('text',{{x:pad.l+i*180+16,y:13,'font-size':10,fill:'#333'}});
     t.textContent=lbl;svg.appendChild(t);
@@ -399,7 +416,7 @@ def build_html(
   </div>
   <svg id="hist-isl" width="860" height="280" style="display:block;"></svg>
 </div>
-{_js_hist("hist-isl", isl_bins, isl_a_pct, isl_b_pct, "ISL (tokens)", la, lb)}
+{_js_hist("hist-isl", isl_bins, isl_a_pct, isl_b_pct, "ISL (tokens)", label_a, label_b)}
 
 <h2>Requested Output Sequence Length (OSL)</h2>
 {render_stat_section(st_osl_a, st_osl_b, la, lb, "requested_osl")}
@@ -410,7 +427,7 @@ def build_html(
   </div>
   <svg id="hist-osl" width="860" height="280" style="display:block;"></svg>
 </div>
-{_js_hist("hist-osl", osl_bins, osl_a_pct, osl_b_pct, "Requested OSL (tokens)", la, lb)}
+{_js_hist("hist-osl", osl_bins, osl_a_pct, osl_b_pct, "Requested OSL (tokens)", label_a, label_b)}
 
 <h2>Tokenization Mode</h2>
 {render_tokenization_mode_table(rows_a, rows_b, la, lb)}
