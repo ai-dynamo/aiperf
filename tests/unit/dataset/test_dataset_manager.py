@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import gc
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -118,6 +121,107 @@ def extract_dataset_notifications(
 # ============================================================================
 # Test Classes
 # ============================================================================
+
+
+class TestDatasetConstructionGC:
+    @pytest.mark.parametrize("initially_enabled", [True, False])
+    async def test_opt_out_leaves_collector_running(
+        self,
+        initialized_dataset_manager: DatasetManager,
+        initially_enabled: bool,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.DATASET, "SUSPEND_GC_DURING_BUILD", False)
+        manager = initialized_dataset_manager
+        original_enabled = gc.isenabled()
+        observed: list[bool] = []
+
+        async def observe() -> None:
+            observed.append(gc.isenabled())
+
+        try:
+            (gc.enable if initially_enabled else gc.disable)()
+            with (
+                patch.object(manager, "_configure_tokenizer", new_callable=AsyncMock),
+                patch.object(manager, "_configure_dataset", side_effect=observe),
+                patch.object(manager, "_should_skip_inputs_json", return_value=True),
+                patch.object(
+                    manager,
+                    "_configure_dataset_client_and_free_memory",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                await manager._configure_dataset_locked()
+            assert observed == [initially_enabled]
+            assert gc.isenabled() is initially_enabled
+        finally:
+            (gc.enable if original_enabled else gc.disable)()
+
+    @pytest.mark.parametrize("initially_enabled", [True, False])
+    @pytest.mark.parametrize(
+        "failure_stage",
+        [None, "dataset", "inputs", "client", "cancelled"],
+    )
+    async def test_construction_suspends_gc_and_restores_prior_state(
+        self,
+        initialized_dataset_manager: DatasetManager,
+        initially_enabled: bool,
+        failure_stage: str | None,
+    ) -> None:
+        manager = initialized_dataset_manager
+        original_enabled = gc.isenabled()
+        stages: list[str] = []
+
+        async def run_stage(stage: str) -> None:
+            assert not gc.isenabled()
+            stages.append(stage)
+            if failure_stage == "cancelled":
+                raise asyncio.CancelledError()
+            if failure_stage == stage:
+                raise RuntimeError(stage)
+
+        async def configure_dataset() -> None:
+            await run_stage("dataset")
+
+        async def generate_inputs() -> None:
+            await run_stage("inputs")
+
+        async def configure_client() -> None:
+            await run_stage("client")
+
+        expected_error = (
+            pytest.raises(asyncio.CancelledError)
+            if failure_stage == "cancelled"
+            else pytest.raises(RuntimeError, match=failure_stage)
+            if failure_stage
+            else nullcontext()
+        )
+        try:
+            (gc.enable if initially_enabled else gc.disable)()
+            with (
+                patch.object(manager, "_configure_tokenizer", new_callable=AsyncMock),
+                patch.object(
+                    manager, "_configure_dataset", side_effect=configure_dataset
+                ),
+                patch.object(manager, "_should_skip_inputs_json", return_value=False),
+                patch.object(
+                    manager, "_generate_inputs_json_file", side_effect=generate_inputs
+                ),
+                patch.object(
+                    manager,
+                    "_configure_dataset_client_and_free_memory",
+                    side_effect=configure_client,
+                ),
+                expected_error,
+            ):
+                await manager._configure_dataset_locked()
+            assert gc.isenabled() is initially_enabled
+            if failure_stage is None:
+                assert stages == ["dataset", "inputs", "client"]
+        finally:
+            (gc.enable if original_enabled else gc.disable)()
 
 
 class TestDatasetManager:
