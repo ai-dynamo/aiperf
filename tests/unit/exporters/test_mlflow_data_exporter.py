@@ -1085,9 +1085,7 @@ class TestSweepChildNaming:
                 cfg=cfg,
                 artifact_dir=cfg.artifacts.dir,
                 trial=trial,
-                variation=SweepVariation(
-                    index=0, label=label, values=variation_values
-                ),
+                variation=SweepVariation(index=0, label=label, values=variation_values),
             )
         exporter_cfg = ExporterConfig(
             cfg=cfg,
