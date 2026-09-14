@@ -159,7 +159,9 @@ class ZMQStreamingPushClient(BaseZMQClient):
                     continue
                 except zmq.ZMQError as e:
                     self.warning(
-                        lambda e=e: f"ZMQError draining credit-return buffer; retrying: {e}"
+                        lambda e=e: (
+                            f"ZMQError draining credit-return buffer; retrying: {e}"
+                        )
                     )
                     await asyncio.sleep(Environment.ZMQ.PUSH_RETRY_DELAY)
                     continue

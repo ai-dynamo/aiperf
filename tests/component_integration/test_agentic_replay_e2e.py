@@ -118,8 +118,8 @@ def _load_small_weka_dataset(monkeypatch, *, parallel: bool = False) -> DatasetM
         loader.prompt_generator._hash_id_corpus_rng = HashIdRandomGenerator(
             12345, _internal=True
         )
-        loader.prompt_generator.tokenizer.decode.side_effect = (
-            lambda toks: f"<dec:{len(toks)}>"
+        loader.prompt_generator.tokenizer.decode.side_effect = lambda toks: (
+            f"<dec:{len(toks)}>"
         )
 
         # Force parallel: workers >= 2 AND threshold low enough that 10
