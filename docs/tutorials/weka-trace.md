@@ -41,10 +41,16 @@ validated. In explicit `absolute` mode, an inner request more than one
 microsecond before its marker is rejected; smaller floating-point jitter is
 clamped to the marker so replay never starts a child before spawn.
 
-Canonicalization metadata is attached only to in-memory trace objects so
-copied or reordered containers are not shifted a second time. Serializing and
-reparsing those objects creates a new raw Weka input boundary and runs the
-configured or automatic interpretation again.
+All top-level and nested request timestamps must be finite, non-negative, and
+representable in milliseconds. This validation covers the complete input before
+context filtering or entry caps because those selectors must not change how a
+source corpus is interpreted.
+
+Canonicalization metadata is attached to each trace object and survives
+`model_dump`/validation round trips, so copied, reordered, serialized, or
+reparsed canonical traces are not shifted a second time. Raw producer traces
+omit this internal metadata and always run the configured or automatic
+interpretation.
 
 AIPerf maps the format directly onto its DAG datastructure:
 

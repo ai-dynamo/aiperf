@@ -33,6 +33,7 @@ from aiperf.dataset.loader.weka_trace_models import (
     WekaNormalRequest,
     WekaStreamingRequest,
     WekaSubagentEntry,
+    WekaTimestampResolution,
     WekaTrace,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -94,18 +95,6 @@ def _install_replay_dependencies(conversations: list[Conversation]) -> None:
                 )
                 for predecessor in predecessors
             ]
-
-
-@dataclass(frozen=True)
-class _WekaTimestampResolution:
-    basis: str
-    reason: str
-    trace_count: int
-    subagent_count: int
-    inner_request_count: int
-    clamped_request_count: int
-    heuristic_evidence_count: int = 0
-    warning: str | None = None
 
 
 def _weka_trace_location(trace_id: str, source_by_trace: dict[str, str]) -> str:
@@ -266,7 +255,7 @@ def _canonicalize_weka_nested_timestamps(
     *,
     configured_basis: str,
     source_by_trace: dict[str, str],
-) -> tuple[dict[str, list[WekaTrace]], _WekaTimestampResolution]:
+) -> tuple[dict[str, list[WekaTrace]], WekaTimestampResolution]:
     """Resolve one nested timestamp basis for the corpus and emit absolute time."""
     if configured_basis not in {"auto", "absolute", "relative"}:
         raise ValueError(
@@ -302,7 +291,7 @@ def _canonicalize_weka_nested_timestamps(
             )
             normalized[trace_id].append(canonical)
             clamped += trace_clamped
-    resolution = _WekaTimestampResolution(
+    resolution = WekaTimestampResolution(
         basis=basis,
         reason=reason,
         trace_count=scan.trace_count,
@@ -310,21 +299,55 @@ def _canonicalize_weka_nested_timestamps(
         inner_request_count=scan.inner_request_count,
         clamped_request_count=clamped,
         heuristic_evidence_count=scan.relative_evidence_count,
+        first_relative_evidence=scan.first_relative_evidence,
         warning=warning,
     )
     for traces in normalized.values():
         for trace in traces:
+            trace.weka_timestamp_resolution = resolution
             trace._weka_timestamp_resolution = resolution
     return normalized, resolution
 
 
+def _validate_serialized_canonical_timestamps(
+    data: dict[str, list[WekaTrace]],
+) -> None:
+    """Validate durable canonicalization metadata before trusting it."""
+    scan = _WekaTimestampScan()
+    for trace_id, traces in data.items():
+        location = _weka_trace_location(trace_id, {})
+        for trace in traces:
+            _scan_weka_trace_timestamps(trace_id, trace, source_by_trace={}, scan=scan)
+            for request in trace.requests:
+                if isinstance(request, WekaNormalRequest | WekaStreamingRequest):
+                    continue
+                for inner_idx, inner in enumerate(request.requests):
+                    if inner.t < request.t:
+                        raise DatasetLoaderError(
+                            f"{location}, subagent '{request.agent_id}': serialized "
+                            "timestamp metadata claims canonical root time, but inner "
+                            f"request[{inner_idx}] timestamp {inner.t} precedes its "
+                            f"marker timestamp {request.t}"
+                        )
+
+
 def _read_preflighted_timestamp_resolution(
     data: dict[str, list[WekaTrace]],
-) -> _WekaTimestampResolution | None:
+) -> WekaTimestampResolution | None:
     """Recover canonicalization metadata without relying on container identity."""
-    resolutions = [
-        trace._weka_timestamp_resolution for traces in data.values() for trace in traces
-    ]
+    trace_models = [trace for traces in data.values() for trace in traces]
+    resolutions: list[WekaTimestampResolution | None] = []
+    needs_validation = False
+    for trace in trace_models:
+        private = trace._weka_timestamp_resolution
+        durable = trace.weka_timestamp_resolution
+        if private is not None and durable != private:
+            raise DatasetLoaderError(
+                f"Weka trace '{trace.id}' has conflicting in-memory and serialized "
+                "timestamp metadata; rebuild it from one canonical corpus boundary"
+            )
+        resolutions.append(private if private is not None else durable)
+        needs_validation |= private is None and durable is not None
     if not resolutions or all(resolution is None for resolution in resolutions):
         return None
     if any(resolution is None for resolution in resolutions):
@@ -333,10 +356,15 @@ def _read_preflighted_timestamp_resolution(
             "consistent corpus boundary"
         )
     first = resolutions[0]
+    assert first is not None
     if any(resolution != first for resolution in resolutions[1:]):
         raise DatasetLoaderError(
             "Weka corpus combines traces canonicalized by different preflight runs"
         )
+    if needs_validation:
+        _validate_serialized_canonical_timestamps(data)
+        for trace in trace_models:
+            trace._weka_timestamp_resolution = first
     return first
 
 
@@ -2026,7 +2054,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         data: dict[str, list[WekaTrace]],
         *,
         source_by_trace: dict[str, str] | None = None,
-    ) -> tuple[dict[str, list[WekaTrace]], _WekaTimestampResolution]:
+    ) -> tuple[dict[str, list[WekaTrace]], WekaTimestampResolution]:
         """Resolve and canonicalize one timestamp basis before corpus selection."""
         preflighted = _read_preflighted_timestamp_resolution(data)
         if preflighted is not None:
@@ -2047,7 +2075,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
 
     def _log_timestamp_resolution(
-        self, timestamp_resolution: _WekaTimestampResolution
+        self, timestamp_resolution: WekaTimestampResolution
     ) -> None:
         """Emit one auditable corpus-level timestamp interpretation summary."""
         if timestamp_resolution.reason == "auto_heuristic":
@@ -2058,6 +2086,11 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                     "inner.t < marker.t - 1e-6 and selected relative for the "
                     "whole corpus"
                 )
+                if timestamp_resolution.first_relative_evidence is not None:
+                    decision += (
+                        "; first relative witness: "
+                        f"{timestamp_resolution.first_relative_evidence}"
+                    )
             else:
                 decision = (
                     "auto heuristic found no nested request with "

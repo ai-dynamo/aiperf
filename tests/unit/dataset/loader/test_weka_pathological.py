@@ -22,6 +22,7 @@ from aiperf.dataset.loader.weka_trace import (
 from aiperf.dataset.loader.weka_trace_models import (
     WekaNormalRequest,
     WekaSubagentEntry,
+    WekaTrace,
 )
 
 FIXTURES = Path(__file__).parents[3] / "fixtures" / "weka_traces"
@@ -445,6 +446,49 @@ def test_preflighted_relative_corpus_survives_copied_and_reordered_containers(tm
     assert third_child.turns[0].timestamp == first_child.turns[0].timestamp
 
 
+def test_preflighted_relative_corpus_survives_model_dump_round_trip(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(100.0, "a"), _normal(200.0, [1, 2])],
+        trace_id="serialized",
+    )
+    trace["requests"][1]["requests"][0]["t"] = 5.0
+    path = tmp_path / "serialized.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="relative"))
+    raw = loader.load_dataset()
+    assert "_aiperf_weka_timestamp_resolution" not in raw["serialized"][0].model_dump(
+        mode="json", by_alias=True
+    )
+
+    normalized, first_resolution = loader.preflight_nested_timestamps(raw)
+    dumped = normalized["serialized"][0].model_dump(mode="json", by_alias=True)
+    reloaded = {"serialized": [WekaTrace.model_validate(dumped)]}
+    repeated, repeated_resolution = loader.preflight_nested_timestamps(reloaded)
+
+    assert "_aiperf_weka_timestamp_resolution" in dumped
+    assert first_resolution == repeated_resolution
+    assert repeated["serialized"][0].requests[1].requests[0].t == 105.0
+
+
+def test_serialized_timestamp_metadata_cannot_bypass_canonical_validation(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(100.0, "a"), _normal(200.0, [1, 2])],
+        trace_id="forged",
+    )
+    trace["requests"][1]["requests"][0]["t"] = 5.0
+    path = tmp_path / "forged.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="relative"))
+    raw = loader.load_dataset()
+    _, resolution = loader.preflight_nested_timestamps(raw)
+    forged = raw["forged"][0].model_copy(
+        update={"weka_timestamp_resolution": resolution}
+    )
+
+    with pytest.raises(DatasetLoaderError, match="claims canonical root time"):
+        loader.preflight_nested_timestamps({"forged": [forged]})
+
+
 def test_auto_uses_any_early_child_as_corpus_wide_relative_heuristic(tmp_path, caplog):
     caplog.set_level(logging.INFO, logger="aiperf.dataset.loader.weka_trace")
     absolute = _base_trace(
@@ -468,6 +512,7 @@ def test_auto_uses_any_early_child_as_corpus_wide_relative_heuristic(tmp_path, c
     assert absolute_child.turns[0].timestamp == pytest.approx(20_000.0)
     assert relative_child.turns[0].timestamp == pytest.approx(10_000.0)
     assert "selected relative for the whole corpus" in caplog.text
+    assert "first relative witness: Trace 'relative'" in caplog.text
     assert "heuristic is not proof" in caplog.text
     assert "cannot reliably detect mixed producer conventions" in caplog.text
 
@@ -631,6 +676,29 @@ def test_preflight_rejects_mixed_raw_and_canonical_objects(tmp_path):
         loader.preflight_nested_timestamps(mixed)
 
 
+def test_preflight_rejects_traces_canonicalized_by_different_runs(tmp_path):
+    first_path = tmp_path / "first.json"
+    second_dir = tmp_path / "second"
+    second_dir.mkdir()
+    first_path.write_text(
+        json.dumps(_base_trace([_normal(0.0, [1])], trace_id="first"))
+    )
+    (second_dir / "second.json").write_text(
+        json.dumps(_base_trace([_normal(0.0, [2])], trace_id="second"))
+    )
+    (second_dir / "third.json").write_text(
+        json.dumps(_base_trace([_normal(0.0, [3])], trace_id="third"))
+    )
+    run = _mk_user_config(weka_nested_timestamp_basis="auto")
+    first_loader = _make_loader(first_path, run)
+    second_loader = _make_loader(second_dir, run)
+    first, _ = first_loader.preflight_nested_timestamps(first_loader.load_dataset())
+    second, _ = second_loader.preflight_nested_timestamps(second_loader.load_dataset())
+
+    with pytest.raises(DatasetLoaderError, match="different preflight runs"):
+        first_loader.preflight_nested_timestamps({**first, **second})
+
+
 @pytest.mark.parametrize("invalid", ["NaN", "Infinity", -1.0, 1e308])
 def test_corpus_preflight_rejects_invalid_nested_timestamp(tmp_path, invalid):
     trace = _base_trace([_normal(0.0, [1]), _subagent(10.0, "bad")], trace_id="invalid")
@@ -638,6 +706,17 @@ def test_corpus_preflight_rejects_invalid_nested_timestamp(tmp_path, invalid):
     path = tmp_path / "invalid.json"
     path.write_text(json.dumps(trace))
     loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="absolute"))
+
+    with pytest.raises(DatasetLoaderError, match=r"must be finite, non-negative"):
+        loader.convert_to_conversations(loader.load_dataset())
+
+
+@pytest.mark.parametrize("invalid", ["NaN", "Infinity", -1.0, 1e308])
+def test_corpus_preflight_rejects_invalid_top_level_timestamp(tmp_path, invalid):
+    trace = _base_trace([_normal(invalid, [1])], trace_id="invalid")
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="auto"))
 
     with pytest.raises(DatasetLoaderError, match=r"must be finite, non-negative"):
         loader.convert_to_conversations(loader.load_dataset())
