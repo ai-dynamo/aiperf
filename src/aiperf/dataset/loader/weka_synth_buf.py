@@ -431,7 +431,7 @@ class ConversationReconstructor:
     def turn_delta(self) -> TurnDelta:
         """Compute the raw_messages to emit for the just-completed turn.
 
-        Three cases:
+        Four cases:
           1. First call after ``init_turn_0`` (``_emitted_segment_count == 0``):
              emit ALL current segments, ``reset_context=False``. This is
              turn 0's baseline state.
@@ -441,6 +441,10 @@ class ConversationReconstructor:
           3. Disturbance touched a previously-emitted segment (index
              ``< _emitted_segment_count``): emit ALL current segments,
              ``reset_context=True``.
+          4. An equal-context retry appended no segments: re-emit ALL current
+             segments with ``reset_context=True``. An empty delta would
+             otherwise render as an invalid empty user message instead of the
+             recorded repeated request.
 
         Updates ``_emitted_segment_count`` to ``len(self._segments)`` on
         return. Clears ``_last_disturbance_at`` to ``None``.
@@ -449,9 +453,16 @@ class ConversationReconstructor:
             self._last_disturbance_at is not None
             and self._last_disturbance_at < self._emitted_segment_count
         )
-        if self._emitted_segment_count == 0 or disturbed_emitted:
+        unchanged_retry = (
+            self._emitted_segment_count > 0
+            and self._emitted_segment_count == len(self._segments)
+            and not disturbed_emitted
+        )
+        if self._emitted_segment_count == 0 or disturbed_emitted or unchanged_retry:
             source = self._segments
-            reset = self._emitted_segment_count != 0 and disturbed_emitted
+            reset = self._emitted_segment_count != 0 and (
+                disturbed_emitted or unchanged_retry
+            )
         else:
             source = self._segments[self._emitted_segment_count :]
             reset = False

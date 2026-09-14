@@ -125,8 +125,8 @@ def test_ignore_eos_falsy_string_zero_violates() -> None:
     assert any(v.flag == "extra_inputs.ignore_eos" for v in exc_info.value.violations)
 
 
-def test_trace_idle_gap_cap_explicit_old_default_is_forbidden() -> None:
-    """Even the old 10-second value now violates faithful trace timing."""
+def test_trace_idle_gap_cap_explicit_old_default_is_allowed() -> None:
+    """The prior 10-second per-trace cap remains a valid explicit choice."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -137,11 +137,10 @@ def test_trace_idle_gap_cap_explicit_old_default_is_forbidden() -> None:
             "trace_idle_gap_cap_seconds": 10.0,
         },
     )
-    with pytest.raises(ScenarioLockError) as exc_info:
-        apply_scenario(run)
-    assert any(
-        v.flag == "--trace-idle-gap-cap-seconds" for v in exc_info.value.violations
-    )
+    outcome = apply_scenario(run)
+    assert outcome.violations == []
+    assert outcome.submission_valid is True
+    assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds == 10.0
 
 
 def test_unsafe_override_with_no_violations_returns_submission_valid_true() -> None:

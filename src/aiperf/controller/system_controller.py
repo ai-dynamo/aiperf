@@ -34,6 +34,7 @@ from aiperf.common.enums import (
     ExportLevel,
     LifecycleState,
     MessageType,
+    ProfileCancelReason,
     ServiceRegistrationStatus,
     SystemState,
 )
@@ -1247,7 +1248,25 @@ class SystemController(
             try:
                 payload = orjson.loads(message.payload)
                 origin_service_id = payload.get("origin_service_id", "")
-            except (orjson.JSONDecodeError, AttributeError) as e:
+                reason = payload.get("reason")
+                if reason is not None and ProfileCancelReason(reason).is_abort:
+                    reason_detail = payload.get("reason_detail")
+                    message_text = (
+                        reason_detail
+                        if reason_detail is not None
+                        else f"Run aborted by '{origin_service_id}': {reason}."
+                    )
+                    self._exit_errors.append(
+                        ExitErrorInfo(
+                            error_details=ErrorDetails(
+                                message=message_text,
+                                type="ProfileCancelAbort",
+                            ),
+                            operation="profile_cancel_abort",
+                            service_id=origin_service_id or None,
+                        )
+                    )
+            except (orjson.JSONDecodeError, AttributeError, ValueError) as e:
                 self.warning(
                     f"Ignoring unreadable {CommandType.PROFILE_CANCEL} payload; "
                     f"relaying to every handler: {e!r}"
@@ -1370,13 +1389,13 @@ class SystemController(
             # to finalize). Announcing those as exported would publish a partial
             # result set as if it were whole, so they set ``_export_failed``,
             # which withholds ResultsExportedMessage on every run type.
-            fatal_errors = [
+            flagged_fatal_errors = [
                 error
                 for error in message.results.errors
                 if isinstance(error.details, dict)
                 and error.details.get(ERROR_FATAL_DETAIL_KEY)
             ]
-            if fatal_errors:
+            if flagged_fatal_errors:
                 self._export_failed = True
 
             # Under Kubernetes these entries also reach ``print_exit_errors``
@@ -1395,7 +1414,7 @@ class SystemController(
                     or error.details.get(ERROR_FATAL_DETAIL_KEY, True)
                 ]
                 if self._is_kubernetes()
-                else fatal_errors
+                else flagged_fatal_errors
             )
             self._exit_errors.extend(
                 ExitErrorInfo(
@@ -1404,6 +1423,19 @@ class SystemController(
                     service_id=message.service_id,
                 )
                 for error in reportable_errors
+            )
+
+        for fatal_error in message.results.fatal_errors:
+            self.error(
+                "Received fatal profile-results validation error: "
+                f"{fatal_error.message}"
+            )
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=fatal_error,
+                    operation="profile_results_validation",
+                    service_id=message.service_id,
+                )
             )
 
         self.debug(
@@ -2247,18 +2279,7 @@ class SystemController(
         # point all result domains and the RAW artifact barrier are complete,
         # but the API and event bus remain live for the export notification.
         try:
-            # "Degraded but has results" and "no results at all" are different
-            # outcomes and must not share a gate. Any recorded error used to
-            # skip the export entirely, so a single aggregation diagnostic or a
-            # reaped producer threw away profile_export.csv/.json, the console
-            # summary, auto-plot, the Kubernetes ready marker and
-            # ResultsExportedMessage for a run that had complete records in
-            # hand. Export whenever there is something to export; the errors are
-            # still printed below and still drive the non-zero exit code.
-            if self._has_exportable_results() or not self._exit_errors:
-                await self._print_post_benchmark_info_and_metrics()
-            if self._exit_errors:
-                self._print_exit_errors_and_log_file()
+            await self._report_post_shutdown_results_and_errors()
 
             if Environment.DEV.MODE:
                 print_developer_mode_warning()
@@ -2295,6 +2316,23 @@ class SystemController(
         exportable record set.
         """
         return bool(self._profile_results and self._profile_results.results.records)
+
+    async def _report_post_shutdown_results_and_errors(self) -> None:
+        """Print benchmark results and/or exit errors before final shutdown.
+
+        "Degraded but has results" and "no results at all" are different
+        outcomes and must not share a gate. Any recorded error used to skip
+        the export entirely, so a single aggregation diagnostic or a reaped
+        producer threw away profile_export.csv/.json, the console summary,
+        auto-plot, the Kubernetes ready marker and ResultsExportedMessage for
+        a run that had complete records in hand. Export whenever there is
+        something to export; the errors are still printed below and still
+        drive the non-zero exit code.
+        """
+        if self._has_exportable_results() or not self._exit_errors:
+            await self._print_post_benchmark_info_and_metrics()
+        if self._exit_errors:
+            self._print_exit_errors_and_log_file()
 
     def _print_degraded_producers(self, console: Console) -> None:
         """Name the producers whose results are missing from this export.

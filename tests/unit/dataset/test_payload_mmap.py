@@ -112,6 +112,7 @@ async def test_concurrent_conversation_reads_do_not_share_mmap_cursor(
         "conv-2", Conversation(session_id="conv-2", turns=[Turn(role="user")])
     )
     await store.finalize()
+
     metadata = store.get_client_metadata()
     client = MemoryMapDatasetClient(
         metadata.data_file_path,
