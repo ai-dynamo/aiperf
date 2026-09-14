@@ -47,6 +47,10 @@ from aiperf.common.endpoint_credentials import (
     redact_sweep_display_label,
     redact_sweep_public_data,
 )
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    MERGE_PATCH_CONTENT_TYPE,
+)
 
 __all__ = ["SWEEP_CONTROLLER_FIELD_MANAGER", "SweepStatusWriter"]
 
@@ -161,7 +165,7 @@ class SweepStatusWriter:
                 name=self.name,
                 body=body,
                 field_manager=SWEEP_CONTROLLER_FIELD_MANAGER,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
         except ApiException as e:
             # 422 = test op failed (peer wrote phase already); 404 = CR gone.
@@ -344,7 +348,7 @@ class SweepStatusWriter:
                 name=self.name,
                 body=patch,
                 field_manager=SWEEP_CONTROLLER_FIELD_MANAGER,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
             return
         # Force merge-patch content-type — kubernetes_asyncio defaults to
@@ -361,7 +365,7 @@ class SweepStatusWriter:
             name=self.name,
             body=body,
             field_manager=SWEEP_CONTROLLER_FIELD_MANAGER,
-            _content_type="application/merge-patch+json",
+            _content_type=MERGE_PATCH_CONTENT_TYPE,
         )
 
 
