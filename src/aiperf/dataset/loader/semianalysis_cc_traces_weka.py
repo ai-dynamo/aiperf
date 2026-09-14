@@ -167,6 +167,8 @@ class SemiAnalysisCCTracesWekaLoader(BaseHFDatasetLoader):
         synthesis = getattr(dataset, "synthesis", None)
         max_osl = getattr(synthesis, "max_osl", None) if synthesis else None
 
+        # Corpus-wide timestamp inference and validation intentionally require
+        # every source row before the generic lazy filter-then-cap selection.
         all_traces = self._load_all_traces(ds, total_rows)
         if num_entries is None and max_ctx is None:
             return all_traces
