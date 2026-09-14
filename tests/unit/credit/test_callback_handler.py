@@ -689,14 +689,16 @@ async def test_overflow_skips_intercept_and_runs_terminal_path(
 
 
 @pytest.mark.asyncio
-async def test_overflow_with_intercept_true_still_records_warmup_failure(
-    mock_concurrency,
-    mock_progress,
-    mock_lifecycle,
-    mock_stop_checker,
-    mock_branch_orchestrator,
-):
-    """Overflow must reach ``_handle_warmup_failure`` despite gated intercept (R4)."""
+async def test_warmup_overflow_skips_intercept_and_bypasses_failure_recording(
+    mock_concurrency: MagicMock,
+    mock_progress: MagicMock,
+    mock_lifecycle: MagicMock,
+    mock_stop_checker: MagicMock,
+    mock_branch_orchestrator: MagicMock,
+) -> None:
+    """Overflow is terminal, so intercept is skipped entirely (even though it
+    would return True); ``_handle_warmup_failure`` is reached but bypasses
+    warmup failure recording and the live abort (R4)."""
     registry = MagicMock()
     registry.has_tree.return_value = True
     mock_branch_orchestrator.intercept = AsyncMock(return_value=True)
@@ -704,10 +706,12 @@ async def test_overflow_with_intercept_true_still_records_warmup_failure(
     strategy = MagicMock()
     strategy.handle_credit_return = AsyncMock()
     strategy.record_warmup_failure = MagicMock()
+    abort_cb = AsyncMock()
     handler = CreditCallbackHandler(
         mock_concurrency,
         branch_orchestrator=mock_branch_orchestrator,
         session_tree_registry=registry,
+        on_warmup_abort=abort_cb,
     )
     handler.register_phase(
         phase=CreditPhase.WARMUP,
@@ -725,8 +729,11 @@ async def test_overflow_with_intercept_true_still_records_warmup_failure(
     )
 
     mock_branch_orchestrator.intercept.assert_not_awaited()
-    strategy.record_warmup_failure.assert_called_once_with(credit.conversation_id)
-    strategy.handle_credit_return.assert_awaited_once()
+    strategy.record_warmup_failure.assert_not_called()
+    abort_cb.assert_not_called()
+    strategy.handle_credit_return.assert_awaited_once_with(
+        credit, error=_OVERFLOW_ERROR
+    )
 
 
 @pytest.mark.asyncio
@@ -1393,6 +1400,63 @@ class TestWarmupEarlyAbort:
         await early_abort_handler.on_credit_return("worker-1", credit_return)
 
         abort_cb.assert_not_awaited()
+
+    async def test_warmup_overflow_does_not_fire_abort(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """A non-cancelled context-overflow warmup failure neither records
+        nor fires the abort."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=False,
+            first_token_sent=False,
+            error=_OVERFLOW_ERROR,
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_not_awaited()
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+    async def test_warmup_overflow_on_final_turn_does_not_fire_abort(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """The overflow bypass must be independent of ``is_final_turn``:
+        gating it on non-final turns would send final-turn overflows back
+        into recording and the live abort."""
+        credit = make_credit(turn_index=2, num_turns=3, phase=CreditPhase.WARMUP)
+        assert credit.is_final_turn
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=False,
+            first_token_sent=False,
+            error=_OVERFLOW_ERROR,
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        abort_cb.assert_not_awaited()
+        warmup_strategy.record_warmup_failure.assert_not_called()
+
+    async def test_warmup_cancelled_with_overflow_body_still_records(
+        self, early_abort_handler, abort_cb, warmup_strategy
+    ):
+        """Cancellation is its own signal: a cancelled credit whose partial
+        record carries an overflow-shaped error body must not take the
+        overflow bypass."""
+        credit = make_credit(turn_index=0, num_turns=3, phase=CreditPhase.WARMUP)
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=True,
+            first_token_sent=False,
+            error=_OVERFLOW_ERROR,
+        )
+
+        await early_abort_handler.on_credit_return("worker-1", credit_return)
+
+        warmup_strategy.record_warmup_failure.assert_called_once()
+        abort_cb.assert_awaited_once()
 
     async def test_publish_failure_resets_trigger_flag(
         self, mock_concurrency, mock_progress, mock_lifecycle, mock_stop_checker
