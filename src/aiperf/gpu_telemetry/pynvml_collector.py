@@ -62,11 +62,15 @@ class GpuDeviceState:
         handle: NVML device handle
         metadata: GPU metadata
         gpm_samples: GPM samples (prev, curr) if GPM supported, else None
+        energy_counter_supported: whether nvmlDeviceGetTotalEnergyConsumption
+            works on this device. Probed once at init; see
+            _init_energy_for_device.
     """
 
     handle: object
     metadata: GpuMetadata
     gpm_samples: tuple[object, object] | None = None
+    energy_counter_supported: bool = True
 
 
 class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
@@ -257,6 +261,8 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
 
         # Check GPM support and allocate samples for efficient SM utilization
         self._init_gpm_for_device(gpu)
+        # Check whether this device implements the energy counter at all
+        self._init_energy_for_device(gpu)
         return gpu
 
     def _init_gpm_for_device(self, gpu: GpuDeviceState) -> None:
@@ -273,6 +279,52 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         except pynvml.NVMLError:
             # GPM unavailable, will use process API fallback
             self.debug(lambda: f"GPM not supported for GPU {gpu.metadata.gpu_index}")
+
+    def _init_energy_for_device(self, gpu: GpuDeviceState) -> None:
+        """Probe nvmlDeviceGetTotalEnergyConsumption once, and say so if absent.
+
+        The counter is only available on Volta and newer. On older devices the
+        query raises NVMLError_NotSupported on every sample, which the
+        collection loop suppresses, so nvidia_energy_consumption stays None for
+        the whole run with nothing in the logs to explain it. Probing once turns
+        that into a single warning and lets the collection loop skip a call it
+        knows will fail.
+        """
+        try:
+            pynvml.nvmlDeviceGetTotalEnergyConsumption(gpu.handle)
+        except pynvml.NVMLError_NotSupported as e:
+            # The device does not implement the counter. This is permanent, so
+            # the collection loop can stop asking.
+            gpu.energy_counter_supported = False
+            self.warning(
+                f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
+                f"NVML total energy counter not available ({e}). Energy metrics "
+                f"will be absent for this GPU; the counter requires Volta or "
+                f"newer."
+            )
+        except pynvml.NVMLError_FunctionNotFound as e:
+            # libnvidia-ml does not export the symbol at all, which pynvml raises
+            # from _nvmlGetFunctionPointer. That cannot recover within the
+            # process, so it is permanent for the same reason NotSupported is,
+            # but the cause is the driver rather than the age of the device.
+            gpu.energy_counter_supported = False
+            self.warning(
+                f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
+                f"NVML total energy counter not available ({e}). Energy metrics "
+                f"will be absent for this GPU; the installed driver does not "
+                f"export nvmlDeviceGetTotalEnergyConsumption."
+            )
+        except pynvml.NVMLError as e:
+            # Anything else may be transient, so leave the capability alone and
+            # let the collection loop try again rather than disabling energy for
+            # the whole run on one bad reading. Warned rather than logged at
+            # debug so that no probe failure can leave a run silent about why
+            # energy is missing, which is the gap this probe exists to close.
+            self.warning(
+                f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
+                f"energy counter probe failed ({e}); keeping it enabled in case "
+                f"the failure is transient."
+            )
 
     def _free_gpm_samples(self) -> None:
         """Free all allocated GPM sample buffers."""
@@ -398,12 +450,16 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
                         power_mw * ScalingFactors.nvidia_power_usage
                     )
 
-                # Total energy consumption (millijoules -> megajoules)
-                with contextlib.suppress(NVMLError):
-                    energy_mj = pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
-                    telemetry_data.nvidia_energy_consumption = (
-                        energy_mj * ScalingFactors.nvidia_energy_consumption
-                    )
+                # Total energy consumption (millijoules -> megajoules).
+                # Skipped entirely on devices that do not implement the counter,
+                # which was established once at init rather than rediscovered by
+                # raising and suppressing on every sample.
+                if gpu.energy_counter_supported:
+                    with contextlib.suppress(NVMLError):
+                        energy_mj = pynvml.nvmlDeviceGetTotalEnergyConsumption(handle)
+                        telemetry_data.nvidia_energy_consumption = (
+                            energy_mj * ScalingFactors.nvidia_energy_consumption
+                        )
 
                 # GPU and memory utilization (percent)
                 with contextlib.suppress(NVMLError):
