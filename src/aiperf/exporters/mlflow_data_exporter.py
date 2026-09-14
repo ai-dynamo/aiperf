@@ -205,6 +205,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         uploaded_artifacts: list[str] = []
 
         reused_live_run = existing_live_run_id is not None
+        _renamed_live_run_name: str | None = None
         if reused_live_run:
             # On reuse, carry forward the parent_run_id from the live metadata.
             resolved_parent_run_id: str | None = existing_metadata.get("parent_run_id")
@@ -212,11 +213,41 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             if cli_parent and cli_parent != resolved_parent_run_id:
                 self.info("parent_run_id ignored on live-run reuse")
             run_context = mlflow.start_run(run_id=existing_live_run_id)
+            # Rename the live-streaming run to its swept dimension value when
+            # this run is a sweep/search variation. Live streaming creates the
+            # run with the configured --mlflow-run-name, which is the SAME for
+            # every variation, so without this every child collides on one name.
+            # Gate on being a sweep variation (_derive_sweep_child_name returns
+            # None otherwise), NOT on having an MLflow parent: an in-process
+            # sweep produces sibling top-level runs with no parent, and those
+            # are exactly the runs that need distinguishing.
+            sweep_name = self._derive_sweep_child_name()
+            if sweep_name:
+                self._warn_if_run_name_overridden(sweep_name)
+                try:
+                    client.update_run(existing_live_run_id, name=sweep_name)
+                    _renamed_live_run_name = sweep_name
+                except Exception as exc:
+                    self.warning(
+                        "Best-effort rename of live run to '%s' failed: %s",
+                        sweep_name,
+                        exc,
+                    )
         else:
             resolved_parent_run_id = self._cfg.mlflow.parent_run_id
             # Fresh run: compute the name up front so _start_new_run can pass it
-            # to mlflow.start_run. Reused runs keep the name MLflow already stored.
-            new_run_name = self._run_name or self._derive_default_run_name()
+            # to mlflow.start_run. Prefer a name derived from the swept dimension
+            # value(s) (e.g. "Concurrency=4") whenever this run is a sweep/search
+            # variation, so sibling runs are distinguishable in the MLflow UI —
+            # independent of whether they nest under a --mlflow-parent-run-id.
+            # Falls back to --mlflow-run-name, then an auto-generated name, for a
+            # non-sweep single run.
+            sweep_name = self._derive_sweep_child_name()
+            if sweep_name:
+                self._warn_if_run_name_overridden(sweep_name)
+            new_run_name = (
+                sweep_name or self._run_name or self._derive_default_run_name()
+            )
             run_context, resolved_parent_run_id = self._start_new_run(
                 mlflow, new_run_name, resolved_parent_run_id
             )
@@ -227,7 +258,13 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             # On reuse, the fanout may have let MLflow auto-generate one when
             # the user did not pass --mlflow-run-name, so re-reading from the
             # run info is the only way to avoid a metadata / MLflow desync.
-            run_name = run.info.run_name or self._derive_default_run_name()
+            # If we renamed the live run (sweep child), use the new name so
+            # mlflow_export.json stays consistent with what MLflow UI shows.
+            run_name = (
+                (_renamed_live_run_name if reused_live_run else None)
+                or run.info.run_name
+                or self._derive_default_run_name()
+            )
 
             # Log batched metrics/params/tags atomically (single round-trip).
             metrics = [
@@ -325,6 +362,104 @@ class MLflowDataExporter(AIPerfLoggerMixin):
         if self._benchmark_id:
             return f"aiperf-{self._benchmark_id[:8]}"
         return f"aiperf-{int(time.time())}"
+
+    def _derive_sweep_child_name(self) -> str | None:
+        """Derive a per-variation run name for a sweep/search child.
+
+        In a sweep or search, every variation is launched with the same
+        ``--mlflow-run-name``, so without a per-variation name they all collide
+        on one string in the MLflow UI. This names each by its swept
+        coordinate(s), read from the AUTHORITATIVE source already on the run —
+        ``BenchmarkRun.variation`` — rather than reverse-engineering the artifact
+        path (a lossy inversion that collapsed multi-dim sweeps and mislabelled
+        ``prefill_concurrency``).
+
+        Returns ``None`` when the run is not a sweep/search variation
+        (``variation is None``), so the caller keeps ``--mlflow-run-name``. The
+        result is unique per (variation, trial):
+
+        - flat scalar ``variation.values`` -> readable ``"Concurrency=4"`` /
+          ``"Concurrency=10, Mean=1024"`` (multi-dim stays distinct);
+        - empty or nested/scenario ``values`` -> ``variation.label`` (bounded and
+          human-authored; the same fallback ``SweepVariation.dir_name`` uses,
+          avoiding an unbounded override-subtree stringification);
+        - adaptive (BO) search re-proposes points, so flat values can repeat
+          across iterations — the unique per-iteration ``label``
+          (``search_iter_NNNN``) is appended so re-proposed points stay distinct;
+        - repeated trials of one variation share the variation, so the 1-based
+          trial index is appended (matching the artifact tree's ``trial_NNNN``).
+        """
+        run = self._exporter_config.run
+        variation = getattr(run, "variation", None) if run is not None else None
+        if variation is None:
+            return None
+
+        values = getattr(variation, "values", None) or {}
+        label = getattr(variation, "label", "") or ""
+
+        if values and not self._has_nested_value(values):
+            base = ", ".join(
+                f"{self._prettify_dimension(key)}={value}"
+                for key, value in values.items()
+            )
+            # Adaptive search re-proposes coordinates, so a value-derived name can
+            # recur; the per-iteration label disambiguates it the same way the
+            # orchestrator's artifact tree does (uses variation.label for BO).
+            if self._is_search_iteration_label(label):
+                base = f"{base} [{label}]"
+        else:
+            # Empty or nested (scenario) values -> fall back to the label.
+            base = label
+
+        if not base:
+            return None
+
+        trial = getattr(run, "trial", 0) or 0
+        if trial:
+            base = f"{base} (trial {trial + 1})"
+        return base
+
+    @staticmethod
+    def _has_nested_value(values: dict[str, Any]) -> bool:
+        """True if any swept value is a nested dict/list (scenario override).
+
+        Mirrors ``SweepVariation._is_nested_override``: such values cannot form a
+        readable ``{dim}={value}`` name, so the caller falls back to the label.
+        """
+        return any(isinstance(v, (dict, list)) for v in values.values())
+
+    @staticmethod
+    def _is_search_iteration_label(label: str) -> bool:
+        """True for the ``search_iter_NNNN`` labels every search planner sets.
+
+        The value-derived name can repeat when an adaptive planner re-proposes a
+        point; this label is unique per iteration, so it is appended to keep the
+        two children distinct.
+        """
+        return label.startswith("search_iter_")
+
+    def _warn_if_run_name_overridden(self, sweep_name: str) -> None:
+        """Warn when an explicit --mlflow-run-name is superseded by the sweep name.
+
+        A passed flag must never be silently ignored: for a sweep, the
+        per-variation name has to win (otherwise every child collides), so we log
+        that the configured name was overridden rather than dropping it quietly.
+        """
+        configured = self._run_name
+        if configured and configured != sweep_name:
+            self.warning(
+                "--mlflow-run-name '%s' is overridden by the per-variation sweep "
+                "name '%s' so sibling runs stay distinct in MLflow.",
+                configured,
+                sweep_name,
+            )
+
+    @staticmethod
+    def _prettify_dimension(dotted_key: str) -> str:
+        """Last dotted segment, TitleCased: ``phases.profiling.concurrency`` ->
+        ``Concurrency``; ``...request_rate`` -> ``RequestRate``."""
+        last = dotted_key.rsplit(".", 1)[-1]
+        return "".join(word.capitalize() for word in last.split("_")) or last
 
     # Statistic fields on JsonMetricResult / MetricResult that are pushed to
     # MLflow. The exporter skips fields that are None, so listing a superset is
