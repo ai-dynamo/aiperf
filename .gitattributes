@@ -1,0 +1,7 @@
+# Normalize line endings to LF on checkout, including on Windows, where
+# git's default core.autocrlf=true otherwise converts text files to CRLF.
+# tests/ui/test_operator_*.py string/regex-strips import lines out of
+# src/aiperf/operator/ui/lib/*.js before eval'ing them as data: URL modules;
+# that stripping assumes LF and silently no-ops on CRLF, leaving the original
+# relative import in place and breaking module resolution on Windows CI.
+* text=auto eol=lf

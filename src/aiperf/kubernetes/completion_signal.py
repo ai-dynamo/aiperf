@@ -22,7 +22,10 @@ from typing import Any
 import aiohttp
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    Annotations,
+)
 from aiperf.kubernetes.cr_refs import (
     AIPERF_GROUP,
     AIPERF_PLURAL,
@@ -118,7 +121,7 @@ async def signal_benchmark_complete() -> bool:
                 namespace=namespace,
                 name=job_id,
                 body=patch_body,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
 
         logger.info(f"Signaled benchmark completion on AIPerfJob {namespace}/{job_id}")
