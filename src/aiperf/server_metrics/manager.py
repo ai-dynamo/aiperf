@@ -203,7 +203,9 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         user_urls = self.run.cfg.server_metrics.urls
         if user_urls:
             for url in user_urls:
-                normalized_url = normalize_metrics_endpoint_url(url)
+                normalized_url = normalize_metrics_endpoint_url(
+                    url, preserve_explicit_path=True
+                )
                 if normalized_url not in self._server_metrics_endpoints:
                     self._server_metrics_endpoints.append(normalized_url)
 

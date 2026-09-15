@@ -50,6 +50,13 @@ class TestServerMetricsCliParity:
         ):
             build_server_metrics(cli)
 
+    def test_server_metrics_preserves_explicit_endpoint_path(self) -> None:
+        config = build_server_metrics(
+            _make_cli(server_metrics=["https://metrics.example/prometheus"])
+        )
+
+        assert config["urls"] == ["https://metrics.example/prometheus"]
+
     def test_server_metrics_headers_reach_config_independently_of_request_headers(
         self,
     ):

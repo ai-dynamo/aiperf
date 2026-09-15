@@ -104,6 +104,23 @@ class TestServerMetricsManagerInitialization:
             "http://another-endpoint:8081/metrics" in manager._server_metrics_endpoints
         )
 
+    def test_custom_server_metrics_url_preserves_explicit_path(self):
+        """A user-supplied metrics path is treated as the complete endpoint."""
+        cfg = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            urls=["http://localhost:8000/v1/chat"],
+            server_metrics=["https://metrics.example/prometheus"],
+        )
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg))
+
+        assert "https://metrics.example/prometheus" in manager._server_metrics_endpoints
+        assert (
+            "https://metrics.example/prometheus/metrics"
+            not in manager._server_metrics_endpoints
+        )
+
     def test_duplicate_urls_avoided(
         self,
         cli_config: CLIConfig,

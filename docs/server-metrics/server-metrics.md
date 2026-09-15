@@ -188,6 +188,9 @@ aiperf profile --model MODEL ... --server-metrics-formats json csv parquet jsonl
 
 ### Adding Custom Endpoints
 
+Custom URLs are complete endpoint URLs: an explicit path is preserved, while a
+pathless host defaults to `/metrics`.
+
 ```bash
 # Single endpoint
 aiperf profile --model MODEL ... --server-metrics http://localhost:8081
@@ -195,7 +198,7 @@ aiperf profile --model MODEL ... --server-metrics http://localhost:8081
 # Multiple endpoints (distributed deployment)
 aiperf profile --model MODEL ... --server-metrics \
     http://node1:8081 \
-    http://node2:8081
+    https://node2/prometheus
 ```
 
 ### Authenticating Metrics Requests
