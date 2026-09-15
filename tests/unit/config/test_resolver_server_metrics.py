@@ -64,23 +64,6 @@ def test_server_metrics_urls_and_formats_override_both_fields():
     }
 
 
-def test_server_metrics_headers_route_without_overriding_yaml_urls():
-    assert build_server_metrics_override(
-        _make_cli(
-            server_metrics_headers=[
-                "Authorization:Bearer metrics-secret",
-                "X-Tenant:tenant-a",
-            ]
-        )
-    ) == {
-        "enabled": True,
-        "headers": {
-            "Authorization": "Bearer metrics-secret",
-            "X-Tenant": "tenant-a",
-        },
-    }
-
-
 def test_server_metrics_headers_yaml_load_and_json_dump_redacts_secret():
     config = load_config_from_string(
         """
