@@ -261,7 +261,6 @@ def parse_http_headers(input: Any | None) -> list[tuple[str, str]] | None:
 
 
 def _parse_http_header_sequence(input: Any) -> list[tuple[str, str]]:
-    """Flatten a sequence of header strings or already parsed pairs."""
     output: list[tuple[str, str]] = []
     for item in input:
         if isinstance(item, (list, tuple)) and len(item) == 2:
@@ -274,7 +273,6 @@ def _parse_http_header_sequence(input: Any) -> list[tuple[str, str]]:
 
 
 def _parse_http_header_string(input: str) -> list[tuple[str, str]]:
-    """Parse either one name/value string or a JSON header object."""
     if input.lstrip().startswith("{"):
         try:
             # Header values may contain credentials. Avoid the shared JSON
@@ -292,7 +290,6 @@ def _parse_http_header_string(input: str) -> list[tuple[str, str]]:
 
 
 def _validate_http_header_pair(name: Any, value: Any) -> tuple[str, str]:
-    """Validate one parsed header pair while preserving its textual value."""
     if not isinstance(name, str) or not name:
         raise ValueError("HTTP header names must be non-empty strings")
     if not isinstance(value, str):
