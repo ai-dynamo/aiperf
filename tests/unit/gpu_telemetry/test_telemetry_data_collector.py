@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import pytest
+from pytest import param
 
 from aiperf.common.models.telemetry_models import TelemetryRecord
 from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
@@ -93,6 +94,34 @@ class TestPrometheusMetricParsing:
         assert 0 < record.telemetry_data.nvidia_power_usage < 400
         assert record.telemetry_data.nvidia_energy_consumption is not None
         assert record.telemetry_data.nvidia_memory_used is not None
+
+    @pytest.mark.parametrize(
+        ("hostname_labels", "expected_hostname"),
+        [
+            param('hostname="current-host"', "current-host", id="current"),
+            param('Hostname="legacy-host"', "legacy-host", id="legacy"),
+            param(
+                'hostname="current-host",Hostname="legacy-host"',
+                "current-host",
+                id="current-precedence",
+            ),
+            param("", None, id="missing"),
+        ],
+    )
+    def test_hostname_label_compatibility(
+        self, hostname_labels: str, expected_hostname: str | None
+    ) -> None:
+        """Test current and legacy dcgm-exporter hostname labels."""
+        labels = 'gpu="0",UUID="GPU-0",modelName="GPU"'
+        if hostname_labels:
+            labels += f",{hostname_labels}"
+        metrics = f"DCGM_FI_DEV_GPU_TEMP{{{labels}}} 42\n"
+        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
+
+        records = collector._parse_metrics_to_records(metrics)
+
+        assert len(records) == 1
+        assert records[0].hostname == expected_hostname
 
     def test_complete_parsing_multi_gpu(self, multi_gpu_dcgm_data):
         """Test parsing complete DCGM response for multiple GPUs.
