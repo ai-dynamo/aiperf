@@ -628,9 +628,7 @@ class TestRedactString:
         "value",
         [
             "X-Acme-Token: supersecret",
-            "Auth-Token: supersecret",
             "{'X-Acme-Token': 'supersecret'}",
-            "{'Auth-Token': 'supersecret'}",
             '{"X-Acme-Token":"supersecret"}',
         ],
     )

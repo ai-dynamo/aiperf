@@ -275,7 +275,7 @@ def _parse_http_header_sequence(input: Any) -> list[tuple[str, str]]:
 
 def _parse_http_header_string(input: str) -> list[tuple[str, str]]:
     """Parse either one name/value string or a JSON header object."""
-    if input.startswith("{"):
+    if input.lstrip().startswith("{"):
         try:
             # Header values may contain credentials. Avoid the shared JSON
             # helper here because it logs the raw value on decode failures.

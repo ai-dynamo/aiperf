@@ -278,7 +278,6 @@ class EndpointCredentialInjection:
     """Full endpoint URLs decoded from the injected JSON string list."""
 
     server_metrics_headers: dict[str, str] | None = None
-    """Credential-bearing server-metrics headers decoded from the injected JSON object."""
 
 
 def parse_injected_dict(name: str, raw: str | None) -> dict[str, str] | None:
