@@ -65,7 +65,6 @@ class TestNormalizeMetricsEndpointUrl:
     def test_normalize_can_preserve_explicit_paths(
         self, input_url: str, expected: str
     ) -> None:
-        """User-provided endpoint paths are complete rather than base paths."""
         assert (
             normalize_metrics_endpoint_url(input_url, preserve_explicit_path=True)
             == expected

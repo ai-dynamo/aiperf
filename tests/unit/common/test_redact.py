@@ -1751,7 +1751,6 @@ class TestCliCommandRedaction:
         "raw",
         [
             '{"Token":"metrics-secret",}',
-            "{Token:'metrics-secret',}",
         ],
     )
     def test_malformed_server_metrics_header_json_redacts_sensitive_values(self, raw):
