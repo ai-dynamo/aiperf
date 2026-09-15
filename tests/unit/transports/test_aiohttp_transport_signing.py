@@ -213,3 +213,101 @@ class TestSignedRequestsDoNotFollowRedirects:
 
         kwargs = transport.aiohttp_client.post_request.call_args.kwargs
         assert "allow_redirects" not in kwargs
+
+
+class TestSignatureMismatchIsExplained:
+    """``SignatureDoesNotMatch`` is the most common SigV4 failure and its cause
+    is almost never guessable from AWS's own message.
+
+    The usual culprit is ``--aws-service``: the value is the *signing name*, not
+    the API id, so SageMaker Runtime signs as ``sagemaker`` rather than
+    ``sagemaker-runtime``. The tutorial calls this "the first thing to
+    double-check", which is a sign it belongs in the error rather than only in
+    prose a user has to know to go and read.
+    """
+
+    async def _signed_transport(self, record: RequestRecord) -> AioHttpTransport:
+        signer = AsyncMock()
+        signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ..."}
+        )
+        with patch(
+            "aiperf.transports.base_transports.plugins.get_class",
+            return_value=MagicMock(return_value=signer),
+        ):
+            transport = AioHttpTransport(
+                model_endpoint=create_model_endpoint_info(
+                    auth_type="sigv4", aws_region="us-east-1", aws_service="sagemaker"
+                )
+            )
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(return_value=record)
+        return transport
+
+    @pytest.mark.asyncio
+    async def test_a_signature_mismatch_names_the_likely_cause(self) -> None:
+        from aiperf.common.models import ErrorDetails
+
+        record = RequestRecord(
+            status=403,
+            error=ErrorDetails(
+                code=403,
+                type="Forbidden",
+                message=(
+                    "<ErrorResponse><Error><Code>SignatureDoesNotMatch</Code>"
+                    "<Message>The request signature we calculated does not match"
+                    "</Message></Error></ErrorResponse>"
+                ),
+            ),
+        )
+        transport = await self._signed_transport(record)
+
+        out = await transport.send_request(
+            create_request_info(transport.model_endpoint), {"messages": []}
+        )
+
+        assert out.error is not None
+        assert "--aws-service" in out.error.message
+        assert "signing name" in out.error.message.lower()
+        # The original AWS text must survive; the hint is additive.
+        assert "SignatureDoesNotMatch" in out.error.message
+
+    @pytest.mark.asyncio
+    async def test_an_unrelated_403_is_not_annotated(self) -> None:
+        """Only the signature case gets the hint; a plain authorization failure
+        has a different cause and would be misdirected by it."""
+        from aiperf.common.models import ErrorDetails
+
+        record = RequestRecord(
+            status=403,
+            error=ErrorDetails(code=403, type="Forbidden", message="AccessDenied"),
+        )
+        transport = await self._signed_transport(record)
+
+        out = await transport.send_request(
+            create_request_info(transport.model_endpoint), {"messages": []}
+        )
+
+        assert out.error.message == "AccessDenied"
+
+    @pytest.mark.asyncio
+    async def test_unsigned_requests_are_never_annotated(self) -> None:
+        """Without a signer the hint cannot apply."""
+        from aiperf.common.models import ErrorDetails
+
+        transport = AioHttpTransport(model_endpoint=create_model_endpoint_info())
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(
+            return_value=RequestRecord(
+                status=403,
+                error=ErrorDetails(
+                    code=403, type="Forbidden", message="SignatureDoesNotMatch"
+                ),
+            )
+        )
+
+        out = await transport.send_request(
+            create_request_info(transport.model_endpoint), {"messages": []}
+        )
+
+        assert out.error.message == "SignatureDoesNotMatch"

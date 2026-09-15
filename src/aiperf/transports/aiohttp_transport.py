@@ -404,6 +404,27 @@ class AioHttpTransport(BaseTransport):
             )
             record.request_headers = redact_headers(headers)
 
+            # SignatureDoesNotMatch is the most common SigV4 failure and AWS's
+            # own message never says why. The usual cause is --aws-service: the
+            # value is the signing name, not the API id, so SageMaker Runtime
+            # signs as 'sagemaker' rather than 'sagemaker-runtime'. Point at that
+            # here rather than only in a tutorial the user has to know to read.
+            if (
+                self.request_signer is not None
+                and record.error is not None
+                and "SignatureDoesNotMatch" in (record.error.message or "")
+            ):
+                record.error.message = (
+                    f"{record.error.message} "
+                    "(AWS rejected the signature. The most common cause is "
+                    "--aws-service: it takes the service's SigV4 signing name, "
+                    "which is not always its API id -- 'sagemaker-runtime' signs "
+                    "as 'sagemaker' and 'bedrock-runtime' as 'bedrock'. Also check "
+                    "that --aws-region matches the endpoint's region, and that the "
+                    "system clock is accurate: AWS rejects signatures more than "
+                    "five minutes out.)"
+                ).strip()
+
             # Release lease for sticky-user-sessions strategy if it's the final turn of the conversation,
             # or the request was cancelled (connection is now dirty/closed), or there was an error.
             if (
