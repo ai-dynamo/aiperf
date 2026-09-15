@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 AIPERF_INJECTED_API_KEY = "AIPERF_INJECTED_API_KEY"
 AIPERF_INJECTED_HEADERS = "AIPERF_INJECTED_HEADERS"
+AIPERF_INJECTED_SERVER_METRICS_HEADERS = "AIPERF_INJECTED_SERVER_METRICS_HEADERS"
 AIPERF_INJECTED_ENDPOINT_URLS = "AIPERF_INJECTED_ENDPOINT_URLS"
 OPENAI_API_KEY = "OPENAI_API_KEY"
 
@@ -276,6 +277,9 @@ class EndpointCredentialInjection:
     urls: list[str] | None
     """Full endpoint URLs decoded from the injected JSON string list."""
 
+    server_metrics_headers: dict[str, str] | None = None
+    """Credential-bearing server-metrics headers decoded from the injected JSON object."""
+
 
 def parse_injected_dict(name: str, raw: str | None) -> dict[str, str] | None:
     """Decode a JSON object whose values must all be strings."""
@@ -336,11 +340,17 @@ def consume_endpoint_credentials() -> EndpointCredentialInjection:
     private_api_key = os.environ.pop(AIPERF_INJECTED_API_KEY, None)
     openai_api_key = os.environ.pop(OPENAI_API_KEY, None)
     headers_raw = os.environ.pop(AIPERF_INJECTED_HEADERS, None)
+    server_metrics_headers_raw = os.environ.pop(
+        AIPERF_INJECTED_SERVER_METRICS_HEADERS, None
+    )
     urls_raw = os.environ.pop(AIPERF_INJECTED_ENDPOINT_URLS, None)
     return EndpointCredentialInjection(
         api_key=(private_api_key if private_api_key_present else openai_api_key),
         api_key_from_alias=not private_api_key_present,
         headers=parse_injected_dict(AIPERF_INJECTED_HEADERS, headers_raw),
+        server_metrics_headers=parse_injected_dict(
+            AIPERF_INJECTED_SERVER_METRICS_HEADERS, server_metrics_headers_raw
+        ),
         urls=parse_injected_str_list(AIPERF_INJECTED_ENDPOINT_URLS, urls_raw),
     )
 
@@ -371,6 +381,8 @@ def apply_endpoint_credentials(
         endpoint.api_key = credentials.api_key
     if credentials.headers:
         endpoint.headers.update(credentials.headers)
+    if credentials.server_metrics_headers:
+        run.cfg.server_metrics.headers.update(credentials.server_metrics_headers)
     if credentials.urls:
         endpoint.urls = credentials.urls
 
@@ -380,11 +392,7 @@ def apply_endpoint_credentials(
     missing: list[str] = []
     if endpoint.api_key == REDACTED_VALUE:
         missing.append(f"{AIPERF_INJECTED_API_KEY} (or {OPENAI_API_KEY})")
-    if any(
-        value == REDACTED_VALUE
-        for value in extract_sensitive_headers(endpoint.headers).values()
-    ):
-        missing.append(AIPERF_INJECTED_HEADERS)
+    missing.extend(_missing_redacted_header_env_names(run))
     if any(REDACTED_VALUE in url for url in endpoint.urls):
         missing.append(AIPERF_INJECTED_ENDPOINT_URLS)
     if missing:
@@ -393,6 +401,26 @@ def apply_endpoint_credentials(
             "benchmark-run contains redacted endpoint credentials; supply them "
             f"through the environment variable(s): {names}"
         )
+
+
+def _missing_redacted_header_env_names(run: BenchmarkRun) -> list[str]:
+    """Return injection env vars needed by redacted header mappings."""
+    endpoint = run.cfg.endpoint
+    header_sources = (
+        (endpoint.headers, AIPERF_INJECTED_HEADERS),
+        (
+            getattr(run.cfg.server_metrics, "headers", {}),
+            AIPERF_INJECTED_SERVER_METRICS_HEADERS,
+        ),
+    )
+    return [
+        env_name
+        for headers, env_name in header_sources
+        if any(
+            value == REDACTED_VALUE
+            for value in extract_sensitive_headers(headers).values()
+        )
+    ]
 
 
 _MIN_REDACTABLE_SECRET_LENGTH = 4
@@ -415,39 +443,55 @@ def credential_values(
     values: list[str] = []
 
     if credentials is not None:
-        if isinstance(credentials.api_key, str):
-            values.append(credentials.api_key)
-        if credentials.headers:
-            values.extend(
-                value
-                for value in credentials.headers.values()
-                if isinstance(value, str)
-            )
-        if credentials.urls:
-            values.extend(
-                url
-                for url in credentials.urls
-                if isinstance(url, str) and redact_url(url) != url
-            )
+        values.extend(_credential_values_from_injection(credentials))
 
     if endpoint is not None:
-        api_key = getattr(endpoint, "api_key", None)
-        if isinstance(api_key, str):
-            values.append(api_key)
-        headers = getattr(endpoint, "headers", None)
+        values.extend(_credential_values_from_endpoint(endpoint))
+
+    return [value for value in values if value and value != REDACTED_VALUE]
+
+
+def _credential_values_from_injection(
+    credentials: EndpointCredentialInjection,
+) -> list[str]:
+    """Extract plaintext values from an injected credential payload."""
+    values: list[str] = []
+    if isinstance(credentials.api_key, str):
+        values.append(credentials.api_key)
+    for headers in (credentials.headers, credentials.server_metrics_headers):
+        if headers:
+            values.extend(value for value in headers.values() if isinstance(value, str))
+    if credentials.urls:
+        values.extend(
+            url
+            for url in credentials.urls
+            if isinstance(url, str) and redact_url(url) != url
+        )
+    return values
+
+
+def _credential_values_from_endpoint(endpoint: Any) -> list[str]:
+    """Extract plaintext values from a resolved endpoint-like object."""
+    values: list[str] = []
+    api_key = getattr(endpoint, "api_key", None)
+    if isinstance(api_key, str):
+        values.append(api_key)
+    for headers in (
+        getattr(endpoint, "headers", None),
+        getattr(getattr(endpoint, "server_metrics", None), "headers", None),
+    ):
         if isinstance(headers, dict):
             values.extend(
                 value
                 for value in extract_sensitive_headers(headers).values()
                 if isinstance(value, str)
             )
-        urls = getattr(endpoint, "urls", None)
-        if isinstance(urls, list | tuple):
-            values.extend(
-                url for url in urls if isinstance(url, str) and redact_url(url) != url
-            )
-
-    return [value for value in values if value and value != REDACTED_VALUE]
+    urls = getattr(endpoint, "urls", None)
+    if isinstance(urls, list | tuple):
+        values.extend(
+            url for url in urls if isinstance(url, str) and redact_url(url) != url
+        )
+    return values
 
 
 def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
@@ -477,6 +521,7 @@ def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
 def validate_kubernetes_credential_transport(
     endpoint: EndpointConfig,
     pod_env: list[dict[str, object]],
+    server_metrics: Any | None = None,
 ) -> None:
     """Reject credentialed runs without matching Secret-backed pod env vars."""
     secret_env_names = {
@@ -496,6 +541,13 @@ def validate_kubernetes_credential_transport(
         and AIPERF_INJECTED_HEADERS not in secret_env_names
     ):
         missing.append(AIPERF_INJECTED_HEADERS)
+    server_metrics_headers = getattr(server_metrics, "headers", None)
+    if (
+        isinstance(server_metrics_headers, dict)
+        and extract_sensitive_headers(server_metrics_headers)
+        and AIPERF_INJECTED_SERVER_METRICS_HEADERS not in secret_env_names
+    ):
+        missing.append(AIPERF_INJECTED_SERVER_METRICS_HEADERS)
     from aiperf.common.redact import redact_url
 
     if (

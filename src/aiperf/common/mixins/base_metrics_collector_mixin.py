@@ -240,6 +240,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         self,
         *,
         endpoint_url: str,
+        headers: dict[str, str] | None = None,
         collection_interval: float,
         reachability_timeout: float,
         record_callback: TRecordCallback | None = None,
@@ -250,6 +251,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
 
         Args:
             endpoint_url: URL of the metrics endpoint
+            headers: Optional HTTP headers sent with reachability and scrape requests
             collection_interval: Interval in seconds between collections
             reachability_timeout: Timeout in seconds for reachability checks
             record_callback: Optional callback to receive collected records
@@ -257,6 +259,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             **kwargs: Additional arguments passed to super().__init__()
         """
         self._endpoint_url = endpoint_url
+        self._headers = dict(headers or {})
         # Credential-free form of the endpoint URL for logging, record keys,
         # and exports. The raw _endpoint_url is used only for the actual HTTP
         # fetch so userinfo never leaks into logs or exported artifacts.
@@ -484,12 +487,14 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         try:
             # Try HEAD first for efficiency
             async with session.head(
-                self._endpoint_url, allow_redirects=False
+                self._endpoint_url, headers=self._headers, allow_redirects=False
             ) as response:
                 if response.status == 200:
                     return True
             # Fall back to GET if HEAD is not supported
-            async with session.get(self._endpoint_url) as response:
+            async with session.get(
+                self._endpoint_url, headers=self._headers, allow_redirects=False
+            ) as response:
                 return response.status == 200
         except (TimeoutError, aiohttp.ClientError):
             return False
@@ -620,7 +625,10 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
                 raise asyncio.CancelledError
 
             async with session.get(
-                self._endpoint_url, trace_request_ctx=trace_ctx
+                self._endpoint_url,
+                headers=self._headers,
+                allow_redirects=False,
+                trace_request_ctx=trace_ctx,
             ) as response:
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()

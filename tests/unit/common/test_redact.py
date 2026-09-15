@@ -281,6 +281,36 @@ class TestCustomAuthHeaderRedaction:
 
         validate_kubernetes_credential_transport(config, pod_env=[])
 
+    def test_k8s_transport_requires_secret_for_server_metrics_headers(self) -> None:
+        from aiperf.common.endpoint_credentials import (
+            AIPERF_INJECTED_SERVER_METRICS_HEADERS,
+            validate_kubernetes_credential_transport,
+        )
+        from aiperf.config.server_metrics import ServerMetricsConfig
+
+        endpoint = EndpointConfig(urls=["http://localhost:8000"])
+        server_metrics = ServerMetricsConfig(
+            headers={"Authorization": "Bearer metrics-secret"}
+        )
+
+        with pytest.raises(ValueError, match="AIPERF_INJECTED_SERVER_METRICS_HEADERS"):
+            validate_kubernetes_credential_transport(
+                endpoint, pod_env=[], server_metrics=server_metrics
+            )
+
+        validate_kubernetes_credential_transport(
+            endpoint,
+            pod_env=[
+                {
+                    "name": AIPERF_INJECTED_SERVER_METRICS_HEADERS,
+                    "valueFrom": {
+                        "secretKeyRef": {"name": "metrics", "key": "headers"}
+                    },
+                }
+            ],
+            server_metrics=server_metrics,
+        )
+
 
 # =============================================================================
 # redact_string
@@ -594,6 +624,21 @@ class TestRedactString:
         result = redact_string("api_key=supersecret&other=value")
         assert "other=value" in result
 
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "X-Acme-Token: supersecret",
+            "Auth-Token: supersecret",
+            "{'X-Acme-Token': 'supersecret'}",
+            "{'Auth-Token': 'supersecret'}",
+            '{"X-Acme-Token":"supersecret"}',
+        ],
+    )
+    def test_custom_sensitive_header_is_redacted(self, value: str) -> None:
+        result = redact_string(value)
+        assert "supersecret" not in result
+        assert REDACTED_VALUE in result
+
     def test_zmq_trace_preserves_non_sensitive_headers(self):
         s = (
             'b\'{"endpoint_headers":{"Authorization":"Bearer sk-zmq-leak-123",'
@@ -651,6 +696,21 @@ _MUST_REDACT_CASES = [
         "aiperf --header 'Authorization:Bearer sk-abc'",
         ["sk-abc"],
         id="header-bearer-colon",
+    ),
+    param(
+        "aiperf --server-metrics-header 'Authorization:Bearer metrics-secret'",
+        ["metrics-secret"],
+        id="server-metrics-header-bearer-colon",
+    ),
+    param(
+        "aiperf --server-metrics-header X-Acme-Token:metrics-secret",
+        ["metrics-secret"],
+        id="server-metrics-custom-token-header",
+    ),
+    param(
+        "aiperf --server-metrics-header=Auth-Token:metrics-secret",
+        ["metrics-secret"],
+        id="server-metrics-equals-custom-token-header",
     ),
     param(
         "aiperf --header 'Authorization: Bearer sk-abc'",
@@ -926,7 +986,8 @@ _MUST_KEEP_CASES = [
         ["Cache-Control:no-cache"],
         id="header-cache-control",
     ),
-    # Headers that look similar but aren't in _SENSITIVE_HEADER_NAMES
+    # Keep existing inference-header string redaction compatibility. The new
+    # metrics-header option uses the broader structured sensitivity matcher.
     param(
         "aiperf --header 'X-Authorization:Bearer tok'",
         ["Bearer tok"],
@@ -2009,6 +2070,28 @@ class TestRedactEndpointSpec:
         assert spec["benchmark"]["endpoint"]["apiKey"] == "public-secret"
         assert spec["benchmark"]["endpoint"]["headers"]["Authorization"] == (
             "Bearer header-secret"
+        )
+
+    def test_redacts_server_metrics_headers_without_endpoint(self) -> None:
+        spec = {
+            "benchmark": {
+                "serverMetrics": {
+                    "headers": {
+                        "Authorization": "Bearer metrics-secret",
+                        "X-Tenant": "tenant-a",
+                    }
+                }
+            }
+        }
+
+        safe = redact_endpoint_spec(spec)
+
+        assert safe["benchmark"]["serverMetrics"]["headers"] == {
+            "Authorization": REDACTED_VALUE,
+            "X-Tenant": "tenant-a",
+        }
+        assert spec["benchmark"]["serverMetrics"]["headers"]["Authorization"] == (
+            "Bearer metrics-secret"
         )
 
 

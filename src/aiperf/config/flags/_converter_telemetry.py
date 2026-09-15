@@ -195,6 +195,8 @@ def build_server_metrics(cli: CLIConfig) -> dict[str, Any]:
     server_metrics: dict[str, Any] = {"enabled": True, "urls": sm_urls}
     if cli.server_metrics_formats:
         server_metrics["formats"] = list(cli.server_metrics_formats)
+    if cli.server_metrics_headers:
+        server_metrics["headers"] = dict(cli.server_metrics_headers)
     return server_metrics
 
 

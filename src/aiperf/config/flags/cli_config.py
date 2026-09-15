@@ -65,6 +65,7 @@ from aiperf.config.loader.parsing import (
     normalize_http_urls,
     parse_file,
     parse_float_or_float_list,
+    parse_http_headers,
     parse_int_or_int_list,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
@@ -2997,6 +2998,26 @@ class CLIConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = None
+
+    server_metrics_headers: Annotated[
+        Any,
+        Field(
+            repr=False,
+            description=(
+                "Custom HTTP headers to include with server-metrics requests. "
+                "Specify as `Header:Value` pairs (e.g., "
+                "`--server-metrics-header Authorization:Bearer token`) or as a "
+                "JSON string. Can be specified multiple times. These headers are "
+                "independent of inference request headers from `--header` / `-H`."
+            ),
+        ),
+        BeforeValidator(parse_http_headers),
+        CLIParameter(
+            name=("--server-metrics-header",),
+            consume_multiple=True,
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = []
 
     no_server_metrics: Annotated[
         bool,

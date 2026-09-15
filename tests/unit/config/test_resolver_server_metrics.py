@@ -7,11 +7,13 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import ServerMetricsFormat
+from aiperf.config import load_config_from_string
 from aiperf.config.flags._resolver_server_metrics import (
     build_server_metrics_override,
     normalize_server_metrics_base_for_override,
 )
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.flags.resolver import resolve_config
 
 
 def _make_cli(**overrides) -> CLIConfig:
@@ -60,6 +62,99 @@ def test_server_metrics_urls_and_formats_override_both_fields():
         "urls": ["http://localhost:9400/metrics"],
         "formats": [ServerMetricsFormat.JSONL],
     }
+
+
+def test_server_metrics_headers_route_without_overriding_yaml_urls():
+    assert build_server_metrics_override(
+        _make_cli(
+            server_metrics_headers=[
+                "Authorization:Bearer metrics-secret",
+                "X-Tenant:tenant-a",
+            ]
+        )
+    ) == {
+        "enabled": True,
+        "headers": {
+            "Authorization": "Bearer metrics-secret",
+            "X-Tenant": "tenant-a",
+        },
+    }
+
+
+def test_server_metrics_headers_yaml_load_and_json_dump_redacts_secret():
+    config = load_config_from_string(
+        """
+benchmark:
+  models: [test-model]
+  endpoint:
+    urls: [http://localhost:8000]
+  server_metrics:
+    headers:
+      Authorization: Bearer metrics-secret
+      X-Tenant: tenant-a
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 1
+      prompts:
+        isl: 8
+        osl: 4
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: 1
+      concurrency: 1
+"""
+    )
+
+    assert config.benchmark.server_metrics.headers == {
+        "Authorization": "Bearer metrics-secret",
+        "X-Tenant": "tenant-a",
+    }
+    dumped = config.model_dump(mode="json", by_alias=False)
+    assert dumped["benchmark"]["server_metrics"]["headers"] == {
+        "Authorization": "<redacted>",
+        "X-Tenant": "tenant-a",
+    }
+
+
+def test_server_metrics_headers_cli_override_preserves_yaml_urls(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        """\
+benchmark:
+  models: [test-model]
+  endpoint:
+    urls: [http://localhost:8000]
+  server_metrics:
+    urls: [http://metrics.example:9400/metrics]
+  datasets:
+    - name: main
+      type: synthetic
+      entries: 1
+      prompts:
+        isl: 8
+        osl: 4
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: 1
+      concurrency: 1
+"""
+    )
+
+    config = resolve_config(
+        _make_cli(
+            config_file=config_file,
+            server_metrics_headers=[("X-Tenant", "tenant-a")],
+        ),
+        config_file,
+    )
+
+    assert config.benchmark.server_metrics.urls == [
+        "http://metrics.example:9400/metrics"
+    ]
+    assert config.benchmark.server_metrics.headers == {"X-Tenant": "tenant-a"}
 
 
 def test_no_server_metrics_wins_over_formats():

@@ -1510,6 +1510,10 @@ Display HTTP trace timing metrics in the console at the end of the benchmark. Sh
 
 Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable collection. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
 
+#### `--server-metrics-header` `<list>`
+
+Custom HTTP headers to include with server-metrics requests. Specify as `Header:Value` pairs (e.g., `--server-metrics-header Authorization:Bearer token`) or as a JSON string. Can be specified multiple times. These headers are independent of inference request headers from `--header` / `-H`.
+
 #### `--no-server-metrics`
 
 Disable server metrics collection entirely.
@@ -3102,6 +3106,10 @@ Display HTTP trace timing metrics in the console at the end of the benchmark. Sh
 
 Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable collection. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
 
+#### `--server-metrics-header` `<list>`
+
+Custom HTTP headers to include with server-metrics requests. Specify as `Header:Value` pairs (e.g., `--server-metrics-header Authorization:Bearer token`) or as a JSON string. Can be specified multiple times. These headers are independent of inference request headers from `--header` / `-H`.
+
 #### `--no-server-metrics`
 
 Disable server metrics collection entirely.
@@ -4688,6 +4696,10 @@ Display HTTP trace timing metrics in the console at the end of the benchmark. Sh
 #### `--server-metrics` `<list>`
 
 Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable collection. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
+
+#### `--server-metrics-header` `<list>`
+
+Custom HTTP headers to include with server-metrics requests. Specify as `Header:Value` pairs (e.g., `--server-metrics-header Authorization:Bearer token`) or as a JSON string. Can be specified multiple times. These headers are independent of inference request headers from `--header` / `-H`.
 
 #### `--no-server-metrics`
 
@@ -6782,6 +6794,10 @@ Display HTTP trace timing metrics in the console at the end of the benchmark. Sh
 #### `--server-metrics` `<list>`
 
 Server metrics collection (ENABLED BY DEFAULT). Automatically collects from inference endpoint base_url + `/metrics`. Optionally specify additional custom Prometheus-compatible endpoint URLs (e.g., http://node1:8081/metrics, http://node2:9090/metrics). Use `--no-server-metrics` to disable collection. Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints.
+
+#### `--server-metrics-header` `<list>`
+
+Custom HTTP headers to include with server-metrics requests. Specify as `Header:Value` pairs (e.g., `--server-metrics-header Authorization:Bearer token`) or as a JSON string. Can be specified multiple times. These headers are independent of inference request headers from `--header` / `-H`.
 
 #### `--no-server-metrics`
 
