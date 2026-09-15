@@ -349,6 +349,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             first_token_callback=first_token_callback,
             connector=connector,
             connector_owner=connector_owner,
+            **kwargs,
         )
 
     async def _request_with_cancellation(
@@ -361,6 +362,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        **kwargs: Any,
     ) -> RequestRecord:
         """Send POST request with cancellation after specified delay.
 
@@ -392,6 +394,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 trace_data=trace_data,
                 connector=connector,
                 connector_owner=connector_owner,
+                **kwargs,
             )
         )
 

@@ -9,7 +9,11 @@ probe strategies, selected via ``endpoint.wait_for_model_mode``:
   configured endpoint. Strongest signal: proves the full serving stack
   (frontend, scheduler, worker, forward pass) is live. Any HTTP status
   below 500 counts as ready — 4xx surfaces the same way on the first real
-  benchmark request and doesn't warrant hanging the probe.
+  benchmark request and doesn't warrant hanging the probe. Exception: a
+  401/403 from a *signed* request (a request signer is configured) fails
+  fast instead, since that almost always means the signature itself is
+  misconfigured rather than something the benchmark run would surface on
+  its own.
 - ``models`` — GET ``{url}/v1/models`` and verify the model id appears in
   ``data[]``. Cheap, no tokens consumed. Falls back to a plain GET on the
   base URL if ``/v1/models`` returns 404 so servers without a model list
@@ -30,8 +34,10 @@ import aiohttp
 import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.endpoint_auth import sign_request
 
 if TYPE_CHECKING:
+    from aiperf.auth.base_signer import RequestSignerProtocol
     from aiperf.transports.aiohttp_client import AioHttpClient
 
 _logger = AIPerfLogger(__name__)
@@ -138,6 +144,30 @@ def _response_status_and_error(record: Any) -> tuple[int | str, str]:
     return status_repr, error_repr
 
 
+def _raise_if_signed_auth_rejected(
+    *, status: int | None, signer: RequestSignerProtocol | None, request_url: str
+) -> None:
+    """Fail fast when a *signed* probe request is rejected as unauthorized.
+
+    A 401/403 on an unsigned request is expected to surface the same way on
+    the first real benchmark request, so it's left to retry/timeout like any
+    other probe failure. But when a ``signer`` (e.g. SigV4) is configured,
+    401/403 almost always means the signature itself is wrong — bad
+    credentials, region, or service name — and retrying for the full
+    ``timeout_s`` won't fix that. Raise immediately with a clear cause
+    instead of silently retrying until the probe times out.
+    """
+    if signer is None or status not in (401, 403):
+        return
+    raise RuntimeError(
+        f"Readiness probe to {request_url} was rejected with status {status} "
+        f"despite a request signer being configured. This usually means the "
+        f"signed request's credentials, region, or service are misconfigured "
+        f"(check --aws-region / --aws-service and your AWS credentials) — "
+        f"retrying will not fix a signature mismatch."
+    )
+
+
 def _models_response_ready(
     *,
     record: Any,
@@ -169,6 +199,7 @@ async def _base_url_ready_after_models_404(
     attempt: int,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
 ) -> bool:
     fallback_timeout = _models_timeout(
         deadline=deadline,
@@ -178,13 +209,21 @@ async def _base_url_ready_after_models_404(
         url=url,
         checked_attempts=attempt,
     )
-    fallback = await client.get_request(url, headers=headers, timeout=fallback_timeout)
+    fallback_url, fallback_headers, _ = await sign_request(
+        signer, method="GET", url=url, headers=headers
+    )
+    fallback = await client.get_request(
+        fallback_url, headers=fallback_headers, timeout=fallback_timeout
+    )
     if fallback.status is not None and 200 <= fallback.status < 300:
         _logger.info(
             f"/v1/models not available at {url}; base URL responded "
             f"{fallback.status} — accepting as ready"
         )
         return True
+    _raise_if_signed_auth_rejected(
+        status=fallback.status, signer=signer, request_url=url
+    )
     _logger.info(
         f"/v1/models returned 404 and base URL returned "
         f"{fallback.status or 'error'} at {url} (attempt {attempt}), "
@@ -233,12 +272,15 @@ async def _wait_models(
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
 ) -> None:
     """Poll ``{url}/v1/models`` until ``model_name`` appears in ``data[]``.
 
     Falls back to a single GET on the base URL if ``/v1/models`` returns 404
     on any attempt — so servers that don't expose a model list still pass
-    when they respond at all.
+    when they respond at all. When a ``signer`` is configured and either
+    probe is rejected with 401/403, raises immediately instead of retrying
+    to the timeout — see ``_raise_if_signed_auth_rejected``.
     """
     deadline = time.monotonic() + timeout_s
     models_url = url.rstrip("/") + "/v1/models"
@@ -255,8 +297,13 @@ async def _wait_models(
             url=url,
             checked_attempts=attempt - 1,
         )
+        # Signed per attempt: a SigV4 signature is only valid inside a
+        # five-minute skew window, which readiness polling routinely outlives.
+        signed_url, signed_headers, _ = await sign_request(
+            signer, method="GET", url=models_url, headers=headers
+        )
         record = await client.get_request(
-            models_url, headers=headers, timeout=request_timeout
+            signed_url, headers=signed_headers, timeout=request_timeout
         )
 
         if record.status == 200 and record.responses:
@@ -280,9 +327,13 @@ async def _wait_models(
                 attempt=attempt,
                 interval_s=interval_s,
                 headers=headers,
+                signer=signer,
             ):
                 return
         else:
+            _raise_if_signed_auth_rejected(
+                status=record.status, signer=signer, request_url=models_url
+            )
             status_repr, error_repr = _response_status_and_error(record)
             _logger.info(
                 f"Probe to {models_url} returned {status_repr} "
@@ -303,6 +354,7 @@ async def _wait_inference(
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None,
 ) -> None:
     """POST a canned 1-token request to the inference endpoint until it works.
 
@@ -310,6 +362,13 @@ async def _wait_inference(
     server is live but our payload was rejected (bad auth / bad model /
     bad path), which surfaces the same way on the first real benchmark
     request. Only 5xx and connection errors trigger retries.
+
+    Exception: when a ``signer`` is configured (e.g. SigV4) and the response
+    is 401/403, this raises immediately instead of counting it as ready or
+    retrying — a rejected *signed* request almost always means the
+    signature itself is wrong (credentials/region/service), which no amount
+    of retrying will fix. Unsigned 401/403 keeps the documented behavior
+    above.
     """
     request_url, body = _build_inference_probe_request(
         url=url,
@@ -336,14 +395,26 @@ async def _wait_inference(
             model_name=model_name,
             checked_attempts=attempt - 1,
         )
-        record = await client.post_request(
-            request_url,
-            payload=body,
+        # Signed per attempt (see _wait_models): the signature covers the
+        # exact body bytes, so sign after the payload is built.
+        signed_url, signed_headers, signed_body = await sign_request(
+            signer,
+            method="POST",
+            url=request_url,
             headers=request_headers,
+            body=body,
+        )
+        record = await client.post_request(
+            signed_url,
+            payload=signed_body,
+            headers=signed_headers,
             timeout=request_timeout,
         )
 
         status = record.status
+        _raise_if_signed_auth_rejected(
+            status=status, signer=signer, request_url=request_url
+        )
         if status is not None and status < 500:
             _logger.info(
                 f"Inference probe ready at {request_url} "
@@ -371,6 +442,7 @@ async def wait_for_endpoint(
     timeout_s: float,
     interval_s: float,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None = None,
 ) -> None:
     """Block until every configured (URL, model) pair passes the probe.
 
@@ -409,6 +481,7 @@ async def wait_for_endpoint(
                         timeout_s=timeout_s,
                         interval_s=interval_s,
                         headers=headers,
+                        signer=signer,
                     )
             if mode in ("inference", "both"):
                 # Probe every configured model. In a multi-model deployment
@@ -428,6 +501,7 @@ async def wait_for_endpoint(
                         timeout_s=timeout_s,
                         interval_s=interval_s,
                         headers=headers,
+                        signer=signer,
                     )
     finally:
         await client.close()
