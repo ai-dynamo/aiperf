@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
@@ -1021,6 +1022,41 @@ class TestPhaseTypes:
 
 
 class TestEdgeCases:
+    @pytest.mark.parametrize(
+        "all_returned, child_allowed, expected_wait",
+        [
+            param(True, False, False, id="hard-cutoff-drained"),
+            param(False, False, True, id="hard-cutoff-in-flight"),
+            param(True, True, True, id="session-limit-pending-children"),
+        ],
+    )  # fmt: skip
+    async def test_pending_dag_work_after_sending_complete(
+        self,
+        runner: PhaseRunner,
+        router: MagicMock,
+        all_returned: bool,
+        child_allowed: bool,
+        expected_wait: bool,
+    ) -> None:
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._progress.check_all_returned_or_cancelled = MagicMock(
+            return_value=all_returned
+        )
+        runner._branch_orchestrator = MagicMock()
+        runner._branch_orchestrator.has_pending_branch_work.return_value = True
+        runner._stop_checker.can_send_child_turn = MagicMock(return_value=child_allowed)
+
+        with patch.object(
+            runner, "_wait_for_event_with_timeout", new=AsyncMock(return_value=False)
+        ) as wait:
+            await runner._wait_for_returning_complete(strategy=None, phase_id=None)
+
+        assert wait.await_count == int(expected_wait)
+        router.cancel_all_credits.assert_not_awaited()
+        if not expected_wait:
+            assert runner._progress.all_credits_returned_event.is_set()
+
     async def test_already_complete_returns_immediately(
         self,
         conv_src: MagicMock,

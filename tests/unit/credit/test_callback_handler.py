@@ -10,6 +10,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.callback_handler import CreditCallbackHandler
@@ -1138,6 +1139,51 @@ class TestDrainObserverWiring:
         callback()
 
         assert mock_progress.all_credits_returned_event.is_set()
+
+    @pytest.mark.parametrize(
+        "all_returned, child_allowed, handoff, expected",
+        [
+            param(True, False, False, True, id="hard-cutoff-drained"),
+            param(False, False, False, False, id="hard-cutoff-in-flight"),
+            param(True, True, False, False, id="session-limit-pending-children"),
+            param(False, True, False, False, id="session-limit-in-flight"),
+            param(True, True, True, True, id="warmup-handoff-drained"),
+            param(False, True, True, False, id="warmup-handoff-in-flight"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize("notification", ["credit-return", "orchestrator-drain"])
+    def test_completion_signal_respects_child_dispatch_cutoff(
+        self,
+        registered_handler: CreditCallbackHandler,
+        mock_progress: MagicMock,
+        mock_lifecycle: MagicMock,
+        mock_stop_checker: MagicMock,
+        mock_strategy: MagicMock,
+        mock_branch_orchestrator: MagicMock,
+        all_returned: bool,
+        child_allowed: bool,
+        handoff: bool,
+        expected: bool,
+        notification: str,
+    ) -> None:
+        mock_progress.check_all_returned_or_cancelled.return_value = all_returned
+        mock_progress.in_flight = 0 if all_returned else 1
+        mock_lifecycle.is_sending_complete = True
+        mock_stop_checker.can_send_child_turn.return_value = child_allowed
+        mock_strategy.allows_pending_branch_handoff_after_sending_complete = handoff
+        mock_branch_orchestrator.has_pending_branch_work.return_value = True
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        if notification == "orchestrator-drain":
+            callback = mock_branch_orchestrator.set_drain_observer.call_args.args[0]
+            callback()
+        else:
+            key = CreditPhase.PROFILING
+            registered_handler._signal_all_credits_returned_if_ready(
+                key, registered_handler._phase_handlers[key], phase=key
+            )
+
+        assert mock_progress.all_credits_returned_event.is_set() is expected
 
     def test_drain_observer_no_op_when_pending_work_remains(
         self, registered_handler, mock_progress, mock_branch_orchestrator

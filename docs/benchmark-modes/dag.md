@@ -343,6 +343,13 @@ Children are dispatched reactively by `BranchOrchestrator` at credit-return time
 - **`--request-count` (`RequestCountStopCondition`): HONORED for children.** It is a literal wire-request cap and applies to every credit on the wire. When the cap fires mid-tree, an in-flight child's remaining turns will be elided — `BranchStats.children_truncated` records the child, and `BranchStats.joins_suppressed` counts any parent join that was released without firing because the gated child was capped. Cancellation and duration timeouts honor the same rule.
 - **`--num-conversations` (`SessionCountStopCondition`): BYPASSED for children.** It targets sampler-plan completion ("run N full conversations") — children belong to a conversation tree and should run as part of their parent's session, not be truncated mid-tree. The wire-cap intent is served by `--request-count` instead.
 
+After a hard cutoff prevents further child dispatch, the phase waits for issued
+requests to return or be cancelled, subject to `--benchmark-grace-period`.
+Pending DAG work that can no longer be dispatched does not keep a fully drained
+phase waiting until the grace period expires. Reaching a conversation-count
+target alone does not remove the pending-child completion barrier, because
+those children are still allowed to run.
+
 ### `--num-conversations` autodefault for `dag_jsonl`
 
 When neither `--request-count` nor `--num-conversations` is supplied for a `dag_jsonl` run, AIPerf auto-defaults `--num-conversations` to the **root count** of the file (sessions not referenced by any other conversation's `forks`, `spawns`, or `pre_session_spawns` lists) rather than auto-defaulting `--request-count`. Auto-defaulting `--request-count` for a forking dataset would silently truncate the DAG mid-tree because the cap counts fork-spawned children. The converter sets `sessions` to that root count silently (no special CLI log line).

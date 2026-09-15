@@ -1144,6 +1144,7 @@ class PhaseRunner(TaskManagerMixin):
                 allows_pending_branch_handoff
                 or self._branch_orchestrator is None
                 or not self._branch_orchestrator.has_pending_branch_work()
+                or not self._stop_checker.can_send_child_turn()
             ):
                 self.info(
                     "All credits already returned. Setting all_credits_returned_event."

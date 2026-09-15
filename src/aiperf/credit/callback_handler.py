@@ -213,14 +213,7 @@ class CreditCallbackHandler:
         for key, handler in self._phase_handlers.items():
             if handler.lifecycle.is_complete:
                 continue
-            orchestrator = self._orchestrator_for(key)
-            if (
-                orchestrator is not None
-                and not handler.progress.all_credits_returned_event.is_set()
-                and handler.progress.check_all_returned_or_cancelled()
-                and not orchestrator.has_pending_branch_work()
-            ):
-                handler.progress.all_credits_returned_event.set()
+            self._signal_all_credits_returned_if_ready(key, handler, phase=None)
 
     def _dag_work_pending(self, credit: Credit) -> bool:
         """True iff the orchestrator has work in flight or will spawn on
@@ -625,6 +618,7 @@ class CreditCallbackHandler:
             and (
                 allows_pending_branch_handoff
                 or not orchestrator.has_pending_branch_work()
+                or not handler.stop_checker.can_send_child_turn()
             )
         ):
             handler.progress.all_credits_returned_event.set()
