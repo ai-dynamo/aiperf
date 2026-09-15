@@ -105,7 +105,6 @@ class TestServerMetricsManagerInitialization:
         )
 
     def test_custom_server_metrics_url_preserves_explicit_path(self):
-        """A user-supplied metrics path is treated as the complete endpoint."""
         cfg = CLIConfig(
             model_names=["test-model"],
             endpoint_type=EndpointType.CHAT,

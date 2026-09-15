@@ -162,7 +162,6 @@ class ServerMetricsConfig(BaseConfig):
 
     @field_serializer("headers", when_used="json")
     def _redact_headers(self, value: dict[str, str]) -> dict[str, str]:
-        """Redact credential-bearing values in serialized run artifacts."""
         from aiperf.common.redact import redact_headers
 
         return redact_headers(value) or {}
