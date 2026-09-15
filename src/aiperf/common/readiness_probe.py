@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 import orjson
@@ -200,8 +201,6 @@ def _build_inference_probe_request(
     endpoint_type: str,
     custom_endpoint: str | None,
 ) -> tuple[str, bytes]:
-    from urllib.parse import urlparse
-
     parsed = urlparse(url)
     endpoint_path = _DEFAULT_PATHS.get(endpoint_type)
     payload_template = _CANNED_PAYLOADS.get(endpoint_type)
@@ -214,15 +213,15 @@ def _build_inference_probe_request(
         )
 
     if custom_endpoint:
-        request_url = url.rstrip("/") + "/" + custom_endpoint.lstrip("/")
+        request_path = parsed.path.rstrip("/") + "/" + custom_endpoint.lstrip("/")
     elif parsed.path and parsed.path != "/":
-        request_url = url.rstrip("/")
+        request_path = parsed.path.rstrip("/")
     else:
-        request_url = url.rstrip("/") + (endpoint_path or _DEFAULT_PATHS["chat"])
+        request_path = endpoint_path or _DEFAULT_PATHS["chat"]
 
     payload = dict(payload_template or _CANNED_PAYLOADS["chat"])
     payload["model"] = model_name
-    return request_url, orjson.dumps(payload)
+    return urlunparse(parsed._replace(path=request_path)), orjson.dumps(payload)
 
 
 async def _wait_models(
@@ -241,7 +240,10 @@ async def _wait_models(
     when they respond at all.
     """
     deadline = time.monotonic() + timeout_s
-    models_url = url.rstrip("/") + "/v1/models"
+    parsed = urlparse(url)
+    models_url = urlunparse(
+        parsed._replace(path=parsed.path.rstrip("/") + "/v1/models")
+    )
     request_timeout_base = max(interval_s, _MIN_REQUEST_TIMEOUT_S)
     attempt = 0
 
