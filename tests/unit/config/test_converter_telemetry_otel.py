@@ -103,6 +103,27 @@ class TestServerMetricsCliParity:
             raw.partition(":")[0]: expected
         }
 
+    def test_server_metrics_header_cli_accepts_whitespace_prefixed_json(self) -> None:
+        from aiperf.cli import app
+        from aiperf.config.flags.resolver import resolve_config
+
+        argv = [
+            "profile",
+            "--model",
+            "m",
+            "--url",
+            "http://127.0.0.1:8000",
+            "--server-metrics-header",
+            '  {"Authorization":"Bearer metrics-secret","X-Tenant":"tenant-a"}',
+        ]
+        _, bound, _ = app.parse_args(argv, exit_on_error=False, print_error=False)
+
+        resolved = resolve_config(bound.arguments["cli_config"], None)
+        assert resolved.benchmark.server_metrics.headers == {
+            "Authorization": "Bearer metrics-secret",
+            "X-Tenant": "tenant-a",
+        }
+
     @pytest.mark.parametrize(
         "raw, secret",
         [
