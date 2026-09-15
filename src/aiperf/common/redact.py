@@ -143,7 +143,6 @@ _PLAIN_CUSTOM_HEADER_PATTERN = re.compile(
 
 
 def _redact_custom_header_match(match: re.Match[str]) -> str:
-    """Redact a hyphenated header only when its name is credential-shaped."""
     if not is_sensitive_header_name(match.group("name")):
         return match.group(0)
     groups = match.groupdict()
@@ -252,7 +251,6 @@ _DYNAMIC_CLI_HEADER_PATTERNS: Sequence[re.Pattern[str]] = (
 
 
 def _redact_dynamic_cli_header(match: re.Match[str]) -> str:
-    """Redact arbitrary credential-shaped names in the metrics-header option."""
     if not is_sensitive_header_name(match.group("name")):
         return match.group(0)
     groups = match.groupdict()
@@ -459,13 +457,15 @@ def _redact_cli_args(args: list) -> list:
 
 
 def _redact_server_metrics_header_value(value: Any) -> str:
-    """Redact one metrics-header CLI value using its structured header name."""
     text = str(value)
     if text.lstrip().startswith("{"):
         try:
             parsed = orjson.loads(text)
         except orjson.JSONDecodeError:
-            return redact_string(text)
+            # Invalid structured input never reaches the request layer. Redact
+            # the complete value because partial parsing cannot prove which
+            # malformed key/value fragments are credentials.
+            return REDACTED_VALUE
         if isinstance(parsed, dict):
             redacted = {
                 str(name): REDACTED_VALUE
@@ -582,7 +582,6 @@ def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _redact_endpoint_spec(endpoint: Any) -> None:
-    """Redact credentials in an endpoint mapping in place."""
     if not isinstance(endpoint, dict):
         return
     for key in ("apiKey", "api_key"):

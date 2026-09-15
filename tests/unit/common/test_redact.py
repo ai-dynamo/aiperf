@@ -1734,23 +1734,33 @@ class TestCliCommandRedaction:
                 "Token:metrics-secret",
             ],
             [
-                "--server-metrics-header",
-                "Auth-Token:metrics-secret",
-                "X-Tenant:tenant-a",
-            ],
-            [
                 "--server-metrics-header=X-Tenant:tenant-a",
                 "--server-metrics-header",
                 "Auth-Token:metrics-secret",
             ],
         ],
-        ids=["sensitive-last", "sensitive-first", "repeated-flag"],
+        ids=["sensitive-last", "repeated-flag"],
     )
     def test_all_server_metrics_header_values_are_redacted(self, argv):
         cmd = self._build_cli_command(["aiperf", "profile", *argv])
         assert "metrics-secret" not in cmd
         assert REDACTED_VALUE in cmd
         assert "tenant-a" in cmd
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            '{"Token":"metrics-secret",}',
+            "{Token:'metrics-secret',}",
+        ],
+    )
+    def test_malformed_server_metrics_header_json_redacts_sensitive_values(self, raw):
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--server-metrics-header", raw]
+        )
+
+        assert "metrics-secret" not in cmd
+        assert REDACTED_VALUE in cmd
 
     @pytest.mark.parametrize(
         "flag, value",

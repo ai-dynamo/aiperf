@@ -403,7 +403,6 @@ def apply_endpoint_credentials(
 
 
 def _missing_redacted_header_env_names(run: BenchmarkRun) -> list[str]:
-    """Return injection env vars needed by redacted header mappings."""
     endpoint = run.cfg.endpoint
     header_sources = (
         (endpoint.headers, AIPERF_INJECTED_HEADERS),
@@ -453,7 +452,6 @@ def credential_values(
 def _credential_values_from_injection(
     credentials: EndpointCredentialInjection,
 ) -> list[str]:
-    """Extract plaintext values from an injected credential payload."""
     values: list[str] = []
     if isinstance(credentials.api_key, str):
         values.append(credentials.api_key)
@@ -470,7 +468,6 @@ def _credential_values_from_injection(
 
 
 def _credential_values_from_endpoint(endpoint: Any) -> list[str]:
-    """Extract plaintext values from a resolved endpoint-like object."""
     values: list[str] = []
     api_key = getattr(endpoint, "api_key", None)
     if isinstance(api_key, str):
