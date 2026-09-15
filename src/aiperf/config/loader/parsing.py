@@ -277,17 +277,17 @@ def _parse_http_header_string(input: str) -> list[tuple[str, str]]:
     """Parse either one name/value string or a JSON header object."""
     if input.startswith("{"):
         try:
-            parsed = load_json_str(input)
+            # Header values may contain credentials. Avoid the shared JSON
+            # helper here because it logs the raw value on decode failures.
+            parsed = orjson.loads(input)
         except orjson.JSONDecodeError as e:
-            raise ValueError(
-                f"HTTP headers: {input} - must be a valid JSON object"
-            ) from e
+            raise ValueError("HTTP headers must be a valid JSON object") from e
         if not isinstance(parsed, dict):
-            raise ValueError(f"HTTP headers: {input} - must be a JSON object")
+            raise ValueError("HTTP headers must be a JSON object")
         return [_validate_http_header_pair(key, value) for key, value in parsed.items()]
     name, separator, value = input.partition(":")
     if not separator:
-        raise ValueError(f"HTTP header: {input} - must be in 'name:value' format")
+        raise ValueError("HTTP header must use 'name:value' format")
     return [_validate_http_header_pair(name.strip(), value.strip())]
 
 

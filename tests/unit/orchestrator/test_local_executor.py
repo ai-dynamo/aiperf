@@ -485,7 +485,6 @@ async def test_server_metrics_headers_are_redacted_and_forwarded_via_dedicated_e
 def test_subprocess_runner_pops_and_restores_server_metrics_headers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The child rehydrates dedicated server-metrics headers before running."""
     import orjson as _orjson
 
     cfg = _benchmark_config()

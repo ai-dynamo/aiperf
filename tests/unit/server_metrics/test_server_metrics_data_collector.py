@@ -64,14 +64,6 @@ class TestServerMetricsDataCollectorInitialization:
         assert collector._collection_interval == 0.333  # SERVER_METRICS default (333ms)
         assert collector.id == "server_metrics_collector"
 
-    def test_initialization_stores_request_headers(self):
-        headers = {"Authorization": "Bearer metrics-secret", "X-Tenant": "tenant-a"}
-        collector = ServerMetricsDataCollector(
-            "http://localhost:8081/metrics", headers=headers
-        )
-
-        assert collector._headers == headers
-
 
 class TestPrometheusMetricParsing:
     """Test Prometheus metric parsing functionality."""

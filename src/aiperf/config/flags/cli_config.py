@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
-from pydantic import AfterValidator, BeforeValidator, Field
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
 
 from aiperf.common.enums import (
     AIPerfLogLevel,
@@ -104,6 +104,13 @@ class CLIConfig(BaseConfig):
     CLIConfig is a flat DTO; no nested-class forward refs remain. Validators
     are forbidden on this class - AIPerfConfig is the single validation gate.
     """
+
+    # CLI values can contain credentials. Keep Pydantic from echoing raw
+    # inputs when a converter or downstream validation step rejects them.
+    model_config = ConfigDict(
+        **BaseConfig.model_config,
+        hide_input_in_errors=True,
+    )
 
     ##############################################################################
     # Endpoint

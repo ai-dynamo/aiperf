@@ -224,6 +224,8 @@ server_metrics:
 
 Headers apply to auto-discovery probes and every subsequent scrape. AIPerf
 redacts credential-bearing values in serialized run configuration and logs.
+Use HTTPS endpoints for credential-bearing headers; HTTP sends those values in
+cleartext to the explicitly configured metrics endpoint.
 For Kubernetes runs, provide sensitive metrics headers through the
 Secret-backed `AIPERF_INJECTED_SERVER_METRICS_HEADERS` environment variable;
 see [Production Deployment](../kubernetes/production.md#secrets-management).
