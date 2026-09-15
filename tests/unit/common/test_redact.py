@@ -1718,7 +1718,7 @@ class TestCliCommandRedaction:
                 "aiperf",
                 "profile",
                 "--server-metrics-header",
-                '{"Authorization":"Bearer metrics-secret","X-Tenant":"tenant-a"}',
+                '{"Token":"metrics-secret","X-Tenant":"tenant-a"}',
             ]
         )
         assert "metrics-secret" not in cmd
@@ -1731,7 +1731,7 @@ class TestCliCommandRedaction:
             [
                 "--server-metrics-header",
                 "X-Tenant:tenant-a",
-                "Auth-Token:metrics-secret",
+                "Token:metrics-secret",
             ],
             [
                 "--server-metrics-header",

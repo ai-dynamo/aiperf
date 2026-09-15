@@ -8,6 +8,8 @@ from copy import deepcopy
 from typing import Any
 from urllib.parse import unquote_plus
 
+import orjson
+
 REDACTED_VALUE = "<redacted>"
 
 # Header names (case-insensitive) whose values carry credentials.
@@ -433,7 +435,9 @@ def _redact_cli_args(args: list) -> list:
             if key in {"server-metrics-header", "server_metrics_header"}:
                 if inline:
                     flag = arg.split("=", 1)[0]
-                    out.append(f"{flag}={redact_string(arg.split('=', 1)[1])}")
+                    out.append(
+                        f"{flag}={_redact_server_metrics_header_value(arg.split('=', 1)[1])}"
+                    )
                 else:
                     out.append(arg)
                 # consume_multiple=True accepts every following non-option
@@ -448,10 +452,33 @@ def _redact_cli_args(args: list) -> list:
                     redact_next = True
                 continue
         if in_server_metrics_header_window:
-            out.append(redact_string(str(arg)))
+            out.append(_redact_server_metrics_header_value(arg))
             continue
         out.append(arg)
     return out
+
+
+def _redact_server_metrics_header_value(value: Any) -> str:
+    """Redact one metrics-header CLI value using its structured header name."""
+    text = str(value)
+    if text.lstrip().startswith("{"):
+        try:
+            parsed = orjson.loads(text)
+        except orjson.JSONDecodeError:
+            return redact_string(text)
+        if isinstance(parsed, dict):
+            redacted = {
+                str(name): REDACTED_VALUE
+                if is_sensitive_header_name(str(name))
+                else header_value
+                for name, header_value in parsed.items()
+            }
+            return orjson.dumps(redacted).decode()
+
+    name, separator, _ = text.partition(":")
+    if separator and is_sensitive_header_name(name.strip()):
+        return f"{name}:{REDACTED_VALUE}"
+    return redact_string(text)
 
 
 def build_cli_command() -> str:
