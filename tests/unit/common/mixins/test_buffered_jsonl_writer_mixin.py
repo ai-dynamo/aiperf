@@ -5,6 +5,8 @@ import asyncio
 import contextlib
 import json
 import tempfile
+import time
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -15,6 +17,34 @@ from aiperf.common.mixins.buffered_jsonl_writer_mixin import (
     _MAX_PENDING_FLUSH_TASKS,
     BufferedJSONLWriterMixin,
 )
+
+_SPIN_TIMEOUT_S = 5.0
+
+
+async def _spin_until(predicate: Callable[[], bool]) -> None:
+    """Yield the event loop until ``predicate`` holds, bounded by wall clock.
+
+    ``asyncio.sleep`` is patched to a bare yield in unit tests (see the
+    ``no_sleep`` autouse fixture), so ``for _ in range(N): await asyncio.sleep(0)``
+    really means "give the scheduler N turns". That is not a reliable proxy for
+    "the task under test got to run": under parallel execution the loop task can
+    be starved for more than N turns, the spin falls through with its event
+    unset, and the assertion after it fails with a message about the product
+    rather than about the harness.
+
+    Real time is not faked in these tests (only ``time_traveler`` tests get
+    virtual time), so a wall-clock budget is both available and honest about
+    what is being waited for.
+
+    Returns on timeout rather than raising: every call site already asserts on
+    the condition it cares about, and those assertions carry better messages
+    than a bare ``TimeoutError`` would.
+    """
+    deadline = time.monotonic() + _SPIN_TIMEOUT_S
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return
+        await asyncio.sleep(0)
 
 
 class SampleRecord(BaseModel):
@@ -366,13 +396,7 @@ class TestBufferedJSONLWriterMixin:
         writer._flush_buffer = flaky_flush
 
         async def yield_until(event: asyncio.Event) -> None:
-            # asyncio.sleep is patched to a no-op in unit tests, so yield the
-            # event loop (bounded) until the periodic task sets the event or
-            # unexpectedly dies.
-            for _ in range(10_000):
-                if event.is_set() or loop_task.done():
-                    return
-                await asyncio.sleep(0)
+            await _spin_until(lambda: event.is_set() or loop_task.done())
 
         loop_task = asyncio.create_task(writer._flush_buffer_periodically())
         try:
@@ -436,10 +460,7 @@ class TestBufferedJSONLWriterMixin:
         writer._flush_buffer = blocked_flush
 
         close_task = asyncio.create_task(writer._close_file())
-        for _ in range(10_000):
-            if flush_started.is_set() or close_task.done():
-                break
-            await asyncio.sleep(0)
+        await _spin_until(lambda: flush_started.is_set() or close_task.done())
         assert flush_started.is_set(), "final flush never started"
 
         close_task.cancel()
@@ -447,10 +468,7 @@ class TestBufferedJSONLWriterMixin:
             await asyncio.wait_for(close_task, timeout=0.1)
 
         flush_continue.set()
-        for _ in range(10_000):
-            if writer._file_handle is None:
-                break
-            await asyncio.sleep(0)
+        await _spin_until(lambda: writer._file_handle is None)
         assert writer._file_handle is None
         with open(temp_output_file) as f:
             lines = [line.strip() for line in f if line.strip()]
@@ -488,10 +506,7 @@ class TestBufferedJSONLWriterMixin:
         writer._flush_buffer = blocked_flush
         await writer.buffered_write(SampleRecord(id=42, value="periodic"))
 
-        for _ in range(10_000):
-            if flush_started.is_set():
-                break
-            await asyncio.sleep(0)
+        await _spin_until(flush_started.is_set)
         assert flush_started.is_set(), "periodic flush never started"
         assert writer._periodic_flush_in_flight is not None
 
@@ -545,10 +560,7 @@ class TestBufferedJSONLWriterMixin:
         loop_task = asyncio.create_task(writer._flush_buffer_periodically())
         writer._periodic_flush_task = loop_task
 
-        for _ in range(10_000):
-            if flush_started.is_set() or loop_task.done():
-                break
-            await asyncio.sleep(0)
+        await _spin_until(lambda: flush_started.is_set() or loop_task.done())
         assert flush_started.is_set(), "periodic flush never started"
         in_flight = writer._periodic_flush_in_flight
         assert in_flight is not None and not in_flight.done()
@@ -657,10 +669,7 @@ class TestBufferedJSONLWriterMixin:
         loop_task = asyncio.create_task(writer._flush_buffer_periodically())
         writer._periodic_flush_task = loop_task
 
-        for _ in range(10_000):
-            if flush_started.is_set() or loop_task.done():
-                break
-            await asyncio.sleep(0)
+        await _spin_until(lambda: flush_started.is_set() or loop_task.done())
         assert flush_started.is_set(), "periodic flush never started"
         in_flight = writer._periodic_flush_in_flight
         assert in_flight is not None
