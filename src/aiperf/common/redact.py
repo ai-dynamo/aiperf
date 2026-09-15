@@ -417,7 +417,6 @@ _CLI_COMMAND_SENSITIVE_TOKENS = (
 
 
 def _redact_cli_args(args: list) -> list:
-    """Token-wise redaction for credential-bearing flags. Helper for build_cli_command."""
     out: list = []
     redact_next = False
     in_server_metrics_header_window = False
@@ -603,7 +602,6 @@ def _redact_endpoint_spec(endpoint: Any) -> None:
 
 
 def _redact_server_metrics_spec(benchmark: dict[str, Any]) -> None:
-    """Redact credentials in either server-metrics key spelling."""
     for key in ("serverMetrics", "server_metrics"):
         server_metrics = benchmark.get(key)
         if not isinstance(server_metrics, dict):
