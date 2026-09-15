@@ -53,3 +53,20 @@ class TestNormalizeMetricsEndpointUrl:
         """Test that multiple trailing slashes are removed."""
         result = normalize_metrics_endpoint_url("http://localhost:9400///")
         assert result == "http://localhost:9400/metrics"
+
+    @pytest.mark.parametrize(
+        "input_url,expected",
+        [
+            ("https://secure:9400/prometheus", "https://secure:9400/prometheus"),
+            ("https://secure:9400/prometheus/", "https://secure:9400/prometheus"),
+            ("https://secure:9400", "https://secure:9400/metrics"),
+        ],
+    )
+    def test_normalize_can_preserve_explicit_paths(
+        self, input_url: str, expected: str
+    ) -> None:
+        """User-provided endpoint paths are complete rather than base paths."""
+        assert (
+            normalize_metrics_endpoint_url(input_url, preserve_explicit_path=True)
+            == expected
+        )

@@ -3066,7 +3066,8 @@ class CLIConfig(BaseConfig):
                 "Server metrics collection (ENABLED BY DEFAULT). "
                 "Automatically collects from inference endpoint base_url + `/metrics`. "
                 "Optionally specify additional custom Prometheus-compatible endpoint URLs "
-                "(e.g., http://node1:8081/metrics, http://node2:9090/metrics). "
+                "(e.g., http://node1:8081/metrics, https://node2/prometheus). "
+                "Explicit URL paths are preserved; pathless URLs default to `/metrics`. "
                 "Use `--no-server-metrics` to disable collection. "
                 "Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints"
             ),
