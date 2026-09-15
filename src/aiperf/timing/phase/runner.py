@@ -1135,10 +1135,10 @@ class PhaseRunner(TaskManagerMixin):
                 is True
                 and self._lifecycle.is_sending_complete
             )
-            all_wire_requests_returned = (
-                self._progress.in_flight == 0
-                if allows_pending_branch_handoff
-                else self._progress.check_all_returned_or_cancelled()
+            # Children can be issued after the root sent count was frozen.
+            all_wire_requests_returned = self._progress.in_flight == 0 and (
+                allows_pending_branch_handoff
+                or self._progress.check_all_returned_or_cancelled()
             )
             if all_wire_requests_returned and (
                 allows_pending_branch_handoff

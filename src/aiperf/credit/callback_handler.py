@@ -560,9 +560,8 @@ class CreditCallbackHandler:
         await self._handle_warmup_failure(credit, credit_return, handler, phase)
 
         # Deferred all-credits-returned check. Runs on EVERY return — root
-        # or child — because child returns don't bump the phase counters
-        # (they're tracked by the BranchOrchestrator, not ``CreditCounter``)
-        # and so can't flip ``is_final_returned`` themselves. The last
+        # or child — after return-driven dispatch updates the live counters
+        # and the orchestrator's pending work. The last
         # child's evict-and-drain cascade is what clears
         # ``has_pending_branch_work``, at which point this check on the
         # child's own return path fires the event.
@@ -607,10 +606,10 @@ class CreditCallbackHandler:
             is True
             and handler.lifecycle.is_sending_complete
         )
-        all_wire_requests_returned = (
-            handler.progress.in_flight == 0
-            if allows_pending_branch_handoff
-            else handler.progress.check_all_returned_or_cancelled()
+        # Children can be issued after the root sent count was frozen.
+        all_wire_requests_returned = handler.progress.in_flight == 0 and (
+            allows_pending_branch_handoff
+            or handler.progress.check_all_returned_or_cancelled()
         )
         if (
             not handler.progress.all_credits_returned_event.is_set()

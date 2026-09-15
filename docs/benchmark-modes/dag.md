@@ -345,6 +345,8 @@ Children are dispatched reactively by `BranchOrchestrator` at credit-return time
 
 After a hard cutoff prevents further child dispatch, the phase waits for issued
 requests to return or be cancelled, subject to `--benchmark-grace-period`.
+This includes children issued after the root sending count was frozen: the
+phase cannot complete normally while any issued request is still in flight.
 Pending DAG work that can no longer be dispatched does not keep a fully drained
 phase waiting until the grace period expires. Reaching a conversation-count
 target alone does not remove the pending-child completion barrier, because

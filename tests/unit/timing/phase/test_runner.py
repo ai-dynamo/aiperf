@@ -17,7 +17,7 @@ from aiperf.common.models import (
 )
 from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.credit.sticky_router import StickyCreditRouter
-from aiperf.credit.structs import Credit
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import ArrivalPattern, DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.runner import PhaseRunner
@@ -1022,6 +1022,69 @@ class TestPhaseTypes:
 
 
 class TestEdgeCases:
+    @pytest.mark.parametrize("cancelled", [False, True])
+    @pytest.mark.parametrize("pending_work", [False, True])
+    async def test_completion_waits_for_child_issued_after_frozen_root_count(
+        self,
+        runner: PhaseRunner,
+        router: MagicMock,
+        cancelled: bool,
+        pending_work: bool,
+    ) -> None:
+        progress = runner._progress
+        for depth in (0, 1):
+            progress.increment_sent(
+                TurnToSend(
+                    conversation_id=f"session-{depth}",
+                    x_correlation_id=f"correlation-{depth}",
+                    turn_index=0,
+                    num_turns=1,
+                    agent_depth=depth,
+                )
+            )
+            if depth == 0:
+                progress.freeze_sent_counts()
+                progress.increment_returned(
+                    is_final_turn=True,
+                    cancelled=False,
+                    errored=False,
+                    is_child=False,
+                    no_request=False,
+                )
+        assert progress.check_all_returned_or_cancelled()
+        assert progress.in_flight == 1
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._lifecycle.cancel()
+        assert not runner._stop_checker.can_send_child_turn()
+        runner._branch_orchestrator = MagicMock()
+        runner._branch_orchestrator.has_pending_branch_work.return_value = pending_work
+
+        async def return_child(**kwargs: object) -> bool:
+            assert not progress.all_credits_returned_event.is_set()
+            assert not runner._lifecycle.is_complete
+            progress.increment_returned(
+                is_final_turn=True,
+                cancelled=cancelled,
+                errored=False,
+                is_child=True,
+                no_request=False,
+            )
+            progress.all_credits_returned_event.set()
+            return False
+
+        with patch.object(
+            runner,
+            "_wait_for_event_with_timeout",
+            new=AsyncMock(side_effect=return_child),
+        ) as wait:
+            await runner._wait_for_returning_complete(strategy=None, phase_id=None)
+
+        wait.assert_awaited_once()
+        router.cancel_all_credits.assert_not_awaited()
+        assert progress.in_flight == 0
+        assert progress.all_credits_returned_event.is_set()
+
     @pytest.mark.parametrize(
         "all_returned, child_allowed, expected_wait",
         [
