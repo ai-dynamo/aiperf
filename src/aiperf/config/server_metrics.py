@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_serializer, model_validator
 
 from aiperf.common.enums import (
     ServerMetricsDiscoveryMode,
@@ -146,6 +146,26 @@ class ServerMetricsConfig(BaseConfig):
             "Typically the /metrics endpoint on inference servers.",
         ),
     ]
+
+    headers: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            repr=False,
+            description=(
+                "Custom HTTP headers to include in server-metrics requests. "
+                "Values support environment variable substitution. These headers "
+                "are independent of inference endpoint headers."
+            ),
+        ),
+    ]
+
+    @field_serializer("headers", when_used="json")
+    def _redact_headers(self, value: dict[str, str]) -> dict[str, str]:
+        """Redact credential-bearing values in serialized run artifacts."""
+        from aiperf.common.redact import redact_headers
+
+        return redact_headers(value) or {}
 
     formats: Annotated[
         list[ServerMetricsFormat],

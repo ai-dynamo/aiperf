@@ -16,6 +16,7 @@ AIPerf automatically collects metrics from Prometheus-compatible endpoints expos
 | **Collection** | Scrapes metrics every 333ms during benchmark | Enabled |
 | **Outputs** | JSON (aggregated), CSV (tabular), JSONL (time-series), Parquet (cumulative deltas) | JSON + CSV + Parquet |
 | **Custom endpoints** | `--server-metrics URL [URL...]` for additional endpoints | None |
+| **Authentication headers** | `--server-metrics-header NAME:VALUE` for metrics-only headers | None |
 | **Disable** | `--no-server-metrics` to turn off collection | Enabled |
 | **Windowed stats** | `--slice-duration SECONDS` for time-sliced analysis | Off |
 
@@ -196,6 +197,36 @@ aiperf profile --model MODEL ... --server-metrics \
     http://node1:8081 \
     http://node2:8081
 ```
+
+### Authenticating Metrics Requests
+
+Use `--server-metrics-header` for a metrics endpoint that requires an HTTP
+header. The option is repeatable and is kept separate from inference request
+headers supplied with `--header` / `-H`:
+
+```bash
+aiperf profile --model MODEL ... \
+    --server-metrics https://metrics.example.com/metrics \
+    --server-metrics-header "Authorization:Bearer ${METRICS_TOKEN}" \
+    --server-metrics-header "X-Tenant:benchmark"
+```
+
+The equivalent YAML configuration is:
+
+```yaml
+server_metrics:
+  urls:
+    - https://metrics.example.com/metrics
+  headers:
+    Authorization: Bearer token
+    X-Tenant: benchmark
+```
+
+Headers apply to auto-discovery probes and every subsequent scrape. AIPerf
+redacts credential-bearing values in serialized run configuration and logs.
+For Kubernetes runs, provide sensitive metrics headers through the
+Secret-backed `AIPERF_INJECTED_SERVER_METRICS_HEADERS` environment variable;
+see [Production Deployment](../kubernetes/production.md#secrets-management).
 
 ### Kubernetes auto-discovery
 

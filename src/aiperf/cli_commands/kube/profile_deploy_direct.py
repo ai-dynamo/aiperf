@@ -108,7 +108,9 @@ def _prepare_direct_deploy(
     )
 
     validate_kubernetes_credential_transport(
-        source_endpoint, deploy_config.pod_template.env
+        source_endpoint,
+        deploy_config.pod_template.env,
+        config.benchmark.server_metrics,
     )
     # Only bump TTL when the user didn't explicitly set --ttl-seconds; the
     # direct-mode default keeps pods alive longer so results can be pulled.

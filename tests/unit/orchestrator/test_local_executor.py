@@ -440,6 +440,97 @@ async def test_subprocess_receives_sensitive_headers_via_env(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+async def test_server_metrics_headers_are_redacted_and_forwarded_via_dedicated_env(
+    tmp_path: Path,
+) -> None:
+    """Server-metrics credentials use their own transport channel.
+
+    They must not be written to ``run_config.json`` and must not share the
+    inference endpoint header channel, otherwise an inference credential could
+    accidentally be sent to a Prometheus endpoint (or vice versa).
+    """
+    import orjson as _orjson
+
+    cfg = _benchmark_config()
+    cfg.server_metrics.headers = {
+        "Authorization": "Bearer metrics-secret-value",
+        "X-Tenant": "tenant-a",
+    }
+    run = BenchmarkRun(
+        benchmark_id="test-id",
+        cfg=cfg,
+        artifact_dir=tmp_path,
+        label="server-metrics-headers",
+    )
+    executor = LocalSubprocessExecutor(base_dir=tmp_path)
+
+    with patch("aiperf.orchestrator.local_executor.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        await executor.execute(run)
+
+    on_disk = _orjson.loads((tmp_path / "run_config.json").read_bytes())
+    assert on_disk["cfg"]["server_metrics"]["headers"] == {
+        "Authorization": "<redacted>",
+        "X-Tenant": "tenant-a",
+    }
+    _, call_kwargs = mock_run.call_args
+    env = call_kwargs["env"]
+    assert _orjson.loads(env["AIPERF_INJECTED_SERVER_METRICS_HEADERS"]) == {
+        "Authorization": "Bearer metrics-secret-value"
+    }
+    assert "AIPERF_INJECTED_HEADERS" not in env
+
+
+def test_subprocess_runner_pops_and_restores_server_metrics_headers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The child rehydrates dedicated server-metrics headers before running."""
+    import orjson as _orjson
+
+    cfg = _benchmark_config()
+    cfg.server_metrics.headers = {
+        "Authorization": "<redacted>",
+        "X-Tenant": "tenant-a",
+    }
+    run_data = {
+        "benchmark_id": "x",
+        "cfg": cfg.model_dump(mode="json", exclude_none=True),
+        "label": "r1",
+        "artifact_dir": str(tmp_path),
+    }
+    config_file = tmp_path / "run_config.json"
+    config_file.write_bytes(_orjson.dumps(run_data))
+
+    monkeypatch.setenv(
+        "AIPERF_INJECTED_SERVER_METRICS_HEADERS",
+        _orjson.dumps({"Authorization": "Bearer metrics-secret-value"}).decode(),
+    )
+    monkeypatch.setattr("sys.argv", ["subprocess_runner", str(config_file)])
+
+    captured: dict[str, Any] = {}
+
+    def fake_run_single_benchmark(run: BenchmarkRun) -> None:
+        captured["headers"] = dict(run.cfg.server_metrics.headers)
+        captured["env_after_pop"] = (
+            "AIPERF_INJECTED_SERVER_METRICS_HEADERS" in __import__("os").environ
+        )
+
+    with patch(
+        "aiperf.cli_runner._run_single_benchmark", side_effect=fake_run_single_benchmark
+    ):
+        from aiperf.orchestrator.subprocess_runner import main as subprocess_main
+
+        subprocess_main()
+
+    assert captured["headers"] == {
+        "Authorization": "Bearer metrics-secret-value",
+        "X-Tenant": "tenant-a",
+    }
+    assert captured["env_after_pop"] is False
+
+
+@pytest.mark.asyncio
 async def test_no_headers_env_var_when_no_sensitive_headers(tmp_path: Path) -> None:
     """AIPERF_INJECTED_HEADERS is absent when no sensitive headers are set."""
     import os as _os

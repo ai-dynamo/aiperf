@@ -290,6 +290,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             )
             collector = ServerMetricsDataCollector(
                 endpoint_url=endpoint_url,
+                headers=self.run.cfg.server_metrics.headers,
                 collection_interval=self._collection_interval,
                 record_callback=self._on_server_metrics_records,
                 error_callback=self._on_server_metrics_error,
