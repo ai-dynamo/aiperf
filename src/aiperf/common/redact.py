@@ -413,7 +413,6 @@ _CLI_COMMAND_SENSITIVE_TOKENS = (
     "id-token", "id_token",
     "refresh-token", "refresh_token",
     "authorization",
-    "server-metrics-header", "server_metrics_header",
 )  # fmt: skip
 
 
@@ -421,14 +420,26 @@ def _redact_cli_args(args: list) -> list:
     """Token-wise redaction for credential-bearing flags. Helper for build_cli_command."""
     out: list = []
     redact_next = False
+    in_server_metrics_header_window = False
     for arg in args:
         if redact_next:
             out.append(REDACTED_VALUE)
             redact_next = False
             continue
         if isinstance(arg, str) and arg.startswith("-"):
+            in_server_metrics_header_window = False
             name = arg.lstrip("-").lower()
             key, _, inline = name.partition("=")
+            if key in {"server-metrics-header", "server_metrics_header"}:
+                if inline:
+                    flag = arg.split("=", 1)[0]
+                    out.append(f"{flag}={redact_string(arg.split('=', 1)[1])}")
+                else:
+                    out.append(arg)
+                # consume_multiple=True accepts every following non-option
+                # token as another header value, including after inline use.
+                in_server_metrics_header_window = True
+                continue
             if any(tok in key for tok in _CLI_COMMAND_SENSITIVE_TOKENS):
                 if inline:
                     out.append(f"{arg.split('=', 1)[0]}={REDACTED_VALUE}")
@@ -436,6 +447,9 @@ def _redact_cli_args(args: list) -> list:
                     out.append(arg)
                     redact_next = True
                 continue
+        if in_server_metrics_header_window:
+            out.append(redact_string(str(arg)))
+            continue
         out.append(arg)
     return out
 

@@ -14,6 +14,7 @@ Ports v1 ``_parse_otel_config`` and ``_normalize_otel_metrics_url``:
 from __future__ import annotations
 
 import pytest
+from cyclopts.exceptions import ValidationError as CycloptsValidationError
 
 from aiperf.common.enums import ServerMetricsFormat
 from aiperf.config.flags._converter_telemetry import (
@@ -101,6 +102,33 @@ class TestServerMetricsCliParity:
         assert resolved.benchmark.server_metrics.headers == {
             raw.partition(":")[0]: expected
         }
+
+    @pytest.mark.parametrize(
+        "raw, secret",
+        [
+            ('{"Authorization":"malformed-secret"', "malformed-secret"),
+            ("Authorization missing-colon-secret", "missing-colon-secret"),
+        ],
+    )
+    def test_server_metrics_header_cli_errors_do_not_echo_values(
+        self, raw: str, secret: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from aiperf.cli import app
+
+        argv = [
+            "profile",
+            "--model",
+            "m",
+            "--url",
+            "http://127.0.0.1:8000",
+            "--server-metrics-header",
+            raw,
+        ]
+        with pytest.raises(CycloptsValidationError) as exc_info:
+            app.parse_args(argv, exit_on_error=False, print_error=False)
+
+        assert secret not in str(exc_info.value)
+        assert secret not in caplog.text
 
 
 class TestOtelUrlNormalization:

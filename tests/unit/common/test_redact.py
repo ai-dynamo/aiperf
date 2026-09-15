@@ -1702,6 +1702,58 @@ class TestCliCommandRedaction:
         assert "http://localhost:8000" in cmd
         assert "gpt2" in cmd
 
+    def test_non_sensitive_server_metrics_header_preserved_in_cli_command(self):
+        cmd = self._build_cli_command(
+            [
+                "aiperf",
+                "profile",
+                "--server-metrics-header",
+                "X-Tenant:tenant-a",
+            ]
+        )
+        assert "X-Tenant:tenant-a" in cmd
+        assert REDACTED_VALUE not in cmd
+
+    def test_server_metrics_header_json_redacts_only_sensitive_values(self):
+        cmd = self._build_cli_command(
+            [
+                "aiperf",
+                "profile",
+                "--server-metrics-header",
+                '{"Authorization":"Bearer metrics-secret","X-Tenant":"tenant-a"}',
+            ]
+        )
+        assert "metrics-secret" not in cmd
+        assert REDACTED_VALUE in cmd
+        assert "tenant-a" in cmd
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            [
+                "--server-metrics-header",
+                "X-Tenant:tenant-a",
+                "Auth-Token:metrics-secret",
+            ],
+            [
+                "--server-metrics-header",
+                "Auth-Token:metrics-secret",
+                "X-Tenant:tenant-a",
+            ],
+            [
+                "--server-metrics-header=X-Tenant:tenant-a",
+                "--server-metrics-header",
+                "Auth-Token:metrics-secret",
+            ],
+        ],
+        ids=["sensitive-last", "sensitive-first", "repeated-flag"],
+    )
+    def test_all_server_metrics_header_values_are_redacted(self, argv):
+        cmd = self._build_cli_command(["aiperf", "profile", *argv])
+        assert "metrics-secret" not in cmd
+        assert REDACTED_VALUE in cmd
+        assert "tenant-a" in cmd
+
     @pytest.mark.parametrize(
         "flag, value",
         [
