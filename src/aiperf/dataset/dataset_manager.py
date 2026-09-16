@@ -757,6 +757,14 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
           available; it is ``all`` rather than ``any``, but a mixed dataset
           cannot be populated with a system prompt in the first place because
           the miss path rejects it before ``mmap_cache.populate``.
+
+        ``get_system_prompt()`` (--system-prompt / --system-prompt-file) is the
+        only carrier checked because it is the only one that can coexist with
+        authored payloads. The other source of ``conversation.system_message``,
+        ``prefix_prompts.shared_system_length`` (--shared-system-prompt-length),
+        is a ``SyntheticDataset``-only field: every loader that emits
+        ``raw_payload`` is file-backed, and the CLI converter rejects the flag
+        on file/public datasets (``_FILE_DATASET_INCOMPATIBLE_TRIGGERS``).
         """
         if self.run.cfg.get_system_prompt() is None or not has_raw_payload:
             return
