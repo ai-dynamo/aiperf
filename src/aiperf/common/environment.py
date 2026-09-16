@@ -1408,6 +1408,10 @@ class _ServerMetricsSettings(BaseSettings):
         "labels. Exceeding the limit stops collection with an explicit error "
         "while inference results still export.",
     )
+    DISCOVERY_LABEL_SELECTOR: str | None = Field(
+        default=None,
+        description="Default Kubernetes label selector for server metrics discovery",
+    )
 
     COLLECTION_FLUSH_PERIOD: float = Field(
         ge=0.0,
