@@ -105,10 +105,11 @@ class TestPrometheusMetricParsing:
                 "current-host",
                 id="current-precedence",
             ),
+            param("", None, id="missing"),
         ],
     )
     def test_hostname_label_compatibility(
-        self, hostname_labels: str, expected_hostname: str
+        self, hostname_labels: str, expected_hostname: str | None
     ) -> None:
         labels = 'gpu="0",UUID="GPU-0",modelName="GPU"'
         if hostname_labels:
