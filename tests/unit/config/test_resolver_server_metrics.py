@@ -71,7 +71,8 @@ def test_no_server_metrics_wins_over_formats():
     ) == {"enabled": False}
 
 
-def test_discovery_mode_disabled_clears_incompatible_yaml_selectors():
+def test_discovery_mode_disabled_clears_incompatible_yaml_selectors() -> None:
+    """Clear Kubernetes selectors when CLI discovery is disabled."""
     assert build_server_metrics_override(
         _make_cli(server_metrics_discovery_mode="disabled")
     ) == {
