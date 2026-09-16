@@ -8,6 +8,8 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+from aiperf.common.enums import ServerMetricsDiscoveryMode
+
 if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
 
@@ -22,6 +24,7 @@ def build_server_metrics_override(cli: CLIConfig) -> dict[str, Any] | None:
     """
     fields_set = cli.model_fields_set & {
         "server_metrics",
+        "server_metrics_discovery_mode",
         "server_metrics_formats",
         "no_server_metrics",
     }
@@ -37,6 +40,14 @@ def build_server_metrics_override(cli: CLIConfig) -> dict[str, Any] | None:
     elif "server_metrics" in fields_set:
         override["enabled"] = True
         override["urls"] = built["urls"]
+
+    if "server_metrics_discovery_mode" in fields_set:
+        discovery: dict[str, Any] = {
+            "mode": cli.server_metrics_discovery_mode,
+        }
+        if cli.server_metrics_discovery_mode == ServerMetricsDiscoveryMode.DISABLED:
+            discovery.update(label_selector=None, namespace=None)
+        override["discovery"] = discovery
 
     if "server_metrics_formats" in fields_set and "formats" in built:
         override["enabled"] = True
