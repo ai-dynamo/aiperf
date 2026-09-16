@@ -186,24 +186,27 @@ class ResponsesEndpoint(BaseEndpoint):
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
 
-        # Responses API doesn't nest the system prompt into ``input``; it
-        # lives in top-level ``instructions``. The per-conversation
-        # ``user_context_message`` is prepended as a leading user item.
-        input_items: list[dict[str, Any]] = []
+        # Responses API carries the system prompt in top-level ``instructions``
+        # rather than in ``input``. The per-conversation ``user_context_message``
+        # is a leading user item.
         if request_info.previous_response_id:
             # Stateful chaining: previous_response_id points to server-side history.
             self._warn_chaining_isl_once()
             rendered = self.build_messages([turns[-1]])
+            context_items: list[dict[str, Any]] = []
         else:
-            if request_info.user_context_message:
-                input_items.append(
+            rendered = self.build_messages(turns)
+            context_items = (
+                [
                     {
                         "type": "message",
                         "role": self.DEFAULT_TURN_ROLE,
                         "content": request_info.user_context_message,
                     }
-                )
-            rendered = self.build_messages(turns)
+                ]
+                if request_info.user_context_message
+                else []
+            )
         instructions = request_info.system_message or None
 
         # A dataset that authored its own leading ``role: system`` input item
@@ -213,8 +216,15 @@ class ResponsesEndpoint(BaseEndpoint):
         # de-dup invariant is endpoint-wide, and repeated system roles are
         # mishandled by many OpenAI-compatible servers.
         #
-        # Checked against ``rendered`` rather than ``input_items`` because
-        # ``user_context_message`` may already occupy index 0.
+        # The merged item is placed AHEAD of ``user_context_message`` so the
+        # system prompt stays the leading wire bytes, as it does for chat and
+        # as ``SYSTEM_PREFIX`` cache-bust assumes. The alternative -- folding
+        # the authored item's text into ``instructions`` and dropping it from
+        # ``input`` -- would keep the "system lives in instructions" contract
+        # unconditional, but flattens list-part content to text and discards
+        # any extra fields on the authored item; the dataset's explicit wire
+        # shape wins here.
+        leading_system: list[dict[str, Any]] = []
         if (
             instructions
             and rendered
@@ -227,10 +237,15 @@ class ResponsesEndpoint(BaseEndpoint):
             merged["content"] = self._prepend_system_text(
                 instructions, merged.get("content")
             )
-            rendered = [merged, *rendered[1:]]
+            leading_system = [merged]
+            rendered = rendered[1:]
             instructions = None
 
-        input_items.extend(rendered)
+        input_items: list[dict[str, Any]] = [
+            *leading_system,
+            *context_items,
+            *rendered,
+        ]
 
         # Conversation-level fields walk turns from the end so FORK-mode
         # children whose final turn lacks model/tools still inherit the parent's
