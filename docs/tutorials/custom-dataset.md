@@ -515,7 +515,8 @@ conversation. Unlike `--shared-system-prompt-length`, which generates synthetic 
 target token length, these take the **exact text** — so prefix-cache hit rates and TTFT
 reflect the system prompt your deployment actually sends.
 
-They work with every dataset kind: synthetic, file-based, and public.
+They work with synthetic, public, and structured file-based datasets. The one exclusion is
+datasets that author their own request payloads — see the note at the end of this section.
 
 ```bash
 # Inline, for short prompts
