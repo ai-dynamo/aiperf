@@ -238,6 +238,10 @@ accepts a comma-separated path list. Discovered paths are used as declared after
 adding a leading slash when needed; AIPerf does not append `/metrics` to a custom
 annotation path.
 
+Set `AIPERF_SERVER_METRICS_DISCOVERY_LABEL_SELECTOR` to provide a default selector
+without a configuration file. An explicit `server_metrics.discovery.label_selector`
+value takes precedence.
+
 #### RBAC prerequisites
 
 Discovery lists pods using the benchmark pod's ServiceAccount:
