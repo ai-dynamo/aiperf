@@ -23,6 +23,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
+from aiperf.common.enums import ServerMetricsDiscoveryMode
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader.plan import build_benchmark_plan
@@ -230,6 +231,38 @@ def test_server_metrics_cli_override_over_yaml_camel_case_url_shorthand(
     config = resolve_config(CLIConfig(server_metrics=["localhost:9400"]), config_file)
 
     assert config.benchmark.server_metrics.urls == ["http://localhost:9400/metrics"]
+
+
+def test_server_metrics_discovery_disabled_clears_yaml_selectors(
+    tmp_path: Path,
+) -> None:
+    """The CLI discovery mode must replace incompatible YAML selectors."""
+    config_file = _write(
+        tmp_path,
+        _PREAMBLE
+        + """\
+  phases:
+    - name: measured
+      kind: profiling
+      type: concurrency
+      concurrency: 8
+      requests: 10
+  serverMetrics:
+    discovery:
+      mode: kubernetes
+      labelSelector: app=vllm
+      namespace: shared
+""",
+    )
+
+    config = resolve_config(
+        CLIConfig(server_metrics_discovery_mode="disabled"), config_file
+    )
+
+    discovery = config.benchmark.server_metrics.discovery
+    assert discovery.mode == ServerMetricsDiscoveryMode.DISABLED
+    assert discovery.label_selector is None
+    assert discovery.namespace is None
 
 
 def test_network_latency_automatic_clears_yaml_mean_ms(tmp_path: Path) -> None:

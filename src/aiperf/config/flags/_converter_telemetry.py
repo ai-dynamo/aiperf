@@ -193,6 +193,10 @@ def build_server_metrics(cli: CLIConfig) -> dict[str, Any]:
         if i.startswith("http") or ":" in i
     ]
     server_metrics: dict[str, Any] = {"enabled": True, "urls": sm_urls}
+    if "server_metrics_discovery_mode" in cli.model_fields_set:
+        server_metrics["discovery"] = {
+            "mode": cli.server_metrics_discovery_mode,
+        }
     if cli.server_metrics_formats:
         server_metrics["formats"] = list(cli.server_metrics_formats)
     return server_metrics
