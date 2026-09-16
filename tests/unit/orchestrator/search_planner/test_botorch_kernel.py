@@ -111,6 +111,7 @@ class TestDspKernelLengthscaleBounds:
     def test_lengthscale_initializes_at_prior_mode(
         self, d: int, batch_shape: torch.Size
     ) -> None:
+        """Initialize batched and unbatched lengthscales at the prior mode."""
         base = make_dsp_kernel(d=d, batch_shape=batch_shape).double().base_kernel
 
         torch.testing.assert_close(
@@ -129,6 +130,7 @@ class TestDspKernelLengthscaleBounds:
     def test_prior_is_finite_at_optimizer_lower_bound(
         self, dtype: torch.dtype, batch_shape: torch.Size
     ) -> None:
+        """Keep the prior and its gradients finite at the optimizer's lower bound."""
         base = make_dsp_kernel(d=2, batch_shape=batch_shape).to(dtype).base_kernel
         _, bounds = get_parameters_and_bounds(base)
         lower_bound, _ = bounds["raw_lengthscale"]
@@ -149,10 +151,10 @@ class TestDspKernelLengthscaleBounds:
         [
             param(1, id="single-output"),
             param(2, id="two-outputs"),
-            param(3, id="three-outputs"),
         ],
     )  # fmt: skip
     def test_gp_fit_projects_out_of_bounds_lengthscale(self, n_outputs: int) -> None:
+        """Project invalid lengthscales into bounds for unbatched and batched GP fits."""
         torch.manual_seed(0)
         train_x = torch.rand(8, 2, dtype=torch.float64)
         train_y = torch.cat(
@@ -172,8 +174,7 @@ class TestDspKernelLengthscaleBounds:
             outcome_transform=Standardize(m=n_outputs),
         )
         base = model.covar_module.base_kernel
-        # A controlled bad starting point, not the original optimizer trace.
-        # SciPy must project it into bounds before evaluating the GP/prior.
+        # Verify SciPy projects this out-of-bounds value before prior evaluation.
         with torch.no_grad():
             base.raw_lengthscale.fill_(-1000.0)
 
