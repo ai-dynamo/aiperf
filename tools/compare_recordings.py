@@ -368,8 +368,9 @@ def build_html(
     _MAX_BINS = 500
 
     def hist_bounds(va: list, vb: list, base_step: int) -> tuple[int, int, int]:
-        lo = (min(va + vb) // base_step) * base_step
-        hi = (max(va + vb) // base_step + 2) * base_step
+        # Recorded values may be floats (e.g. "max_tokens": 100.0); range() needs ints.
+        lo = int(min(va + vb) // base_step) * base_step
+        hi = int(max(va + vb) // base_step + 2) * base_step
         n_bins = (hi - lo) // base_step
         step = base_step * max(1, math.ceil(n_bins / _MAX_BINS))
         hi = lo + step * math.ceil((hi - lo) / step)
