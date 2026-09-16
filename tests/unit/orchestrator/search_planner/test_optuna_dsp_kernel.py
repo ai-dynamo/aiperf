@@ -108,6 +108,31 @@ def test_qlognei_candidates_func_fits_with_sla_constraints(n_sla_filters: int) -
     assert candidates.shape == (1, d)
 
 
+@pytest.mark.parametrize(
+    "n_sla_filters",
+    [param(0, id="no-sla"), param(1, id="one-sla"), param(2, id="two-slas")],
+)  # fmt: skip
+def test_qlognei_candidates_func_supports_repeated_fits(n_sla_filters: int) -> None:
+    torch.manual_seed(0)
+    func = build_qlognei_candidates_func()
+    train_x = torch.linspace(0, 1, 6, dtype=torch.float64).unsqueeze(-1)
+    bounds = torch.tensor([[0.0], [1.0]], dtype=torch.float64)
+
+    for _ in range(3):
+        train_obj = torch.sin(2 * math.pi * train_x)
+        train_con = (
+            torch.cat([train_x - 0.65, 0.1 - train_x], dim=-1)[:, :n_sla_filters]
+            if n_sla_filters
+            else None
+        )
+        candidates = func(train_x, train_obj, train_con, bounds, None)
+
+        assert candidates.shape == (1, 1)
+        assert torch.isfinite(candidates).all()
+        assert ((candidates >= bounds[0]) & (candidates <= bounds[1])).all()
+        train_x = torch.cat([train_x, candidates], dim=0)
+
+
 def test_qnehvi_candidates_func_fits_dsp_kernel_per_objective(monkeypatch):
     captured: list = []
     _capture_built_models(monkeypatch, captured)
