@@ -1596,6 +1596,33 @@ class TestKubernetesDiscoveryIntegration:
     """Manager discovery honors mode, timeout, merge, and dedup semantics."""
 
     @pytest.mark.asyncio
+    async def test_discovery_uses_environment_label_selector(
+        self, cfg_with_endpoint: CLIConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        selector = "athena.nvidia.com/trial-id=01TEST"
+        monkeypatch.setattr(
+            Environment.SERVER_METRICS,
+            "DISCOVERY_LABEL_SELECTOR",
+            selector,
+        )
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager.run.cfg.server_metrics.discovery.mode = "kubernetes"
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as discover,
+        ):
+            await manager._run_metrics_discovery()
+
+        assert discover.await_args.kwargs["label_selector"] == selector
+
+    @pytest.mark.asyncio
     async def test_forced_discovery_preserves_custom_path_and_deduplicates(
         self, cfg_with_endpoint: CLIConfig
     ) -> None:
