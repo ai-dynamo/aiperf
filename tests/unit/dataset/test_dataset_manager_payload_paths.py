@@ -34,6 +34,7 @@ from aiperf.common.messages import (
 from aiperf.common.models import Conversation, ModelEndpointInfo, Text, Turn
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.dataset import mmap_cache
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.conftest import make_run_from_cli
@@ -211,6 +212,38 @@ def _make_system_prompt_run(prompt: str = "VERBATIM-SYS") -> BenchmarkRun:
     )
 
 
+def _has_raw(conversations: list[Conversation]) -> bool:
+    """The predicate the cache-miss call site feeds to the guard."""
+    return any(
+        turn.raw_payload is not None for conv in conversations for turn in conv.turns
+    )
+
+
+def _make_cache_hit(
+    tmp_path: Path, *, all_turns_source_loaded_payloads: bool
+) -> mmap_cache.CacheHit:
+    entry_dir = tmp_path / "entry"
+    entry_dir.mkdir()
+    (entry_dir / "dataset.dat").write_bytes(b"DATA")
+    (entry_dir / "index.dat").write_bytes(b"IDX")
+    return mmap_cache.CacheHit(
+        entry_dir=entry_dir,
+        data_path=entry_dir / "dataset.dat",
+        index_path=entry_dir / "index.dat",
+        manifest=mmap_cache.CacheManifest(
+            cache_key="k",
+            created_at=0.0,
+            num_conversations=1,
+            total_size_bytes=4,
+            compressed=False,
+            compressed_size_bytes=0,
+            mmap_format=str(MemoryMapFormat.PAYLOAD_BYTES),
+            all_turns_source_loaded_payloads=all_turns_source_loaded_payloads,
+            dataset_metadata_json='{"conversations": [], "sampling_strategy": "random"}',
+        ),
+    )
+
+
 class TestRejectSystemPromptForRawPayload:
     """A verbatim system prompt cannot ride on datasets that author payloads.
 
@@ -225,21 +258,23 @@ class TestRejectSystemPromptForRawPayload:
 
     def test_no_system_prompt_allows_raw_payload(self) -> None:
         dm = self._manager(_make_synthetic_run())
-        dm._reject_system_prompt_for_raw_payload([_raw_conversation()])
+        dm._reject_system_prompt_for_raw_payload(_has_raw([_raw_conversation()]))
 
     def test_system_prompt_without_raw_payload_is_allowed(self) -> None:
         dm = self._manager(_make_system_prompt_run())
-        dm._reject_system_prompt_for_raw_payload([_single_turn_conversation()])
+        dm._reject_system_prompt_for_raw_payload(
+            _has_raw([_single_turn_conversation()])
+        )
 
     def test_system_prompt_with_raw_payload_raises(self) -> None:
         dm = self._manager(_make_system_prompt_run())
         with pytest.raises(ValueError, match="raw_payload"):
-            dm._reject_system_prompt_for_raw_payload([_raw_conversation()])
+            dm._reject_system_prompt_for_raw_payload(_has_raw([_raw_conversation()]))
 
     def test_error_names_the_flag_and_the_way_out(self) -> None:
         dm = self._manager(_make_system_prompt_run())
         with pytest.raises(ValueError) as excinfo:
-            dm._reject_system_prompt_for_raw_payload([_raw_conversation()])
+            dm._reject_system_prompt_for_raw_payload(_has_raw([_raw_conversation()]))
 
         message = str(excinfo.value)
         assert "--system-prompt/--system-prompt-file" in message
@@ -254,7 +289,7 @@ class TestRejectSystemPromptForRawPayload:
         conversations = [_single_turn_conversation(), _raw_conversation()]
 
         with pytest.raises(ValueError, match="raw_payload"):
-            dm._reject_system_prompt_for_raw_payload(conversations)
+            dm._reject_system_prompt_for_raw_payload(_has_raw(conversations))
 
     def test_preformatted_payloads_are_not_rejected(
         self, monkeypatch: pytest.MonkeyPatch
@@ -269,7 +304,7 @@ class TestRejectSystemPromptForRawPayload:
         conversations = [_single_turn_conversation()]
         conversations[0].system_message = "VERBATIM-SYS"
 
-        dm._reject_system_prompt_for_raw_payload(conversations)
+        dm._reject_system_prompt_for_raw_payload(_has_raw(conversations))
         dm._preformat_payloads(conversations)
 
         # The synthesized payload really does carry the system message, which
@@ -285,7 +320,32 @@ class TestRejectSystemPromptForRawPayload:
         # the whole reason the call site sits before _preformat_payloads; if it
         # ever moves, this assertion documents what breaks.
         with pytest.raises(ValueError, match="raw_payload"):
-            dm._reject_system_prompt_for_raw_payload(conversations)
+            dm._reject_system_prompt_for_raw_payload(_has_raw(conversations))
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_with_raw_payload_manifest_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """A warm HIT never loads conversations, so the composition-path guard
+        never runs. The manifest's ``all_turns_source_loaded_payloads`` is the
+        only signal left; the same rejection must fire before the cached bytes
+        are adopted."""
+        dm = self._manager(_make_system_prompt_run())
+        hit = _make_cache_hit(tmp_path, all_turns_source_loaded_payloads=True)
+
+        with pytest.raises(ValueError, match="raw_payload"):
+            await dm._configure_from_cache_hit(hit)
+        assert dm._cache_hit_used is False
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_without_raw_payload_manifest_passes_guard(
+        self, tmp_path: Path
+    ) -> None:
+        dm = self._manager(_make_system_prompt_run())
+        hit = _make_cache_hit(tmp_path, all_turns_source_loaded_payloads=False)
+
+        await dm._configure_from_cache_hit(hit)
+        assert dm._cache_hit_used is True
 
 
 class TestPreformatPayloads:
