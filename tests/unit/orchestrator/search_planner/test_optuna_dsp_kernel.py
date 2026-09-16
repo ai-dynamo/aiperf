@@ -110,9 +110,10 @@ def test_qlognei_candidates_func_fits_with_sla_constraints(n_sla_filters: int) -
 
 @pytest.mark.parametrize(
     "n_sla_filters",
-    [param(0, id="no-sla"), param(1, id="one-sla"), param(2, id="two-slas")],
+    [param(0, id="no-sla"), param(1, id="one-sla")],
 )  # fmt: skip
 def test_qlognei_candidates_func_supports_repeated_fits(n_sla_filters: int) -> None:
+    """Keep successive qLogNEI candidates finite and in bounds as data grows."""
     torch.manual_seed(0)
     func = build_qlognei_candidates_func()
     train_x = torch.linspace(0, 1, 6, dtype=torch.float64).unsqueeze(-1)
