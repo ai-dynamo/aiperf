@@ -221,10 +221,14 @@ If the probe were unsigned, API Gateway would answer `403`, and the readiness
 rule treats any status below `500` as "the server is up" -- so the run would
 start against an endpoint that rejects every request. Signing the probe
 closes that gap: when a signer is configured, a `401`/`403` response is
-never treated as "ready" -- it's reported as a signature/credential
-misconfiguration (check region, service, and credentials) instead of
-silently letting the run start. Signing the probe is what makes preflight
-actually gate the benchmark.
+never treated as "ready". Preflight stops there and reports the likely
+causes, because none of them are fixed by retrying.
+
+A rejection is not proof that the signature is wrong. An IAM policy denial, a
+WAF rule, or a path the endpoint does not route all return `401`/`403` on a
+perfectly valid signature -- API Gateway in particular answers an unrouted
+path with `403 Missing Authentication Token`, which AIPerf names explicitly so
+you check the URL rather than the credentials.
 
 ## Examples
 

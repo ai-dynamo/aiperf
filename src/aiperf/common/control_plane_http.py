@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.endpoint_auth import sign_request
+from aiperf.common.endpoint_auth import no_redirect_kwargs, sign_request
 from aiperf.common.redact import redact_url
 
 if TYPE_CHECKING:
@@ -74,15 +74,28 @@ async def control_plane_post(
     safe_url = redact_url(url)
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     # trust_env=False keeps loopback / cluster traffic off ambient HTTP(S)_PROXY.
+    # Scoped to the signing call alone: a catch-all spanning the request would
+    # label any failure below "signing failed" and force it retryable, which is
+    # both untrue (with no signer, sign_request returns immediately) and a
+    # behavior change, since _post_with_retry branches on error.retryable.
     try:
         url, headers, signed_body = await sign_request(
             signer, method="POST", url=url, headers=headers, body=body
         )
         body = signed_body if signed_body is not None else body
         safe_url = redact_url(url)
+    except Exception as exc:
+        raise ControlPlaneHttpError(
+            f"control_plane POST {safe_url} signing failed: {type(exc).__name__}: {exc}",
+            retryable=True,
+        ) from exc
+
+    try:
         async with (
             aiohttp.ClientSession(timeout=timeout, trust_env=False) as session,
-            session.post(url, headers=headers, data=body) as resp,
+            session.post(
+                url, headers=headers, data=body, **no_redirect_kwargs(signer)
+            ) as resp,
         ):
             if 200 <= resp.status < 300:
                 _logger.debug(lambda: f"control_plane POST {safe_url} -> {resp.status}")
@@ -101,7 +114,9 @@ async def control_plane_post(
             retryable=True,
         ) from exc
     except Exception as exc:
+        # Genuinely unexpected: not a transport hiccup, so retrying it would
+        # burn the caller's whole backoff budget on something already fatal.
         raise ControlPlaneHttpError(
-            f"control_plane POST {safe_url} signing failed: {type(exc).__name__}: {exc}",
-            retryable=True,
+            f"control_plane POST {safe_url} failed: {type(exc).__name__}: {exc}",
+            retryable=False,
         ) from exc

@@ -34,7 +34,7 @@ import aiohttp
 import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.common.endpoint_auth import sign_request
+from aiperf.common.endpoint_auth import no_redirect_kwargs, sign_request
 
 if TYPE_CHECKING:
     from aiperf.auth.base_signer import RequestSignerProtocol
@@ -145,26 +145,45 @@ def _response_status_and_error(record: Any) -> tuple[int | str, str]:
 
 
 def _raise_if_signed_auth_rejected(
-    *, status: int | None, signer: RequestSignerProtocol | None, request_url: str
+    *,
+    status: int | None,
+    signer: RequestSignerProtocol | None,
+    request_url: str,
+    detail: str = "",
 ) -> None:
     """Fail fast when a *signed* probe request is rejected as unauthorized.
 
     A 401/403 on an unsigned request is expected to surface the same way on
     the first real benchmark request, so it's left to retry/timeout like any
-    other probe failure. But when a ``signer`` (e.g. SigV4) is configured,
-    401/403 almost always means the signature itself is wrong — bad
-    credentials, region, or service name — and retrying for the full
-    ``timeout_s`` won't fix that. Raise immediately with a clear cause
-    instead of silently retrying until the probe times out.
+    other probe failure. When a ``signer`` (e.g. SigV4) is configured, none of
+    the plausible causes are fixed by retrying, so preflight stops here rather
+    than spinning until ``timeout_s``.
+
+    The cause is offered, not asserted. A valid signature still draws 401/403
+    from an IAM policy denial, a WAF rule, or a path the endpoint does not
+    route -- and API Gateway, whose ``execute-api`` is this feature's headline
+    target, answers an unrouted path with 403 ``Missing Authentication Token``.
     """
     if signer is None or status not in (401, 403):
         return
+    if "missing authentication token" in detail.lower():
+        cause = (
+            "API Gateway returns this for a path it does not route, so the URL "
+            "is the likely problem rather than the signature: check the "
+            "endpoint path against the deployed route."
+        )
+    else:
+        cause = (
+            "This may mean the signed request's credentials, region, or service "
+            "are misconfigured (check --aws-region / --aws-service and your AWS "
+            "credentials). An IAM policy denial, a WAF rule, or a path the "
+            "endpoint does not route all return 401/403 on a perfectly valid "
+            "signature too."
+        )
     raise RuntimeError(
         f"Readiness probe to {request_url} was rejected with status {status} "
-        f"despite a request signer being configured. This usually means the "
-        f"signed request's credentials, region, or service are misconfigured "
-        f"(check --aws-region / --aws-service and your AWS credentials) — "
-        f"retrying will not fix a signature mismatch."
+        f"despite a request signer being configured. {cause} Retrying will not "
+        f"fix any of these, so preflight stops here."
     )
 
 
@@ -213,7 +232,10 @@ async def _base_url_ready_after_models_404(
         signer, method="GET", url=url, headers=headers
     )
     fallback = await client.get_request(
-        fallback_url, headers=fallback_headers, timeout=fallback_timeout
+        fallback_url,
+        headers=fallback_headers,
+        timeout=fallback_timeout,
+        **no_redirect_kwargs(signer),
     )
     if fallback.status is not None and 200 <= fallback.status < 300:
         _logger.info(
@@ -222,7 +244,10 @@ async def _base_url_ready_after_models_404(
         )
         return True
     _raise_if_signed_auth_rejected(
-        status=fallback.status, signer=signer, request_url=url
+        status=fallback.status,
+        signer=signer,
+        request_url=url,
+        detail=_response_status_and_error(fallback)[1],
     )
     _logger.info(
         f"/v1/models returned 404 and base URL returned "
@@ -303,7 +328,10 @@ async def _wait_models(
             signer, method="GET", url=models_url, headers=headers
         )
         record = await client.get_request(
-            signed_url, headers=signed_headers, timeout=request_timeout
+            signed_url,
+            headers=signed_headers,
+            timeout=request_timeout,
+            **no_redirect_kwargs(signer),
         )
 
         if record.status == 200 and record.responses:
@@ -332,7 +360,10 @@ async def _wait_models(
                 return
         else:
             _raise_if_signed_auth_rejected(
-                status=record.status, signer=signer, request_url=models_url
+                status=record.status,
+                signer=signer,
+                request_url=models_url,
+                detail=_response_status_and_error(record)[1],
             )
             status_repr, error_repr = _response_status_and_error(record)
             _logger.info(
@@ -409,11 +440,15 @@ async def _wait_inference(
             payload=signed_body,
             headers=signed_headers,
             timeout=request_timeout,
+            **no_redirect_kwargs(signer),
         )
 
         status = record.status
         _raise_if_signed_auth_rejected(
-            status=status, signer=signer, request_url=request_url
+            status=status,
+            signer=signer,
+            request_url=request_url,
+            detail=_response_status_and_error(record)[1],
         )
         if status is not None and status < 500:
             _logger.info(

@@ -14,6 +14,8 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 import orjson
 
+from aiperf.auth.base_signer import SignedRequest
+from aiperf.common.endpoint_auth import no_redirect_kwargs
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     RequestContentType,
@@ -39,6 +41,20 @@ from aiperf.transports.base_transports import (
     FirstTokenCallback,
     TransportMetadata,
 )
+
+
+def _same_origin(url: str, reference: str) -> bool:
+    """Whether ``url`` targets the same scheme, host, and port as ``reference``.
+
+    Used to decide whether a URL the benchmarked server handed us may be signed
+    with the endpoint's AWS credentials, so it fails closed: a URL that does not
+    parse counts as foreign rather than raising into the caller.
+    """
+    try:
+        a, b = urlsplit(url), urlsplit(reference)
+    except ValueError:
+        return False
+    return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
 
 
 def _has_http_scheme(url: str) -> bool:
@@ -383,14 +399,7 @@ class AioHttpTransport(BaseTransport):
                         f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
                     )
 
-            # A redirect would replay the signed headers at the new origin.
-            # aiohttp drops Authorization when the origin changes, but has no such
-            # rule for custom headers, so X-Amz-Security-Token -- a bearer
-            # credential -- would follow. Nothing is lost by refusing: SigV4 signs
-            # the Host header, so a replayed signature is invalid there anyway.
-            redirect_kwargs: dict[str, Any] = (
-                {"allow_redirects": False} if self.request_signer else {}
-            )
+            redirect_kwargs = no_redirect_kwargs(self.request_signer)
 
             record = await self.aiohttp_client.post_request(
                 url,
@@ -574,7 +583,9 @@ class AioHttpTransport(BaseTransport):
                 "form-data. EndpointConfig should have rejected "
                 "auth_type + multipart at config time."
             )
-        record = await self.aiohttp_client.post_request(url, body, headers)
+        record = await self.aiohttp_client.post_request(
+            url, body, headers, **no_redirect_kwargs(self.request_signer)
+        )
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
             return result
@@ -608,7 +619,11 @@ class AioHttpTransport(BaseTransport):
 
         while (time.perf_counter_ns() - poll_start) / 1e9 < timeout:
             signed = await self._sign_if_needed("GET", poll_url, headers)
-            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
+            record = await self.aiohttp_client.get_request(
+                signed.url,
+                signed.headers,
+                **no_redirect_kwargs(self.request_signer),
+            )
             result = self._parse_video_response(record, "poll")
             if isinstance(result, ErrorDetails):
                 return result
@@ -649,17 +664,36 @@ class AioHttpTransport(BaseTransport):
         job_id: str,
         content_url: str,
         headers: dict[str, str],
+        *,
+        signing_origin_url: str,
     ) -> bytes | ErrorDetails:
         """Download video content via GET /v1/videos/{id}/content.
 
         Returns video bytes on success, ErrorDetails on failure.
         Used when --download-video-content is enabled.
+
+        ``content_url`` may come from the benchmarked server's own response
+        body, so it is signed only when it shares an origin with
+        ``signing_origin_url``. Signing it unconditionally would let that server
+        name any host and receive a fresh signature plus the raw session token;
+        it would also break the benign case, since the natural value is a
+        presigned S3 URL and S3 rejects a presigned request that also carries an
+        ``Authorization`` header.
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         try:
-            signed = await self._sign_if_needed("GET", content_url, headers)
-            record = await self.aiohttp_client.get_request(signed.url, signed.headers)
+            sign_this = _same_origin(content_url, signing_origin_url)
+            signed = (
+                await self._sign_if_needed("GET", content_url, headers)
+                if sign_this
+                else SignedRequest(url=content_url, headers=headers, body=None)
+            )
+            record = await self.aiohttp_client.get_request(
+                signed.url,
+                signed.headers,
+                **(no_redirect_kwargs(self.request_signer) if sign_this else {}),
+            )
             if record.error:
                 return ErrorDetails(
                     type="VideoDownloadError",
@@ -754,7 +788,7 @@ class AioHttpTransport(BaseTransport):
             if download_content:
                 content_url = data.get("url") or f"{poll_url}/content"
                 download_result = await self._download_video_content(
-                    job_id, content_url, headers
+                    job_id, content_url, headers, signing_origin_url=poll_url
                 )
                 if isinstance(download_result, ErrorDetails):
                     return make_record(error=download_result)
