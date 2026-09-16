@@ -48,7 +48,8 @@ class TestServerMetricsCliParity:
         ):
             build_server_metrics(cli)
 
-    def test_discovery_mode_is_forwarded(self):
+    def test_discovery_mode_is_forwarded(self) -> None:
+        """Forward an explicitly configured discovery mode."""
         cli = _make_cli(server_metrics_discovery_mode="disabled")
 
         assert build_server_metrics(cli)["discovery"] == {

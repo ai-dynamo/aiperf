@@ -396,7 +396,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     namespace=discovery.namespace,
                     label_selector=(
                         discovery.label_selector
-                        or Environment.SERVER_METRICS.DISCOVERY_LABEL_SELECTOR
+                        if discovery.label_selector is not None
+                        else Environment.SERVER_METRICS.DISCOVERY_LABEL_SELECTOR
                     ),
                     request_timeout=discovery.timeout_seconds,
                 ),

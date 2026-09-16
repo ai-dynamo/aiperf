@@ -246,7 +246,8 @@ annotation path.
 
 Set `AIPERF_SERVER_METRICS_DISCOVERY_LABEL_SELECTOR` to provide a default selector
 without a configuration file. An explicit `server_metrics.discovery.label_selector`
-value takes precedence.
+value takes precedence. Set it to an empty string to ignore the environment default
+and use only the built-in eligibility rules.
 
 #### RBAC prerequisites
 
