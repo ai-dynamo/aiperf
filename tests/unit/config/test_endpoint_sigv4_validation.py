@@ -248,3 +248,90 @@ class TestServiceFlagOptionalWhenTransportSuppliesIt:
             aws_service="execute-api",
         )
         assert cfg.aws_service == "execute-api"
+
+
+class TestLoopbackExemptionParsesAddresses:
+    """The exemption must be decided by parsing the host as an IP address, not
+    by matching its text. A prefix test lets anyone who controls a domain mint
+    a name that merely *looks* loopback and collect the signature plus the
+    session token in cleartext.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("http://127.attacker.example/api", id="subdomain-of-127"),
+            param("http://127.0.0.1.nip.io/api", id="loopback-shaped-domain"),
+            param("http://localhost.attacker.example/api", id="localhost-prefix"),
+        ],
+    )  # fmt: skip
+    def test_a_host_that_only_looks_loopback_is_rejected(self, url: str) -> None:
+        with pytest.raises(ValueError, match="https"):
+            EndpointConfig(
+                urls=[url],
+                auth_type="sigv4",
+                aws_region="us-east-1",
+                aws_service="execute-api",
+            )
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            param("http://127.0.0.1:8765", id="canonical"),
+            param("http://127.1.2.3:8765", id="elsewhere-in-127-8"),
+            param("http://[::1]:8765", id="ipv6-loopback"),
+            param("http://[::ffff:127.0.0.1]:8765", id="ipv4-mapped-loopback"),
+        ],
+    )  # fmt: skip
+    def test_real_loopback_addresses_stay_exempt(self, url: str) -> None:
+        cfg = EndpointConfig(
+            urls=[url],
+            auth_type="sigv4",
+            aws_region="us-east-1",
+            aws_service="execute-api",
+        )
+        assert cfg.urls == [url]
+
+
+class TestDerivedServiceIsNotTreatedAsAUserSetFlag:
+    """``aws_flags`` answers two questions: what is the effective service, and
+    which flags did the *user* pass. Folding the transport-derived id into the
+    second makes an unsigned run fail over a flag nobody typed.
+    """
+
+    def test_a_declaring_transport_does_not_require_auth_type(self) -> None:
+        from aiperf.transports.aiohttp_transport import AioHttpTransport
+        from tests.harness import mock_plugin
+
+        class _AwsishTransport(AioHttpTransport):
+            botocore_service_id = "sagemaker-runtime"
+
+        with mock_plugin("transport", "awsish3", _AwsishTransport):
+            cfg = EndpointConfig.model_construct(
+                urls=["https://x.example.com"],
+                auth_type=None,
+                aws_region=None,
+                aws_profile=None,
+                aws_service=None,
+                transport="awsish3",
+            )
+            cfg._validate_sigv4_auth()
+
+    def test_a_user_set_flag_on_a_declaring_transport_still_errors(self) -> None:
+        from aiperf.transports.aiohttp_transport import AioHttpTransport
+        from tests.harness import mock_plugin
+
+        class _AwsishTransport(AioHttpTransport):
+            botocore_service_id = "sagemaker-runtime"
+
+        with mock_plugin("transport", "awsish4", _AwsishTransport):
+            cfg = EndpointConfig.model_construct(
+                urls=["https://x.example.com"],
+                auth_type=None,
+                aws_region=None,
+                aws_profile=None,
+                aws_service="execute-api",
+                transport="awsish4",
+            )
+            with pytest.raises(ValueError, match="--aws-service has no effect"):
+                cfg._validate_sigv4_auth()

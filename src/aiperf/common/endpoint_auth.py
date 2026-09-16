@@ -75,6 +75,23 @@ async def sign_request(
     )
 
 
+def no_redirect_kwargs(signer: RequestSignerProtocol | None) -> dict[str, bool]:
+    """Request kwargs that stop a *signed* request from following redirects.
+
+    aiohttp drops ``Authorization`` when a redirect crosses origins, but has no
+    equivalent rule for custom headers, so ``x-amz-security-token`` -- a bearer
+    credential valid wherever it lands -- would follow. Refusing costs nothing:
+    SigV4 signs the ``Host`` header, so a signature replayed at another origin
+    is invalid there anyway, and following the redirect could only leak the
+    token and then fail.
+
+    Returns an empty dict when no signer is configured, so unsigned callers keep
+    their existing redirect behavior and every signed call site can spread this
+    unconditionally.
+    """
+    return {"allow_redirects": False} if signer is not None else {}
+
+
 @asynccontextmanager
 async def endpoint_signer(
     cfg: BenchmarkConfig,
@@ -100,8 +117,12 @@ async def endpoint_signer(
 
     signer_class = plugins.get_class(PluginType.REQUEST_SIGNER, auth_type)
     signer = signer_class(model_endpoint=ModelEndpointInfo.from_config(cfg))
-    await signer.initialize_and_start()
+    # Start inside the try: a signer that fails partway through start-up has
+    # already resolved credentials and scheduled its refresh background task,
+    # and the finally is what guarantees those are torn down here rather than
+    # via AIPerfLifecycleMixin internals.
     try:
+        await signer.initialize_and_start()
         yield signer
     finally:
         await signer.stop()

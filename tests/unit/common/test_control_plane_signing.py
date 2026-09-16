@@ -120,8 +120,10 @@ async def test_control_plane_post_sends_signed_headers() -> None:
         async def __aexit__(self, *exc: object) -> None:
             return None
 
-        def post(self, url: str, headers: dict[str, str], data: bytes) -> _Resp:
-            captured.update(url=url, headers=headers, data=data)
+        def post(
+            self, url: str, headers: dict[str, str], data: bytes, **kwargs: Any
+        ) -> _Resp:
+            captured.update(url=url, headers=headers, data=data, kwargs=kwargs)
             return _Resp()
 
     with patch("aiohttp.ClientSession", return_value=_Session()):
@@ -282,9 +284,10 @@ async def test_readiness_inference_probe_signs_each_attempt() -> None:
             payload: bytes,
             headers: dict[str, str],
             timeout: object,
+            **kwargs: Any,
         ) -> _Record:
             nonlocal attempts
-            del request_url, timeout
+            del request_url, timeout, kwargs
             attempts += 1
             seen.append(headers["X-Amz-Date"])
             assert signer.calls[-1][2] == payload
@@ -322,10 +325,10 @@ async def test_readiness_models_probe_signs_each_attempt() -> None:
 
     class _Client:
         async def get_request(
-            self, url: str, headers: dict[str, str], timeout: object
+            self, url: str, headers: dict[str, str], timeout: object, **kwargs: Any
         ) -> _Record:
             nonlocal attempts
-            del timeout
+            del timeout, kwargs
             attempts += 1
             seen.append(headers["X-Amz-Date"])
             assert url == "http://server/v1/models"
@@ -401,3 +404,39 @@ def test_control_signer_only_built_when_profiler_hooks_exist(
         signer = TimingManager._create_control_signer(manager, hooks)
 
     assert (signer is not None) is expect_signer
+
+
+@pytest.mark.asyncio
+async def test_endpoint_signer_stops_a_signer_whose_start_failed() -> None:
+    """``initialize_and_start`` sat outside the ``try``, so a signer that got
+    partway through start-up -- resolving credentials, scheduling its refresh
+    background task -- was never handed to the ``finally``.
+
+    ``AIPerfLifecycleMixin`` does route a failed start to ``stop()`` itself, so
+    this is belt-and-braces for the real signer. The guarantee is worth making
+    local rather than inherited: this contextmanager is what the preflight and
+    reset-kv-cache paths rely on, and it should not depend on mixin internals
+    to hold.
+    """
+    stopped = False
+
+    class _FailingSigner:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+
+        async def initialize_and_start(self) -> None:
+            raise ValueError("No AWS credentials found")
+
+        async def stop(self) -> None:
+            nonlocal stopped
+            stopped = True
+
+    cfg = _config(auth_type="sigv4", aws_region="us-east-1", aws_service="execute-api")
+    with (
+        patch("aiperf.plugin.plugins.get_class", return_value=_FailingSigner),
+        pytest.raises(ValueError, match="No AWS credentials"),
+    ):
+        async with endpoint_signer(cfg):
+            pass
+
+    assert stopped, "a signer that failed during start was never stopped"

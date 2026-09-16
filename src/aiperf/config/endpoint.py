@@ -9,6 +9,7 @@ Endpoint - Server connection and API configuration
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
@@ -148,12 +149,25 @@ def _is_cleartext_remote(url: str) -> bool:
     Loopback is deliberately exempt: the documented mock-server workflow signs
     against ``http://localhost``, and headers that never leave the machine are not
     disclosed by the absence of TLS.
+
+    The host is parsed as an address rather than matched as text. A prefix test
+    such as ``host.startswith("127.")`` also accepts ``127.attacker.example`` --
+    a subdomain anyone controlling a domain can create -- and this function is
+    what decides whether a signature and session token may travel in cleartext.
     """
     parsed = urlparse(url if "://" in url else f"http://{url}")
     if parsed.scheme != "http":
         return False
     host = (parsed.hostname or "").lower()
-    return not (host in {"localhost", "::1"} or host.startswith("127."))
+    if host == "localhost":
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    # ipv4_mapped is unwrapped explicitly: is_loopback only began covering
+    # ::ffff:127.0.0.1 in CPython newer than this project's 3.11 floor.
+    return not (getattr(address, "ipv4_mapped", None) or address).is_loopback
 
 
 class EndpointConfig(BaseConfig):
@@ -792,13 +806,13 @@ class EndpointConfig(BaseConfig):
         Runs after ``_validate_request_content_type`` so the multipart check
         sees the auto-selected content type for form-data endpoints.
         """
+        # Exactly what the user passed: this dict also answers "which flags did
+        # they set", so a value derived from the transport must not appear here
+        # or an unsigned run is rejected over a flag nobody typed.
         aws_flags = {
             "--aws-region": self.aws_region,
             "--aws-profile": self.aws_profile,
-            # Optional when the selected transport declares which AWS API it
-            # speaks; the signer then resolves the scope from botocore's model.
-            "--aws-service": self.aws_service
-            or _transport_botocore_service_id(self.transport),
+            "--aws-service": self.aws_service,
         }
         if self.auth_type != RequestSignerType.SIGV4:
             set_flags = sorted(
@@ -810,6 +824,12 @@ class EndpointConfig(BaseConfig):
                     f"to 'sigv4'. Set --auth-type sigv4 to enable request signing."
                 )
             return self
+
+        # Only now that signing is confirmed does the transport get to supply
+        # the credential scope; the signer resolves it from botocore's model.
+        aws_flags["--aws-service"] = self.aws_service or _transport_botocore_service_id(
+            self.transport
+        )
 
         missing = [
             flag
