@@ -292,7 +292,9 @@ with a 300-step one and give a different number.
 > **Gauge-based engines are not token-weighted.** SGLang exposes acceptance as a gauge
 > (`sglang:spec_accept_length`), as does TensorRT-LLM, and the report reads those as the
 > unweighted mean of the scrape samples - a time-average, in which an idle interval counts
-> as much as a busy one. Those cells answer a different question from the token-weighted
+> as much as a busy one. The same applies to a vLLM build that publishes
+> `vllm:spec_decode_mean_accepted_length` or `vllm:spec_decode_draft_acceptance_rate`: the
+> gauges are checked before vLLM's counters, so those cells are time-averaged too. Those cells answer a different question from the token-weighted
 > ones and should not be compared value-for-value against them, nor averaged into a single
 > `Overall` alongside them. Under `--source auto` the report prints the source it resolved
 > for each run to stderr, so mixed provenance is visible rather than silent.

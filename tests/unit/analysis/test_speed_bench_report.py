@@ -848,6 +848,25 @@ class TestBuildReportSources:
 
         assert report == {"m1": {"coding": 3.5}}
 
+    def test_auto_prefers_records_over_the_summary_scalar(self, tmp_path: Path):
+        """Under ``auto``, per-request records win over the run-level scalar.
+
+        Both are present here and disagree, so the assertion pins the
+        precedence order rather than merely that some value was found.
+        """
+        profile = _profile(dataset="speed_bench_coding", model="m1")
+        profile["spec_decode_token_weighted_acceptance_length"] = {"avg": 3.5}
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            profile,
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+
+        report = build_report(find_run_dirs([tmp_path]), metric_type="accept_length")
+
+        assert report == {"m1": {"coding": 2.0}}
+
     def test_summary_metrics_used_when_no_records_exist(self, tmp_path: Path):
         profile = _profile(dataset="speed_bench_coding", model="m1")
         profile["spec_decode_token_weighted_acceptance_length"] = {"avg": 3.5}
@@ -974,6 +993,28 @@ class TestGenerateReport:
 
         assert output.exists()
         assert "m1,2.50" in output.read_text()
+
+    def test_generate_report_forwards_the_source_selector(self, tmp_path: Path):
+        """``--source`` must reach ``build_report``, not just be parsed.
+
+        The fixture carries both a per-request record (2.00) and the run-level
+        summary scalar (3.50), so the CSV distinguishes the two paths.
+        """
+        profile = _profile(dataset="speed_bench_coding", model="m1")
+        profile["spec_decode_token_weighted_acceptance_length"] = {"avg": 3.5}
+        _write_run_dir(
+            tmp_path,
+            "run_coding",
+            profile,
+            records=[_record("coding", accepted=10, drafted=50, steps=10)],
+        )
+        output = tmp_path / "report.csv"
+
+        generate_report(
+            [tmp_path], output=output, output_format="csv", source="summary"
+        )
+
+        assert "m1,3.50" in output.read_text()
 
     def test_generate_report_table_format_prints_without_writing_csv(
         self,
@@ -1102,6 +1143,35 @@ class TestWideMatrixRendering:
     def test_narrow_matrix_does_not_force_a_wide_console(self):
         narrow = {"m": {"coding": 1.0}}
         assert _min_table_width(narrow, ["coding"]) < 80
+
+    def test_wide_overall_is_not_truncated(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ):
+        """Overall is derived, not a key, so it must be measured like a cell.
+
+        Throughput cells run to five digits, which makes the rendered Overall
+        wider than the literal "Overall" header.
+        """
+        monkeypatch.setenv("COLUMNS", "80")
+        results = {
+            "meta-llama/Llama-3.1-8B-Instruct": dict.fromkeys(
+                QUALITATIVE_CATEGORIES, 12345.67
+            )
+        }
+
+        print_table(results, QUALITATIVE_CATEGORIES, "throughput")
+
+        out = capsys.readouterr().out
+        assert "12345.67" in out
+        assert "…" not in out
+
+    def test_short_model_name_still_fits_the_model_header(self):
+        """The first column holds the header "Model" even when every name is shorter."""
+        results = {"m1": {"coding": 4.44}}
+
+        assert _min_table_width(results, ["coding"]) >= (
+            len("Model") + 3 + max(len("coding"), 4) + 3 + len("Overall") + 3 + 1
+        )
 
 
 class TestUnrelatedRunsDoNotPolluteTheMatrix:

@@ -31,11 +31,13 @@ so their columns are directly comparable: acceptance length is
 summed over the run rather than averaged per request.
 
 Engines that expose acceptance as a *gauge* rather than counters (SGLang's
-``sglang:spec_accept_length``, the TRT-LLM equivalent, and the fuzzy fallback)
-are read as the unweighted mean of the scrape samples -- a time-average, in
-which an idle interval counts as much as a busy one. Those cells are not
-volume-weighted and should not be compared value-for-value against the
-token-weighted ones.
+``sglang:spec_accept_length``, the TRT-LLM equivalent, ``vllm:spec_decode_*``
+mean/rate gauges where a build exposes them, and the fuzzy fallback) are read
+as the unweighted mean of the scrape samples -- a time-average, in which an
+idle interval counts as much as a busy one. Those cells are not volume-weighted
+and should not be compared value-for-value against the token-weighted ones. The
+gauges are checked first, so on a vLLM build that publishes both, the gauge
+wins over the counter branch.
 """
 
 from __future__ import annotations
@@ -573,6 +575,18 @@ def detect_columns(results: dict[str, dict[str, float | None]]) -> list[str]:
     return sorted(all_cats)
 
 
+def _overall(data: dict[str, float | None], columns: list[str]) -> float | None:
+    """Macro-average of the categories present for one model.
+
+    ``Overall`` is computed at render time and is never a key in the per-model
+    dict, so every consumer -- the CSV, both table renderers, and the width
+    calculation -- must derive it the same way or the width will not match what
+    is printed.
+    """
+    values = [value for name in columns if (value := data.get(name)) is not None]
+    return mean(values) if values else None
+
+
 def write_csv(
     results: dict[str, dict[str, float | None]],
     columns: list[str],
@@ -583,16 +597,10 @@ def write_csv(
         writer = csv.writer(f)
         writer.writerow(["Model", *columns, "Overall"])
         for model, data in sorted(results.items()):
-            row = [model]
-            values = []
-            for col in columns:
-                v = data.get(col)
-                row.append(f"{v:.2f}" if v is not None else "")
-                if v is not None:
-                    values.append(v)
-            overall = mean(values) if values else None
-            row.append(f"{overall:.2f}" if overall is not None else "")
-            writer.writerow(row)
+            cells = [data.get(col) for col in columns] + [_overall(data, columns)]
+            writer.writerow(
+                [model, *(f"{v:.2f}" if v is not None else "" for v in cells)]
+            )
     print(f"CSV written to {output}")
 
 
@@ -611,12 +619,14 @@ def _min_table_width(
     Each column costs its widest cell plus two padding spaces and a border, and
     the table adds one closing border.
     """
-    widths = [max((len(model) for model in results), default=len("Model"))]
+    widths = [max([len("Model"), *(len(model) for model in results)])]
     for name in (*columns, "Overall"):
         cells = [
             f"{value:.2f}" if value is not None else "-"
             for data in results.values()
-            for value in [data.get(name)]
+            for value in [
+                _overall(data, columns) if name == "Overall" else data.get(name)
+            ]
         ]
         widths.append(max([len(name), *(len(cell) for cell in cells)]))
     return sum(width + 3 for width in widths) + 1
@@ -648,16 +658,8 @@ def print_table(
         table.add_column("Overall", justify="right", style="bold green")
 
         for model, data in sorted(results.items()):
-            row = [model]
-            values = []
-            for col in columns:
-                v = data.get(col)
-                row.append(f"{v:.2f}" if v is not None else "-")
-                if v is not None:
-                    values.append(v)
-            overall = mean(values) if values else None
-            row.append(f"{overall:.2f}" if overall is not None else "-")
-            table.add_row(*row)
+            cells = [data.get(col) for col in columns] + [_overall(data, columns)]
+            table.add_row(model, *(f"{v:.2f}" if v is not None else "-" for v in cells))
 
         # Widen only when the detected console cannot hold the matrix, so a real
         # terminal keeps its own width and an oversized table is not forced on it.
@@ -675,15 +677,8 @@ def print_table(
         print("  ".join(h.rjust(w) for h, w in zip(header, widths, strict=True)))
         print("  ".join("-" * w for w in widths))
         for model, data in sorted(results.items()):
-            values = []
-            cells = [model]
-            for col in columns:
-                v = data.get(col)
-                cells.append(f"{v:.2f}" if v is not None else "-")
-                if v is not None:
-                    values.append(v)
-            overall = mean(values) if values else None
-            cells.append(f"{overall:.2f}" if overall is not None else "-")
+            values = [data.get(col) for col in columns] + [_overall(data, columns)]
+            cells = [model, *(f"{v:.2f}" if v is not None else "-" for v in values)]
             print("  ".join(c.rjust(w) for c, w in zip(cells, widths, strict=True)))
 
 
