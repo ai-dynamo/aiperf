@@ -218,6 +218,12 @@ outside a cluster. `mode: disabled` uses only URL-derived and explicit endpoints
 Discovery is best-effort: a timeout or API error does not prevent the benchmark
 from using its other endpoints.
 
+Set the same mode without a configuration file:
+
+```bash
+aiperf profile --model MODEL ... --server-metrics-discovery-mode disabled
+```
+
 If `namespace` is omitted, discovery searches only the benchmark pod's own
 namespace, resolved from `AIPERF_NAMESPACE` or its mounted ServiceAccount namespace.
 It never silently expands to cluster scope. `namespace: "*"` is the explicit
