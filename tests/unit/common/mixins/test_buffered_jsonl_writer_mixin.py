@@ -513,6 +513,8 @@ class TestBufferedJSONLWriterMixin:
         close_task = asyncio.create_task(writer._close_file())
         # Close must block on the in-flight periodic write, not finish early
         # and close the handle out from under it.
+        # Negative assertion: bounded by count on purpose, not time - _spin_until
+        # would burn its full timeout waiting for a condition that must stay false.
         for _ in range(100):
             if close_task.done():
                 break
