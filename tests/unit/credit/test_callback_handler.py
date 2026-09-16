@@ -10,11 +10,15 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.credit.messages import CreditReturn, FirstToken
-from aiperf.credit.structs import Credit
+from aiperf.credit.structs import Credit, TurnToSend
+from aiperf.plugin.enums import TimingMode
+from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 
 # =============================================================================
 # Test Fixtures
@@ -37,6 +41,7 @@ def mock_progress():
     mock.increment_returned = MagicMock(return_value=False)  # Not final return
     mock.increment_prefill_released = MagicMock()
     mock.all_credits_returned_event = asyncio.Event()
+    mock.in_flight = 0
     mock.in_flight_sessions = 0
     return mock
 
@@ -1111,6 +1116,81 @@ class TestDrainObserverWiring:
     registered via ``BranchOrchestrator.set_drain_observer``.
     """
 
+    @pytest.mark.parametrize("notification", ["credit-return", "orchestrator-drain"])
+    def test_completion_waits_for_child_issued_after_frozen_root_count(
+        self,
+        callback_handler: CreditCallbackHandler,
+        mock_lifecycle: MagicMock,
+        mock_stop_checker: MagicMock,
+        mock_strategy: MagicMock,
+        mock_branch_orchestrator: MagicMock,
+        notification: str,
+    ) -> None:
+        """Wait for a live child even when frozen root counts report completion."""
+        progress = PhaseProgressTracker(
+            CreditPhaseConfig(
+                phase=CreditPhase.PROFILING,
+                timing_mode=TimingMode.REQUEST_RATE,
+                expected_num_sessions=1,
+            )
+        )
+        for depth in (0, 1):
+            progress.increment_sent(
+                TurnToSend(
+                    conversation_id=f"session-{depth}",
+                    x_correlation_id=f"correlation-{depth}",
+                    turn_index=0,
+                    num_turns=1,
+                    agent_depth=depth,
+                )
+            )
+            if depth == 0:
+                progress.freeze_sent_counts()
+                progress.increment_returned(
+                    is_final_turn=True,
+                    cancelled=False,
+                    errored=False,
+                    is_child=False,
+                    no_request=False,
+                )
+        assert progress.check_all_returned_or_cancelled()
+        assert progress.in_flight == 1
+        mock_lifecycle.is_sending_complete = True
+        mock_stop_checker.can_send_child_turn.return_value = False
+        mock_strategy.allows_pending_branch_handoff_after_sending_complete = False
+        mock_branch_orchestrator.has_pending_branch_work.return_value = True
+        callback_handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=progress,
+            lifecycle=mock_lifecycle,
+            stop_checker=mock_stop_checker,
+            strategy=mock_strategy,
+        )
+        callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        def notify_completion() -> None:
+            """Check completion through the selected notification path."""
+            if notification == "orchestrator-drain":
+                mock_branch_orchestrator.set_drain_observer.call_args.args[0]()
+            else:
+                key = CreditPhase.PROFILING
+                callback_handler._signal_all_credits_returned_if_ready(
+                    key, callback_handler._phase_handlers[key], phase=key
+                )
+
+        notify_completion()
+        assert not progress.all_credits_returned_event.is_set()
+        progress.increment_returned(
+            is_final_turn=True,
+            cancelled=False,
+            errored=False,
+            is_child=True,
+            no_request=False,
+        )
+        notify_completion()
+        assert progress.in_flight == 0
+        assert progress.all_credits_returned_event.is_set()
+
     def test_set_branch_orchestrator_registers_drain_observer(self, callback_handler):
         """Attaching an orchestrator must register a drain callback;
         detaching (set None) must clear it."""
@@ -1138,6 +1218,51 @@ class TestDrainObserverWiring:
         callback()
 
         assert mock_progress.all_credits_returned_event.is_set()
+
+    @pytest.mark.parametrize(
+        "all_returned, child_allowed, handoff, expected",
+        [
+            param(True, False, False, True, id="hard-cutoff-drained"),
+            param(False, False, False, False, id="hard-cutoff-in-flight"),
+            param(True, True, False, False, id="session-limit-pending-children"),
+            param(True, True, True, True, id="warmup-handoff-drained"),
+            param(False, True, True, False, id="warmup-handoff-in-flight"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize("notification", ["credit-return", "orchestrator-drain"])
+    def test_completion_signal_respects_child_dispatch_cutoff(
+        self,
+        registered_handler: CreditCallbackHandler,
+        mock_progress: MagicMock,
+        mock_lifecycle: MagicMock,
+        mock_stop_checker: MagicMock,
+        mock_strategy: MagicMock,
+        mock_branch_orchestrator: MagicMock,
+        all_returned: bool,
+        child_allowed: bool,
+        handoff: bool,
+        expected: bool,
+        notification: str,
+    ) -> None:
+        """Keep issued requests and dispatchable DAG work as completion barriers."""
+        mock_progress.check_all_returned_or_cancelled.return_value = all_returned
+        mock_progress.in_flight = 0 if all_returned else 1
+        mock_lifecycle.is_sending_complete = True
+        mock_stop_checker.can_send_child_turn.return_value = child_allowed
+        mock_strategy.allows_pending_branch_handoff_after_sending_complete = handoff
+        mock_branch_orchestrator.has_pending_branch_work.return_value = True
+        registered_handler.set_branch_orchestrator(mock_branch_orchestrator)
+
+        if notification == "orchestrator-drain":
+            callback = mock_branch_orchestrator.set_drain_observer.call_args.args[0]
+            callback()
+        else:
+            key = CreditPhase.PROFILING
+            registered_handler._signal_all_credits_returned_if_ready(
+                key, registered_handler._phase_handlers[key], phase=key
+            )
+
+        assert mock_progress.all_credits_returned_event.is_set() is expected
 
     def test_drain_observer_no_op_when_pending_work_remains(
         self, registered_handler, mock_progress, mock_branch_orchestrator
