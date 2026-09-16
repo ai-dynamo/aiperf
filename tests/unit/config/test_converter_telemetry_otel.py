@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from aiperf.common.enums import ServerMetricsFormat
+from aiperf.common.enums import ServerMetricsDiscoveryMode, ServerMetricsFormat
 from aiperf.config.flags._converter_telemetry import (
     _normalize_otel_metrics_url,
     build_otel,
@@ -47,6 +47,13 @@ class TestServerMetricsCliParity:
             ValueError, match="Cannot use both --no-server-metrics and --server-metrics"
         ):
             build_server_metrics(cli)
+
+    def test_discovery_mode_is_forwarded(self):
+        cli = _make_cli(server_metrics_discovery_mode="disabled")
+
+        assert build_server_metrics(cli)["discovery"] == {
+            "mode": ServerMetricsDiscoveryMode.DISABLED,
+        }
 
 
 class TestOtelUrlNormalization:

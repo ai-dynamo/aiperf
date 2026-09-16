@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from pytest import param
 
-from aiperf.common.enums import ServerMetricsFormat
+from aiperf.common.enums import ServerMetricsDiscoveryMode, ServerMetricsFormat
 from aiperf.config.flags._resolver_server_metrics import (
     build_server_metrics_override,
     normalize_server_metrics_base_for_override,
@@ -69,6 +69,18 @@ def test_no_server_metrics_wins_over_formats():
             server_metrics_formats=["json", "csv", "jsonl"],
         )
     ) == {"enabled": False}
+
+
+def test_discovery_mode_disabled_clears_incompatible_yaml_selectors():
+    assert build_server_metrics_override(
+        _make_cli(server_metrics_discovery_mode="disabled")
+    ) == {
+        "discovery": {
+            "mode": ServerMetricsDiscoveryMode.DISABLED,
+            "label_selector": None,
+            "namespace": None,
+        },
+    }
 
 
 @pytest.mark.parametrize(
