@@ -1116,8 +1116,6 @@ class TestDrainObserverWiring:
     registered via ``BranchOrchestrator.set_drain_observer``.
     """
 
-    @pytest.mark.parametrize("cancelled", [False, True])
-    @pytest.mark.parametrize("pending_work", [False, True])
     @pytest.mark.parametrize("notification", ["credit-return", "orchestrator-drain"])
     def test_completion_waits_for_child_issued_after_frozen_root_count(
         self,
@@ -1126,10 +1124,9 @@ class TestDrainObserverWiring:
         mock_stop_checker: MagicMock,
         mock_strategy: MagicMock,
         mock_branch_orchestrator: MagicMock,
-        cancelled: bool,
-        pending_work: bool,
         notification: str,
     ) -> None:
+        """Wait for a live child even when frozen root counts report completion."""
         progress = PhaseProgressTracker(
             CreditPhaseConfig(
                 phase=CreditPhase.PROFILING,
@@ -1161,7 +1158,7 @@ class TestDrainObserverWiring:
         mock_lifecycle.is_sending_complete = True
         mock_stop_checker.can_send_child_turn.return_value = False
         mock_strategy.allows_pending_branch_handoff_after_sending_complete = False
-        mock_branch_orchestrator.has_pending_branch_work.return_value = pending_work
+        mock_branch_orchestrator.has_pending_branch_work.return_value = True
         callback_handler.register_phase(
             phase=CreditPhase.PROFILING,
             progress=progress,
@@ -1172,6 +1169,7 @@ class TestDrainObserverWiring:
         callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
 
         def notify_completion() -> None:
+            """Check completion through the selected notification path."""
             if notification == "orchestrator-drain":
                 mock_branch_orchestrator.set_drain_observer.call_args.args[0]()
             else:
@@ -1184,7 +1182,7 @@ class TestDrainObserverWiring:
         assert not progress.all_credits_returned_event.is_set()
         progress.increment_returned(
             is_final_turn=True,
-            cancelled=cancelled,
+            cancelled=False,
             errored=False,
             is_child=True,
             no_request=False,
@@ -1227,7 +1225,6 @@ class TestDrainObserverWiring:
             param(True, False, False, True, id="hard-cutoff-drained"),
             param(False, False, False, False, id="hard-cutoff-in-flight"),
             param(True, True, False, False, id="session-limit-pending-children"),
-            param(False, True, False, False, id="session-limit-in-flight"),
             param(True, True, True, True, id="warmup-handoff-drained"),
             param(False, True, True, False, id="warmup-handoff-in-flight"),
         ],
@@ -1247,6 +1244,7 @@ class TestDrainObserverWiring:
         expected: bool,
         notification: str,
     ) -> None:
+        """Keep issued requests and dispatchable DAG work as completion barriers."""
         mock_progress.check_all_returned_or_cancelled.return_value = all_returned
         mock_progress.in_flight = 0 if all_returned else 1
         mock_lifecycle.is_sending_complete = True

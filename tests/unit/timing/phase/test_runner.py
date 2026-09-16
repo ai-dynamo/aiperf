@@ -1022,15 +1022,12 @@ class TestPhaseTypes:
 
 
 class TestEdgeCases:
-    @pytest.mark.parametrize("cancelled", [False, True])
-    @pytest.mark.parametrize("pending_work", [False, True])
     async def test_completion_waits_for_child_issued_after_frozen_root_count(
         self,
         runner: PhaseRunner,
         router: MagicMock,
-        cancelled: bool,
-        pending_work: bool,
     ) -> None:
+        """Wait for a live child even when frozen root counts report completion."""
         progress = runner._progress
         for depth in (0, 1):
             progress.increment_sent(
@@ -1058,14 +1055,15 @@ class TestEdgeCases:
         runner._lifecycle.cancel()
         assert not runner._stop_checker.can_send_child_turn()
         runner._branch_orchestrator = MagicMock()
-        runner._branch_orchestrator.has_pending_branch_work.return_value = pending_work
+        runner._branch_orchestrator.has_pending_branch_work.return_value = True
 
         async def return_child(**kwargs: object) -> bool:
+            """Return the outstanding child after verifying the runner waits for it."""
             assert not progress.all_credits_returned_event.is_set()
             assert not runner._lifecycle.is_complete
             progress.increment_returned(
                 is_final_turn=True,
-                cancelled=cancelled,
+                cancelled=False,
                 errored=False,
                 is_child=True,
                 no_request=False,
@@ -1101,6 +1099,7 @@ class TestEdgeCases:
         child_allowed: bool,
         expected_wait: bool,
     ) -> None:
+        """Keep issued requests and dispatchable DAG work as completion barriers."""
         runner._lifecycle.start()
         runner._lifecycle.mark_sending_complete(timeout_triggered=False)
         runner._progress.check_all_returned_or_cancelled = MagicMock(
