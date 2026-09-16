@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from aiperf.common.models import Conversation
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.dataset.loader.models import MultiTurn
+from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.dataset.loader.speed_bench import SpeedBenchLoader, SpeedBenchRow
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from tests.unit.conftest import make_run_from_cli
@@ -236,6 +236,92 @@ class TestSpeedBenchLoader:
         assert len(conversation.turns) == 2
         assert conversation.turns[0].role == "system"
         assert conversation.turns[0].texts[0].contents == ["Answer tersely."]
+
+
+class TestSpeedBenchLoaderCategoryTagging:
+    def test_turns_carry_their_row_category_as_source_kind(self, create_jsonl_file):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"), category="math"
+                ),
+            ],
+        )
+
+        conversations = loader.convert_to_conversations(dataset)
+
+        by_id = {c.session_id: c for c in conversations}
+        assert by_id[_qid("speed-coding-1")].turns[0].source_kind == "coding"
+        assert by_id[_qid("speed-math-1")].turns[0].source_kind == "math"
+
+    def test_every_turn_of_a_multi_turn_row_carries_the_category(
+        self, create_jsonl_file
+    ):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-chat-1"),
+                    category="roleplay",
+                    messages=[
+                        {"role": "user", "content": "Play a pirate."},
+                        {"role": "user", "content": "Now find the treasure."},
+                    ],
+                )
+            ],
+        )
+
+        conversation = loader.convert_to_conversations(dataset)[0]
+
+        assert len(conversation.turns) == 2
+        assert [turn.source_kind for turn in conversation.turns] == [
+            "roleplay",
+            "roleplay",
+        ]
+
+    def test_category_filtered_run_still_tags_its_rows(self, create_jsonl_file):
+        loader, dataset = _load_speed_bench_file(
+            create_jsonl_file,
+            [
+                _make_speed_bench_row(
+                    question_id=_qid("speed-coding-1"), category="coding"
+                ),
+                _make_speed_bench_row(
+                    question_id=_qid("speed-math-1"), category="math"
+                ),
+            ],
+            category="math",
+        )
+
+        conversations = loader.convert_to_conversations(dataset)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].source_kind == "math"
+
+    def test_conversation_with_no_recorded_category_is_left_untagged(
+        self, create_jsonl_file
+    ):
+        # convert_to_conversations is only meaningful for sessions load_dataset
+        # saw; an unmapped one must pass through rather than raise.
+        loader, _ = _load_speed_bench_file(
+            create_jsonl_file, [_make_speed_bench_row(category="coding")]
+        )
+        unmapped = {
+            "never-loaded": [
+                MultiTurn(
+                    session_id="never-loaded",
+                    turns=[SingleTurn(text="hi", role="user")],
+                )
+            ]
+        }
+
+        conversations = loader.convert_to_conversations(unmapped)
+
+        assert conversations[0].turns[0].source_kind is None
 
 
 class TestSpeedBenchLoaderCategoryFiltering:
