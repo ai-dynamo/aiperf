@@ -196,7 +196,7 @@ def _is_eligible(
         return True
     if _has_inference_server_container(pod):
         return True
-    return label_selector is not None
+    return bool(label_selector)
 
 
 def _has_inference_server_container(pod: V1Pod) -> bool:
