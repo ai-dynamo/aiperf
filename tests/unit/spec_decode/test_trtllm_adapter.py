@@ -58,7 +58,6 @@ def _response(
 
 
 def _non_streaming(payload: dict[str, Any]) -> list[ParsedResponse]:
-    """Single response carrying both the stats and usage."""
     return [_response(spec_decode_stats=payload, usage={"completion_tokens": 50})]
 
 

@@ -139,7 +139,6 @@ class TestPayloadsProduceRecords:
         assert payload["num_accepted_draft_tokens"] <= payload["num_draft_tokens"]
 
     def test_adaptive_bound_round_trips(self, spec_decode_config) -> None:
-        """num_spec_tokens: null must survive generation and adaptation."""
         spec_decode_config(flavor="trtllm", num_spec_tokens=None)
         payload = build_spec_decode_payload(_ctx(100))
         assert payload["num_spec_tokens"] is None
