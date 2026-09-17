@@ -551,9 +551,21 @@ def build_spec_decode_payload(ctx: "RequestCtx") -> dict[str, Any] | None:
     if completion_tokens <= 0:
         return None
 
-    num_spec_steps = max(1, round(completion_tokens / (1 + rate * k)))
+    # Each verify step emits one always-accepted bonus token plus whatever drafts
+    # it accepted, so ``num_spec_steps + num_accepted == completion_tokens`` is a
+    # physical identity rather than a modelling choice. Derive the accepted count
+    # from the token count instead of rounding it independently: independent
+    # rounding disagreed with the usage reported beside it for
+    # ``completion_tokens <= 2``, emitting acceptance that implied more tokens
+    # than the response contained.
+    #
+    # The floor on steps is what keeps accepted <= drafted. A step contributes at
+    # most k + 1 tokens, so fewer than ceil(completion_tokens / (k + 1)) steps
+    # could not have produced the tokens being claimed.
+    minimum_steps = math.ceil(completion_tokens / (k + 1))
+    num_spec_steps = max(1, minimum_steps, round(completion_tokens / (1 + rate * k)))
     num_draft_tokens = k * num_spec_steps
-    num_accepted = round(rate * num_draft_tokens)
+    num_accepted = completion_tokens - num_spec_steps
 
     # base <= k always, since num_accepted <= num_draft_tokens = k * steps; and
     # base == k forces rem == 0, so base + 1 never runs off the histogram.

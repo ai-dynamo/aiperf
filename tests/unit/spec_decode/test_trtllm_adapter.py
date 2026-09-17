@@ -106,7 +106,7 @@ class TestAdapt:
         assert record.draft_acceptance_rate == 0.5
         assert record.num_spec_tokens == 3
         assert record.completion_tokens == 50
-        # Sparse map with zero-count buckets dropped -- index 1 is absent.
+        # Zero-count buckets are dropped by the dense -> sparse inflation.
         assert record.acceptance_histogram == {0: 8, 2: 6, 3: 6}
 
     def test_mean_acceptance_length_is_derived_from_counts(self) -> None:
