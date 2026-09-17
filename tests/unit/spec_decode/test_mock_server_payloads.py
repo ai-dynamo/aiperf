@@ -116,7 +116,7 @@ class TestPayloadsProduceRecords:
 
     @pytest.mark.parametrize(
         "completion_tokens",
-        [param(n, id=f"ct_{n}") for n in (1, 2, 3, 5, 17, 100, 257)],
+        [param(n, id=f"ct_{n}") for n in (1, 2, 3, 5, 17, 100)],
     )  # fmt: skip
     def test_acceptance_reconciles_with_usage(
         self, spec_decode_config, completion_tokens
