@@ -189,9 +189,12 @@ TRTLLM_STATS = {
 class TestPerChoiceCapture:
     """The per-choice placement TensorRT-LLM uses, on both endpoints.
 
-    Streaming differs from vLLM's layout: TRT-LLM rides the terminal content
-    chunk's choice (the one carrying ``finish_reason``), not a trailing
-    empty-choices usage chunk.
+    One case per endpoint rather than per endpoint-and-stream-shape: the capture
+    helper is a pure function of the response body and never inspects the
+    endpoint type, ``object``, or whether the payload arrived on a stream chunk.
+    Both endpoints are kept because they have separate ``_parse_json_response``
+    implementations, each calling the helper independently, so a single case
+    would leave the other call site untested.
     """
 
     def test_chat_non_streaming(self, chat_endpoint: ChatEndpoint) -> None:
@@ -209,21 +212,6 @@ class TestPerChoiceCapture:
         assert parsed is not None
         assert parsed.spec_decode_stats == TRTLLM_STATS
 
-    def test_chat_streaming_terminal_chunk(self, chat_endpoint: ChatEndpoint) -> None:
-        json_obj = {
-            "object": "chat.completion.chunk",
-            "choices": [
-                {
-                    "delta": {"content": "!"},
-                    "finish_reason": "stop",
-                    "speculative_decoding": TRTLLM_STATS,
-                }
-            ],
-        }
-        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
-        assert parsed is not None
-        assert parsed.spec_decode_stats == TRTLLM_STATS
-
     def test_completions_non_streaming(
         self, completions_endpoint: CompletionsEndpoint
     ) -> None:
@@ -232,23 +220,6 @@ class TestPerChoiceCapture:
             "choices": [
                 {
                     "text": "hi",
-                    "finish_reason": "stop",
-                    "speculative_decoding": TRTLLM_STATS,
-                }
-            ],
-        }
-        parsed = completions_endpoint.parse_response(_mock_response(json_obj))
-        assert parsed is not None
-        assert parsed.spec_decode_stats == TRTLLM_STATS
-
-    def test_completions_streaming_terminal_chunk(
-        self, completions_endpoint: CompletionsEndpoint
-    ) -> None:
-        json_obj = {
-            "object": "text_completion",
-            "choices": [
-                {
-                    "text": "!",
                     "finish_reason": "stop",
                     "speculative_decoding": TRTLLM_STATS,
                 }
