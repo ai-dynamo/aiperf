@@ -49,6 +49,7 @@ def make_dsp_kernel(d: int, batch_shape: torch.Size | None = None) -> ScaleKerne
     normalization itself.
     """
     import torch
+    from gpytorch.constraints import GreaterThan
     from gpytorch.kernels import MaternKernel, ScaleKernel
     from gpytorch.priors import GammaPrior, LogNormalPrior
 
@@ -56,11 +57,17 @@ def make_dsp_kernel(d: int, batch_shape: torch.Size | None = None) -> ScaleKerne
         raise ValueError(f"d must be >= 1; got {d}")
     loc = torch.tensor(math.sqrt(2.0) + 0.5 * math.log(d), dtype=torch.float64)
     scale = torch.tensor(math.sqrt(3.0), dtype=torch.float64)
+    lengthscale_prior = LogNormalPrior(loc=loc, scale=scale)
     return ScaleKernel(
         MaternKernel(
             nu=2.5,
             ard_num_dims=d,
-            lengthscale_prior=LogNormalPrior(loc=loc, scale=scale),
+            lengthscale_prior=lengthscale_prior,
+            # Match BoTorch's dimension-scaled prior: optimize directly in a
+            # bounded domain so Softplus cannot underflow to an invalid zero.
+            lengthscale_constraint=GreaterThan(
+                2.5e-2, transform=None, initial_value=lengthscale_prior.mode
+            ),
             batch_shape=batch_shape,
         ),
         outputscale_prior=GammaPrior(2.0, 0.15),
