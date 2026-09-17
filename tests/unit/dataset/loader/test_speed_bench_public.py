@@ -486,6 +486,36 @@ class TestMovedNameMigration:
 
         assert registered >= _MOVED_TO_PUBLIC_DATASET
 
+    @pytest.mark.parametrize("name", sorted(_MOVED_TO_PUBLIC_DATASET))
+    def test_moved_name_in_yaml_format_points_at_the_new_flag(self, name) -> None:
+        """`--custom-dataset-type` and YAML `format:` are the same choice.
+
+        A user with an existing config file never types the flag, so guarding
+        only the CLI spelling leaves them with a bare enum error naming every
+        remaining value instead of the command that replaced theirs.
+        """
+        from pydantic import ValidationError
+
+        from aiperf.config.dataset import FileDataset
+
+        with pytest.raises(ValidationError) as excinfo:
+            FileDataset(name="main", type="file", path="x.jsonl", format=name)
+
+        message = str(excinfo.value)
+        assert "--public-dataset" in message
+        assert f"--public-dataset {name}" in message
+
+    @pytest.mark.parametrize(
+        "name", ["speed_bench_qualitative", "speed_bench_throughput_1k"]
+    )
+    def test_surviving_names_still_load_from_yaml(self, name) -> None:
+        """The 6 base entries still address a prepared file via `format:`."""
+        from aiperf.config.dataset import FileDataset
+
+        dataset = FileDataset(name="main", type="file", path="x.jsonl", format=name)
+
+        assert dataset.format == name
+
     @pytest.mark.parametrize(
         "name", ["speed_bench_qualitative", "speed_bench_throughput_1k"]
     )
