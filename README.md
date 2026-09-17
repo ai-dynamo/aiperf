@@ -253,6 +253,10 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions, and contribution guidelines.
 
+## License
+
+AIPerf is licensed under the [Apache License 2.0](LICENSE). The independently packaged [aiperf-operator Helm chart](deploy/helm/aiperf-operator) includes its own [Apache License 2.0](deploy/helm/aiperf-operator/LICENSE) file.
+
 ## Known Issues
 
 - Output sequence length constraints (`--output-tokens-mean`) cannot be guaranteed unless you pass `ignore_eos` and/or `min_tokens` via `--extra-inputs` to an inference server that supports them.

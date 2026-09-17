@@ -211,22 +211,60 @@ act -j run-integration-tests
 
 You can also use the Visual Studio Code extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
 
-## Developer Certificate of Origin
+## Signing Off Your Work
 
-AIPerf is open source under the Apache 2.0 license (see [the Apache site](https://www.apache.org/licenses/LICENSE-2.0) or [LICENSE](./LICENSE)).
+We require that all contributors "sign-off" on their commits. This certifies that the contribution is your original work, or you have rights to submit it under the same license, or a compatible license.
 
-We respect intellectual property rights and want to ensure all contributions are correctly attributed and licensed. A Developer Certificate of Origin (DCO) is a lightweight mechanism to do that.
+- Any contribution which contains commits that are not Signed-Off will not be accepted.
+- To sign off on a commit you simply use the `--signoff` (or `-s`) option when committing your changes:
 
-The DCO is a declaration attached to every contribution. In the commit message, the developer adds a `Signed-off-by` statement and thereby agrees to the DCO, which you can find at [DeveloperCertificate.org](http://developercertificate.org/).
+  ```bash
+  $ git commit -s -m "Add cool feature."
+  ```
 
-We require that every contribution is signed with a DCO, verified by a required CI check. Please use your real name. We do not accept anonymous contributors or pseudonyms.
+  This will append the following to your commit message:
 
-Each commit must include:
+  ```text
+  Signed-off-by: Your Name <your@email.com>
+  ```
 
-```text
-Signed-off-by: Jane Smith <jane.smith@email.com>
-```
+- Full text of the DCO (https://developercertificate.org/):
 
-You can use `-s` or `--signoff` to add the `Signed-off-by` line automatically.
+  ```text
+  Developer Certificate of Origin
+  Version 1.1
+
+  Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
+
+  Everyone is permitted to copy and distribute verbatim copies of this
+  license document, but changing it is not allowed.
+
+
+  Developer's Certificate of Origin 1.1
+
+  By making a contribution to this project, I certify that:
+
+  (a) The contribution was created in whole or in part by me and I
+      have the right to submit it under the open source license
+      indicated in the file; or
+
+  (b) The contribution is based upon previous work that, to the best
+      of my knowledge, is covered under an appropriate open source
+      license and I have the right under that license to submit that
+      work with modifications, whether created in whole or in part
+      by me, under the same open source license (unless I am
+      permitted to submit under a different license), as indicated
+      in the file; or
+
+  (c) The contribution was provided directly to me by some other
+      person who certified (a), (b) or (c) and I have not modified
+      it.
+
+  (d) I understand and agree that this project and the contribution
+      are public and that a record of the contribution (including all
+      personal information I submit with it, including my sign-off) is
+      maintained indefinitely and may be redistributed consistent with
+      this project or the open source license(s) involved.
+  ```
 
 If your pull request fails the DCO check, see the [DCO Troubleshooting Guide](DCO.md).
