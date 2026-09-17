@@ -1580,6 +1580,14 @@ gpu_telemetry_collector:
     class: aiperf.gpu_telemetry.dcgm_collector:DCGMTelemetryCollector
     description: |
       DCGM telemetry collector that collects GPU telemetry metrics from DCGM HTTP endpoints.
+  amd_dme:
+    class: aiperf.gpu_telemetry.amd_dme_collector:AMDDMETelemetryCollector
+    description: |
+      AMD Device Metrics Exporter (DME) telemetry collector for AMD ROCm GPUs.
+      Collects from remote Prometheus-compatible AMD DME (gpu-operator-metrics-exporter) over HTTP.
+      Enables remote AMD GPU monitoring via AMD's Device Metrics Exporter.
+    metadata:
+      is_local: false
   pynvml:
     class: aiperf.gpu_telemetry.pynvml_collector:PyNVMLTelemetryCollector
     description: |
