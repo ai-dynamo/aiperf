@@ -5,6 +5,7 @@
 
 from aiperf.common.enums import (
     EnergyMetricUnit,
+    FrequencyMetricUnit,
     GenericMetricUnit,
     MetricSizeUnit,
     MetricTimeUnit,
@@ -18,6 +19,8 @@ PYNVML_SOURCE_IDENTIFIER = "pynvml://localhost"
 
 # Source identifier for amdsmi collector (used in TelemetryRecord.telemetry_source_url field)
 AMDSMI_SOURCE_IDENTIFIER = "amdsmi://localhost"
+
+# Source identifier for AMD DME collector is the actual HTTP URL (like DCGM)
 
 NVIDIA_GPU_TELEMETRY_PLATFORM = "nvidia"
 AMD_GPU_TELEMETRY_PLATFORM = "amd"
@@ -128,9 +131,14 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("AMD UMC Activity", "amd_umc_activity", GenericMetricUnit.PERCENT),
     ("AMD MM Activity", "amd_mm_activity", GenericMetricUnit.PERCENT),
     ("AMD GPU Memory Used", "amd_memory_used", MetricSizeUnit.GIGABYTES),
+    ("AMD GPU Memory Free", "amd_memory_free", MetricSizeUnit.GIGABYTES),
+    ("AMD GPU Memory Total", "amd_memory_total", MetricSizeUnit.GIGABYTES),
     ("AMD GPU Temperature", "amd_temperature", TemperatureMetricUnit.CELSIUS),
+    ("AMD Memory Temperature", "amd_memory_temperature", TemperatureMetricUnit.CELSIUS),
     ("AMD ECC Uncorrectable", "amd_ecc_uncorrectable", GenericMetricUnit.COUNT),
     ("AMD Throttle Status", "amd_throttle_status", GenericMetricUnit.COUNT),
+    ("AMD SM Clock Frequency", "amd_sm_clock", FrequencyMetricUnit.MEGAHERTZ),
+    ("AMD Memory Clock Frequency", "amd_mem_clock", FrequencyMetricUnit.MEGAHERTZ),
 ]
 
 # Metrics that are cumulative counters (need delta calculation).
