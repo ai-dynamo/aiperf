@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.weka_trace import (
@@ -470,6 +471,52 @@ def test_preflighted_relative_corpus_survives_model_dump_round_trip(tmp_path):
     assert repeated["serialized"][0].requests[1].requests[0].t == 105.0
 
 
+def test_serialized_timestamp_metadata_cannot_override_explicit_basis(tmp_path):
+    trace = _base_trace(
+        [_normal(0.0, [1]), _subagent(10.0, "a"), _normal(40.0, [1, 2])],
+        trace_id="conflict",
+    )
+    trace["requests"][1]["requests"][0]["t"] = 20.0
+    path = tmp_path / "conflict.json"
+    path.write_text(json.dumps(trace))
+    absolute_loader = _make_loader(
+        path, _mk_user_config(weka_nested_timestamp_basis="absolute")
+    )
+    canonical, _ = absolute_loader.preflight_nested_timestamps(
+        absolute_loader.load_dataset()
+    )
+    dumped = canonical["conflict"][0].model_dump(mode="json", by_alias=True)
+    serialized_path = tmp_path / "conflict-canonical.json"
+    serialized_path.write_text(json.dumps(dumped))
+    relative_loader = _make_loader(
+        serialized_path, _mk_user_config(weka_nested_timestamp_basis="relative")
+    )
+
+    with pytest.raises(
+        DatasetLoaderError,
+        match=(
+            r"--weka-nested-timestamp-basis explicitly requests 'relative'.*"
+            r"metadata for 'absolute'"
+        ),
+    ):
+        relative_loader.preflight_nested_timestamps(relative_loader.load_dataset())
+
+
+def test_serialized_timestamp_metadata_rejects_non_alias_field_name(tmp_path):
+    trace = _base_trace([_normal(0.0, [1])], trace_id="bare_name")
+    path = tmp_path / "bare-name.json"
+    path.write_text(json.dumps(trace))
+    loader = _make_loader(path, _mk_user_config(weka_nested_timestamp_basis="auto"))
+    canonical, _ = loader.preflight_nested_timestamps(loader.load_dataset())
+    dumped = canonical["bare_name"][0].model_dump(mode="json", by_alias=True)
+    dumped["weka_timestamp_resolution"] = dumped.pop(
+        "_aiperf_weka_timestamp_resolution"
+    )
+
+    with pytest.raises(ValidationError, match="weka_timestamp_resolution"):
+        WekaTrace.model_validate(dumped)
+
+
 def test_serialized_timestamp_metadata_cannot_bypass_canonical_validation(tmp_path):
     trace = _base_trace(
         [_normal(0.0, [1]), _subagent(100.0, "a"), _normal(200.0, [1, 2])],
@@ -485,7 +532,7 @@ def test_serialized_timestamp_metadata_cannot_bypass_canonical_validation(tmp_pa
         update={"weka_timestamp_resolution": resolution}
     )
 
-    with pytest.raises(DatasetLoaderError, match="claims canonical root time"):
+    with pytest.raises(DatasetLoaderError, match="non-canonical shape"):
         loader.preflight_nested_timestamps({"forged": [forged]})
 
 
@@ -513,6 +560,8 @@ def test_auto_uses_any_early_child_as_corpus_wide_relative_heuristic(tmp_path, c
     assert relative_child.turns[0].timestamp == pytest.approx(10_000.0)
     assert "selected relative for the whole corpus" in caplog.text
     assert "first relative witness: Trace 'relative'" in caplog.text
+    assert "Auto-selected relative Weka timestamps" in caplog.text
+    assert "absolute-looking anchor evidence at Trace 'absolute'" in caplog.text
     assert "heuristic is not proof" in caplog.text
     assert "cannot reliably detect mixed producer conventions" in caplog.text
 

@@ -142,7 +142,7 @@ WekaRequest: TypeAlias = Annotated[
 
 
 class WekaTimestampResolution(AIPerfBaseModel):
-    """Serializable provenance for one corpus timestamp canonicalization."""
+    """Round-trip metadata for one corpus timestamp canonicalization."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -177,7 +177,7 @@ class WekaTimestampResolution(AIPerfBaseModel):
 class WekaTrace(AIPerfBaseModel):
     """A single Weka trace file."""
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
     _weka_timestamp_resolution: WekaTimestampResolution | None = PrivateAttr(
         default=None
@@ -187,8 +187,8 @@ class WekaTrace(AIPerfBaseModel):
         default=None,
         alias="_aiperf_weka_timestamp_resolution",
         exclude_if=lambda value: value is None,
-        description="Internal provenance attached after AIPerf canonicalizes nested "
-        "timestamps. Raw producer traces omit this field.",
+        description="Internal round-trip metadata attached after AIPerf canonicalizes "
+        "nested timestamps. Raw producer traces omit this field.",
     )
 
     id: str = Field(description="Trace identifier (session ID).")

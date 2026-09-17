@@ -274,12 +274,21 @@ def _canonicalize_weka_nested_timestamps(
         else (configured_basis, "configured")
     )
     warning = None
-    if configured_basis == "relative" and scan.first_absolute_evidence is not None:
-        warning = (
-            "Configured relative Weka timestamps conflict with absolute-looking "
-            f"anchor evidence at {scan.first_absolute_evidence}; honoring the explicit "
-            "corpus-wide setting because timestamp values cannot prove their basis."
-        )
+    if basis == "relative" and scan.first_absolute_evidence is not None:
+        if configured_basis == "relative":
+            warning = (
+                "Configured relative Weka timestamps conflict with absolute-looking "
+                f"anchor evidence at {scan.first_absolute_evidence}; honoring the "
+                "explicit corpus-wide setting because timestamp values cannot prove "
+                "their basis."
+            )
+        else:
+            warning = (
+                "Auto-selected relative Weka timestamps while also finding "
+                "absolute-looking anchor evidence at "
+                f"{scan.first_absolute_evidence}; honoring the corpus-wide ordering "
+                "heuristic because timestamp values cannot prove their basis."
+            )
     normalized: dict[str, list[WekaTrace]] = {}
     clamped = 0
     for trace_id, traces in data.items():
@@ -309,10 +318,10 @@ def _canonicalize_weka_nested_timestamps(
     return normalized, resolution
 
 
-def _validate_serialized_canonical_timestamps(
+def _validate_reloaded_canonical_shape(
     data: dict[str, list[WekaTrace]],
 ) -> None:
-    """Validate durable canonicalization metadata before trusting it."""
+    """Check that reloaded timestamps have a possible canonical root-time shape."""
     scan = _WekaTimestampScan()
     for trace_id, traces in data.items():
         location = _weka_trace_location(trace_id, {})
@@ -325,9 +334,9 @@ def _validate_serialized_canonical_timestamps(
                     if inner.t < request.t:
                         raise DatasetLoaderError(
                             f"{location}, subagent '{request.agent_id}': serialized "
-                            "timestamp metadata claims canonical root time, but inner "
-                            f"request[{inner_idx}] timestamp {inner.t} precedes its "
-                            f"marker timestamp {request.t}"
+                            "timestamp metadata accompanies a non-canonical shape; "
+                            f"inner request[{inner_idx}] timestamp {inner.t} precedes "
+                            f"its marker timestamp {request.t}"
                         )
 
 
@@ -362,7 +371,7 @@ def _read_preflighted_timestamp_resolution(
             "Weka corpus combines traces canonicalized by different preflight runs"
         )
     if needs_validation:
-        _validate_serialized_canonical_timestamps(data)
+        _validate_reloaded_canonical_shape(data)
         for trace in trace_models:
             trace._weka_timestamp_resolution = first
     return first
@@ -1214,6 +1223,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._weka_nested_timestamp_basis = (
             "auto" if configured_basis is None else configured_basis
         )
+        self._weka_nested_timestamp_basis_explicit = configured_basis is not None
         if self._weka_nested_timestamp_basis not in {"auto", "absolute", "relative"}:
             raise ValueError(
                 "nested_timestamp_basis must be 'auto', 'absolute', or 'relative'; "
@@ -2058,6 +2068,17 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         """Resolve and canonicalize one timestamp basis before corpus selection."""
         preflighted = _read_preflighted_timestamp_resolution(data)
         if preflighted is not None:
+            if (
+                self._weka_nested_timestamp_basis_explicit
+                and self._weka_nested_timestamp_basis in {"absolute", "relative"}
+                and preflighted.basis != self._weka_nested_timestamp_basis
+            ):
+                raise DatasetLoaderError(
+                    "--weka-nested-timestamp-basis explicitly requests "
+                    f"'{self._weka_nested_timestamp_basis}', but the corpus carries "
+                    f"canonicalization metadata for '{preflighted.basis}'; use the "
+                    "matching basis or rebuild the corpus from raw producer traces"
+                )
             return data, preflighted
         if source_by_trace is not None:
             self._source_by_trace = source_by_trace
