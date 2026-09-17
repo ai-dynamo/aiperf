@@ -19,7 +19,7 @@ AIPerf's `responses` endpoint type handles the key differences between the Respo
 | Chat Completions | Responses API |
 |---|---|
 | `messages` array | `input` array |
-| `system` role message | Top-level `instructions` field |
+| `system` role message | Top-level `instructions` field (see [System Instructions](#system-instructions) for the authored-system-item case) |
 | `max_completion_tokens` | `max_output_tokens` |
 | `{"type": "text", ...}` content | `{"type": "input_text", ...}` content |
 | `{"type": "image_url", ...}` content | `{"type": "input_image", ...}` content |
@@ -138,6 +138,12 @@ aiperf profile \
 ```
 
 This generates a synthetic system prompt of approximately 50 tokens and places it in the `"instructions"` field of the Responses API payload, rather than adding a system message to the input array. The same prompt is shared across all requests in the session.
+
+### When the dataset authors its own system item
+
+A custom dataset whose turns go through the Responses formatter (for example `multi_turn` with `raw_messages`) may already carry a leading `{"role": "system", ...}` input item. (Datasets that author complete request payloads — `raw_payload`, `inputs_json` — bypass the formatter and are rejected outright when combined with a system prompt; see [Adding a System Prompt](custom-dataset.md#adding-a-system-prompt).) Shipping that alongside `instructions` would give the server two system prompts, so AIPerf merges instead: the `--system-prompt` / `--shared-system-prompt-length` text is prepended to the authored item's content (joined with a blank line), the merged item stays at index 0 of `input` — ahead of any `--user-context-prompt-length` item — and `instructions` is omitted. This mirrors how the `chat` endpoint handles the same collision and keeps the system prompt as the leading wire bytes, which `--cache-bust system-prefix` relies on.
+
+`instructions` is only dropped in that collision case. With no authored system item, the prompt goes to `instructions` as described above.
 
 ---
 
