@@ -17,6 +17,14 @@
 # `server_metrics_export.json` from which the report extracts per-category
 # acceptance length / acceptance rate / throughput.
 #
+# This is the ENGINE-PORTABLE path, needed when acceptance can only be read
+# from the server's Prometheus endpoint (SGLang, TensorRT-LLM, NIM-LLM, or a
+# vLLM behind Dynamo). On vLLM started with `--per-request-spec-decode-metrics`,
+# a SINGLE run over the aggregate `speed_bench_qualitative` split produces the
+# same matrix: every request carries its category into the per-request records
+# and `aiperf speed-bench-report` groups them. See
+# docs/tutorials/speed-bench.md "Per-Category Matrix in One Run".
+#
 # Output layout (one variation per category):
 #   ./artifacts/speed_bench_sweep/
 #     datasets.main.dataset=speed_bench_coding/profile_runs/run_0001/

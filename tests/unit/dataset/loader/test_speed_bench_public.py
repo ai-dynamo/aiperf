@@ -1012,3 +1012,59 @@ class TestRegisteredEntriesMatchThePublishedDataset:
             "Registered SPEED-Bench entries no longer match the published "
             "dataset:\n  " + "\n  ".join(mismatches)
         )
+
+
+class TestCategoryTagging:
+    """A single run over an aggregate split must carry its own breakdown.
+
+    `aiperf speed-bench-report --source records` groups per-request records by
+    `metadata.source_kind`. Without the stamp every record falls back to the
+    run-level category and an 11-column matrix silently collapses to one, so
+    the public path has to tag exactly as the custom-file loader does.
+    """
+
+    @pytest.mark.asyncio
+    async def test_every_turn_carries_its_row_category(self) -> None:
+        loader = SpeedBenchPublicLoader.__new__(SpeedBenchPublicLoader)
+        loader.config = "qualitative"
+        loader.category = None
+        loader.multi_turn = True
+        loader.session_id_generator = type(
+            "G", (), {"next": staticmethod(lambda: "generated")}
+        )()
+
+        conversations = await loader.convert_to_conversations(
+            {
+                "dataset": [
+                    _row("a" * 32, "coding", "Write a function."),
+                    _row("b" * 32, "math", "Solve for x."),
+                ]
+            }
+        )
+
+        assert [t.source_kind for c in conversations for t in c.turns] == [
+            "coding",
+            "math",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_filtered_run_still_tags_its_single_category(self) -> None:
+        """A per-category selector yields one column, not an untagged run."""
+        loader = SpeedBenchPublicLoader.__new__(SpeedBenchPublicLoader)
+        loader.config = "qualitative"
+        loader.category = "coding"
+        loader.multi_turn = True
+        loader.session_id_generator = type(
+            "G", (), {"next": staticmethod(lambda: "generated")}
+        )()
+
+        conversations = await loader.convert_to_conversations(
+            {
+                "dataset": [
+                    _row("a" * 32, "coding", "Write a function."),
+                    _row("b" * 32, "math", "Solve for x."),
+                ]
+            }
+        )
+
+        assert {t.source_kind for c in conversations for t in c.turns} == {"coding"}

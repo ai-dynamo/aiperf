@@ -507,6 +507,14 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
     ) -> list[Conversation]:
         """Convert resolved rows into Conversations, applying the category filter.
 
+        Each turn is stamped with its row's category via ``Turn.source_kind``,
+        which the worker copies onto every request and the record processor
+        writes to ``MetricRecordMetadata.source_kind``. That lets a single run
+        over an aggregate split be broken down per category afterwards -- by
+        ``aiperf speed-bench-report`` or any other consumer -- without the
+        source JSONL, which the artifact directory does not contain. The
+        custom-file loader stamps the same field for the same reason.
+
         Raises:
             DatasetLoaderError: If the category matches no rows.
         """
@@ -528,12 +536,16 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
             if not self.multi_turn:
                 texts = texts[:1]
 
+            category = row.get("category")
             conversations.append(
                 Conversation(
                     session_id=str(question_id)
                     if (question_id := row.get("question_id"))
                     else self.session_id_generator.next(),
-                    turns=[Turn(texts=[Text(contents=[text])]) for text in texts],
+                    turns=[
+                        Turn(texts=[Text(contents=[text])], source_kind=category)
+                        for text in texts
+                    ],
                 )
             )
 
