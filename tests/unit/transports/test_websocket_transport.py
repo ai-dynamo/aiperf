@@ -3,7 +3,9 @@
 """Tests for the OpenAI Responses WebSocket transport."""
 
 import asyncio
+import inspect
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import aiohttp
@@ -43,6 +45,9 @@ class FakeWS:
         self.closed = False
         self.sent: list[str] = []
         self._exc: Exception | None = None
+        # Mirror aiohttp.ClientWebSocketResponse, which always sets ``_response``;
+        # empty history == no redirect, so the redirect guard passes by default.
+        self._response = SimpleNamespace(history=(), url="wss://host/v1/responses")
 
     async def send_str(self, data: str) -> None:
         self.sent.append(data)
@@ -163,6 +168,42 @@ class TestGetUrl:
         )
         assert transport.get_url(info) == "ws://localhost:8000/v1/responses"
 
+    def test_schemeless_base_url_defaults_to_ws(self) -> None:
+        me = create_model_endpoint_info(
+            base_url="localhost:8000", custom_endpoint="/v1/responses"
+        )
+        transport = WebSocketTransport(model_endpoint=me)
+        info = RequestInfo(
+            model_endpoint=me,
+            turns=[],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="r",
+            x_correlation_id="c",
+            conversation_id="c",
+        )
+        assert transport.get_url(info) == "ws://localhost:8000/v1/responses"
+
+    def test_http_base_url_not_mangled_into_ws_http(self) -> None:
+        # Keying the fallback on ``"://" not in url`` (not "lacks ws scheme")
+        # keeps a stray http:// URL from becoming ``ws://http://...``.
+        me = create_model_endpoint_info(
+            base_url="http://localhost:8000", custom_endpoint="/v1/responses"
+        )
+        transport = WebSocketTransport(model_endpoint=me)
+        info = RequestInfo(
+            model_endpoint=me,
+            turns=[],
+            turn_index=0,
+            credit_num=1,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="r",
+            x_correlation_id="c",
+            conversation_id="c",
+        )
+        assert not transport.get_url(info).startswith("ws://http")
+
     def test_v1_base_url_collapses_overlap(self) -> None:
         """A ``ws(s)://host/v1`` base URL must not become ``/v1/v1/responses``."""
         me = create_model_endpoint_info(
@@ -243,6 +284,47 @@ class TestErrorFromEvent:
         err = WebSocketTransport._error_from_event({"type": "response.failed"})
         assert err.type == "response.failed"
         assert "did not complete" in err.message
+
+    def test_string_code_becomes_type_and_code_is_none(self) -> None:
+        # Responses-API codes are strings; the int-typed ErrorDetails.code must
+        # not blow up, and the string must survive as the error type.
+        err = WebSocketTransport._error_from_event(
+            {
+                "type": "error",
+                "error": {"code": "rate_limit_exceeded", "message": "slow down"},
+            }
+        )
+        assert err.code is None
+        assert err.type == "rate_limit_exceeded"
+        assert err.message == "slow down"
+
+    def test_numeric_string_code_coerced_to_int(self) -> None:
+        err = WebSocketTransport._error_from_event(
+            {"type": "error", "error": {"code": "429", "message": "slow down"}}
+        )
+        assert err.code == 429
+
+    def test_top_level_error_frame_without_error_key(self) -> None:
+        # The ``error`` lifecycle frame carries code/message at the top level.
+        err = WebSocketTransport._error_from_event(
+            {"type": "error", "code": "invalid_request", "message": "bad input"}
+        )
+        assert err.type == "invalid_request"
+        assert err.message == "bad input"
+
+    def test_explicit_type_not_overwritten_by_string_code(self) -> None:
+        err = WebSocketTransport._error_from_event(
+            {
+                "type": "response.failed",
+                "error": {
+                    "code": "rate_limit_exceeded",
+                    "type": "server_error",
+                    "message": "boom",
+                },
+            }
+        )
+        assert err.type == "server_error"
+        assert err.code is None
 
 
 @pytest.mark.asyncio
@@ -350,6 +432,29 @@ class TestSendRequest:
         assert record.status != 200
         assert record.error is not None
         assert record.error.message == "kaboom"
+        await transport.stop()
+
+    async def test_response_error_event_is_terminal_failure(self) -> None:
+        # A server that emits response.error must be recorded as that error, not
+        # read past until the turn 408s on the endpoint timeout.
+        transport = await self._transport()
+        fake = FakeWS(
+            [
+                _text(
+                    {
+                        "type": "response.error",
+                        "error": {"code": "server_error", "message": "exploded"},
+                    }
+                ),
+            ]
+        )
+        transport._open = AsyncMock(return_value=fake)
+
+        record = await transport.send_request(_request_info(), {"model": "m"})
+        assert record.status != 200
+        assert record.error is not None
+        assert record.error.type == "server_error"
+        assert record.error.message == "exploded"
         await transport.stop()
 
     async def test_incomplete_event_ends_turn_successfully(self) -> None:
@@ -506,6 +611,48 @@ class TestPoolAndAffinity:
         assert len(opened) == 1
         await transport.stop()
 
+    async def test_reused_socket_reports_handshake_headers(self) -> None:
+        # A live WebSocket sends headers once (on upgrade), so a reused socket runs
+        # on the first turn's handshake identity. record.request_headers must
+        # report that, not a later turn's recomputed set.
+        transport = await self._transport()
+        opened: list[FakeWS] = []
+
+        async def fake_open(
+            request_info: RequestInfo, headers: dict[str, str]
+        ) -> FakeWS:
+            fake = FakeWS(
+                [_text({"type": "response.completed", "response": {"id": "r"}})]
+            )
+            opened.append(fake)
+            return fake
+
+        transport._open = fake_open
+
+        turn_counter = {"n": 0}
+
+        def fake_build_headers(request_info: RequestInfo) -> dict[str, str]:
+            h = {"X-Turn": str(turn_counter["n"])}
+            turn_counter["n"] += 1
+            return h
+
+        transport.build_headers = fake_build_headers
+
+        r1 = await transport.send_request(
+            _request_info(is_final_turn=False), {"model": "m"}
+        )
+        opened[0]._messages = [
+            _text({"type": "response.completed", "response": {"id": "r"}})
+        ]
+        r2 = await transport.send_request(
+            _request_info(is_final_turn=True, turn_index=1), {"model": "m"}
+        )
+
+        assert len(opened) == 1  # socket reused
+        assert r1.request_headers["X-Turn"] == "0"
+        assert r2.request_headers["X-Turn"] == "0"  # not the turn-1 recompute
+        await transport.stop()
+
     async def test_final_turn_drops_lease(self) -> None:
         transport = await self._transport()
         transport._open = AsyncMock(side_effect=lambda ri, h: self._completed())
@@ -623,10 +770,11 @@ class TestReconnectChaining:
         opened[0].closed = True
         # Turn 2 chains onto the prior response but must reconnect; the
         # connection-local cache is gone, so the chained turn cannot succeed.
+        chained = _request_info(
+            is_final_turn=True, turn_index=1, previous_response_id="resp_1"
+        )
         record = await transport.send_request(
-            _request_info(
-                is_final_turn=True, turn_index=1, previous_response_id="resp_1"
-            ),
+            chained,
             {"model": "m", "previous_response_id": "resp_1"},
         )
 
@@ -635,6 +783,9 @@ class TestReconnectChaining:
         # A fresh socket was opened but the doomed turn was never sent on it.
         assert len(opened) == 2
         assert opened[1].sent == []
+        # The guard returns before send, so no unsent envelope is exported as the
+        # replayable wire frame.
+        assert chained.payload_bytes is None
         await transport.stop()
 
     async def test_reconnect_with_store_proceeds(self) -> None:
@@ -947,10 +1098,49 @@ class TestRedirectGuard:
         await WebSocketTransport._reject_redirected_socket(ws)
         assert ws.closed is False
 
-    async def test_allows_socket_with_no_response_attr(self) -> None:
+    async def test_missing_response_attr_fails_closed(self) -> None:
         ws = FakeWS([])
-        await WebSocketTransport._reject_redirected_socket(ws)
-        assert ws.closed is False
+        del ws._response
+        with pytest.raises(ValueError, match="Cannot verify"):
+            await WebSocketTransport._reject_redirected_socket(ws)
+        assert ws.closed is True
+
+
+def test_aiohttp_client_ws_always_sets_response_attr() -> None:
+    # Fail-closed only stays safe if the real socket exposes ``_response``.
+    # Pin the aiohttp contract the guard relies on.
+    source = inspect.getsource(aiohttp.ClientWebSocketResponse.__init__)
+    assert "self._response" in source
+
+
+class TestRejectCleartextCredentials:
+    """The config-time TLS gate cannot see a dataset ``Turn.extra_headers`` merged
+    into the handshake headers, so ``_open`` re-checks the resolved header set."""
+
+    def test_sensitive_header_over_ws_raises(self) -> None:
+        with pytest.raises(ValueError, match="credential headers"):
+            WebSocketTransport._reject_cleartext_credentials(
+                "ws://host/v1/responses", {"Authorization": "Bearer secret"}
+            )
+
+    def test_sensitive_header_over_wss_allowed(self) -> None:
+        WebSocketTransport._reject_cleartext_credentials(
+            "wss://host/v1/responses", {"Authorization": "Bearer secret"}
+        )
+
+    def test_non_sensitive_header_over_ws_allowed(self) -> None:
+        WebSocketTransport._reject_cleartext_credentials(
+            "ws://host/v1/responses", {"X-Request-ID": "req-1"}
+        )
+
+    def test_error_message_redacts_credential_value(self) -> None:
+        with pytest.raises(ValueError) as exc_info:
+            WebSocketTransport._reject_cleartext_credentials(
+                "ws://host/v1/responses?api_key=supersecret",
+                {"Authorization": "Bearer topsecret"},
+            )
+        assert "topsecret" not in str(exc_info.value)
+        assert "supersecret" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio

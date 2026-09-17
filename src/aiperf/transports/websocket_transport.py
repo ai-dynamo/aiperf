@@ -24,7 +24,11 @@ from aiperf.common.models import (
     SSEField,
     SSEMessage,
 )
-from aiperf.common.redact import redact_headers, redact_url
+from aiperf.common.redact import (
+    is_sensitive_header_name,
+    redact_headers,
+    redact_url,
+)
 from aiperf.common.utils import is_truthy_flag
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
@@ -35,15 +39,19 @@ from aiperf.transports.base_transports import (
 )
 
 # Terminal Responses lifecycle events over the socket. ``response.completed``
-# and ``response.incomplete`` both end a turn successfully; only ``response.failed``
-# and ``error`` end it in failure. ``response.incomplete`` is the contract's normal
-# terminal status for a truncated output (``incomplete_details.reason ==
-# "max_output_tokens"``), reached routinely via ``max_output_tokens`` /
-# ``cancel_after_ns``; the HTTP SSE path never errors on it, so neither does this.
+# and ``response.incomplete`` both end a turn successfully; ``response.failed``,
+# ``response.error`` and the top-level ``error`` frame end it in failure.
+# ``response.incomplete`` is the contract's normal terminal status for a truncated
+# output (``incomplete_details.reason == "max_output_tokens"``), reached routinely
+# via ``max_output_tokens`` / ``cancel_after_ns``; the HTTP SSE path never errors
+# on it, so neither does this. ``response.error`` is kept in the terminal+failure
+# sets so a server that emits it (the FORK-replay helper's ``_FAILURE_EVENT_TYPES``
+# treats it as terminal too) is recorded as the server error it is, rather than
+# read past until the turn 408s on the endpoint timeout.
+_FAILURE_EVENT_TYPES = frozenset({"response.failed", "response.error", "error"})
 _TERMINAL_EVENT_TYPES = frozenset(
-    {"response.completed", "response.failed", "response.incomplete", "error"}
+    {"response.completed", "response.incomplete"} | _FAILURE_EVENT_TYPES
 )
-_FAILURE_EVENT_TYPES = frozenset({"response.failed", "error"})
 
 # stream_id charset per the OpenAI WebSocket-mode spec: 1-256 characters,
 # alphanumeric plus underscore, hyphen, and period.
@@ -128,6 +136,14 @@ class WebSocketTransport(BaseTransport):
         # not-persisted and fails with a clear ChainingContextLost.
         self._stored: OrderedDict[str, bool] = OrderedDict()
         self._stored_max = Environment.WORKER.SESSION_CACHE_MAX_ENTRIES
+        # Redacted headers actually sent on each lease's handshake. A WebSocket
+        # sends headers only once (on upgrade), so a reused socket runs on the
+        # first turn's handshake identity; recording these -- not the per-turn
+        # recomputed set -- keeps ``record.request_headers`` honest about what
+        # authenticated the connection when later turns supply different
+        # ``extra_headers``. Same lease lifecycle as ``_leases``: written on open,
+        # dropped when the lease is dropped (re-stored on reopen).
+        self._handshake_headers: dict[str, dict[str, str]] = {}
         self._lock = asyncio.Lock()
 
     @classmethod
@@ -149,6 +165,7 @@ class WebSocketTransport(BaseTransport):
             self._all.clear()
             self._leases.clear()
             self._stored.clear()
+            self._handshake_headers.clear()
         for ws in sockets:
             if not ws.closed:
                 await ws.close()
@@ -164,11 +181,19 @@ class WebSocketTransport(BaseTransport):
         against the endpoint metadata ``endpoint_path`` while preserving the
         ``ws``/``wss`` scheme, so a ``ws(s)://host/v1`` base and a metadata path
         of ``v1/responses`` collapse to ``/v1/responses`` rather than
-        ``/v1/v1/responses``. A base URL without a scheme defaults to ``ws://``.
+        ``/v1/v1/responses``.
+
+        In practice the config-time scheme-consistency gate guarantees this
+        transport only ever serves ``ws``/``wss`` URLs (the ``urls`` field's
+        AfterValidator normalizes a schemeless URL to ``http://`` before
+        validation, which then rejects it against ``--transport websocket``). The
+        genuinely-schemeless fallback below is retained defensively and keyed on
+        the absence of any scheme, so a stray ``http://`` URL is never mangled into
+        ``ws://http://...``.
         """
         endpoint_info = request_info.model_endpoint.endpoint
         raw_base_url = endpoint_info.get_url(request_info.url_index)
-        if not _has_ws_scheme(raw_base_url):
+        if "://" not in raw_base_url:
             raw_base_url = f"ws://{raw_base_url}"
 
         split = urlsplit(raw_base_url)
@@ -210,12 +235,14 @@ class WebSocketTransport(BaseTransport):
             )
 
         envelope = self._build_envelope(payload, request_info)
-        # The raw-record exporter replays request_info.payload_bytes verbatim, but
-        # it was populated upstream with the pre-envelope HTTP-style body. Overwrite
-        # it with the exact frame we put on the wire (type=response.create,
-        # stream_id, HTTP-only keys stripped) so WebSocket records stay replayable.
+        # The raw-record exporter replays request_info.payload_bytes verbatim. It
+        # was populated upstream with the pre-envelope HTTP-style body; overwrite it
+        # with the exact frame we put on the wire (type=response.create, stream_id,
+        # HTTP-only keys stripped) so WebSocket records stay replayable -- but only
+        # *after* the frame is actually sent (below), so a turn that fails the
+        # chaining guard or errors before send does not export an envelope that
+        # never hit the wire.
         envelope_bytes = orjson.dumps(envelope)
-        request_info.payload_bytes = envelope_bytes
         headers = self.build_headers(request_info)
         correlation_id = request_info.x_correlation_id
         # Effective store for this turn. ResponsesEndpoint.format_payload already
@@ -268,22 +295,26 @@ class WebSocketTransport(BaseTransport):
         # with a clear cause instead. Resolvability hinges on whether the *prior*
         # turn (the one previous_response_id points at) was persisted.
         #
-        # A reconnect of the same conversation has that turn's recorded effective
-        # store in ``_stored`` (each turn writes its own merged store, _release
-        # preserves it across a dropped lease), so use it. A FORK child chaining
-        # onto its parent's response opens a brand-new conversation whose id is
-        # not in ``_stored``; there the best proxy for "the inherited response is
-        # server-persisted" is this turn's effective store (``store_requested``,
-        # already the endpoint-wide default with the per-turn override applied and
-        # true whenever server-side store is on for the run). Defaulting to
-        # ``store_requested`` -- not to False -- keeps the legitimately chained
-        # FORK child from being tripped, while a recorded ``False`` from a prior
-        # ``store: false`` turn still correctly blocks a same-conversation
-        # reconnect.
-        prior_stored = bool(correlation_id) and self._stored.get(
-            correlation_id, store_requested
+        # Veto only a *reconnect of a conversation this transport already served*
+        # and recorded as not-persisted: ``_stored[correlation_id] is False`` (each
+        # turn writes its own merged store; _release preserves it across a dropped
+        # lease). A FORK child chaining onto its parent opens a brand-new
+        # conversation whose id was never recorded here, so the transport must not
+        # re-derive persistence from this turn's own ``store`` -- that contradicted
+        # the worker, which decides chaining from the *parent's* dispatched turns
+        # (worker._parent_chain_is_persisted) and only sets previous_response_id
+        # when that chain is server-persisted. An unrecorded id therefore defers to
+        # the worker's decision rather than blocking a turn it deliberately chained.
+        prior_unstored = (
+            self._stored.get(correlation_id) is False if correlation_id else False
         )
-        if is_fresh and request_info.previous_response_id and not prior_stored:
+        # Report the headers that actually authenticated the connection: on a
+        # reused socket that is the first turn's handshake set, not this turn's
+        # recomputed one (a live WebSocket cannot re-send headers mid-conversation).
+        handshake_headers = (
+            self._handshake_headers.get(correlation_id) if correlation_id else None
+        ) or redact_headers(headers)
+        if is_fresh and request_info.previous_response_id and prior_unstored:
             record.error = ErrorDetails(
                 code=None,
                 type="ChainingContextLost",
@@ -295,13 +326,15 @@ class WebSocketTransport(BaseTransport):
                 ),
             )
             record.end_perf_ns = time.perf_counter_ns()
-            record.request_headers = redact_headers(headers)
+            record.request_headers = handshake_headers
             await self._release(ws, correlation_id, request_info.is_final_turn, True)
             return record
         try:
             # The Responses WebSocket contract requires JSON text frames; binary
             # frames are rejected with an invalid_request_error.
             await ws.send_str(envelope_bytes.decode())
+            # Now that the exact frame is on the wire, record it for raw export.
+            request_info.payload_bytes = envelope_bytes
             dirty = await self._read_bounded(
                 ws,
                 record,
@@ -321,12 +354,17 @@ class WebSocketTransport(BaseTransport):
             record.error = ErrorDetails.from_exception(e)
         finally:
             record.end_perf_ns = time.perf_counter_ns()
-            record.request_headers = redact_headers(headers)
+            record.request_headers = handshake_headers
             await self._release(ws, correlation_id, request_info.is_final_turn, dirty)
         # Remember this turn's store status so the next chained turn can judge
-        # whether its previous_response_id survives a reconnect. Skip the final
-        # turn (no successor) since _release already dropped the lease and flag.
-        if record.error is None and correlation_id and not request_info.is_final_turn:
+        # whether its previous_response_id survives a reconnect. Record even when
+        # the turn ended dirty: the conversation *was* served on this correlation
+        # id, so a same-conversation reconnect must still see the prior turn's
+        # effective store (a non-persisted dirty turn leaves ``False`` and trips the
+        # guard). A FORK child opens a brand-new id that stays unrecorded and thus
+        # defers to the worker. Skip the final turn (no successor) since _release
+        # already dropped the lease and flag.
+        if correlation_id and not request_info.is_final_turn:
             self._remember_store(correlation_id, store_requested)
         return record
 
@@ -539,21 +577,50 @@ class WebSocketTransport(BaseTransport):
         return False
 
     @staticmethod
-    def _error_from_event(event: dict[str, Any]) -> ErrorDetails:
-        err = event.get("error")
-        if isinstance(err, dict):
-            return ErrorDetails(
-                code=err.get("code"),
-                type=err.get("type") or event.get("type"),
-                message=err.get("message") or "WebSocket response failed",
-            )
+    def _coerce_error_code(code: Any) -> int | None:
+        """Responses-API error codes are strings (``"rate_limit_exceeded"``),
+        which the ``int``-typed ``ErrorDetails.code`` rejects with a
+        ValidationError -- replacing the typed failure with a bare
+        ValidationError record at exactly the moment the real error type matters.
+        Keep only a numeric code as ``int``; a non-numeric string survives in the
+        error ``type`` instead of blowing up construction."""
+        if isinstance(code, bool):
+            return None
+        if isinstance(code, int):
+            return code
+        if isinstance(code, str) and code.isdigit():
+            return int(code)
+        return None
+
+    @classmethod
+    def _error_from_event(cls, event: dict[str, Any]) -> ErrorDetails:
+        """Build ``ErrorDetails`` from a failure event.
+
+        The error fields may sit under ``event['error']`` (``response.failed``),
+        under ``event['response']['error']`` (nested), or at the event's top level
+        -- the ``error`` lifecycle frame carries ``code``/``message`` directly, so
+        without the top-level source that operator-facing message is lost to the
+        generic fallback. The first source that actually carries error fields
+        wins; a non-numeric string ``code`` becomes the error ``type`` (a generic
+        ``"error"`` type is upgraded to it) so it is never dropped.
+        """
         response = event.get("response")
-        if isinstance(response, dict) and isinstance(response.get("error"), dict):
-            nested = response["error"]
+        nested = response.get("error") if isinstance(response, dict) else None
+        for source in (event.get("error"), nested, event):
+            if not isinstance(source, dict):
+                continue
+            code = source.get("code")
+            message = source.get("message")
+            if code is None and message is None:
+                continue
+            string_code = code if isinstance(code, str) and not code.isdigit() else None
+            type_ = source.get("type")
+            if type_ in (None, "error"):
+                type_ = string_code or type_ or event.get("type")
             return ErrorDetails(
-                code=nested.get("code"),
-                type=nested.get("type") or event.get("type"),
-                message=nested.get("message") or "WebSocket response failed",
+                code=cls._coerce_error_code(code),
+                type=type_,
+                message=message or "WebSocket response failed",
             )
         return ErrorDetails(
             code=None,
@@ -601,6 +668,7 @@ class WebSocketTransport(BaseTransport):
             self._all.add(ws)
             if correlation_id:
                 self._leases[correlation_id] = ws
+                self._handshake_headers[correlation_id] = redact_headers(headers)
         return ws, True
 
     async def _open(
@@ -618,23 +686,59 @@ class WebSocketTransport(BaseTransport):
         assert self._session is not None
         url = self.build_url(request_info)
 
+        # The config-time ws:// TLS gate only sees endpoint api_key/headers and
+        # URL-embedded credentials; it cannot see a dataset ``Turn.extra_headers``,
+        # which ``build_headers`` merges into the actual handshake headers. Re-check
+        # the *resolved* header set here so a dataset-supplied Authorization (or any
+        # sensitive header) cannot ride an unencrypted ws:// socket in cleartext.
+        self._reject_cleartext_credentials(url, headers)
+
         # Terminal 'response.completed' frames carry the whole assembled response,
         # which can exceed aiohttp's 4 MiB default and discard otherwise-complete
         # work as a spurious transport error. 0 disables the cap (matching the
         # HTTP SSE path); a positive value bounds per-frame memory.
         max_msg_size = Environment.ENDPOINT.WEBSOCKET_MAX_MESSAGE_SIZE
 
+        connected: aiohttp.ClientWebSocketResponse | None = None
+
         async def _connect() -> aiohttp.ClientWebSocketResponse:
-            ws = await self._session.ws_connect(
+            nonlocal connected
+            connected = await self._session.ws_connect(
                 url, headers=headers, autoping=True, max_msg_size=max_msg_size
             )
-            await self._reject_redirected_socket(ws)
-            return ws
+            await self._reject_redirected_socket(connected)
+            return connected
 
         timeout = self.model_endpoint.endpoint.timeout
-        if not timeout or timeout <= 0:
-            return await _connect()
-        return await asyncio.wait_for(_connect(), timeout=timeout)
+        try:
+            if not timeout or timeout <= 0:
+                return await _connect()
+            return await asyncio.wait_for(_connect(), timeout=timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            # A handshake that connected but then timed out (or was cancelled)
+            # during the redirect check leaves an open socket that never reached
+            # _acquire's ``_all`` registration; close it here so it cannot orphan.
+            if connected is not None and not connected.closed:
+                await connected.close()
+            raise
+
+    @staticmethod
+    def _reject_cleartext_credentials(url: str, headers: dict[str, str]) -> None:
+        """Refuse to send credential-bearing headers over an unencrypted ws://.
+
+        Complements the config-time gate for the one credential source it cannot
+        see: per-turn ``Turn.extra_headers`` resolved into the handshake headers.
+        """
+        if not url.lower().startswith("ws://"):
+            return
+        leaked = [name for name in headers if is_sensitive_header_name(name)]
+        if leaked:
+            raise ValueError(
+                f"Refusing to send credential headers ({', '.join(sorted(leaked))}) "
+                f"over the unencrypted ws:// URL {redact_url(url)!r}; they would "
+                "travel in cleartext. Use a wss:// endpoint, or drop the "
+                "authentication headers."
+            )
 
     @staticmethod
     async def _reject_redirected_socket(
@@ -644,15 +748,31 @@ class WebSocketTransport(BaseTransport):
 
         ``aiohttp.ClientSession.ws_connect`` issues its upgrade through
         ``self.request`` with the default ``allow_redirects=True`` and exposes no
-        way to disable it, so a ``wss://`` endpoint that answers the upgrade with
-        a 302 to ``http://elsewhere`` has aiohttp re-send the credential-bearing
-        custom headers to the redirect target -- in cleartext, and to a host the
-        credential-TLS gate never vetted. The headers are already on the wire by
-        the time we see the resolved response, but refusing to *use* the resulting
-        socket stops the run from silently benchmarking over the downgraded
-        connection and surfaces the misconfiguration loudly instead. ``history``
-        is non-empty only when at least one redirect was followed.
+        parameter to disable it (verified on the pinned 3.14.3: ``ws_connect`` has
+        no ``allow_redirects`` argument and ``_ws_connect`` hard-codes the
+        ``self.request(...)`` call), so a ``wss://`` endpoint that answers the
+        upgrade with a 302 to ``http://elsewhere`` has aiohttp re-send the
+        credential-bearing custom headers to the redirect target -- in cleartext,
+        and to a host the credential-TLS gate never vetted. The headers are already
+        on the wire by the time we see the resolved response, but refusing to *use*
+        the resulting socket stops the run from silently benchmarking over the
+        downgraded connection and surfaces the misconfiguration loudly instead.
+        ``history`` is non-empty only when at least one redirect was followed.
+
+        Fails *closed*: aiohttp 3.14.3's ``ClientWebSocketResponse.__init__``
+        always sets ``_response``, so a missing attribute means the dependency
+        contract this guard relies on has changed -- treat that as a redirect it
+        can no longer vet rather than silently accepting an unvetted socket.
         """
+        if not hasattr(ws, "_response"):
+            if not ws.closed:
+                await ws.close()
+            raise ValueError(
+                "Cannot verify the WebSocket handshake did not follow a redirect: "
+                "aiohttp no longer exposes ClientWebSocketResponse._response. "
+                "Refusing the socket because a redirect could have leaked "
+                "credentials to an unvetted host."
+            )
         response = getattr(ws, "_response", None)
         if response is not None and getattr(response, "history", None):
             final_url = getattr(response, "url", None)
@@ -688,6 +808,9 @@ class WebSocketTransport(BaseTransport):
                 return
             if correlation_id and self._leases.get(correlation_id) is ws:
                 self._leases.pop(correlation_id, None)
+                # The handshake headers belong to this now-dropped socket; a
+                # reconnect re-stores its own on reopen.
+                self._handshake_headers.pop(correlation_id, None)
                 # Keep the prior-turn store flag across a dropped lease: a turn
                 # that ends dirty (timeout/close) still forces the next turn onto
                 # a fresh socket, and the chaining guard there must know whether

@@ -388,7 +388,11 @@ Key behaviors:
   websocket`) with any other endpoint type is rejected at config validation.
 - **Credentials require `wss://`.** An API key or authentication header sent over
   unencrypted `ws://` would travel in cleartext, so AIPerf rejects that
-  combination — use `wss://` for credential-bearing WebSocket runs.
+  combination — use `wss://` for credential-bearing WebSocket runs. This is
+  enforced both at config validation (for endpoint-level credentials) and again at
+  connection time against the fully resolved handshake headers, so a
+  dataset-supplied per-turn `extra_headers` credential cannot slip onto a `ws://`
+  socket either.
 - **Redirected handshakes are refused.** If a `wss://` endpoint answers the upgrade
   with an HTTP redirect, AIPerf refuses to reuse the resulting connection (it may
   have re-sent credentials to an unvetted host over cleartext). Point `--url`

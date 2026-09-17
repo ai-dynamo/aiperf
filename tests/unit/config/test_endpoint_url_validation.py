@@ -134,6 +134,18 @@ def test_mixed_transport_schemes_rejected() -> None:
         )
 
 
+def test_scheme_mismatch_error_redacts_url_credentials() -> None:
+    """A scheme-mismatch error names the offending URL; a credential embedded in
+    it must not surface in the (logged) validation message."""
+    with pytest.raises(ValidationError) as exc_info:
+        EndpointConfig(
+            urls=["wss://api.example.com/v1/responses?api_key=supersecret"],
+            type="responses",
+            transport="http",
+        )
+    assert "supersecret" not in str(exc_info.value)
+
+
 # --- Credential-bearing WebSocket connections require TLS (wss://) -----------
 
 
