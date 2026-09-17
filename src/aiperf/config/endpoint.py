@@ -640,10 +640,13 @@ class EndpointConfig(BaseConfig):
         """Reject the readiness probe on the WebSocket transport.
 
         ``wait_for_endpoint`` probes readiness with ``AioHttpClient`` HTTP
-        GET/POST calls against the configured URL, but aiohttp rejects a
-        ``ws://``/``wss://`` URL with NonHttpUrlClientError, so the probe would
-        never succeed and every WebSocket benchmark would fail at preflight.
-        Fail fast at config time instead of hanging until the probe deadline.
+        GET/POST calls, but an HTTP readiness probe is not meaningful for a
+        WebSocket endpoint: aiohttp treats a ``ws://``/``wss://`` URL as an
+        ordinary HTTP request (it does not reject the scheme), so the probe would
+        hit whatever HTTP surface -- if any -- happens to share that host/port and
+        report a readiness that says nothing about the WebSocket upgrade the
+        benchmark actually uses. Fail fast at config time rather than probe a
+        surface that cannot answer the question.
         """
         if (
             self.wait_for_model_timeout > 0
@@ -652,7 +655,7 @@ class EndpointConfig(BaseConfig):
             raise ValueError(
                 "--wait-for-model-timeout is not supported on the WebSocket "
                 "transport: the readiness probe issues HTTP requests, which "
-                "cannot target a ws:// or wss:// URL. Drop "
+                "cannot meaningfully verify a WebSocket upgrade. Drop "
                 "--wait-for-model-timeout for WebSocket endpoints."
             )
         return self
@@ -797,8 +800,13 @@ class EndpointConfig(BaseConfig):
         explicit ``transport``, ``InferenceClient`` auto-detects a single
         transport from the first URL only, so a list mixing ``ws(s)`` and
         ``http(s)`` URLs would silently route the rest through the wrong
-        transport. Reject both up front. Schemeless URLs are wildcards
-        (``get_url`` supplies the selected transport's scheme) and are skipped.
+        transport. Reject both up front.
+
+        A schemeless URL never reaches this validator as schemeless: the ``urls``
+        field's ``AfterValidator`` (``normalize_http_urls``) has already rewritten
+        it to ``http://...``. So ``--transport websocket --url host:port`` is
+        rejected here as an http-URL/ws-transport mismatch (the message names the
+        normalized ``http://`` scheme), not treated as a wildcard.
         """
         scheme_transport = {
             "ws": TransportType.WEBSOCKET,
@@ -815,9 +823,15 @@ class EndpointConfig(BaseConfig):
         if self.transport is not None:
             mismatched = [url for url, mapped in schemed if mapped != self.transport]
             if mismatched:
+                from aiperf.common.redact import redact_url
+
+                # Redact before interpolation: this runs after Secret-backed URL
+                # injection too, and userinfo / sensitive query params in a
+                # mismatched URL would otherwise reach the error and any log.
+                shown = [redact_url(url) for url in mismatched]
                 raise ValueError(
                     f"--transport {str(self.transport)!r} is incompatible with the "
-                    f"scheme of URL(s) {mismatched!r}. Use ws/wss URLs with "
+                    f"scheme of URL(s) {shown!r}. Use ws/wss URLs with "
                     "--transport websocket and http/https URLs with --transport "
                     "http, or drop --transport to auto-detect from the URL scheme."
                 )

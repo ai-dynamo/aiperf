@@ -1976,8 +1976,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         *planned* (a non-terminal background FORK can be dispatched before the
         parent has sent its later turns), so slicing on ``num_turns`` would
         judge persistence against not-yet-sent turns.
+
+        ``turn_index`` is ``Field(ge=0)`` and a FORK child only exists once the
+        parent's declaring response has been dispatched and stored
+        (``branch_orchestrator`` forbids overlap-at-issue), so the dispatched
+        prefix ``turns[: turn_index + 1]`` always covers at least turn 0.
         """
-        if parent is None or parent.turn_index < 0:
+        if parent is None:
             return False
         endpoint_store = is_truthy_flag(
             dict(self.model_endpoint.endpoint.extra or []).get("store")
@@ -1990,9 +1995,22 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @staticmethod
     def _turn_store_persisted(turn: Turn, endpoint_store: bool) -> bool:
-        """Effective ``store`` for one turn: its ``extra_body`` override wins over
-        the endpoint-wide default, matching ``ResponsesEndpoint.format_payload``
-        (endpoint ``extra`` applied first, per-turn ``extra_body`` last)."""
+        """Effective ``store`` for one turn.
+
+        A ``raw_payload`` turn (``raw_payload`` / ``inputs_json`` /
+        ``mooncake_trace`` datasets) bypasses ``ResponsesEndpoint.format_payload``
+        entirely -- ``inference_client`` sends it verbatim -- so neither the
+        endpoint-wide ``extra`` nor ``extra_body`` reaches the wire. Its own
+        ``store`` key is therefore authoritative, and its absence means nothing
+        asked the server to persist (conservatively not-stored), so a FORK child
+        replays rather than chaining onto a response the server never kept.
+
+        Otherwise the per-turn ``extra_body`` override wins over the endpoint-wide
+        default, matching ``format_payload`` (endpoint ``extra`` first, per-turn
+        ``extra_body`` last).
+        """
+        if turn.raw_payload is not None:
+            return is_truthy_flag(turn.raw_payload.get("store"))
         override = (turn.extra_body or {}).get("store")
         if override is not None:
             return is_truthy_flag(override)
