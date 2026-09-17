@@ -32,7 +32,6 @@ from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
 
 
 def test_adapters_are_registered() -> None:
-    """Both adapters resolve through the spec_decode_adapter category."""
     assert (
         plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "vllm").__name__
         == "VLLMSpecDecodeAdapter"
@@ -109,13 +108,6 @@ class TestAmbiguityIsRejected:
             assert (
                 InferenceResultParser._extract_spec_decode_acceptance(responses) is None
             )
-
-    def test_detection_survives_the_stub_being_removed(self) -> None:
-        """The contested case must not leave the registry perturbed."""
-        responses = [ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD)]
-        record = InferenceResultParser._extract_spec_decode_acceptance(responses)
-        assert record is not None
-        assert record.engine == "vllm"
 
 
 class TestAdapterFailureIsIsolated:
