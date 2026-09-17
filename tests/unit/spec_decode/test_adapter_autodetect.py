@@ -139,7 +139,6 @@ class TestAdapterFailureIsIsolated:
         ):
             record = InferenceResultParser._extract_spec_decode_acceptance(responses)
 
-        # The working adapter is still found despite the broken one raising.
         assert record is not None
         assert record.engine == "vllm"
 
