@@ -114,6 +114,30 @@ class TestPayloadsProduceRecords:
         _assert_identities(record)
         assert record.draft_acceptance_rate == rate
 
+    @pytest.mark.parametrize(
+        "completion_tokens",
+        [param(n, id=f"ct_{n}") for n in (1, 2, 3, 5, 17, 100, 257)],
+    )  # fmt: skip
+    def test_acceptance_reconciles_with_usage(
+        self, spec_decode_config, completion_tokens
+    ) -> None:
+        """Emitted acceptance must account for exactly the tokens usage reports.
+
+        Each verify step emits one always-accepted bonus token plus its accepted
+        drafts, so ``num_spec_steps + num_accepted == completion_tokens`` is a
+        physical identity. The record's own validators do not cross-check against
+        usage, so without this a payload can satisfy every identity while still
+        claiming more emitted tokens than the response contained -- which it did
+        for ``completion_tokens <= 2``.
+        """
+        spec_decode_config(flavor="vllm")
+        payload = build_spec_decode_payload(_ctx(completion_tokens))
+        assert (
+            payload["num_spec_steps"] + payload["num_accepted_draft_tokens"]
+            == completion_tokens
+        )
+        assert payload["num_accepted_draft_tokens"] <= payload["num_draft_tokens"]
+
     def test_adaptive_bound_round_trips(self, spec_decode_config) -> None:
         """num_spec_tokens: null must survive generation and adaptation."""
         spec_decode_config(flavor="trtllm", num_spec_tokens=None)
