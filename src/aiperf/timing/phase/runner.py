@@ -1217,6 +1217,13 @@ class PhaseRunner(TaskManagerMixin):
             if not self._lifecycle.is_complete:
                 self._lifecycle.mark_complete(grace_period_triggered=timed_out)
                 self._progress.freeze_completed_counts()
+            # Gate the warmup/profiling boundary on the server-metrics flush
+            # deadline before publishing phase-complete (and before run()
+            # returns so the orchestrator cannot start profiling early).
+            # Skip on cancel: a cancelled run has no settled boundary worth
+            # waiting for (same rationale as PROFILE_CANCEL).
+            if not self._was_cancelled:
+                await self._wait_for_server_metrics_warmup_flush()
             if phase_id is not None and self._baseline_end_ns is None:
                 self._baseline_end_ns = (
                     await self._capture_baseline_boundary_before_completion(
@@ -1229,6 +1236,38 @@ class PhaseRunner(TaskManagerMixin):
             await self._phase_publisher.publish_phase_complete(
                 stats, branch_stats=self._snapshot_branch_stats()
             )
+
+    async def _wait_for_server_metrics_warmup_flush(self) -> None:
+        """Hold warmup completion until server metrics can settle.
+
+        ``ServerMetricsManager`` scrapes the warmup boundary after the same
+        ``COLLECTION_FLUSH_PERIOD`` deadline. Sleeping here (before publishing
+        ``CREDIT_PHASE_COMPLETE`` and before ``run()`` returns) keeps the next
+        phase from issuing profiling credits during that window. Sleeping only
+        in the metrics manager would still allow profiling traffic to enter the
+        delayed boundary scrape.
+        """
+        is_warmup = (
+            self._config.phase == CreditPhase.WARMUP
+            or self._config.phase_kind == "warmup"
+        )
+        if not is_warmup:
+            return
+        if self._run is None or not self._run.cfg.server_metrics.enabled:
+            return
+        flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        if flush_period <= 0:
+            return
+        end_ns = self._lifecycle.complete_at_ns or time.time_ns()
+        remaining_seconds = (
+            end_ns + int(flush_period * 1_000_000_000) - time.time_ns()
+        ) / 1_000_000_000
+        if remaining_seconds > 0:
+            self.info(
+                f"Waiting {remaining_seconds:.1f}s for server metrics flush "
+                "before ending warmup..."
+            )
+            await asyncio.sleep(remaining_seconds)
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""

@@ -575,6 +575,11 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
     ) -> None:
         """Capture an end-of-warmup scrape and retire non-profiling phases.
 
+        Warmup waits for ``COLLECTION_FLUSH_PERIOD`` before the final scrape so
+        late server histogram observations settle into the warmup bucket.
+        ``PhaseRunner`` holds the same deadline before starting profiling, so
+        the next phase cannot issue credits during the flush window.
+
         ``PROFILE_COMPLETE`` still owns the final profiling scrape. We do not
         clear profiling here because the profile-complete command is delivered
         after the profiling phase completes and should still tag the final
@@ -603,6 +608,15 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 self._profiling_window_end_ns or 0, end_ns
             )
         if is_warmup and self._collectors:
+            # Match the PROFILE_COMPLETE flush barrier so late histogram
+            # observations (published after the response returns) settle into
+            # the warmup-tagged scrape instead of leaking into profiling.
+            # Reuse the warmup window end so the runner and manager share a
+            # deadline (requests_end_ns / complete_at_ns).
+            await self._wait_for_collection_flush(
+                self._warmup_window_end_ns,
+                reason="warmup phase complete",
+            )
             self.info(
                 "Server Metrics: Warmup complete, capturing final warmup metrics..."
             )
@@ -675,6 +689,29 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     warmup_end_ns=window.get("warmup_end_ns"),
                 )
 
+    async def _wait_for_collection_flush(
+        self, end_ns: int | None, *, reason: str
+    ) -> None:
+        """Wait until ``end_ns + COLLECTION_FLUSH_PERIOD`` before a boundary scrape.
+
+        Prometheus histograms are cumulative and may publish after the client
+        observes response completion. Holding the scrape until the flush
+        deadline lets late observations land in the correct phase bucket.
+        Callers that gate the next request phase on the same deadline (see
+        ``PhaseRunner._wait_for_server_metrics_warmup_flush``) must use the
+        same ``end_ns`` so profiling credits cannot start during the wait.
+        """
+        flush_end_ns = (end_ns or time.time_ns()) + int(
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
+        )
+        remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000
+        if remaining_seconds > 0:
+            self.info(
+                f"Waiting {remaining_seconds:.1f}s for server metrics flush "
+                f"period ({reason})..."
+            )
+            await asyncio.sleep(remaining_seconds)
+
     async def _capture_profile_complete_scrape(self, end_ns: int | None) -> None:
         """Scrape every endpoint one last time, attributed to the final profile."""
         if not self._collectors:
@@ -688,15 +725,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             )
             return
 
-        flush_end_ns = (end_ns or time.time_ns()) + int(
-            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
+        await self._wait_for_collection_flush(
+            end_ns,
+            reason="profiling complete",
         )
-        remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000
-        if remaining_seconds > 0:
-            self.info(
-                f"Waiting {remaining_seconds:.1f}s for server metrics flush period..."
-            )
-            await asyncio.sleep(remaining_seconds)
 
         self.info("Server Metrics: Profiling complete, capturing final metrics...")
         final_phase = self._last_profiling_phase or _ServerMetricsPhaseIdentity(

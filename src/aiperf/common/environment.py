@@ -1336,8 +1336,12 @@ class _ServerMetricsSettings(BaseSettings):
         ge=0.0,
         le=30.0,
         default=2.0,
-        description="Time in seconds to continue collecting metrics after profiling completes, "
-        "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
+        description=(
+            "Time in seconds to wait for server-side metrics to flush/finalize "
+            "at phase boundaries: after warmup completes (before profiling "
+            "starts) and after profiling completes (before shutdown). "
+            "Default: 2.0s."
+        ),
     )
     PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
         ge=1.0,
