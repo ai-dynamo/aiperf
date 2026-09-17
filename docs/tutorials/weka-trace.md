@@ -37,7 +37,10 @@ corpus. Use
 `--weka-nested-timestamp-basis absolute` or `relative` when the producer is
 known. AIPerf logs one INFO summary naming the resolved basis, the heuristic or
 configured decision, and the number of traces, subagents, and inner requests
-validated. In explicit `absolute` mode, an inner request more than one
+validated. When auto selects `relative` while also observing best-effort
+absolute-looking anchor evidence, AIPerf warns and names the first conflicting
+witness without changing the corpus-wide decision. In explicit `absolute`
+mode, an inner request more than one
 microsecond before its marker is rejected; smaller floating-point jitter is
 clamped to the marker so replay never starts a child before spawn.
 
@@ -50,7 +53,10 @@ Canonicalization metadata is attached to each trace object and survives
 `model_dump`/validation round trips, so copied, reordered, serialized, or
 reparsed canonical traces are not shifted a second time. Raw producer traces
 omit this internal metadata and always run the configured or automatic
-interpretation.
+interpretation. If a caller explicitly selects `absolute` or `relative` for a
+reloaded canonical corpus whose metadata records the other basis, AIPerf rejects
+the conflict instead of silently ignoring the explicit setting or applying a
+second timestamp transform.
 
 AIPerf maps the format directly onto its DAG datastructure:
 
