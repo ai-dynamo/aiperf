@@ -255,7 +255,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions
 
 ## License
 
-AIPerf is licensed under the [Apache License 2.0](LICENSE). Because `helm package` only includes files beneath the chart directory, the [aiperf-operator Helm chart](deploy/helm/aiperf-operator) contains a byte-for-byte [copy of the root license](deploy/helm/aiperf-operator/LICENSE) solely so the license is included in the packaged chart archive.
+AIPerf is licensed under the [Apache License 2.0](LICENSE). Because `helm package` only includes files beneath the chart directory, the [aiperf-operator Helm chart](deploy/helm/aiperf-operator) contains a [symlink to the repository's top-level license](deploy/helm/aiperf-operator/LICENSE) solely so the license is included in the packaged chart archive. Helm dereferences the symlink at packaging time, so the archive contains a regular `LICENSE` file with the top-level license contents.
 
 ## Known Issues
 
