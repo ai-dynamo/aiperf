@@ -394,11 +394,23 @@ class InferenceResultParser(CommunicationMixin):
         with_stats = [r for r in responses if r.spec_decode_stats]
         if len(with_stats) != 1:
             return None
-        matches = [
-            AdapterClass
-            for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER)
-            if AdapterClass.can_adapt(responses)
-        ]
+        matches = []
+        for entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
+            try:
+                if AdapterClass.can_adapt(responses):
+                    matches.append(AdapterClass)
+            except Exception as e:  # noqa: BLE001 - one bad plugin must not fail the record
+                # ``can_adapt`` is a third-party plugin callback: the protocol
+                # asks for it to be cheap and side-effect free but cannot stop
+                # an implementation from raising. Isolating each call keeps one
+                # bad adapter from failing the whole record and from hiding
+                # every adapter registered after it.
+                error = e
+                _logger.warning(
+                    lambda name=entry.name,
+                    error=error: f"Spec-decode adapter {name!r} raised during "
+                    f"detection; skipping it: {error!r}"
+                )
         if len(matches) > 1:
             # Always a bug in AIPerf's own signatures, not in the payload: two
             # adapters cannot both be right about which engine produced it.
