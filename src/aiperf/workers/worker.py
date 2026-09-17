@@ -1736,12 +1736,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             payload_bytes=payload_turn.payload_bytes,
             # Scalars only — payload_bytes carries the wire body; enrichment
             # reads max_tokens / timestamp off this turn for OSL-mismatch and
-            # schedule-lag metrics.
+            # schedule-lag metrics, and source_kind for per-row attribution.
             turns=[
                 Turn(
                     role="user",
                     max_tokens=payload_turn.max_tokens,
                     timestamp=payload_turn.timestamp,
+                    source_kind=payload_turn.source_kind,
                 )
             ],
         )
