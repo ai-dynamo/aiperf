@@ -118,6 +118,40 @@ class TestAmbiguityIsRejected:
         assert record.engine == "vllm"
 
 
+class TestAdapterFailureIsIsolated:
+    """One adapter raising must not fail the record or hide the others.
+
+    ``can_adapt`` is a third-party plugin callback: the protocol asks for it to
+    be cheap and side-effect free, but nothing stops an implementation raising.
+    Without isolation the exception propagates out of the parser and the whole
+    inference record fails, even though the response was perfectly usable and a
+    later adapter could have read it.
+    """
+
+    class _ExplodingAdapter:
+        @classmethod
+        def can_adapt(cls, responses: list[ParsedResponse]) -> bool:
+            raise RuntimeError("third-party adapter blew up")
+
+        @classmethod
+        def adapt(cls, responses: list[ParsedResponse]) -> None:
+            raise AssertionError("must never be reached")
+
+    def test_raising_adapter_does_not_fail_the_record(self) -> None:
+        responses = [
+            ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
+            ParsedResponse(perf_ns=2, usage={"completion_tokens": 7}),
+        ]
+        with mock_plugin(
+            PluginType.SPEC_DECODE_ADAPTER, "exploding-stub", self._ExplodingAdapter
+        ):
+            record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+
+        # The working adapter is still found despite the broken one raising.
+        assert record is not None
+        assert record.engine == "vllm"
+
+
 class TestNoAdapterMatches:
     def test_unrecognized_engine_payload_yields_none(self) -> None:
         """A payload no adapter recognizes yields no record rather than a guess.
