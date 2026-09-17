@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
@@ -1590,6 +1591,94 @@ class TestWarmupPhaseCompleteScrape:
 
         assert manager._active_phase is not None
         assert manager._active_phase.phase == CreditPhase.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_warmup_complete_waits_for_flush_before_scrape(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """Late warmup observations must settle before the final warmup scrape.
+
+        Regression for #1435: an immediate end-of-warmup scrape lets a delayed
+        histogram observation fall into the profiling delta.
+        """
+        manager = self._make_manager(cfg_with_endpoint)
+        events: list[object] = []
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 1.5
+
+        async def record_sleep(delay: float) -> None:
+            events.append(("flush", delay))
+
+        async def record_scrape(*args, **kwargs) -> None:
+            events.append("scrape")
+
+        collector = MagicMock()
+        collector.collect_and_process_metrics = AsyncMock(side_effect=record_scrape)
+        manager._collectors = {"http://localhost:8000/metrics": collector}
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
+        )
+
+        try:
+            with patch(
+                "aiperf.server_metrics.manager.asyncio.sleep",
+                side_effect=record_sleep,
+            ):
+                # requests_end_ns near "now" so the flush deadline is still in
+                # the future and asyncio.sleep is actually entered.
+                now_ns = time.time_ns()
+                await manager._on_credit_phase_complete(
+                    CreditPhaseCompleteMessage(
+                        service_id="timing-manager",
+                        stats=CreditPhaseStats(
+                            phase=CreditPhase.WARMUP,
+                            start_ns=now_ns - 1_000_000_000,
+                            requests_end_ns=now_ns,
+                        ),
+                    )
+                )
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+
+        assert events[0][0] == "flush"
+        assert events[0][1] == pytest.approx(1.5, abs=0.05)
+        assert events[1] == "scrape"
+        collector.collect_and_process_metrics.assert_awaited_once()
+        assert manager._active_phase is None
+
+    @pytest.mark.asyncio
+    async def test_warmup_flush_barrier_keeps_scrape_tagged_warmup(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """The post-flush boundary scrape must still be attributed to warmup."""
+        manager = self._make_manager(cfg_with_endpoint)
+        scraped_phases: list[CreditPhase] = []
+
+        async def capture_phase(collector, identity) -> None:
+            scraped_phases.append(identity.phase)
+
+        collector = MagicMock()
+        manager._collectors = {"http://localhost:8000/metrics": collector}
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
+        )
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.25
+        try:
+            with patch.object(
+                manager,
+                "_collect_and_process_metrics_for_phase",
+                side_effect=capture_phase,
+            ):
+                await manager._on_credit_phase_complete(
+                    self._phase_complete(CreditPhase.WARMUP)
+                )
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+
+        assert scraped_phases == [CreditPhase.WARMUP]
 
 
 class TestKubernetesDiscoveryIntegration:
