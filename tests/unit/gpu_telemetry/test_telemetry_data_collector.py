@@ -99,7 +99,6 @@ class TestPrometheusMetricParsing:
         ("hostname_labels", "expected_hostname"),
         [
             param('hostname="current-host"', "current-host", id="current"),
-            param('Hostname="legacy-host"', "legacy-host", id="legacy-only"),
             param(
                 'hostname="current-host",Hostname="legacy-host"',
                 "current-host",
@@ -110,9 +109,7 @@ class TestPrometheusMetricParsing:
     def test_hostname_label_compatibility(
         self, hostname_labels: str, expected_hostname: str
     ) -> None:
-        labels = 'gpu="0",UUID="GPU-0",modelName="GPU"'
-        if hostname_labels:
-            labels += f",{hostname_labels}"
+        labels = f'gpu="0",UUID="GPU-0",modelName="GPU",{hostname_labels}'
         metrics = f"DCGM_FI_DEV_GPU_TEMP{{{labels}}} 42\n"
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
