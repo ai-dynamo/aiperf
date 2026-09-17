@@ -1611,6 +1611,20 @@ spec_decode_adapter:
       list into the record's sparse map.
     metadata: {}
 
+  tensorrt_llm:
+    class: aiperf.spec_decode.trtllm_adapter:TRTLLMSpecDecodeAdapter
+    description: |
+      Reads TensorRT-LLM's per-choice ``speculative_decoding`` object (emitted
+      when the server sets ``per_request_spec_decode_stats``) and fills the
+      engine-neutral
+      SpecDecodeAcceptanceRecord. Handles chat and completions, streaming and
+      non-streaming. Derives mean acceptance length from the counts, since
+      TRT-LLM reports it separately as ``avg_decoded_tokens_per_iter``.
+      Declaration order here is not a detection mechanism: adapters are
+      distinguished by disjoint payload signatures, and the parser rejects a
+      payload that more than one adapter claims.
+    metadata: {}
+
 accuracy_grader:
   exact_match:
     class: aiperf.accuracy.graders.exact_match:ExactMatchGrader
