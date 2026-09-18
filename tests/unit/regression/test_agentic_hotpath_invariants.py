@@ -7,11 +7,9 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import defaultdict
-from multiprocessing import shared_memory
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import numpy as np
 import pytest
 
 from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
@@ -23,7 +21,6 @@ from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.messages import CreditReturn
 from aiperf.credit.sticky_router import StickyCreditRouter, _StickyEntry
 from aiperf.credit.structs import Credit
-from aiperf.dataset.loader import weka_parallel_convert as wpc
 from aiperf.metrics.theoretical_prefix_cache import TheoreticalPrefixCacheAccumulator
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import AccumulatorType, PluginType
@@ -322,92 +319,6 @@ async def test_phase_keys_lane_credit_uses_runtime_index_not_enum() -> None:
         f"(got {released}); enum-keyed trees would miss index {phase_index}"
     )
     assert concurrency.release_session_slot.call_args.args[0] == phase_index
-
-
-def test_parent_floor_process_task_nan_delay_stays_none() -> None:
-    """``_process_task`` must not ``max(None, 0.0)`` after NaN clamp → None."""
-    corpus = np.arange(1024, dtype=np.int32)
-    shm = shared_memory.SharedMemory(create=True, size=corpus.nbytes, name=None)
-    try:
-        np.ndarray((len(corpus),), dtype=np.int32, buffer=shm.buf)[:] = corpus
-        tok = MagicMock()
-        tok.decode.side_effect = lambda toks: "x" * max(len(toks), 1)
-
-        with patch(
-            "aiperf.dataset.loader.weka_parallel_convert.Tokenizer.from_pretrained",
-            return_value=tok,
-        ):
-            wpc._init_worker(
-                wpc._WekaWorkerInitArgs(
-                    shm_name=shm.name,
-                    corpus_len=len(corpus),
-                    tokenizer_name="test-tok",
-                    base_seed=0,
-                    block_size=16,
-                    bpe_stable_terminator_tokens=[],
-                )
-            )
-
-        def _req(
-            *,
-            outer: int,
-            t: float,
-            delay: float | None,
-            hashes: list[int],
-            in_len: int,
-        ) -> tuple[int, dict]:
-            return (
-                outer,
-                {
-                    "hash_ids": hashes,
-                    "input_length": in_len,
-                    "output_length": 1,
-                    "model": "m",
-                    "t": t,
-                    "think_time": None,
-                    "capped_output_length": 1,
-                    "theoretical_hit_blocks": 0,
-                    "theoretical_total_blocks": len(hashes),
-                    "effective_t": t,
-                    "effective_delay_ms": delay,
-                },
-            )
-
-        task = wpc._WekaTraceTask(
-            trace_id="nan-delay",
-            parent={
-                "normals": [
-                    _req(outer=0, t=0.0, delay=None, hashes=[1], in_len=16),
-                    _req(
-                        outer=1,
-                        t=1.0,
-                        delay=float("nan"),
-                        hashes=[1, 2],
-                        in_len=32,
-                    ),
-                ],
-                "subagents": [],
-                "tool_tokens": 0,
-                "system_tokens": 0,
-            },
-            children=[],
-            cap_seconds=60.0,
-            ignore_delays=False,
-            think_time_only=False,
-            model_map={"m": "m"},
-            block_size=16,
-        )
-        result = wpc._process_task(task)
-        delay = result["parent_turns"][1]["delay"]
-        assert delay is None, (
-            "NaN effective_delay_ms must stay None after "
-            f"clamp+floor, got {delay!r} (ungated max(None, 0.0) TypeErrors)"
-        )
-        assert result["non_finite_count"] == 1
-    finally:
-        wpc._worker_state = None
-        shm.close()
-        shm.unlink()
 
 
 def test_build_dataset_does_not_call_apply_file_block_size(

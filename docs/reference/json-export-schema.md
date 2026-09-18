@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.4",
+  "schema_version": "1.5",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -71,10 +71,11 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 | `run_info` | object | Per-run reproducibility — see below. Schema 1.2+. |
 | `telemetry_data` | object | GPU telemetry summaries when telemetry collection was active. |
 | `error_summary` | array | Per-error counts collected during the run. |
+| `runtime_submission_invalid_reasons` | array | Runtime reason tags that invalidate this run's scenario submission (for example a context-overflow rate over the allowed threshold). Empty when the run is submission-valid. Schema 1.5+. |
 
 ### `telemetry_data`
 
-Schema 1.4 adds a `platform` field to each GPU summary and vendor-scopes GPU
+Schema 1.5 adds a `platform` field to each GPU summary and vendor-scopes GPU
 telemetry metric names. NVIDIA metrics collected through DCGM or pynvml use
 `nvidia_*` names, and AMD metrics collected through amdsmi use `amd_*` names.
 Metric semantics are platform-specific; cross-platform comparisons require
@@ -144,7 +145,7 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.2` | Added top-level `run_info` block (`random_seed`, `trial`, `run_label`, `variation_label`, `variation_index`, `variation_values`). Backward-compatible: readers that don't need reproducibility can ignore the field. |
 | `1.3` | Added `benchmark_id`, `sweep_id`, and `cli_command` to `run_info`. `benchmark_id` duplicates the top-level field so `run_info` is self-contained; `sweep_id` (UUID4 of the outer sweep) lets readers join all per-run exports from one plan without consulting the parent multi-run artifact directory; `cli_command` records the redacted command line when available. Backward-compatible: nullable fields default to `null` when unavailable. |
 | `1.4` | Added optional top-level `warmup_metrics`, keyed by metric tag, containing metrics computed only from warmup-phase requests. Existing top-level metric fields remain profiling-only. |
-| `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. |
+| `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. Also added the full-response metric blocks `full_decode_duration`, `full_response_inter_token_latency`, and `full_response_output_token_throughput_per_user` (emitted only when the corresponding metrics were computed), and the top-level `runtime_submission_invalid_reasons` array. Additive and backward-compatible apart from the telemetry rename. |
 
 ### Other JSON exports use independent schema versions
 

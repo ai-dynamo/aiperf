@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -56,6 +57,7 @@ def _mk_harness(
     conversations: list[ConversationMetadata],
     *,
     dispatch_result: bool = True,
+    scheduler: LoopScheduler | None = None,
 ):
     """(orchestrator, conversation_source, issuer) with real metadata models."""
     by_id = {c.conversation_id: c for c in conversations}
@@ -78,8 +80,46 @@ def _mk_harness(
     issuer.dispatch_first_turn = AsyncMock(return_value=dispatch_result)
     issuer.dispatch_join_turn = AsyncMock(return_value=True)
 
-    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+    orch = BranchOrchestrator(
+        conversation_source=cs,
+        credit_issuer=issuer,
+        scheduler=scheduler,
+    )
     return orch, cs, issuer
+
+
+@pytest.mark.asyncio
+async def test_offset_child_uses_shared_scheduler_for_idle_cap(
+    time_traveler_no_patch_sleep,
+) -> None:
+    """Production offsets are replay timers, not untracked asyncio sleeps."""
+    parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=1_000.0)])
+    scheduler_errors: list[BaseException] = []
+    scheduler = LoopScheduler(
+        exception_handler=lambda task: scheduler_errors.append(task.exception())
+    )
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("kid", 5_000.0)],
+        scheduler=scheduler,
+    )
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+
+    assert scheduler.pending_count == 1
+    assert orch._delayed_dispatch_tasks == set()
+    issuer.dispatch_first_turn.assert_not_awaited()
+    assert scheduler.cap_pending_delay(0.01) == pytest.approx(3.99, abs=0.02)
+    handle, _ = next(iter(scheduler._handles.values()))
+    assert handle.when() - scheduler._loop.time() < 0.02
+
+    await asyncio.sleep(0.10)
+
+    assert scheduler_errors == []
+    assert scheduler.pending_count == 0
+    assert scheduler.running_count == 0
+    issuer.dispatch_first_turn.assert_awaited_once()
+    assert scheduler.pending_count == 0
+    scheduler.cancel_all()
 
 
 def _mk_credit(conv_id: str, corr_id: str, turn_index: int):
