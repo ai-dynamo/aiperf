@@ -138,6 +138,31 @@ When the benchmark finishes, AIPerf performs a deferred export:
 2. The MLflow data exporter detects the live run via `mlflow_export.json` (written during the run).
 3. All artifacts (JSON export, CSV export, GPU telemetry, metadata) are uploaded to the same MLflow run.
 
+The deferred export also logs summary metrics. Inference performance and quality
+metrics keep their top-level names, such as `time_to_first_token.p95`,
+`request_throughput`, and `accuracy.correct`. Diagnostic and hardware metrics use
+MLflow's `system/` namespace so they appear in the System Metrics section:
+
+| Category | Example MLflow key |
+| --- | --- |
+| HTTP transport timings and counters | `system/http_req_waiting.p95` |
+| Internal diagnostics and intermediate counts | `system/credit_drop_latency`, `system/num_images` |
+| Server-reported usage, usage totals, and cache statistics | `system/usage_completion_tokens`, `system/total_usage_prompt_tokens` |
+| Token-count discrepancies and output-length mismatches | `system/usage_prompt_tokens_diff_pct`, `system/osl_mismatch_count` |
+| NVIDIA and AMD power, energy, and efficiency metrics | `system/nvidia_total_gpu_power`, `system/amd_energy_delay_product` |
+
+The prefix applies to each exported statistic, including percentiles, counts,
+and sums; values and units are unchanged. Benchmark duration, request timestamps,
+and the `aiperf.completed_requests` / `aiperf.total_expected_requests` bookkeeping
+keys remain top-level. Custom metrics retain their names unless their exact tag
+is one of AIPerf's classified built-in metrics.
+
+**Migration:** dashboards and API queries for these post-run diagnostic metrics
+must use the new keys (for example, replace `http_req_waiting.p95` with
+`system/http_req_waiting.p95`). Existing MLflow runs keep their original keys.
+The `live.*` namespace and metric names inside uploaded JSON/CSV artifacts are
+unchanged.
+
 The `mlflow_export.json` file records the mapping between the local run and the MLflow run:
 
 ```json
