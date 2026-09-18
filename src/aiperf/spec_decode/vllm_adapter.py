@@ -136,6 +136,8 @@ class VLLMSpecDecodeAdapter:
             # ``except ... as e`` name is cleared at block exit).
             error = e
             _logger.warning(
-                lambda: f"Ignoring malformed vLLM spec-decode payload {payload!r}: {error!r}"
+                lambda: (
+                    f"Ignoring malformed vLLM spec-decode payload {payload!r}: {error!r}"
+                )
             )
             return None

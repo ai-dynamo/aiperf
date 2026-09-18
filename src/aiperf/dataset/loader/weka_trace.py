@@ -1450,21 +1450,25 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         split_stats.total_seams += detection.seams_merged
         split_stats.total_empty_hash += detection.unclassified_empty_hash
         _logger.debug(
-            lambda: f"Trace {trace_id}: detected {1 + len(detection.worker_indices)} "
-            f"agents ({detection.seams_merged} seams merged, "
-            f"{len(detection.worker_indices)} spawned chains "
-            f"[{n_aux} aux sidecars ({n_red} reductions), {n_wg} worker-group], "
-            f"{detection.unclassified_empty_hash} empty-hash kept on main)"
+            lambda: (
+                f"Trace {trace_id}: detected {1 + len(detection.worker_indices)} "
+                f"agents ({detection.seams_merged} seams merged, "
+                f"{len(detection.worker_indices)} spawned chains "
+                f"[{n_aux} aux sidecars ({n_red} reductions), {n_wg} worker-group], "
+                f"{detection.unclassified_empty_hash} empty-hash kept on main)"
+            )
         )
         # True-DAG fork edges live only in this log in v1 (the orchestrator
         # cannot replay nested spawns, so all chains attach to the root).
         _logger.debug(
-            lambda: f"Trace {trace_id} fork detail: "
-            + "; ".join(
-                f"fa:{n:03d} parent_chain={detection.chains[ci].fork.parent_chain} "
-                f"depth={detection.chains[ci].fork.depth}"
-                for n, ci in enumerate(detection.worker_indices)
-                if detection.chains[ci].fork is not None
+            lambda: (
+                f"Trace {trace_id} fork detail: "
+                + "; ".join(
+                    f"fa:{n:03d} parent_chain={detection.chains[ci].fork.parent_chain} "
+                    f"depth={detection.chains[ci].fork.depth}"
+                    for n, ci in enumerate(detection.worker_indices)
+                    if detection.chains[ci].fork is not None
+                )
             )
         )
         main_normals = list(detection.chains[detection.main_index].requests)

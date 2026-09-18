@@ -102,8 +102,8 @@ def _make_executor_returning(results: list[RunResult]) -> MagicMock:
     """Mocked RunExecutor whose execute() pops successive results."""
     iterator = iter(results)
     executor = MagicMock()
-    executor.derive_id.side_effect = (
-        lambda plan, var_idx, trial: f"id-{var_idx}-{trial}"
+    executor.derive_id.side_effect = lambda plan, var_idx, trial: (
+        f"id-{var_idx}-{trial}"
     )
     executor.execute = AsyncMock(side_effect=lambda _run: next(iterator))
     return executor
