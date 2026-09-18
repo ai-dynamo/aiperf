@@ -1626,8 +1626,6 @@ class TestRecordsManagerTimingDispatch:
 
 
 class TestRecordsManagerAnalyzerMetrics:
-    """Completed requests are independent of metric summaries and analyzers."""
-
     @pytest.mark.parametrize(
         ("success_count", "error_count", "cancelled"),
         [
