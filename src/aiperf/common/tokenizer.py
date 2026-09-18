@@ -674,6 +674,10 @@ class Tokenizer:
         from huggingface_hub import snapshot_download
         from huggingface_hub.errors import LocalEntryNotFoundError
 
+        local_path = Path(name).expanduser()
+        if local_path.is_dir():
+            return str(local_path.resolve())
+
         candidates = [name]
         if "/" not in name:
             cached_alias = cls._find_cached_model_for_alias(name)
