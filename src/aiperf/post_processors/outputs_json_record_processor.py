@@ -17,6 +17,7 @@ from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.metric_registry import MetricRegistry
+from aiperf.post_processors.shard_writer import ShardWriterMixin
 
 if TYPE_CHECKING:
     from aiperf.post_processors.record_observer_context import RecordObserverContext
@@ -51,7 +52,9 @@ class OutputFragment(AIPerfBaseModel):
     )
 
 
-class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
+class OutputsJsonRecordProcessor(
+    ShardWriterMixin, BufferedJSONLWriterMixin[OutputFragment]
+):
     """Captures model response text per request and writes fragment files.
 
     Enabled when --export-outputs-json is set. Writes per-processor fragment
@@ -83,22 +86,13 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
                 "OutputsJsonRecordProcessor is disabled (--export-outputs-json not set)"
             )
 
-        output_dir = (
-            self.cfg.artifacts.artifact_directory
-            / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        output_file = self.shard_output_file(
+            self.cfg.artifacts.dir,
+            OutputDefaults.OUTPUT_FRAGMENTS_FOLDER,
+            prefix="output_fragments",
+            ext="jsonl",
+            service_id=service_id,
         )
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        safe_id = (
-            (service_id or "processor")
-            .replace("/", "_")
-            .replace(":", "_")
-            .replace(" ", "_")
-        )
-        output_file = output_dir / f"output_fragments_{safe_id}.jsonl"
-
-        # Clear own file from a previous failed run (safe: each processor has a unique ID)
-        output_file.unlink(missing_ok=True)
 
         super().__init__(
             output_file=output_file,
@@ -124,7 +118,7 @@ class OutputsJsonRecordProcessor(BufferedJSONLWriterMixin[OutputFragment]):
         response_text = "".join(parts) or None
 
         # Capture the allowlisted metrics straight off the producer output, in the
-        # same display units the records JSONL export uses (see RecordExportJSONLWriter).
+        # same display units the records JSONL export uses (see RecordShardJSONLWriter).
         # This keeps outputs.json self-contained: metrics no longer require the
         # records JSONL to have been written, so --export-level summary (or a YAML
         # records: false) still yields fully-populated per-request metrics.
