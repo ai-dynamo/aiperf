@@ -119,6 +119,12 @@ class TestIterSelectedRecords:
 
 
 class TestScreenshotWindow:
+    def test_slots_span_user_and_tool_observations(self) -> None:
+        messages = _record(2)["messages"]
+        by_content = {id(m["content"]): m["role"] for m in messages}
+        slots = screenshot_slots(messages)
+        assert [by_content[id(parts)] for parts, _ in slots] == ["user", "tool", "tool"]
+
     def test_window_of_one_is_a_no_op_on_the_source(self) -> None:
         records = [_record(0), _record(1), _record(2)]
         untouched = copy.deepcopy(records)
