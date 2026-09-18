@@ -71,3 +71,18 @@ class RealtimeServerMetricsMessage(BaseServiceMessage):
         default_factory=dict,
         description="Bounded scalar snapshot for realtime console rendering.",
     )
+
+
+class ServerMetricsWarmupBoundaryReadyMessage(BaseServiceMessage):
+    """Published after warmup flush, in-flight scrape drain, and boundary scrape.
+
+    Timing waits for this before releasing profiling credits so a delayed
+    warmup-tagged scrape cannot include profiling observations.
+    """
+
+    message_type: MessageTypeT = MessageType.SERVER_METRICS_WARMUP_BOUNDARY_READY
+
+    phase_name: str | None = Field(
+        default=None,
+        description="Warmup phase name that completed its server-metrics boundary",
+    )

@@ -699,7 +699,14 @@ class PhaseRunner(TaskManagerMixin):
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
-        if seamless_to_next and not is_final_phase:
+        # Warmup never detaches: the server-metrics flush/drain barrier must
+        # finish before profiling credits start, even when the next phase is
+        # marked seamless.
+        is_warmup = (
+            self._config.phase == CreditPhase.WARMUP
+            or self._config.phase_kind == "warmup"
+        )
+        if seamless_to_next and not is_final_phase and not is_warmup:
             self._return_wait_task = self.execute_async(
                 self._wait_for_returning_complete(strategy, phase_id=phase_id)
             )
@@ -1217,13 +1224,9 @@ class PhaseRunner(TaskManagerMixin):
             if not self._lifecycle.is_complete:
                 self._lifecycle.mark_complete(grace_period_triggered=timed_out)
                 self._progress.freeze_completed_counts()
-            # Gate the warmup/profiling boundary on the server-metrics flush
-            # deadline before publishing phase-complete (and before run()
-            # returns so the orchestrator cannot start profiling early).
             # Skip on cancel: a cancelled run has no settled boundary worth
             # waiting for (same rationale as PROFILE_CANCEL).
-            if not self._was_cancelled:
-                await self._wait_for_server_metrics_warmup_flush()
+            await self._prepare_server_metrics_warmup_boundary()
             if phase_id is not None and self._baseline_end_ns is None:
                 self._baseline_end_ns = (
                     await self._capture_baseline_boundary_before_completion(
@@ -1233,19 +1236,34 @@ class PhaseRunner(TaskManagerMixin):
             stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
-            await self._phase_publisher.publish_phase_complete(
-                stats, branch_stats=self._snapshot_branch_stats()
-            )
+            await self._publish_phase_complete_with_server_metrics_gate(stats)
+
+    async def _prepare_server_metrics_warmup_boundary(self) -> None:
+        """Flush wait + clear ready event before publishing phase-complete."""
+        if self._was_cancelled:
+            return
+        await self._wait_for_server_metrics_warmup_flush()
+        self._phase_publisher.clear_warmup_boundary_ready()
+
+    async def _publish_phase_complete_with_server_metrics_gate(
+        self, stats: CreditPhaseStats
+    ) -> None:
+        """Publish phase-complete, then wait for warmup metrics drain ack."""
+        await self._phase_publisher.publish_phase_complete(
+            stats, branch_stats=self._snapshot_branch_stats()
+        )
+        if self._was_cancelled:
+            return
+        await self._wait_for_server_metrics_warmup_boundary_ready()
 
     async def _wait_for_server_metrics_warmup_flush(self) -> None:
         """Hold warmup completion until server metrics can settle.
 
         ``ServerMetricsManager`` scrapes the warmup boundary after the same
         ``COLLECTION_FLUSH_PERIOD`` deadline. Sleeping here (before publishing
-        ``CREDIT_PHASE_COMPLETE`` and before ``run()`` returns) keeps the next
-        phase from issuing profiling credits during that window. Sleeping only
-        in the metrics manager would still allow profiling traffic to enter the
-        delayed boundary scrape.
+        ``CREDIT_PHASE_COMPLETE``) keeps the next phase from issuing profiling
+        credits during that window. The runner then waits for the manager's
+        drain acknowledgment before ``run()`` returns.
         """
         is_warmup = (
             self._config.phase == CreditPhase.WARMUP
@@ -1268,6 +1286,34 @@ class PhaseRunner(TaskManagerMixin):
                 "before ending warmup..."
             )
             await asyncio.sleep(remaining_seconds)
+
+    async def _wait_for_server_metrics_warmup_boundary_ready(self) -> None:
+        """Wait until in-flight warmup scrapes are drained and baselined.
+
+        ``CREDIT_PHASE_COMPLETE`` is fire-and-forget over PUB/SUB, so the
+        manager's drain and final scrape can still be running when the
+        orchestrator would otherwise start profiling. Waiting for
+        ``SERVER_METRICS_WARMUP_BOUNDARY_READY`` closes that gap.
+        """
+        is_warmup = (
+            self._config.phase == CreditPhase.WARMUP
+            or self._config.phase_kind == "warmup"
+        )
+        if not is_warmup:
+            return
+        if self._run is None or not self._run.cfg.server_metrics.enabled:
+            return
+        timeout = (
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+            + Environment.SERVER_METRICS.SCRAPE_TIMEOUT
+            + 5.0
+        )
+        ready = await self._phase_publisher.wait_for_warmup_boundary_ready(timeout)
+        if not ready:
+            self.warning(
+                f"Timed out after {timeout:.1f}s waiting for server-metrics "
+                "warmup boundary ready; continuing without drain acknowledgment"
+            )
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""

@@ -173,6 +173,8 @@ def pub() -> MagicMock:
     m.publish_phase_complete = AsyncMock()
     m.publish_progress = AsyncMock()
     m.publish_credits_complete = AsyncMock()
+    m.clear_warmup_boundary_ready = MagicMock()
+    m.wait_for_warmup_boundary_ready = AsyncMock(return_value=True)
     return m
 
 
@@ -1445,8 +1447,6 @@ class TestWarmupProgressHeartbeat:
 
 
 class TestWarmupServerMetricsFlushBarrier:
-    """Warmup must hold CREDIT_PHASE_COMPLETE until the flush deadline (#1435)."""
-
     async def test_warmup_waits_for_flush_before_phase_complete(
         self,
         conv_src: MagicMock,
@@ -1553,3 +1553,104 @@ class TestWarmupServerMetricsFlushBarrier:
 
         assert events == []
         pub.publish_phase_complete.assert_awaited_once()
+
+    async def test_warmup_waits_for_boundary_ready_after_phase_complete(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        events: list[str] = []
+
+        async def record_phase_complete(*args, **kwargs) -> None:
+            events.append("phase_complete")
+
+        async def record_ready(timeout: float) -> bool:
+            events.append("boundary_ready_wait")
+            return True
+
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            )
+        )
+        run.cfg.server_metrics.enabled = True
+        runner = make_runner(
+            cfg(phase=CreditPhase.WARMUP),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+            run=run,
+        )
+        pub.publish_phase_complete = AsyncMock(side_effect=record_phase_complete)
+        pub.wait_for_warmup_boundary_ready = AsyncMock(side_effect=record_ready)
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._progress.all_credits_returned_event.set()
+
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.0
+        try:
+            await runner._wait_for_returning_complete(phase_id="phase-warmup")
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+
+        assert events == ["phase_complete", "boundary_ready_wait"]
+        pub.clear_warmup_boundary_ready.assert_called()
+
+    async def test_warmup_to_seamless_profiling_awaits_return_and_flush(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Warmup must not detach its return wait when the next phase is seamless."""
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            )
+        )
+        run.cfg.server_metrics.enabled = True
+        runner = make_runner(
+            cfg(phase=CreditPhase.WARMUP, reqs=1, rate=100.0, grace=0.05),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+            run=run,
+        )
+        strategy = MockStrategy()
+
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.0
+        try:
+            with (
+                patch.object(runner, "_create_rampers", MagicMock()),
+                patch.object(runner, "_wait_for_sending_complete", AsyncMock()),
+                patch.object(
+                    runner, "_wait_for_returning_complete", AsyncMock()
+                ) as wait_returning,
+            ):
+                await runner._run_strategy(
+                    strategy, is_final_phase=False, seamless_to_next=True
+                )
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+
+        wait_returning.assert_awaited_once()
+        assert runner.return_wait_task is None
