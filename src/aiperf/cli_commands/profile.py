@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from cyclopts import App
 
 from aiperf.config.flags import CLIConfig
@@ -53,6 +55,28 @@ def profile(
     with exit_on_error(title="Error Running AIPerf System", show_traceback=False):
         from aiperf.config.flags.resolver import resolve_config
         from aiperf.config.loader import build_benchmark_plan
+
+        # If the user didn't provide --model/--model-names, try to discover
+        # one from the server's OpenAI-compatible model list.
+        if not cli_config.model_names:
+            import logging
+
+            from aiperf.common.models.model_autodetect import autodetect_names
+
+            if not logging.getLogger().handlers:
+                logging.basicConfig(
+                    level=logging.INFO,
+                    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                )
+
+            cli_config.model_names = asyncio.run(
+                autodetect_names(
+                    urls=cli_config.urls,
+                    headers={},
+                    timeout_s=cli_config.wait_for_model_timeout or 10.0,
+                    interval_s=cli_config.wait_for_model_interval,
+                )
+            )
 
         # ``resolve_config`` handles both paths: CLI-only (no config_file)
         # and YAML+CLI merge (YAML is the base, explicitly-set CLI flags like
