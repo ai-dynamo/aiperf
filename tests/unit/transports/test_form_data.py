@@ -6,6 +6,7 @@ import base64
 
 import aiohttp
 import pytest
+from pytest import param
 
 from aiperf.transports.aiohttp_transport import AioHttpTransport
 
@@ -103,3 +104,25 @@ class TestBuildFormData:
         assert content_type.startswith("multipart/form-data"), (
             f"text-only FormData must be multipart, got {content_type!r}"
         )
+
+    @pytest.mark.parametrize(
+        "values, expected",
+        [
+            param(["word", "segment"], ["word", "segment"], id="multiple"),
+            param([], [], id="empty"),
+            param([True, False, 2], ["true", "false", "2"], id="scalar-types"),
+        ],
+    )  # fmt: skip
+    def test_list_fields_emit_repeated_parts(
+        self, values: list[str | bool | int], expected: list[str]
+    ) -> None:
+        form = AioHttpTransport._build_form_data(
+            {"timestamp_granularities[]": values, "model": "whisper-1"}
+        )
+        actual = [
+            value
+            for options, _, value in form._fields
+            if options["name"] == "timestamp_granularities[]"
+        ]
+        assert actual == expected
+        assert form._fields[-1][2] == "whisper-1"
