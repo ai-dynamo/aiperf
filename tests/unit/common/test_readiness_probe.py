@@ -214,3 +214,51 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
             f"EndpointConfig normalization is broken"
         )
     assert fake.urls[0] == "http://localhost:8000/v1/models"
+
+
+@pytest.mark.parametrize(
+    "mode, base_path, custom_endpoint, expected_paths",
+    [
+        pytest.param(
+            "both", "", None, ["/v1/models", "/v1/chat/completions"], id="default"
+        ),
+        pytest.param(
+            "inference",
+            "/v1/chat/completions/",
+            None,
+            ["/v1/chat/completions"],
+            id="existing-path",
+        ),
+        pytest.param(
+            "both",
+            "/proxy/",
+            "/generate",
+            ["/proxy/v1/models", "/proxy/generate"],
+            id="custom-path",
+        ),
+    ],
+)
+def test_readiness_preserves_query_while_appending_endpoint(
+    mode: str, base_path: str, custom_endpoint: str | None, expected_paths: list[str]
+) -> None:
+    """Probe paths must precede repeated queries, including trailing slashes in values."""
+    client = _FakeMultiClient()
+    query = "?tag=first&mode=strict&tag=&tag=last&prefix=%2Fraw/"
+    common = dict(
+        client=cast(Any, client),
+        url="http://server" + base_path + query,
+        model_name="served-model",
+        timeout_s=1.0,
+        interval_s=0.1,
+        headers={},
+    )
+    if mode == "both":
+        asyncio.run(readiness_probe._wait_models(**common))
+    asyncio.run(
+        readiness_probe._wait_inference(
+            **common,
+            endpoint_type="chat",
+            custom_endpoint=custom_endpoint,
+        )
+    )
+    assert client.urls == ["http://server" + path + query for path in expected_paths]
