@@ -9,6 +9,7 @@ Endpoint - Server connection and API configuration
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
@@ -37,6 +38,7 @@ from aiperf.config.control_hooks import (
 from aiperf.config.loader.parsing import normalize_http_urls
 from aiperf.plugin.enums import (
     EndpointType,
+    RequestSignerType,
     TransportType,
     URLSelectionStrategy,
 )
@@ -100,6 +102,72 @@ class TemplateConfig(BaseConfig):
             "Use dot notation for nested fields: 'choices.0.message.content'.",
         ),
     ]
+
+
+def _transport_botocore_service_id(transport: TransportType | None) -> str | None:
+    """Return the botocore service id the given transport speaks, if any.
+
+    Duplicated from ``aiperf.auth.sigv4_signer`` on purpose: config validation
+    must work without the optional ``aiperf[aws]`` extra installed, and importing
+    the signer module pulls in botocore.
+    """
+    if transport is None:
+        return None
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return None
+    return getattr(transport_cls, "botocore_service_id", None)
+
+
+def _transport_signs(transport: TransportType) -> bool:
+    """Whether the named transport applies the configured request signer.
+
+    Signing lives on ``AioHttpTransport._sign_if_needed``; anything deriving from
+    it inherits the call site. Resolved through the plugin registry rather than an
+    enum comparison so that adding a signing transport requires no edit here.
+    """
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+    from aiperf.transports.aiohttp_transport import AioHttpTransport
+
+    try:
+        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
+    except Exception:
+        return False
+    return isinstance(transport_cls, type) and issubclass(
+        transport_cls, AioHttpTransport
+    )
+
+
+def _is_cleartext_remote(url: str) -> bool:
+    """Whether ``url`` would send request headers unencrypted off-box.
+
+    Loopback is deliberately exempt: the documented mock-server workflow signs
+    against ``http://localhost``, and headers that never leave the machine are not
+    disclosed by the absence of TLS.
+
+    The host is parsed as an address rather than matched as text. A prefix test
+    such as ``host.startswith("127.")`` also accepts ``127.attacker.example`` --
+    a subdomain anyone controlling a domain can create -- and this function is
+    what decides whether a signature and session token may travel in cleartext.
+    """
+    parsed = urlparse(url if "://" in url else f"http://{url}")
+    if parsed.scheme != "http":
+        return False
+    host = (parsed.hostname or "").lower()
+    if host == "localhost":
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    # ipv4_mapped is unwrapped explicitly: is_loopback only began covering
+    # ::ffff:127.0.0.1 in CPython newer than this project's 3.11 floor.
+    return not (getattr(address, "ipv4_mapped", None) or address).is_loopback
 
 
 class EndpointConfig(BaseConfig):
@@ -217,6 +285,46 @@ class EndpointConfig(BaseConfig):
             description="Transport plugin name. Currently only 'http' (aiohttp-based "
             "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
             "setting overrides auto-detection.",
+        ),
+    ]
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="AWS region for the request. Required when auth_type='sigv4'.",
+        ),
+    ]
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Named AWS credentials profile. Unset uses botocore's default "
+            "credential chain.",
+        ),
+    ]
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            default=None,
+            description="Request signing method for authentication. When set, the selected "
+            "request_signer plugin signs every HTTP request sent by the HTTP transport. "
+            "Replaces Bearer token auth (api_key is ignored when auth_type is set).",
+        ),
+    ]
+
+    aws_service: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="SigV4 signing name -- the credential scope the signature "
+            "is bound to (e.g. 'execute-api', 'sagemaker', 'bedrock'). This is not "
+            "always the API id: the 'sagemaker-runtime' API signs as 'sagemaker' and "
+            "'bedrock-runtime' as 'bedrock'. Required when auth_type='sigv4', unless "
+            "the selected transport declares which AWS API it speaks, in which case "
+            "the scope is resolved from botocore's service model.",
         ),
     ]
 
@@ -688,5 +796,84 @@ class EndpointConfig(BaseConfig):
                 "endpoint.reset_kv_cache and endpoint.server_profiler require "
                 "HTTP transport; unsupported transport "
                 f"{self.transport!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_sigv4_auth(self) -> Self:
+        """Reject SigV4 configurations that would only fail at request time.
+
+        Runs after ``_validate_request_content_type`` so the multipart check
+        sees the auto-selected content type for form-data endpoints.
+        """
+        # Exactly what the user passed: this dict also answers "which flags did
+        # they set", so a value derived from the transport must not appear here
+        # or an unsigned run is rejected over a flag nobody typed.
+        aws_flags = {
+            "--aws-region": self.aws_region,
+            "--aws-profile": self.aws_profile,
+            "--aws-service": self.aws_service,
+        }
+        if self.auth_type != RequestSignerType.SIGV4:
+            set_flags = sorted(
+                flag for flag, val in aws_flags.items() if val is not None
+            )
+            if set_flags:
+                raise ValueError(
+                    f"{', '.join(set_flags)} has no effect unless --auth-type is set "
+                    f"to 'sigv4'. Set --auth-type sigv4 to enable request signing."
+                )
+            return self
+
+        # Only now that signing is confirmed does the transport get to supply
+        # the credential scope; the signer resolves it from botocore's model.
+        aws_flags["--aws-service"] = self.aws_service or _transport_botocore_service_id(
+            self.transport
+        )
+
+        missing = [
+            flag
+            for flag in ("--aws-region", "--aws-service")
+            if not (aws_flags[flag] or "").strip()
+        ]
+        if missing:
+            raise ValueError(
+                f"--auth-type sigv4 requires {' and '.join(missing)} to be set to a "
+                f"non-empty value."
+            )
+
+        # Transport None means auto-detect HTTP from URL — allowed. Otherwise the
+        # transport must actually sign: one lacking the _sign_if_needed call site
+        # would resolve AWS credentials and sign nothing, silently producing
+        # unauthenticated requests. Tested by capability rather than identity with
+        # TransportType.HTTP, which would exclude every transport deriving from the
+        # HTTP one -- they inherit the call site and do sign.
+        if self.transport is not None and not _transport_signs(self.transport):
+            raise ValueError(
+                f"--auth-type {self.auth_type} requires a transport that signs "
+                f"requests; {self.transport!r} does not. Signing is implemented by "
+                "the HTTP transport and anything deriving from it."
+            )
+
+        if self.request_content_type == RequestContentType.MULTIPART_FORM_DATA:
+            raise ValueError(
+                f"--auth-type sigv4 does not support multipart/form-data requests, "
+                f"which endpoint type {self.type} uses. Signing a multipart body is "
+                f"not implemented, and sending it unsigned would silently produce "
+                f"unauthenticated requests."
+            )
+
+        # SigV4 signing adds AWS credentials (Authorization header and optional
+        # X-Amz-Security-Token) to outbound requests. Sending those over plain
+        # HTTP would expose them to interception, so require https -- except for
+        # loopback, where the headers never leave the machine and where the
+        # documented mock-server workflow runs.
+        insecure = [url for url in self.urls if _is_cleartext_remote(url)]
+        if insecure:
+            raise ValueError(
+                f"--auth-type {self.auth_type} puts the signature and any session "
+                "token into the request headers; sending those over plain HTTP "
+                f"would disclose them: {', '.join(insecure)}. Use https:// URLs, "
+                "or drop --auth-type."
             )
         return self

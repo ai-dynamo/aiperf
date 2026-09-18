@@ -98,7 +98,16 @@ otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
+aws = [
+  "botocore>=1.34.0",
+]
 test = [
+  # test_sigv4_signer.py self-skips via pytest.importorskip("botocore"), and the
+  # Windows-on-ARM job installs "--extra test --no-dev". Without botocore here
+  # that job skips all 18 signer tests and still reports green. botocore is a
+  # pure-Python (py3-none-any) wheel, so unlike the deps `dev` pulls it installs
+  # there fine.
+  "aiperf[aws]",
   "httpx>=0.27.0",
   # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
   # build and no sdist, so it can't install on Windows-on-ARM. Cap it there to
@@ -119,7 +128,7 @@ test = [
   "trustme>=1.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
 ]
 dev = [
-  "aiperf[mlflow,otel,test,wandb]",
+  "aiperf[aws,mlflow,otel,test,wandb]",
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",

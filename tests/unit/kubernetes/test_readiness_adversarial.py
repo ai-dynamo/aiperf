@@ -120,6 +120,7 @@ def _plan_with_endpoint(**endpoint_overrides: Any) -> SimpleNamespace:
         "wait_for_model_mode": "both",
         "type": "chat",
         "path": "/v1/chat/completions",
+        "auth_type": None,
     }
     endpoint_defaults.update(endpoint_overrides)
     config = SimpleNamespace(
@@ -169,6 +170,7 @@ class TestReadinessProbeStatusClassification:
             timeout_s=5.0,
             interval_s=0.1,
             headers={"X-Readiness": "models"},
+            signer=None,
         )
 
         assert client.get_urls == [
@@ -205,6 +207,7 @@ class TestReadinessProbeStatusClassification:
             timeout_s=5.0,
             interval_s=0.1,
             headers={"Authorization": "Bearer sk-local-readiness"},
+            signer=None,
         )
 
         assert client.post_urls == ["http://localhost:8000/v1/chat/completions"]
@@ -232,6 +235,7 @@ class TestReadinessProbeStatusClassification:
             timeout_s=5.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
 
         assert client.post_urls == [
@@ -252,6 +256,7 @@ class TestReadinessProbeStatusClassification:
             timeout_s=5.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
 
         assert client.get_urls == [
@@ -347,6 +352,7 @@ class TestReadinessProbeHttpClient:
                 timeout_s=0.0,
                 interval_s=0.1,
                 headers={},
+                signer=None,
             )
 
         assert client.closed is True
@@ -376,6 +382,7 @@ class TestReadinessProbeHttpClient:
                     timeout_s=5.0,
                     interval_s=0.1,
                     headers={},
+                    signer=None,
                 )
         finally:
             await client.close()
@@ -422,6 +429,7 @@ class TestCliPreflightEndpointReady:
             "X-Trace-ID": "conv-2026-05-18-9c3a",
             "Authorization": "Bearer sk-local-readiness",
         }
+        assert captured["signer"] is None
 
 
 # =============================================================================

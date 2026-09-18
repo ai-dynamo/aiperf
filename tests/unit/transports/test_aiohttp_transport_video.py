@@ -2,13 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for AioHttpTransport video generation functionality."""
 
+import time
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import orjson
 import pytest
 
-from aiperf.common.models import ErrorDetails, RequestRecord, TextResponse
+from aiperf.auth.base_signer import SignedRequest
+from aiperf.common.models import (
+    BinaryResponse,
+    ErrorDetails,
+    RequestRecord,
+    TextResponse,
+)
 from aiperf.plugin.enums import EndpointType
 from aiperf.transports.aiohttp_client import AioHttpClient
 from aiperf.transports.aiohttp_transport import AioHttpTransport
@@ -317,6 +324,7 @@ class TestVideoContentDownload:
             "video-123",
             "http://localhost/v1/videos/video-123/content",
             {"Authorization": "Bearer token"},
+            signing_origin_url="http://localhost/v1/videos/video-123",
         )
 
         assert not isinstance(result, ErrorDetails)
@@ -334,12 +342,111 @@ class TestVideoContentDownload:
             "video-123",
             "http://localhost/v1/videos/video-123/content",
             {"Authorization": "Bearer token"},
+            signing_origin_url="http://localhost/v1/videos/video-123",
         )
 
         assert isinstance(result, ErrorDetails)
         # The actual implementation propagates the original error code
         assert result.code == 404
         assert "Failed to download video" in result.message
+
+
+class TestVideoTransportSigning:
+    """Signed headers from `request_signer` must reach the video job HTTP calls."""
+
+    @pytest.mark.asyncio
+    async def test_submit_video_job_passes_signed_headers_to_client(self, transport):
+        """_submit_video_job must sign the JSON request and forward signed headers."""
+        transport.aiohttp_client.post_request.return_value = create_request_record(
+            status=201,
+            body=orjson.dumps({"id": "video-123", "status": "queued"}).decode(),
+        )
+        mock_signer = AsyncMock()
+        mock_signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ...", "X-Amz-Date": "now"},
+            body=b"signed-body",
+        )
+        transport.request_signer = mock_signer
+
+        result = await transport._submit_video_job(
+            "http://localhost/v1/videos",
+            {"prompt": "A cat playing piano"},
+            {"Content-Type": "application/json"},
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        mock_signer.sign.assert_awaited_once()
+        url, body, headers = transport.aiohttp_client.post_request.call_args.args
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+        assert headers["X-Amz-Date"] == "now"
+        assert body == b"signed-body"
+
+    @pytest.mark.asyncio
+    async def test_poll_video_job_passes_signed_headers_to_client(self, transport):
+        """_poll_video_job must sign each poll request and forward signed headers."""
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200,
+            body=orjson.dumps({"id": "video-123", "status": "completed"}).decode(),
+        )
+        mock_signer = AsyncMock()
+        mock_signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ...", "X-Amz-Date": "now"},
+            url="https://signed.example.com/v1/videos/video-123",
+        )
+        transport.request_signer = mock_signer
+
+        result = await transport._poll_video_job(
+            "video-123",
+            "http://localhost/v1/videos/video-123",
+            {"Authorization": "Bearer token"},
+            timeout=60.0,
+            poll_interval=1.0,
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        mock_signer.sign.assert_awaited_once()
+        url, headers = transport.aiohttp_client.get_request.call_args.args
+        assert url == "https://signed.example.com/v1/videos/video-123"
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+        assert headers["X-Amz-Date"] == "now"
+
+    @pytest.mark.asyncio
+    async def test_download_video_content_passes_signed_headers_to_client(
+        self, transport
+    ):
+        """_download_video_content must sign the download request and forward signed headers."""
+        import time
+
+        from aiperf.common.models import BinaryResponse
+
+        perf_ns = time.perf_counter_ns()
+        transport.aiohttp_client.get_request.return_value = RequestRecord(
+            request_headers={},
+            start_perf_ns=perf_ns,
+            end_perf_ns=perf_ns + 1000000,
+            status=200,
+            responses=[
+                BinaryResponse(perf_ns=perf_ns, raw_bytes=b"fake_video_content")
+            ],
+        )
+        mock_signer = AsyncMock()
+        mock_signer.sign.return_value = SignedRequest(
+            headers={"Authorization": "AWS4-HMAC-SHA256 ...", "X-Amz-Date": "now"},
+        )
+        transport.request_signer = mock_signer
+
+        result = await transport._download_video_content(
+            "video-123",
+            "http://localhost/v1/videos/video-123/content",
+            {"Authorization": "Bearer token"},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        assert not isinstance(result, ErrorDetails)
+        mock_signer.sign.assert_awaited_once()
+        url, headers = transport.aiohttp_client.get_request.call_args.args
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+        assert headers["X-Amz-Date"] == "now"
 
 
 class TestVideoRequestWorkflow:
@@ -728,3 +835,182 @@ class TestVideoJobSubmissionPayloadEncoding:
         assert not isinstance(result, ErrorDetails)
         sent_body = transport.aiohttp_client.post_request.call_args.args[1]
         assert sent_body is payload_bytes
+
+
+def _stub_signer() -> AsyncMock:
+    signer = AsyncMock()
+    signer.sign.return_value = SignedRequest(
+        headers={
+            "Authorization": "AWS4-HMAC-SHA256 ...",
+            "X-Amz-Security-Token": "SESSION-SECRET",
+        }
+    )
+    return signer
+
+
+class TestSignedVideoRequestsDoNotFollowRedirects:
+    """The inference path already refuses redirects on signed requests. The
+    video job paths sign too, so a redirect there replays
+    ``X-Amz-Security-Token`` -- a bearer credential -- at whatever origin the
+    redirect names. The poll path is the worst of the three: it re-delivers the
+    token on every iteration for the full timeout window.
+    """
+
+    @pytest.mark.asyncio
+    async def test_submit_refuses_redirects_when_signed(self, transport):
+        transport.aiohttp_client.post_request.return_value = create_request_record(
+            status=201,
+            body=orjson.dumps({"id": "video-123", "status": "queued"}).decode(),
+        )
+        transport.request_signer = _stub_signer()
+
+        await transport._submit_video_job(
+            "http://localhost/v1/videos", {"prompt": "x"}, {}
+        )
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_poll_refuses_redirects_when_signed(self, transport):
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200,
+            body=orjson.dumps({"id": "video-123", "status": "completed"}).decode(),
+        )
+        transport.request_signer = _stub_signer()
+
+        await transport._poll_video_job(
+            "video-123",
+            "http://localhost/v1/videos/video-123",
+            {},
+            timeout=60.0,
+            poll_interval=1.0,
+        )
+
+        kwargs = transport.aiohttp_client.get_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_download_refuses_redirects_when_signed(self, transport):
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+        transport.request_signer = _stub_signer()
+
+        await transport._download_video_content(
+            "video-123",
+            "http://localhost/v1/videos/video-123/content",
+            {},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        kwargs = transport.aiohttp_client.get_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_unsigned_video_requests_still_follow_redirects(self, transport):
+        transport.aiohttp_client.post_request.return_value = create_request_record(
+            status=201,
+            body=orjson.dumps({"id": "video-123", "status": "queued"}).decode(),
+        )
+
+        await transport._submit_video_job(
+            "http://localhost/v1/videos", {"prompt": "x"}, {}
+        )
+
+        kwargs = transport.aiohttp_client.post_request.call_args.kwargs
+        assert "allow_redirects" not in kwargs
+
+
+class TestVideoDownloadDoesNotSignForeignUrls:
+    """``content_url`` is read out of the polled response body, so the
+    benchmarked server chooses it. Signing it unconditionally lets that server
+    name any host and receive a freshly minted signature plus the raw session
+    token.
+
+    Refusing also fixes the benign case: the natural value for ``data["url"]``
+    is a presigned S3 URL, and S3 rejects a request carrying both a presigned
+    query signature and an ``Authorization`` header.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_off_origin_download_url_is_not_signed(self, transport):
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+        signer = _stub_signer()
+        transport.request_signer = signer
+
+        await transport._download_video_content(
+            "video-123",
+            "https://evil.example.com/collect?X-Amz-Signature=presigned",
+            {},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        signer.sign.assert_not_awaited()
+        _, headers = transport.aiohttp_client.get_request.call_args.args
+        assert "X-Amz-Security-Token" not in headers
+        assert "Authorization" not in headers
+
+    @pytest.mark.asyncio
+    async def test_a_same_origin_download_url_is_still_signed(self, transport):
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+        signer = _stub_signer()
+        transport.request_signer = signer
+
+        await transport._download_video_content(
+            "video-123",
+            "http://localhost/v1/videos/video-123/content",
+            {},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        signer.sign.assert_awaited_once()
+        _, headers = transport.aiohttp_client.get_request.call_args.args
+        assert headers["Authorization"] == "AWS4-HMAC-SHA256 ..."
+
+    @pytest.mark.asyncio
+    async def test_the_poll_url_is_what_the_server_url_is_checked_against(
+        self, transport, video_request_info
+    ):
+        """The guard is only worth anything if the value the server put in
+        ``data["url"]`` is the one compared, against the URL we were already
+        polling. Asserts the wiring, since the origin decision itself is
+        covered above."""
+        submit_response = TextResponse(
+            perf_ns=time.perf_counter_ns(),
+            text='{"id":"video-123","status":"queued"}',
+        )
+        with (
+            patch.object(transport, "_submit_video_job") as mock_submit,
+            patch.object(transport, "_poll_video_job") as mock_poll,
+            patch.object(transport, "_download_video_content") as mock_download,
+        ):
+            mock_submit.return_value = ("video-123", submit_response)
+            mock_poll.return_value = (
+                {
+                    "id": "video-123",
+                    "status": "completed",
+                    "url": "https://evil.example.com/collect",
+                },
+                5.5,
+            )
+            mock_download.return_value = BinaryResponse(
+                perf_ns=time.perf_counter_ns(), raw_bytes=b"video-bytes"
+            )
+            with patch.object(
+                video_request_info.model_endpoint.endpoint,
+                "download_video_content",
+                True,
+            ):
+                await transport._send_video_request_with_polling(
+                    video_request_info, {"prompt": "x"}
+                )
+
+        args, kwargs = mock_download.call_args
+        assert args[1] == "https://evil.example.com/collect"
+        assert kwargs["signing_origin_url"] != args[1]
+        assert "evil.example.com" not in kwargs["signing_origin_url"]
