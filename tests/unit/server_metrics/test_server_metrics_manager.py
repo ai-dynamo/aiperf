@@ -13,6 +13,7 @@ from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
+    ServerMetricsWarmupBoundaryReadyMessage,
 )
 from aiperf.common.models import CreditPhaseStats, ErrorDetails
 from aiperf.common.models.server_metrics_models import ServerMetricsRecord
@@ -1488,12 +1489,21 @@ class TestWarmupPhaseCompleteScrape:
     """End-of-warmup scrape behavior on CREDIT_PHASE_COMPLETE."""
 
     def _make_manager(self, cfg_with_endpoint: CLIConfig) -> ServerMetricsManager:
-        return ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager.publish = AsyncMock()
+        return manager
 
     def _phase_complete(self, phase: CreditPhase) -> CreditPhaseCompleteMessage:
+        # requests_end_ns far enough in the past that the flush deadline has
+        # already elapsed, so boundary tests stay fast by default.
+        end_ns = time.time_ns() - 60_000_000_000
         return CreditPhaseCompleteMessage(
             service_id="timing-manager",
-            stats=CreditPhaseStats(phase=phase, start_ns=1_000_000_000),
+            stats=CreditPhaseStats(
+                phase=phase,
+                start_ns=end_ns - 1_000_000_000,
+                requests_end_ns=end_ns,
+            ),
         )
 
     @pytest.mark.asyncio
@@ -1569,6 +1579,12 @@ class TestWarmupPhaseCompleteScrape:
         )
 
         assert manager._active_phase is None
+        ready_messages = [
+            call.args[0]
+            for call in manager.publish.await_args_list
+            if isinstance(call.args[0], ServerMetricsWarmupBoundaryReadyMessage)
+        ]
+        assert len(ready_messages) == 1
 
     @pytest.mark.asyncio
     async def test_profiling_complete_preserves_active_phase(
@@ -1646,39 +1662,111 @@ class TestWarmupPhaseCompleteScrape:
         assert events[1] == "scrape"
         collector.collect_and_process_metrics.assert_awaited_once()
         assert manager._active_phase is None
+        ready_messages = [
+            call.args[0]
+            for call in manager.publish.await_args_list
+            if isinstance(call.args[0], ServerMetricsWarmupBoundaryReadyMessage)
+        ]
+        assert len(ready_messages) == 1
+        assert ready_messages[0].phase_name == "warmup"
 
     @pytest.mark.asyncio
-    async def test_warmup_flush_barrier_keeps_scrape_tagged_warmup(
+    async def test_warmup_complete_drains_in_flight_scrape_before_ready(
         self,
         cfg_with_endpoint: CLIConfig,
     ):
-        """The post-flush boundary scrape must still be attributed to warmup."""
+        """An in-flight warmup scrape must finish before boundary ready.
+
+        Regression for the #1435 follow-up: a delayed periodic scrape tagged
+        warmup can otherwise finish after profiling starts and double-count.
+        """
         manager = self._make_manager(cfg_with_endpoint)
-        scraped_phases: list[CreditPhase] = []
+        events: list[str] = []
+        release_scrape = asyncio.Event()
 
-        async def capture_phase(collector, identity) -> None:
-            scraped_phases.append(identity.phase)
+        async def delayed_in_flight_scrape() -> None:
+            events.append("in_flight_started")
+            await release_scrape.wait()
+            events.append("in_flight_finished")
 
+        async def record_final_scrape(*args, **kwargs) -> None:
+            events.append("final_scrape")
+
+        async def record_ready(phase_name: str | None) -> None:
+            events.append("boundary_ready")
+
+        in_flight = asyncio.create_task(delayed_in_flight_scrape())
+        manager._in_flight_scrapes.add(in_flight)
         collector = MagicMock()
         manager._collectors = {"http://localhost:8000/metrics": collector}
         manager._active_phase = _ServerMetricsPhaseIdentity(
             phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
         )
+
         original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
-        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.25
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.0
         try:
-            with patch.object(
-                manager,
-                "_collect_and_process_metrics_for_phase",
-                side_effect=capture_phase,
+            with (
+                patch.object(
+                    manager,
+                    "_collect_and_process_metrics_for_phase",
+                    side_effect=record_final_scrape,
+                ),
+                patch.object(
+                    manager,
+                    "_publish_warmup_boundary_ready",
+                    side_effect=record_ready,
+                ),
             ):
-                await manager._on_credit_phase_complete(
-                    self._phase_complete(CreditPhase.WARMUP)
+                complete_task = asyncio.create_task(
+                    manager._on_credit_phase_complete(
+                        self._phase_complete(CreditPhase.WARMUP)
+                    )
                 )
+                # Allow the complete handler to reach the drain await.
+                for _ in range(20):
+                    await asyncio.sleep(0)
+                    if "in_flight_started" in events:
+                        break
+                assert "final_scrape" not in events
+                assert "boundary_ready" not in events
+                release_scrape.set()
+                await complete_task
         finally:
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+            if not in_flight.done():
+                in_flight.cancel()
 
-        assert scraped_phases == [CreditPhase.WARMUP]
+        assert events == [
+            "in_flight_started",
+            "in_flight_finished",
+            "final_scrape",
+            "boundary_ready",
+        ]
+        assert manager._active_phase is None
+        assert manager._periodic_scrapes_suspended is False
+
+    @pytest.mark.asyncio
+    async def test_suspended_periodic_scrapes_skip_during_warmup_boundary(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        manager = self._make_manager(cfg_with_endpoint)
+        events: list[str] = []
+
+        class _Collector:
+            async def collect_and_process_metrics(self) -> None:
+                events.append("periodic_ran")
+
+        real_collector = _Collector()
+        manager._attach_phase_scoped_collection(real_collector)
+        manager._periodic_scrapes_suspended = True
+        await real_collector.collect_and_process_metrics()
+        assert events == []
+
+        manager._periodic_scrapes_suspended = False
+        await real_collector.collect_and_process_metrics()
+        assert events == ["periodic_ran"]
 
 
 class TestKubernetesDiscoveryIntegration:

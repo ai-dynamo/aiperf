@@ -460,6 +460,7 @@ class MessageType(CaseInsensitiveStrEnum):
     TELEMETRY_RECORDS = "telemetry_records"
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_STATUS = "server_metrics_status"
+    SERVER_METRICS_WARMUP_BOUNDARY_READY = "server_metrics_warmup_boundary_ready"
     NETWORK_LATENCY_RECORD = "network_latency_record"
     WORKER_GROUP_STATS = "worker_group_stats"
     WORKER_HEALTH = "worker_health"

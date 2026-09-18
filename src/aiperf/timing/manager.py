@@ -26,6 +26,7 @@ from aiperf.common.messages import (
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
     HeartbeatMessage,
+    ServerMetricsWarmupBoundaryReadyMessage,
 )
 from aiperf.common.models import DatasetMetadata
 from aiperf.credit.sticky_router import StickyCreditRouter
@@ -64,10 +65,12 @@ class TimingManager(BaseComponentService):
         self.debug("Timing manager __init__")
         self.config = TimingConfig.from_run(self.run)
 
+        self._server_metrics_warmup_boundary_ready = asyncio.Event()
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
             service_id=self.service_id,
             profile_cancel_sender=self._request_profile_cancel,
+            warmup_boundary_ready=self._server_metrics_warmup_boundary_ready,
         )
 
         self._dataset_configured_event = asyncio.Event()
@@ -108,6 +111,13 @@ class TimingManager(BaseComponentService):
         """
         if message.service_type == ServiceType.WORKER:
             self.sticky_router.note_worker_heartbeat(message.service_id)
+
+    @on_message(MessageType.SERVER_METRICS_WARMUP_BOUNDARY_READY)
+    async def _on_server_metrics_warmup_boundary_ready(
+        self, _message: ServerMetricsWarmupBoundaryReadyMessage
+    ) -> None:
+        """Release PhaseRunner's wait after the warmup metrics boundary settles."""
+        self._server_metrics_warmup_boundary_ready.set()
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured_notification(

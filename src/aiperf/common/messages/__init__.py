@@ -44,6 +44,7 @@ from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
     RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
+    ServerMetricsWarmupBoundaryReadyMessage,
 )
 from aiperf.common.messages.service_messages import (
     BaseServiceErrorMessage,
@@ -104,6 +105,7 @@ __all__ = [
     "ResultsExportedMessage",
     "RealtimeServerMetricsMessage",
     "ServerMetricsStatusMessage",
+    "ServerMetricsWarmupBoundaryReadyMessage",
     "SystemStateChangedMessage",
     "TargetedServiceMessage",
     "TelemetryRecordsMessage",
