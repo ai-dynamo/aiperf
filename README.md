@@ -253,6 +253,10 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions, and contribution guidelines.
 
+## License
+
+AIPerf is licensed under the [Apache License 2.0](LICENSE). Because `helm package` only includes files beneath the chart directory, the [aiperf-operator Helm chart](deploy/helm/aiperf-operator) contains a [symlink to the repository's top-level license](deploy/helm/aiperf-operator/LICENSE) solely so the license is included in the packaged chart archive. Helm dereferences the symlink at packaging time, so the archive contains a regular `LICENSE` file with the top-level license contents.
+
 ## Known Issues
 
 - Output sequence length constraints (`--output-tokens-mean`) cannot be guaranteed unless you pass `ignore_eos` and/or `min_tokens` via `--extra-inputs` to an inference server that supports them.

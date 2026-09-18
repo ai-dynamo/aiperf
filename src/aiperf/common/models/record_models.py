@@ -428,7 +428,7 @@ class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
     records: list[MetricResult] | None = Field(
-        ..., description="The records of the profile results"
+        default=None, description="The records of the profile results"
     )
     warmup_records: list[MetricResult] | None = Field(
         default=None,
