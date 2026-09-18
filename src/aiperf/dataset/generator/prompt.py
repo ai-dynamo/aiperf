@@ -612,6 +612,21 @@ class PromptGenerator(BaseGenerator):
                 or if hash_ids overshoots and the implied partial block size is
                 outside ``(0, block_size]``.
         """
+        pieces = self._build_token_pieces(num_tokens, hash_ids, block_size)
+        if len(pieces) == 1:
+            return list(pieces[0])
+        final_prompt: list[int] = []
+        for piece in pieces:
+            final_prompt.extend(piece)
+        return final_prompt
+
+    def _build_token_pieces(
+        self,
+        num_tokens: int,
+        hash_ids: list[int],
+        block_size: int,
+    ) -> list[list[int]]:
+        """Same layouts as :meth:`_build_token_sequence`, without concatenating."""
         if num_tokens <= 0 or block_size <= 0:
             raise ConfigurationError(
                 f"Input length: {num_tokens}, Hash IDs: {hash_ids}, "
@@ -619,15 +634,12 @@ class PromptGenerator(BaseGenerator):
                 f"and block_size must both be greater than 0."
             )
 
+        if not hash_ids:
+            return [self._sample_tokens(num_tokens)]
+
         m = len(hash_ids)
         total_hashed = m * block_size
-        final_prompt: list[int] = []
-
-        if not hash_ids:
-            return self._sample_tokens(num_tokens)
-
         if total_hashed > num_tokens:
-            # Synthetic-prompt path: last hash is a partial block.
             final_block_size = num_tokens - ((m - 1) * block_size)
             if final_block_size <= 0 or final_block_size > block_size:
                 raise ConfigurationError(
@@ -637,18 +649,14 @@ class PromptGenerator(BaseGenerator):
                     f"0 and less than or equal to {block_size}."
                 )
         else:
-            # Exact-tile or prefix-only path: every hash is a full block.
             final_block_size = block_size
 
+        pieces: list[list[int]] = []
+        hashed_len = 0
         for index, hash_id in enumerate(hash_ids):
             current_block_size = final_block_size if index == m - 1 else block_size
             cached = self._cache.get(hash_id)
             if cached is None:
-                # Reseed per-(trace_id, hash_id) so the same hash_id in a
-                # different trace file (different trace_id scope) produces
-                # different tokens. Trace loaders set the trace_id once per
-                # file in BaseTraceDatasetLoader.load_dataset and clear
-                # ``self._cache`` between files.
                 self._hash_id_corpus_rng.reseed_for_hash_id(hash_id)
                 cached = sample_tokens_from_corpus(
                     self._tokenized_corpus,
@@ -658,9 +666,6 @@ class PromptGenerator(BaseGenerator):
                 )
                 self._cache[hash_id] = cached
             elif len(cached) != current_block_size:
-                # A hash_id identifies a fixed block of content, so it can only
-                # ever have one size. The same id at two sizes means a corrupt
-                # trace or a block_size that disagrees with the recorded blocks.
                 raise ConfigurationError(
                     f"hash_id {hash_id} requested at {current_block_size} tokens "
                     f"but was already materialized at {len(cached)} tokens. A "
@@ -668,15 +673,13 @@ class PromptGenerator(BaseGenerator):
                     f"sizes indicate a corrupt trace or a --isl-block-size that "
                     f"disagrees with the recorded blocks."
                 )
+            pieces.append(cached)
+            hashed_len += len(cached)
 
-            final_prompt.extend(cached)
-
-        # Prefix-only: pad the un-hashed tail with sampled (uncached) tokens.
-        tail = num_tokens - len(final_prompt)
+        tail = num_tokens - hashed_len
         if tail > 0:
-            final_prompt.extend(self._sample_tokens(tail))
-
-        return final_prompt
+            pieces.append(self._sample_tokens(tail))
+        return pieces
 
     def _sample_tokens(self, num_tokens: int) -> list[int]:
         """Generate a list of token IDs containing exactly `num_tokens` number of tokens.
