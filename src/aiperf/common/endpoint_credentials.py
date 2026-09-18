@@ -372,7 +372,22 @@ def apply_endpoint_credentials(
     if credentials.headers:
         endpoint.headers.update(credentials.headers)
     if credentials.urls:
-        endpoint.urls = credentials.urls
+        from aiperf.config.loader.parsing import normalize_http_urls
+
+        # Mirror the ``urls`` field's AfterValidator: a schemeless injected URL
+        # (``host:8000``) must be normalized to an explicit scheme here, exactly
+        # as construction does, otherwise the scheme-aware gates below never see
+        # it as ``ws://`` and a credential-bearing socket slips through in
+        # cleartext.
+        endpoint.urls = normalize_http_urls(credentials.urls)
+
+    # BaseConfig has no validate_assignment, so the endpoint's model validators do
+    # not re-run on the in-place overlay above. Re-assert the URL/credential
+    # gates: an injected api_key/header on a ``ws://`` endpoint would transmit the
+    # just-rehydrated secret in cleartext, and an injected URL would otherwise
+    # escape the boundary, responses-type, scheme-consistency, control-hook, and
+    # token-count gates entirely.
+    endpoint.revalidate_after_credential_injection()
 
     if not require_resolved:
         return

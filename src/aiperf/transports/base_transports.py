@@ -205,6 +205,30 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
 
         return base_url
 
+    @staticmethod
+    def _dedup_path_overlap(base_path: str, sub_path: str) -> str:
+        """Join ``base_path`` and ``sub_path`` while collapsing tail/head overlap.
+
+        Three cases are deduped:
+
+        * ``sub_path`` is empty: the base path is returned unchanged.
+        * ``base_path`` already ends with the full ``sub_path`` (e.g. user wrote
+          the complete endpoint URL): the base path is returned unchanged.
+        * ``base_path`` ends with ``/v1`` and ``sub_path`` starts with ``v1/``:
+          the leading ``v1/`` on the sub-path is dropped before joining, so a
+          ``/v1`` base plus a metadata path of ``v1/chat/completions`` produces
+          ``/v1/chat/completions`` rather than ``/v1/v1/chat/completions``.
+
+        Otherwise the two are joined with a single ``/``.
+        """
+        if not sub_path:
+            return base_path
+        if base_path.endswith("/" + sub_path):
+            return base_path
+        if base_path.endswith("/v1") and sub_path.startswith("v1/"):
+            sub_path = sub_path.removeprefix("v1/")
+        return f"{base_path}/{sub_path}"
+
     @abstractmethod
     def get_url(self, request_info: RequestInfo) -> str:
         """Build base URL without query parameters.
