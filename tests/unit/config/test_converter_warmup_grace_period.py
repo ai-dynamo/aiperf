@@ -200,3 +200,46 @@ class TestWarmupGracePeriodUnderScenario:
         loadgen = CLIConfig(warmup_grace_period=5.0)
         with pytest.raises(ValueError, match="without any warmup trigger"):
             build_warmup(_make_user(loadgen))
+
+
+class TestWarmupRequestConcurrencyUnderScenario:
+    """Under --scenario, --warmup-request-concurrency routes onto the profiling
+    phase so the auto-synthesized agentic warmup can throttle priming
+    independently of profiling ``request_concurrency``."""
+
+    def test_warmup_request_concurrency_routes_onto_profiling_phase(self):
+        from aiperf.config.flags._converter_profiling import build_profiling
+
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp",
+            concurrency=64,
+            request_concurrency=32,
+            warmup_request_concurrency=8,
+        )
+        prof = build_profiling(_make_user(loadgen))
+        assert prof["agentic_warmup_request_concurrency"] == 8
+        # Profiling intensity is untouched.
+        assert prof["request_concurrency"] == 32
+
+    def test_no_warmup_request_concurrency_leaves_field_unset(self):
+        from aiperf.config.flags._converter_profiling import build_profiling
+
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp",
+            concurrency=64,
+            request_concurrency=32,
+        )
+        prof = build_profiling(_make_user(loadgen))
+        assert "agentic_warmup_request_concurrency" not in prof
+
+    def test_no_scenario_does_not_route(self):
+        from aiperf.config.flags._converter_profiling import build_profiling
+
+        loadgen = CLIConfig(
+            concurrency=64,
+            request_concurrency=32,
+            warmup_request_concurrency=8,
+            request_count=10,
+        )
+        prof = build_profiling(_make_user(loadgen))
+        assert "agentic_warmup_request_concurrency" not in prof

@@ -52,7 +52,7 @@ def _make_runner(
     conc.acquire_prefill_slot = AsyncMock(return_value=True)
     conc.release_session_slot = conc.release_prefill_slot = MagicMock()
     conc.set_session_limit = conc.set_prefill_limit = MagicMock()
-    conc.release_stuck_slots = MagicMock(return_value=(0, 0))
+    conc.release_stuck_slots = MagicMock(return_value=(0, 0, 0))
     cancel = MagicMock()
     cancel.next_cancellation_delay_ns = MagicMock(return_value=None)
     cb = MagicMock()

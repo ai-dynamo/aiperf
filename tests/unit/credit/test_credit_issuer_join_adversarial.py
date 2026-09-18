@@ -27,6 +27,7 @@ def _make_issuer() -> CreditIssuer:
     issuer._concurrency_manager = MagicMock()
     issuer._concurrency_manager.acquire_session_slot = AsyncMock(return_value=True)
     issuer._concurrency_manager.acquire_prefill_slot = AsyncMock(return_value=True)
+    issuer._concurrency_manager.acquire_request_slot = AsyncMock(return_value=True)
     issuer._concurrency_manager.release_session_slot = MagicMock()
     issuer._stop_checker = MagicMock()
     issuer._stop_checker.can_send_any_turn.return_value = True

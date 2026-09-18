@@ -398,6 +398,11 @@
     ],
     [
       "pydantic-fields",
+      "src/aiperf/config/phases.py",
+      "BasePhaseConfig"
+    ],
+    [
+      "pydantic-fields",
       "src/aiperf/kubernetes/environment.py",
       "_K8sEnvironment"
     ]
