@@ -307,3 +307,52 @@ class TestServiceCommand:
             )
 
         mock_bootstrap.assert_not_called()
+
+
+class TestDatasetPreflightGate:
+    """Only `dataset_manager` may run the public-dataset preflight.
+
+    It is the sole container that composes the dataset, so its configure step
+    is what `AIPERF_DATASET_CONFIGURATION_TIMEOUT` bounds. Letting every other
+    pod run the preflight would have each of them separately download the same
+    multi-GB resolution into a private filesystem it never reads.
+    """
+
+    def test_dataset_manager_runs_the_preflight(
+        self, mock_bootstrap: MagicMock, benchmark_run_file: Path
+    ) -> None:
+        from aiperf.plugin.enums import ServiceType
+
+        with patch(
+            "aiperf.cli_runner._preflight.preflight_public_datasets_for_run"
+        ) as mock_preflight:
+            service(
+                service_type=ServiceType.DATASET_MANAGER,
+                benchmark_run_file=benchmark_run_file,
+            )
+
+        mock_preflight.assert_called_once()
+        assert "run" in mock_bootstrap.call_args.kwargs
+
+    @pytest.mark.parametrize(
+        "service_type_name",
+        ["WORKER", "TIMING_MANAGER", "RECORDS_MANAGER", "SYSTEM_CONTROLLER"],
+    )  # fmt: skip
+    def test_other_services_skip_the_preflight(
+        self,
+        mock_bootstrap: MagicMock,
+        benchmark_run_file: Path,
+        service_type_name: str,
+    ) -> None:
+        from aiperf.plugin.enums import ServiceType
+
+        with patch(
+            "aiperf.cli_runner._preflight.preflight_public_datasets_for_run"
+        ) as mock_preflight:
+            service(
+                service_type=getattr(ServiceType, service_type_name),
+                benchmark_run_file=benchmark_run_file,
+            )
+
+        mock_preflight.assert_not_called()
+        assert "run" in mock_bootstrap.call_args.kwargs
