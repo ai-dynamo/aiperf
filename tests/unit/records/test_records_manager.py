@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.control_structs import Command
@@ -1625,11 +1626,22 @@ class TestRecordsManagerTimingDispatch:
 
 
 class TestRecordsManagerAnalyzerMetrics:
-    """Pin the invariant that `completed` counts request-derived records only,
-    and that analyzer-injected metrics are merged after the snapshot."""
+    """Completed requests are independent of metric summaries and analyzers."""
 
+    @pytest.mark.parametrize(
+        ("success_count", "error_count", "cancelled"),
+        [
+            param(3, 0, False, id="successful"),
+            param(3, 1, False, id="mixed"),
+            param(0, 3, False, id="errors-only"),
+            param(1, 2, True, id="cancelled-partial"),
+            param(0, 0, True, id="cancelled-empty"),
+        ],
+    )  # fmt: skip
     @pytest.mark.asyncio
-    async def test_completed_excludes_analyzer_metrics(self) -> None:
+    async def test_completed_counts_phase_requests_not_metric_summaries(
+        self, success_count: int, error_count: int, cancelled: bool
+    ) -> None:
         manager = RecordsManager.__new__(RecordsManager)
 
         manager.debug = MagicMock()
@@ -1650,14 +1662,14 @@ class TestRecordsManagerAnalyzerMetrics:
         manager.run.cfg.server_metrics_disabled = True
         manager.run.cfg.network_latency.enabled = False
 
-        request_records = [
+        summary_metrics = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
             MetricResult(tag="output_token_count", header="h", unit="tokens", avg=2.0),
         ]
         metric_accumulator = MagicMock()
         metric_accumulator.summarize = AsyncMock(
             return_value=AccumulatorMetricsSummary(
-                results={r.tag: r for r in request_records},
+                results={r.tag: r for r in summary_metrics},
             )
         )
         manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
@@ -1666,8 +1678,6 @@ class TestRecordsManagerAnalyzerMetrics:
         manager._gpu_telemetry_accumulator = None
         manager._server_metrics_accumulator = None
 
-        # An analyzer contributes derived aggregates that must NOT inflate
-        # `completed` (which counts request-derived records only).
         analyzer_metrics = [
             MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
             MetricResult(tag="total_gpu_energy", header="h", unit="J", avg=1000.0),
@@ -1686,13 +1696,32 @@ class TestRecordsManagerAnalyzerMetrics:
         ]
         manager._run_analyzers = RecordsManager._run_analyzers.__get__(manager)
 
-        manager._records_tracker = MagicMock()
-        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
-            start_ns=1_000_000_000,
-            requests_end_ns=2_000_000_000,
-            success_records=2,
-            error_records=0,
+        manager._records_tracker = RecordsTracker()
+        manager._records_tracker.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                start_ns=1_000_000_000,
+                requests_end_ns=2_000_000_000,
+            )
         )
+        for phase, successes, errors in (
+            (CreditPhase.WARMUP, 5, 1),
+            (CreditPhase.PROFILING, success_count, error_count),
+        ):
+            for index in range(successes + errors):
+                manager._records_tracker.update_from_request(
+                    MetricRecordMetadata(
+                        session_num=index,
+                        request_start_ns=1_000_000_000,
+                        request_end_ns=2_000_000_000,
+                        worker_id="worker",
+                        record_processor_id="processor",
+                        benchmark_phase=phase,
+                    ),
+                    None
+                    if index < successes
+                    else ErrorDetails(code=500, type="ServerError", message="failed"),
+                )
         manager._error_tracker = MagicMock()
         manager._error_tracker.get_error_summary_for_phase.return_value = []
 
@@ -1701,10 +1730,16 @@ class TestRecordsManagerAnalyzerMetrics:
         manager._finalize_record_processor_artifacts = AsyncMock()
         manager._await_telemetry_ingest_complete = AsyncMock(return_value=[])
 
-        result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
+        result = await manager._process_results(
+            CreditPhase.PROFILING, cancelled=cancelled
+        )
 
-        assert result.results.completed == len(request_records)
-        assert len(result.results.records) == len(request_records) + len(
+        assert result.results.completed == success_count + error_count
+        assert result.results.successful_request_count == success_count
+        assert result.results.error_request_count == error_count
+        assert result.results.was_cancelled is cancelled
+        assert result.results.is_complete is not cancelled
+        assert len(result.results.records) == len(summary_metrics) + len(
             analyzer_metrics
         )
         assert {r.tag for r in result.results.records} == {
