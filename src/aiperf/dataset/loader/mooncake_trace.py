@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import AssistantResponseMode, ConversationContextMode
 from aiperf.common.models import Turn
 from aiperf.dataset.loader.base_loader import LoaderProbeData
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
@@ -35,6 +35,14 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     {"session_id": "abc-123", "input_length": 300, "output_length": 40},
     {"session_id": "abc-123", "delay": 2, "input_length": 150, "output_length": 20}
     ```
+
+    Message-delta version (opt-in via assistant_responses; the first entry carries the
+    initial history, later entries carry only the new messages for that turn,
+    and live assistant responses are threaded into the history between them)
+    ```json
+    {"session_id": "abc-123", "assistant_responses": "live", "messages": [{"role": "user", "content": "Hi"}]},
+    {"session_id": "abc-123", "assistant_responses": "live", "delay": 2, "messages": [{"role": "user", "content": "More"}]}
+    ```
     """
 
     @classmethod
@@ -43,13 +51,21 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     ) -> bool:
         """Check if this loader can handle the given data format.
 
-        For mooncake trace data, simply validate the data against the MooncakeTrace model.
-        This will handle all of the validation logic for the different input combinations.
+        Explicit response-mode fields identify Mooncake before validation, so
+        malformed values cannot fall through to raw-payload replay. Other rows
+        are probed against the MooncakeTrace schema.
         """
         if data is None:
             return False
         if is_speed_bench_row(data):
             return False
+        if isinstance(data, dict) and {
+            "assistant_responses",
+            "message_mode",
+        }.intersection(data):
+            # Explicit Mooncake fields must reach schema validation, even when
+            # their values are invalid, instead of selecting another loader.
+            return True
 
         try:
             MooncakeTrace.model_validate(data)
@@ -63,6 +79,36 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
 
     def _parse_trace(self, record: dict) -> MooncakeTrace:
         return MooncakeTrace.model_validate(record)
+
+    def _preprocess_trace(self, trace: MooncakeTrace) -> None:
+        """Fail closed: timestamp-offset cropping is rejected for delta entries.
+
+        ``start_offset``/``end_offset`` drop individual timestamped rows in
+        :meth:`BaseTraceDatasetLoader.load_dataset` before sessions are
+        grouped, but each ``assistant_responses='live'`` row depends on every
+        earlier row in its session (the initial history plus the live
+        assistant turns threaded between them), so cropping would silently
+        truncate the assembled conversation. This hook runs before
+        :meth:`BaseTraceDatasetLoader._filter_and_cap_trace`, so the load
+        aborts on the first delta row whenever either offset is configured --
+        even if offsets already dropped earlier (e.g. history-mode) rows in
+        the file, nothing partially filtered is ever returned. Both offsets
+        default to ``None``, so ordinary runs are unaffected; history-mode and
+        synthesized traces keep the existing offset filtering.
+        """
+        if trace.assistant_responses == AssistantResponseMode.LIVE and (
+            self._start_offset is not None or self._end_offset is not None
+        ):
+            raise ValueError(
+                f"mooncake trace: timestamp offset filtering (start_offset="
+                f"{self._start_offset}, end_offset={self._end_offset}) cannot "
+                f"be combined with assistant_responses='live' entries. Offsets drop "
+                f"individual rows before sessions are assembled, which would "
+                f"silently remove the initial history or preceding turns that "
+                f"later delta rows depend on. Remove the offsets and construct "
+                f"a trace file containing only the complete delta sessions to "
+                f"replay."
+            )
 
     def _group_traces(
         self, items: list[MooncakeTrace]
@@ -80,12 +126,17 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
     def _infer_context_mode(
         self, traces: list[MooncakeTrace]
     ) -> ConversationContextMode | None:
-        """Auto-detect MESSAGE_ARRAY_WITH_RESPONSES when all traces are self-contained.
+        """Auto-detect the context mode for self-contained sessions.
 
         Self-contained traces (pre-built `messages` or verbatim `payload`) bypass
-        endpoint formatting and need to be replayed verbatim. Mixed sessions that
-        combine self-contained traces with synthesized prompts, or mix `messages`
-        and `payload` modes, are rejected.
+        prompt synthesis. All-`messages` sessions resolve by ``assistant_responses``:
+        the default 'recorded' replays each entry verbatim
+        (MESSAGE_ARRAY_WITH_RESPONSES) while opt-in 'live' accumulates entries
+        and threads live assistant responses into the history
+        (DELTAS_WITHOUT_RESPONSES). Mixed sessions that combine self-contained
+        traces with synthesized prompts, mix `messages` and `payload` modes, or
+        mix 'recorded' and 'live' entries (including entries that omit
+        ``assistant_responses`` and default to 'recorded') are rejected.
         """
         msg_trace_count = sum(1 for trace in traces if trace.messages is not None)
         payload_trace_count = sum(1 for trace in traces if trace.payload is not None)
@@ -99,13 +150,52 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
                 f"the offending sessions or convert all entries to a single "
                 f"self-contained mode."
             )
+
+        live_count = sum(
+            1
+            for trace in traces
+            if trace.messages is not None
+            and trace.assistant_responses == AssistantResponseMode.LIVE
+        )
+        if 0 < live_count < msg_trace_count:
+            raise ValueError(
+                f"mooncake trace: mixed session contains {live_count} "
+                f"assistant_responses='live' trace(s) and "
+                f"{msg_trace_count - live_count} assistant_responses='recorded' "
+                f"trace(s) (omitted assistant_responses defaults to 'recorded'); each "
+                f"session must use exactly one assistant_responses value. Mark every "
+                f"`messages` entry in the session with assistant_responses='live' or "
+                f"none of them."
+            )
+
         if self_contained_count == len(traces) and self_contained_count > 0:
+            if live_count > 0:
+                self._validate_endpoint_extra_for_live()
+                return ConversationContextMode.DELTAS_WITHOUT_RESPONSES
             return ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         if self_contained_count > 0:
             raise ValueError(
                 "Mixed Mooncake sessions with both raw `messages`/`payload` and synthesized prompts are unsupported."
             )
         return None
+
+    def _validate_endpoint_extra_for_live(self) -> None:
+        """Fail closed when an endpoint-global extra input would clobber history.
+
+        Endpoint-level ``extra`` entries (``--extra-inputs`` /
+        ``endpoint.extra``) are merged into every request body after the
+        formatter builds ``messages`` (or ``input`` for the Responses API),
+        so either key could replace the assembled history in every request.
+        """
+        extra = self.run.cfg.endpoint.extra
+        if history_keys := {"messages", "input"}.intersection(extra):
+            raise ValueError(
+                "mooncake trace: assistant_responses='live' cannot be combined with "
+                f"an endpoint-level extra input named {sorted(history_keys)} "
+                "(--extra-inputs or endpoint.extra); it "
+                "would overwrite the assembled conversation history in every "
+                "request"
+            )
 
     def _get_text_input(self, trace: MooncakeTrace) -> str | None:
         if trace.messages is not None or trace.payload is not None:
