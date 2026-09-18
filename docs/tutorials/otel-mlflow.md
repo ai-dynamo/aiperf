@@ -186,7 +186,20 @@ aiperf profile \
     --request-count 64
 ```
 
-In the MLflow UI the parent run shows both child runs nested beneath it, making it straightforward to compare concurrency=4 vs concurrency=8 side by side.
+Because both invocations above pass the same `--mlflow-parent-run-id`, they are children of `abc123def456`; in the MLflow UI the parent run shows both nested beneath it, making it straightforward to compare concurrency=4 vs concurrency=8 side by side.
+
+#### Child run names
+
+When a run is a **sweep or search variation**, AIPerf names it after the dimension value that varied for it — e.g. `Concurrency=4` and `Concurrency=8` — so siblings are distinguishable in the UI instead of all sharing the same `--mlflow-run-name`. This is driven by the run's swept coordinate (`variation.values`) and applies to **any** sweep/search, whether or not the runs nest under a `--mlflow-parent-run-id` (an in-process sweep like `--concurrency 4,8` produces sibling top-level runs and they are named this way too). So:
+
+- a multi-dimension sweep names the child by every varied dimension, joined with commas (`Concurrency=10, Mean=1024`);
+- a `prefill_concurrency` sweep is named `PrefillConcurrency=N` (by the dimension that actually varied, not the fixed total concurrency);
+- an adaptive (BO) search, whose planner can re-propose a coordinate, appends the unique iteration label (`Concurrency=64 [search_iter_0009]`);
+- a scenario sweep (no per-dimension `values:`) is named by its scenario label;
+- repeated trials of one variation append the trial index (`Concurrency=4 (trial 2)`);
+- any future sweep dimension names itself automatically with no code change.
+
+A **non-sweep** single run has no variation, so it keeps its configured `--mlflow-run-name` (or MLflow's auto-generated name). Note the two invocations above are single-value runs (no sweep), so each keeps its `--mlflow-run-name`. When a run *is* a sweep variation, the derived per-variation name takes priority over `--mlflow-run-name` (which is identical for every variation and would collide); AIPerf logs a warning when it overrides an explicitly configured name.
 
 ## Attach Plots
 
