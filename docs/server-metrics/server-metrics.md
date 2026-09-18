@@ -313,7 +313,7 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | 0.333s | Collection frequency (333ms, ~3Hz) |
-| `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for final metrics after benchmark |
+| `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for metrics to settle at warmup/profiling boundaries; warmup also drains in-flight scrapes before profiling starts |
 | `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | 60s | Maximum wait for the manager-owned final scrape and artifact flush command |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | 10s | Timeout for endpoint reachability tests |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | 100 | Batch size for JSONL writer |
