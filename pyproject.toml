@@ -164,6 +164,16 @@ dev = [
 # Sdist counts as installable — crick ships only sdist on Linux
 # aarch64 and is unaffected (env-builder compiles it from source).
 [tool.uv]
+# lighteval (latest, 0.13.0) hard-pins ``nltk==3.9.1``, which carries four
+# CRITICAL CVEs (CVE-2026-79675, CVE-2026-79657, CVE-2026-78683 and
+# CVE-2025-14009). nltk is reached only through the optional ``[accuracy]``
+# extra, via lighteval and rouge-score. Upstream has no release that relaxes
+# the pin, so override it here to pull the patched line. Revisit and drop this
+# once lighteval ships a version that allows nltk >= 3.10.3.
+override-dependencies = [
+  "nltk>=3.10.3",
+]
+
 required-environments = [
   "sys_platform == 'linux' and platform_machine == 'x86_64'",
   "sys_platform == 'linux' and platform_machine == 'aarch64'",
