@@ -11,13 +11,13 @@ Conversation context mode controls how prior turns are accumulated when building
 Two dimensions determine the mode:
 
 - **Turn format**: `DELTAS` (incremental per-turn content) vs `MESSAGE_ARRAY` (each turn carries its complete message list)
-- **Response inclusion**: `WITH_RESPONSES` (pre-canned assistant turns in dataset) vs `WITHOUT_RESPONSES` (only user content; live responses captured at runtime)
+- **Response inclusion**: `WITH_RESPONSES` (assistant replies supplied by the dataset) vs `WITHOUT_RESPONSES` (replies generated during the run are captured and retained)
 
 ## Modes
 
 ### `deltas_without_responses`
 
-Standard multi-turn chat. Each dataset turn is a user-only delta. AIPerf accumulates turns and threads live inference responses into the history.
+Standard multi-turn chat. Each dataset turn supplies new input messages. AIPerf accumulates turns and threads live inference responses into the history. The initial history may include recorded assistant messages from before replay begins; those messages are preserved too.
 
 **Dataset:**
 ```
@@ -42,10 +42,10 @@ Default for:
 - Synthetic datasets
 - Multi-turn JSONL
 - ShareGPT
-- Mooncake traces with `hash_ids`
+- Mooncake traces with `text_input` or synthesized `input_length` (including `hash_ids`)
 
 Opt-in for:
-- Mooncake traces with `messages` arrays marked `"message_mode": "delta"` (see [Trace Replay](../benchmark-modes/trace-replay.md#replaying-message-deltas-with-live-responses)). The first entry carries the initial history (system prompt + first user message); each later entry carries only the new messages for that turn, and AIPerf threads the live assistant responses (text and tool_calls) into the history between them.
+- Mooncake traces with `messages` arrays marked `"assistant_responses": "live"` on every row in the session (see [Trace Replay](../benchmark-modes/trace-replay.md#live-responses-for-structured-messages)). The first entry carries the initial history, including any earlier recorded assistant messages; each later entry carries only the new messages for that turn. AIPerf inserts live assistant responses (text and tool calls) between entries. Use `--custom-dataset-type mooncake_trace` to select this format explicitly.
 
 ### `deltas_with_responses`
 
@@ -94,7 +94,7 @@ Request 3: sends Turn 3 as-is
 Each turn is sent exactly as it appears in the dataset.
 
 Default for:
-- Mooncake traces with pre-built `messages` arrays (the default `"message_mode": "history"`)
+- Mooncake traces with pre-built `messages` arrays (the default `"assistant_responses": "recorded"`)
 
 ### `message_array_without_responses`
 

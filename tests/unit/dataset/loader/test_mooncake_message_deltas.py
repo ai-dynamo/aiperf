@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the opt-in MooncakeTrace message_mode='delta' replay mode."""
+"""Tests for the opt-in MooncakeTrace assistant_responses='live' replay mode."""
 
 from pathlib import Path
 
@@ -10,10 +10,11 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.common.enums import ConversationContextMode
+from aiperf.common.enums import AssistantResponseMode, ConversationContextMode
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
+from aiperf.plugin.enums import EndpointType
 
 USER_MSG = [{"role": "user", "content": "Hello"}]
 TOOL_DEFS = [
@@ -42,25 +43,52 @@ def _load_conversations(
     return loader.convert_to_conversations(loader.load_dataset())
 
 
-class TestMessageModeSchema:
-    """MooncakeTrace model validation for the message_mode field."""
+class TestAssistantResponsesSchema:
+    """MooncakeTrace model validation for the assistant_responses field."""
 
-    def test_message_mode_defaults_to_history(self):
+    def test_assistant_responses_defaults_to_history(self):
         trace = MooncakeTrace(messages=USER_MSG)
-        assert trace.message_mode == "history"
+        assert trace.assistant_responses == "recorded"
 
-    def test_message_mode_history_explicit(self):
-        trace = MooncakeTrace(messages=USER_MSG, message_mode="history")
-        assert trace.message_mode == "history"
+    def test_assistant_responses_history_explicit(self):
+        trace = MooncakeTrace(messages=USER_MSG, assistant_responses="recorded")
+        assert trace.assistant_responses == "recorded"
 
-    def test_message_mode_delta_with_messages(self):
-        trace = MooncakeTrace(messages=USER_MSG, message_mode="delta")
-        assert trace.message_mode == "delta"
+    def test_assistant_responses_delta_with_messages(self):
+        trace = MooncakeTrace(messages=USER_MSG, assistant_responses="live")
+        assert trace.assistant_responses == "live"
 
-    def test_message_mode_default_preserved_for_non_message_modes(self):
-        assert MooncakeTrace(input_length=10).message_mode == "history"
-        assert MooncakeTrace(text_input="hi").message_mode == "history"
-        assert MooncakeTrace(payload={"prompt": "hi"}).message_mode == "history"
+    def test_assistant_responses_default_preserved_for_non_message_inputs(self):
+        assert MooncakeTrace(input_length=10).assistant_responses == "recorded"
+        assert MooncakeTrace(text_input="hi").assistant_responses == "recorded"
+        assert MooncakeTrace(payload={"prompt": "hi"}).assistant_responses == "recorded"
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            param("live", AssistantResponseMode.LIVE, id="live"),
+            param("LIVE", AssistantResponseMode.LIVE, id="uppercase_live"),
+            param("Live", AssistantResponseMode.LIVE, id="mixed_case_live"),
+            param("RECORDED", AssistantResponseMode.RECORDED, id="uppercase_recorded"),
+            param("Recorded", AssistantResponseMode.RECORDED, id="mixed_case_recorded"),
+        ],
+    )  # fmt: skip
+    def test_assistant_responses_case_insensitive_round_trip(
+        self, value: str, expected: AssistantResponseMode
+    ) -> None:
+        """Hand-authored casing normalizes to the enum's canonical wire value."""
+        trace = MooncakeTrace(messages=USER_MSG, assistant_responses=value)
+        assert trace.assistant_responses is expected
+        serialized = trace.model_dump(mode="json")
+        assert serialized["assistant_responses"] == str(expected)
+        assert MooncakeTrace.model_validate(serialized).assistant_responses is expected
+
+    def test_legacy_message_mode_rejected(self) -> None:
+        """Stale opt-in traces must not silently become recorded replay."""
+        with pytest.raises(
+            ValidationError, match="has been renamed to 'assistant_responses'"
+        ):
+            MooncakeTrace(messages=USER_MSG, message_mode="delta")
 
     @pytest.mark.parametrize(
         "fields",
@@ -73,33 +101,35 @@ class TestMessageModeSchema:
     )  # fmt: skip
     def test_delta_without_messages_rejected(self, fields: dict):
         with pytest.raises(ValidationError, match="only supported with 'messages'"):
-            MooncakeTrace(message_mode="delta", **fields)
+            MooncakeTrace(assistant_responses="live", **fields)
 
     @pytest.mark.parametrize(
         "bad_mode",
         [
-            param("deltas", id="plural"),
-            param("Delta", id="wrong_case"),
+            param("lives", id="plural"),
+            param("delta", id="old_mode"),
             param("message_array", id="context_mode_name"),
             param("", id="empty"),
             param(1, id="non_string"),
         ],
     )  # fmt: skip
-    def test_unsupported_message_mode_literal_rejected(self, bad_mode):
-        with pytest.raises(ValidationError, match="message_mode"):
-            MooncakeTrace(messages=USER_MSG, message_mode=bad_mode)
+    def test_unsupported_assistant_responses_rejected(self, bad_mode):
+        with pytest.raises(ValidationError, match="assistant_responses"):
+            MooncakeTrace(messages=USER_MSG, assistant_responses=bad_mode)
 
-    def test_delta_with_extra_messages_key_rejected(self):
+    @pytest.mark.parametrize("key", ["messages", "input"])
+    def test_live_with_extra_history_key_rejected(self, key: str) -> None:
+        """Neither chat nor Responses extras may replace live conversation input."""
         with pytest.raises(ValidationError, match="'extra' must not contain"):
             MooncakeTrace(
                 messages=USER_MSG,
-                message_mode="delta",
-                extra={"messages": [{"role": "user", "content": "clobber"}]},
+                assistant_responses="live",
+                extra={key: [{"role": "user", "content": "clobber"}]},
             )
 
     def test_delta_with_safe_extra_allowed(self):
         trace = MooncakeTrace(
-            messages=USER_MSG, message_mode="delta", extra={"temperature": 0.5}
+            messages=USER_MSG, assistant_responses="live", extra={"temperature": 0.5}
         )
         assert trace.extra == {"temperature": 0.5}
 
@@ -111,13 +141,15 @@ class TestMessageModeSchema:
         assert trace.extra is not None
 
     def test_delta_with_tools_allowed(self):
-        trace = MooncakeTrace(messages=USER_MSG, message_mode="delta", tools=TOOL_DEFS)
+        trace = MooncakeTrace(
+            messages=USER_MSG, assistant_responses="live", tools=TOOL_DEFS
+        )
         assert trace.tools == TOOL_DEFS
 
     def test_delta_serialization_round_trip(self):
         trace = MooncakeTrace(
             messages=USER_MSG,
-            message_mode="delta",
+            assistant_responses="live",
             tools=TOOL_DEFS,
             output_length=50,
             timestamp=1000,
@@ -127,23 +159,24 @@ class TestMessageModeSchema:
             orjson.loads(orjson.dumps(trace.model_dump(exclude_none=True)))
         )
         assert round_tripped == trace
-        assert round_tripped.message_mode == "delta"
+        assert round_tripped.assistant_responses == "live"
 
     def test_history_default_serialization_round_trip(self):
         trace = MooncakeTrace(messages=USER_MSG, output_length=5)
         round_tripped = MooncakeTrace.model_validate(
             orjson.loads(orjson.dumps(trace.model_dump(exclude_none=True)))
         )
-        assert round_tripped.message_mode == "history"
+        assert round_tripped.assistant_responses == "recorded"
 
     def test_can_load_accepts_delta_record(self):
         assert MooncakeTraceDatasetLoader.can_load(
-            {"messages": USER_MSG, "message_mode": "delta"}
+            {"messages": USER_MSG, "assistant_responses": "live"}
         )
 
-    def test_can_load_rejects_delta_payload_record(self):
-        assert not MooncakeTraceDatasetLoader.can_load(
-            {"payload": {"prompt": "hi"}, "message_mode": "delta"}
+    def test_can_load_routes_invalid_live_payload_to_schema_validation(self) -> None:
+        """An explicit response mode identifies Mooncake even if the row is invalid."""
+        assert MooncakeTraceDatasetLoader.can_load(
+            {"payload": {"prompt": "hi"}, "assistant_responses": "live"}
         )
 
 
@@ -154,8 +187,8 @@ class TestDeltaContextModeInference:
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}], "timestamp": 0},
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t2"}], "delay": 250},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}], "timestamp": 0},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t2"}], "delay": 250},
         ]  # fmt: skip
         conversations = _load_conversations(
             tmp_path, records, default_cfg, mock_prompt_generator
@@ -197,27 +230,27 @@ class TestDeltaContextModeInference:
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}]},
-            {"session_id": "s1", "message_mode": "history", "messages": [{"role": "user", "content": "t2"}]},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}]},
+            {"session_id": "s1", "assistant_responses": "recorded", "messages": [{"role": "user", "content": "t2"}]},
         ]  # fmt: skip
-        with pytest.raises(ValueError, match="exactly one message_mode"):
+        with pytest.raises(ValueError, match="exactly one assistant_responses"):
             _load_conversations(tmp_path, records, default_cfg, mock_prompt_generator)
 
     def test_mixed_delta_and_omitted_history_default_rejected(
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}]},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}]},
             {"session_id": "s1", "messages": [{"role": "user", "content": "t2"}]},
         ]  # fmt: skip
-        with pytest.raises(ValueError, match="omitted message_mode defaults"):
+        with pytest.raises(ValueError, match="omitted assistant_responses defaults"):
             _load_conversations(tmp_path, records, default_cfg, mock_prompt_generator)
 
     def test_mixed_delta_messages_and_payload_rejected(
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}]},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}]},
             {"session_id": "s1", "payload": {"prompt": "t2"}},
         ]  # fmt: skip
         with pytest.raises(ValueError, match="exactly one mode"):
@@ -227,7 +260,7 @@ class TestDeltaContextModeInference:
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}]},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}]},
             {"session_id": "s1", "input_length": 10},
         ]  # fmt: skip
         with pytest.raises(ValueError, match="synthesized prompts are unsupported"):
@@ -247,7 +280,7 @@ class TestDeltaContextModeInference:
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "delta-sess", "message_mode": "delta", "messages": [{"role": "user", "content": "d1"}]},
+            {"session_id": "delta-sess", "assistant_responses": "live", "messages": [{"role": "user", "content": "d1"}]},
             {"session_id": "history-sess", "messages": [{"role": "user", "content": "h1"}]},
             {"session_id": "synthetic-sess", "input_length": 10},
         ]  # fmt: skip
@@ -270,8 +303,8 @@ class TestDeltaTurnConstruction:
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}], "timestamp": 1000.5, "output_length": 64},
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t2"}], "delay": 250.25, "output_length": 32},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}], "timestamp": 1000.5, "output_length": 64},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t2"}], "delay": 250.25, "output_length": 32},
         ]  # fmt: skip
         conversations = _load_conversations(
             tmp_path, records, default_cfg, mock_prompt_generator
@@ -292,8 +325,8 @@ class TestDeltaTurnConstruction:
             {"role": "user", "content": "t1"},
         ]
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": messages, "tools": TOOL_DEFS, "extra": {"temperature": 0.1}},
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t2"}]},
+            {"session_id": "s1", "assistant_responses": "live", "messages": messages, "tools": TOOL_DEFS, "extra": {"temperature": 0.1}},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t2"}]},
         ]  # fmt: skip
         conversations = _load_conversations(
             tmp_path, records, default_cfg, mock_prompt_generator
@@ -310,20 +343,33 @@ class TestDeltaTurnConstruction:
 class TestDeltaEndpointExtraProtection:
     """Endpoint-global extra inputs must not clobber assembled delta history."""
 
-    def _make_run(self, extra_inputs):
+    def _make_run(self, extra_inputs, endpoint_type=EndpointType.CHAT):
         from tests.unit.conftest import make_run_from_cli
 
         return make_run_from_cli(
-            CLIConfig(model_names=["test-model"], extra_inputs=extra_inputs)
+            CLIConfig(
+                model_names=["test-model"],
+                extra_inputs=extra_inputs,
+                endpoint_type=endpoint_type,
+            )
         )
 
+    @pytest.mark.parametrize(
+        ("endpoint_type", "key"),
+        [
+            param(EndpointType.CHAT, "messages", id="chat_messages"),
+            param(EndpointType.RESPONSES, "input", id="responses_input"),
+        ],
+    )  # fmt: skip
     def test_endpoint_extra_messages_rejected_for_delta_sessions(
-        self, tmp_path: Path, default_cfg, mock_prompt_generator
+        self, tmp_path: Path, default_cfg, mock_prompt_generator, endpoint_type, key
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}]},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}]},
         ]  # fmt: skip
-        run = self._make_run({"messages": [{"role": "user", "content": "clobber"}]})
+        run = self._make_run(
+            {key: [{"role": "user", "content": "clobber"}]}, endpoint_type
+        )
         with pytest.raises(ValueError, match="endpoint-level extra input"):
             _load_conversations(
                 tmp_path, records, default_cfg, mock_prompt_generator, run=run
@@ -333,7 +379,7 @@ class TestDeltaEndpointExtraProtection:
         self, tmp_path: Path, default_cfg, mock_prompt_generator
     ):
         records = [
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}]},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}]},
         ]  # fmt: skip
         run = self._make_run({"temperature": 0.7})
         conversations = _load_conversations(
@@ -371,9 +417,9 @@ class TestDeltaOffsetRejection:
     """
 
     DELTA_RECORDS = [
-        {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t1"}], "timestamp": 1000},
-        {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t2"}], "timestamp": 2000},
-        {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "t3"}], "timestamp": 3000},
+        {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t1"}], "timestamp": 1000},
+        {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t2"}], "timestamp": 2000},
+        {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "t3"}], "timestamp": 3000},
     ]  # fmt: skip
 
     def _make_offset_run(
@@ -410,14 +456,14 @@ class TestDeltaOffsetRejection:
         self, tmp_path: Path, mock_prompt_generator
     ):
         """A start offset that would drop the initial history row must abort."""
-        with pytest.raises(ValueError, match="message_mode='delta'"):
+        with pytest.raises(ValueError, match="assistant_responses='live'"):
             self._load_with_offsets(
                 tmp_path, self.DELTA_RECORDS, mock_prompt_generator, start_offset=1500
             )
 
     def test_end_offset_cutoff_rejected(self, tmp_path: Path, mock_prompt_generator):
         """An end offset that would drop trailing delta rows must abort."""
-        with pytest.raises(ValueError, match="message_mode='delta'"):
+        with pytest.raises(ValueError, match="assistant_responses='live'"):
             self._load_with_offsets(
                 tmp_path, self.DELTA_RECORDS, mock_prompt_generator, end_offset=2500
             )
@@ -440,7 +486,7 @@ class TestDeltaOffsetRejection:
         start_offset=0 would keep every row, but permitting it would make
         validity depend on the data's timestamps, so it is rejected outright.
         """
-        with pytest.raises(ValueError, match="message_mode='delta'"):
+        with pytest.raises(ValueError, match="assistant_responses='live'"):
             self._load_with_offsets(
                 tmp_path, self.DELTA_RECORDS, mock_prompt_generator, start_offset=0
             )
@@ -457,9 +503,9 @@ class TestDeltaOffsetRejection:
         records = [
             {"session_id": "hist", "messages": [{"role": "user", "content": "h1"}], "timestamp": 100},
             {"session_id": "hist", "messages": [{"role": "user", "content": "h1"}, {"role": "assistant", "content": "a1"}, {"role": "user", "content": "h2"}], "timestamp": 200},
-            {"session_id": "s1", "message_mode": "delta", "messages": [{"role": "user", "content": "d1"}], "timestamp": 2000},
+            {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "d1"}], "timestamp": 2000},
         ]  # fmt: skip
-        with pytest.raises(ValueError, match="message_mode='delta'"):
+        with pytest.raises(ValueError, match="assistant_responses='live'"):
             self._load_with_offsets(
                 tmp_path, records, mock_prompt_generator, start_offset=1500
             )

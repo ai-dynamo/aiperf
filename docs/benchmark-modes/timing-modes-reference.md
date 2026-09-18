@@ -233,7 +233,7 @@ aiperf profile --url localhost:8000 --model llama \
     --fixed-schedule-end-offset 120000
 ```
 
-Time window filtering is rejected at load time when the trace contains [`"message_mode": "delta"`](trace-replay.md#replaying-message-deltas-with-live-responses) entries: cropping individual rows would silently truncate the accumulated delta history. Construct a trace file of complete sessions instead.
+Time window filtering is rejected at load time when the trace contains [`"assistant_responses": "live"`](trace-replay.md#live-responses-for-structured-messages) entries: cropping individual rows would silently truncate the accumulated conversation history. Construct a trace file of complete sessions instead.
 
 ### Using `--user-centric-rate` (KV Cache Benchmarking)
 
