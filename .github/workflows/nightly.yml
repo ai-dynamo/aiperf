@@ -632,7 +632,7 @@ jobs:
           # the source tree.
           # -n auto on the many-core builder starved the runner of memory.
           .venv-wheel-tests/bin/pytest tests/unit \
-            -n 8 --dist=worksteal \
+            -n 4 --dist=worksteal \
             -m 'not performance and not stress' \
             --tb=short
 
