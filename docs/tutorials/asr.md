@@ -20,6 +20,9 @@ Five ASR datasets are built in:
 | AMI | `ami` | No | Meeting recordings with individual headset microphone audio |
 | SPGISpeech | `spgispeech` | Yes | Financial earnings call recordings (Kensho) |
 
+Audio rows can contain embedded audio bytes or a path to a local/cache file.
+Both forms are decoded to WAV for requests and checked against the duration limit.
+
 Clips longer than 30 seconds are automatically skipped to stay within typical ASR model context
 limits.
 
