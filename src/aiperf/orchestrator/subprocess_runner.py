@@ -20,8 +20,9 @@ from aiperf.common.endpoint_credentials import (
     redact_credential_text,
 )
 
-# Endpoint credentials (api_key, sensitive headers, userinfo-bearing URLs) are
-# redacted out of run_config.json by EndpointConfig's field serializers, so the
+# Endpoint credentials (api_key, sensitive endpoint/server-metrics headers,
+# userinfo-bearing URLs) are
+# redacted out of run_config.json by the config model field serializers, so the
 # parent hands the real values to this child through environment variables
 # instead. aiperf.common.endpoint_credentials owns those variable names and the
 # pop-validate-apply sequence; see consume_endpoint_credentials there.

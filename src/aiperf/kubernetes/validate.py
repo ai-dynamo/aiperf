@@ -434,7 +434,9 @@ def validate_endpoint_credential_transport(
         config = converter.to_aiperf_config()
         deployment = converter.to_deployment_config()
         validate_kubernetes_credential_transport(
-            config.benchmark.endpoint, deployment.pod_template.env
+            config.benchmark.endpoint,
+            deployment.pod_template.env,
+            config.benchmark.server_metrics,
         )
     except (
         ConfigurationError,

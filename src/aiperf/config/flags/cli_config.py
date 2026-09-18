@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
-from pydantic import AfterValidator, BeforeValidator, Field
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
 
 from aiperf.common.enums import (
     AIPerfLogLevel,
@@ -65,6 +65,7 @@ from aiperf.config.loader.parsing import (
     normalize_http_urls,
     parse_file,
     parse_float_or_float_list,
+    parse_http_headers,
     parse_int_or_int_list,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
@@ -103,6 +104,13 @@ class CLIConfig(BaseConfig):
     CLIConfig is a flat DTO; no nested-class forward refs remain. Validators
     are forbidden on this class - AIPerfConfig is the single validation gate.
     """
+
+    # CLI values can contain credentials. Keep Pydantic from echoing raw
+    # inputs when a converter or downstream validation step rejects them.
+    model_config = ConfigDict(
+        **BaseConfig.model_config,
+        hide_input_in_errors=True,
+    )
 
     ##############################################################################
     # Endpoint
@@ -2985,7 +2993,8 @@ class CLIConfig(BaseConfig):
                 "Server metrics collection (ENABLED BY DEFAULT). "
                 "Automatically collects from inference endpoint base_url + `/metrics`. "
                 "Optionally specify additional custom Prometheus-compatible endpoint URLs "
-                "(e.g., http://node1:8081/metrics, http://node2:9090/metrics). "
+                "(e.g., http://node1:8081/metrics, https://node2/prometheus). "
+                "Explicit URL paths are preserved; pathless URLs default to `/metrics`. "
                 "Use `--no-server-metrics` to disable collection. "
                 "Example: `--server-metrics node1:8081 node2:9090/metrics` for additional endpoints"
             ),
@@ -2997,6 +3006,26 @@ class CLIConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = None
+
+    server_metrics_headers: Annotated[
+        Any,
+        Field(
+            repr=False,
+            description=(
+                "Custom HTTP headers to include with server-metrics requests. "
+                "Specify as `Header:Value` pairs (e.g., "
+                "`--server-metrics-header Authorization:Bearer token`) or as a "
+                "JSON string. Can be specified multiple times. These headers are "
+                "independent of inference request headers from `--header` / `-H`."
+            ),
+        ),
+        BeforeValidator(parse_http_headers),
+        CLIParameter(
+            name=("--server-metrics-header",),
+            consume_multiple=True,
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = []
 
     no_server_metrics: Annotated[
         bool,

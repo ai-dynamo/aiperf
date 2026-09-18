@@ -188,13 +188,15 @@ def build_server_metrics(cli: CLIConfig) -> dict[str, Any]:
     if cli.no_server_metrics:
         return {"enabled": False}
     sm_urls = [
-        normalize_metrics_endpoint_url(_url(i))
+        normalize_metrics_endpoint_url(_url(i), preserve_explicit_path=True)
         for i in cli.server_metrics or []
         if i.startswith("http") or ":" in i
     ]
     server_metrics: dict[str, Any] = {"enabled": True, "urls": sm_urls}
     if cli.server_metrics_formats:
         server_metrics["formats"] = list(cli.server_metrics_formats)
+    if cli.server_metrics_headers:
+        server_metrics["headers"] = dict(cli.server_metrics_headers)
     return server_metrics
 
 
