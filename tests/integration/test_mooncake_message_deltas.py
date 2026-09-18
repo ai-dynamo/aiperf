@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""End-to-end HTTP integration tests for Mooncake message_mode='delta' replay.
+"""End-to-end HTTP integration tests for Mooncake assistant_responses='live' replay.
 
 Runs the real aiperf CLI (subprocess, real HTTP transport) against an in-test
 recording server that streams SSE chat chunks with tool_calls deltas split
@@ -11,7 +11,6 @@ reassembled streamed tool_calls (id/name/arguments), followed by the dataset's
 tool-result delta whose ``tool_call_id`` matches the live-generated call id.
 """
 
-import socket
 from pathlib import Path
 from typing import Any
 
@@ -87,11 +86,9 @@ class RecordingToolCallServer:
         app.router.add_post("/v1/chat/completions", self._handle_chat)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            self.port = s.getsockname()[1]
-        site = web.TCPSite(self._runner, "127.0.0.1", self.port)
+        site = web.TCPSite(self._runner, "127.0.0.1", 0)
         await site.start()
+        self.port = self._runner.addresses[0][1]
 
     async def stop(self) -> None:
         if self._runner is not None:
@@ -158,7 +155,7 @@ class RecordingToolCallServer:
 
 
 def _write_trace(path: Path, records: list[dict[str, Any]]) -> Path:
-    trace_file = path / "delta_trace.jsonl"
+    trace_file = path / "live_trace.jsonl"
     with open(trace_file, "wb") as f:
         for record in records:
             f.write(orjson.dumps(record))
@@ -172,10 +169,10 @@ def _token_cap(payload: dict[str, Any]) -> int | None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-class TestMooncakeMessageDeltaHTTP:
+class TestMooncakeLiveResponsesHTTP:
     async def test_second_http_request_contains_live_assistant_and_tool_calls(
         self, cli: AIPerfCLI, tmp_path: Path
-    ):
+    ) -> None:
         """The actual second HTTP request must carry the live assistant turn.
 
         Turn 1 sends the initial history; the server streams text + a tool
@@ -187,8 +184,8 @@ class TestMooncakeMessageDeltaHTTP:
         remapping is performed by AIPerf.
         """
         records = [
-            {"session_id": "weather-1", "message_mode": "delta", "timestamp": 0, "messages": [SYSTEM_MSG, USER_MSG], "tools": TOOL_DEFS, "output_length": 64},
-            {"session_id": "weather-1", "message_mode": "delta", "delay": 100, "messages": [TOOL_RESULT_MSG], "output_length": 32, "extra": {"temperature": 0.25}},
+            {"session_id": "weather-1", "assistant_responses": "live", "timestamp": 0, "messages": [SYSTEM_MSG, USER_MSG], "tools": TOOL_DEFS, "output_length": 64},
+            {"session_id": "weather-1", "assistant_responses": "live", "delay": 100, "messages": [TOOL_RESULT_MSG], "output_length": 32, "extra": {"temperature": 0.25}},
         ]  # fmt: skip
         trace_file = _write_trace(tmp_path, records)
 
@@ -254,13 +251,19 @@ class TestMooncakeMessageDeltaHTTP:
 
     async def test_third_turn_history_includes_post_tool_assistant_text(
         self, cli: AIPerfCLI, tmp_path: Path
-    ):
-        """Context keeps growing: turn 3 sees both live assistant replies."""
+    ) -> None:
+        """Turn 3 retains recorded initial history and both live replies."""
+        initial_history = [
+            SYSTEM_MSG,
+            {"role": "user", "content": "I am planning a trip."},
+            {"role": "assistant", "content": "Where are you going?"},
+            USER_MSG,
+        ]
         follow_up = {"role": "user", "content": "Thanks! And in London?"}
         records = [
-            {"session_id": "weather-1", "message_mode": "delta", "timestamp": 0, "messages": [SYSTEM_MSG, USER_MSG], "tools": TOOL_DEFS, "output_length": 64},
-            {"session_id": "weather-1", "message_mode": "delta", "delay": 50, "messages": [TOOL_RESULT_MSG], "output_length": 32},
-            {"session_id": "weather-1", "message_mode": "delta", "delay": 50, "messages": [follow_up], "output_length": 32},
+            {"session_id": "weather-1", "assistant_responses": "live", "timestamp": 0, "messages": initial_history, "tools": TOOL_DEFS, "output_length": 64},
+            {"session_id": "weather-1", "assistant_responses": "live", "delay": 50, "messages": [TOOL_RESULT_MSG], "output_length": 32},
+            {"session_id": "weather-1", "assistant_responses": "live", "delay": 50, "messages": [follow_up], "output_length": 32},
         ]  # fmt: skip
         trace_file = _write_trace(tmp_path, records)
 
@@ -287,17 +290,17 @@ class TestMooncakeMessageDeltaHTTP:
 
         assert result.request_count == 3
         assert len(server.requests) == 3
+        assert server.requests[0]["messages"] == initial_history
         third_request = server.requests[2]
         messages = third_request["messages"]
 
-        # [system, user, live assistant+tool_call, tool result,
-        #  live assistant text, follow-up user delta]
-        assert messages[:2] == [SYSTEM_MSG, USER_MSG]
-        assert messages[2]["role"] == "assistant"
-        assert messages[2]["tool_calls"][0]["id"] == LIVE_TOOL_CALL_ID
-        assert messages[3] == TOOL_RESULT_MSG
-        assert messages[4] == {
-            "role": "assistant",
-            "content": ASSISTANT_TEXT_TURN_2,
-        }
-        assert messages[5:] == [follow_up]
+        history_length = len(initial_history)
+        assert messages[:history_length] == initial_history
+        live_tool_call = messages[history_length]
+        assert live_tool_call["role"] == "assistant"
+        assert live_tool_call["tool_calls"][0]["id"] == LIVE_TOOL_CALL_ID
+        assert messages[history_length + 1 :] == [
+            TOOL_RESULT_MSG,
+            {"role": "assistant", "content": ASSISTANT_TEXT_TURN_2},
+            follow_up,
+        ]
