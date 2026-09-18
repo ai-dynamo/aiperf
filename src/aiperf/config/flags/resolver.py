@@ -734,7 +734,30 @@ def _build_endpoint_override(cli: CLIConfig, fields_set: set[str]) -> dict[str, 
 
     _apply_reset_kv_cache_override(endpoint, cli, fields_set)
     _apply_server_profiler_override(endpoint, cli, fields_set)
+    _apply_sagemaker_override(endpoint, cli, fields_set)
     return endpoint
+
+
+def _apply_sagemaker_override(
+    endpoint: dict[str, Any], cli: CLIConfig, fields_set: set[str]
+) -> None:
+    """Route the flat ``--sagemaker-*`` flags onto the nested endpoint block.
+
+    Unlike the control hooks there is no bare boolean flag to interpret, so a
+    partial override merges field-by-field with whatever the YAML supplied.
+    """
+    from aiperf.config.flags._converter_endpoint import (
+        _SAGEMAKER_FIELD_MAP,
+        _maybe_build_sagemaker,
+    )
+
+    if not fields_set & set(_SAGEMAKER_FIELD_MAP):
+        return
+    if sub_fields := _maybe_build_sagemaker(cli):
+        existing = endpoint.get("sagemaker")
+        endpoint["sagemaker"] = (
+            {**existing, **sub_fields} if isinstance(existing, dict) else sub_fields
+        )
 
 
 def _apply_reset_kv_cache_override(
