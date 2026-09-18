@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import importlib
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -872,6 +873,33 @@ class TestResolutionReportsItsResult:
             )
 
 
+@pytest.fixture
+def _allow_hub_access(monkeypatch):
+    """Let a `@pytest.mark.network` test actually reach the HuggingFace Hub.
+
+    `tests/unit/conftest.py` sets `HF_HUB_OFFLINE=1` session-wide so no unit
+    test downloads a tokenizer by accident. Without opting out, a test that
+    reads the published dataset raises `OfflineModeIsEnabled`, the
+    `pytest.skip` below converts that to a skip, and the check silently never
+    runs on a clean CI machine -- it only appears to pass on a developer box
+    whose HuggingFace cache already holds the dataset.
+    """
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+
+    # huggingface_hub freezes HF_HUB_OFFLINE into a module constant at import
+    # time, and the session fixture sets it before this module is imported, so
+    # clearing the variable alone leaves the frozen True in place.
+    for module in ("huggingface_hub.constants", "datasets.config"):
+        try:
+            mod = importlib.import_module(module)
+        except ImportError:  # pragma: no cover - datasets is an optional extra
+            continue
+        for attr in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE"):
+            if hasattr(mod, attr):
+                monkeypatch.setattr(mod, attr, False, raising=False)
+
+
 @pytest.mark.network
 class TestAllowlistMatchesThePublishedDataset:
     """The allowlist is a denylist for everything else, so a gap breaks resolution.
@@ -891,7 +919,9 @@ class TestAllowlistMatchesThePublishedDataset:
         "throughput_32k",
     )
 
-    def test_allowlist_covers_every_published_source_host(self) -> None:
+    def test_allowlist_covers_every_published_source_host(
+        self, _allow_hub_access
+    ) -> None:
         from urllib.parse import urlparse
 
         datasets = pytest.importorskip("datasets")
@@ -997,7 +1027,9 @@ class TestRegisteredEntriesMatchThePublishedDataset:
             return 880 if category is None else 80
         return 1536 if category is None else 512
 
-    def test_every_entry_yields_its_documented_row_count(self) -> None:
+    def test_every_entry_yields_its_documented_row_count(
+        self, _allow_hub_access
+    ) -> None:
         import collections
 
         datasets = pytest.importorskip("datasets")
