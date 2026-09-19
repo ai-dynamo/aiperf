@@ -70,6 +70,7 @@ from aiperf.config.loader.parsing import (
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list,
     parse_str_or_list_of_positive_values,
+    reject_moved_custom_dataset_type,
     require_turn_mean_at_least_one,
 )
 from aiperf.config.runtime import ServiceDefaults
@@ -658,6 +659,7 @@ class CLIConfig(BaseConfig):
 
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
+        BeforeValidator(reject_moved_custom_dataset_type),
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "

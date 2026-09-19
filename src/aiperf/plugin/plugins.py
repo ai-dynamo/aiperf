@@ -1271,6 +1271,19 @@ def is_trace_dataset(name: str) -> bool:
     return get_dataset_loader_metadata(name).is_trace
 
 
+def is_autodetectable(entry: PluginEntry) -> bool:
+    """Whether a registry entry may claim a file during structural detection.
+
+    An entry that pre-filters rows to a subset (``metadata.category``) loads
+    part of a file, which cannot be inferred from the file's contents -- it can
+    only be requested by name. Including such entries makes every valid file
+    look ambiguous, because the unfiltered entry and each category variant all
+    match. Both structural-detection loops must apply this, or a file resolves
+    differently depending on which one runs.
+    """
+    return entry.metadata.get("category") is None
+
+
 def get_convergence_criterion_metadata(name: str) -> ConvergenceCriterionMetadata:
     """Get typed metadata for a convergence criterion plugin.
 
