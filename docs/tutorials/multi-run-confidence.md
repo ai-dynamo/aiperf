@@ -722,6 +722,12 @@ aiperf profile \
 
 > Distribution mode requires `--export-level records` or `--export-level raw` because it reads per-request JSONL data. It is rejected with `--export-level summary`.
 
+For YAML configuration, use `benchmark.artifacts.records: [jsonl]`; add
+`benchmark.artifacts.raw: true` to also export raw payloads. Setting both
+`records: false` and `raw: false` selects summary-only export, which is rejected
+for distribution convergence. CLI and YAML configurations use the resolved
+artifact export level for this validation.
+
 ### Threshold Semantics
 
 For `ci_width` and `cv`, a lower threshold is stricter (harder to converge). For `distribution`, the threshold is a KS test p-value — convergence triggers when `p_value > threshold`, so a higher threshold is stricter. AIPerf logs this at runtime:
