@@ -1287,6 +1287,33 @@ class PhaseRunner(TaskManagerMixin):
             )
             await asyncio.sleep(remaining_seconds)
 
+    def _server_metrics_warmup_boundary_ready_timeout(self) -> float:
+        """Bound the runner wait for the manager's warmup boundary work.
+
+        After ``CREDIT_PHASE_COMPLETE``, ``ServerMetricsManager`` drains
+        in-flight scrapes (concurrent, one scrape-timeout bound) then takes a
+        serial final scrape per collector. The previous
+        ``flush + SCRAPE_TIMEOUT + 5`` budget covered only one scrape and let
+        multi-collector boundaries expire while still tagged warmup, so
+        profiling credits started and observations were misattributed.
+        """
+        urls: list[str] = []
+        if self._run is not None:
+            urls = list(self._run.cfg.server_metrics.urls or [])
+        # Discovery can add endpoints beyond configured urls; floor at 2 so a
+        # dual-collector local setup (Jan's ack-timeout repro) is covered when
+        # only one URL is configured explicitly.
+        #
+        # Budget is 2 * N scrape-timeouts: one in-flight periodic task may scrape
+        # every collector serially during drain, then the boundary takes another
+        # serial final scrape per collector.
+        collector_budget = max(len(urls), 2)
+        return (
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+            + Environment.SERVER_METRICS.SCRAPE_TIMEOUT * (2 * collector_budget)
+            + 5.0
+        )
+
     async def _wait_for_server_metrics_warmup_boundary_ready(self) -> None:
         """Wait until in-flight warmup scrapes are drained and baselined.
 
@@ -1294,6 +1321,11 @@ class PhaseRunner(TaskManagerMixin):
         manager's drain and final scrape can still be running when the
         orchestrator would otherwise start profiling. Waiting for
         ``SERVER_METRICS_WARMUP_BOUNDARY_READY`` closes that gap.
+
+        A missing acknowledgement is a failed boundary: raise so ``run()``
+        aborts via the phase-failure lifecycle and profiling credits are never
+        released. Soft-continuing after timeout reintroduces warmup/profiling
+        misattribution.
         """
         is_warmup = (
             self._config.phase == CreditPhase.WARMUP
@@ -1303,16 +1335,12 @@ class PhaseRunner(TaskManagerMixin):
             return
         if self._run is None or not self._run.cfg.server_metrics.enabled:
             return
-        timeout = (
-            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
-            + Environment.SERVER_METRICS.SCRAPE_TIMEOUT
-            + 5.0
-        )
+        timeout = self._server_metrics_warmup_boundary_ready_timeout()
         ready = await self._phase_publisher.wait_for_warmup_boundary_ready(timeout)
         if not ready:
-            self.warning(
+            raise TimeoutError(
                 f"Timed out after {timeout:.1f}s waiting for server-metrics "
-                "warmup boundary ready; continuing without drain acknowledgment"
+                "warmup boundary ready; aborting before profiling credits start"
             )
 
     def _release_stuck_slots(self) -> None:

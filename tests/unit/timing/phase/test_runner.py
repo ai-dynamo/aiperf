@@ -1606,6 +1606,96 @@ class TestWarmupServerMetricsFlushBarrier:
         assert events == ["phase_complete", "boundary_ready_wait"]
         pub.clear_warmup_boundary_ready.assert_called()
 
+    async def test_warmup_boundary_ready_timeout_aborts_before_profiling(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Missing drain ack must fail the warmup phase, not soft-continue."""
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            )
+        )
+        run.cfg.server_metrics.enabled = True
+        run.cfg.server_metrics.urls = [
+            "http://localhost:8000/metrics",
+            "http://localhost:8000/second/metrics",
+        ]
+        runner = make_runner(
+            cfg(phase=CreditPhase.WARMUP),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+            run=run,
+        )
+        pub.publish_phase_complete = AsyncMock()
+        pub.wait_for_warmup_boundary_ready = AsyncMock(return_value=False)
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._progress.all_credits_returned_event.set()
+
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        original_scrape = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.2
+        Environment.SERVER_METRICS.SCRAPE_TIMEOUT = 8.0
+        try:
+            with pytest.raises(TimeoutError, match="warmup boundary ready"):
+                await runner._wait_for_returning_complete(phase_id="phase-warmup")
+            # flush(0.2) + scrape(8) * (2 * max(2 urls, 2)) + 5 = 37.2
+            pub.wait_for_warmup_boundary_ready.assert_awaited_once_with(37.2)
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+            Environment.SERVER_METRICS.SCRAPE_TIMEOUT = original_scrape
+
+    async def test_warmup_boundary_ready_timeout_floors_collector_budget(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Configured URL count floors at 2 for dual-collector local setups."""
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            )
+        )
+        run.cfg.server_metrics.enabled = True
+        run.cfg.server_metrics.urls = ["http://localhost:8000/second/metrics"]
+        runner = make_runner(
+            cfg(phase=CreditPhase.WARMUP),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+            run=run,
+        )
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        original_scrape = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.2
+        Environment.SERVER_METRICS.SCRAPE_TIMEOUT = 8.0
+        try:
+            assert runner._server_metrics_warmup_boundary_ready_timeout() == 37.2
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+            Environment.SERVER_METRICS.SCRAPE_TIMEOUT = original_scrape
+
     async def test_warmup_to_seamless_profiling_awaits_return_and_flush(
         self,
         conv_src: MagicMock,
