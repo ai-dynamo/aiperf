@@ -44,15 +44,15 @@ def validate_convergence_config(plan: BenchmarkPlan) -> None:
         )
     convergence = plan.multi_run.convergence
     assert convergence is not None  # use_adaptive guards this
-    if (
-        convergence.mode == ConvergenceCriterionType.DISTRIBUTION
-        and plan.export_level == ExportLevel.SUMMARY
-    ):
-        raise ValueError(
-            "--convergence-mode distribution requires per-request JSONL data, "
-            "but --export-level is set to 'summary'. "
-            "Use --export-level records or --export-level raw."
-        )
+    if convergence.mode == ConvergenceCriterionType.DISTRIBUTION:
+        for index, config in enumerate(plan.configs, start=1):
+            if config.artifacts.export_level == ExportLevel.SUMMARY:
+                raise ValueError(
+                    "--convergence-mode distribution requires per-request JSONL data, "
+                    f"but benchmark config {index} has export level 'summary'. "
+                    "Enable benchmark.artifacts.records: [jsonl] for this config "
+                    "(CLI: --export-level records or --export-level raw)."
+                )
 
 
 def build_strategy(plan: BenchmarkPlan, logger: AIPerfLogger) -> ExecutionStrategy:
