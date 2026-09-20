@@ -25,16 +25,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.config import BenchmarkPlan
+    from aiperf.config import BenchmarkConfig, BenchmarkPlan
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.strategies import ExecutionStrategy
 
 
 def validate_convergence_config(plan: BenchmarkPlan) -> None:
     """Raise ValueError for invalid adaptive/convergence plan configurations."""
-    from aiperf.common.enums import ExportLevel
-    from aiperf.plugin.enums import ConvergenceCriterionType
-
     if not plan.use_adaptive:
         return
     if plan.trials <= 1:
@@ -42,17 +39,27 @@ def validate_convergence_config(plan: BenchmarkPlan) -> None:
             "--convergence-metric requires --num-profile-runs > 1. "
             "Set --num-profile-runs to at least 2 to enable adaptive convergence."
         )
+    for index, config in enumerate(plan.configs, start=1):
+        validate_convergence_export(plan, config, label=f"benchmark config {index}")
+
+
+def validate_convergence_export(
+    plan: BenchmarkPlan, config: BenchmarkConfig, *, label: str
+) -> None:
+    """Reject summary-only exports when distribution convergence needs request data."""
+    from aiperf.common.enums import ExportLevel
+    from aiperf.plugin.enums import ConvergenceCriterionType
+
     convergence = plan.multi_run.convergence
-    assert convergence is not None  # use_adaptive guards this
-    if convergence.mode == ConvergenceCriterionType.DISTRIBUTION:
-        for index, config in enumerate(plan.configs, start=1):
-            if config.artifacts.export_level == ExportLevel.SUMMARY:
-                raise ValueError(
-                    "--convergence-mode distribution requires per-request JSONL data, "
-                    f"but benchmark config {index} has export level 'summary'. "
-                    "Enable benchmark.artifacts.records: [jsonl] for this config "
-                    "(CLI: --export-level records or --export-level raw)."
-                )
+    if convergence is None or convergence.mode != ConvergenceCriterionType.DISTRIBUTION:
+        return
+    if config.artifacts.export_level == ExportLevel.SUMMARY:
+        raise ValueError(
+            "--convergence-mode distribution requires per-request JSONL data, "
+            f"but {label} has export level 'summary'. "
+            "Enable benchmark.artifacts.records: [jsonl] for this config "
+            "(CLI: --export-level records or --export-level raw)."
+        )
 
 
 def build_strategy(plan: BenchmarkPlan, logger: AIPerfLogger) -> ExecutionStrategy:

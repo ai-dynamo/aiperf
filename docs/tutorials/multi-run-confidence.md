@@ -734,6 +734,10 @@ if the base config uses `records` or `raw`. Conversely, a summary-only base is
 valid when every expanded config enables per-request records. Mixing `records`
 and `raw` export levels across variations is allowed.
 
+Dynamically proposed search configs are checked again before their trials start.
+A summary-only proposal is rejected with its search iteration index, so runtime
+artifact overrides do not bypass the distribution-convergence requirement.
+
 ### Threshold Semantics
 
 For `ci_width` and `cv`, a lower threshold is stricter (harder to converge). For `distribution`, the threshold is a KS test p-value — convergence triggers when `p_value > threshold`, so a higher threshold is stricter. AIPerf logs this at runtime:
