@@ -307,6 +307,84 @@ class TestBuildBenchmarkPlan:
         else:
             validate_convergence_config(plan)
 
+    @pytest.mark.parametrize(
+        "sweep_type", [param("grid"), param("zip"), param("scenarios")]
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "base_records, swept_field, values, expected_levels",
+        [
+            param(
+                True, "records", [["jsonl"], False], ["records", "summary"],
+                id="summary-last",
+            ),
+            param(
+                True, "records", [False, ["jsonl"]], ["summary", "records"],
+                id="summary-first",
+            ),
+            param(
+                False, "records", [["jsonl"], ["jsonl"]], ["records", "records"],
+                id="summary-base-overridden",
+            ),
+            param(
+                True, "raw", [False, True], ["records", "raw"],
+                id="mixed-records-raw",
+            ),
+        ],
+    )  # fmt: skip
+    def test_distribution_convergence_checks_expanded_sweep_exports(
+        self,
+        sweep_type: str,
+        base_records: bool,
+        swept_field: str,
+        values: list[object],
+        expected_levels: list[str],
+        tmp_path: Path,
+    ) -> None:
+        sweep: dict[str, object] = {
+            "type": sweep_type,
+            "iteration_order": "independent",
+        }
+        if sweep_type == "scenarios":
+            sweep["runs"] = [
+                {"name": f"point-{i}", "benchmark": {"artifacts": {swept_field: value}}}
+                for i, value in enumerate(values)
+            ]
+        else:
+            sweep["parameters"] = {f"artifacts.{swept_field}": values}
+        path = tmp_path / "sweep.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "benchmark": {
+                        **_MINIMAL_CONFIG_KWARGS,
+                        "artifacts": {
+                            "records": ["jsonl"] if base_records else False,
+                            "raw": False,
+                        },
+                    },
+                    "sweep": sweep,
+                    "multi_run": {
+                        "num_runs": 3,
+                        "convergence": {
+                            "metric": "request_latency",
+                            "mode": "distribution",
+                        },
+                    },
+                }
+            )
+        )
+        plan = load_benchmark_plan(path, substitute_env=False)
+
+        assert [cfg.artifacts.export_level for cfg in plan.configs] == expected_levels
+        if "summary" in expected_levels:
+            with pytest.raises(
+                ValueError, match="requires per-request JSONL data"
+            ) as exc:
+                validate_convergence_config(plan)
+            assert f"config {expected_levels.index('summary') + 1}" in str(exc.value)
+        else:
+            validate_convergence_config(plan)
+
     def test_grid_sweep(self) -> None:
         config = _make_aiperf_config(
             sweep={
