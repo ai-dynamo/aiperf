@@ -162,7 +162,7 @@ async def acquire_cache_lock(
 
     if _cache_complete():
         _logger.debug(
-            lambda: (f"Cache {cache_key} already populated; skipping lock acquire.")
+            lambda: f"Cache {cache_key} already populated; skipping lock acquire."
         )
         yield
         return
@@ -226,5 +226,7 @@ async def acquire_cache_lock(
                 await asyncio.to_thread(lock.release)
             except OSError:
                 _logger.debug(
-                    lambda: f"Best-effort release of mmap-cache lock {lock_path} failed."
+                    lambda: (
+                        f"Best-effort release of mmap-cache lock {lock_path} failed."
+                    )
                 )

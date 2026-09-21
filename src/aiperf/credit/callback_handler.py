@@ -345,8 +345,10 @@ class CreditCallbackHandler:
             return
         self._warmup_abort_triggered = True
         _logger.warning(
-            lambda: f"Terminal warmup failure for trace {credit.conversation_id}; "
-            f"aborting run early (requesting PROFILE_CANCEL)."
+            lambda: (
+                f"Terminal warmup failure for trace {credit.conversation_id}; "
+                f"aborting run early (requesting PROFILE_CANCEL)."
+            )
         )
         try:
             await self._on_warmup_abort()
@@ -382,8 +384,10 @@ class CreditCallbackHandler:
         handler = self._phase_handlers.get(key)
         if not handler:
             _logger.debug(
-                lambda: f"Credit return for unregistered phase {phase} key={key}, "
-                f"credit_id={credit.id}, worker={worker_id}"
+                lambda: (
+                    f"Credit return for unregistered phase {phase} key={key}, "
+                    f"credit_id={credit.id}, worker={worker_id}"
+                )
             )
             return
         orchestrator = self._orchestrator_for(key, phase)
@@ -391,8 +395,10 @@ class CreditCallbackHandler:
         # Late arrivals after phase complete are logged but don't affect counts
         if handler.lifecycle.is_complete:
             _logger.warning(
-                lambda: f"Credit return after phase {phase} key={key} complete, "
-                f"credit_id={credit.id}, worker={worker_id}"
+                lambda: (
+                    f"Credit return after phase {phase} key={key} complete, "
+                    f"credit_id={credit.id}, worker={worker_id}"
+                )
             )
             return
 
@@ -458,9 +464,11 @@ class CreditCallbackHandler:
                     await orchestrator.on_child_leaf_reached(credit.x_correlation_id)
             except Exception as exc:
                 _logger.warning(
-                    lambda exc=exc: f"BranchOrchestrator child-completion "
-                    f"hook failed for x_correlation_id="
-                    f"{credit.x_correlation_id}: {exc}"
+                    lambda exc=exc: (
+                        f"BranchOrchestrator child-completion "
+                        f"hook failed for x_correlation_id="
+                        f"{credit.x_correlation_id}: {exc}"
+                    )
                 )
 
         observe_credit_return = getattr(handler.strategy, "observe_credit_return", None)
@@ -557,9 +565,11 @@ class CreditCallbackHandler:
                 await orchestrator.on_child_stopped(credit.x_correlation_id)
             except Exception as exc:
                 _logger.warning(
-                    lambda exc=exc: f"BranchOrchestrator on_child_stopped "
-                    f"hook failed for x_correlation_id="
-                    f"{credit.x_correlation_id}: {exc}"
+                    lambda exc=exc: (
+                        f"BranchOrchestrator on_child_stopped "
+                        f"hook failed for x_correlation_id="
+                        f"{credit.x_correlation_id}: {exc}"
+                    )
                 )
 
         # WARMUP terminal-failure handling: accumulate, and live-abort on, a
@@ -681,7 +691,9 @@ class CreditCallbackHandler:
             in_flight = handler.progress.in_flight_sessions
             if in_flight > 0:
                 _logger.debug(
-                    lambda: f"Releasing {in_flight} in-flight session slots for phase {phase}"
+                    lambda: (
+                        f"Releasing {in_flight} in-flight session slots for phase {phase}"
+                    )
                 )
                 for _ in range(in_flight):
                     concurrency.release_session_slot(phase)
@@ -706,8 +718,10 @@ class CreditCallbackHandler:
 
         if not handler:
             _logger.debug(
-                lambda: f"TTFT for unregistered phase {phase}, "
-                f"credit_id={first_token.credit_id}"
+                lambda: (
+                    f"TTFT for unregistered phase {phase}, "
+                    f"credit_id={first_token.credit_id}"
+                )
             )
             return
 

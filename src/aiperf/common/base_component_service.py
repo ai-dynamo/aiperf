@@ -489,7 +489,9 @@ class BaseComponentService(BaseService):
             return
         if not isinstance(message, Command):
             self.debug(
-                lambda: f"Dropping unexpected control channel message: {type(message).__name__}"
+                lambda: (
+                    f"Dropping unexpected control channel message: {type(message).__name__}"
+                )
             )
             return
 
