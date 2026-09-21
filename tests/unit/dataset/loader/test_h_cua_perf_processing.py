@@ -137,7 +137,6 @@ class TestScreenshotWindow:
         apply_screenshot_window(records, 2)
 
         assert [_image_slots(r) for r in records] == [[0], [0, 1], [1, 2]]
-        # The restored screenshot is the one the earlier request carried.
         slots = screenshot_slots(records[2]["messages"])
         parts, idx = slots[1]
         assert parts[idx] == _image(1)
