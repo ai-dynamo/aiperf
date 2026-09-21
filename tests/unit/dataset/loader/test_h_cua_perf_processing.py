@@ -5,6 +5,7 @@ import copy
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.dataset.loader.h_cua_perf_processing import (
@@ -177,6 +178,10 @@ class TestFilters:
             {"n_screenshots": "3", "avg_trace_length": "20"}
         )
         assert (filters.n_screenshots, filters.avg_trace_length) == (3, 20.0)
+
+    def test_max_length_below_min_length_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="below min_trace_length"):
+            HCuaPerfFilters(min_trace_length=3, max_trace_length=2, avg_trace_length=1)
 
     def test_defaults_match_trace_processor(self) -> None:
         assert HCuaPerfFilters().min_trace_length == 1

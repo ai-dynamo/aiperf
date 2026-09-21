@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import zstandard
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.models import AIPerfBaseModel
@@ -65,6 +65,18 @@ class HCuaPerfFilters(AIPerfBaseModel):
         description="Target mean requests per trajectory, reached by truncating "
         "every trajectory by the same factor.",
     )
+
+    @model_validator(mode="after")
+    def _max_not_below_min(self) -> HCuaPerfFilters:
+        if (
+            self.max_trace_length is not None
+            and self.max_trace_length < self.min_trace_length
+        ):
+            raise ValueError(
+                f"max_trace_length={self.max_trace_length} is below "
+                f"min_trace_length={self.min_trace_length}"
+            )
+        return self
 
 
 def supported_filter_keys() -> str:
