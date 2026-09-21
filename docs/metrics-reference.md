@@ -20,9 +20,12 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
     - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
     - [Decode Duration](#decode-duration)
+    - [Full Decode Duration](#full-decode-duration)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
+    - [Full-Response Inter Token Latency](#full-response-inter-token-latency)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
+    - [Full-Response Output Token Throughput Per User](#full-response-output-token-throughput-per-user)
     - [Prefill Throughput Per User](#prefill-throughput-per-user)
   - [Token Based Metrics](#token-based-metrics)
     - [Output Token Count](#output-token-count)
@@ -366,14 +369,20 @@ completion.
 
 **Formula:**
 ```python
+# Default: assume one token in the first content chunk.
 full_response_inter_token_latency_ns = (
     full_decode_duration_ns / (output_sequence_length - 1)
+)
+
+# With --per-chunk-usage and a valid server-reported first-content-chunk count:
+full_response_inter_token_latency_ns = (
+    full_decode_duration_ns / (output_sequence_length - tokens_in_first_content_chunk)
 )
 ```
 
 **Notes:**
 - Requires an output sequence length of at least 2 tokens and a valid Full Decode Duration.
-- Uses the same token normalization as Inter Token Latency while extending the interval through HTTP response completion.
+- Uses the same conditional divisor as Inter Token Latency while extending the interval through HTTP response completion: `output_sequence_length - tokens_in_first_content_chunk` when `--per-chunk-usage` reports a positive first-content-chunk count smaller than OSL, otherwise `output_sequence_length - 1`.
 - With server-reported token counting, it keeps the duration and token count aligned when a response parser suppresses generated tokens.
 - This remains a client-observed average, not a distribution of raw engine token-to-token timestamps.
 - Streaming chunks can contain multiple tokens. A response delivered entirely in one content chunk may not expose a meaningful post-first-content decode interval.

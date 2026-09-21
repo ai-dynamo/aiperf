@@ -319,13 +319,27 @@ class TestSystemControllerExitScenarios:
                 service_id="records_manager",
             )
         ]
+        call_order: list[str] = []
+
+        async def record_export() -> None:
+            call_order.append("export")
+
+        def record_exit_error_report() -> None:
+            call_order.append("exit_error_report")
+
         system_controller._print_post_benchmark_info_and_metrics = AsyncMock()
-        system_controller._print_exit_errors_and_log_file = MagicMock()
+        system_controller._print_post_benchmark_info_and_metrics.side_effect = (
+            record_export
+        )
+        system_controller._print_exit_errors_and_log_file = MagicMock(
+            side_effect=record_exit_error_report
+        )
 
         await system_controller._report_post_shutdown_results_and_errors()
 
         system_controller._print_post_benchmark_info_and_metrics.assert_awaited_once()
         system_controller._print_exit_errors_and_log_file.assert_called_once()
+        assert call_order == ["export", "exit_error_report"]
 
     @pytest.mark.asyncio
     async def test_system_controller_exits_on_profile_configure_error_response(
