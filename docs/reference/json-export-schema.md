@@ -71,7 +71,7 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 | `run_info` | object | Per-run reproducibility — see below. Schema 1.2+. |
 | `telemetry_data` | object | GPU telemetry summaries when telemetry collection was active. |
 | `error_summary` | array | Per-error counts collected during the run. |
-| `runtime_submission_invalid_reasons` | array | Runtime reason tags that invalidate this run's scenario submission. `insufficient_profile_metric_coverage` means measured TTFT and inter-token-latency coverage did not reach the scenario threshold; `profile_metric_coverage_validation_failed` means AIPerf could not validate that coverage because required accumulator data or phase timestamps were unavailable. These runtime-only tags also flow into aggregate `metadata.submission_invalid_reasons`. Empty when the run is submission-valid. Schema 1.5+. |
+| `runtime_submission_invalid_reasons` | array | Runtime-only reason tags that invalidate this run's scenario submission. `insufficient_profile_metric_coverage` means measured TTFT and inter-token-latency coverage did not reach the scenario threshold; `profile_metric_coverage_validation_failed` means AIPerf could not validate that coverage because required accumulator data or phase timestamps were unavailable. An empty array is not an overall submission-validity verdict because static or merged invalidity may still apply; consumers must read `metadata.submission_valid` and `metadata.submission_invalid_reasons` for the overall verdict. Schema 1.5+. |
 
 ### `telemetry_data`
 
