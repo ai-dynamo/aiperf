@@ -60,13 +60,13 @@ def _scope_trace(trace_id: str) -> dict:
         "status": "completed",
         "requests": [
             _req(
-                t=0.0,
+                t=2.0,
                 hash_ids=[50, 51],
                 input_types=["text"],
                 stop="tool_use",
                 model=_HAIKU,
             ),
-            _req(t=1.0, hash_ids=[50, 51, 52, 53], model=_HAIKU),
+            _req(t=3.0, hash_ids=[50, 51, 52, 53], model=_HAIKU),
         ],
         "models": [_HAIKU],
         "tool_tokens": 0,
