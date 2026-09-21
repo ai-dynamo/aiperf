@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from collections import defaultdict
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,31 @@ from aiperf.dataset.loader.base_loader import LoaderProbeData
 from aiperf.dataset.loader.base_trace_loader import BaseTraceDatasetLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.speed_bench import is_speed_bench_row
+
+
+def _looks_like_implicit_message_deltas(traces: list[MooncakeTrace]) -> bool:
+    """Identify likely incremental input without overriding recorded replay."""
+    if len(traces) < 2:
+        return False
+    message_rows: list[list[dict[str, Any]]] = []
+    for trace in traces:
+        if trace.messages is None or "assistant_responses" in trace.model_fields_set:
+            return False
+        message_rows.append(trace.messages)
+
+    if not any(
+        message["role"] == "assistant"
+        for messages in message_rows
+        for message in messages
+    ):
+        return True
+    return any(
+        len(current) < len(previous)
+        or any(
+            before != after for before, after in zip(previous, current, strict=False)
+        )
+        for previous, current in pairwise(message_rows)
+    )
 
 
 class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
@@ -117,6 +143,24 @@ class MooncakeTraceDatasetLoader(BaseTraceDatasetLoader[MooncakeTrace]):
         for trace in items:
             session_id = trace.session_id or self.session_id_generator.next()
             data[session_id].append(trace)
+        # Synthesis serializes defaults, so inspect omission before that round-trip.
+        suspicious_count = 0
+        first_suspicious_id: str | None = None
+        for session_id, traces in data.items():
+            if _looks_like_implicit_message_deltas(traces):
+                suspicious_count += 1
+                if first_suspicious_id is None:
+                    first_suspicious_id = session_id
+        if suspicious_count:
+            self.warning(
+                f"Mooncake trace: {suspicious_count} multi-row messages session(s), "
+                f"including {first_suspicious_id!r}, omit assistant_responses and "
+                "may contain incremental rows. Defaulting to recorded replays "
+                "each row independently; live replies and preceding rows are "
+                "not accumulated. Set assistant_responses='live' on every row "
+                "for incremental replay, or explicitly set 'recorded' for "
+                "intentional self-contained requests."
+            )
         return dict(data)
 
     # ------------------------------------------------------------------

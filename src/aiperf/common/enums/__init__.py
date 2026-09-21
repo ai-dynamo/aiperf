@@ -103,6 +103,7 @@ from aiperf.plugin.enums import DatasetFormat
 
 __all__ = [
     "AIPerfLogLevel",
+    "AssistantResponseMode",
     "AudioFormat",
     "BaseMetricUnit",
     "BaseMetricUnitInfo",
