@@ -125,6 +125,24 @@ failure; ``False`` (or absent) means the error is diagnostic only -- report it,
 but never suppress an otherwise valid export because of it.
 """
 
+_PROFILE_METRIC_COVERAGE_ERROR = "ProfileMetricCoverageError"
+_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR = "ProfileMetricCoverageValidationError"
+_PROFILE_METRIC_COVERAGE_REASON = "insufficient_profile_metric_coverage"
+_PROFILE_METRIC_COVERAGE_VALIDATION_REASON = "profile_metric_coverage_validation_failed"
+
+
+def _profile_metric_coverage_reasons(
+    fatal_errors: Sequence[ErrorDetails],
+) -> list[str]:
+    """Translate coverage failures to stable runtime submission reason tags."""
+    error_types = {error.type for error in fatal_errors}
+    reasons: list[str] = []
+    if _PROFILE_METRIC_COVERAGE_ERROR in error_types:
+        reasons.append(_PROFILE_METRIC_COVERAGE_REASON)
+    if _PROFILE_METRIC_COVERAGE_VALIDATION_ERROR in error_types:
+        reasons.append(_PROFILE_METRIC_COVERAGE_VALIDATION_REASON)
+    return reasons
+
 
 def build_failed_request_abort_config(
     profiling_phases: Sequence[Any],
@@ -2160,7 +2178,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         calculate = getattr(accumulator, "profile_metric_duration_coverage", None)
         if not callable(calculate):
             error = ErrorDetails(
-                type="ProfileMetricCoverageError",
+                type=_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR,
                 message=(
                     "Profiling metric coverage could not be validated because the "
                     "metrics accumulator does not expose coverage timestamps."
@@ -2199,7 +2217,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             if stats is None or stats.start_ns is None:
                 fatal_errors.append(
                     ErrorDetails(
-                        type="ProfileMetricCoverageError",
+                        type=_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR,
                         message=(
                             "Profiling metric coverage could not be validated for "
                             f"phase {phase_config.name!r} because its start time is "
@@ -2250,7 +2268,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.error(message)
             fatal_errors.append(
                 ErrorDetails(
-                    type="ProfileMetricCoverageError",
+                    type=_PROFILE_METRIC_COVERAGE_ERROR,
                     message=message,
                     details=coverage.model_dump(mode="json"),
                 )
@@ -2577,8 +2595,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                     phase, 0
                 ),
                 metric_duration_coverage=metric_duration_coverage,
-                runtime_submission_invalid_reasons=(
-                    ["insufficient_profile_metric_coverage"] if fatal_errors else []
+                runtime_submission_invalid_reasons=_profile_metric_coverage_reasons(
+                    fatal_errors
                 ),
                 phase_records=phase_records,
                 pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(

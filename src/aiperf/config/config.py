@@ -788,7 +788,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             getattr(phase, "warmup_requests_per_lane", None) is not None
             and getattr(phase, "agentic_cache_warmup_duration", None) is not None
             for phase in profiling_phases
-        ):
+        ) or (has_duration and has_request_budget):
             raise ValueError(
                 "--warmup-requests-per-lane and "
                 "--agentic-cache-warmup-duration are mutually exclusive."
