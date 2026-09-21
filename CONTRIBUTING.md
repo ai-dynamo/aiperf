@@ -211,6 +211,12 @@ act -j run-integration-tests
 
 You can also use the Visual Studio Code extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
 
+## Nightly Slack Alerts
+
+The nightly workflow ends with a `notify-slack` job that calls the reusable `.github/workflows/notify-slack.yml`. It lists the run's jobs through the Actions API and, when any job failed, timed out, or was cancelled, posts one Slack alert per configured webhook. Advisory jobs listed in the caller's `ignored_jobs` input (currently Suggest Shard Weights) are not reported, and nothing is posted for a green run or when the run itself was cancelled.
+
+Configuration lives in repository settings. `SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL` (secret) is the incoming webhook for the release automation channel and falls back to the legacy `NIGHTLY_SLACK_WEBHOOK` secret. `SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL` (secret) is the webhook for the AIPerf dev channel. `NIGHTLY_SLACK_MENTION` (variable) holds optional Slack IDs to mention, `S...` for a team or `U...` for a user, comma separated. Every webhook is optional; with none configured the job logs a warning and stays green.
+
 ## Developer Certificate of Origin
 
 AIPerf is open source under the Apache 2.0 license (see [the Apache site](https://www.apache.org/licenses/LICENSE-2.0) or [LICENSE](./LICENSE)).

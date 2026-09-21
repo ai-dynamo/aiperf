@@ -5,8 +5,9 @@
 # Lists the calling run's jobs via the Actions API and posts one alert per
 # configured webhook when any job failed or timed out. Both webhooks are
 # optional; a green run or a missing secret posts nothing and stays green.
-# Call from a job with `if: always()`, `needs:` on every reported job, and
-# `permissions: actions: read`.
+# Call from a job with `if: ${{ !cancelled() }}` (cancelled jobs are reported
+# as failures, so `always()` would alert on every manual cancellation),
+# `needs:` on every reported job, and `permissions: actions: read`.
 name: Notify Slack
 
 on:
@@ -27,7 +28,7 @@ on:
         type: string
         default: ""
       runs_on:
-        description: "Runner label for the notifier job."
+        description: "Runner label for the notifier job. Needs a POSIX runner with bash, jq, and curl."
         required: false
         type: string
         default: ubuntu-latest
@@ -37,7 +38,7 @@ on:
         type: string
         default: ""
       mention:
-        description: "Slack IDs to mention in the call-to-action, comma or space separated: S... for a team (user group), U... for a user. Ready-made mrkdwn mentions are passed through."
+        description: "Slack IDs to mention in the call-to-action: S... for a team (user group), U... for a user, comma or space separated. Ready-made mrkdwn mentions such as <!subteam^S...|@team> are passed through and must be comma separated."
         required: false
         type: string
         default: ""
@@ -91,12 +92,16 @@ jobs:
           IGNORED_JSON=$(printf '%s\n' "${IGNORED_JOBS}" | jq -R 'gsub("^\\s+|\\s+$"; "")' | jq -s 'map(select(length > 0))')
 
           # A job that exceeds timeout-minutes ends as "cancelled", so count it too.
-          # Reusable-workflow jobs are named "caller / callee / job"; keep the ends.
+          # Names go into mrkdwn, where & < > are control characters. Reusable-workflow
+          # jobs are named "caller / job"; show the caller unless the job repeats it.
           FAILED_JOBS=$(jq -rs --argjson ignored "${IGNORED_JSON}" '
             map(select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled"))
             | map(select(.name as $n | ($ignored | any(. as $i | $n | contains($i))) | not))
             | map(":failed: "
-                  + (.name | split(" / ") | if length > 2 then .[0] + " > " + .[-1] else .[-1] end)
+                  + (.name | gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;")
+                     | split(" / ") as $p
+                     | if ($p | length) > 1 and (($p[-1] | startswith($p[0])) | not)
+                       then $p[0] + " &gt; " + $p[-1] else $p[-1] end)
                   + (if .conclusion == "failure" then "" else " (" + .conclusion + ")" end))
             | .[]' "${JOBS_ACC}")
 
@@ -117,9 +122,14 @@ jobs:
           fi
 
           # Bare IDs become mrkdwn mentions: S... -> <!subteam^S...>, U.../W... -> <@U...>.
+          # Ready-made markup may contain spaces, so split on commas only when present.
           MENTION_MARKUP=""
-          IFS=', ' read -r -a ids <<< "${MENTION}"
-          for id in "${ids[@]}"; do
+          MENTION="$(printf '%s' "${MENTION}" | tr '\n\t' ',,')"
+          case "${MENTION}" in *'<'*) SEP=',' ;; *) SEP=', ' ;; esac
+          IFS="${SEP}" read -r -a ids <<< "${MENTION}"
+          for id in ${ids[@]+"${ids[@]}"}; do
+            id="${id#"${id%%[![:space:]]*}"}"; id="${id%"${id##*[![:space:]]}"}"
+            [ -z "${id}" ] && continue
             case "${id}" in
               \<*)   MENTION_MARKUP="${MENTION_MARKUP} ${id}" ;;
               S*)    MENTION_MARKUP="${MENTION_MARKUP} <!subteam^${id}>" ;;
@@ -133,7 +143,7 @@ jobs:
           if [ -n "${MENTION_MARKUP}" ]; then
             CALL_TO_ACTION="${MENTION_MARKUP} ${CTA}"
           else
-            CALL_TO_ACTION="${CTA^}"
+            CALL_TO_ACTION="$(printf '%s' "${CTA:0:1}" | tr '[:lower:]' '[:upper:]')${CTA:1}"
           fi
 
           # jq escapes quotes and backslashes in job names.
@@ -188,6 +198,8 @@ jobs:
           webhook: ${{ secrets.SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           errors: true
+          # The default schedule retries for up to 15 minutes; the job allows 10.
+          retries: RAPID
           payload: ${{ env.SLACK_PAYLOAD }}
 
       - name: Notify AIPerf dev channel
@@ -197,4 +209,6 @@ jobs:
           webhook: ${{ secrets.SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           errors: true
+          # The default schedule retries for up to 15 minutes; the job allows 10.
+          retries: RAPID
           payload: ${{ env.SLACK_PAYLOAD }}

@@ -10,7 +10,7 @@
 #   4. Stage    — [automated-release approval] ECR → NGC staging; S3 → Artifactory
 #   5. Trigger  — trigger GitLab nightly pipeline (fire-and-forget)
 #   6. Summary  — always runs
-#   7. Alert    — always runs; posts a Slack alert only when a job failed
+#   7. Alert    — runs unless the run was cancelled; posts only when a job failed
 #
 # No git tag is created by this workflow. NIGHTLY_TAG is a display label only.
 #
@@ -166,8 +166,8 @@ jobs:
             fi
 
             # NIGHTLY_TAG is a human-readable label surfaced in the pipeline
-            # summary, Slack notification, and forwarded to the GitLab scan. It
-            # is NOT a git tag — nothing in this workflow pushes a git tag.
+            # summary and forwarded to the GitLab scan. It is NOT a git tag —
+            # nothing in this workflow pushes a git tag.
             NIGHTLY_TAG="AIPerf Nightlies"
 
             # Scheduled vs manual disambiguation:
