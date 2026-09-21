@@ -51,6 +51,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             "credit_drop_latency",
             "inter_chunk_latency",
             "error_isl",
+            "total_error_isl",
             "num_images",
             "video_peak_memory",
             "usage_prompt_tokens",
@@ -416,6 +417,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
 
     def _build_metric_payload(self) -> dict[str, float]:
         payload: dict[str, float] = {}
+        sources: dict[str, str] = {}
         for metric in self._results.records or []:
             tag = (
                 f"system/{metric.tag}"
@@ -428,12 +430,21 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                     continue
                 try:
                     key = tag if field == "avg" else f"{tag}.{field}"
-                    payload[key] = float(value)
+                    numeric_value = float(value)
                 except (TypeError, ValueError):
                     self.debug(
                         f"Skipping non-numeric metric for MLflow export: "
                         f"{metric.tag}.{field}"
                     )
+                    continue
+                source = f"{metric.tag}.{field}"
+                if previous_source := sources.get(key):
+                    raise ValueError(
+                        f"Duplicate MLflow metric key {key!r} after namespace "
+                        f"normalization from {previous_source!r} and {source!r}."
+                    )
+                payload[key] = numeric_value
+                sources[key] = source
         payload["aiperf.completed_requests"] = float(self._results.completed)
         if self._results.total_expected is not None:
             payload["aiperf.total_expected_requests"] = float(

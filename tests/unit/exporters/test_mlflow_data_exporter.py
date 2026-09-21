@@ -221,6 +221,7 @@ class TestMLflowDataExporter:
             param("credit_drop_latency", "system/credit_drop_latency", id="internal"),
             param("inter_chunk_latency", "system/inter_chunk_latency", id="stream-diagnostic"),
             param("error_isl", "system/error_isl", id="error-input"),
+            param("total_error_isl", "system/total_error_isl", id="total-error-input"),
             param("num_images", "system/num_images", id="image-count"),
             param("video_peak_memory", "system/video_peak_memory", id="video-memory"),
             param("usage_prompt_cache_read_tokens", "system/usage_prompt_cache_read_tokens", id="usage-cache"),
@@ -340,23 +341,55 @@ class TestMLflowDataExporter:
         assert sample_results.model_dump() == original_results
 
     @pytest.mark.parametrize(
-        "records", [param(None, id="missing"), param([], id="empty")]
+        ("field", "reverse"),
+        [
+            param("avg", False, id="avg-generated-first"),
+            param("avg", True, id="avg-prefixed-first"),
+            param("p95", False, id="p95-generated-first"),
+            param("p95", True, id="p95-prefixed-first"),
+            param("count", False, id="count-generated-first"),
+            param("count", True, id="count-prefixed-first"),
+        ],
     )
-    def test_build_metric_payload_without_records_preserves_bookkeeping(
+    def test_build_metric_payload_rejects_normalized_key_collisions(
         self,
-        records: list[MetricResult] | None,
+        field: str,
+        reverse: bool,
         sample_results: ProfileResults,
         mlflow_cfg: BenchmarkConfig,
     ) -> None:
-        sample_results.records = records
-        sample_results.total_expected = None
+        values = {field: 2 if field == "count" else 2.5}
+        records = [
+            MetricResult(
+                tag="http_req_waiting",
+                header="HTTP waiting",
+                unit="ms",
+                **values,
+            ),
+            MetricResult(
+                tag="system/http_req_waiting",
+                header="Already prefixed HTTP waiting",
+                unit="ms",
+                **values,
+            ),
+        ]
+        sample_results.records = list(reversed(records)) if reverse else records
         exporter = MLflowDataExporter(
             ExporterConfig(
                 results=sample_results, cfg=mlflow_cfg, telemetry_results=None
             )
         )
 
-        assert exporter._build_metric_payload() == {"aiperf.completed_requests": 10.0}
+        expected_key = (
+            "system/http_req_waiting"
+            if field == "avg"
+            else f"system/http_req_waiting.{field}"
+        )
+        with pytest.raises(
+            ValueError,
+            match=rf"Duplicate MLflow metric key '{expected_key}'",
+        ):
+            exporter._build_metric_payload()
 
     def test_disabled_without_tracking_uri(
         self, tmp_path: Path, sample_results: ProfileResults
