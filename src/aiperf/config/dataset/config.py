@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -49,6 +50,7 @@ from aiperf.config.dataset.video import (
     VideoConfig,
 )
 from aiperf.config.loader.normalizers import _hoist_synthetic_prompt_fields
+from aiperf.config.loader.parsing import reject_moved_custom_dataset_type
 from aiperf.config.types import SamplingDistribution
 from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
 
@@ -327,6 +329,7 @@ class FileDataset(SystemPromptMixin):
 
     format: Annotated[
         DatasetFormat,
+        BeforeValidator(reject_moved_custom_dataset_type),
         Field(
             default=DatasetFormat.SINGLE_TURN,
             description="Dataset file format determining parsing logic and expected file structure. "
