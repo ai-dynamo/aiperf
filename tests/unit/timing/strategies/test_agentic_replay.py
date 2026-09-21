@@ -214,6 +214,47 @@ def test_system_idle_cap_shifts_pending_schedule_only_when_globally_idle():
     scheduler.cap_pending_delay.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("trace_cap", "system_cap", "expects_warning"),
+    [
+        pytest.param(5.0, None, True, id="trace-only"),
+        pytest.param(5.0, 10.0, False, id="both-caps"),
+        pytest.param(None, None, False, id="neither-cap"),
+    ],
+)
+def test_constructor_warns_only_for_trace_idle_cap_without_system_cap(
+    caplog,
+    trace_cap: float | None,
+    system_cap: float | None,
+    expects_warning: bool,
+) -> None:
+    trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
+    run = MagicMock()
+    run.benchmark_id = "bench"
+    run.cfg.get_cache_bust_target.return_value = CacheBustTarget.FIRST_TURN_PREFIX
+    run.cfg.get_default_dataset.return_value.trace_idle_gap_cap_seconds = trace_cap
+    profiling_phase = MagicMock()
+    profiling_phase.burst_phase_starts = False
+    profiling_phase.system_idle_gap_cap_seconds = system_cap
+    run.cfg.get_profiling_phases.return_value = [profiling_phase]
+
+    with caplog.at_level(logging.WARNING, logger="AgenticReplayTiming"):
+        _make_strategy(
+            phase=CreditPhase.PROFILING,
+            trajectories=trajectories,
+            run=run,
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    matching = [
+        message
+        for message in messages
+        if "trace_idle_gap_cap_seconds" in message
+        and "system_idle_gap_cap_seconds" in message
+    ]
+    assert bool(matching) is expects_warning
+
+
 def test_constructor_accepts_warmup_and_profiling():
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     for phase in (CreditPhase.WARMUP, CreditPhase.PROFILING):
@@ -2754,16 +2795,16 @@ async def test_global_idle_cap_rechecks_after_barrier_defers_near_timer(
             lambda: issue(fa3, 2),
         )
 
-    barrier.complete(
-        _make_credit(
-            conversation_id=fa4,
-            turn_index=42,
-            num_turns=44,
-            x_correlation_id=f"{fa4}:runtime",
-            root_correlation_id=root_id,
-            agent_depth=1,
-        )
+    completed_credit = _make_credit(
+        conversation_id=fa4,
+        turn_index=42,
+        num_turns=44,
+        x_correlation_id=f"{fa4}:runtime",
+        root_correlation_id=root_id,
+        agent_depth=1,
     )
+    barrier.observe_issued(completed_credit)
+    barrier.complete(completed_credit)
     scheduler.schedule_later(0.02, submit_fa4_turn43())
     scheduler.schedule_later(2_171.528, submit_fa3_turn2())
 

@@ -261,6 +261,27 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._system_idle_watchdog: asyncio.TimerHandle | None = None
         self._system_idle_summary_logged = False
 
+        trace_idle_cap_s = (
+            getattr(
+                run.cfg.get_default_dataset(),
+                "trace_idle_gap_cap_seconds",
+                None,
+            )
+            if run is not None
+            else None
+        )
+        if (
+            isinstance(trace_idle_cap_s, int | float)
+            and self._system_idle_gap_cap_seconds is None
+        ):
+            self.warning(
+                "Dataset trace_idle_gap_cap_seconds=%g is set without "
+                "profiling system_idle_gap_cap_seconds. Per-trace replay gaps "
+                "are bounded, but aggregate benchmark idleness remains "
+                "unbounded.",
+                trace_idle_cap_s,
+            )
+
         # Wrap-fill + cache_bust=NONE produces byte-identical traffic across
         # shared-trace lanes. agentx-mvp auto-locks cache_bust=first_turn_prefix
         # so this never fires there; ad-hoc agentic-replay with cache_bust

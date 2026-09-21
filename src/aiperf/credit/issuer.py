@@ -588,7 +588,9 @@ class CreditIssuer:
         await self._issue_credit_internal(turn)
         return ChildDispatchResult.ISSUED
 
-    async def dispatch_join_turn(self, pending: PendingBranchJoin) -> bool:
+    async def dispatch_join_turn(
+        self, pending: PendingBranchJoin
+    ) -> ChildDispatchResult:
         """Dispatch a parent's gated turn after all its children complete.
 
         The parent already holds a session slot (acquired at turn_index=0);
@@ -612,11 +614,10 @@ class CreditIssuer:
         NOT issued and the orchestrator increments ``BranchStats.joins_suppressed``.
 
         Returns:
-            True IFF the credit was actually issued. Unlike ``issue_credit``
-            (whose False conflates "refused, not issued" with "issued, was the
-            phase's final credit"), this inlines the issuance so an issued-but-
-            final join is reported as resumed, not suppressed -- mirroring
-            ``dispatch_child_turn``.
+            The join's explicit dispatch disposition. Replay-barrier retention
+            transfers ownership to the replay gate and normalizes to
+            ``ISSUED``; admission deferral remains ``DEFERRED`` so the branch
+            orchestrator can preserve the pending join for phase handoff.
         """
         assert pending.gated_turn_index is not None, (
             "dispatch_join_turn called without a gated_turn_index"
@@ -641,20 +642,19 @@ class CreditIssuer:
             cache_bust_target=pending.parent_cache_bust_target,
         )
         gate = getattr(self, "replay_gate", ReplayIssueGate(None))
-        return await gate.submit(turn, lambda: self._dispatch_join_turn_ready(turn))
+        result = await gate.submit(turn, lambda: self._dispatch_join_turn_ready(turn))
+        return ChildDispatchResult.normalize(result)
 
-    async def _dispatch_join_turn_ready(self, turn: TurnToSend) -> bool:
+    async def _dispatch_join_turn_ready(self, turn: TurnToSend) -> ChildDispatchResult:
         """Issue a parent's gated (join) turn once its frontier is complete.
 
-        Returns True IFF the credit was actually issued. A join turn is a parent
-        continuation (``turn_index > 0``): it inherits the root's session slot
-        (no session-slot acquisition) and only needs a prefill slot. The
-        final-credit bookkeeping (freeze counts + done event) still runs inside
-        ``_issue_credit_internal``; we simply do not let its "can-send-more"
-        False leak out as a spurious suppression.
+        A join turn is a parent continuation (``turn_index > 0``): it inherits
+        the root's session slot (no session-slot acquisition) and only needs a
+        prefill slot. The final-credit bookkeeping (freeze counts + done event)
+        still runs inside ``_issue_credit_internal``.
         """
         if self._issuing_stopped:
-            return False
+            return ChildDispatchResult.REJECTED
         # Nested (agent_depth > 0) join is reactive DAG work that must progress
         # past the root-sampler-done signal; a top-level join is a normal
         # continuation. Mirrors _issue_credit_ready's check selection.
@@ -664,13 +664,19 @@ class CreditIssuer:
             else self._stop_checker.can_send_any_turn
         )
         if not can_proceed_fn():
-            return False
+            return ChildDispatchResult.REJECTED
         if not await self._concurrency_manager.acquire_prefill_slot(
             self._phase_key, can_proceed_fn
         ):
-            return False
+            return ChildDispatchResult.REJECTED
+        admission = self._turn_admission_result(turn)
+        if admission is not TurnAdmission.ADMIT:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if admission is TurnAdmission.DEFER:
+                return ChildDispatchResult.DEFERRED
+            return ChildDispatchResult.REJECTED
         await self._issue_credit_internal(turn)
-        return True
+        return ChildDispatchResult.ISSUED
 
     async def abort_session(self, x_correlation_id: str) -> None:
         """Abort an in-flight session (FORK/SPAWN parent or orphan).

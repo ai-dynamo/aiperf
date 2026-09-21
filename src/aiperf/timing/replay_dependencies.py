@@ -277,7 +277,9 @@ class ReplayBarrierCoordinator:
         if not self._active:
             return
         root_id = credit.effective_root_correlation_id
-        state = self._root_state(root_id)
+        state = self._roots.get(root_id)
+        if state is None:
+            return
         state.in_flight = max(0, state.in_flight - 1)
         state.completed.add(ReplayTurnKey(credit.conversation_id, credit.turn_index))
         if self._releases_paused:

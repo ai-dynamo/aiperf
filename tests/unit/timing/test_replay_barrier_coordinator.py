@@ -224,10 +224,26 @@ async def test_new_request_cancels_runtime_root_idle_watchdog() -> None:
 
     coordinator.observe_issued(_credit("a"))
     coordinator.complete(_credit("a"))
+    handle = coordinator._roots["root"].idle_watchdog
+    assert handle is not None
     coordinator.observe_issued(_credit("b"))
+
+    assert handle.cancelled()
     await asyncio.sleep(0.06)
 
     scheduler.cap_pending_delay_for_group.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_late_completion_does_not_recreate_closed_root() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    coordinator.observe_issued(_credit("a"))
+    coordinator.close_root("root")
+
+    coordinator.complete(_credit("a"))
+
+    assert "root" not in coordinator._roots
 
 
 @pytest.mark.asyncio

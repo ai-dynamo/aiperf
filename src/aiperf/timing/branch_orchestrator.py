@@ -1769,9 +1769,13 @@ class BranchOrchestrator:
         think_ms = self._resolve_think_ms(pending)
         if think_ms > 0.0 and math.isfinite(think_ms):
             await self._sleep_think_ms(think_ms / 1000.0)
-        issued = await self._issuer.dispatch_join_turn(pending)
-        if issued:
+        result = ChildDispatchResult.normalize(
+            await self._issuer.dispatch_join_turn(pending)
+        )
+        if result is ChildDispatchResult.ISSUED:
             self.stats.parents_resumed += 1
+        elif result is ChildDispatchResult.DEFERRED:
+            self._active_joins[pending.parent_x_correlation_id] = pending
         else:
             self.stats.joins_suppressed += 1
 

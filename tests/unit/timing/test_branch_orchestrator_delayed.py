@@ -29,6 +29,7 @@ from aiperf.common.models import (
     TurnMetadata,
     TurnPrerequisite,
 )
+from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 from aiperf.timing.trajectory_source import ConversationState
@@ -634,6 +635,46 @@ async def test_delayed_join_stop_condition_fires_during_gap_suppresses_join():
 
     assert orch.stats.joins_suppressed == 1
     assert orch.stats.parents_resumed == 0
+
+
+@pytest.mark.asyncio
+async def test_delayed_join_admission_defer_stays_pending_until_retry():
+    """A temporary join deferral retains the gate and retries without suppression."""
+    cs = _mk_source(_k5_metadata())
+
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **kwargs
+    ):
+        session = MagicMock()
+        session.x_correlation_id = f"corr-{child_conversation_id}"
+        return session
+
+    cs.start_branch_child = MagicMock(side_effect=_start)
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=ChildDispatchResult.ISSUED)
+    issuer.dispatch_join_turn = AsyncMock(
+        side_effect=[
+            ChildDispatchResult.DEFERRED,
+            ChildDispatchResult.ISSUED,
+        ]
+    )
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    await orch.intercept(_mk_credit("root", "corr-root", 0))
+    await orch.intercept(_mk_credit("root", "corr-root", 4))
+    await orch.on_child_leaf_reached("corr-c0")
+    await orch.on_child_leaf_reached("corr-c1")
+
+    assert "corr-root" in orch._active_joins
+    assert orch.stats.parents_resumed == 0
+    assert orch.stats.joins_suppressed == 0
+
+    await orch.expire_replay_deadlines()
+
+    assert issuer.dispatch_join_turn.await_count == 2
+    assert "corr-root" not in orch._active_joins
+    assert orch.stats.parents_resumed == 1
+    assert orch.stats.joins_suppressed == 0
 
 
 @pytest.mark.asyncio

@@ -1013,6 +1013,21 @@ class TestDispatchJoinTurnNoRequest:
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.no_request is False
 
+    async def test_dispatch_join_turn_admission_defer_preserves_distinct_result(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """A warmup handoff deferral must not become an issued join."""
+        credit_issuer.set_turn_admission(lambda _turn: TurnAdmission.DEFER)
+
+        result = await credit_issuer.dispatch_join_turn(self._pending(no_request=False))
+
+        assert result is ChildDispatchResult.DEFERRED
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
 
 # =============================================================================
 # Test: WARMUP_ISOLATION_* cache-bust target phase-aware marker emission
