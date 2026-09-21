@@ -335,3 +335,32 @@ class TestDerivedServiceIsNotTreatedAsAUserSetFlag:
             )
             with pytest.raises(ValueError, match="--aws-service has no effect"):
                 cfg._validate_sigv4_auth()
+
+
+def test_validator_derives_the_scope_through_the_signer_s_own_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Config decides whether ``--aws-service`` is *required*; the signer
+    resolves the actual scope. They must answer from one implementation.
+
+    A second copy could drift and let this validator accept a scope the signer
+    then resolves to None -- handing ``service=None`` to ``SigV4Auth`` and
+    turning a config error into a 403 partway into a run. Patching the shared
+    lookup and watching validation stop demanding ``--aws-service`` is what
+    proves the validator is not reading a private copy: without the patch being
+    observed, this config raises "requires --aws-service".
+    """
+    from aiperf.auth import _transport_scope
+
+    monkeypatch.setattr(
+        _transport_scope,
+        "transport_botocore_service_id",
+        lambda transport: "derived-scope",
+    )
+
+    config = EndpointConfig(
+        urls=["https://example.com"], auth_type="sigv4", aws_region="us-east-1"
+    )
+
+    # Derived, never echoed back as something the user typed.
+    assert config.aws_service is None

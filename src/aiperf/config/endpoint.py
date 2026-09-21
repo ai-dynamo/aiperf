@@ -104,25 +104,6 @@ class TemplateConfig(BaseConfig):
     ]
 
 
-def _transport_botocore_service_id(transport: TransportType | None) -> str | None:
-    """Return the botocore service id the given transport speaks, if any.
-
-    Duplicated from ``aiperf.auth.sigv4_signer`` on purpose: config validation
-    must work without the optional ``aiperf[aws]`` extra installed, and importing
-    the signer module pulls in botocore.
-    """
-    if transport is None:
-        return None
-    from aiperf.plugin import plugins
-    from aiperf.plugin.enums import PluginType
-
-    try:
-        transport_cls = plugins.get_class(PluginType.TRANSPORT, str(transport))
-    except Exception:
-        return None
-    return getattr(transport_cls, "botocore_service_id", None)
-
-
 def _transport_signs(transport: TransportType) -> bool:
     """Whether the named transport applies the configured request signer.
 
@@ -827,7 +808,14 @@ class EndpointConfig(BaseConfig):
 
         # Only now that signing is confirmed does the transport get to supply
         # the credential scope; the signer resolves it from botocore's model.
-        aws_flags["--aws-service"] = self.aws_service or _transport_botocore_service_id(
+        # Imported here, not at module scope: aiperf/auth/__init__.py reaches
+        # back into aiperf.config via base_signer, so a top-level import is a
+        # cycle. Deliberately the *same* function the signer uses -- a second
+        # copy could drift and let this validator accept a scope the signer
+        # then resolves to None, turning a config error into a mid-run 403.
+        from aiperf.auth._transport_scope import transport_botocore_service_id
+
+        aws_flags["--aws-service"] = self.aws_service or transport_botocore_service_id(
             self.transport
         )
 

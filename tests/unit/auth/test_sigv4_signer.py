@@ -487,20 +487,20 @@ class TestSigningNameDerivedFromTransport:
         assert session.get_service_model("bedrock-runtime").signing_name == "bedrock"
 
     def test_no_transport_yields_no_service_id(self) -> None:
-        from aiperf.auth.sigv4_signer import _transport_botocore_service_id
+        from aiperf.auth._transport_scope import transport_botocore_service_id
 
-        assert _transport_botocore_service_id(None) is None
+        assert transport_botocore_service_id(None) is None
 
     def test_a_transport_without_the_attribute_yields_none(self) -> None:
         """The built-in http transport speaks no particular AWS API, so it
         supplies no scope and the flag stays required for it."""
-        from aiperf.auth.sigv4_signer import _transport_botocore_service_id
+        from aiperf.auth._transport_scope import transport_botocore_service_id
         from aiperf.plugin.enums import TransportType
 
-        assert _transport_botocore_service_id(TransportType.HTTP) is None
+        assert transport_botocore_service_id(TransportType.HTTP) is None
 
     def test_a_transport_declaring_a_service_id_supplies_it(self) -> None:
-        from aiperf.auth.sigv4_signer import _transport_botocore_service_id
+        from aiperf.auth._transport_scope import transport_botocore_service_id
         from aiperf.transports.aiohttp_transport import AioHttpTransport
         from tests.harness import mock_plugin
 
@@ -508,4 +508,40 @@ class TestSigningNameDerivedFromTransport:
             botocore_service_id = "sagemaker-runtime"
 
         with mock_plugin("transport", "awsish", _AwsishTransport):
-            assert _transport_botocore_service_id("awsish") == "sagemaker-runtime"
+            assert transport_botocore_service_id("awsish") == "sagemaker-runtime"
+
+    def test_exactly_one_implementation_of_the_scope_lookup_exists(self) -> None:
+        """Config decides whether --aws-service is *required*; the signer
+        resolves the actual scope. Two copies can drift, and a drifted pair
+        lets validation accept a scope the signer then resolves to None --
+        service=None reaches SigV4Auth and a config error becomes a mid-run
+        403. The signer must hold no private copy, and src/ must define the
+        lookup once. (The config side is pinned behaviourally in
+        tests/unit/config/test_endpoint_sigv4_validation.py, since it imports
+        lazily to avoid an aiperf.auth -> aiperf.config cycle.)
+        """
+        import pathlib
+
+        from aiperf.auth import _transport_scope, sigv4_signer
+
+        assert (
+            sigv4_signer.transport_botocore_service_id
+            is _transport_scope.transport_botocore_service_id
+        )
+
+        src = pathlib.Path(_transport_scope.__file__).parents[1]
+        definitions = sorted(
+            # as_posix() so the comparison holds on Windows, which would
+            # otherwise render this "auth\\_transport_scope.py". No line
+            # number: it would make any unrelated edit fail this test.
+            path.relative_to(src).as_posix()
+            for path in src.rglob("*.py")
+            # encoding pinned: src/ contains non-ASCII, and read_text() would
+            # otherwise use the locale encoding on Windows.
+            for line in path.read_text(encoding="utf-8").splitlines()
+            # lstrip: a nested def is a private copy too, and indenting one
+            # is exactly how this would quietly come back.
+            if line.lstrip().startswith("def transport_botocore_service_id")
+            or line.lstrip().startswith("def _transport_botocore_service_id")
+        )
+        assert definitions == ["auth/_transport_scope.py"], definitions
