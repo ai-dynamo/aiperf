@@ -51,10 +51,19 @@ benchmark:
 """
 
 
-def _agentic_yaml(tmp_path: pathlib.Path) -> pathlib.Path:
+def _agentic_yaml(
+    tmp_path: pathlib.Path, warmup_requests_per_lane: int | None = None
+) -> pathlib.Path:
     """A YAML whose profiling phase resolves to AGENTIC_REPLAY, needed because ``validate_agentic_cache_warmup`` rejects ``--agentic-cache-warmup-duration`` on a non-agentic run."""
     path = tmp_path / "agentic_profiling.yaml"
-    path.write_text(_AGENTIC_PROFILING_YAML)
+    yaml = _AGENTIC_PROFILING_YAML
+    if warmup_requests_per_lane is not None:
+        yaml = yaml.replace(
+            "    timingMode: agentic_replay\n",
+            "    timingMode: agentic_replay\n"
+            f"    warmupRequestsPerLane: {warmup_requests_per_lane}\n",
+        )
+    path.write_text(yaml)
     return path
 
 
@@ -73,7 +82,7 @@ def test_agentic_cache_warmup_request_budget_overrides_yaml_profiling_phase(
 ) -> None:
     cfg = resolve_config(
         _cli(warmup_requests_per_lane=10),
-        _agentic_yaml(tmp_path),
+        _agentic_yaml(tmp_path, warmup_requests_per_lane=3),
     )
     phase = _profiling_phase(cfg)
     assert phase.agentic_cache_warmup_duration is None
