@@ -31,7 +31,6 @@ EXEMPT_SUFFIXES = {
     ".json",
     ".jsonl",
     ".lock",
-    ".mock-server",
     ".png",
     ".svg",
     ".txt",
@@ -77,6 +76,7 @@ SOURCE_FILENAMES = {
     "Dockerfile",
     "Makefile",
 }
+SOURCE_FILENAME_PREFIXES = ("Dockerfile.",)
 HEADER_SCAN_LINES = 10
 YEAR_PATTERN = r"(?P<start_year>\d{4})(?:-(?P<end_year>\d{4}))?"
 COPYRIGHT_TEXT = (
@@ -106,7 +106,7 @@ def is_exempt(root: Path, relative_path: Path) -> bool:
     return (
         relative_path in EXEMPT_PATHS
         or (
-            relative_path.name not in SOURCE_FILENAMES
+            not has_source_filename(relative_path)
             and relative_path.suffix.lower() in EXEMPT_SUFFIXES
         )
         or any(is_under(relative_path, prefix) for prefix in EXEMPT_PREFIXES)
@@ -116,7 +116,14 @@ def is_exempt(root: Path, relative_path: Path) -> bool:
 
 def requires_header(path: Path) -> bool:
     """Return whether a supported first-party path requires an SPDX header."""
-    return path.suffix.lower() in SOURCE_SUFFIXES or path.name in SOURCE_FILENAMES
+    return path.suffix.lower() in SOURCE_SUFFIXES or has_source_filename(path)
+
+
+def has_source_filename(path: Path) -> bool:
+    """Return whether a filename or filename prefix is covered by source policy."""
+    return path.name in SOURCE_FILENAMES or path.name.startswith(
+        SOURCE_FILENAME_PREFIXES
+    )
 
 
 def has_ordered_year_range(match: re.Match[str]) -> bool:
@@ -138,7 +145,7 @@ def validate_file(root: Path, relative_path: Path) -> list[str]:
     except OSError as error:
         return [f"{relative_path}: cannot read file: {error}"]
     if not contents.strip():
-        return []
+        return [f"{relative_path}: empty source file is missing an SPDX header"]
     if b"\x00" in contents:
         return [f"{relative_path}: binary files require an explicit policy exemption"]
     try:

@@ -4,7 +4,6 @@
 name: SPDX header compliance
 
 on:
-  pull_request:
   push:
     branches:
       - main

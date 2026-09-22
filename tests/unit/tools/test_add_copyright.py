@@ -34,6 +34,7 @@ LICENSE_TEXT = (ROOT / "tools/COPYRIGHT").read_text().strip()
     [
         *(f"example{suffix}" for suffix in sorted(checker.SOURCE_SUFFIXES)),
         *sorted(checker.SOURCE_FILENAMES),
+        *(f"{prefix}example" for prefix in checker.SOURCE_FILENAME_PREFIXES),
     ],
 )
 def test_fixer_generates_every_required_header(tmp_path: Path, filename: str) -> None:
@@ -47,9 +48,10 @@ def test_fixer_generates_every_required_header(tmp_path: Path, filename: str) ->
     assert checker.validate_file(tmp_path, Path(filename)) == []
 
 
-def test_fixer_preserves_mdc_frontmatter(tmp_path: Path) -> None:
-    """Cursor rule metadata remains the first construct in an MDC file."""
-    path = tmp_path / "rule.mdc"
+@pytest.mark.parametrize("suffix", [".md", ".mdc"])
+def test_fixer_preserves_markdown_frontmatter(tmp_path: Path, suffix: str) -> None:
+    """Markdown metadata remains the first construct in frontmatter files."""
+    path = tmp_path / f"rule{suffix}"
     path.write_text(
         "---\ndescription: Example rule\nalwaysApply: true\n---\n\n# Rule\n",
         encoding="utf-8",
@@ -59,7 +61,61 @@ def test_fixer_preserves_mdc_frontmatter(tmp_path: Path) -> None:
 
     assert (changed, status) == (True, "added copyright")
     assert path.read_text(encoding="utf-8").startswith("---\n")
-    assert checker.validate_file(tmp_path, Path("rule.mdc")) == []
+    assert (
+        path.read_text(encoding="utf-8")
+        .splitlines()[1]
+        .startswith("# SPDX-FileCopyrightText:")
+    )
+    assert checker.validate_file(tmp_path, Path(f"rule{suffix}")) == []
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "critical_prefix"),
+    [
+        pytest.param(
+            "script.py",
+            "\ufeff#!/usr/bin/env python3\n# coding: utf-8\nprint('ok')\n",
+            "\ufeff#!/usr/bin/env python3\n# coding: utf-8\n",
+            id="bom-and-python-preamble",
+        ),
+        pytest.param(
+            "tool.mjs",
+            "#!/usr/bin/env node\nconsole.log('ok');\n",
+            "#!/usr/bin/env node\n",
+            id="javascript-shebang",
+        ),
+        pytest.param(
+            "Dockerfile.custom",
+            "# syntax=docker/dockerfile:1\n# check=error=true\nFROM scratch\n",
+            "# syntax=docker/dockerfile:1\n# check=error=true\n",
+            id="docker-directives",
+        ),
+        pytest.param(
+            "style.css",
+            '@charset "UTF-8";\nbody {}\n',
+            '@charset "UTF-8";\n',
+            id="css-charset",
+        ),
+        pytest.param(
+            "index.html",
+            "<!DOCTYPE html>\n<html></html>\n",
+            "<!DOCTYPE html>\n",
+            id="html-doctype",
+        ),
+    ],
+)
+def test_fixer_preserves_critical_preamble(
+    tmp_path: Path, filename: str, content: str, critical_prefix: str
+) -> None:
+    """Syntax-critical leading constructs remain ahead of the SPDX header."""
+    path = tmp_path / filename
+    path.write_text(content, encoding="utf-8")
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "added copyright")
+    assert path.read_text(encoding="utf-8").startswith(critical_prefix)
+    assert checker.validate_file(tmp_path, Path(filename)) == []
 
 
 def test_fixer_normalizes_malformed_nvidia_header(
