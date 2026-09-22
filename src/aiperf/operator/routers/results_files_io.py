@@ -334,6 +334,8 @@ def _serve_sanitized_job_spec(request: Request, path: Path) -> StreamingResponse
         request.headers.get("accept-encoding"),
         default=CompressionEncoding.IDENTITY,
     )
+    if encoding is None:
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
     headers = _download_headers(JOB_SPEC_FILENAME)
     if encoding != CompressionEncoding.IDENTITY:
         headers["Content-Encoding"] = encoding
@@ -513,6 +515,8 @@ def _serve_raw_file(request: Request, file_path: Path) -> StreamingResponse:
 
     accept = request.headers.get("accept-encoding")
     encoding = select_encoding(accept, default=CompressionEncoding.IDENTITY)
+    if encoding is None:
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
 
     headers = _download_headers(file_path.name)
     if encoding != CompressionEncoding.IDENTITY:

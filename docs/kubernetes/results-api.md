@@ -476,6 +476,8 @@ The lookup tries `<filename>.zst` first, then `<filename>` as-is. `namespace` an
 
 The `common.compression.select_encoding` helper picks the best encoding the client accepts (default `IDENTITY`). An `Accept-Encoding: *` wildcard accepts both zstd and gzip, with explicit encoding values taking precedence (for example, `*;q=1, zstd;q=0` selects gzip). `Content-Encoding` is set only if the server is recompressing; otherwise it's omitted.
 
+If every available encoding is rejected, the server returns `406 Not Acceptable`. This includes `*;q=0`, which also rejects identity unless explicitly allowed (for example, `*;q=0, identity;q=1`). An absent header keeps the default identity response. These rules also apply to the sanitized `job_spec.json` response.
+
 **Response headers (both paths)**
 
 - `Content-Disposition: attachment; filename="<display-name>"` (switched to the RFC 5987 `filename*=UTF-8''…` form for non-ASCII names)

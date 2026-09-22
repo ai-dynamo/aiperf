@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -49,6 +50,46 @@ def dataset_async_client(
 
 class TestDatasetEndpoints:
     """Test the /api/dataset/* endpoints."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", ["data", "index"])
+    @pytest.mark.parametrize(
+        "accept_encoding,expected_status",
+        [
+            param("*;q=0", 406, id="wildcard-rejection"),
+            param("zstd;q=0, gzip;q=0, identity;q=0", 406, id="explicit-rejection"),
+            param("*;q=0, identity;q=1", 200, id="identity-allowed"),
+        ],
+    )  # fmt: skip
+    async def test_dataset_encoding_negotiation(
+        self,
+        dataset_async_client: AsyncClient,
+        dataset_router: DatasetRouter,
+        tmp_path: Path,
+        endpoint: str,
+        accept_encoding: str,
+        expected_status: int,
+    ) -> None:
+        payload = b"dataset content"
+        file_path = tmp_path / "data.dat"
+        file_path.write_bytes(payload)
+        dataset_router._dataset_configured.set()
+        dataset_router._dataset_client_metadata = MemoryMapClientMetadata(
+            data_file_path=file_path,
+            index_file_path=file_path,
+            conversation_count=1,
+        )
+
+        response = await dataset_async_client.get(
+            f"/api/dataset/{endpoint}",
+            headers={"Accept-Encoding": accept_encoding},
+        )
+
+        assert response.status_code == expected_status
+        if expected_status == 200:
+            assert response.content == payload
+        else:
+            assert "content-encoding" not in response.headers
 
     def test_dataset_data_timeout_returns_503(
         self,

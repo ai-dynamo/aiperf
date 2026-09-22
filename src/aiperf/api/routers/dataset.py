@@ -139,6 +139,10 @@ async def _stream_dataset_file(
         encoding = CompressionEncoding.ZSTD
     else:
         encoding = select_encoding(accept_encoding)
+        if encoding is None:
+            raise HTTPException(
+                status_code=406, detail="No acceptable content encoding"
+            )
         stream = stream_file_compressed(file_path, encoding)
 
     return StreamingResponse(

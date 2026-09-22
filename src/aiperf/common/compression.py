@@ -8,6 +8,8 @@ Supports compression algorithms with content negotiation:
 - gzip: Universal fallback
 
 Usage::
+    from fastapi import HTTPException
+
     from aiperf.common.compression import (
         select_encoding,
         stream_file_compressed,
@@ -15,6 +17,8 @@ Usage::
 
     # Select encoding based on Accept-Encoding header
     encoding = select_encoding(request.headers.get("accept-encoding"))
+    if encoding is None:
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
 
     # Stream a compressed file
     async for chunk in stream_file_compressed(file_path, encoding):
@@ -79,7 +83,7 @@ def parse_accept_encoding(header: str) -> dict[str, float]:
 def select_encoding(
     accept_encoding: str | None,
     default: CompressionEncoding = CompressionEncoding.GZIP,
-) -> CompressionEncoding:
+) -> CompressionEncoding | None:
     """Select best compression based on Accept-Encoding header.
 
     Priority: zstd > gzip (if available and accepted by client).
@@ -88,10 +92,10 @@ def select_encoding(
 
     Args:
         accept_encoding: The Accept-Encoding header value from HTTP request.
-        default: Fallback encoding if no preferred encoding is accepted.
+        default: Encoding to use when the header is absent or empty.
 
     Returns:
-        Selected compression encoding.
+        Selected compression encoding, or None if all available encodings are rejected.
     """
     if not accept_encoding:
         return default
@@ -103,10 +107,11 @@ def select_encoding(
         return CompressionEncoding.ZSTD
     if accepted.get("gzip", wildcard_quality) > 0:
         return CompressionEncoding.GZIP
-    if accepted.get("identity", 1.0) > 0:
+    identity_quality = accepted.get("identity", 0.0 if accepted.get("*") == 0 else 1.0)
+    if identity_quality > 0:
         return CompressionEncoding.IDENTITY
 
-    return default
+    return None
 
 
 def _make_compressobj(encoding: CompressionEncoding) -> Any | None:

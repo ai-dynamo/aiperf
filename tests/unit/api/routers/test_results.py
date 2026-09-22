@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -548,6 +549,37 @@ class TestResultsFileEndpoints:
 
 class TestResultsFileContentType:
     """Test content type detection by file extension for result files."""
+
+    @pytest.mark.parametrize(
+        "accept_encoding,expected_status",
+        [
+            param("*;q=0", 406, id="wildcard-rejection"),
+            param("zstd;q=0, gzip;q=0, identity;q=0", 406, id="explicit-rejection"),
+            param("*;q=0, identity;q=1", 200, id="identity-allowed"),
+        ],
+    )  # fmt: skip
+    def test_file_encoding_negotiation(
+        self,
+        results_client: TestClient,
+        results_router: ResultsRouter,
+        tmp_path: Path,
+        accept_encoding: str,
+        expected_status: int,
+    ) -> None:
+        payload = b'{"metrics": {"latency": 100}}'
+        (tmp_path / "metrics.json").write_bytes(payload)
+        write_ready_marker(tmp_path)
+        results_router.run.cfg.artifacts.dir = tmp_path
+
+        response = results_client.get(
+            "/api/results/files/metrics.json",
+            headers={"Accept-Encoding": accept_encoding},
+        )
+
+        assert response.status_code == expected_status
+        assert "content-encoding" not in response.headers
+        if expected_status == 200:
+            assert response.content == payload
 
     @pytest.mark.parametrize(
         "filename,expected_content_type",

@@ -102,6 +102,36 @@ def _legacy_job_spec() -> dict:
     }
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filename", ["metrics.json", "job_spec.json"])
+@pytest.mark.parametrize(
+    "accept_encoding,expected_status",
+    [
+        param("*;q=0", 406, id="wildcard-rejection"),
+        param("zstd;q=0, gzip;q=0, identity;q=0", 406, id="explicit-rejection"),
+        param("*;q=0, identity;q=1", 200, id="identity-allowed"),
+    ],
+)  # fmt: skip
+async def test_raw_artifact_encoding_negotiation(
+    tmp_path: Path,
+    client: httpx.AsyncClient,
+    filename: str,
+    accept_encoding: str,
+    expected_status: int,
+) -> None:
+    _seed_run(tmp_path, files={filename: b'{"safe": true}'})
+
+    response = await client.get(
+        f"/api/v1/results/bench-prod/llama-3-8b-load/runs/{_EPOCH_NEW}/{filename}",
+        headers={"Accept-Encoding": accept_encoding},
+    )
+
+    assert response.status_code == expected_status
+    assert "content-encoding" not in response.headers
+    if expected_status == 200:
+        assert response.json() == {"safe": True}
+
+
 class TestLegacyJobSpecCredentialRedaction:
     """Every artifact read path sanitizes specs written by older operators."""
 
