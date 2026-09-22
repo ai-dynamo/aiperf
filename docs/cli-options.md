@@ -160,7 +160,7 @@ Run an AIPerf service in a single process.
 
 ### [`speed-bench-report`](#aiperf-speed-bench-report)
 
-Assemble per-category SPEED-Bench aiperf results into a matrix report.
+Assemble SPEED-Bench aiperf results into a matrix report.
 
 ### [`synthesize`](#aiperf-synthesize)
 
@@ -655,7 +655,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--hf-subset` `<str>`
 
@@ -665,6 +665,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
+
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
@@ -672,7 +677,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -1404,11 +1409,11 @@ Output directory for all benchmark artifacts including metrics (`.csv`, `.json`,
 
 #### `--profile-export-prefix`, `--profile-export-file` `<str>`
 
-Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
+Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
 
 #### `--export-level`, `--profile-export-level` `<str>`
 
-Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`).
+Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`) and, unless `--no-export-outputs-json` is passed, the generated text (`_outputs.json`).
 
 **Choices:**
 
@@ -1432,10 +1437,9 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
 <br/>_Flag (no value required)_
 
-#### `--export-outputs-json`
+#### `--export-outputs-json`, `--no-export-outputs-json`
 
-Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
-<br/>_Flag (no value required)_
+Export generated response text after the run. When enabled, the raw generated-text payload for each request is written to `outputs.json` in the artifact directory, or to `<prefix>_outputs.json` when `--profile-export-prefix` is set (prefix `foo` gives `foo_outputs.json`). Implied by `--export-level raw`; pass `--no-export-outputs-json` to opt out of the extra file while keeping raw export.
 
 #### `--otel-url` `<str>`
 
@@ -2248,7 +2252,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--hf-subset` `<str>`
 
@@ -2258,6 +2262,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
+
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
@@ -2265,7 +2274,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -2997,11 +3006,11 @@ Output directory for all benchmark artifacts including metrics (`.csv`, `.json`,
 
 #### `--profile-export-prefix`, `--profile-export-file` `<str>`
 
-Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
+Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
 
 #### `--export-level`, `--profile-export-level` `<str>`
 
-Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`).
+Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`) and, unless `--no-export-outputs-json` is passed, the generated text (`_outputs.json`).
 
 **Choices:**
 
@@ -3025,10 +3034,9 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
 <br/>_Flag (no value required)_
 
-#### `--export-outputs-json`
+#### `--export-outputs-json`, `--no-export-outputs-json`
 
-Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
-<br/>_Flag (no value required)_
+Export generated response text after the run. When enabled, the raw generated-text payload for each request is written to `outputs.json` in the artifact directory, or to `<prefix>_outputs.json` when `--profile-export-prefix` is set (prefix `foo` gives `foo_outputs.json`). Implied by `--export-level raw`; pass `--no-export-outputs-json` to opt out of the extra file while keeping raw export.
 
 #### `--otel-url` `<str>`
 
@@ -3836,7 +3844,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--hf-subset` `<str>`
 
@@ -3846,6 +3854,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
+
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
@@ -3853,7 +3866,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -4585,11 +4598,11 @@ Output directory for all benchmark artifacts including metrics (`.csv`, `.json`,
 
 #### `--profile-export-prefix`, `--profile-export-file` `<str>`
 
-Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
+Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
 
 #### `--export-level`, `--profile-export-level` `<str>`
 
-Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`).
+Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`) and, unless `--no-export-outputs-json` is passed, the generated text (`_outputs.json`).
 
 **Choices:**
 
@@ -4613,10 +4626,9 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
 <br/>_Flag (no value required)_
 
-#### `--export-outputs-json`
+#### `--export-outputs-json`, `--no-export-outputs-json`
 
-Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
-<br/>_Flag (no value required)_
+Export generated response text after the run. When enabled, the raw generated-text payload for each request is written to `outputs.json` in the artifact directory, or to `<prefix>_outputs.json` when `--profile-export-prefix` is set (prefix `foo` gives `foo_outputs.json`). Implied by `--export-level raw`; pass `--no-export-outputs-json` to opt out of the extra file while keeping raw export.
 
 #### `--otel-url` `<str>`
 
@@ -5931,7 +5943,7 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`]_
 
 #### `--hf-subset` `<str>`
 
@@ -5941,6 +5953,11 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace dataset repo for the generic Weka loader (e.g. `semianalysisai/cc-traces-weka-061526`). Passing this auto-selects `--public-dataset weka_hf`, so the repo flag works on its own; setting it alongside any other `--public-dataset` or `--custom-dataset-type` is an error. Pinned Weka public dataset aliases keep their registry-defined repo names.
 
+#### `--weka-nested-timestamp-basis` `<str>`
+
+Interpretation of timestamps inside Weka subagent entries. 'absolute' treats them as root-trace timestamps, 'relative' adds the subagent marker timestamp, and 'auto' selects relative for the entire corpus if any child precedes its marker by more than 1 microsecond, otherwise absolute. Full-input validation always runs; auto is a heuristic and cannot detect every mixed or malformed convention. Use an explicit basis when the producer convention is known.
+<br/>_Default: `auto`_
+
 #### `--dataset-filter` `<list>`
 
 Dataset-specific filter in key=value form. Repeat for multiple filters. Only supported by public datasets that declare filter support.
@@ -5948,7 +5965,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -6680,11 +6697,11 @@ Output directory for all benchmark artifacts including metrics (`.csv`, `.json`,
 
 #### `--profile-export-prefix`, `--profile-export-file` `<str>`
 
-Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
+Base filename for ALL exported files. With prefix='foo' every output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, `foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), historical per-file names are used: `profile_export_aiperf.{csv,json}` for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, `_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) are stripped from the supplied value.
 
 #### `--export-level`, `--profile-export-level` `<str>`
 
-Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`).
+Controls which output files are generated. `summary`: Only aggregate metrics files (`.csv`, `.json`). `records`: Includes per-request metrics (`.jsonl`). `raw`: Includes raw request/response data (`_raw.jsonl`) and, unless `--no-export-outputs-json` is passed, the generated text (`_outputs.json`).
 
 **Choices:**
 
@@ -6708,10 +6725,9 @@ Auto-invoke `aiperf plot` against the artifact directory after the benchmark com
 Treat auto-plot failures as fatal: re-raise so `aiperf profile` exits non-zero. Only meaningful when auto-plot is on. Default False = warn and continue.
 <br/>_Flag (no value required)_
 
-#### `--export-outputs-json`
+#### `--export-outputs-json`, `--no-export-outputs-json`
 
-Export generated response text to outputs.json after the run. When enabled, the raw generated-text payload for each request is written to an outputs.json file in the artifact directory.
-<br/>_Flag (no value required)_
+Export generated response text after the run. When enabled, the raw generated-text payload for each request is written to `outputs.json` in the artifact directory, or to `<prefix>_outputs.json` when `--profile-export-prefix` is set (prefix `foo` gives `foo_outputs.json`). Implied by `--export-level raw`; pass `--no-export-outputs-json` to opt out of the extra file while keeping raw export.
 
 #### `--otel-url` `<str>`
 
@@ -7354,13 +7370,16 @@ HTTP port for health endpoints (/healthz, /readyz). Required for Kubernetes live
 
 ## `aiperf speed-bench-report`
 
-Assemble per-category SPEED-Bench aiperf results into a matrix report.
+Assemble SPEED-Bench aiperf results into a matrix report.
 
-Run ``aiperf profile`` once per SPEED-Bench category, then point this command at the output directories to produce a matrix matching the SPEED-Bench paper format.
+Point this command at one or more ``aiperf profile`` output directories. A single run over an aggregate SPEED-Bench split (``speed_bench_qualitative``) already carries every category, and each of its per-request records is stamped with the category it came from, so one run produces the whole matrix. Runs over a single category still work and contribute one column each.
 
 **Examples:**
 
 ```bash
+# One run over all categories: matrix comes from its per-request records
+aiperf speed-bench-report ./artifacts/speed_bench_qualitative/
+
 # Scan a parent directory for per-category run subdirectories
 aiperf speed-bench-report ./artifacts/
 
@@ -7370,8 +7389,11 @@ aiperf speed-bench-report ./artifacts/run_coding/ ./artifacts/run_math/
 # Acceptance rate matrix (accepted / draft tokens)
 aiperf speed-bench-report ./artifacts/ --metric accept_rate
 
-# Throughput matrix (output tokens/sec per category)
+# Throughput matrix (output tokens/sec per run)
 aiperf speed-bench-report ./artifacts/ --metric throughput
+
+# Force the Prometheus scrape, ignoring any per-request records
+aiperf speed-bench-report ./artifacts/ --source server
 ```
 
 ### `--paths`, `--empty-paths` `<list>` _(Required)_
@@ -7392,6 +7414,11 @@ Output format - 'csv', 'table', or 'both'. Defaults to 'both'.
 
 Which metric to report - 'accept_length', 'accept_rate', or 'throughput'. Defaults to 'accept_length'.
 <br/>_Default: `accept_length`_
+
+### `--source` `<str>`
+
+Where acceptance numbers come from - 'records' (per-request ``profile_export.jsonl``), 'summary' (the same per-request data reduced to run-level scalars in ``profile_export_aiperf.json``, the only source left at ``--export-level summary``), 'server' (Prometheus scrape in ``server_metrics_export.json``), or 'auto' to try them in that order. Only 'records' can split one run into per-category columns; only 'server' reads server-side data. Defaults to 'auto'.
+<br/>_Default: `auto`_
 
 <hr/>
 

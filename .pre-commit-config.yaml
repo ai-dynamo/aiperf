@@ -34,20 +34,25 @@ repos:
         args: ['--allow-multiple-documents']
         exclude: ^deploy/helm/.*/templates/.*\.yaml$
       - id: check-shebang-scripts-are-executable
+      # The vendored SPEED-Bench resolver is byte-pinned to upstream by a
+      # sha256 CI gate. Any whitespace or newline rewrite breaks that pin.
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]
+        exclude: ^src/aiperf/dataset/loader/vendor/
       - id: mixed-line-ending
+        exclude: ^src/aiperf/dataset/loader/vendor/
       - id: no-commit-to-branch
         args: [--branch, main]
       - id: requirements-txt-fixer
       - id: trailing-whitespace
+        exclude: ^src/aiperf/dataset/loader/vendor/
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.2
     hooks:
     - id: codespell
       additional_dependencies: [tomli]
       args: ["--toml", "pyproject.toml"]
-      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md)
+      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md|src/aiperf/dataset/loader/vendor/.*)
   - repo: local
     hooks:
       - id: add-license
@@ -55,6 +60,7 @@ repos:
         entry: make add-copyright
         language: python
         require_serial: true
+        exclude: ^src/aiperf/dataset/loader/vendor/
       - id: generate-cli-docs
         name: generate-cli-docs
         entry: make generate-cli-docs
