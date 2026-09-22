@@ -230,7 +230,10 @@ class TestSigV4RequestSignerSign:
         assert "Authorization" in result.headers
         assert result.headers["Authorization"].startswith("AWS4-HMAC-SHA256")
         assert "X-Amz-Date" in result.headers
-        assert result.url is None
+        # The signer now returns the URL it signed, so the transport transmits
+        # the same representation botocore hashed (see
+        # TestSignedUrlMatchesTheWireUrl). Unchanged here: nothing to normalize.
+        assert result.url == "https://example.com/invoke"
         assert result.body is None
 
     @pytest.mark.asyncio
@@ -545,3 +548,74 @@ class TestSigningNameDerivedFromTransport:
             or line.lstrip().startswith("def _transport_botocore_service_id")
         )
         assert definitions == ["auth/_transport_scope.py"], definitions
+
+
+class TestSignedUrlMatchesTheWireUrl:
+    """botocore signs the URL string it is handed, but aiohttp routes every URL
+    through yarl, which decodes unreserved percent-escapes before transmission:
+    ``/a%30?x=%31`` goes out as ``/a0?x=1``.
+
+    Signing the authored form therefore hashes a canonical request the server
+    never sees, and a verifier recomputing SigV4 over the transmitted URL
+    returns 403 ``SignatureDoesNotMatch``. The signer must return the exact
+    representation that will go on the wire so both sides agree.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_signer_returns_the_url_it_actually_signed(self) -> None:
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+        _setup_signer_for_sign(signer)
+
+        result = await signer.sign("GET", "https://example.com/a%30?x=%31", {}, None)
+
+        assert result.url == "https://example.com/a0?x=1"
+
+    @pytest.mark.asyncio
+    async def test_the_returned_url_is_stable_under_yarl(self) -> None:
+        """The invariant that actually matters: whatever the signer returns,
+        aiohttp must not rewrite it again on the way out."""
+        from yarl import URL
+
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+        _setup_signer_for_sign(signer)
+
+        result = await signer.sign("GET", "https://example.com/a%30?x=%31", {}, None)
+
+        assert result.url is not None
+        assert str(URL(result.url)) == result.url
+
+    @pytest.mark.asyncio
+    async def test_reserved_escapes_are_not_decoded(self) -> None:
+        """``%2F`` is a literal slash inside one path segment, not a separator.
+        Canonicalizing must not decode it -- that would change which resource
+        is addressed as well as the signature."""
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+        _setup_signer_for_sign(signer)
+
+        result = await signer.sign("GET", "https://example.com/a%2Fb", {}, None)
+
+        assert result.url == "https://example.com/a%2Fb"
+
+    @pytest.mark.asyncio
+    async def test_a_url_needing_no_normalization_is_unchanged(self) -> None:
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+        _setup_signer_for_sign(signer)
+
+        url = "https://example.com/v1/chat/completions?model=m"
+        result = await signer.sign("POST", url, {}, b"{}")
+
+        assert result.url == url
+
+    @pytest.mark.asyncio
+    async def test_botocore_signs_the_canonical_url_not_the_authored_one(self) -> None:
+        """Pins that the normalization happens *before* add_auth, so the
+        signature covers the transmitted path. Returning a canonical URL while
+        signing the authored one would still 403."""
+        signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+        _, mock_sigv4_cls = _setup_signer_for_sign(signer)
+        seen: list[str] = []
+        mock_sigv4_cls.return_value.add_auth.side_effect = lambda r: seen.append(r.url)
+
+        await signer.sign("GET", "https://example.com/a%30?x=%31", {}, None)
+
+        assert seen == ["https://example.com/a0?x=1"]

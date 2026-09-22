@@ -6,6 +6,8 @@ import asyncio
 import math
 from typing import TYPE_CHECKING
 
+from yarl import URL
+
 from aiperf.auth._transport_scope import transport_botocore_service_id
 from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.environment import Environment
@@ -185,6 +187,17 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
             frozen.access_key, frozen.secret_key, frozen.token
         )
 
-        request = self._AWSRequest(method=method, url=url, data=body, headers=headers)
+        # aiohttp routes every URL through yarl, which decodes unreserved
+        # percent-escapes before transmission: /a%30?x=%31 goes out as /a0?x=1.
+        # Signing the authored string hashes a canonical request the server
+        # never receives, and a verifier recomputing SigV4 over the wire URL
+        # returns 403 SignatureDoesNotMatch. Canonicalize once, sign that, and
+        # return the same representation so the transport transmits exactly
+        # what was signed. str(URL(...)) is idempotent and leaves reserved
+        # escapes such as %2F encoded, so the addressed resource is unchanged.
+        canonical_url = str(URL(url))
+        request = self._AWSRequest(
+            method=method, url=canonical_url, data=body, headers=headers
+        )
         self._SigV4Auth(credentials, self.service, self.region).add_auth(request)
-        return SignedRequest(headers=dict(request.headers))
+        return SignedRequest(url=canonical_url, headers=dict(request.headers))
