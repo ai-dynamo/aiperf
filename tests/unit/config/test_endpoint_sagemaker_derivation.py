@@ -102,3 +102,48 @@ class TestSageMakerFieldsAreOptional:
         assert cfg.sagemaker.target_model is None
         assert cfg.sagemaker.inference_component_name is None
         assert cfg.sagemaker.target_variant is None
+
+
+class TestCamelCaseInputDerivesTheSameWay:
+    """``BaseConfig`` sets ``alias_generator=to_camel`` with
+    ``populate_by_name=True``, so field validation accepts ``endpointName`` and
+    ``awsRegion``. The before-validator runs earlier and saw the raw mapping, so
+    it read snake_case only.
+
+    Both generated CRDs and the published JSON schema declare camelCase
+    exclusively -- the exact shape the CRD's relaxed ``required`` was changed to
+    admit -- so Kubernetes input either failed with "urls: Field required" or was
+    spuriously rejected for a missing ``--aws-region`` that was in fact supplied.
+    """
+
+    def test_camel_case_endpoint_name_and_region_derive_the_url(self) -> None:
+        cfg = EndpointConfig.model_validate(
+            {
+                "type": "chat",
+                "sagemaker": {"endpointName": "my-ep"},
+                "awsRegion": "us-west-2",
+            }
+        )
+
+        assert cfg.urls == ["https://runtime.sagemaker.us-west-2.amazonaws.com"]
+        assert cfg.sagemaker.endpoint_name == "my-ep"
+        assert cfg.transport == TransportType.SAGEMAKER
+
+    def test_camel_case_without_a_region_still_names_the_flag(self) -> None:
+        """The region requirement must survive the alias handling, or camelCase
+        input would sail past a guard that snake_case input trips."""
+        with pytest.raises(ValidationError, match="--aws-region"):
+            EndpointConfig.model_validate(
+                {"type": "chat", "sagemaker": {"endpointName": "my-ep"}}
+            )
+
+    def test_camel_case_transport_conflict_still_names_the_conflict(self) -> None:
+        with pytest.raises(ValidationError, match="--sagemaker-endpoint-name"):
+            EndpointConfig.model_validate(
+                {
+                    "type": "chat",
+                    "sagemaker": {"endpointName": "my-ep"},
+                    "awsRegion": "us-west-2",
+                    "transport": "http",
+                }
+            )

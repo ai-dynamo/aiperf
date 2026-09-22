@@ -116,11 +116,16 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
     repo's complexity guardrail, and because everything here is one concern.
     """
     sagemaker = data.get("sagemaker") or {}
-    endpoint_name = (
-        sagemaker.get("endpoint_name")
-        if isinstance(sagemaker, dict)
-        else getattr(sagemaker, "endpoint_name", None)
-    )
+    if isinstance(sagemaker, dict):
+        # Both spellings: BaseConfig sets alias_generator=to_camel with
+        # populate_by_name, so field validation accepts either -- but this runs
+        # before that, on the raw mapping. Both generated CRDs and the published
+        # JSON schema declare camelCase only, so reading snake_case alone meant
+        # Kubernetes input never derived anything and failed with
+        # "urls: Field required" or a spurious missing-region error.
+        endpoint_name = sagemaker.get("endpoint_name") or sagemaker.get("endpointName")
+    else:
+        endpoint_name = getattr(sagemaker, "endpoint_name", None)
     if not endpoint_name:
         return
 
@@ -141,7 +146,7 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
     if data.get("urls"):
         return
 
-    region = data.get("aws_region")
+    region = data.get("aws_region") or data.get("awsRegion")
     if not region:
         raise ValueError(
             "SageMaker endpoints require --aws-region: it selects both the "
