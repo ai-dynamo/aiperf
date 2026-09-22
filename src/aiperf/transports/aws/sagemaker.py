@@ -49,6 +49,24 @@ _INVOCATIONS_PATH = "invocations"
 _INVOCATIONS_STREAM_PATH = "invocations-response-stream"
 
 
+def _strip_invocations_suffix(base_path: str, name: str) -> str:
+    """Drop a trailing ``/endpoints/{name}/invocations[-response-stream]``.
+
+    A URL pasted out of the console carries whichever operation the console
+    displayed, which need not be the one ``--streaming`` selects. The inherited
+    ``_dedup_path_overlap`` only collapses an *exact* suffix match, so the two
+    spellings do not cancel and the path is emitted twice. Stripping either
+    variant first lets the configured operation win in both directions.
+
+    The stream variant is tested first so the longer match is preferred.
+    """
+    for operation in (_INVOCATIONS_STREAM_PATH, _INVOCATIONS_PATH):
+        suffix = f"/endpoints/{name}/{operation}"
+        if base_path.endswith(suffix):
+            return base_path[: -len(suffix)]
+    return base_path
+
+
 class SageMakerTransport(AioHttpTransport):
     """Invoke a model hosted behind a SageMaker Runtime endpoint."""
 
@@ -114,6 +132,7 @@ class SageMakerTransport(AioHttpTransport):
                 else _INVOCATIONS_PATH
             )
             sub_path = f"endpoints/{name}/{operation}"
+            base_path = _strip_invocations_suffix(base_path, name)
 
         # Inherited: collapses an overlap so pasting a full invocations URL into
         # --url does not produce /endpoints/x/invocations/endpoints/x/invocations.

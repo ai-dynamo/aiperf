@@ -93,6 +93,33 @@ class TestUrlConstruction:
         )
         assert url.count("/endpoints/my-ep/invocations") == 1
 
+    def test_a_pasted_invocations_url_with_streaming_does_not_double(self) -> None:
+        """The console hands you a URL ending in /invocations, but --streaming
+        selects the invocations-response-stream operation instead.
+
+        The inherited dedup only collapses an exact suffix match, so the two
+        spellings do not cancel and the path is emitted twice:
+        /endpoints/my-ep/invocations/endpoints/my-ep/invocations-response-stream.
+        """
+        url = _url(
+            base_url="https://runtime.sagemaker.us-west-2.amazonaws.com/endpoints/my-ep/invocations",
+            streaming=True,
+        )
+
+        assert url.endswith("/endpoints/my-ep/invocations-response-stream")
+        assert url.count("/endpoints/") == 1
+
+    def test_a_pasted_stream_url_without_streaming_does_not_double(self) -> None:
+        """The same mismatch in reverse: a pasted streaming URL with streaming
+        off. The operation the config selects has to win either way."""
+        url = _url(
+            base_url="https://runtime.sagemaker.us-west-2.amazonaws.com/endpoints/my-ep/invocations-response-stream",
+            streaming=False,
+        )
+
+        assert url.endswith("/endpoints/my-ep/invocations")
+        assert url.count("/endpoints/") == 1
+
     def test_custom_endpoint_overrides_everything(self) -> None:
         assert _url(custom_endpoint="/totally/custom").endswith("/totally/custom")
 
