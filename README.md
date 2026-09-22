@@ -49,10 +49,11 @@ pip install aiperf
 > a C compiler at install time. `crick` backs the non-default `tdigest`
 > list-metric backend, so a plain `pip install aiperf` does not pull it and
 > needs no toolchain. If you want that backend
-> (`AIPERF_METRICS_LIST_BACKEND=tdigest`), install the system build tools
-> first: `sudo apt install build-essential` (Debian/Ubuntu),
-> `sudo yum groupinstall "Development Tools"` (RHEL/CentOS), or equivalent.
-> Then `pip install "aiperf[tdigest]"`.
+> (`AIPERF_METRICS_LIST_BACKEND=tdigest`) on a platform that builds it from
+> source, install the system build tools first: `sudo apt install
+> build-essential` (Debian/Ubuntu), `sudo yum groupinstall "Development Tools"`
+> (RHEL/CentOS), or equivalent. Everywhere a wheel exists, `pip install
+> "aiperf[tdigest]"` is all you need.
 >
 > `crick` 0.0.8 publishes wheels for Linux `x86_64` and `i686`, macOS
 > `arm64`, and Windows `win32` and `win_amd64`. Everything else builds from

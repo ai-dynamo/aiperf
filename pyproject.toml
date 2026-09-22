@@ -171,7 +171,7 @@ dev = [
 # both shipped without cp313/linux wheels and broke cold builds).
 # Sdist counts as installable — crick ships only sdist on Linux
 # aarch64 and is unaffected (env-builder compiles it from source).
-# crick is an optional extra now, so a default arm64 install skips it.
+# crick is an optional extra, so a default arm64 install skips it.
 [tool.uv]
 required-environments = [
   "sys_platform == 'linux' and platform_machine == 'x86_64'",
