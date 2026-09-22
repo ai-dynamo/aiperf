@@ -42,6 +42,27 @@ from aiperf.transports.base_transports import (
     TransportMetadata,
 )
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin_of(url: str) -> tuple[str, str | None, int | None] | None:
+    """Scheme, host and normalized port, or None when the URL will not parse.
+
+    ``urlsplit`` accepts a malformed port and only raises when ``.port`` is
+    read, so the read happens here inside the guard; leaving it to the caller
+    lets ``ValueError`` escape the fail-closed contract.
+
+    An omitted port is normalized to the scheme default, so ``https://host``
+    and ``https://host:443`` compare equal. The scheme stays part of the tuple,
+    so ``http://host:443`` is still a different origin from ``https://host``.
+    """
+    try:
+        parts = urlsplit(url)
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+        return parts.scheme, parts.hostname, port
+    except ValueError:
+        return None
+
 
 def _same_origin(url: str, reference: str) -> bool:
     """Whether ``url`` targets the same scheme, host, and port as ``reference``.
@@ -50,11 +71,10 @@ def _same_origin(url: str, reference: str) -> bool:
     with the endpoint's AWS credentials, so it fails closed: a URL that does not
     parse counts as foreign rather than raising into the caller.
     """
-    try:
-        a, b = urlsplit(url), urlsplit(reference)
-    except ValueError:
-        return False
-    return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
+    origin = _origin_of(url)
+    # Explicit None check: two unparseable URLs must not compare equal and be
+    # read as "same origin".
+    return origin is not None and origin == _origin_of(reference)
 
 
 def _has_http_scheme(url: str) -> bool:
