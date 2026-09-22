@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Run aiperf against trtllm-serve to validate DCGM-sourced power against pynvml ground truth.
 
 Identical orchestration to run_trtllm_serve_with_power.py, but aiperf is configured to

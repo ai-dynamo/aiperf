@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Mechanical verifier for the aiperf-kube-* skill pack.
 
 Checks every ``aiperf kube`` subcommand and flag, referenced repo path,

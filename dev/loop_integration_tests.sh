@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Run integration tests one file at a time with pytest-xdist -n auto.
 # Stops on the first failing file so it can be fixed, then rerun to continue.
 #

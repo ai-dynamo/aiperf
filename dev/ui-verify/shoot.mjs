@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 // Drives the local operator UI with Playwright: screenshots each page and
 // asserts the presentation contracts the recent fixes established.
 //

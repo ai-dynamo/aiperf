@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 // Local harness: serves the operator UI from source and replays real API
 // responses captured from the live cluster, so the UI can be inspected and
 // screenshotted without a cluster, a build, or a deploy.
