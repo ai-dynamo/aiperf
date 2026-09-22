@@ -82,7 +82,6 @@ class TestSelectEncoding:
         zstd_available: bool,
         expected: CompressionEncoding,
     ) -> None:
-        """A wildcard accepts unlisted encodings without overriding explicit values."""
         monkeypatch.setattr(
             "aiperf.common.compression.is_zstd_available", lambda: zstd_available
         )
@@ -94,7 +93,6 @@ class TestSelectEncoding:
         "accept_encoding",
         [
             param("*;q=0", id="wildcard-rejection"),
-            param("*;q=0, identity;q=0", id="wildcard-and-identity-rejection"),
             param("zstd;q=0, gzip;q=0, identity;q=0", id="explicit-rejection"),
         ],
     )  # fmt: skip

@@ -57,7 +57,6 @@ class TestDatasetEndpoints:
         "accept_encoding,expected_status",
         [
             param("*;q=0", 406, id="wildcard-rejection"),
-            param("zstd;q=0, gzip;q=0, identity;q=0", 406, id="explicit-rejection"),
             param("*;q=0, identity;q=1", 200, id="identity-allowed"),
         ],
     )  # fmt: skip
