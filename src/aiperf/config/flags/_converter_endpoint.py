@@ -154,7 +154,20 @@ def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
     ``headers`` / ``extra`` live as top-level fields on CLIConfig and
     flow through to the endpoint dict.
     """
-    endpoint: dict[str, Any] = {"urls": [_url(u) for u in cli.urls]}
+    # --url defaults to http://localhost:8000 (min_length=1, validate_default=True),
+    # so passing it through unconditionally means EndpointConfig never sees an
+    # empty `urls` and the SageMaker before-validator never derives the runtime
+    # host: the documented one-flag quick start would sign for SageMaker and send
+    # to localhost. Omitted only when SageMaker is there to supply it, since
+    # EndpointConfig.urls is otherwise required.
+    derives_own_url = (
+        "urls" not in cli.model_fields_set
+        and "sagemaker_endpoint_name" in cli.model_fields_set
+        and bool(cli.sagemaker_endpoint_name)
+    )
+    endpoint: dict[str, Any] = (
+        {} if derives_own_url else {"urls": [_url(u) for u in cli.urls]}
+    )
     ep_set = cli.model_fields_set & ENDPOINT_FIELDS
     for field, key in _ENDPOINT_FIELD_MAP.items():
         if field in ep_set:
