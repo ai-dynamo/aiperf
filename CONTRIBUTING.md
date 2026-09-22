@@ -120,6 +120,21 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 - `validate-plugin-schemas` - Validate plugin YAML against schemas
 - `test-imports` - Verify all modules can be imported
 
+#### SPDX headers
+
+Every tracked first-party source file must carry an SPDX copyright line and
+`SPDX-License-Identifier: Apache-2.0` within its first 10 lines, using valid
+comment syntax for that file type. Add or repair headers with:
+
+```bash
+make add-copyright args="path/to/file.py path/to/another-file.yaml"
+make check-spdx-headers
+```
+
+The checker fails closed when it encounters a new file type. Add an appropriate
+comment-style handler to `tools/add_copyright.py` and classify the type in
+`tools/check_spdx_headers.py` before committing that file.
+
 Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
 
 ### Bundled Skills

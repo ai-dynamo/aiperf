@@ -100,6 +100,33 @@ def test_third_party_copyright_is_accepted(tmp_path: Path) -> None:
     assert CHECKER.validate_file(tmp_path, Path("contribution.py")) == []
 
 
+@pytest.mark.parametrize(
+    "copyright_line",
+    [
+        pytest.param(
+            "# SPDX-FileCopyrightText: Copyright (c) 2026 Nvidia Corporation "
+            "& AFFILIATES. All rights reserved.\n",
+            id="mixed-case-company",
+        ),
+        pytest.param(
+            "# SPDX-FileCopyrightText: Copyright (c) 2026-2025 NVIDIA "
+            "CORPORATION & AFFILIATES. All rights reserved.\n",
+            id="reversed-year-range",
+        ),
+    ],
+)
+def test_malformed_nvidia_copyright_is_rejected(
+    tmp_path: Path, copyright_line: str
+) -> None:
+    """NVIDIA ownership text cannot bypass the canonical header format."""
+    (tmp_path / "example.py").write_text(
+        copyright_line + "# SPDX-License-Identifier: Apache-2.0\n",
+        encoding="utf-8",
+    )
+    violations = CHECKER.validate_file(tmp_path, Path("example.py"))
+    assert "malformed NVIDIA copyright header" in violations[0]
+
+
 def test_non_apache_identifier_is_rejected(tmp_path: Path) -> None:
     """A complete copyright cannot mask a non-Apache license identifier."""
     (tmp_path / "style.css").write_text(
@@ -165,6 +192,23 @@ def test_git_index_supplies_the_scan_set(tmp_path: Path) -> None:
     assert CHECKER.tracked_files(tmp_path) == [Path("tracked.py")]
 
 
-def test_repository_satisfies_spdx_policy() -> None:
-    """The checked-in tree remains a passing fixture for the full policy."""
-    assert CHECKER.validate_paths(ROOT, CHECKER.tracked_files(ROOT)) == []
+def test_failure_output_points_to_fixer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed repository scan gives contributors a copyable repair command."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "missing.py").write_text("print('missing')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "missing.py"], cwd=tmp_path, check=True)
+
+    assert CHECKER.main(["--root", str(tmp_path)]) == 1
+
+    captured = capsys.readouterr()
+    assert "make add-copyright args=missing.py" in captured.err
+
+
+def test_cmake_lists_is_not_exempt_as_plain_text(tmp_path: Path) -> None:
+    """The exact CMake source filename takes precedence over the text exemption."""
+    path = Path("CMakeLists.txt")
+    (tmp_path / path).write_text("project(aiperf)\n", encoding="utf-8")
+    violations = CHECKER.validate_file(tmp_path, path)
+    assert "malformed or missing copyright header" in violations[0]
