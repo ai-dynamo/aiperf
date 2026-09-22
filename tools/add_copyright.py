@@ -67,7 +67,9 @@ COPYRIGHT_FILE = Path(__file__).parent / "COPYRIGHT"
 
 # Match NVIDIA copyright lines specifically (not third-party copyrights)
 NVIDIA_COPYRIGHT_PAT = re.compile(
-    r"SPDX-FileCopyrightText: Copyright( \(c\))? (\d{4})?-?(\d{4}) NVIDIA CORPORATION"
+    r"SPDX-FileCopyrightText: Copyright(?: \(c\))? "
+    r"(?:(\d{4})-)?(\d{4}) NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.",
+    re.IGNORECASE,
 )
 
 # =============================================================================
@@ -134,8 +136,7 @@ def update_copyright_year(content: str, disallow_range: bool = False) -> str:
     if not match:
         return content
 
-    c_marker = match.group(1) or ""  # " (c)" or empty
-    min_year = match.group(2) or match.group(3)
+    min_year = match.group(1) or match.group(2)
 
     # Build new copyright text
     if min_year < CURRENT_YEAR and not disallow_range:
@@ -144,7 +145,8 @@ def update_copyright_year(content: str, disallow_range: bool = False) -> str:
         year_part = CURRENT_YEAR
 
     new_copyright = (
-        f"SPDX-FileCopyrightText: Copyright{c_marker} {year_part} NVIDIA CORPORATION"
+        "SPDX-FileCopyrightText: Copyright (c) "
+        f"{year_part} NVIDIA CORPORATION & AFFILIATES. All rights reserved."
     )
 
     # Replace only the FIRST occurrence
@@ -175,6 +177,16 @@ def prepend_header(header: str, content: str) -> str:
     return header + "\n" + content
 
 
+def insert_mdc_header(license_text: str, content: str) -> str:
+    """Insert YAML comments into MDC frontmatter, or an HTML comment otherwise."""
+    if content.startswith("---\n"):
+        pos = len("---\n")
+        header = prefix_lines(license_text, "# ")
+        return content[:pos] + header + "\n" + content[pos:]
+    header = "<!--\n" + license_text + "\n-->"
+    return prepend_header(header, content)
+
+
 # =============================================================================
 # File Type Handlers
 # =============================================================================
@@ -186,17 +198,12 @@ FILE_HANDLERS: dict[Callable[[str], bool], FileHandler] = {}
 
 def has_ext(exts: Sequence[str]) -> Callable[[str], bool]:
     """Match files by extension."""
-    return lambda p: Path(p).suffix in exts
+    return lambda p: Path(p).suffix.lower() in exts
 
 
 def basename_is(name: str) -> Callable[[str], bool]:
     """Match files by basename."""
     return lambda p: Path(p).name == name
-
-
-def path_contains(text: str) -> Callable[[str], bool]:
-    """Match files containing text in path."""
-    return lambda p: text in p
 
 
 def any_of(*funcs: Callable[[str], bool]) -> Callable[[str], bool]:
@@ -216,17 +223,63 @@ def register(
 # Register handlers for different file types
 register(
     any_of(
-        has_ext([".py", ".pyi", ".sh", ".bash", ".yaml", ".yml", ".pbtxt"]),
+        has_ext(
+            [
+                ".bash",
+                ".pbtxt",
+                ".py",
+                ".pyi",
+                ".sh",
+                ".toml",
+                ".tmpl",
+                ".yaml",
+                ".yml",
+            ]
+        ),
+        basename_is(".dockerignore"),
+        basename_is(".editorconfig"),
+        basename_is(".gitignore"),
+        basename_is(".helmignore"),
         basename_is("CMakeLists.txt"),
-        path_contains("Dockerfile"),
+        basename_is("CODEOWNERS"),
+        basename_is("Dockerfile"),
+        basename_is("Makefile"),
     ),
     lambda lic: prefix_lines(lic, "# "),
     insert_after_shebang,
 )
-register(has_ext([".cc", ".h", ".cpp", ".hpp"]), lambda lic: prefix_lines(lic, "// "))
-register(has_ext([".tpl"]), lambda lic: "{{/*\n" + prefix_lines(lic, "# ") + "\n*/}}")
 register(
-    has_ext([".html", ".md"]), lambda lic: "<!--\n" + prefix_lines(lic, "# ") + "\n-->"
+    has_ext(
+        [
+            ".c",
+            ".cc",
+            ".cpp",
+            ".cu",
+            ".cuh",
+            ".h",
+            ".hpp",
+            ".js",
+            ".mjs",
+            ".proto",
+            ".tsx",
+        ]
+    ),
+    lambda lic: prefix_lines(lic, "// "),
+)
+register(
+    has_ext([".css"]),
+    lambda lic: "/* " + lic.replace("\n", "\n   ") + " */",
+)
+register(has_ext([".mmd"]), lambda lic: prefix_lines(lic, "%% "))
+register(has_ext([".tpl"]), lambda lic: "{{/*\n" + lic + "\n*/}}")
+register(
+    has_ext([".html", ".md"]),
+    lambda lic: "<!--\n" + lic + "\n-->",
+)
+register(
+    has_ext([".mdc"]),
+    lambda lic: lic,
+    insert_mdc_header,
 )
 register(has_ext([".rst"]), lambda lic: prefix_lines(lic, ".. "))
 
@@ -340,6 +393,7 @@ def main() -> int:
             error_count += 1
         elif status.startswith("not found") or status.startswith("no handler"):
             print_warning(f"{status}")
+            error_count += 1
         elif changed:
             if args.check or args.dry_run:
                 console.print(f"  [yellow]![/] {path}: {status}")

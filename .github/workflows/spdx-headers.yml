@@ -33,7 +33,10 @@ jobs:
         run: uv pip install 'pytest>=8,<10'
 
       - name: Test the SPDX checker
-        run: uv run --no-sync pytest --confcutdir=tests/unit/tools tests/unit/tools/test_check_spdx_headers.py
+        run: >-
+          uv run --no-sync pytest --confcutdir=tests/unit/tools
+          tests/unit/tools/test_check_spdx_headers.py
+          tests/unit/tools/test_add_copyright.py
 
       - name: Validate tracked files
         run: uv run --no-sync python tools/check_spdx_headers.py

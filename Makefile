@@ -460,7 +460,7 @@ generate-all-docs: #? generate all documentation files.
 	$(activate_venv) && ./tools/generate_env_vars_docs.py
 
 add-copyright: #? add the copyright header to the files.
-	$(activate_venv) && ./tools/add_copyright.py
+	$(activate_venv) && ./tools/add_copyright.py $(args)
 
 check-spdx-headers: #? validate SPDX headers on tracked first-party source files.
-	python3 tools/check_spdx_headers.py
+	$(activate_venv) && python tools/check_spdx_headers.py

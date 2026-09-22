@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
@@ -77,15 +78,21 @@ SOURCE_FILENAMES = {
     "Makefile",
 }
 HEADER_SCAN_LINES = 10
-YEAR_PATTERN = r"\d{4}(?:-\d{4})?"
+YEAR_PATTERN = r"(?P<start_year>\d{4})(?:-(?P<end_year>\d{4}))?"
 COPYRIGHT_TEXT = (
     r"SPDX-FileCopyrightText: Copyright \(c\) "
     rf"{YEAR_PATTERN} NVIDIA CORPORATION & AFFILIATES\. All rights reserved\."
 )
 LICENSE_TEXT = r"SPDX-License-Identifier: Apache-2\.0"
 COPYRIGHT_RE = re.compile(rf"^[^A-Za-z0-9]*{COPYRIGHT_TEXT}[^A-Za-z0-9]*$")
+BASETEN_COPYRIGHT_RE = re.compile(
+    rf"^[^A-Za-z0-9]*SPDX-FileCopyrightText: Copyright \(c\) {YEAR_PATTERN} "
+    r"Baseten\.co, NVIDIA CORPORATION & AFFILIATES\. All rights reserved\."
+    r"[^A-Za-z0-9]*$"
+)
 ANY_COPYRIGHT_RE = re.compile(r"^[^A-Za-z0-9]*SPDX-FileCopyrightText: .+[^A-Za-z0-9]*$")
 LICENSE_RE = re.compile(rf"^[^A-Za-z0-9]*{LICENSE_TEXT}[^A-Za-z0-9]*$")
+NVIDIA_ORG_RE = re.compile(r"\bNVIDIA CORPORATION\b", re.IGNORECASE)
 
 
 def is_under(path: Path, prefix: Path) -> bool:
@@ -98,7 +105,10 @@ def is_exempt(root: Path, relative_path: Path) -> bool:
     path = root / relative_path
     return (
         relative_path in EXEMPT_PATHS
-        or relative_path.suffix.lower() in EXEMPT_SUFFIXES
+        or (
+            relative_path.name not in SOURCE_FILENAMES
+            and relative_path.suffix.lower() in EXEMPT_SUFFIXES
+        )
         or any(is_under(relative_path, prefix) for prefix in EXEMPT_PREFIXES)
         or path.is_symlink()
     )
@@ -107,6 +117,12 @@ def is_exempt(root: Path, relative_path: Path) -> bool:
 def requires_header(path: Path) -> bool:
     """Return whether a supported first-party path requires an SPDX header."""
     return path.suffix.lower() in SOURCE_SUFFIXES or path.name in SOURCE_FILENAMES
+
+
+def has_ordered_year_range(match: re.Match[str]) -> bool:
+    """Return whether an SPDX year or year range is chronologically valid."""
+    end_year = match.group("end_year")
+    return end_year is None or int(match.group("start_year")) <= int(end_year)
 
 
 def validate_file(root: Path, relative_path: Path) -> list[str]:
@@ -147,12 +163,12 @@ def validate_file(root: Path, relative_path: Path) -> list[str]:
         header[license_index]
     ):
         copyright_line = header[license_index]
-        if (
-            "NVIDIA CORPORATION" in copyright_line
-            and "Baseten.co, NVIDIA CORPORATION" not in copyright_line
-            and not COPYRIGHT_RE.fullmatch(copyright_line)
-        ):
-            return [f"{relative_path}: malformed NVIDIA copyright header"]
+        if NVIDIA_ORG_RE.search(copyright_line):
+            match = COPYRIGHT_RE.fullmatch(copyright_line)
+            if match is None:
+                match = BASETEN_COPYRIGHT_RE.fullmatch(copyright_line)
+            if match is None or not has_ordered_year_range(match):
+                return [f"{relative_path}: malformed NVIDIA copyright header"]
         license_index += 1
     if license_index >= len(header) or not LICENSE_RE.fullmatch(header[license_index]):
         return [f"{relative_path}: malformed or missing Apache-2.0 header"]
@@ -205,6 +221,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("SPDX header violations:", file=sys.stderr)
         for violation in violations:
             print(f"- {violation}", file=sys.stderr)
+        violation_paths = {Path(violation.split(":", 1)[0]) for violation in violations}
+        fixable_paths = [
+            str(path)
+            for path in paths
+            if path in violation_paths
+            and not is_exempt(root, path)
+            and requires_header(path)
+        ]
+        fix_args = " ".join(shlex.quote(path) for path in fixable_paths)
+        print(
+            "\nAdd or repair supported headers with:\n"
+            f"  make add-copyright args={shlex.quote(fix_args)}",
+            file=sys.stderr,
+        )
         return 1
     print(f"Validated SPDX policy for {len(paths)} tracked files.")
     return 0

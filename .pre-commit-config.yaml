@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 ci:
   skip:
+    - check-spdx-headers
     - generate-cli-docs
     - generate-env-vars-docs
     - generate-plugin-artifacts
