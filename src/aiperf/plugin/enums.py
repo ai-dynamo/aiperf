@@ -71,7 +71,7 @@ EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=_
 
 TransportTypeStr: TypeAlias = str
 TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", module=__name__)
-"""Dynamic enum for transport. Example: TransportType.HTTP"""
+"""Dynamic enum for transport. Example: TransportType.HTTP, TransportType.SAGEMAKER"""
 
 RequestSignerTypeStr: TypeAlias = str
 RequestSignerType = plugins.create_enum(PluginType.REQUEST_SIGNER, "RequestSignerType", module=__name__)
