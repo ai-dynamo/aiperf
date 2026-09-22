@@ -176,6 +176,24 @@ class EndpointInfo(AIPerfBaseModel):
         default=None,
         description="AWS service name for SigV4 request signing. Required when auth_type='sigv4'.",
     )
+    sagemaker_endpoint_name: str | None = Field(
+        default=None,
+        description="Name of the SageMaker endpoint to invoke. Forms the "
+        "/endpoints/{name}/invocations request path.",
+    )
+    sagemaker_target_model: str | None = Field(
+        default=None,
+        description="SageMaker TargetModel for multi-model endpoints. Not sent on "
+        "streaming requests; defaults to the request's model name.",
+    )
+    sagemaker_inference_component_name: str | None = Field(
+        default=None,
+        description="SageMaker InferenceComponentName to target.",
+    )
+    sagemaker_target_variant: str | None = Field(
+        default=None,
+        description="SageMaker production variant to pin every request to.",
+    )
 
     @property
     def base_url(self) -> str:
@@ -259,6 +277,10 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 aws_profile=getattr(ep, "aws_profile", None),
                 auth_type=getattr(ep, "auth_type", None),
                 aws_service=getattr(ep, "aws_service", None),
+                sagemaker_endpoint_name=ep.sagemaker.endpoint_name,
+                sagemaker_target_model=ep.sagemaker.target_model,
+                sagemaker_inference_component_name=ep.sagemaker.inference_component_name,
+                sagemaker_target_variant=ep.sagemaker.target_variant,
             ),
             transport=ep.transport,
         )

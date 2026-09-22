@@ -36,6 +36,7 @@ from aiperf.config.control_hooks import (
     require_relative_path,
 )
 from aiperf.config.loader.parsing import normalize_http_urls
+from aiperf.config.sagemaker import SageMakerConfig
 from aiperf.plugin.enums import (
     EndpointType,
     RequestSignerType,
@@ -102,6 +103,54 @@ class TemplateConfig(BaseConfig):
             "Use dot notation for nested fields: 'choices.0.message.content'.",
         ),
     ]
+
+
+def _apply_sagemaker_before_validation(data: dict) -> None:
+    """Resolve what ``--sagemaker-endpoint-name`` implies about transport and URL.
+
+    Runs as part of the before-validator rather than an after-validator because
+    ``urls`` is a required field: an after-validator never runs, so the user
+    would get "urls: Field required" instead of anything about SageMaker.
+
+    Extracted from ``normalize_before_validation`` to keep that method under the
+    repo's complexity guardrail, and because everything here is one concern.
+    """
+    sagemaker = data.get("sagemaker") or {}
+    endpoint_name = (
+        sagemaker.get("endpoint_name")
+        if isinstance(sagemaker, dict)
+        else getattr(sagemaker, "endpoint_name", None)
+    )
+    if not endpoint_name:
+        return
+
+    # Checked before the URL derivation below, and before any after-validator,
+    # so the diagnostic names the real conflict. Otherwise whichever guard
+    # happens to fire first blames an unrelated flag: with a region,
+    # "--aws-region has no effect unless --auth-type is set to 'sigv4'";
+    # without one, "SageMaker endpoints require --aws-region".
+    transport = data.get("transport")
+    if transport is not None and str(transport) != "sagemaker":
+        raise ValueError(
+            f"--sagemaker-endpoint-name selects the SageMaker transport, but "
+            f"--transport {transport} was set explicitly. Drop --transport to "
+            f"benchmark the SageMaker endpoint, or drop "
+            f"--sagemaker-endpoint-name to use {transport} against --url."
+        )
+
+    if data.get("urls"):
+        return
+
+    region = data.get("aws_region")
+    if not region:
+        raise ValueError(
+            "SageMaker endpoints require --aws-region: it selects both the "
+            "runtime hostname and the SigV4 credential scope, and there is "
+            "no safe default to guess."
+        )
+    from aiperf.transports.aws.regions import dns_suffix
+
+    data["urls"] = [f"https://runtime.sagemaker.{region}.{dns_suffix(region)}"]
 
 
 def _transport_signs(transport: TransportType) -> bool:
@@ -306,6 +355,15 @@ class EndpointConfig(BaseConfig):
             "'bedrock-runtime' as 'bedrock'. Required when auth_type='sigv4', unless "
             "the selected transport declares which AWS API it speaks, in which case "
             "the scope is resolved from botocore's service model.",
+        ),
+    ]
+
+    sagemaker: Annotated[
+        SageMakerConfig,
+        Field(
+            default_factory=SageMakerConfig,
+            description="SageMaker Runtime routing options. Setting "
+            "sagemaker.endpoint_name selects the SageMaker transport.",
         ),
     ]
 
@@ -534,6 +592,8 @@ class EndpointConfig(BaseConfig):
             if "urls" not in data:
                 data["urls"] = [url] if isinstance(url, str) else url
 
+        _apply_sagemaker_before_validation(data)
+
         # Auto-detect template type
         if "template" in data and data["template"] is not None and "type" not in data:
             data["type"] = EndpointType.TEMPLATE
@@ -570,6 +630,36 @@ class EndpointConfig(BaseConfig):
         underscore flag for the scenario resolver's defensive ``getattr``.
         """
         self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
+
+    @model_validator(mode="after")
+    def _derive_sagemaker_settings(self) -> Self:
+        """Fill in everything ``--sagemaker-endpoint-name`` implies.
+
+        Defined above ``_validate_endpoint_boundaries`` because that validator
+        inspects ``urls``, and the derived URL has to exist by then
+        (``mode="after"`` validators run in definition order).
+
+        Only ever fills unset values: anything the user set explicitly wins, so
+        an explicit ``--url`` still points at a VPC/PrivateLink endpoint or a
+        custom domain.
+        """
+        if self.sagemaker.endpoint_name and self.transport is None:
+            self.transport = TransportType.SAGEMAKER
+
+        if self.transport != TransportType.SAGEMAKER:
+            return self
+
+        if self.auth_type is None:
+            self.auth_type = RequestSignerType.SIGV4
+
+        if not self.aws_region:
+            raise ValueError(
+                "SageMaker endpoints require --aws-region: it selects both the "
+                "runtime hostname and the SigV4 credential scope, and there is no "
+                "safe default to guess."
+            )
+
         return self
 
     @model_validator(mode="after")
